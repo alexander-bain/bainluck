@@ -272,6 +272,14 @@ def _feed_quality_empty_detail(eval_row) -> str:
 
 _GH_ISSUE_URL = "https://github.com/alexander-bain/bainluck/issues/{}"
 
+# The Schedule Sentinel's own ``GREEN_UNVERIFIED``. Duplicated as a literal rather
+# than imported because ``app.routes.*`` importing ``app.tasks.*`` at module scope
+# pulls the Celery app into every web request path. The duplication is bounded by
+# a test that asserts this string still equals ``schedule_sentinel.GREEN_UNVERIFIED``
+# — a copied constant with no equality test is how a tile silently stops matching
+# the verdict it renders.
+_SCHEDULE_GREEN_UNVERIFIED = "green_unverified"
+
 
 def _flow_sentinel_group() -> dict:
     """Per-flow pass/fail from the last Flow Sentinel run (#1078 / Queue #185).
@@ -514,7 +522,22 @@ def _schedule_sentinel_group() -> dict | None:
         real = int(lg.get("real_defects") or 0)
         watch = int(lg.get("watch") or 0)
         covered = bool(lg.get("covered"))
-        unverified = bool(lg.get("days_unverified"))
+        # Codex C-SEN-2 specimen 4: this read ONLY `days_unverified` — the list of
+        # days whose truth FETCH failed. A league the sentinel itself scored
+        # `green_unverified` because its PAIRINGS could not be dereferenced has an
+        # empty `days_unverified`, so the tile rendered it green and the verdict
+        # string sitting right beside it was carried through and never consulted.
+        #
+        # All three are read now, and deliberately so: the verdict is the module's
+        # own published authority and cannot be laundered, the count is what a
+        # newer payload carries, and `days_unverified` is the original fetch case.
+        # A rail that only works once BOTH ends are upgraded is broken for the
+        # whole rollout, and a cached scorecard outlives a deploy.
+        unverified = (
+            bool(lg.get("days_unverified"))
+            or int(lg.get("unverified") or 0) > 0
+            or str(lg.get("verdict") or "") == _SCHEDULE_GREEN_UNVERIFIED
+        )
         any_real = any_real or real > 0
         any_unverified = any_unverified or unverified
         any_uncovered = any_uncovered or not covered

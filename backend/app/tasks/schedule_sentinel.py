@@ -557,12 +557,21 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent],
     on a pair is entitled to know whether the pairing was dereferenced or inferred,
     and per ruling 042 that fact travels ON the pair rather than in a comment here.
 
-    Returns ``{pairs, unmatched_truth, unmatched_ours, near_miss_ours}`` where a
-    near-miss is one of our events that WOULD have paired to an already-taken
-    truth game — the DUPLICATE signal, as distinct from a genuine EXTRA."""
+    Returns ``{pairs, unmatched_truth, unmatched_ours, near_miss_ours,
+    duplicate_ids}`` where a near-miss is one of our events that WOULD have paired
+    to an already-taken truth game — the DUPLICATE signal, as distinct from a
+    genuine EXTRA — and ``duplicate_ids`` is the set of values stage 0 REFUSED to
+    pair on because more than one of our rows asserted them.
+
+    ``duplicate_ids`` is returned rather than re-derived by the caller (Codex
+    C-SEN-2 specimen 2). Stage 0 is the only place that knows an id was refused;
+    when that fact stayed local, the refused rows fell through into name pairing
+    and the caller — seeing an id it could not account for — labelled the truth
+    source's OWN namespace "foreign" and reported green."""
     taken_t: set[int] = set()
     taken_o: set[int] = set()
     pairs: list[dict] = []
+    duplicate_ids: set[str] = set()
 
     # --- Stage 0: identity. ------------------------------------------------
     if truth_id_attr:
@@ -575,8 +584,14 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent],
             if val:
                 # A duplicated id is not an identity; refuse to pair on it rather
                 # than pick one arbitrarily. Those rows fall through to the name
-                # stages and surface as DUPLICATE/EXTRA on their own merits.
-                by_our_id[str(val)] = -1 if str(val) in by_our_id else oi
+                # stages — but the REFUSAL travels out with them (``duplicate_ids``)
+                # so the caller can report the contradiction instead of inferring
+                # innocence from the absence of an id pair.
+                if str(val) in by_our_id:
+                    by_our_id[str(val)] = -1
+                    duplicate_ids.add(str(val))
+                else:
+                    by_our_id[str(val)] = oi
         for ti, t in enumerate(truth):
             try:
                 oi = by_our_id.get(str(t.key or ""))
@@ -592,9 +607,17 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent],
             pairs.append({"truth": t, "ours": o, "score": score,
                           "orientation": orient, "hours_apart": _hours_apart(o, t),
                           # Deliberately NOT mis_dated: an id-paired row whose clock
-                          # disagrees is a WRONG_DATE finding on a correctly paired
-                          # row, which _check_pair already raises. Marking it
-                          # mis_dated here would relabel it as a pairing compromise.
+                          # disagrees is a WRONG_DATE finding on a CORRECTLY paired
+                          # row, not a pairing compromise, so it must not be
+                          # relabelled as one.
+                          #
+                          # C-SEN-2 specimen 3: this comment used to end "...which
+                          # _check_pair already raises", and _check_pair did not —
+                          # it gated the date finding on ``mis_dated``, which is
+                          # False here by construction. The date check was therefore
+                          # disabled for exactly the pairs we trust most, and an
+                          # exact ESPN id 24h off the official start reported green.
+                          # ``_check_pair`` now raises it off ``paired_by == "id"``.
                           "mis_dated": False, "paired_by": "id"})
 
     def _run(bound: float, mis_dated: bool) -> None:
@@ -649,7 +672,8 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent],
             logger.warning("schedule sentinel near-miss scan failed: %s", exc)
 
     return {"pairs": pairs, "unmatched_truth": unmatched_truth,
-            "unmatched_ours": unmatched_ours, "near_miss_ours": near_miss}
+            "unmatched_ours": unmatched_ours, "near_miss_ours": near_miss,
+            "duplicate_ids": duplicate_ids}
 
 
 # ---------------------------------------------------------------------------
@@ -692,22 +716,35 @@ def reconcile(truth: list[TruthGame], ours: list[OurEvent], spec: LeagueSpec,
     paired = pair_events(truth, ours, truth_id_attr)
     L = spec.slug.upper()
 
-    # --- Which pairs did we actually VERIFY? (ruling 042, Codex C-SEN-1) -------
-    # A pair made on names and a clock is a claim about the name-matcher. Three
-    # outcomes, and only the third is a finding:
-    #   id                       — dereferenced, verified;
-    #   names, row individuated  — the truth source's id space is not one we hold
-    #                              (MLB's gamePk), so we could not cross-reference.
-    #                              Counted and named; NOT a defect and NOT verified;
+    # --- Which pairs did we actually VERIFY? (ruling 042, Codex C-SEN-1/C-SEN-2) -
+    # A pair made on names and a clock is a claim about the name-matcher. FIVE
+    # outcomes now, because C-SEN-2 showed the original three collapsed two very
+    # different things into "individuated, not a finding":
+    #
+    #   id                        — dereferenced, verified;
+    #   names, SAME id space, id duplicated across our rows
+    #                             — two of our rows assert one official game id.
+    #                               Provable without inference, so REAL;
+    #   names, SAME id space, id disagrees with the pair
+    #                             — our row carries the truth source's own id space
+    #                               and it names a different game. Not provably a
+    #                               defect, but certainly not verified;
+    #   names, FOREIGN id space   — the truth source's key lives in a space we hold
+    #                               on no column (MLB's gamePk), or this row has no
+    #                               value in the comparable column. We could not
+    #                               cross-reference. Counted here and declared ONCE
+    #                               for the league below — deliberately not once per
+    #                               pair, because for MLB that would be a constant,
+    #                               and a constant is not a signal;
     #   names, row un-individuated — nothing has ever named this game. The pairing
-    #                              cannot be verified even in principle, so it may
-    #                              not borrow GREEN's authority. Not RED either:
-    #                              nothing here shows a defect.
-    # A doubleheader paired by name is always in the third bucket regardless of
+    #                               cannot be verified even in principle.
+    #
+    # A doubleheader paired by name is always unverified regardless of
     # individuation — the provider's own game_number says two games share this
     # matchup and this day, so no clock reading disambiguates them.
     paired_by_id = 0
     foreign_id_space = 0
+    duplicate_ids = paired.get("duplicate_ids") or set()
     for p in paired["pairs"]:
         try:
             if p.get("paired_by") == "id":
@@ -715,6 +752,48 @@ def reconcile(truth: list[TruthGame], ours: list[OurEvent], spec: LeagueSpec,
                 continue
             t, o = p["truth"], p["ours"]
             ambiguous_dh = t.doubleheader
+
+            # Does this row carry a value in the SAME id space as the truth key?
+            our_same_space_id = None
+            if truth_id_attr:
+                try:
+                    v = getattr(o, truth_id_attr, None)
+                except Exception:  # gotcha #42
+                    v = None
+                our_same_space_id = str(v) if v else None
+
+            if our_same_space_id is not None:
+                # It is NOT foreign — it is the authority's own namespace, and the
+                # pairing did not come from it. Codex C-SEN-2: counting these as
+                # `foreign_id_space` is the mislabel that produced the green.
+                if our_same_space_id in duplicate_ids:
+                    out.append(_finding(
+                        "schedule_duplicate_identity", "critical",
+                        f"{L} {o.label} asserts {truth_id_attr}="
+                        f"{our_same_space_id!r}, and so does another of our rows in "
+                        f"this window — two rows claim to be the one official game "
+                        f"{t.label}. A shared provider id is evidence of identity, "
+                        f"never proof of it (#1947), so this is either a duplicate "
+                        f"row or a mis-stamped id; both are defects",
+                        kind="DUPLICATE", event_id=o.id, truth_key=t.key,
+                        duplicated_id=our_same_space_id, id_space=truth_id_attr,
+                    ))
+                    continue
+                if our_same_space_id != str(t.key or ""):
+                    out.append(_finding(
+                        "schedule_identity_conflict", "info",
+                        f"{L} {o.label} was paired to the official {t.label} on "
+                        f"NAMES, but it carries {truth_id_attr}="
+                        f"{our_same_space_id!r} — an identifier in the authority's "
+                        f"OWN id space naming a different game. The pairing "
+                        f"contradicts a dereferenceable identity and cannot be "
+                        f"reported as checked",
+                        kind="UNVERIFIED", tier="provenance", event_id=o.id,
+                        truth_key=t.key, paired_by="names",
+                        our_id=our_same_space_id, id_space=truth_id_attr,
+                    ))
+                    continue
+
             if o.individuated and not ambiguous_dh:
                 foreign_id_space += 1
                 continue
@@ -738,6 +817,37 @@ def reconcile(truth: list[TruthGame], ours: list[OurEvent], spec: LeagueSpec,
         except Exception as exc:  # gotcha #42
             logger.warning("schedule sentinel pairing provenance failed (%s): %s",
                            L, exc)
+
+    # --- The league-level identity-coverage declaration (Codex C-SEN-2 #1) ----
+    # ONE statement, not one per pair. The distinction matters in both directions
+    # and each direction has a named failure behind it:
+    #
+    #   * N findings would make the state CONSTANT for MLB — every pair, every
+    #     night, forever. The committed suite was right to refuse that, and its
+    #     `test_an_individuated_row_in_a_foreign_id_space_is_not_flagged` is what
+    #     kept it out. A constant is not a signal.
+    #   * ZERO findings, which is what we had, meant a league where NOTHING was
+    #     dereferenced reported the same `green` as a league where EVERYTHING was.
+    #     That is the false green C-SEN-2 blocked on, and it is the more dangerous
+    #     error: this is the only detector we have for an ABSENT GAME, so a green
+    #     it did not earn is worse than no sentinel at all.
+    #
+    # So: one declaration, carrying the COUNT. The count is what moves when the
+    # anchor channel (#1946) starts storing gamePk and this league becomes
+    # verifiable — at which point this finding stops firing on its own.
+    if foreign_id_space:
+        out.append(_finding(
+            "schedule_identity_space_unavailable", "info",
+            f"{L}: {foreign_id_space} of {len(paired['pairs'])} pairings could not "
+            f"be dereferenced — the authority's key lives in "
+            f"{truth_id_attr or (spec.truth or 'none') + ' (not stored)'}, which is "
+            f"not an id space we hold on the event row. These pairings rest on "
+            f"names and a clock, so this league has been COMPARED, not checked",
+            kind="UNVERIFIED", tier="provenance",
+            pairings_not_dereferenced=foreign_id_space,
+            pairings_total=len(paired["pairs"]),
+            truth_id_space=truth_id_attr or f"{spec.truth or 'none'} (not stored)",
+        ))
 
     # --- MISSING: in truth, not in ours. The class with no prior detector. -----
     for t in paired["unmatched_truth"]:
@@ -871,6 +981,31 @@ def _check_pair(p: dict, truth: list[TruthGame], spec: LeagueSpec,
             f"{L} event {o.id} sits {p['hours_apart']:.1f}h from the official "
             f"start of {t.label} — the row exists but is on the wrong date",
             kind="MISSING", event_id=o.id, hours_apart=p["hours_apart"],
+            paired_by=p.get("paired_by", "names"),
+        ))
+    # --- Mis-dated (IDENTITY pair) — Codex C-SEN-2 specimen 3 ----------------
+    # An id pair is never marked `mis_dated` (that flag means "the pairing itself
+    # was a compromise", and an identity pair is not one). The date finding was
+    # gated on that flag, so it could not fire for id pairs at all: an exact ESPN
+    # id sitting 24h off the official start produced ZERO findings and a literal
+    # green. That is the strongest evidence case there is — the id PROVES the two
+    # rows are the same game, so the clock disagreement is not ambiguity to be
+    # weighed, it is a wrong date to be reported.
+    #
+    # The bound is STRICT_PAIR_HOURS, the same bar a confident NAME pair must
+    # clear, so the two stages cannot disagree about what "the right day" means.
+    # Below it, a provider start-time revision is routine and is not a defect.
+    elif (p.get("paired_by") == "id"
+          and p.get("hours_apart") is not None
+          and p["hours_apart"] > STRICT_PAIR_HOURS):
+        out.append(_finding(
+            "schedule_wrong_date", "warning",
+            f"{L} event {o.id} sits {p['hours_apart']:.1f}h from the official "
+            f"start of {t.label} — and the two are the SAME GAME by identifier, "
+            f"so this is a wrong date on a correctly-paired row, not a pairing "
+            f"ambiguity",
+            kind="MISSING", event_id=o.id, hours_apart=p["hours_apart"],
+            paired_by="id", truth_key=t.key,
         ))
 
     # --- SCORE DISAGREEMENT on a settled game ------------------------------
@@ -1402,6 +1537,12 @@ async def _run_schedule_sentinel(
                 "watch": len((lg.get("classified") or {}).get("watch") or []),
                 "kind_counts": lg.get("kind_counts") or {},
                 "days_unverified": lg.get("days_unverified") or [],
+                # Codex C-SEN-2 specimen 4. Without this the cockpit could see
+                # only `days_unverified` — the FETCH-failure list — so a league
+                # whose verdict was `green_unverified` purely from PAIRING
+                # uncertainty rendered green. A verdict that survives the trip and
+                # is then ignored is gotcha #145 wearing an operator's hat.
+                "unverified": len((lg.get("classified") or {}).get("unverified") or []),
             }
             for lg in stats["leagues"]
         ],
