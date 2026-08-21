@@ -169,7 +169,23 @@ class TestTheReconciliation:
 
     def test_a_cell_on_only_one_side_is_counted_never_skipped(self):
         """An instrument that quietly compares the intersection reports its
-        cleanest number on its worst day."""
+        cleanest number on its worst day.
+
+        ⚠️ **The verdict on this fixture CHANGED in CAL-P086B, deliberately.**
+        It used to assert ``AGREES`` with the comment *"nothing compared,
+        nothing outside"* — and that was the defect, stated out loud in an
+        assertion: the payload here carries a ``polymarket`` cell, polymarket
+        is a source the fold's population DOES cover, and the fold produced no
+        row for it. That is the twin and the producer disagreeing about the
+        population, over a run that compared zero buckets. ``agrees`` is the
+        word a certifier reads.
+
+        The counting half of this test's point is unchanged and still asserted:
+        both sides are still counted, neither is skipped. What changed is that
+        an IN-SCOPE published-only cell now reaches the verdict. See
+        ``tests/test_calibration_twin_scope_p086b.py`` for the split and the
+        measurement (203 of 285 published cells are structurally out of scope,
+        which is why the out-of-scope half must NOT do this)."""
         out = reconcile(
             db_cells=self._cells(0.35),
             published_buckets=[{"source": "polymarket", "category": "politics",
@@ -179,7 +195,12 @@ class TestTheReconciliation:
         assert out["compared"] == 0
         assert len(out["db_only"]) == 1
         assert len(out["published_only"]) == 1
-        assert out["verdict"] == VERDICT_AGREES, "nothing compared, nothing outside"
+        assert out["verdict"] == VERDICT_DISAGREES, (
+            "polymarket is IN the fold's population, so a published cell with "
+            "no twin row is a population disagreement, not a scope limit"
+        )
+        assert len(out["published_only_in_scope"]) == 1
+        assert out["published_only_out_of_scope"] == []
         assert out["cells_db"] == 1 and out["cells_published"] == 1
 
     def test_winners_over_n_is_accepted_when_no_rate_is_given(self):

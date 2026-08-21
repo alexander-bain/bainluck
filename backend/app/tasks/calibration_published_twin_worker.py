@@ -111,26 +111,78 @@ that is no longer served is the flattering direction and is the exact shape of
 the defect this gate exists to catch, while refusing outright would throw away
 the verdict in precisely the hour Gate 0 is supposed to be runnable.
 
-What is NOT done here, and the premise that stops it
------------------------------------------------------
-#2076's option 2/3 — narrowing or chunking the fold — is the pattern Fable named
-(*"the same unit-admission/bounding pattern that fixed the builder"*), and the
-obvious form is one chunk per ``source`` with its own ``statement_timeout``.
-**It is not shipped here, because its premise is untested and its failure
-direction is the expensive one.** The population is a 665-line chain in which
-several CTEs are referenced more than once; Postgres materialises those rather
-than inlining them, so a ``WHERE d.source = ...`` on the final SELECT may not
-push down at all — in which case seven chunks (kalshi 593 buckets, polymarket
-462, odds_api 236, odds_api_bookmaker 229, odds_api_totals 222,
-odds_api_spreads 187, datagolf 5) each pay the FULL population cost and the fix
-makes it seven times worse.
+CAL-P086B — THE PREMISE IS NO LONGER UNTESTED. Source-chunking is REFUTED.
+---------------------------------------------------------------------------
+The paragraph that used to sit here declined #2076's option 2/3 (one chunk per
+``source``) on a premise it stated and never measured, and named the obstacle:
+``POST /admin/db-query`` refuses this SQL as ``Multi-statement`` because the
+frozen builder's COMMENTS carry 15 semicolons. That was a tooling obstacle, not
+a law. ``app/utils/sql_comment_strip.py`` removes it; ``scripts/
+explain_twin_fold_pushdown.py`` asks the planner. Measured 2026-08-21, plan-only
+(``explain: true``, never ``analyze``), artifact
+``artifacts/cal-p086b/ARTIFACT-CAL-P086B-2076-PUSHDOWN-EXPLAIN.json``:
 
-That premise is cheaply measurable with a plan-only ``EXPLAIN`` and was NOT
-measurable from here: ``POST /admin/db-query`` rejects this SQL outright with
-``Multi-statement queries not allowed``, because the frozen builder's own
-comments contain 15 semicolons. Measuring it needs either a psql session or a
-guard that ignores semicolons inside comments. Named for whoever takes it, with
-the number they need: **the pushdown question is the whole decision.**
+**1. The premise was RIGHT, and exactly right.** A ``WHERE d.source = ...`` on
+the final SELECT changes the plan by **nothing**: total cost 9,368,253.4 ->
+9,368,698.01 (a ratio of **1.0000**, and it went UP), the same 110 nodes, and
+``ranked_outcomes``' self-cost identical to the decimal at 6,781,188.7. The
+predicate does not reach the CTEs at all. Seven such chunks cost **7.00x**.
+
+**2. But the fix it rules out is not the only chunking shape.** ``market_info``
+is the single base CTE everything descends from, so a predicate injected into
+ITS ``WHERE`` needs no pushdown — the population is smaller from the first scan.
+That works: kalshi **0.3296x**, polymarket **0.7616x**, datagolf 0.0025x, and
+the seven-chunk SUM is **1.0939x** — a 9.4% total overhead, not 7x.
+
+**3. And it still does not fix #2076, for two reasons that are arithmetic.**
+The budget is per-statement, so what matters is the BIGGEST chunk, not the sum:
+polymarket at **0.7616x** of a fold that has never finished in 1,350 s is a 24%
+shave on the binding case, against a cost model CAL-P085 measured understating
+THIS fold by **>= 2.35x**. And the partition is far smaller than it looked:
+``SELECT source, count(*) FROM futures_markets WHERE status='resolved'`` returns
+**three** values (polymarket 569,781 / kalshi 225,274 / datagolf 295). The
+seven-way decomposition quoted in the old paragraph counted PUBLISHED PAYLOAD
+BUCKETS, not population rows. It is a 2-way split wearing a 7-way name.
+
+**4. Before it is a cost question it is a CORRECTNESS question, and that half
+is not settled either.** The population's aggregates are source-scoped and safe
+(``group_sizes``/``event_sizes`` group by ``(x, source)``; ``virtual_market``
+joins carry ``AND gs.source = mi.source``; ``vm_stats`` groups by ``vm.source``)
+— but ``vm_id`` is ``'g:'||group_id | 'e:'||event_id | 'm:'||market_id`` and
+carries **no source**, while ``mode_prices`` groups by bare ``vm_id`` and
+``deduped`` joins on bare ``vm_id``. Measured: **1,271 event_ids reach
+``event_size >= 3`` under more than one source** (0 group_ids do). On those, an
+unchunked fold can suppress one source's legs with a mode price computed from
+the other's, and a chunked fold cannot. Whether any of the 1,271 actually
+cross-suppresses today is **NOT measured**. So a source-chunked fold is not
+proven row-identical to the whole fold.
+
+**The decision, per the directive: the plan decides, not the planner's cost.**
+The plan says tail-chunking is refuted structurally and root-chunking works
+structurally; the arithmetic says root-chunking does not clear the budget. So
+#2076's option 2/3 is closed alongside option 1, and the remaining avenue is
+the in-dyno shape CAL-P079 identified — a reader whose budget is its own, on a
+host with no Celery ``soft_time_limit`` over it. See
+:func:`app.tasks.calibration_published_twin_worker` module notes and
+``scripts/measure_published_twin.py``, whose ``--timeout-ms`` has no ceiling.
+
+AND THE THING THE MEASUREMENT FOUND THAT #2076 WAS NOT LOOKING FOR
+-------------------------------------------------------------------
+The fold's population is the FUTURES population only. The published curve has
+seven sources; four of them (``odds_api``, ``odds_api_bookmaker``,
+``odds_api_totals``, ``odds_api_spreads``) are built by separate SQL in
+``precompute_calibration.py`` (:3677, :3729, :3778, bookmaker at :3838) over a
+different population. So **203 of 285 published cells (71.2%)**, 874 of 1,934
+buckets and 135,102 of 867,101 outcomes can NEVER have a twin row.
+
+``reconcile`` counted them into ``published_only`` and reported them, which was
+honest — but the VERDICT never read that list, so Gate 0 could return ``agrees``
+having compared 28.8% of the curve's cells. That is blocker 2's shape a third
+time: an instrument honest about everything except the one thing it cannot see,
+and it would have been the FIRST thing a finished fold got wrong. Fixed in
+:func:`app.utils.calibration_published_twin.reconcile` by splitting
+``published_only`` into out-of-scope (a declared, counted limit) and in-scope
+(a population disagreement, which now forces ``disagrees``).
 """
 
 from __future__ import annotations
