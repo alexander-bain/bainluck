@@ -387,18 +387,29 @@ async def prune_unanchored_duplicates_endpoint(
     max_delete: int = Query(DEFAULT_MAX_DELETE, ge=1, le=MAX_DELETE_CEILING),
     expected_min: Optional[int] = Query(None, description="Required when apply=true"),
     expected_max: Optional[int] = Query(None, description="Required when apply=true"),
+    plan_hash: Optional[str] = Query(
+        None,
+        description="Required when apply=true. The content address the dry run "
+                    "returned over its exact ordered id set.",
+    ),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """#2020 — the bounded delete rail for the unanchored-duplicate surplus.
 
     Dry-run by default and readable with the ordinary admin secret, because a census
     an operator cannot take is a census nobody checks. ``apply`` additionally
-    requires the destructive token AND an expected band; a live count outside the
-    band refuses the call before any write.
+    requires the destructive token, an expected band, AND the dry run's ``plan_hash``.
 
     Queue 382 stopped an authorized 61,000-row delete because this endpoint did not
     exist and the only available rail took a bare id list with no dry-run, no census
     and no cap. This is the shape that authorization actually described.
+
+    **REBUILT queue 386 after ``C-DELETE-RAIL-PRE`` returned BLOCK and Alex voided all
+    31 attended applies.** The band was the whole authorization and a band bounds
+    CARDINALITY — every one of the six findings was about IDENTITY. ``plan_hash`` is
+    the identity half: the dry run publishes a content address over its complete
+    ordered id set, apply requires it, and the rail re-derives it inside the locked
+    transaction. A count-preserving row swap between review and apply now refuses.
     """
     _check_admin_secret(secret, request=request)
     if apply:
@@ -413,6 +424,7 @@ async def prune_unanchored_duplicates_endpoint(
             max_delete=max_delete,
             expected_min=expected_min,
             expected_max=expected_max,
+            plan_hash=plan_hash,
         )
     except PruneRefused as exc:
         # A refusal is a 409, not a 500: the rail worked correctly and declined.
