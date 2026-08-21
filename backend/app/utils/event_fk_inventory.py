@@ -124,10 +124,71 @@ EVENT_CHILD_DISPOSITIONS: dict[str, Disposition] = {
 #: So the rail no longer nulls anything. A pinned row is WITHHELD at the predicate, and
 #: the impossible statement is deleted rather than repaired — a refusal that happens at
 #: selection is reviewable in a dry run; one that happens at the final write is not.
+#: **C-DELETE-RAIL-PRE-R3 finding 2: this dict was the allowlist defect again, one
+#: table over.** It held exactly ``user_pins`` while ``user_seen_markets`` and
+#: ``discover_interactions`` both carry event ids that the live feed consumes for
+#: seen/dismissed behaviour — and R3 executed the real prune flow against rows
+#: referenced by each and got ``deleted=1`` for both, while the rail's own response
+#: claimed "NO observation of any kind".
+#:
+#: A polymorphic reference genuinely cannot be derived from FK metadata — that is what
+#: makes it polymorphic. But the CANDIDATES can be: a table carrying an
+#: ``(<x>_id, <x>_type)`` column pair is nominated by the schema, and what a human
+#: maintains is the CLASSIFICATION. An unclassified candidate turns CI red
+#: (``test_every_schema_nominated_pseudo_fk_is_classified``), so the list cannot go
+#: quietly stale the way it just did.
 EVENT_PSEUDO_FK_SUBSTANCE: dict[str, tuple[str, str]] = {
     # table: (id column, the predicate that scopes it to events)
+    #
+    # A pin is a user saying "I care about this game" (rail v3, R2 finding 2).
     "user_pins": ("target_id", "pin_type = 'event'"),
+    # A seen row is the record that we showed this event to somebody. Deleting the
+    # event destroys the dedup history and the user starts seeing it again.
+    "user_seen_markets": ("item_id", "item_type = 'event'"),
+    # A dismiss/like is an explicit user judgement about this event, and the feed's
+    # personalization reads it directly (`feed.py` seen/dismissed paths).
+    "discover_interactions": ("item_id", "item_type = 'event'"),
+    # A recorded review decision about this event is human labour. It is the one
+    # class here that is not reconstructible from behaviour at all.
+    "discover_review_decisions": ("item_id", "item_type = 'event'"),
 }
+
+#: Schema-nominated polymorphic tables that are explicitly NOT substance, with the
+#: reason. Being on this list is a positive claim by a human, not an omission — which
+#: is the whole difference between this design and the one R3 blocked.
+EVENT_PSEUDO_FK_DERIVED: dict[str, str] = {
+    # A search projection, rebuilt from its source rows by the typeahead builder.
+    # Destroying it loses nothing that cannot be regenerated, and treating it as
+    # substance would withhold rows for holding a cache entry.
+    "typeahead_index": "derived search projection — regenerable, holds no observation",
+}
+
+#: Column-name pairs that mark a polymorphic reference. Used only to NOMINATE tables
+#: for classification; it never decides anything on its own.
+PSEUDO_FK_COLUMN_PAIRS: tuple[tuple[str, str], ...] = (
+    ("item_id", "item_type"),
+    ("target_id", "target_type"),
+    ("target_id", "pin_type"),
+    ("entity_id", "entity_type"),
+    ("subject_id", "subject_type"),
+)
+
+
+def schema_nominated_pseudo_fk_tables() -> tuple[str, ...]:
+    """Tables the SCHEMA says might hold a polymorphic event reference.
+
+    The independent oracle for :data:`EVENT_PSEUDO_FK_SUBSTANCE`. It does not read
+    that dict, so the two cannot share a blind spot — which is precisely how the
+    previous guard passed while three tables went unprotected.
+    """
+    from app.models.models import Base
+
+    found: list[str] = []
+    for table in Base.metadata.sorted_tables:
+        names = {c.name for c in table.columns}
+        if any(idc in names and typc in names for idc, typc in PSEUDO_FK_COLUMN_PAIRS):
+            found.append(table.name)
+    return tuple(sorted(found))
 
 #: Tables whose FK is ``ON DELETE CASCADE``. Deleting the parent removes these WITHOUT
 #: any statement naming them. The rail names them in its response anyway — an effect
@@ -137,61 +198,151 @@ CASCADING_CHILD_TABLES: frozenset[str] = frozenset(
 )
 
 
-#: Columns ON THE EVENT ROW ITSELF whose presence means the row is an observation.
+#: Columns that are NOT substance. **Everything else on the row IS.**
 #:
-#: **C-DELETE-RAIL-PRE-R2 finding 1 — "childless" is not "carries nothing".** The rebuild
-#: turned "no child rows" into "holds no observation" and those are not the same claim,
-#: because *the parent row is itself the system's record of game-existence, result and
-#: line*. Codex executed the real ``prune()`` against a linked keeper and an anchorless,
-#: childless row representing a DISTINCT completed 5–3 game with opening 0.57 / closing
-#: 0.64, sharing only the stale name/time fixture key — and got ``deleted=1``.
+#: **C-DELETE-RAIL-PRE-R3 finding 1, and it is a finding about STRATEGY, not contents.**
+#: R2 said "childless is not carries nothing" and v3 answered it by ENUMERATING what
+#: counts as something — a nine-column allowlist. R3 then executed the real ``prune()``
+#: against a distinct-game candidate whose sole recorded observation was
+#: ``opening_home_spread = -1.5``, a column the allowlist did not name, and got
+#: ``deleted=1``. The allowlist covered 12 of the table's 55 columns; 43 were unguarded.
 #:
-#: That is ruling 048 restated from the destructive side: the name/time fixture key
-#: cannot prove two rows are one game, so emptiness of the ten child tables cannot be
-#: read as duplicate identity. #2018 is the certified specimen — an exact-time collision
-#: between two genuinely different games.
+#: **A fourth round that lengthens the list is the same move a fourth time.** R3 named
+#: why it cannot converge: the guard test iterated *the same production constant* the
+#: implementation did, so it was **self-oracular** — an omitted column disappeared from
+#: implementation and oracle together, and the suite went green on exactly the rows it
+#: failed to protect. Three enumeration rounds was the evidence.
 #:
-#: Every column here is a fact somebody recorded about a game. If any is present, the
-#: row is withheld; the rail's remaining population is rows that assert nothing at all.
-PARENT_SUBSTANCE_COLUMNS: tuple[str, ...] = (
-    "home_score",                 # the result
-    "away_score",
-    "completed_at",               # the settlement fact
-    "opening_home_probability",   # the opening line
-    "opening_away_probability",
-    "closing_home_probability",   # the closing line
-    "closing_away_probability",
-    "espn_win_prob_home",         # a source's own observation
-    "raw_ei",                     # a computed observation over the whole game
+#: So the polarity is inverted, on Alex's ruling (2026-08-21): **deny by default.** A row
+#: is deletable only when every column NOT named here is empty. A column added to
+#: ``models.py`` tomorrow is PROTECTED the day it is born, and making it deletable
+#: requires a human to write its name down in this set — which is the same contract the
+#: FK half of this module has had since R4, now applied to the parent row.
+#:
+#: The three groups below are the only things a row can carry that are not a claim about
+#: a game. Note what is deliberately ABSENT: ``espn_id`` and ``statpal_fixture_id`` are
+#: substance (an anchor is a claim), as are venue, broadcast, game state, all spreads and
+#: totals, the EI fields, the LLM classifications, tags and every tournament fact.
+PARENT_IGNORABLE_COLUMNS: frozenset[str] = frozenset(
+    {
+        # --- bookkeeping: true of every row, says nothing about a game
+        "id",
+        "created_at",
+        # --- the fixture key ITSELF. These are what makes two rows candidates for
+        # being the same game; they cannot also be the evidence that one of them is
+        # real, or nothing is ever comparable.
+        "sport_id",
+        "home_team_id",
+        "away_team_id",
+        "home_team_name",
+        "away_team_name",
+        "commence_time",
+        # --- derived from the fixture key or from team identity, not recorded about
+        # THIS game. Normalisation is a function of the name; alt-names belong to the
+        # club and are the same on every row that names it.
+        "home_team_normalized",
+        "away_team_normalized",
+        "home_team_alt_names",
+        "away_team_alt_names",
+        # --- provenance OF THE ROW rather than an observation IN it. `external_id` is
+        # the creating source's key for this row: it identifies the row, and every row
+        # in the population has one, including the empty ones.
+        "external_id",
+        "commence_time_source",
+    }
 )
 
-#: JSONB columns that must be tested for empty as well as NULL — ``{}`` is what an
-#: initialized-but-never-written blob looks like, and reading it as substance would
-#: withhold most of the population for holding nothing.
-PARENT_SUBSTANCE_JSONB: tuple[str, ...] = (
-    "box_score_data",
-    "win_probability_sources",
-)
+#: Per-column definition of "empty" for columns where ``IS NULL`` is not the whole
+#: story. Anything not listed and not auto-classified below is empty iff it is NULL.
+#:
+#: ``status`` is here rather than in the ignorable set's spirit: it IS substance —
+#: anything other than ``scheduled`` is a claim that the game happened — but it is
+#: NOT NULL, so its emptiness needs a value test rather than a null test.
+PARENT_EMPTY_VALUE_SQL: dict[str, str] = {
+    "status": "({alias}.status IS NULL OR {alias}.status IN ('scheduled'))",
+}
 
-#: ``events.status`` is NOT NULL with a ``scheduled`` default, so it cannot be tested for
-#: presence. Anything OTHER than these is a claim about the game having happened.
+#: Retained for readers of older reports. ``EMPTY_STATUSES`` is now expressed inside
+#: ``PARENT_EMPTY_VALUE_SQL``; the tuple is kept so nothing that quotes it breaks.
 EMPTY_STATUSES: tuple[str, ...] = ("scheduled",)
+
+
+def _event_columns() -> tuple:
+    """The LIVE column set, read from the mapped table at call time.
+
+    Imported lazily and never cached at module scope: a cached snapshot taken at
+    import time is a second copy of the schema, and a second copy is the thing that
+    goes stale. The whole point of R3's fix is that there is exactly one source of
+    truth for what columns exist, and it is the table.
+    """
+    from app.models.models import Event
+
+    return tuple(Event.__table__.columns)
+
+
+def parent_substance_columns() -> tuple[str, ...]:
+    """Every column that counts as an observation — DERIVED, never restated.
+
+    ``schema minus denylist``. A new column appears here automatically.
+    """
+    return tuple(
+        c.name for c in _event_columns() if c.name not in PARENT_IGNORABLE_COLUMNS
+    )
+
+
+def _empty_sql_for(alias: str, column) -> str:
+    """SQL true when this column records nothing.
+
+    Type-directed so that a newly-added JSONB or boolean column gets a correct
+    emptiness test without anyone remembering to add one — the failure mode being
+    guarded against is a protected-but-untestable column silently withholding the
+    entire population.
+    """
+    name = column.name
+    if name in PARENT_EMPTY_VALUE_SQL:
+        return PARENT_EMPTY_VALUE_SQL[name].format(alias=alias)
+
+    type_name = str(column.type).upper()
+    if "JSON" in type_name:
+        # ``{}`` / ``[]`` is what an initialised-but-never-written blob looks like;
+        # reading it as substance would withhold most of the population for nothing.
+        return (
+            f"({alias}.{name} IS NULL OR "
+            f"{alias}.{name}::text IN ('{{}}', '[]'))"
+        )
+    if "BOOLEAN" in type_name:
+        return f"({alias}.{name} IS NULL OR {alias}.{name} = false)"
+    return f"{alias}.{name} IS NULL"
+
+
+#: Back-compat: the derived substance list, materialised at import for callers and
+#: reports that expect a tuple. ``parent_substance_columns()`` is the live read; this
+#: is a convenience over it, and both come from the same derivation, so they cannot
+#: disagree the way a hand-written list disagreed with the schema.
+def __getattr__(name: str):  # noqa: D401 - module-level lazy attribute
+    if name == "PARENT_SUBSTANCE_COLUMNS":
+        return parent_substance_columns()
+    if name == "PARENT_SUBSTANCE_JSONB":
+        return tuple(
+            c.name
+            for c in _event_columns()
+            if "JSON" in str(c.type).upper() and c.name not in PARENT_IGNORABLE_COLUMNS
+        )
+    raise AttributeError(name)
 
 
 def parent_substance_predicate(alias: str) -> str:
     """SQL true when the row's OWN columns record nothing about a game.
 
-    Deliberately built here, next to the column list, rather than in the rail: the list
-    and the predicate going out of sync is the same failure as the hand-maintained FK
-    tuple that R4 replaced.
+    Built from the live schema at call time (R3's ruling), so the predicate and the
+    table cannot drift. Deterministically ordered by column position, so the emitted
+    SQL is stable and diffable across runs.
     """
-    parts = [f"{alias}.{col} IS NULL" for col in PARENT_SUBSTANCE_COLUMNS]
-    parts += [
-        f"({alias}.{col} IS NULL OR {alias}.{col}::text IN ('{{}}', '[]'))"
-        for col in PARENT_SUBSTANCE_JSONB
+    parts = [
+        _empty_sql_for(alias, c)
+        for c in _event_columns()
+        if c.name not in PARENT_IGNORABLE_COLUMNS
     ]
-    statuses = ", ".join(f"'{s}'" for s in EMPTY_STATUSES)
-    parts.append(f"({alias}.status IS NULL OR {alias}.status IN ({statuses}))")
     return " AND ".join(parts)
 
 
