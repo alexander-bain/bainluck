@@ -65,6 +65,95 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     private override init() {
         super.init()
         UNUserNotificationCenter.current().delegate = self
+        registerNotificationCategories()
+    }
+
+    // MARK: - Notification routing (#2060 item 6)
+
+    /// Where a notification interaction lands. An explicit `.none` rather than an
+    /// Optional: "this payload names nowhere" is a real answer a test should be
+    /// able to assert, not an absence.
+    nonisolated enum NotificationDestination: Equatable {
+        case labeling
+        case url(URL)
+        case event(id: Int)
+        case market(id: Int)
+        case none
+    }
+
+    // MARK: - Notification categories (#2060 item 6)
+
+    /// The category the morning digest's admin variant declares, and the action
+    /// on it. Must match `LABELING_NOTIFICATION_CATEGORY` in
+    /// `backend/app/utils/morning_digest.py`; asserted by
+    /// `LabelingNudgeContractTests`.
+    static let labelingCategoryId = "morning_digest_admin"
+    static let labelingActionId = "label_today"
+
+    /// Where one notification interaction should land.
+    ///
+    /// ── PURE, BECAUSE THE ORDERING IS THE BUG AND A GREP CANNOT CATCH IT ─────
+    ///
+    /// `UNNotificationResponse` cannot be constructed in a test without private
+    /// API, so the delegate method itself is untestable and the only guard on it
+    /// was a source grep asserting the action check appears ABOVE the `url` read.
+    /// Mutation M14 defanged the condition without moving it and the grep stayed
+    /// green — it was checking line order, which is a proxy for the decision, not
+    /// the decision.
+    ///
+    /// So the decision moves here, where a test can execute it. `static` and
+    /// `nonisolated` for the same reason `driftRefusalMessage` is: a test should
+    /// not need the manager or the main actor to ask what a payload means.
+    ///
+    /// The action takes precedence over `url` because BOTH keys are present on an
+    /// admin digest — the action's destination is the labelling queue, the body
+    /// tap's is the market. Reading `url` first sends every action tap to the
+    /// market: the button is there, it animates, and it silently does the wrong
+    /// thing.
+    nonisolated static func notificationDestination(
+        actionIdentifier: String,
+        userInfo: [AnyHashable: Any]
+    ) -> NotificationDestination {
+        if actionIdentifier == labelingActionId {
+            return .labeling
+        }
+        if let urlString = userInfo["url"] as? String,
+           let url = URL(string: urlString) {
+            return .url(url)
+        }
+        if let eventIdString = userInfo["event_id"] as? String,
+           let eventId = Int(eventIdString) {
+            return .event(id: eventId)
+        }
+        if let marketIdString = userInfo["market_id"] as? String,
+           let marketId = Int(marketIdString) {
+            return .market(id: marketId)
+        }
+        return .none
+    }
+
+    /// Registering the category is what makes the "Label today" button exist.
+    ///
+    /// ** REGISTERED UNCONDITIONALLY, SURFACED CONDITIONALLY. ** Categories are a
+    /// client-side table consulted when a push names one, so registering costs
+    /// nothing and shows nobody anything. The server puts `category` on the
+    /// payload only for an admin recipient, so on every other device this entry
+    /// is simply never referenced — the gate is on the send, where it can be
+    /// tested against the recipient's identity, not on the client, where it would
+    /// depend on a build flag being right.
+    private func registerNotificationCategories() {
+        let labelToday = UNNotificationAction(
+            identifier: Self.labelingActionId,
+            title: "Label today",
+            options: [.foreground]
+        )
+        let digestAdmin = UNNotificationCategory(
+            identifier: Self.labelingCategoryId,
+            actions: [labelToday],
+            intentIdentifiers: [],
+            options: []
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([digestAdmin])
     }
 
     /// Attach to Firebase Messaging. Must be called AFTER `FirebaseApp.configure()`
@@ -113,22 +202,31 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             AnalyticsService.trackPushOpened(payloadId: payloadId)
         }
 
-        // If the notification payload includes a deep link URL, navigate to it.
-        if let urlString = userInfo["url"] as? String,
-           let url = URL(string: urlString) {
+        // The decision is `notificationDestination`, which is pure and tested.
+        // This method's remaining job is dispatch — see that function for why the
+        // precedence between the action and `url` is load-bearing.
+        switch Self.notificationDestination(
+            actionIdentifier: response.actionIdentifier,
+            userInfo: userInfo
+        ) {
+        case .labeling:
+            Task { @MainActor in
+                navCoordinator?.navigate(to: .discoverLabeling, tab: .feed)
+            }
+        case .url(let url):
             Task { @MainActor in
                 _ = navCoordinator?.handleURL(url)
             }
-        } else if let eventIdString = userInfo["event_id"] as? String,
-                  let eventId = Int(eventIdString) {
+        case .event(let eventId):
             Task { @MainActor in
                 navCoordinator?.navigate(to: .eventDetail(id: eventId), tab: .feed)
             }
-        } else if let marketIdString = userInfo["market_id"] as? String,
-                  let marketId = Int(marketIdString) {
+        case .market(let marketId):
             Task { @MainActor in
                 navCoordinator?.navigate(to: .futuresDetail(id: marketId), tab: .feed)
             }
+        case .none:
+            break
         }
 
         completionHandler()

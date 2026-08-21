@@ -71,6 +71,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.models.models import RankingJudgment
+from app.utils.label_reasons import defect_route
 from app.utils.reviewer_tier import TIER_ALEX, with_tier
 
 #: The gold vocabulary. All four are in live use.
@@ -158,6 +159,8 @@ def structured_label_metadata(
     gate: dict[str, Any] | None = None,
     live_card: dict[str, Any] | None = None,
     gate_surface: str = "native_ranking_judgment",
+    label: str | None = None,
+    reason_tags: Any = None,
 ) -> dict[str, Any] | None:
     metadata = dict(explicit_metadata) if isinstance(explicit_metadata, dict) else {}
     card_snapshot = body.get("card_snapshot")
@@ -228,10 +231,41 @@ def structured_label_metadata(
     }
     if top_level_fixable:
         fixable = {**top_level_fixable, **fixable}
+
+    # ── A REASONED BAD IS DEFECT EVIDENCE, AND THIS IS WHERE IT BECOMES ONE ──
+    #
+    # UX-P117 / #2060 item 1. The cluster endpoints skip any row without a
+    # `fixable_interest` key, and measured on production 2026-08-21 **zero of 88
+    # rows had one** — so 71 tagged negatives, 35 of them `stale`, routed
+    # nowhere. See `app/utils/label_reasons.py` for the full measurement.
+    #
+    # ** IT LIVES IN THE SHARED ENVELOPE, NOT IN THE NATIVE ROUTE. ** That is the
+    # standing trap on this queue restated: `admin_judgments` and
+    # `admin_label_pass` both call this function, and the last thing scoped to
+    # "the surface that carried the bug report" was #1873's coherence gate, which
+    # is exactly why native spent months serving cards the web pass had already
+    # learned to withhold. One envelope, both paths, no second implementation
+    # that merely agrees.
+    #
+    # ** AN EXPLICIT fixable_interest ALWAYS WINS. ** A `fix_type` a human chose
+    # in the ReviewTab select is a considered answer; one inferred from a chip
+    # tap is a default. Merging the derived keys UNDER the explicit ones (rather
+    # than over) means turning on the inference cannot change a single row that
+    # a human had already classified.
+    # Fold the explicit sources together FIRST, then lay the derived keys
+    # underneath the result. Doing it the other way round would let an inferred
+    # `fix_type` override `metadata["fixable_interest"]`, which is also explicit —
+    # `fixable` outranks `existing` two lines down, so anything merged into
+    # `fixable` inherits that precedence.
+    existing = metadata.get("fixable_interest")
+    if isinstance(existing, dict):
+        fixable = {**existing, **fixable}
+
+    derived = defect_route(label=label, reason_tags=reason_tags)
+    if derived:
+        fixable = {**derived, **fixable}
+
     if fixable:
-        existing = metadata.get("fixable_interest")
-        if isinstance(existing, dict):
-            fixable = {**existing, **fixable}
         metadata["fixable_interest"] = fixable
     return metadata or None
 

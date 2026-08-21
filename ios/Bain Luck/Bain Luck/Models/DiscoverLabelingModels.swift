@@ -220,3 +220,35 @@ nonisolated struct RankingJudgmentResponse: Decodable, Sendable {
     let id: Int
     let label: String
 }
+
+nonisolated struct RankingJudgmentDeleteResponse: Decodable, Sendable {
+    let status: String
+    let id: Int
+    let label: String?
+}
+
+/// The gold-set progress meter (#2060 item 4).
+///
+/// ** THE LEG THAT MATTERS IS `spreadMet`, NOT `total`. ** The Discover slate
+/// turns over daily, so 250 labels from three sittings are 250 opinions about
+/// three slates. Each leg carries its own flag rather than being folded into one
+/// percentage, because the interesting failure (a big corpus, few days) and the
+/// healthy state (a small corpus growing daily) produce almost the same
+/// percentage.
+nonisolated struct LabelingProgress: Decodable, Sendable {
+    let total: Int
+    let totalTarget: Int
+    let totalMet: Bool
+    let today: Int
+    let dailyTarget: Int
+    let dailyMet: Bool
+    let distinctDays: Int
+    let spreadTarget: Int
+    let spreadMet: Bool
+    let streak: Int
+    let firstDay: String?
+    let lastDay: String?
+    /// The zone the day boundary is computed in — `America/Los_Angeles`.
+    /// Carried so the surface can say so rather than implying the device's.
+    let timezone: String?
+}

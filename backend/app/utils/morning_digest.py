@@ -167,8 +167,26 @@ def _with_open_tracking(path: str, payload_id: str) -> str:
     )
 
 
+#: The labelling nudge's own deep link, carried beside `url` rather than
+#: replacing it (#2060 item 6).
+#:
+#: A push has ONE tap target and the digest's is the top market — that is the
+#: digest's whole job and the reminder must not steal it. So the nudge rides a
+#: notification ACTION ("Label today") which reads this key, and a plain tap still
+#: opens the market. Two destinations, one notification, neither degraded.
+LABELING_DEEP_LINK = "/admin/labeling"
+
+#: The category the client registers the "Label today" action against. Present in
+#: the payload only for admin recipients, so a non-admin build can never surface
+#: an action for a screen it cannot open.
+LABELING_NOTIFICATION_CATEGORY = "morning_digest_admin"
+
+
 def render_digest_payload(
-    items: list[DigestCandidate], payload_id: str | None = None
+    items: list[DigestCandidate],
+    payload_id: str | None = None,
+    *,
+    labeling_reminder: bool = False,
 ) -> DigestPayload:
     """Render selected candidates into an APNS/FCM push payload.
 
@@ -200,6 +218,19 @@ def render_digest_payload(
             }
         )
 
+    # ── THE LABELLING NUDGE, ADMIN-ONLY (#2060 item 6) ───────────────────────
+    #
+    # Appended to the SAME digest rather than sent as a second push, because
+    # notifications v1 is digest-only by standing ruling and a new daily push is
+    # an amendment to that ruling, not a drive-by in this queue.
+    #
+    # Guarded by the caller, and the guard is load-bearing: the digest is ONE
+    # payload broadcast to every opted-in device, so an unconditional line here
+    # would tell the entire user base to go and label Alex's gold set. The
+    # recipient split lives in `app/tasks/morning_digest.py`.
+    if labeling_reminder:
+        lines.append("\U0001f3f7️ Label today's cards — the gold set needs the spread.")
+
     body = "\n".join(lines) if lines else "No standout probabilities today."
     data: dict[str, str] = {"type": "morning_digest", "url": "/discover"}
     if items:
@@ -208,5 +239,11 @@ def render_digest_payload(
     if payload_id:
         data["payload_id"] = payload_id
         data["url"] = _with_open_tracking(data["url"], payload_id)
+    if labeling_reminder:
+        # `labeling_url`, never `url`. Overwriting `url` would silently convert
+        # the digest's tap target from "the most interesting market today" into
+        # an admin screen — for the one person who most wants the market.
+        data["labeling_url"] = LABELING_DEEP_LINK
+        data["category"] = LABELING_NOTIFICATION_CATEGORY
 
     return DigestPayload(title=title, body=body, data=data, items=rendered_items)

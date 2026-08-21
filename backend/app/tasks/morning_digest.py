@@ -83,6 +83,38 @@ def digest_recipients(rows) -> list[tuple[int | None, str]]:
     return out
 
 
+def admin_digest_tokens(rows) -> set[str]:
+    """Which of those recipient tokens belong to an admin (#2060 item 6).
+
+    ── A SEPARATE FUNCTION RATHER THAN A THIRD TUPLE SLOT ───────────────────────
+
+    ``digest_recipients`` could have returned ``(id, token, is_admin)``, and that
+    would have changed the arity of a function whose both-directions tests are the
+    guard on a DESTRUCTIVE path — an APNS hex reaching FCM makes the caller
+    deactivate real devices. Widening it would have rewritten six assertions on
+    that guard to add a field none of them are about. This composes instead, and
+    those tests keep asserting exactly what they asserted before.
+
+    ** THE ADMIN SET IS THE SAME ONE THE ADMIN ROUTES USE. ** Imported from
+    ``admin_utils`` rather than re-read from the environment here: a second
+    reading of ``ADMIN_USER_IDS`` is a second definition of who Alex is, and the
+    one that decides who gets told to go labelling would be free to drift from
+    the one that decides who is allowed to.
+    """
+    from app.routes.admin_utils import _admin_user_emails, _admin_user_ids
+
+    admin_ids = _admin_user_ids()
+    admin_emails = _admin_user_emails()
+
+    tokens: set[str] = set()
+    for device_token, user in rows:
+        if user is None:
+            continue
+        if user.id in admin_ids or (user.email or "").lower() in admin_emails:
+            tokens.add(device_token.device_token)
+    return tokens
+
+
 async def _gather_digest_candidates(session, redis, *, pool_size=CANDIDATE_POOL_SIZE) -> list[DigestCandidate]:
     """Cheap read: top-volume feed-eligible markets + their cached interestingness."""
     now = datetime.now(timezone.utc)
@@ -230,7 +262,11 @@ async def _run_morning_digest(
             summary["sent"] = 0
             return summary
 
-        # Resolve the recipient token set.
+        # Resolve the recipient token set. `admin_tokens` is initialised here
+        # rather than in the broadcast branch: the `target_token` path skips that
+        # branch entirely, and a name bound in only one arm of an if/else is an
+        # UnboundLocalError on the other (gotcha #7's shape).
+        admin_tokens: set[str] = set()
         if target_token:
             recipient_tokens = [(None, target_token)]  # (device_row_id, token)
         else:
@@ -247,18 +283,37 @@ async def _run_morning_digest(
                 .where(DeviceToken.is_active.is_(True))
                 .where(DeviceToken.token_kind == SENDABLE_TOKEN_KIND)
             )
-            recipient_tokens = digest_recipients(rows.all())
+            fetched = rows.all()
+            recipient_tokens = digest_recipients(fetched)
+            admin_tokens = admin_digest_tokens(fetched)
+
+        # ── THE ADMIN VARIANT (#2060 item 6) ─────────────────────────────────
+        #
+        # Built ONCE, outside the loop, and selected per recipient. The digest is
+        # a broadcast of a single payload, so the labelling nudge has to be a
+        # second payload or it goes to everybody.
+        #
+        # `target_token` deliberately does NOT get it: that path is a dogfood
+        # send to a named device and bypasses opt-in entirely, so it has no user
+        # attached to check. Sending the admin variant there would be guessing.
+        admin_payload = (
+            render_digest_payload(selected, payload_id=payload_id, labeling_reminder=True)
+            if admin_tokens
+            else payload
+        )
+        summary["admin_recipients"] = len(admin_tokens)
 
         sent, failed = 0, 0
         from app.tasks.push_notifications import _InvalidTokenError, _send_fcm_message
 
         for device_row_id, token in recipient_tokens:
+            outgoing = admin_payload if token in admin_tokens else payload
             try:
                 _send_fcm_message(
                     token=token,
-                    title=payload.title,
-                    body=payload.body,
-                    data=payload.data,
+                    title=outgoing.title,
+                    body=outgoing.body,
+                    data=outgoing.data,
                 )
                 sent += 1
             except _InvalidTokenError:

@@ -1092,6 +1092,32 @@ actor APIClient {
         return try await postEncodable("/api/admin/ranking-judgments", body: body)
     }
 
+    /// Removes one judgment — the write half of "undo last vote" (#2060 item 3).
+    ///
+    /// The local pointer rewind was never the undo; it left the row in the gold
+    /// set and let the next submit write a SECOND row for the same card. This is
+    /// the same endpoint the web ReviewTab's `u` shortcut has always used.
+    func deleteRankingJudgment(id: Int) async throws -> RankingJudgmentDeleteResponse {
+        return try await delete("/api/admin/ranking-judgments/\(id)")
+    }
+
+    /// Gold-set progress: today vs the daily target, total vs 250, and day spread.
+    ///
+    /// Its own endpoint rather than `/coverage`, which pulls every judgment row
+    /// into Python plus a 200-row query per stratum — correct for a dashboard,
+    /// far too heavy for a header that redraws after every vote.
+    func fetchLabelingProgress(reviewer: String? = nil) async throws -> LabelingProgress {
+        var query: [String: String] = [:]
+        if let reviewer, reviewer != "native", !reviewer.isEmpty {
+            query["reviewer"] = reviewer
+        }
+        return try await fetch(
+            "/api/admin/ranking-judgments/progress",
+            query: query,
+            cacheTTL: nil
+        )
+    }
+
     // MARK: - Bug Reports
 
     /// Uploads a rage-shake bug report with screenshot and app state.

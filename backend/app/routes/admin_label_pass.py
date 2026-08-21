@@ -927,6 +927,14 @@ async def label_pass_verdict(
                     gate=drift,
                     live_card=derived_card,
                     gate_surface="label_pass_verdict",
+                    # Passed for completeness of the shared envelope, not because
+                    # this path can route today: the label-pass verdict elicits
+                    # accept/reject on a proposal and collects no reason tags, so
+                    # `defect_route` returns None here every time. Wiring it
+                    # anyway is what stops the next person who adds tags to this
+                    # surface from having to remember that the route exists.
+                    label=gold_label,
+                    reason_tags=None,
                 ),
                 origin=label_origin(
                     surface="label_pass",

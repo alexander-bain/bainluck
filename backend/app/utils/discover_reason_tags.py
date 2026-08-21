@@ -30,6 +30,14 @@ CANONICAL_REASON_TAGS = frozenset(
         "generic_hook",
         "wrong_category",
         "not_a_real_prediction",
+        # UX-P117 / #2060 item 1. The one chip in Alex's six with nothing to fold
+        # onto: `misleading` is about the HOOK TEXT overselling a card, which is a
+        # different complaint from "the number itself is wrong", and the web
+        # ReviewTab's `too_high`/`too_low` were never registered here at all — so
+        # a labeller who thought the probability was wrong had no canonical way to
+        # say it. Both directions alias onto this because the defect is the same
+        # one (`data_bug`); which way it is wrong belongs in `notes`.
+        "wrong_probability",
     }
 )
 
@@ -60,6 +68,23 @@ REASON_TAG_ALIASES = {
     "duplicate_family": "duplicate",
     "bucket": "repetitive",
     "dated_bucket": "repetitive",
+    # ── UX-P117: the forks the store was already carrying ────────────────────
+    #
+    # `boring` is what `/admin/labeling` writes and it was never registered, so
+    # `canonical_reason_tag` preserved it verbatim as an unknown tag. Measured on
+    # production 2026-08-21 that is 2 rows sitting beside 6 `low_stakes` — one
+    # complaint, counted twice, and each half too small to look like anything.
+    # Folding it here fixes new writes; the 2 historical rows keep their spelling
+    # and are folded at ROUTE time by the same function, which is the point of
+    # canonicalising on read as well as write.
+    "boring": "low_stakes",
+    "dull": "low_stakes",
+    # The web ReviewTab has offered these two since it shipped and neither was
+    # ever canonical, so both would have landed as unknown tags.
+    "too_high": "wrong_probability",
+    "too_low": "wrong_probability",
+    "wrong_prob": "wrong_probability",
+    "wrong_probability": "wrong_probability",
 }
 
 

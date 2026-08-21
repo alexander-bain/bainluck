@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 
 // ── #2060 item 2: the card's WHEN, formatted ─────────────────────────────────
@@ -48,11 +51,40 @@ struct DiscoverLabelingView: View {
     @State private var betterThanPrevious = false
     @State private var worseThanNext = false
 
+    /// Set when Bad is tapped: the six reason chips replace the verdict row until
+    /// one is chosen or the reason is skipped (#2060 item 1).
+    @State private var awaitingBadReason = false
+
     private let labels = [
         ("love", "Love"),
         ("fine", "Fine"),
         ("bad", "Bad"),
         ("kill", "Kill"),
+    ]
+
+    /// ── THE SIX CHIPS, AND WHY THE STORED TAG IS NOT THE ENGLISH ─────────────
+    ///
+    /// One tap after Bad (#2060 item 1). Mirrors the web `/admin/labeling` flow,
+    /// which has had this since it shipped — native never got it, which is the
+    /// parity gap this closes.
+    ///
+    /// The stored tag is the STORE's canonical spelling, which is why "Confusing"
+    /// stores `unclear` and "Boring" stores `low_stakes`: the corpus already holds
+    /// 16 and 6 rows under those names, and a chip that minted a new spelling
+    /// would split the very tally it exists to grow. The pairing is asserted
+    /// against the backend vocabulary by
+    /// `backend/tests/test_label_reason_routing.py`.
+    ///
+    /// Order is by measured frequency of the complaint each names, so the most
+    /// common answer is the shortest reach on a phone. `stale` leads because it
+    /// is 40% of the corpus (35 of 88 rows, measured 2026-08-21).
+    private let badReasons: [(tag: String, title: String)] = [
+        ("stale", "Stale"),
+        ("wrong_probability", "Wrong probability"),
+        ("unclear", "Confusing"),
+        ("duplicate", "Duplicate"),
+        ("bad_image", "Bad image"),
+        ("low_stakes", "Boring"),
     ]
 
     private let reasonTags = [
@@ -74,7 +106,17 @@ struct DiscoverLabelingView: View {
             viewModel.updateUserEmail(authManager.user?.email)
             if viewModel.items.isEmpty && !viewModel.loading {
                 await viewModel.load()
+            } else {
+                // Returning to the screen mid-session: the queue is intact but
+                // the meter is from whenever it was last drawn.
+                await viewModel.refreshProgress()
             }
+        }
+        // #2060 item 5 — top up before the queue runs out, so there is no wait
+        // between votes. Keyed on the index rather than driven from `submit` so
+        // it also covers Skip and Undo, which move the pointer without writing.
+        .onChange(of: viewModel.currentIndex) { _, _ in
+            Task { await viewModel.prefetchIfNeeded() }
         }
         .onChange(of: authManager.user?.email) { _, newEmail in
             viewModel.updateUserEmail(newEmail)
@@ -134,6 +176,10 @@ struct DiscoverLabelingView: View {
                 total: Double(max(viewModel.items.count, 1))
             )
 
+            if let progress = viewModel.progress {
+                goldMeter(progress)
+            }
+
             if !viewModel.labelCounts.isEmpty {
                 FlowLayout(spacing: 6) {
                     ForEach(viewModel.labelCounts.sorted(by: { $0.key < $1.key }), id: \.key) { label, count in
@@ -165,6 +211,68 @@ struct DiscoverLabelingView: View {
                 .disabled(viewModel.loading || viewModel.submitting)
             }
         }
+    }
+
+    /// ── THE GOLD METER, AND THE LEG IT LEADS WITH (#2060 item 4) ─────────────
+    ///
+    /// Three legs, each with its own state, never folded into one percentage.
+    /// A big corpus from three sittings and a small one growing daily produce
+    /// almost the same percentage and mean opposite things.
+    ///
+    /// The STREAK is displayed because temporal spread is the gold set's actual
+    /// requirement — the Discover slate turns over daily, so 250 labels from two
+    /// sittings are 250 opinions about two slates. That makes the streak the
+    /// requirement made visible, not gamification, and it is why it sits beside
+    /// the day count rather than alone.
+    private func goldMeter(_ progress: LabelingProgress) -> some View {
+        HStack(spacing: 8) {
+            meterChip(
+                "Today",
+                "\(progress.today)/\(progress.dailyTarget)",
+                met: progress.dailyMet
+            )
+            meterChip(
+                "Gold set",
+                "\(progress.total)/\(progress.totalTarget)",
+                met: progress.totalMet
+            )
+            meterChip(
+                "Days",
+                "\(progress.distinctDays)/\(progress.spreadTarget)",
+                met: progress.spreadMet
+            )
+            if progress.streak > 0 {
+                meterChip(
+                    "Streak",
+                    "\(progress.streak)d",
+                    met: true
+                )
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(progress.today) of \(progress.dailyTarget) today, "
+            + "\(progress.total) of \(progress.totalTarget) in the gold set, "
+            + "\(progress.distinctDays) of \(progress.spreadTarget) days, "
+            + "\(progress.streak) day streak"
+        )
+    }
+
+    private func meterChip(_ title: String, _ value: String, met: Bool) -> some View {
+        VStack(spacing: 1) {
+            Text(value)
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(met ? Color.green : Color.primary)
+            Text(title)
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 5)
+        .background(
+            (met ? Color.green : Color.secondary).opacity(0.10),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -269,15 +377,10 @@ struct DiscoverLabelingView: View {
 
     private var formControls: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                ForEach(labels, id: \.0) { key, title in
-                    Button(title) {
-                        selectedLabel = key
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(labelTint(key, selected: selectedLabel == key))
-                    .controlSize(.regular)
-                }
+            if awaitingBadReason {
+                badReasonChips
+            } else {
+                verdictButtons
             }
 
             FlowLayout(spacing: 6) {
@@ -303,6 +406,7 @@ struct DiscoverLabelingView: View {
 
             Button {
                 guard let label = selectedLabel else { return }
+                lightHaptic()
                 Task {
                     let saved = await viewModel.submit(
                         label: label,
@@ -326,6 +430,13 @@ struct DiscoverLabelingView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(selectedLabel == nil || viewModel.submitting)
+            // Hidden during the reason flow: the chip IS the submit there, and
+            // leaving this live would offer a second path that writes the same
+            // Bad with no reason — the unroutable row the chips exist to end.
+            .opacity(awaitingBadReason ? 0 : 1)
+            .frame(height: awaitingBadReason ? 0 : nil)
+            .disabled(awaitingBadReason)
+            .accessibilityHidden(awaitingBadReason)
 
             HStack(spacing: 16) {
                 Button("Skip") {
@@ -338,26 +449,166 @@ struct DiscoverLabelingView: View {
 
                 if viewModel.canUndo {
                     Button {
-                        viewModel.undo()
-                        resetForm()
+                        lightHaptic()
+                        Task {
+                            // Awaited: undo now DELETES the judgment row, so it
+                            // is a network write and the form must not reset
+                            // until it lands. A failed delete leaves the button
+                            // live and the error on screen rather than quietly
+                            // becoming a pointer rewind over a surviving row.
+                            await viewModel.undo()
+                            resetForm()
+                        }
                     } label: {
                         Label("Undo", systemImage: "arrow.uturn.backward")
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
+                    .disabled(viewModel.submitting)
                 }
             }
         }
     }
 
+    private var verdictButtons: some View {
+        HStack(spacing: 8) {
+            ForEach(labels, id: \.0) { key, title in
+                Button(title) {
+                    lightHaptic()
+                    // Bad asks WHY before it writes. Every other verdict is a
+                    // complete opinion on its own; "bad" without a reason is the
+                    // bare downvote that produced 71 unroutable rows.
+                    if key == "bad" {
+                        selectedLabel = key
+                        awaitingBadReason = true
+                    } else {
+                        selectedLabel = key
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(labelTint(key, selected: selectedLabel == key))
+                .controlSize(.regular)
+            }
+        }
+    }
+
+    /// One tap after Bad, and the tap SUBMITS (#2060 item 1).
+    ///
+    /// Not "select a chip, then press Submit & Next". The reason chip is the last
+    /// thing Alex knows, so making it the last thing he taps is what keeps a
+    /// reasoned Bad the same two taps a bare one used to be — otherwise the
+    /// routable path costs more than the unroutable one and the corpus fills with
+    /// whichever is cheaper.
+    private var badReasonChips: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Why is it bad?")
+                .font(.subheadline.weight(.semibold))
+
+            FlowLayout(spacing: 8) {
+                ForEach(badReasons, id: \.tag) { reason in
+                    Button(reason.title) {
+                        submitBad(reasonTag: reason.tag)
+                    }
+                    .font(.subheadline)
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                    .disabled(viewModel.submitting)
+                }
+            }
+
+            HStack(spacing: 16) {
+                Button("Skip reason") {
+                    submitBad(reasonTag: nil)
+                }
+                .font(.caption)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(viewModel.submitting)
+
+                Button("Back") {
+                    awaitingBadReason = false
+                    selectedLabel = nil
+                }
+                .font(.caption)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(viewModel.submitting)
+            }
+        }
+    }
+
+    /// Submit a Bad with (or deliberately without) one reason.
+    ///
+    /// The chip is ADDED to whatever multi-select tags are already set rather
+    /// than replacing them — the 24-tag row is still on screen and a tag Alex set
+    /// there is an opinion he expressed.
+    private func submitBad(reasonTag: String?) {
+        lightHaptic()
+        var tags = selectedTags
+        if let reasonTag {
+            tags.insert(reasonTag)
+        }
+        Task {
+            let saved = await viewModel.submit(
+                label: "bad",
+                reasonTags: tags,
+                notes: notes,
+                betterThanPrevious: betterThanPrevious,
+                worseThanNext: worseThanNext
+            )
+            if saved {
+                resetForm()
+            }
+        }
+    }
+
+    /// Light impact on every vote (#2060 item 5). Matches `PinButton` and
+    /// `FeedView`, which already use exactly this generator and style.
+    private func lightHaptic() {
+        #if os(iOS)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        #endif
+    }
+
+    /// ── HONEST-EMPTY, RULING 027 (#2060 item 5) ──────────────────────────────
+    ///
+    /// Two endings, and they are different facts, so they get different words.
+    ///
+    /// `queueExhausted` means the SERVER said `has_more: false` and had nothing
+    /// fresh — that is a finished day's work and it says so. Anything else means
+    /// the on-screen batch is spent but the server may still have cards, which is
+    /// a "load more", not a congratulation.
+    ///
+    /// What neither of them does is recycle. Re-serving cards Alex has already
+    /// judged would inflate the corpus with duplicate opinions on one slate,
+    /// which is precisely the spread failure the progress meter exists to expose.
     private var completedState: some View {
         VStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
+            Image(systemName: viewModel.queueExhausted ? "checkmark.seal.fill" : "tray")
                 .font(.largeTitle)
-                .foregroundStyle(.green)
-            Text("All reviewed")
+                .foregroundStyle(viewModel.queueExhausted ? .green : .secondary)
+
+            Text(viewModel.queueExhausted
+                 ? "You've judged everything fresh today"
+                 : "That's the batch")
                 .font(.headline)
-            Button("Reload Debug Feed") {
+                .multilineTextAlignment(.center)
+
+            Text(viewModel.queueExhausted
+                 ? "Nothing is being recycled — new cards appear as the slate turns over."
+                 : "There may be more candidates on the server.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            if let progress = viewModel.progress, viewModel.queueExhausted {
+                Text(spreadEncouragement(progress))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            Button(viewModel.queueExhausted ? "Check again" : "Load more") {
                 resetForm()
                 Task { await viewModel.load() }
             }
@@ -365,6 +616,19 @@ struct DiscoverLabelingView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
+    }
+
+    /// What is left, stated as the requirement rather than as a score.
+    ///
+    /// Names the SPREAD leg, not the total, because that is the one a good day's
+    /// grinding cannot fix — and saying "12 more days" when he has just done
+    /// twenty cards is the honest thing, not a discouraging one.
+    private func spreadEncouragement(_ progress: LabelingProgress) -> String {
+        let daysLeft = max(progress.spreadTarget - progress.distinctDays, 0)
+        if daysLeft == 0 {
+            return "\(progress.total) of \(progress.totalTarget) labels, spread across \(progress.distinctDays) days."
+        }
+        return "\(progress.total) of \(progress.totalTarget) labels across \(progress.distinctDays) days — \(daysLeft) more separate days gets the spread the gold set needs."
     }
 
     private func toggleTag(_ tag: String) {
@@ -381,6 +645,9 @@ struct DiscoverLabelingView: View {
         notes = ""
         betterThanPrevious = false
         worseThanNext = false
+        // Left set, the next card would open straight onto "Why is it bad?" —
+        // asking for a reason before a verdict, on a card nobody has judged.
+        awaitingBadReason = false
     }
 
     private func pill(_ text: String) -> some View {
