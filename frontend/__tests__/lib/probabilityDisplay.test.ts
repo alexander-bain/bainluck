@@ -18,9 +18,27 @@ describe("formatProbabilityPercent", () => {
   test("the production specimen: every bridesmaids outcome stops printing 0%", () => {
     // The real wire values from GET /api/feed, market 12194657.
     const wire = [0.0035, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005];
-    const printed = wire.map(formatProbabilityPercent);
+    // NOT `wire.map(formatProbabilityPercent)`. UX-P114 gave this function an
+    // optional second argument, and the point-free form handed it the array
+    // INDEX — these eight rows printed `<1%, 1%, 2%, 3%…` and this assertion is
+    // what caught it. The parameter is an options OBJECT now, so the point-free
+    // call is a type error rather than a wrong number, but the explicit arrow is
+    // what makes the intent survive the next signature change.
+    const printed = wire.map((p) => formatProbabilityPercent(p));
     expect(printed).toEqual(Array(8).fill(BELOW_ONE_PERCENT));
     expect(printed.filter((p) => p === "0%")).toHaveLength(0);
+  });
+
+  test("the second argument is an options object, not a positional number", () => {
+    // The guard that keeps the trap above closed: an integer override only
+    // applies when it arrives under its own key. Anything else — notably a bare
+    // index — is ignored rather than printed.
+    expect(formatProbabilityPercent(0.675, { rendered: 68 })).toBe("68%");
+    expect(formatProbabilityPercent(0.675)).toBe("68%");
+    // The boundary rule still wins over the override, because it is a claim
+    // about the probability rather than about the arithmetic.
+    expect(formatProbabilityPercent(0.996, { rendered: 100 })).toBe(">99%");
+    expect(formatProbabilityPercent(0.004, { rendered: 0 })).toBe("<1%");
   });
 
   test("a value that is possible never prints as impossible", () => {

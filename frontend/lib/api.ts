@@ -46,7 +46,10 @@ import type {
   TeamData,
 } from "./types";
 import { getDiscoverSessionId } from "./discoverInteractions";
-import { formatProbabilityPercent } from "./probabilityDisplay";
+import {
+  formatProbabilityPercent,
+  type ProbabilityFormatOptions,
+} from "./probabilityDisplay";
 import { reportFeedTelemetry } from "./feedTelemetry";
 import { resolveSharedAnonSuppression } from "./discover/sharedAnonFeed";
 
@@ -566,12 +569,19 @@ export async function fetchEventConcept(key: string): Promise<EventConceptRespon
   return apiFetch<EventConceptResponse>(`/api/event/${encodeURIComponent(key)}`);
 }
 
-export function formatProbability(prob: number | null | undefined): string {
+export function formatProbability(
+  prob: number | null | undefined,
+  options?: ProbabilityFormatOptions,
+): string {
   if (prob === null || prob === undefined) return "-";
   // UX-P046: delegate the rounding so a small-but-real probability never prints
   // as "0%" (which reads as impossible). The "-" for absent data is unchanged,
   // and every value that already rounded inside 1%-99% prints identically.
-  return formatProbabilityPercent(prob);
+  // UX-P114: a caller drawing BOTH sides of one question passes the server's
+  // card-level integer so the two do not sum to 101; omitting it is unchanged.
+  // An OBJECT, not a bare number — see `formatProbabilityPercent` for the
+  // `.map(fn)` index trap that shape exists to turn into a type error.
+  return formatProbabilityPercent(prob, options);
 }
 
 /**

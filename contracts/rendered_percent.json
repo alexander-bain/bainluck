@@ -37,7 +37,7 @@
     "then change the implementations."
   ],
 
-  "version": 2,
+  "version": 3,
 
   "rule": "floor(probability * 100 + 0.5), IEEE 754 double, multiply before rounding; null in, null out",
 
@@ -170,5 +170,61 @@
     { "probabilities": [0.6, null],    "percents": [60, null], "complement_pair": false, "naive": [60, null], "discriminates": false, "$why": "one side unpriced is not a priced pair; null stays null rather than becoming a derived 40" },
     { "probabilities": [0.925],        "percents": [93],     "complement_pair": false, "naive": [93],     "discriminates": false, "$why": "a single outcome has no complement to derive" },
     { "probabilities": [],             "percents": [],       "complement_pair": false, "naive": [],       "discriminates": false, "$why": "empty field in, empty field out" }
+  ],
+
+  "$duel_cases_comment": [
+    "VERSION 3 ADDS THE DUEL — THE SAME QUESTION IN FIXED POSITIONS (UX-P114).",
+    "",
+    "`card_cases` above assumes SERVED ORDER, where index 0 is the headline because",
+    "both labeling serializers sort descending before calling. The Discover EVENT",
+    "card does not sort: away is always drawn on the left, home on the right,",
+    "because those positions carry meaning a probability ranking would destroy.",
+    "",
+    "It is nonetheless the most exact complement pair in the product, because",
+    "`routes/feed.py` derives the away side as `round(1.0 - current_home_prob, 6)`.",
+    "The two numbers sum to one BY CONSTRUCTION, so the defect fires on a provable",
+    "condition: whenever `home * 100` lands exactly on `.5`, both sides round up and",
+    "the card prints 101. It can never print 99. MEASURED on production 2026-08-21",
+    "over the 414 scheduled/live events inside the feed's window, blend computed by",
+    "`compute_aggregate_probability` itself: 34 (8.2%) print 101, all 101, none 99.",
+    "",
+    "THE RULE: hand the FAVOURITE in at index 0 of the card rule above, then map the",
+    "result back into [away, home]. No new band, no new constant — the same",
+    "[0.99, 1.01] predicate and the same normalize-round-derive.",
+    "",
+    "WHY THE FAVOURITE AND NOT THE AWAY SIDE. A duel has no served order to inherit",
+    "a headline from, so the replacement rule is the one the card rule was written to",
+    "express: the number a reader anchors on survives untouched, and the side nobody",
+    "is quoting absorbs the derived point. `positional` below records what",
+    "always-away-first would print instead, and it differs on four rows — including",
+    "Green Bay @ Denver, where it moves the FAVOURITE from its own correct 68 to 67.",
+    "That is the one number on a game card anybody checks.",
+    "",
+    "Every `percents` was COMPUTED by the Python implementation. `naive` is what the",
+    "four surfaces printed before this rule (web EventCard, native DiscoverEventCard,",
+    "the macOS menu bar, and the widget — the last two re-derive `1 - home`",
+    "themselves off this very payload). The five non-discriminating rows pin the",
+    "LEAVE-ALONE direction as explicitly as the fixed one (gotcha #43)."
+  ],
+
+  "duel_rule": "render [away, home] by handing the FAVOURITE to the card rule at index 0 and mapping the result back to away/home order; a pair that is not a complement pair is rendered independently",
+
+  "duel_implementations": [
+    { "runtime": "python",     "symbol": "rendered_duel_percents", "path": "backend/app/utils/graded_card.py" },
+    { "runtime": "typescript", "symbol": "renderedDuelPercents",   "path": "frontend/lib/renderedPercent.ts" },
+    { "runtime": "swift",      "symbol": "renderedDuelPercents",   "path": "ios/Bain Luck/Bain Luck/Utilities/RenderedPercent.swift" }
+  ],
+
+  "duel_cases": [
+    { "away": 0.645, "home": 0.355, "percents": [65, 35], "naive": [65, 36], "positional": [65, 35], "complement_pair": true,  "discriminates": true,  "$why": "SPECIMEN — event 15277855, Madison Keys @ Sara Bejlek, LIVE when measured. Printed 65 + 36 = 101" },
+    { "away": 0.325, "home": 0.675, "percents": [32, 68], "naive": [33, 68], "positional": [33, 67], "complement_pair": true,  "discriminates": true,  "$why": "SPECIMEN — event 15200290, Green Bay Packers @ Denver Broncos. Printed 33 + 68 = 101, and the row where positional derivation would move the FAVOURITE off its own correct 68" },
+    { "away": 0.495, "home": 0.505, "percents": [49, 51], "naive": [50, 51], "positional": [50, 50], "complement_pair": true,  "discriminates": true,  "$why": "SPECIMEN — event 15197813, Toronto FC @ Inter Miami CF. A near coin flip printed 50 + 51 = 101; positional would print two 50s and lose which side is favoured" },
+    { "away": 0.045, "home": 0.955, "percents": [4, 96],  "naive": [5, 96],  "positional": [5, 95],  "complement_pair": true,  "discriminates": true,  "$why": "SPECIMEN — event 15176690, Lucrecia Manzur @ Amanda Serrano. The lopsided end behaves the same way" },
+    { "away": 0.485, "home": 0.515, "percents": [48, 52], "naive": [49, 52], "positional": [49, 51], "complement_pair": true,  "discriminates": true,  "$why": "SPECIMEN — event 14897211, TSG Hoffenheim @ Erzgebirge Aue, LIVE when measured" },
+    { "away": 0.5,   "home": 0.5,   "percents": [50, 50], "naive": [50, 50], "positional": [50, 50], "complement_pair": true,  "discriminates": false, "$why": "an exact coin flip is already consistent and the rule must not disturb it" },
+    { "away": 0.34,  "home": 0.66,  "percents": [34, 66], "naive": [34, 66], "positional": [34, 66], "complement_pair": true,  "discriminates": false, "$why": "a complement pair NOT on a .5 boundary — in band, and still unchanged. This is the common case: 380 of the 414 measured events" },
+    { "away": 0.6,   "home": 0.4,   "percents": [60, 40], "naive": [60, 40], "positional": [60, 40], "complement_pair": true,  "discriminates": false, "$why": "away favourite, no boundary — the favourite-first mapping must be a no-op when nothing needs deriving" },
+    { "away": null,  "home": 0.6,   "percents": [null, 60], "naive": [null, 60], "positional": [null, 60], "complement_pair": false, "discriminates": false, "$why": "one side unpriced is not a priced pair; null stays null rather than becoming a derived 40" },
+    { "away": 0.4,   "home": 0.5,   "percents": [40, 50], "naive": [40, 50], "positional": [40, 50], "complement_pair": false, "discriminates": false, "$why": "sum 0.9, outside the band. A game card should never produce this, but the rule must not force a total onto a pair that is not one" }
   ]
 }

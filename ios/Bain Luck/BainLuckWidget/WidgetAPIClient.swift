@@ -56,8 +56,16 @@ actor WidgetAPIClient {
                 awayAbbrev: awayAbbrev,
                 homeScore: event.homeScore,
                 awayScore: event.awayScore,
-                homeProb: Int((homeProbability * 100).rounded()),
-                awayProb: Int((awayProbability * 100).rounded()),
+                // UX-P114: prefer the server's card-level percents. This widget
+                // draws both sides of one question, and `awayProbability` above is
+                // `1 - home`, so rounding the two independently printed 101
+                // whenever the blend landed on a half-percent. The band lives on
+                // the server precisely so this standalone target does not carry a
+                // fourth copy of it.
+                homeProb: event.currentOdds?.homeRenderedPercent
+                    ?? Int((homeProbability * 100).rounded()),
+                awayProb: event.currentOdds?.awayRenderedPercent
+                    ?? Int((awayProbability * 100).rounded()),
                 period: [event.espn?.period, event.espn?.gameClock]
                     .compactMap { $0 }
                     .filter { !$0.isEmpty }

@@ -8,6 +8,7 @@ scores/dicts — no database access, no side effects.
 from datetime import datetime
 
 from app.utils.game_state import normalize_live_game_state
+from app.utils.graded_card import rendered_duel_percents
 
 
 # Tag-based scoring boosts (LLM taxonomy enrichment)
@@ -292,9 +293,24 @@ def format_event_data(
             data["espn"] = espn_data
 
     if current_home_prob is not None:
+        # UX-P114: the card prints BOTH of these side by side, and `feed.py` derives
+        # the away side as `1 - home`, so they are an exact complement pair — which
+        # made every client that rounds them independently print 101 whenever the
+        # blend landed on a half-percent (34 of 414 live/upcoming events, 2026-08-21).
+        #
+        # The decision is made ONCE, here, rather than in each of the four surfaces
+        # that draw this strip: web `EventCard`, native `DiscoverEventCard`, the
+        # macOS menu bar, and the home-screen widget — the last two read this very
+        # payload and re-derive `1 - home` themselves. Ruling 021: share the
+        # DECISION, not the ingredient. The probabilities below are UNCHANGED; these
+        # are two extra integers, so nothing that ranks or filters on a probability
+        # can see this change at all.
+        away_pct, home_pct = rendered_duel_percents(current_away_prob, current_home_prob)
         odds_data = {
             "home_probability": current_home_prob,
             "away_probability": current_away_prob,
+            "home_rendered_percent": home_pct,
+            "away_rendered_percent": away_pct,
         }
         if prob_source:
             odds_data["source"] = prob_source

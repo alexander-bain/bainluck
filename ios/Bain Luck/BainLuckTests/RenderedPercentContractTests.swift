@@ -65,6 +65,28 @@ private let cardCases: [(probabilities: [Double?], percents: [Int?], pair: Bool,
 ]
 /// CARD ROWS END
 
+/// UX-P114 — the DUEL rows: the same question in fixed away/home positions.
+///
+/// `(away, home, percents [away, home], pair, naive, positional)`. `positional`
+/// records what always-away-first derivation would print, and it is in the table
+/// because four rows differ from the served answer — on Green Bay @ Denver it
+/// moves the FAVOURITE off its own correct 68.
+///
+/// DUEL ROWS BEGIN
+private let duelCases: [(away: Double?, home: Double?, percents: [Int?], pair: Bool, naive: [Int?], positional: [Int?])] = [
+    (0.645, 0.355, [65, 35], true, [65, 36], [65, 35]),
+    (0.325, 0.675, [32, 68], true, [33, 68], [33, 67]),
+    (0.495, 0.505, [49, 51], true, [50, 51], [50, 50]),
+    (0.045, 0.955, [4, 96], true, [5, 96], [5, 95]),
+    (0.485, 0.515, [48, 52], true, [49, 52], [49, 51]),
+    (0.5, 0.5, [50, 50], true, [50, 50], [50, 50]),
+    (0.34, 0.66, [34, 66], true, [34, 66], [34, 66]),
+    (0.6, 0.4, [60, 40], true, [60, 40], [60, 40]),
+    (nil, 0.6, [nil, 60], false, [nil, 60], [nil, 60]),
+    (0.4, 0.5, [40, 50], false, [40, 50], [40, 50]),
+]
+/// DUEL ROWS END
+
 final class RenderedPercentContractTests: XCTestCase {
 
     func testEveryContractRow() {
@@ -137,6 +159,59 @@ final class RenderedPercentContractTests: XCTestCase {
         // A vacuous pass is the failure mode: if the predicate stopped matching
         // anything, the loop above is green and proves nothing.
         XCTAssertGreaterThanOrEqual(checked, 6)
+    }
+
+    // ── THE DUEL RULE (UX-P114) ──────────────────────────────────────────────
+
+    func testEveryDuelContractRow() {
+        for row in duelCases {
+            XCTAssertEqual(
+                renderedDuelPercents(away: row.away, home: row.home),
+                row.percents,
+                "duel \(String(describing: row.away)) v \(String(describing: row.home))"
+            )
+        }
+    }
+
+    /// THE display invariant for a game card: away% + home% is exactly 100.
+    ///
+    /// The feed derives away as `1 - home`, so these are the most exact complement
+    /// pairs in the product — and independent rounding printed 101 on 34 of the
+    /// 414 live/upcoming events measured on 2026-08-21. Always 101, never 99: only
+    /// an exact `.5` fractional part misfires, and it rounds BOTH sides up.
+    func testEveryDuelPairSumsToExactlyOneHundred() {
+        var checked = 0
+        for row in duelCases where row.pair {
+            let rendered = renderedDuelPercents(away: row.away, home: row.home)
+                .compactMap { $0 }
+            XCTAssertEqual(rendered.count, 2)
+            XCTAssertEqual(rendered.reduce(0, +), 100,
+                           "duel \(String(describing: row.away)) v \(String(describing: row.home))")
+            checked += 1
+        }
+        XCTAssertGreaterThanOrEqual(checked, 5)
+    }
+
+    /// The favourite keeps its own honest rounding; the underdog absorbs the
+    /// derived point. Away-first derivation would print 67 for a Denver priced at
+    /// 0.675 — moving the one number on a game card anybody checks.
+    func testTheFavouriteSurvivesRatherThanTheAwaySide() {
+        XCTAssertEqual(renderedDuelPercents(away: 0.325, home: 0.675), [32, 68])
+        XCTAssertEqual(renderedPercent(0.675), 68)
+        // …and symmetrically when the AWAY side is the favourite.
+        XCTAssertEqual(renderedDuelPercents(away: 0.645, home: 0.355), [65, 35])
+        XCTAssertEqual(renderedPercent(0.645), 65)
+    }
+
+    /// Gotcha #43 — the leave-alone direction, which is 380 of the 414 measured
+    /// events and must not be "fixed".
+    func testADuelThatIsAlreadyConsistentIsUntouched() {
+        XCTAssertEqual(renderedDuelPercents(away: 0.34, home: 0.66), [34, 66])
+        XCTAssertEqual(renderedDuelPercents(away: 0.5, home: 0.5), [50, 50])
+        // Not a complement pair: no total is forced onto it.
+        XCTAssertEqual(renderedDuelPercents(away: 0.4, home: 0.5), [40, 50])
+        // One side unpriced stays nil rather than becoming a derived 40.
+        XCTAssertEqual(renderedDuelPercents(away: nil, home: 0.6), [nil, 60])
     }
 
     /// The other direction, and it is not a formality (gotcha #43). A two-outcome

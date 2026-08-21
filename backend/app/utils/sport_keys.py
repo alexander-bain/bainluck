@@ -1622,3 +1622,45 @@ def get_llm_category_for_prefix(sport_prefix: str) -> str:
     Falls back to the prefix itself if no mapping exists.
     """
     return SPORT_PREFIX_TO_LLM_CATEGORY.get(sport_prefix, sport_prefix)
+
+
+# =============================================================================
+# 6. NON_SPORT_LLM_CATEGORIES — the categories where a date is NOT a kickoff
+# =============================================================================
+#
+# UX-P114 (#2075). `llm_sport_category` answers "what is this about", and the
+# sports/non-sports split matters to any rule that reads a market's dates as
+# GAME dates. `commence_time` on a soccer market is kickoff; on an economics
+# market it is whatever the ingest happened to stamp, and reading it as a start
+# time would retire live questions for having a stale field.
+#
+# STATED AS THE NEGATIVE ON PURPOSE. The sports side is open-ended and keeps
+# growing — a measured slice of one day's markets carried table_tennis,
+# pickleball, combat_archery, dodgeball, chess and poker, none of which a
+# hand-kept sport allowlist would have contained. An allowlist fails CLOSED on a
+# new sport (the rule silently stops applying); a denylist fails OPEN, which for
+# every current caller is the safe direction. A NULL category is in neither set,
+# and `NOT IN` yields NULL for it in SQL, so an unclassified market is excluded
+# from sport-only rules without a special case.
+#
+# ** THREE OTHER COPIES OF THIS SET EXIST ** and are deliberately NOT edited from
+# here, because each lives in another lane's file: `tasks/data_quality.py:43`,
+# `tasks/polymarket.py:677` and `utils/market_label_normalization.py:751`. This
+# module is the declared home for sport-key and sport-category data and imports
+# nothing (gotcha #3), so it is where they should converge — whoever next has one
+# of those files open should delete its local copy and import this instead.
+NON_SPORT_LLM_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "politics",
+        "crypto",
+        "economics",
+        "entertainment",
+        "tech",
+        "weather",
+        "geopolitics",
+        "culture",
+        "health",
+        "legal",
+        "other",
+    }
+)

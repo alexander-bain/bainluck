@@ -98,6 +98,18 @@ nonisolated struct CurrentOdds: Decodable, Sendable {
     let capturedAt: String?
     let homeProbability: Double?
     let awayProbability: Double?
+    // UX-P114: the whole percents the card PRINTS for the two probabilities above.
+    // A game card draws both at once and the feed derives away as `1 - home`, so
+    // rounding them independently printed 101 whenever the blend landed on a
+    // half-percent (34 of 414 live/upcoming events, measured 2026-08-21). The
+    // server decides it once because four surfaces draw this strip.
+    //
+    // OPTIONAL, and every reader must fall back to `renderedDuelPercents`: a
+    // Discover response is cached and this build can be installed against an older
+    // deploy, so "the field exists in feed.py" is not "the field is on this
+    // payload".
+    let homeRenderedPercent: Int?
+    let awayRenderedPercent: Int?
     let spread: Double?
     let homeSpread: Double?
     let overUnder: Double?

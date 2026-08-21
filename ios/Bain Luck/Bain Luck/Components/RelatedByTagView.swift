@@ -86,7 +86,14 @@ struct RelatedByTagView: View {
             if let odds = data.currentOdds,
                let homeProbability = odds.homeProbability,
                let awayProbability = odds.awayProbability {
-                Text("\(formatProbability(awayProbability)) / \(formatProbability(homeProbability))")
+                // UX-P114 — this row prints BOTH sides of one question separated by
+                // a slash, so it is the same 101 as the Discover card's strip.
+                let duelFallback = renderedDuelPercents(
+                    away: awayProbability, home: homeProbability
+                )
+                let awayPct = odds.awayRenderedPercent ?? duelFallback[0]
+                let homePct = odds.homeRenderedPercent ?? duelFallback[1]
+                Text("\(formatProbability(awayProbability, renderedPercent: awayPct)) / \(formatProbability(homeProbability, renderedPercent: homePct))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

@@ -155,6 +155,15 @@ enum WidgetLifecycle {
 
 struct WidgetCurrentOdds: Decodable {
     let homeProbability: Double?
+    // UX-P114: the whole percents the SERVER decided this card prints. The widget
+    // is a standalone target and cannot import `RenderedPercent.swift` (see the
+    // header of `WidgetAPIClient`), so it consumes the decision rather than
+    // reimplementing the [0.99, 1.01] band a fourth time — a copied rule is a rule
+    // that drifts, which is what `contracts/rendered_percent.json` exists to stop.
+    // Optional: the widget can outlive a rollback, so the caller keeps its
+    // arithmetic as the fallback.
+    let homeRenderedPercent: Int?
+    let awayRenderedPercent: Int?
 }
 
 struct WidgetTeamData: Decodable {

@@ -36,6 +36,7 @@ from app.utils.graded_card import (
     drift_outcome,
     is_complement_pair,
     rendered_card_percents,
+    rendered_duel_percents,
     rendered_percent,
 )
 
@@ -45,6 +46,7 @@ CONTRACT_PATH = (
 CONTRACT = json.loads(CONTRACT_PATH.read_text())
 CASES = CONTRACT["cases"]
 CARD_CASES = CONTRACT["card_cases"]
+DUEL_CASES = CONTRACT["duel_cases"]
 
 
 # ── 1. THE PERCENT, AGAINST THE SHARED TABLE ────────────────────────────────
@@ -201,6 +203,142 @@ def test_a_complement_pair_always_renders_exactly_one_hundred():
     assert len(pairs) >= 6
     for case in pairs:
         assert sum(case["percents"]) == 100, case["probabilities"]
+
+
+# ── 1c. THE DUEL — THE SAME QUESTION IN FIXED POSITIONS (UX-P114) ───────────
+
+
+@pytest.mark.parametrize(
+    "case", DUEL_CASES, ids=[f"{c['away']}v{c['home']}" for c in DUEL_CASES]
+)
+def test_rendered_duel_percents_matches_the_contract(case):
+    assert rendered_duel_percents(case["away"], case["home"]) == case["percents"]
+
+
+@pytest.mark.parametrize(
+    "case", DUEL_CASES, ids=[f"{c['away']}v{c['home']}" for c in DUEL_CASES]
+)
+def test_the_duel_naive_column_is_arithmetic_not_annotation(case):
+    """`naive` is what the four surfaces printed BEFORE this rule.
+
+    Checked rather than trusted, for the same reason as its `card_cases` sibling:
+    a wrong value here silently disarms the row-preservation test below.
+    """
+    assert [
+        rendered_percent(case["away"]),
+        rendered_percent(case["home"]),
+    ] == case["naive"]
+
+
+@pytest.mark.parametrize(
+    "case", DUEL_CASES, ids=[f"{c['away']}v{c['home']}" for c in DUEL_CASES]
+)
+def test_the_duel_positional_column_is_arithmetic_not_annotation(case):
+    """`positional` is the REJECTED alternative, and it is computed, not asserted.
+
+    It records what always-away-first derivation would print. Four rows differ
+    from the served answer, and the point of keeping the column is that the
+    difference is demonstrable rather than argued — on Green Bay @ Denver it moves
+    the FAVOURITE off its own correct 68.
+    """
+    away, home = case["away"], case["home"]
+    if not is_complement_pair([away, home]):
+        expected = [rendered_percent(away), rendered_percent(home)]
+    else:
+        expected = rendered_card_percents([float(away), float(home)])
+    assert expected == case["positional"]
+
+
+def test_the_duel_contract_keeps_the_rows_that_catch_independent_rounding():
+    """A table can be defanged by deleting rows while staying green.
+
+    Five rows disagree with the independent per-side rounding the four surfaces
+    used to do; those five ARE the defect, and every one of them is a real
+    production event measured on 2026-08-21.
+    """
+    discriminating = [c for c in DUEL_CASES if c.get("discriminates")]
+    assert len(discriminating) >= 5
+
+    for case in discriminating:
+        assert case["percents"] != case["naive"], (
+            f"{case['away']}/{case['home']} is flagged as discriminating but the "
+            f"duel rule agrees with independent rounding on it — the flag is wrong"
+        )
+    for case in DUEL_CASES:
+        if case.get("discriminates"):
+            continue
+        assert case["percents"] == case["naive"], (
+            f"{case['away']}/{case['home']} is NOT flagged as discriminating but "
+            f"the duel rule disagrees with it — the flag is wrong"
+        )
+
+
+def test_the_duel_contract_still_discriminates_the_positional_alternative():
+    """The favourite-first mapping must be visibly different from away-first.
+
+    Without a row where the two disagree, `rendered_duel_percents` could be
+    replaced by a bare `rendered_card_percents([away, home])` and this whole suite
+    would stay green — which is exactly how the wrong side ends up absorbing the
+    derived point on every home favourite.
+    """
+    differing = [c for c in DUEL_CASES if c["percents"] != c["positional"]]
+    assert len(differing) >= 3, (
+        "no contract row distinguishes favourite-first from away-first derivation"
+    )
+    # And at least one of them must be a HOME favourite, which is the arm the
+    # positional rule gets wrong.
+    assert any(
+        c["home"] is not None and c["away"] is not None and c["home"] > c["away"]
+        for c in differing
+    )
+
+
+def test_the_duel_contract_pins_the_leave_alone_direction_too():
+    """Gotcha #43, again: prove it does NOT fire as hard as it fires.
+
+    Five rows must render identically to independent rounding — including a
+    complement pair that simply is not on a half-percent boundary, which is the
+    common case (380 of the 414 events measured).
+    """
+    untouched = [c for c in DUEL_CASES if not c.get("discriminates")]
+    assert len(untouched) >= 5
+    assert any(c["complement_pair"] for c in untouched), (
+        "every untouched row is a non-pair, so this test cannot tell "
+        "'in band and already consistent' from 'out of band'"
+    )
+    assert any(not c["complement_pair"] for c in untouched), (
+        "no out-of-band row survives, so a rule that normalized everything "
+        "would pass"
+    )
+
+
+def test_a_duel_complement_pair_always_renders_exactly_one_hundred():
+    """The display-layer invariant for the game card, against the table."""
+    pairs = [c for c in DUEL_CASES if c["complement_pair"]]
+    assert len(pairs) >= 5
+    for case in pairs:
+        assert sum(case["percents"]) == 100, (case["away"], case["home"])
+
+
+def test_the_duel_rule_holds_across_the_whole_half_percent_grid():
+    """The exhaustive proof, because the table is a sample and this is cheap.
+
+    `feed.py` derives away as `round(1 - home, 6)`, so every game card in
+    production is one of these pairs. The defect fires on exactly the half-percent
+    values, so sweeping the grid at that resolution covers every case the rule can
+    ever see — and asserts the leave-alone direction on the whole-percent half of
+    the same sweep.
+    """
+    for half in range(1, 2000):  # home = 0.0005 .. 0.9995
+        home = half / 2000
+        away = round(1.0 - home, 6)
+        away_pct, home_pct = rendered_duel_percents(away, home)
+        assert away_pct + home_pct == 100, (away, home, away_pct, home_pct)
+        # The favourite keeps its own honest rounding; only the underdog derives.
+        if home > away:
+            assert home_pct == rendered_percent(home), (away, home)
+        elif away > home:
+            assert away_pct == rendered_percent(away), (away, home)
 
 
 def test_none_is_not_zero():

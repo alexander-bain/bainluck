@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GolfTournament } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
+import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
@@ -296,6 +297,21 @@ function EventFeedCard({
   const openingAway = data.opening_odds?.away_probability ?? null;
   const displayHomeProb = isFinished ? (openingHome ?? homeProb) : homeProb;
   const displayAwayProb = isFinished ? (openingAway ?? awayProb) : awayProb;
+  // UX-P114 — the chips below print BOTH sides of one question, and the feed
+  // derives away as `1 - home`, so rounding them independently printed 101
+  // whenever the blend landed on a half-percent (34 of 414 live/upcoming events,
+  // 2026-08-21). Same decision as the Discover card's strip.
+  //
+  // The served percents describe `current_odds`, and the chips only render when
+  // `!isFinished` — i.e. exactly when `displayProb` IS `current_odds`. The
+  // `opening_odds` branch above therefore never reaches them, which is why the
+  // served values can be used directly rather than being matched to their source.
+  const [fallbackAwayPct, fallbackHomePct] = renderedDuelPercents(
+    displayAwayProb,
+    displayHomeProb,
+  );
+  const awayPct = data.current_odds?.away_rendered_percent ?? fallbackAwayPct;
+  const homePct = data.current_odds?.home_rendered_percent ?? fallbackHomePct;
 
   // Team colors for probability bar
   const homeColor = data.home_team_data?.primary_color ?? null;
@@ -466,11 +482,11 @@ function EventFeedCard({
             <div className="flex-shrink-0 text-right">
               {/* Away prob */}
               <div className={`font-mono text-sm font-bold mb-0.5 ${displayAwayProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
-                {formatProbability(displayAwayProb)}
+                {formatProbability(displayAwayProb, { rendered: awayPct })}
               </div>
               {/* Home prob */}
               <div className={`font-mono text-sm font-bold ${displayHomeProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
-                {formatProbability(displayHomeProb)}
+                {formatProbability(displayHomeProb, { rendered: homePct })}
               </div>
             </div>
           )}

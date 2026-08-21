@@ -1,0 +1,111 @@
+<!doctype html><meta charset="utf-8"><title>UX-P114 before/after</title>
+<style>
+ body{font:13px -apple-system,system-ui,sans-serif;background:#f8fafc;color:#0f172a;padding:26px;margin:0}
+ h1{font-size:18px;margin:0 0 3px} .sub{color:#475569;margin:0 0 6px;font-size:12.5px;max-width:940px;line-height:1.6}
+ .meta{color:#94a3b8;font-size:11.5px;margin:0 0 20px;max-width:940px;line-height:1.5}
+ table{border-collapse:separate;border-spacing:0 8px}
+ th{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;text-align:left;padding:0 16px 6px 0}
+ td{vertical-align:top;padding-right:16px}
+ .lbl{width:260px;padding-top:9px;font-size:13px} .id{color:#94a3b8;font-size:11px;margin-top:2px;font-family:ui-monospace,monospace}
+ .strip{width:280px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:11px 14px;
+        display:flex;align-items:center;justify-content:space-between;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+ .strip span{font:800 17px ui-monospace,monospace;font-variant-numeric:tabular-nums}
+ .strip em{font-style:normal;font-size:10px;color:#94a3b8}
+ .strip.bad{border-color:#fca5a5;background:#fef2f2}
+ .sum{margin-top:6px;font:600 12px ui-monospace,monospace}
+ .bad{color:#dc2626} .good{color:#059669}
+ .verdict{padding-top:11px;font:700 11px ui-monospace,monospace}
+ .fix{color:#059669} .same{color:#94a3b8}
+ tr.ctrl .lbl{color:#64748b}
+</style>
+<h1>UX-P114 — the Discover game card's two numbers are one answer</h1>
+<p class="sub"><b>BEFORE</b> is <code>origin/master</code>'s <code>components/discover/EventCard.tsx</code>, rendered verbatim.
+<b>AFTER</b> is this branch's, reading <code>current_odds.{away,home}_rendered_percent</code>. Both are the real component;
+only the win-probability strip is reproduced here, because that is the whole finding. Probabilities are the values production
+served on 2026-08-21, blend computed by <code>compute_aggregate_probability</code> itself.</p>
+<p class="meta">Population: <b>34 of 414</b> scheduled/live events inside the feed's window printed 101 (8.2%). Always 101,
+never 99 — the feed derives away as <code>1 - home</code>, so only an exact half-percent blend misfires, and it rounds both
+sides up. The two CONTROL rows are ordinary pairs off the boundary: they must be identical in both columns, or the change is
+touching cards it has no business touching (gotcha #43).</p>
+<table><tr><th>event</th><th>before (origin/master)</th><th>after (program/ux-101)</th><th></th></tr>
+<tr class="">
+      <td class="lbl"><b>Green Bay Packers</b> @ <b>Denver Broncos</b><div class="id">event 15200290 · away 0.325 &nbsp;home 0.675</div></td>
+      <td><div class="strip bad"><span>33%</span><em>Win Probability</em><span>68%</span></div>
+          <div class="sum bad">33 + 68 = <b>101</b></div></td>
+      <td><div class="strip"><span>32%</span><em>Win Probability</em><span>68%</span></div>
+          <div class="sum good">32 + 68 = <b>100</b></div></td>
+      <td class="verdict fix">FIXED</td>
+    </tr>
+<tr class="">
+      <td class="lbl"><b>Toronto FC</b> @ <b>Inter Miami CF</b><div class="id">event 15197813 · away 0.495 &nbsp;home 0.505</div></td>
+      <td><div class="strip bad"><span>50%</span><em>Win Probability</em><span>51%</span></div>
+          <div class="sum bad">50 + 51 = <b>101</b></div></td>
+      <td><div class="strip"><span>49%</span><em>Win Probability</em><span>51%</span></div>
+          <div class="sum good">49 + 51 = <b>100</b></div></td>
+      <td class="verdict fix">FIXED</td>
+    </tr>
+<tr class="">
+      <td class="lbl"><b>Madison Keys</b> @ <b>Sara Bejlek</b><div class="id">event 15277855 · away 0.645 &nbsp;home 0.355</div></td>
+      <td><div class="strip bad"><span>65%</span><em>Win Probability</em><span>36%</span></div>
+          <div class="sum bad">65 + 36 = <b>101</b></div></td>
+      <td><div class="strip"><span>65%</span><em>Win Probability</em><span>35%</span></div>
+          <div class="sum good">65 + 35 = <b>100</b></div></td>
+      <td class="verdict fix">FIXED</td>
+    </tr>
+<tr class="">
+      <td class="lbl"><b>Lucrecia Manzur</b> @ <b>Amanda Serrano</b><div class="id">event 15176690 · away 0.045 &nbsp;home 0.955</div></td>
+      <td><div class="strip bad"><span>5%</span><em>Win Probability</em><span>96%</span></div>
+          <div class="sum bad">5 + 96 = <b>101</b></div></td>
+      <td><div class="strip"><span>4%</span><em>Win Probability</em><span>96%</span></div>
+          <div class="sum good">4 + 96 = <b>100</b></div></td>
+      <td class="verdict fix">FIXED</td>
+    </tr>
+<tr class="">
+      <td class="lbl"><b>TSG Hoffenheim</b> @ <b>Erzgebirge Aue</b><div class="id">event 14897211 · away 0.485 &nbsp;home 0.515</div></td>
+      <td><div class="strip bad"><span>49%</span><em>Win Probability</em><span>52%</span></div>
+          <div class="sum bad">49 + 52 = <b>101</b></div></td>
+      <td><div class="strip"><span>48%</span><em>Win Probability</em><span>52%</span></div>
+          <div class="sum good">48 + 52 = <b>100</b></div></td>
+      <td class="verdict fix">FIXED</td>
+    </tr>
+<tr class="">
+      <td class="lbl"><b>Cremonese</b> @ <b>Empoli</b><div class="id">event 15179599 · away 0.655 &nbsp;home 0.345</div></td>
+      <td><div class="strip bad"><span>66%</span><em>Win Probability</em><span>35%</span></div>
+          <div class="sum bad">66 + 35 = <b>101</b></div></td>
+      <td><div class="strip"><span>66%</span><em>Win Probability</em><span>34%</span></div>
+          <div class="sum good">66 + 34 = <b>100</b></div></td>
+      <td class="verdict fix">FIXED</td>
+    </tr>
+<tr class="">
+      <td class="lbl"><b>Levadiakos</b> @ <b>PAOK Thessaloniki</b><div class="id">event 15176333 · away 0.515 &nbsp;home 0.485</div></td>
+      <td><div class="strip bad"><span>52%</span><em>Win Probability</em><span>49%</span></div>
+          <div class="sum bad">52 + 49 = <b>101</b></div></td>
+      <td><div class="strip"><span>52%</span><em>Win Probability</em><span>48%</span></div>
+          <div class="sum good">52 + 48 = <b>100</b></div></td>
+      <td class="verdict fix">FIXED</td>
+    </tr>
+<tr class="">
+      <td class="lbl"><b>Barnsley</b> @ <b>Doncaster Rovers</b><div class="id">event 15199568 · away 0.365 &nbsp;home 0.635</div></td>
+      <td><div class="strip bad"><span>37%</span><em>Win Probability</em><span>64%</span></div>
+          <div class="sum bad">37 + 64 = <b>101</b></div></td>
+      <td><div class="strip"><span>36%</span><em>Win Probability</em><span>64%</span></div>
+          <div class="sum good">36 + 64 = <b>100</b></div></td>
+      <td class="verdict fix">FIXED</td>
+    </tr>
+<tr class="ctrl">
+      <td class="lbl"><b>Boston Celtics</b> @ <b>New York Knicks</b><div class="id">CONTROL · away 0.38 &nbsp;home 0.62</div></td>
+      <td><div class="strip "><span>38%</span><em>Win Probability</em><span>62%</span></div>
+          <div class="sum good">38 + 62 = <b>100</b></div></td>
+      <td><div class="strip"><span>38%</span><em>Win Probability</em><span>62%</span></div>
+          <div class="sum good">38 + 62 = <b>100</b></div></td>
+      <td class="verdict same">unchanged</td>
+    </tr>
+<tr class="ctrl">
+      <td class="lbl"><b>Chicago Cubs</b> @ <b>St Louis Cardinals</b><div class="id">CONTROL · away 0.34 &nbsp;home 0.66</div></td>
+      <td><div class="strip "><span>34%</span><em>Win Probability</em><span>66%</span></div>
+          <div class="sum good">34 + 66 = <b>100</b></div></td>
+      <td><div class="strip"><span>34%</span><em>Win Probability</em><span>66%</span></div>
+          <div class="sum good">34 + 66 = <b>100</b></div></td>
+      <td class="verdict same">unchanged</td>
+    </tr>
+</table>

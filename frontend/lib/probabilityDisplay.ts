@@ -38,10 +38,45 @@ export const ABOVE_NINETY_NINE_PERCENT = ">99%";
  * caller that wants to distinguish "no data" from "genuinely zero" does so
  * before calling (several already render an em dash for `0`, which is preserved).
  */
-export function formatProbabilityPercent(prob: number): string {
+/**
+ * `rendered` overrides the INTEGER, not the rule.
+ *
+ * UX-P114: a card that prints two sides of one question decides both percents
+ * together, or the two independently-correct numbers sum to 101 (see
+ * `renderedDuelPercents` and `contracts/rendered_percent.json`). That decision is
+ * made on the server and arrives on the payload, so callers that have it pass it
+ * here rather than rounding a second time.
+ *
+ * The boundary rule above still runs on the PROBABILITY. A served 100 over a
+ * probability of 0.996 is still `>99%`, because "rounding may never move a
+ * probability across a boundary it is not on" is a claim about the value, not
+ * about which arithmetic produced the integer. The two rules compose; neither
+ * outranks the other by accident.
+ *
+ * ** IT IS AN OPTIONS OBJECT, AND THAT IS DELIBERATE. ** The first draft took a
+ * bare second `number`, and `wire.map(formatProbabilityPercent)` — a real call in
+ * this module's own test — silently handed it the ARRAY INDEX. Eight outcomes
+ * that must print `<1%` printed `<1%, 1%, 2%, 3%…`, and only an existing
+ * production-specimen assertion caught it. With an object, the point-free form is
+ * a TYPE error instead of a wrong number, because `number` is not assignable to
+ * it. The shape of the parameter is the guard.
+ */
+export interface ProbabilityFormatOptions {
+  /** The card-level integer this surface has already decided to print. */
+  rendered?: number | null;
+}
+
+export function formatProbabilityPercent(
+  prob: number,
+  options?: ProbabilityFormatOptions,
+): string {
   if (!Number.isFinite(prob)) return "—";
 
-  const rounded = Math.round(prob * 100);
+  const override = options?.rendered;
+  const rounded =
+    override != null && Number.isFinite(override)
+      ? override
+      : Math.round(prob * 100);
 
   // Strictly inside the interval, but rounding would claim a boundary.
   if (rounded <= 0 && prob > 0) return BELOW_ONE_PERCENT;

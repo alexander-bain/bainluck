@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -24,6 +25,7 @@ from app.routes.admin_utils import (
 )
 from app.services import get_db, get_db_rw
 from app.utils.card_integrity import display_scale, field_coherence, is_unlabelable
+from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES
 from app.utils.discover_reason_tags import canonical_reason_tags
 from app.utils.graded_card import (
     ABSENT_UNBOUND,
@@ -157,12 +159,124 @@ _PRICE_FRESH_STRATA = frozenset(
 )
 
 
+# ── A GAME THAT HAS FINISHED IS NOT A LABELLING CANDIDATE (#2075) ────────────
+#
+# Both date fields the sampler trusts can be false at once for a settled Kalshi
+# game. `status` stays `'open'` forever because regular polling only fetches open
+# markets, so nothing ever moves it once the market settles upstream (gotcha #33),
+# and `resolution_date` is Kalshi's CLOSE time rather than the start (gotcha #14).
+# Market 59183794, `Los Angeles D vs Colorado`, was served to Alex on 2026-08-21
+# for a game that started on the 18th: both fields looked future-ish while the
+# game itself was history.
+#
+# ** IT IS INVISIBLE TO EVERY EXISTING GUARD, BY CONSTRUCTION. ** The strata admit
+# "live, unresolved" markets BY `status`, and `status` is the field that has gone
+# stale — so the card passes the admission test *because* of the defect.
+#
+# ** WHY THIS COSTS SOMETHING. ** Labelling volume is the scarce input: ruling 016
+# is blocked on it, and #1873 exists because Alex was grading cards Discover no
+# longer serves. This is the same waste by a different route — #1873 was a stale
+# snapshot of a live market, this is a live-looking snapshot of a dead one.
+#
+# ── THE THREE CONDITIONS, AND WHY IT IS NOT JUST "commence_time IS PAST" ──────
+#
+# MEASURED on production 2026-08-21. Of the 52,615 markets the sampler admits,
+# **42,046 (80%) have a commence_time in the past** — the blanket rule would gut
+# the pool, because for a season future or a non-sport question that column is not
+# a kickoff at all. So all three conditions are load-bearing:
+#
+#   1. HEAD-TO-HEAD SHAPE. `X vs Y` / `X @ Y`. 32,488 admissible markets match.
+#   2. A SPORT CATEGORY. 99% of the matched cohort is sport, but ~340 rows are
+#      entertainment/tech/economics/politics questions that merely contain "vs".
+#      `commence_time` means kickoff only where the market is a contest.
+#   3. STARTED MORE THAN 12 HOURS AGO.
+#
+# ** THE 12 HOURS IS A DURATION BOUND, NOT A MEASURED GAP, AND THAT IS STATED
+# RATHER THAN DRESSED UP. ** The hours-since-start histogram is CONTINUOUS — 245
+# rows at 0-3h, 207 at 3-6h, 129 at 6-9h, 222 at 9-12h, 729 at 12-18h — so unlike
+# #2060's [0.99, 1.01] band there is no empty middle to derive a threshold from.
+# 12h is chosen because every game form we carry (an extra-innings baseball game,
+# a five-set match, a BO5 esports series, a Hundred fixture) is over well inside
+# it, so beyond 12h the market is certainly describing a finished game. Every one
+# of the 13 already-played games in the live 100-card sample was 17h or older.
+#
+# ** THE RESIDUAL IS DELIBERATE. ** A game that finished two hours ago is still
+# served, because at that range a finished game and a live one are indistinguishable
+# without a trustworthy `status` — and `status` being untrustworthy is the whole
+# issue. Refusing the certainly-dead is worth more than a threshold that also
+# refuses live games, which are legitimate cards.
+#
+# ** THIS IS THE CHEAP HALF OF #2075. ** The durable fix is reconciling `status`
+# for game markets whose start has passed, which lives in the settled-events
+# backfill and not in a read path. That half stays open on the issue.
+_GAME_CERTAINLY_OVER = timedelta(hours=12)
+
+#: `X vs Y`, `X vs. Y`, `X @ Y`, `X at Y` — the head-to-head naming shape. Applied
+#: with a sport category, never alone (see condition 2 above).
+_HEAD_TO_HEAD_NAME_RE = r"(^| )(vs\.?|@) |[ ](vs\.?|at) "
+
+#: The Python arm of the same predicate. Python's `re` and Postgres' `~*` agree on
+#: this pattern — it uses no syntax where the two dialects differ.
+_HEAD_TO_HEAD_PY_RE = re.compile(_HEAD_TO_HEAD_NAME_RE, re.IGNORECASE)
+
+
+def is_finished_contest(
+    *,
+    name: str | None,
+    llm_sport_category: str | None,
+    commence_time: datetime | None,
+    now: datetime,
+) -> bool:
+    """Is this market a sport contest that has certainly already been played?
+
+    ** THE POLICY, AS OPPOSED TO THE QUERY. ** The stratum SQL above applies the
+    same three conditions, and it has to, because ordering by `volume_24h DESC`
+    puts just-finished games at the top of the budget. But a filter expressed only
+    as a WHERE clause cannot be driven through cases, cannot be counted, and
+    reports nothing when it stops matching. This function is the one the endpoint
+    refuses with and the one the tests exercise; the SQL is an optimisation over
+    it. Both are built from the SAME three constants, so they cannot drift without
+    someone editing a constant that moves both.
+
+    Returns False for anything it cannot be sure about — an unclassified market, a
+    market with no start time, a non-sport question that merely contains "vs".
+    Refusing a live card costs Alex a label he wanted; serving a dead one costs him
+    a label he did not. Neither is free, and only one of them is silent.
+    """
+    if commence_time is None or name is None:
+        return False
+    if now - commence_time <= _GAME_CERTAINLY_OVER:
+        return False
+    category = (llm_sport_category or "").strip().lower()
+    if not category or category in NON_SPORT_LLM_CATEGORIES:
+        return False
+    return bool(_HEAD_TO_HEAD_PY_RE.search(name))
+
+
 def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
     base_filters = [
         FuturesMarket.status == "open",
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date > now,
+        ),
+        # #2075 — refuse a sport contest that has certainly already been played.
+        # Filtered in SQL rather than after the fetch on purpose: `top_feed_like`
+        # orders by `volume_24h DESC`, and a game that JUST finished carries high
+        # 24h volume, so the dead rows crowd the top of the very stratum the
+        # sampler spends its budget on. Dropping them post-fetch would shrink the
+        # served page instead of improving it.
+        or_(
+            FuturesMarket.commence_time.is_(None),
+            FuturesMarket.commence_time > now - _GAME_CERTAINLY_OVER,
+            FuturesMarket.llm_sport_category.is_(None),
+            # SORTED, not `tuple(frozenset)`. Set iteration order varies per
+            # process under string hash randomisation, so the unsorted form emits
+            # a DIFFERENT SQL string on every worker — which fragments the
+            # `pg_stat_statements` entry for this query across restarts and makes
+            # the compiled text untestable for anything but membership.
+            FuturesMarket.llm_sport_category.in_(sorted(NON_SPORT_LLM_CATEGORIES)),
+            ~FuturesMarket.name.op("~*")(_HEAD_TO_HEAD_NAME_RE),
         ),
     ]
 
@@ -1204,10 +1318,33 @@ async def list_labeling_candidates(
 
     candidates: list[dict[str, Any]] = []
     filtered_reviewed = 0
+    filtered_finished_contest = 0
     filtered_unrenderable: dict[str, int] = {}
     for stratum, market in sampled:
         if ("futures", market.id) in reviewed_keys:
             filtered_reviewed += 1
+            continue
+        # #2075 — a game that has already been played is not a labelling
+        # candidate, however renderable its card is. Counted separately from
+        # `filtered_unrenderable` because it is a different claim: that card can
+        # be drawn perfectly, it is simply about a game whose result is known.
+        # This should be near zero once the SQL filter has done its work; a
+        # non-zero count means the query arm regressed and this one caught it.
+        # getattr-with-default, NOT a bare attribute read. This loop is fed
+        # duck-typed market objects by several tests and by the trace tooling, and
+        # a hard read raises `AttributeError` on any of them — which is how this
+        # landed four unrelated red tests in `test_admin_judgments.py` on its first
+        # full-suite run. Same idiom as `_live_features`, which already reads
+        # `commence_time` this way, and as the feed serializer's `market_type`.
+        # Absent reads as None, which `is_finished_contest` treats as "unknown, do
+        # not refuse" — the direction that cannot silently empty the queue.
+        if is_finished_contest(
+            name=getattr(market, "name", None),
+            llm_sport_category=getattr(market, "llm_sport_category", None),
+            commence_time=getattr(market, "commence_time", None),
+            now=now,
+        ):
+            filtered_finished_contest += 1
             continue
         row = _serialize_labeling_candidate(
             market,
@@ -1250,6 +1387,18 @@ async def list_labeling_candidates(
             "enabled": True,
             "filtered_count": sum(filtered_unrenderable.values()),
             "by_reason": filtered_unrenderable,
+        },
+        # #2075. Reported for the same reason, and with the threshold in the
+        # payload rather than only in the source: this refusal turns on a
+        # judgement call ("a game is certainly over after 12 hours"), and a
+        # judgement call that is not visible where its effect is visible is one
+        # nobody can revise. `filtered_count` is expected to be ~0 because the
+        # stratum query already excluded these; a non-zero value means the SQL
+        # arm regressed and the policy arm caught it.
+        "finished_contest_filter": {
+            "enabled": True,
+            "filtered_count": filtered_finished_contest,
+            "certainly_over_after_hours": _GAME_CERTAINLY_OVER.total_seconds() / 3600,
         },
     }
 

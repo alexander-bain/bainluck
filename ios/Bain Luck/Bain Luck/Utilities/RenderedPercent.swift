@@ -80,3 +80,50 @@ nonisolated func renderedCardPercents(_ probabilities: [Double?]) -> [Int?] {
     }
     return [leader, 100 - leader]
 }
+
+/// The two whole percents a GAME card prints, returned as `[away, home]` —
+/// version 3 of `contracts/rendered_percent.json` (UX-P114).
+///
+/// ## Why the card rule above needed a positional sibling
+///
+/// `renderedCardPercents` assumes SERVED ORDER, where index 0 is the headline
+/// because the labeling serializers sort descending first. A game card does not
+/// sort: away is always drawn left and home always right, because those positions
+/// carry meaning a probability ranking would destroy.
+///
+/// It is still the most exact complement pair in the product — `routes/feed.py`
+/// derives the away side as `round(1.0 - current_home_prob, 6)` — so the defect
+/// fires on a provable condition: when `home * 100` lands exactly on `.5`, both
+/// sides round up and the strip prints 101. It can never print 99. Measured on
+/// production 2026-08-21 over the 414 scheduled/live events in the feed's window:
+/// 34 (8.2%) printed 101, including Green Bay @ Denver and Toronto FC @ Inter
+/// Miami.
+///
+/// ## The favourite is the side that survives
+///
+/// A duel has no served order to inherit a headline from, so the replacement rule
+/// is the one the card rule expresses: the number a reader anchors on is left
+/// untouched and the derived point lands on the underdog. Always-away-first would
+/// instead move the favourite half the time — on Green Bay @ Denver it prints 67
+/// for a side whose own correct value is 68.
+///
+/// The SERVER now decides this and sends it as
+/// `current_odds.{away,home}_rendered_percent`, because four surfaces draw this
+/// strip. This function is the local fallback for a payload from before that field
+/// existed, and it lives in the contract so the fallback cannot drift from the
+/// served answer.
+nonisolated func renderedDuelPercents(
+    away awayProbability: Double?,
+    home homeProbability: Double?
+) -> [Int?] {
+    let pair = [awayProbability, homeProbability]
+    guard isComplementPair(pair),
+          let away = awayProbability, let home = homeProbability else {
+        return [renderedPercent(awayProbability), renderedPercent(homeProbability)]
+    }
+    if away >= home {
+        return renderedCardPercents([away, home])
+    }
+    let flipped = renderedCardPercents([home, away])
+    return [flipped[1], flipped[0]]
+}
