@@ -72,5 +72,120 @@
     "3 no input_fingerprint invalidation on the first beat": "PASS \u2014 staged:cursor_reason:resumable, and input_fingerprint is b65faaacdc240b3b256934fcad528db1 on every beat before and after the deploy. Independently re-measured on the branch: identical.",
     "4 a cancelled unit -> staged:units_cancelled + terminal partial": "NOT EXERCISED \u2014 no unit was cancelled on any post-deploy beat. staged:units_cancelled absent, incompletes_24h still 0.",
     "5 a teardown -> terminal interrupted with release_age_s": "NOT EXERCISED \u2014 see ARTIFACT-CAL-P082-ITEM3-SPECIMEN.json. The 22:21:31Z teardown was recorded by the v3880 worker, because the dying worker is always the pre-release one."
+  },
+  "FOURTH_BEAT_ADDED": {
+    "captured_at": "2026-08-21T00:41:19.502583+00:00",
+    "beat": "2026-08-21T00:15Z (published 00:37:01Z)",
+    "units_this_beat": 8,
+    "units_banked": 40,
+    "carried": [],
+    "terminal": "complete",
+    "banked": {},
+    "input_fingerprint": "b65faaacdc240b3b256934fcad528db1",
+    "note": "The graded window is the LAST three, so it is now [5, 8, 8] and still PASS; all four beats are [7, 5, 8, 8]. `banked` is still {} \u2014 the guard remains unexercised, for the same reason: a completing beat clears the checkpoint instead of building one."
+  },
+  "grade_latest": {
+    "pass": true,
+    "reason": "advancing",
+    "detail": "units_this_beat across 3 adjacent beats: [5, 8, 8]",
+    "graded_window": [
+      1787264491343,
+      1787268887906,
+      1787272621648
+    ],
+    "carried_in_window": [
+      [],
+      [],
+      []
+    ],
+    "beats_observed": 4,
+    "minimum": 3,
+    "beats": [
+      {
+        "generation": 1787261587576,
+        "generated_at": "2026-08-20 21:33:07.576173+00:00",
+        "units_this_beat": 7,
+        "units_banked": 20,
+        "carried": [],
+        "terminal": "complete"
+      },
+      {
+        "generation": 1787264491343,
+        "generated_at": "2026-08-20 22:21:31.343433+00:00",
+        "units_this_beat": 5,
+        "units_banked": 24,
+        "carried": [],
+        "terminal": "cancelled"
+      },
+      {
+        "generation": 1787268887906,
+        "generated_at": "2026-08-20 23:34:47.906233+00:00",
+        "units_this_beat": 8,
+        "units_banked": 32,
+        "carried": [],
+        "terminal": "complete"
+      },
+      {
+        "generation": 1787272621648,
+        "generated_at": "2026-08-21 00:37:01.648144+00:00",
+        "units_this_beat": 8,
+        "units_banked": 40,
+        "carried": [],
+        "terminal": "complete"
+      }
+    ]
+  },
+  "grade_over_all_four": {
+    "pass": true,
+    "reason": "advancing",
+    "detail": "units_this_beat across 4 adjacent beats: [7, 5, 8, 8]",
+    "graded_window": [
+      1787261587576,
+      1787264491343,
+      1787268887906,
+      1787272621648
+    ],
+    "carried_in_window": [
+      [],
+      [],
+      [],
+      []
+    ],
+    "beats_observed": 4,
+    "minimum": 4,
+    "beats": [
+      {
+        "generation": 1787261587576,
+        "generated_at": "2026-08-20 21:33:07.576173+00:00",
+        "units_this_beat": 7,
+        "units_banked": 20,
+        "carried": [],
+        "terminal": "complete"
+      },
+      {
+        "generation": 1787264491343,
+        "generated_at": "2026-08-20 22:21:31.343433+00:00",
+        "units_this_beat": 5,
+        "units_banked": 24,
+        "carried": [],
+        "terminal": "cancelled"
+      },
+      {
+        "generation": 1787268887906,
+        "generated_at": "2026-08-20 23:34:47.906233+00:00",
+        "units_this_beat": 8,
+        "units_banked": 32,
+        "carried": [],
+        "terminal": "complete"
+      },
+      {
+        "generation": 1787272621648,
+        "generated_at": "2026-08-21 00:37:01.648144+00:00",
+        "units_this_beat": 8,
+        "units_banked": 40,
+        "carried": [],
+        "terminal": "complete"
+      }
+    ]
   }
 }

@@ -138,5 +138,54 @@
     ],
     "headline": "Between ~10:15Z and ~19:15Z Thu 2026-08-21 (03:15\u201312:15 PDT). CENTRAL ESTIMATE ~14:15Z / 07:15 PDT \u2014 15 beats at the 6.67-per-beat mean the three graded beats actually achieved. Unchanged in substance from the pre-merge estimate (06:15 PDT) despite 12 more units banked, because the realised rate came in at 6.67 rather than the build's optimistic 9.",
     "note": "staged:beats_to_publish moved 12 -> 6 -> 11 across the three beats. It is recomputed from THAT beat's own unit_ms_mean, so it swings with unit size (131,140 -> 64,354 -> 125,315 ms). Read it as one beat's opinion, not a trend."
+  },
+  "REFRESHED_ON_THE_0015Z_BEAT": {
+    "captured_at": "2026-08-21T00:41:19.503422+00:00",
+    "state": {
+      "rebuild_units_banked": 40,
+      "remaining": 88,
+      "staged:beats_to_publish": 11,
+      "staged:unit_ms_mean": 133193,
+      "staged:units_drifted": 19,
+      "staged:units_drift_checkable": 32
+    },
+    "observed_units_per_beat": [
+      7,
+      5,
+      8,
+      8
+    ],
+    "scenarios": [
+      {
+        "label": "build's own staged:beats_to_publish = 11",
+        "rate": 8.0,
+        "beats": 11,
+        "eta_utc": "2026-08-21T11:15:00+00:00",
+        "eta_pdt": "2026-08-21 04:15 PDT"
+      },
+      {
+        "label": "the last TWO beats (8 each)",
+        "rate": 8,
+        "beats": 11,
+        "eta_utc": "2026-08-21T11:15:00+00:00",
+        "eta_pdt": "2026-08-21 04:15 PDT"
+      },
+      {
+        "label": "mean of all four graded beats (7,5,8,8)",
+        "rate": 7.0,
+        "beats": 13,
+        "eta_utc": "2026-08-21T13:15:00+00:00",
+        "eta_pdt": "2026-08-21 06:15 PDT"
+      },
+      {
+        "label": "worst observed (5 \u2014 the deploy-killed beat)",
+        "rate": 5,
+        "beats": 18,
+        "eta_utc": "2026-08-21T18:15:00+00:00",
+        "eta_pdt": "2026-08-21 11:15 PDT"
+      }
+    ],
+    "headline": "CONVERGING. Realised 7.0 units/beat over four beats \u2014 13 more beats \u2014 **promotion ~13:15Z Thu 2026-08-21 = 06:15 PDT**, range 03:15\u201308:15 PDT on the rates actually observed. The bound descends on that beat and no other.",
+    "how_to_read_it_when_it_lands": "staged:units_banked reaches 128; served_at is re-stamped away from 1787250149; staged:units_drifted resets to 0; and tolerance_pp on /api/calibration reads BELOW 100.0. That last number is the one Fable asked to be quoted."
   }
 }
