@@ -4738,6 +4738,47 @@ def _effective_stop_at(
     return stop_at
 
 
+def _next_gamma_cursor_decision(selected_ids, completed_ids, limit):
+    """Decide how the Gamma winner-recovery cursor advances. Returns
+    ``(op, value)`` where ``op`` is ``"set"`` (value = new cursor), ``"delete"``
+    (wraparound to the oldest id), or ``"noop"`` (nothing was selected).
+
+    CAL-P086A, closing `C-WINNER-WRITER-1`'s [P0]. The cursor used to be written
+    from ``max(row.id for row in markets)`` BEFORE the first API call, so the
+    task skipped every row it selected but did not finish — which is every row,
+    on any run that tripped the throttle circuit-breaker, hit the caller's
+    deadline, or died. Selection capacity is not completed work (gotcha #36).
+
+    This is `clob_resolve._next_cursor_decision` (#989 item 1), transposed. That
+    rail drains DESCENDING with ``id < cursor``, so it holds just ABOVE its
+    highest failure; this one drains ASCENDING with ``fm.id > :last_id``, so it
+    holds just BELOW its LOWEST deferred id. Re-doing the completed rows beneath
+    that point is free: every write is guarded by
+    ``resolution_source NOT IN (authoritative)``.
+
+    ``completed_ids`` means CLASSIFIED, not graded — a genuine 404, a
+    not-settled price envelope and a row handed to the CLOB rail's registered
+    owner are all finished work as far as this rail is concerned. A transient
+    (429, transport, timeout) and a row the run never reached are not.
+
+    Never wraps while anything is deferred: a wrap declares the backlog drained,
+    and a run holding a row it failed to check has not drained anything.
+    """
+    selected = set(selected_ids)
+    if not selected:
+        return ("noop", None)
+    deferred = selected - set(completed_ids)
+    if deferred:
+        # Hold immediately below the lowest unfinished row so the next
+        # `fm.id > :last_id` re-selects it. Every selected id exceeds the
+        # previous cursor, so this can stall but can never rewind.
+        return ("set", min(deferred) - 1)
+    if len(selected) < limit:
+        # A clean, short page: fully drained, so start again from the oldest.
+        return ("delete", None)
+    return ("set", max(selected))
+
+
 async def _backfill_polymarket_winners_from_api(
     limit: int = 500, deadline: float | None = None
 ):
@@ -4848,9 +4889,22 @@ async def _backfill_polymarket_winners_from_api(
         # starved run are not the same fact and must not read the same.
         return _finish(stats)
 
-    # Save cursor for next run
-    max_id = max(row.id for row in markets)
-    _rc.setex(_offset_key, 86400 * 7, str(max_id))
+    # CAL-P086A (`C-WINNER-WRITER-1` [P0]): the cursor is NOT written here.
+    #
+    # It used to be — `max_id = max(row.id for row in markets)` followed by a
+    # `setex`, with the comment "Save cursor for next run", three lines above
+    # the first API call. Selecting a row is not checking it, so every early
+    # stop below (throttle circuit-breaker, `_out_of_time`, transport error,
+    # SIGKILL) skipped the whole page permanently, and the row came back only
+    # after a full wraparound that a growing id frontier can prevent forever.
+    #
+    # The cursor is now decided at the END, from what actually completed. See
+    # `_next_gamma_cursor_decision`. `_completed_ids` is the ledger: a row goes
+    # in when this rail is FINISHED with it — graded, definitively 404, price
+    # envelope not settled, or handed to another rail's registered owner — and
+    # stays out when the answer was transient or never asked for.
+    _selected_ids = [row.id for row in markets]
+    _completed_ids: set = set()
 
     # Separate markets by lookup strategy:
     # - With poly_event_id: group by event for batch event lookup
@@ -4984,6 +5038,21 @@ async def _backfill_polymarket_winners_from_api(
         alive_conditions = [r for r in _addressable if r.external_id not in dead_cids]
         stats["skipped_dead"] = len(_addressable) - len(alive_conditions)
 
+        # A handed-off row is COMPLETED for cursor purposes and it is important
+        # that it is. These are ~97.5% of a typical pull; treating a structural
+        # refusal as unfinished work would pin the cursor below the first `0x`
+        # id forever and starve the addressable rows above it — the #41 lesson
+        # arriving through the cursor instead of through the ORDER BY. Gamma has
+        # finished with them: it routed them to a named owner. Whether that
+        # owner drains them is `clob_terminal`'s question, not this cursor's.
+        _completed_ids.update(r.id for r in _routing.handed)
+        # Already-known-dead condition ids were definitively 404'd on an earlier
+        # run; skipping them is a decision, not a deferral.
+        _completed_ids.update(
+            r.id for r in _addressable if r.external_id in dead_cids
+        )
+        _id_by_cid = {r.external_id: r.id for r in alive_conditions}
+
         for batch_start in range(0, len(alive_conditions), 200):
             if _out_of_time():
                 stats["deadline_hit"] = "phase_a"
@@ -5014,10 +5083,16 @@ async def _backfill_polymarket_winners_from_api(
                             # genuine 404 — safe to cache dead
                             stats["api_miss"] += 1
                             _rc.sadd(_dead_key, cid)
+                            _completed_ids.add(_id_by_cid.get(cid))
                         else:
-                            # transient (429/error) — DO NOT mark dead; retry next run
+                            # transient (429/error) — DO NOT mark dead; retry next
+                            # run. CAL-P086A: and DO NOT let the cursor past it,
+                            # which is the same sentence one layer down. Caching
+                            # it dead and skipping it with the cursor are the
+                            # same mistake against two different stores.
                             stats["rate_limited"] = stats.get("rate_limited", 0) + 1
                         continue
+                    _completed_ids.add(_id_by_cid.get(cid))
 
                     prices_raw = (
                         market_data.get("outcomePrices")
@@ -5117,17 +5192,33 @@ async def _backfill_polymarket_winners_from_api(
                     if _out_of_time():
                         stats["deadline_hit"] = "phase_b_inner"
                         break
+                    # CAL-P086A: split "Gamma answered, and the answer is no
+                    # such event" from "Gamma did not answer". Both used to
+                    # arrive here as `event_data = None` and both were counted
+                    # as `api_miss` — an empty result and a failure wearing the
+                    # same number, which is gotcha #53 exactly. The cursor now
+                    # depends on the difference: a definitive miss is finished
+                    # work, a transient is not.
+                    _definitive = True
                     try:
                         event_data = await service.get_event_by_id(str(event_id))
                     except Exception as e:
                         if "429" in str(e) or "rate" in str(e).lower():
                             await asyncio.sleep(2)
                         event_data = None
+                        _definitive = False
                     if not event_data:
                         for row in by_event[event_id]:
                             stats["markets_checked"] += 1
-                            stats["api_miss"] += 1
+                            if _definitive:
+                                stats["api_miss"] += 1
+                                _completed_ids.add(row.id)
+                            else:
+                                stats["rate_limited"] = (
+                                    stats.get("rate_limited", 0) + 1
+                                )
                         continue
+                    _completed_ids.update(r.id for r in by_event[event_id])
 
                     api_markets = event_data.get("markets") or []
                     # Index by condition_id for fast lookup
@@ -5352,6 +5443,45 @@ async def _backfill_polymarket_winners_from_api(
         logger.error("Polymarket API winner backfill error: %s", e)
     finally:
         await service.close()
+
+    # --- CAL-P086A: the cursor moves HERE, and only on completed work. ---
+    #
+    # Outside the try/finally on purpose: a run that died mid-phase is exactly
+    # the run whose cursor must not advance, so this must execute on the
+    # exception path too. `_completed_ids` will simply be short, and the
+    # decision holds the line below the lowest row that never got an answer.
+    _completed_ids.discard(None)
+    _deferred_ids = set(_selected_ids) - _completed_ids
+    stats["selected"] = len(_selected_ids)
+    stats["completed"] = len(_completed_ids)
+    stats["deferred"] = len(_deferred_ids)
+    try:
+        _cursor_op, _cursor_value = _next_gamma_cursor_decision(
+            _selected_ids, _completed_ids, limit
+        )
+        if _cursor_op == "set":
+            _rc.setex(_offset_key, 86400 * 7, str(_cursor_value))
+        elif _cursor_op == "delete":
+            _rc.delete(_offset_key)
+        stats["cursor_op"] = _cursor_op
+        stats["cursor_value"] = _cursor_value
+    except Exception as e:  # a cursor we could not write is a cursor that held
+        stats["errors"].append(f"cursor: {e}")
+        stats["cursor_op"] = "failed"
+        stats["cursor_value"] = None
+    # Reported separately from `markets_checked`, per the finding: a drained
+    # page and a skipped page produced the same single number before this.
+    stats["cursor_held"] = bool(_deferred_ids)
+
+    logger.info(
+        "Polymarket API winner backfill: cursor %s -> %s (selected %d, "
+        "completed %d, deferred %d)",
+        _last_max_id,
+        stats.get("cursor_value"),
+        stats["selected"],
+        stats["completed"],
+        stats["deferred"],
+    )
 
     logger.info(
         "Polymarket API winner backfill: %d checked, %d winners, %d losers, "
