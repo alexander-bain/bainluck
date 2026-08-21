@@ -21,7 +21,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.routes import admin_judgments
+from app.routes import admin_judgments, admin_utils
 
 
 def _outcome(name, probability, rank=1):
@@ -83,6 +83,13 @@ class _Session:
 def client(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    # Queue 390: authorization resolves ONCE, in
+    # `admin_utils._resolve_admin_principal`. `admin_judgments` no longer runs
+    # its own copy of the token comparison, so patching only the module-local
+    # name silently stops taking effect and every write here turns 403.
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     def _build(session):
