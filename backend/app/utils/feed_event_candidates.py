@@ -103,10 +103,14 @@ def identity_incomplete_expr():
     rows partition on their own ``id`` instead and can therefore never be
     collapsed with anything.
 
-    Latent, not live: zero NULL and zero empty team names, and zero NULL
-    commence times, across all 25,610 candidates on 2026-08-21.  It is here
-    because a partition key that silently fuses NULLs is precisely the landmine
-    that only surfaces once the data shifts under it.
+    The live arm is the EMPTY STRING, not NULL: ``home_team_name``,
+    ``away_team_name`` and ``commence_time`` are all NOT NULL in the schema, so
+    the NULL arms are unreachable today and are kept for the column that loosens
+    later.  Either way this is latent rather than live — production measured zero
+    empty and zero NULL names across all 25,610 candidates on 2026-08-21 — which
+    is exactly why it needs a test and not a comment.  Mutation M2 deleted this
+    guard and the first version of that test still passed, because it varied the
+    away name and so never made two rows share a key.
     """
     return or_(
         Event.home_team_name.is_(None),

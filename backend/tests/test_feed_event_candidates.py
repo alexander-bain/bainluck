@@ -408,11 +408,23 @@ def test_the_same_fixture_in_two_sports_is_not_collapsed(engine):
 
 
 def test_rows_with_an_incomplete_identity_are_never_fused(engine):
-    """PARTITION BY treats NULLs as EQUAL. Without the id fallback these three
-    unrelated rows would collapse into one and two real events would vanish.
+    """Three rows whose identity is entirely blank must stay three rows.
 
-    Latent today — production measured zero NULL/empty names — which is why it
-    needs a test rather than a comment.
+    A partition key groups equal values — and NULLs count as equal — so without
+    the id fallback these collapse into ONE and two real events vanish. We cannot
+    tell them apart, which is exactly the reason not to assert they are the same
+    fixture.
+
+    THE FIRST VERSION OF THIS TEST DID NOT TEST THIS. It blanked only
+    `home_team_name` and gave each row a DIFFERENT away name, so the partition
+    keys already differed and the rows could never have fused — mutation M2
+    (deleting the guard outright) passed all twenty tests. The names have to
+    collide for the guard to be the thing keeping them apart.
+
+    Note the live hazard is the EMPTY STRING, not NULL: `home_team_name`,
+    `away_team_name` and `commence_time` are all NOT NULL in the schema, so the
+    NULL arms of the guard are unreachable today and are kept for the column that
+    loosens later.
     """
     with Session(engine) as s:
         t = NOW - timedelta(hours=1)
@@ -420,9 +432,9 @@ def test_rows_with_an_incomplete_identity_are_never_fused(engine):
         _seed(
             s,
             [
-                _event(1, S_LIGUE1, "", "A", t, "live", src),
-                _event(2, S_LIGUE1, "", "B", t, "live", src),
-                _event(3, S_LIGUE1, "", "C", t, "live", src),
+                _event(1, S_LIGUE1, "", "", t, "live", src),
+                _event(2, S_LIGUE1, "", "", t, "live", src),
+                _event(3, S_LIGUE1, "", "", t, "live", src),
             ],
         )
         assert _admitted(s) == {1, 2, 3}
