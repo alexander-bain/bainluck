@@ -365,15 +365,15 @@ async def reconcile(
 async def _absorb(session, *, keep: int, drop: int) -> None:
     """Repoint every event FK from ``drop`` to ``keep``, then delete ``drop``.
 
-    The FK table list is imported from the existing drain rather than restated,
-    because a table added to one list and not the other is a silent orphan — the
-    same drift ``event_merge_invariant`` exists to prevent one layer up.
-
-    The merge STEP is duplicated from ``_merge_duplicate_events_impl`` and that is
-    debt, named here rather than hidden: the right shape is one extracted
-    ``merge_event_pair`` both rails call. It is not extracted in this window
-    because that rail is mid-certification and a refactor of a DELETE path is not
-    a free change. Caller has already run ``assert_mergeable``.
+    R4: the repoint step used to be a loop here over ``sports._EVENT_FK_TABLES`` — a
+    THIRD consumer of the hand-written eight-tuple that SQLAlchemy metadata said was
+    ten, so this rail silently CASCADE-destroyed the loser's ``game_moments`` and hit
+    an FK violation on any loser holding a ``ranking_judgments`` row, exactly as the
+    other two did. Importing the short list from a sibling did stop the two lists
+    drifting *from each other*; it could not stop them drifting from the schema, which
+    is the drift that actually happened. It is one derived, shared call now — which
+    also retires most of the "duplicated merge STEP" debt named in this docstring's
+    previous revision. Caller has already run ``assert_mergeable``.
 
     #1947: that caller-side check is arm A on a stale read, so it is no longer
     the last word. ``assert_absorbable_now`` re-reads both rows ``FOR UPDATE``
@@ -381,19 +381,15 @@ async def _absorb(session, *, keep: int, drop: int) -> None:
     statement below. It raises a subclass of ``UnanchoredMergeRefused``, which
     ``reconcile`` already catches per pair.
     """
-    from app.tasks.sports import _EVENT_FK_TABLES  # noqa: PLC0415
     from app.utils.event_absorption_guard import assert_absorbable_now  # noqa: PLC0415
+    from app.utils.event_child_repoint import repoint_event_children  # noqa: PLC0415
 
     await assert_absorbable_now(
         session, keep_id=keep, orphan_id=drop,
         context="reconcile_unanchored_events",
     )
 
-    for table in _EVENT_FK_TABLES:
-        await session.execute(
-            text(f"UPDATE {table} SET event_id = :keep WHERE event_id = :drop"),
-            {"keep": keep, "drop": drop},
-        )
+    await repoint_event_children(session, keep_id=keep, orphan_id=drop)
     await session.execute(text("DELETE FROM events WHERE id = :drop"), {"drop": drop})
 
 

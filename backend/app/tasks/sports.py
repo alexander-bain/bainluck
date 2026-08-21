@@ -13,6 +13,7 @@ from app.models import Sport, Event, OddsSnapshot, Team
 from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
+from app.utils.event_child_repoint import repoint_event_children
 from app.utils.name_normalization import names_match as _canonical_names_match
 from app.utils.espn_candidate_selection import select_espn_candidate
 from app.utils.espn_id_stamp import (
@@ -707,6 +708,9 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
         refused_count = 0
         uncorroborated_count = 0
         delete_ids = []
+        child_moves: dict[str, dict[str, int]] = {
+            "repointed": {}, "dropped_as_duplicate": {}
+        }
 
         for row in pairs:
             # R6: the SQL above already required a shared provider id, and this
@@ -830,14 +834,15 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                         sa_text(f"UPDATE events SET {', '.join(set_clauses)} WHERE id = :kid"),
                         params,
                     )
-                # Reassign ALL FK references from orphan → keep before delete
-                for table in ("odds_snapshots", "win_prob_snapshots", "score_snapshots",
-                              "espn_snapshots", "scoring_plays", "odds_aggregated",
-                              "line_movement_analyses", "futures_markets"):
-                    await session.execute(
-                        sa_text(f"UPDATE {table} SET event_id = :keep WHERE event_id = :orphan"),
-                        {"keep": keep_id, "orphan": orphan_id},
-                    )
+                # Reassign ALL FK references from orphan → keep before delete.
+                # R4: this used to be an inline eight-tuple literal — a SECOND
+                # hand-written copy of the list, free to drift from the module-level
+                # one the other rail used AND from the schema, which it did. Both are
+                # one derived call now (app/utils/event_child_repoint.py).
+                moved = await repoint_event_children(
+                    session, keep_id=keep_id, orphan_id=orphan_id
+                )
+                _merge_child_moves(child_moves, moved)
                 await session.execute(
                     sa_text("DELETE FROM events WHERE id = :orphan"),
                     {"orphan": orphan_id},
@@ -863,16 +868,41 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
             # worth an eye, not an alarm, since the invariant refused it.
             "refused_uncorroborated": uncorroborated_count,
             "deleted": len(delete_ids) if not dry_run else 0,
+            # R4's silent half, made loud. Every child row this rail moved, per
+            # table — including the two the old hand-list never named, one of
+            # which (game_moments) was being CASCADE-destroyed unmentioned on
+            # every merge. `dropped_as_duplicate` is the rows the survivor
+            # already held an equivalent of under an event-scoped UNIQUE key;
+            # they are deleted deliberately, so they are reported deliberately.
+            "child_rows_repointed": child_moves["repointed"],
+            "child_rows_dropped_as_duplicate": child_moves["dropped_as_duplicate"],
         }
 
 
-# FK tables whose event_id must repoint from an orphan event to the survivor
-# before the orphan is deleted (shared with _merge_duplicate_events_impl).
-_EVENT_FK_TABLES = (
-    "odds_snapshots", "win_prob_snapshots", "score_snapshots",
-    "espn_snapshots", "scoring_plays", "odds_aggregated",
-    "line_movement_analyses", "futures_markets",
-)
+def _merge_child_moves(
+    total: dict[str, dict[str, int]], one_pair: dict[str, dict[str, int]]
+) -> None:
+    """Fold one pair's per-table repoint counts into the run total, in place."""
+    for bucket, counts in one_pair.items():
+        target = total.setdefault(bucket, {})
+        for table, n in counts.items():
+            target[table] = target.get(table, 0) + n
+
+
+# A module-level `_EVENT_FK_TABLES` tuple stood here, shared by the rail above, the
+# rail below, and reconcile_unanchored_events._absorb. R4 (C-DELETE-RAIL-PRE): it
+# held EIGHT tables and SQLAlchemy metadata declared TEN FKs to events.id. The two it
+# missed failed in opposite directions and neither was visible in any response —
+# game_moments is ON DELETE CASCADE, so the loser's moments were silently destroyed by
+# every merge; ranking_judgments has no ON DELETE action, so a merge whose loser held a
+# human judgment failed with an FK violation.
+#
+# Adding two names would have been the same hand-list one commit later, so all three
+# rails now go through app/utils/event_child_repoint.repoint_event_children, whose
+# table list is DERIVED from the schema on every call and which pre-dedupes the two
+# children carrying an event-scoped UNIQUE constraint. That module explains why it is
+# not part of event_fk_inventory: that inventory's Disposition has no TRANSFER value
+# on purpose, because the PRUNE rail must never repoint.
 
 
 async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int = 500):
@@ -930,6 +960,9 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
         refused_anchored = 0
         refused_pairs = []
         merged_pairs = []
+        child_moves: dict[str, dict[str, int]] = {
+            "repointed": {}, "dropped_as_duplicate": {}
+        }
 
         for d in degen_rows:
             # R6 → R7 (#1801): DELETION REQUIRES EVIDENCE OF THE ARTIFACT, not
@@ -1027,11 +1060,10 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
             merged_pairs.append({"orphan": orphan_id, "keep": keep_id, "fighter": fighter})
 
             if not dry_run:
-                for table in _EVENT_FK_TABLES:
-                    await session.execute(
-                        sa_text(f"UPDATE {table} SET event_id = :keep WHERE event_id = :orphan"),
-                        {"keep": keep_id, "orphan": orphan_id},
-                    )
+                moved = await repoint_event_children(
+                    session, keep_id=keep_id, orphan_id=orphan_id
+                )
+                _merge_child_moves(child_moves, moved)
                 await session.execute(
                     sa_text("DELETE FROM events WHERE id = :orphan"),
                     {"orphan": orphan_id},
@@ -1057,4 +1089,7 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
             "refused_anchored": refused_anchored,
             "refused_sample": refused_pairs[:15],
             "sample": merged_pairs[:15],
+            # R4: see the same two keys on _merge_duplicate_events_impl.
+            "child_rows_repointed": child_moves["repointed"],
+            "child_rows_dropped_as_duplicate": child_moves["dropped_as_duplicate"],
         }
