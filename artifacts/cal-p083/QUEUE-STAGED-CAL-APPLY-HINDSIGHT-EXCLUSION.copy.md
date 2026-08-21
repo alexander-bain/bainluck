@@ -33,11 +33,19 @@ independent reading. All five, current as of 2026-08-21 07:5x PDT:
 
 1. ☐ **`C-APPLY-PRE-WHICHPRICE-R2` GREEN** on its four named attacks (pack §8.3, verbatim).
    GREEN on three of four is a BLOCK.
-   **STATUS: NOT RUN.** It sits in `CODEX-NEXT.md`, `status: approved`, unconsumed. The active
-   `CODEX-QUEUE.md` is `C-SEN-2-R2` (`status: running`, staged by Alex/Fable as authoritative
-   over the stale CODEX-NEXT ordering). Lane4 step 4 promotes WHICHPRICE-R2 when C-SEN-2-R2
-   reaches `done`. R1's verdict was **BLOCK** and it was upheld — R2 certifies the AMENDED
-   premise, so its GREEN is not a formality.
+   **STATUS: NOT RUN.** It sits in `CODEX-NEXT.md`, `status: approved`, unconsumed. R1's verdict
+   was **BLOCK** and it was upheld — R2 certifies the AMENDED premise, so its GREEN is not a
+   formality.
+
+   🔶 **AND IT IS STARVING, NOT BLOCKED — a distinction worth acting on.** It is SAFE:
+   `CODEX-NEXT.md` is byte-for-byte unchanged since 2026-08-20 15:23, so CAL-P082's two-condition
+   fix is holding across rotations. But lane4 step 4 promotes the NEXT slot only when
+   `CODEX-QUEUE.md` reaches `done`, and Fable/Alex have been hand-staging directly INTO
+   `CODEX-QUEUE.md`, which bypasses the promotion path entirely. `CODEX-QUEUE.md` rotated **twice
+   inside CAL-P083's own window** (`C-SEN-2-R2` → `C-DELETE-RAIL-PRE-R2`), and WHICHPRICE-R2 was
+   passed over both times. **It will not drain on its own.** Someone must hand-stage it into
+   `CODEX-QUEUE.md`. The queue whose GREEN releases the 1.77 apply should probably not be the one
+   waiting on an opportunistic drain.
 2. ☑ **`program/calibration-74` DEPLOYED — VERIFIED ON PRODUCTION 2026-08-21, not on a merge SHA.**
    `GET /api/calibration` carries the `staged` block (`measured: true`, `staged_at`,
    `units_banked`, `units_drifted`, `frozen_over_drift`, `rebuild_units_*`), and
@@ -94,11 +102,16 @@ The worker's guards behaved correctly throughout: `db_rows <= 0` did NOT present
 agreement, it went `unmeasurable` and banked `complete=False`. **The instrument was honest. It
 just could not be heard** — see the endpoint defect below.
 
-**Gate 5 cannot be met until the fold fits its budget.** That is a real piece of work with no
-owner yet, and it is on the critical path of the 1.77 apply. Options, none costed:
-raise the fold's own `statement_timeout` above the 240 s worker budget (they are not the same
-knob); narrow the fold to the cells actually compared; or fold incrementally across beats. **File
-this before promoting the queue** — it is not an item this queue can absorb silently.
+**Gate 5 cannot be met until the fold fits its budget.** Filed as **#2076** (P1, `needs-agent`),
+cross-linked to #2052. It is on the critical path of the 1.77 apply. Options, none costed: raise
+the fold's own `statement_timeout` above the 240 s worker budget (they are **not the same knob** —
+the inner one binds first); narrow the fold to the cells actually compared; or fold incrementally
+across beats the way the rebuild already stages its 128 units. Not an item this queue absorbs
+silently.
+
+⚠️ Note the compounding: the fold does not merely need to FINISH, it needs to finish **inside the
+one-beat trough** described above. A 240 s fold in a ~60 min window is fine; a fold that needs an
+unbounded retry loop is not.
 
 ### Endpoint defect found and FIXED in CAL-P083 (`backend/app/routes/admin_cohort.py`)
 

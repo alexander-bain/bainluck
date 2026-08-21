@@ -13,7 +13,7 @@
   "served_at_after": 1787315330,
   "at_tight_floor": true,
   "held": false,
-  "beats_observed_after": 2,
+  "beats_observed_after": 3,
   "tolerance_pp_after": [
    {
     "generation": 1787319343481,
@@ -23,6 +23,11 @@
    {
     "generation": 1787323095513,
     "generated_at": "2026-08-21 14:38:15.513209+00:00",
+    "tolerance_pp": 100.0
+   },
+   {
+    "generation": 1787326548480,
+    "generated_at": "2026-08-21 15:35:48.480766+00:00",
     "tolerance_pp": 100.0
    }
   ]
@@ -335,9 +340,27 @@
    "frozen_over_drift": true,
    "rebuild_units_banked": 16,
    "rebuild_units_this_beat": 8
+  },
+  {
+   "generation": 1787326548480,
+   "generated_at": "2026-08-21 15:35:48.480766+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "tolerance_pp": 100.0,
+   "measured": true,
+   "unmeasured_reason": null,
+   "served_at": 1787315330,
+   "served_units": 128,
+   "served_drifted": 128,
+   "units_banked": 128,
+   "units_drifted": 128,
+   "units_drift_unknown": 0,
+   "frozen_over_drift": true,
+   "rebuild_units_banked": 24,
+   "rebuild_units_this_beat": 8
   }
  ],
- "measurable_beats": 17,
+ "measurable_beats": 18,
  "bound_series_pp": [
   100.0,
   100.0,
@@ -355,6 +378,7 @@
   100.0,
   0.5,
   85.9375,
+  100.0,
   100.0
  ],
  "constants": {

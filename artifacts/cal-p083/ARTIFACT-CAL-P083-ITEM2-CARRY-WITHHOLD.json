@@ -380,10 +380,32 @@
    "units_this_beat": 8,
    "units_banked": 16,
    "state": "guard_unreachable_complete"
+  },
+  {
+   "generation": 1787326548480,
+   "generated_at": "2026-08-21 15:35:48.480766+00:00",
+   "terminal": "complete",
+   "carried": [],
+   "banked": {},
+   "completed_required": [
+    "futures",
+    "sports",
+    "diagnostics",
+    "aggregate",
+    "serialize_gate_publish"
+   ],
+   "units_planned": 128,
+   "units_done": 24,
+   "units_done_source": "gauge",
+   "rebuild_in_flight": true,
+   "futures_completed": true,
+   "units_this_beat": 8,
+   "units_banked": 24,
+   "state": "guard_unreachable_complete"
   }
  ],
  "counts": {
-  "guard_unreachable_complete": 15,
+  "guard_unreachable_complete": 16,
   "nothing_to_bank": 1,
   "withheld": 1
  },
