@@ -232,19 +232,53 @@ DEFAULT_TIMEOUT_MS = 240_000
 MAX_TIMEOUT_MS = 1_350_000
 MIN_TIMEOUT_MS = 1_000
 
+#: The ceiling for a **one-off dyno**, which is a different host, not a
+#: different opinion.
+#:
+#: CAL-P086B closed #2076's options 2/3 by plan (see the module header), leaving
+#: CAL-P079's finding as the only avenue: *the reader belongs inside the dyno on
+#: a worker whose budget is its own.* The twin worker is that — except that its
+#: budget is **not** its own. :data:`MAX_TIMEOUT_MS` is 1,350,000 ms because the
+#: CELERY TASK is ``soft_time_limit=1800``; the number describes the scheduler,
+#: not the query. A ``heroku run:detached`` one-off dyno has no Celery limit over
+#: it, so on that host the same constant is an inherited restriction with no
+#: reason behind it.
+#:
+#: 90 minutes: four times the fold's largest MEASURED non-completion (901.96 s),
+#: which is the smallest ceiling that can distinguish "slow" from "never
+#: finishes" — the only question #2076 has left. It is not a belief that the
+#: fold fits inside it, for the same reason :data:`MAX_TIMEOUT_MS` was not.
+#:
+#: **Reachable only by asking.** ``clamp_timeout_ms`` still defaults to the
+#: Celery ceiling, so nothing about the beat or the admin endpoint moves; a
+#: default that quietly grew would put a 90-minute statement on the schedule,
+#: which is the one outcome worse than a timeout.
+ONE_OFF_MAX_TIMEOUT_MS = 5_400_000
 
-def clamp_timeout_ms(value: Any) -> int:
-    """Coerce an operator-supplied budget into the range the worker can honour.
+
+def clamp_timeout_ms(value: Any, *, ceiling: Any = MAX_TIMEOUT_MS) -> int:
+    """Coerce an operator-supplied budget into the range this HOST can honour.
 
     Clamped rather than rejected: an out-of-range number is an operator asking
     for a longer look, and refusing the whole run over it would trade a
     measurable gate for a 422.
+
+    ``ceiling`` exists because the binding limit belongs to the host, not to the
+    query — :data:`MAX_TIMEOUT_MS` for the Celery task (default, unchanged),
+    :data:`ONE_OFF_MAX_TIMEOUT_MS` for a one-off dyno. A malformed ``ceiling``
+    falls back to the Celery one: a widening argument that arrives broken must
+    fail toward the SMALLER budget, never the larger.
     """
+    try:
+        cap = int(ceiling)
+    except (TypeError, ValueError):
+        cap = MAX_TIMEOUT_MS
+    cap = max(MIN_TIMEOUT_MS, cap)
     try:
         ms = int(value)
     except (TypeError, ValueError):
-        return DEFAULT_TIMEOUT_MS
-    return max(MIN_TIMEOUT_MS, min(MAX_TIMEOUT_MS, ms))
+        return min(DEFAULT_TIMEOUT_MS, cap)
+    return max(MIN_TIMEOUT_MS, min(cap, ms))
 
 
 async def _read_published_payload() -> tuple[dict, Optional[str]]:
@@ -480,9 +514,18 @@ def build_artifact(
     return artifact
 
 
-async def run_published_twin(*, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> dict:
-    """Run Gate 0's twin in-dyno and bank the artifact. Never raises."""
-    budget = clamp_timeout_ms(timeout_ms)
+async def run_published_twin(
+    *, timeout_ms: int = DEFAULT_TIMEOUT_MS, ceiling: Any = MAX_TIMEOUT_MS
+) -> dict:
+    """Run Gate 0's twin in-dyno and bank the artifact. Never raises.
+
+    ``ceiling`` names the HOST's limit and defaults to the Celery task's, so
+    every existing caller is unchanged. ``scripts/measure_published_twin.py
+    --bank`` passes :data:`ONE_OFF_MAX_TIMEOUT_MS` because a one-off dyno has no
+    ``soft_time_limit`` over it. It is the same function either way, deliberately:
+    a gate that fired on a dyno must be the gate the beat would have fired.
+    """
+    budget = clamp_timeout_ms(timeout_ms, ceiling=ceiling)
 
     # BEFORE the fold, so the trough's own bound is captured at the instant the
     # fold's population is read rather than up to 22 minutes later.
