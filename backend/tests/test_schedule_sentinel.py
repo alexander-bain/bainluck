@@ -105,6 +105,24 @@ def _checks(findings):
     return {f["check"] for f in findings}
 
 
+def _defects(findings):
+    """Findings that CLAIM SOMETHING IS WRONG — i.e. everything except the
+    ``UNVERIFIED`` provenance bucket.
+
+    Added by queue 388 (#1827, Codex C-SEN-2 specimen 1). An MLB league now emits
+    one league-level ``schedule_identity_space_unavailable`` declaration whenever
+    pairings rested on names, because MLB StatsAPI's ``gamePk`` is not an id space
+    we store — so those pairings were COMPARED, not checked.
+
+    Tests below that predate it assert ``findings == []`` to mean "nothing is
+    wrong". That is still what they mean and still what they check; they just have
+    to say it about defects rather than about silence, because silence is what the
+    false green was made of. ``UNVERIFIED`` is deliberately neither ``real`` nor
+    ``watch`` (see ``classify_findings``) — it is an absent measurement, not a
+    defect."""
+    return [f for f in findings if f.get("kind") != "UNVERIFIED"]
+
+
 # ---------------------------------------------------------------------------
 # Name similarity — the pairing primitive. Both directions (gotcha #43).
 # ---------------------------------------------------------------------------
@@ -215,7 +233,7 @@ class TestMissing:
         ours = [_ours(1, "Toronto Blue Jays", "Boston Red Sox", start=_ago(7),
                       hs=5, aws=3)]
         findings, _ = ss.reconcile(truth, ours, MLB, NOW)
-        assert findings == []
+        assert _defects(findings) == []
 
     def test_missing_is_real_and_files(self):
         truth = [_truth("Toronto Blue Jays", "Boston Red Sox", start=_ago(7),
@@ -268,7 +286,7 @@ class TestMissing:
         ours = [_ours(1, "Toronto Blue Jays", "Boston Red Sox", start=_ago(29),
                       hs=5, aws=3)]
         findings, stats = ss.reconcile(truth, ours, MLB, NOW)
-        assert _checks(findings) == {"schedule_wrong_date"}
+        assert _checks(_defects(findings)) == {"schedule_wrong_date"}
         assert stats["unmatched_truth"] == 0 and stats["unmatched_ours"] == 0
 
 
@@ -373,7 +391,7 @@ class TestScoreDisagreement:
                         hs=4, aws=6)]
         ours = [_ours(1, "Detroit Tigers", "Cleveland Guardians", start=_ago(7),
                       hs=4, aws=6)]
-        assert ss.reconcile(truth, ours, MLB, NOW)[0] == []
+        assert _defects(ss.reconcile(truth, ours, MLB, NOW)[0]) == []
 
     def test_absorbed_score_names_the_game_it_came_from(self):
         """The #1779 mechanism, measured live on 2026-08-13: our Aug-12 row for
@@ -417,7 +435,7 @@ class TestScoreDisagreement:
                         state="live", raw="In Progress", hs=1, aws=0)]
         ours = [_ours(1, "Miami Marlins", "Pittsburgh Pirates", start=_ago(1),
                       status="live", hs=1, aws=0)]
-        assert ss.reconcile(truth, ours, MLB, NOW)[0] == []
+        assert _defects(ss.reconcile(truth, ours, MLB, NOW)[0]) == []
 
     def test_premature_settle_is_caught(self):
         truth = [_truth("Miami Marlins", "Pittsburgh Pirates", start=_ago(1),
@@ -452,7 +470,7 @@ class TestExtraAndDuplicate:
             _ours(2, "Reno Aces", "Tacoma Rainiers", start=_ago(7), hs=1, aws=0),
         ]
         findings, _ = ss.reconcile(truth, ours, MLB, NOW)
-        assert _kinds(findings) == {"EXTRA": 1}
+        assert _kinds(_defects(findings)) == {"EXTRA": 1}
 
     def test_settled_extra_with_a_published_score_is_real(self):
         """We are showing a RESULT for a game the authority says never happened."""
@@ -923,12 +941,26 @@ class TestPairingIsKeyedOnIdentity:
         assert ss.schedule_verdict(classified, covered=True) == "green"
         assert "schedule_unverified_pairing" not in _checks(findings)
 
-    def test_an_individuated_row_in_a_foreign_id_space_is_not_flagged(self):
+    def test_an_individuated_row_in_a_foreign_id_space_is_not_flagged_PER_PAIR(self):
         """No crying wolf. MLB truth is a ``gamePk``; we hold ESPN/StatPal/Odds ids.
 
         We cannot cross-reference those, but the row is NOT an anonymous shell —
         some provider looked at the schedule and named it. Reporting every MLB pair
         as unverified would make the state constant, and a constant is not a signal.
+
+        **AMENDED by queue 388 (#1827) on Codex C-SEN-2 specimen 1.** The clause
+        above is still right and is still enforced here — there is no PER-PAIR
+        finding. What this test also used to assert was ``verdict == "green"``, and
+        that part was the first of the four standing false greens: nothing in this
+        league was ever dereferenced, and the sentinel reported the same word it
+        reports for a league where everything was.
+
+        Both halves now hold at once, which is the point of the split:
+
+        * no per-pair ``schedule_unverified_pairing`` — the constant stays out;
+        * ONE league-level ``schedule_identity_space_unavailable`` carrying the
+          COUNT, so the verdict is ``green_unverified`` and the count is what moves
+          when #1946's anchor channel makes this league verifiable.
         """
         truth = [_truth(self.HOME, self.AWAY, start=_ago(7), hs=4, aws=2,
                         key="777001")]
@@ -938,9 +970,20 @@ class TestPairingIsKeyedOnIdentity:
         findings, stats = ss.reconcile(truth, ours, MLB, NOW)
         classified = ss.classify_findings(findings, MLB, NOW)
 
-        assert "schedule_unverified_pairing" not in _checks(findings)
-        assert ss.schedule_verdict(classified, covered=True) == "green"
+        assert "schedule_unverified_pairing" not in _checks(findings), (
+            "no per-pair finding — that would make the MLB state constant"
+        )
+        assert classified["real"] == [], "an absent measurement is not a defect"
         assert stats["paired_by_names_foreign_id_space"] == 1
+
+        declarations = [f for f in findings
+                        if f["check"] == "schedule_identity_space_unavailable"]
+        assert len(declarations) == 1
+        assert declarations[0]["pairings_not_dereferenced"] == 1
+        assert ss.schedule_verdict(classified, covered=True) == ss.GREEN_UNVERIFIED, (
+            "MLB's gamePk was never dereferenced; green is a word this league has "
+            "not earned (Codex C-SEN-2 specimen 1)"
+        )
 
     def test_the_id_is_consumed_before_names_ever_run(self):
         """The ordering IS the fix, not a tiebreak.
