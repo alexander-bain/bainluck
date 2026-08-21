@@ -109,7 +109,7 @@ from sqlalchemy import text
 from app.utils.event_fk_inventory import (
     CASCADING_CHILD_TABLES,
     EVENT_PSEUDO_FK_SUBSTANCE,
-    PARENT_SUBSTANCE_COLUMNS,
+    parent_substance_columns,
     parent_substance_predicate,
     pseudo_fk_substance_predicate,
     substance_tables,
@@ -160,7 +160,7 @@ def _substance_predicate(alias: str) -> str:
     tables, so "childless" was silently equated with "carries nothing" — and codex
     executed the real ``prune()`` deleting a childless row that was the only record of a
     distinct completed 5–3 game. The event row is itself an observation; see
-    ``PARENT_SUBSTANCE_COLUMNS``.
+    ``parent_substance_columns()`` (derived from the live schema).
     """
     child = " AND ".join(
         f"NOT EXISTS (SELECT 1 FROM {t} c_{i} WHERE c_{i}.event_id = {alias}.id)"
@@ -370,8 +370,20 @@ def compute_plan_hash(
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-class CensusDoesNotAccount(Exception):
-    """The census's own populations do not sum to the surplus it reported."""
+class CensusDoesNotAccount(PruneRefused):
+    """The census's own populations do not sum to the surplus it reported.
+
+    **C-DELETE-RAIL-PRE-R3 finding 3 (P2): this inherited from ``Exception``, so it
+    escaped the route as an uncaught 500 with neither an explicit rollback nor a
+    commit.** The arithmetic guard existed and was correct; its promised operational
+    behaviour did not, and the difference is invisible from inside the rail.
+
+    Subclassing ``PruneRefused`` is the whole fix: the route already translates that
+    into a named **409**, and a refusal is a 409 rather than a 500 because the rail
+    worked correctly and declined. A guard whose only observable effect is a stack
+    trace teaches the operator that the rail is broken, when what it is actually
+    saying is that the population moved.
+    """
 
 
 async def census(session, *, sport_id: int, linked_copies: int) -> dict[str, int]:
@@ -546,7 +558,7 @@ async def prune(
             "is anchor-free and holds NO observation of any kind — zero child rows in "
             f"all {len(substance_tables())} substance tables (#2057 recut), zero rows "
             f"in {len(EVENT_PSEUDO_FK_SUBSTANCE)} polymorphic pseudo-FK table(s), and "
-            f"all {len(PARENT_SUBSTANCE_COLUMNS)} parent-local substance columns empty "
+            f"all {len(parent_substance_columns())} parent-local substance columns empty "
             "with a 'scheduled' status (rail v3 / R2 finding 1)"
             if linked_copies == 1
             else "UNDETERMINED — this rail only prunes partitions with exactly one "
@@ -564,7 +576,7 @@ async def prune(
         # Renamed from `pointer_tables`, because they are no longer pointers the rail
         # nulls — they are substance the rail withholds on (R2 finding 2).
         "pseudo_fk_substance_tables": sorted(EVENT_PSEUDO_FK_SUBSTANCE),
-        "parent_substance_columns": list(PARENT_SUBSTANCE_COLUMNS),
+        "parent_substance_columns": list(parent_substance_columns()),
     }
 
     if linked_copies != 1:

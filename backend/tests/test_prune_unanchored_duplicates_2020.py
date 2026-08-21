@@ -926,15 +926,178 @@ class TestR2Finding1ParentLocalSubstance:
         assert ("e.win_probability_sources IS NULL OR "
                 "e.win_probability_sources::text IN ('{}', '[]')") in sql
 
-    def test_every_declared_parent_substance_column_reaches_the_sql(self):
-        """The list and the predicate must not drift — the same failure mode R4 fixed
-        for the hand-maintained FK tuple."""
+
+class TestR3Finding1DenyByDefaultOverTheLiveSchema:
+    """The v4 design, and the reason the previous guard could not catch its own gap.
+
+    **The deleted test was SELF-ORACULAR.** It read
+    ``PARENT_SUBSTANCE_COLUMNS`` — the same production constant the implementation
+    read — and asserted each entry reached the SQL. A column omitted from the constant
+    vanished from implementation and oracle *together*, so the suite went green on
+    exactly the rows it failed to protect. It passed while 43 of 55 columns were
+    unguarded, and R3 deleted a distinct game whose only observation was
+    ``opening_home_spread = -1.5``.
+
+    Every test below takes its oracle from somewhere the implementation does not:
+    the live mapped table, or a column that did not exist when the code was written.
+    """
+
+    def test_every_live_schema_column_is_either_ignorable_or_enforced(self):
+        """The independent oracle: ``Event.__table__``, not the module's own list.
+
+        This is the assertion the old one should have been. It cannot be satisfied by
+        shortening a constant, because the constant is not what it reads.
+        """
+        from app.models.models import Event
         from app.tasks.prune_unanchored_duplicates import _substance_predicate
-        from app.utils.event_fk_inventory import PARENT_SUBSTANCE_COLUMNS
+        from app.utils.event_fk_inventory import PARENT_IGNORABLE_COLUMNS
 
         sql = _substance_predicate("e")
-        missing = [c for c in PARENT_SUBSTANCE_COLUMNS if f"e.{c} IS NULL" not in sql]
-        assert missing == [], f"declared but not enforced: {missing}"
+        unguarded = [
+            c.name
+            for c in Event.__table__.columns
+            if c.name not in PARENT_IGNORABLE_COLUMNS and f"e.{c.name}" not in sql
+        ]
+        assert unguarded == [], f"live schema columns neither ignored nor enforced: {unguarded}"
+
+    def test_a_column_added_today_is_PROTECTED_the_day_it_is_born(self):
+        """The synthetic-column fixture — deny-by-default's whole claim, executed.
+
+        A column that did not exist when this rail was written must be treated as
+        substance without anyone touching the rail. If this fails, the design has
+        silently reverted to an allowlist and the next schema change is the next R3.
+        """
+        from sqlalchemy import Column, Integer
+
+        from app.models.models import Event
+        from app.tasks.prune_unanchored_duplicates import _substance_predicate
+
+        column = Column("q389_synthetic_probe_column", Integer)
+        Event.__table__.append_column(column)
+        try:
+            sql = _substance_predicate("e")
+            assert "e.q389_synthetic_probe_column IS NULL" in sql, (
+                "a newly-added column was NOT protected — deny-by-default has "
+                "regressed to an allowlist"
+            )
+        finally:
+            Event.__table__._columns.remove(column)
+
+        # And it is gone again, so the fixture cannot leak into a sibling test.
+        assert "q389_synthetic_probe_column" not in _substance_predicate("e")
+
+    def test_a_synthetic_JSONB_column_gets_an_emptiness_test_not_a_null_test(self):
+        """Type-direction must also be automatic.
+
+        A protected-but-wrongly-tested column is the mirror failure: ``{}`` would read
+        as substance and the rail would withhold the entire population while looking
+        careful (gotcha #43's shape).
+        """
+        from sqlalchemy import Column
+        from sqlalchemy.dialects.postgresql import JSONB
+
+        from app.models.models import Event
+        from app.tasks.prune_unanchored_duplicates import _substance_predicate
+
+        column = Column("q389_synthetic_jsonb", JSONB)
+        Event.__table__.append_column(column)
+        try:
+            sql = _substance_predicate("e")
+            assert "e.q389_synthetic_jsonb::text IN ('{}', '[]')" in sql
+        finally:
+            Event.__table__._columns.remove(column)
+
+    def test_the_R3_specimen_column_is_now_guarded(self):
+        """`opening_home_spread` — the exact column R3 deleted a real game through."""
+        from app.tasks.prune_unanchored_duplicates import _substance_predicate
+
+        assert "e.opening_home_spread IS NULL" in _substance_predicate("e")
+
+    def test_the_guard_covers_far_more_than_the_allowlist_ever_did(self):
+        """A blunt count, because the regression would be silent otherwise.
+
+        v3 enforced 12 of 55 columns. If a future edit drops this back toward that,
+        it is the allowlist returning under another name.
+        """
+        from app.models.models import Event
+        from app.utils.event_fk_inventory import parent_substance_columns
+
+        total = len(Event.__table__.columns)
+        guarded = len(parent_substance_columns())
+        assert guarded >= total - 15, (
+            f"only {guarded}/{total} columns are substance — the ignorable set has "
+            f"grown into an allowlist"
+        )
+
+    def test_the_ignorable_set_contains_no_column_that_records_a_game_fact(self):
+        """A denylist fails by growing. These names must never appear on it."""
+        from app.utils.event_fk_inventory import PARENT_IGNORABLE_COLUMNS
+
+        never_ignorable = {
+            "home_score", "away_score", "completed_at", "raw_ei",
+            "opening_home_probability", "opening_home_spread", "opening_over_under",
+            "closing_home_probability", "closing_over_under", "espn_win_prob_home",
+            "espn_id", "statpal_fixture_id", "box_score_data",
+            "win_probability_sources", "game_clock", "period",
+        }
+        leaked = sorted(never_ignorable & set(PARENT_IGNORABLE_COLUMNS))
+        assert leaked == [], f"game facts declared ignorable: {leaked}"
+
+
+class TestR3Finding2PseudoFkCandidatesComeFromTheSchema:
+    """The pseudo-FK dict was the same allowlist defect one table over."""
+
+    def test_every_schema_nominated_pseudo_fk_is_classified(self):
+        """The independent oracle for the polymorphic half.
+
+        The schema NOMINATES (an ``(<x>_id, <x>_type)`` column pair); a human
+        CLASSIFIES. An unclassified candidate is CI-red rather than an unguarded
+        delete — which is exactly how ``user_seen_markets`` and
+        ``discover_interactions`` went missing.
+        """
+        from app.utils.event_fk_inventory import (
+            EVENT_PSEUDO_FK_DERIVED,
+            EVENT_PSEUDO_FK_SUBSTANCE,
+            schema_nominated_pseudo_fk_tables,
+        )
+
+        classified = set(EVENT_PSEUDO_FK_SUBSTANCE) | set(EVENT_PSEUDO_FK_DERIVED)
+        unclassified = [t for t in schema_nominated_pseudo_fk_tables() if t not in classified]
+        assert unclassified == [], (
+            f"schema nominates polymorphic tables nobody has classified: {unclassified}"
+        )
+
+    @pytest.mark.parametrize(
+        "table", ["user_pins", "user_seen_markets", "discover_interactions"]
+    )
+    def test_the_three_R3_named_tables_reach_the_predicate(self, table):
+        from app.tasks.prune_unanchored_duplicates import _substance_predicate
+
+        assert table in _substance_predicate("e")
+
+    def test_a_derived_projection_is_not_treated_as_substance(self):
+        """`typeahead_index` is regenerable. Withholding rows for a cache entry would
+        be the mirror error — careful-looking and useless."""
+        from app.tasks.prune_unanchored_duplicates import _substance_predicate
+        from app.utils.event_fk_inventory import EVENT_PSEUDO_FK_DERIVED
+
+        assert "typeahead_index" in EVENT_PSEUDO_FK_DERIVED
+        assert "typeahead_index" not in _substance_predicate("e")
+
+
+class TestR3Finding3CensusMismatchIsANamedRefusal:
+    """P2: the guard existed and its promised operational behaviour did not."""
+
+    def test_census_mismatch_is_a_PruneRefused_so_the_route_returns_409(self):
+        """It inherited from ``Exception``, so it escaped the route as a 500 with
+        neither an explicit rollback nor a commit. The route already translates
+        ``PruneRefused`` into a named 409; subclassing is the whole fix."""
+        from app.tasks.prune_unanchored_duplicates import (
+            CensusDoesNotAccount,
+            PruneRefused,
+        )
+
+        assert issubclass(CensusDoesNotAccount, PruneRefused)
 
 
 class TestR2Finding2ThePinRefusesAtSelectionNotAtAnImpossibleWrite:
