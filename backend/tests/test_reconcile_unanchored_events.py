@@ -14,7 +14,8 @@ bound grows. The dispositions exist to make those two zeros different objects.
 import pytest
 
 from app.tasks.reconcile_unanchored_events import (
-    DISPOSITION_ANCHORED_NO_TWIN,
+    DISPOSITION_ANCHORED_NO_DUPLICATE,
+    DISPOSITION_ANCHORED_TWIN_UNSEEN,
     DISPOSITION_AWAITING,
     DISPOSITION_DRAINABLE,
     DISPOSITION_NO_CHANNEL,
@@ -81,10 +82,45 @@ class TestTheZeroIsNotOneZero:
         ])
         assert classify_row(row) == DISPOSITION_AWAITING
 
-    def test_an_arrived_id_with_no_twin_is_reconciled_not_drainable(self):
+    def test_an_arrived_id_with_no_duplicate_at_all_is_the_only_success(self):
         """Reconciliation succeeding and a duplicate existing are separate facts."""
-        row = _Row(espn_id="401816407", twin_count=0)
-        assert classify_row(row) == DISPOSITION_ANCHORED_NO_TWIN
+        row = _Row(espn_id="401816407", twin_count=0, shadow_twin_count=0)
+        assert classify_row(row) == DISPOSITION_ANCHORED_NO_DUPLICATE
+
+    def test_a_duplicate_the_id_key_CANNOT_SEE_is_not_a_success(self):
+        """Queue 387's split, and the whole reason for it.
+
+        ``twin_count`` is strictly id-keyed. A row whose duplicate shares no
+        provider id therefore reports ``twin_count = 0`` — and under the old
+        single bucket that rendered identically to "there is no duplicate".
+        It is the opposite: it is ruling 048's accepted cost, outstanding, in
+        the one shape this rail is constitutionally unable to drain.
+        """
+        row = _Row(espn_id="401816407", twin_count=0, shadow_twin_count=1)
+        assert classify_row(row) == DISPOSITION_ANCHORED_TWIN_UNSEEN
+        assert classify_row(row) != DISPOSITION_ANCHORED_NO_DUPLICATE
+
+    def test_a_visible_twin_still_wins_over_an_invisible_one(self):
+        """An id-keyed twin is DRAINABLE regardless of the shadow count — the
+        meter must never divert a row away from the arm that can actually act."""
+        row = _Row(espn_id="401816407", twin_count=1, shadow_twin_count=3)
+        assert classify_row(row) == DISPOSITION_DRAINABLE
+
+    def test_the_shadow_count_never_reaches_the_drain(self):
+        """The meter is a meter. Ruling 048 deleted name-and-time absorption;
+        counting it is safe only while nothing consumes the count to write."""
+        import inspect
+
+        import app.tasks.reconcile_unanchored_events as mod
+
+        src = inspect.getsource(mod.reconcile)
+        # `drainable` — the list the apply path iterates — is built from the
+        # id-keyed disposition alone. If shadow_twin_count ever appears in this
+        # function, someone has wired the meter into the rail.
+        assert "shadow_twin_count" not in src, (
+            "the shadow (name-and-time) count has reached reconcile() — that is "
+            "ruling 048's deleted absorption path being rebuilt via the meter"
+        )
 
     def test_an_arrived_id_that_another_row_shares_is_drainable(self):
         row = _Row(espn_id="401816407", twin_count=1)
