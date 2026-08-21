@@ -1,4 +1,4 @@
-# RULING 054 — A column default is not an observation, and removing one is a CORRECTION, declared and counted
+# RULING 058 — A column default is not an observation, and removing one is a CORRECTION, declared and counted
 
 date: 2026-08-14
 author: Fable

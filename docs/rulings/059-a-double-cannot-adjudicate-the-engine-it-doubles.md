@@ -1,4 +1,4 @@
-# RULING 055 — A double cannot adjudicate the engine it doubles
+# RULING 059 — A double cannot adjudicate the engine it doubles
 
 date: 2026-08-14
 author: Fable

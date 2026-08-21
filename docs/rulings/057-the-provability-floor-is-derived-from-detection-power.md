@@ -1,4 +1,4 @@
-# RULING 053 — A cell's provability floor is DERIVED from detection power, never chosen
+# RULING 057 — A cell's provability floor is DERIVED from detection power, never chosen
 
 date: 2026-08-14
 author: Fable
