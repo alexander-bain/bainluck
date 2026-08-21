@@ -2599,7 +2599,7 @@ def cohort_cell_census(self, page_size=1000, resume=True):
     )
 
 
-@celery_app.task(bind=True, soft_time_limit=1500, time_limit=1560,
+@celery_app.task(bind=True, soft_time_limit=1800, time_limit=1860,
                  name="app.tasks.calibration_published_twin")
 def calibration_published_twin(self, timeout_ms=None):
     """CAL-P080 (#2007): Gate 0's DB-direct twin, run where its budget fits.
@@ -2615,7 +2615,15 @@ def calibration_published_twin(self, timeout_ms=None):
     240 s and the admin ``db-query`` rail hardcodes 10 s, so the fold had no
     reachable home; here it does. Reads only, writes no market data (gotcha
     #21). Enrolled in ``task_verdict.ENFORCED_TASKS`` WITH a terminal, so a run
-    that measured nothing cannot report GREEN."""
+    that measured nothing cannot report GREEN.
+
+    **CAL-P084 (#2076): 1500 s -> 1800 s soft, on a measurement.** The fold was
+    cancelled at ``fold_duration_s 901.96`` against the then-ceiling of 900 s
+    (2026-08-21 16:55:05Z), as it had been at 241.18 against 240 s. The ceiling
+    moves to 1 350 000 ms and the soft limit has to clear it with room for the
+    two disclosure reads, the payload read and the durable write — a statement
+    allowed to outlive the soft limit is killed mid-flight and writes no
+    artifact, which is worse than a timeout because it leaves no diagnosis."""
     from app.tasks.calibration_published_twin_worker import (
         DEFAULT_TIMEOUT_MS,
         run_published_twin,
@@ -2626,6 +2634,31 @@ def calibration_published_twin(self, timeout_ms=None):
         "calibration_published_twin",
         run_published_twin(timeout_ms=budget),
     )
+
+
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=180,
+                 name="app.tasks.calibration_beat_gauge_sampler")
+def calibration_beat_gauge_sampler(self):
+    """CAL-P084 (#2007): bank each beat's fixed gauge set before it is overwritten.
+
+    ``durable_state_snapshots`` keeps ONE row per identity, so
+    ``calibration:main:phase_ledger`` is overwritten every beat and the beat
+    that promotes the bank is observable for about an hour. The bound's first
+    descent (2026-08-21 12:30:24Z) was captured only because a PREVIOUS window
+    had left ``scripts/sample_calibration_beats.py`` running in a terminal.
+    This task is that observer, made permanent.
+
+    Two small reads and at most one small write, so the time limits are tight
+    on purpose: anything that takes two minutes here has gone wrong, and a
+    ``soft_time_limit`` well inside the beat's quiet window means it can never
+    still be holding a connection when the producer starts at :15.
+
+    Enrolled in ``task_verdict.ENFORCED_TASKS`` WITH terminals — a run that
+    captured nothing, or that ran cleanly over a producer that has stopped,
+    must not read GREEN."""
+    from app.tasks.calibration_beat_gauge_sampler import run_beat_gauge_sample
+
+    return _tracked_run("calibration_beat_gauge_sampler", run_beat_gauge_sample())
 
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.compute_time_horizon_calibration")
@@ -3889,6 +3922,27 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.precompute_calibration_main",
         "schedule": crontab(minute=15),  # Every 1 hour at :15
         "options": {"queue": "heavy"},
+    },
+    "calibration-beat-gauge-sampler": {
+        # CAL-P084 (#2007): capture each beat's fixed gauge set before the
+        # single-row phase ledger is overwritten by the next one.
+        #
+        # TWICE per beat, and both times are chosen against known hazards
+        # rather than picked round:
+        #   :45 — the beat starts :15 and finishes ~:33-:37, so this is the
+        #         first safe read of the row it just wrote.
+        #   :05 — the redundant one. The safe DEPLOY window is :35-:05
+        #         (README "PRODUCER BEAT DISCIPLINE"), so a release can SIGTERM
+        #         the :45 sample; the ledger row survives until ~:35 next hour,
+        #         so :05 still catches that beat. One sample per beat would make
+        #         the instrument's coverage a function of the deploy schedule.
+        # Both sit OUTSIDE :15-:35, so this never contends with the producer —
+        # the contention CAL-P074 measured costing a cell its whole first pass.
+        # Duplicate reads dedupe on `generation`, so twice per beat still banks
+        # one row per beat.
+        "task": "app.tasks.calibration_beat_gauge_sampler",
+        "schedule": crontab(minute="5,45"),
+        "options": {"queue": "background"},
     },
     "compute-time-horizon-calibration": {
         "task": "app.tasks.compute_time_horizon_calibration",
