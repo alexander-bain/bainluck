@@ -59,17 +59,29 @@ class _Session:
 
     def __init__(
         self, *, fixtures=0, total_rows=0, keepers=0, surplus=None, deletable=0,
-        withheld_anchored=0, withheld_substantive=0,
+        anchored_copies=0, withheld_due_to_anchor=None, withheld_substantive=0,
         batch_ids=None, verify_overrides=None, delete_rowcount=None,
         keeper_ids=None, vanish=(), batch_ids_on_apply=None,
     ):
+        # Rail v3 (C-DELETE-RAIL-PRE-R2 finding 4): `withheld_anchored` counted anchored
+        # ROWS while `surplus` counted surplus rows, so the census could not be made to
+        # add up and nothing required it to. The unit is now consistent, and `census()`
+        # REFUSES when the three buckets do not sum to `surplus` — which polices this
+        # fake too: a fixture that injects an unaccountable census now raises instead of
+        # quietly proving the rail correct against arithmetic that cannot occur.
+        surplus_val = deletable if surplus is None else surplus
+        if withheld_due_to_anchor is None:
+            withheld_due_to_anchor = max(
+                surplus_val - deletable - withheld_substantive, 0
+            )
         self._census = {
             "fixtures": fixtures,
             "total_rows": total_rows,
             "keepers": keepers,
-            "surplus": deletable if surplus is None else surplus,
-            "withheld_anchored": withheld_anchored,
+            "surplus": surplus_val,
+            "anchored_copies": anchored_copies,
             "withheld_substantive": withheld_substantive,
+            "withheld_due_to_anchor": withheld_due_to_anchor,
             "deletable": deletable,
         }
         self._batch = list(batch_ids) if batch_ids is not None else []
@@ -487,7 +499,11 @@ class TestTheEmptyCase:
         out = await prune(session, sport_id=37871)
         assert out["terminal"] == "no_work"
         assert "50 surplus" in out["reason"]
-        assert "hold child data" in out["reason"]
+        # Rail v3: this asserted "hold child data", and that phrase was the finding-1
+        # error stated in the operator's own words — child rows were only ever one of
+        # the three ways a row holds something. The reason now names all three.
+        assert "hold an observation" in out["reason"]
+        assert "the row itself" in out["reason"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -859,3 +875,195 @@ class TestTheHostileSpecimens:
             await _apply(session, expected_min=2, expected_max=2)
 
         assert _deleted_event_ids(session) is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# C-DELETE-RAIL-PRE-R2 — the second BLOCK, and rail v3's answer to it
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# R2's verdict: "CHILDLESS IS NOT CARRIES NOTHING: THE RAIL STILL DELETES DISTINCT GAME
+# STATE STORED ON THE EVENT ROW, AND ITS USER-PIN WRITE IS IMPOSSIBLE UNDER THE DECLARED
+# SCHEMA."
+#
+# The v2 rail turned "no child rows" into "holds no observation". Those are different
+# claims, and the gap between them is a whole event row — the system's own record of
+# game-existence, result and line. Ruling 048 from the destructive side: the name/time
+# fixture key cannot prove two rows are one game, so emptiness cannot be read as
+# duplicate identity.
+
+
+class TestR2Finding1ParentLocalSubstance:
+    """A childless, anchorless row can still be the only record of a distinct game."""
+
+    def test_the_predicate_reads_the_rows_own_columns_not_only_children(self):
+        """Codex's specimen was a completed 5–3 game with opening 0.57 / closing 0.64
+        and zero child rows. Every column it used must be in the predicate."""
+        from app.tasks.prune_unanchored_duplicates import _substance_predicate
+
+        sql = _substance_predicate("e")
+        for col in ("home_score", "away_score", "completed_at",
+                    "opening_home_probability", "closing_home_probability"):
+            assert f"e.{col} IS NULL" in sql, (
+                f"{col} is parent-local game state and the predicate ignores it — "
+                f"this is exactly the row codex deleted"
+            )
+
+    def test_status_is_weighed_even_though_it_is_never_null(self):
+        """`events.status` is NOT NULL with a 'scheduled' default, so an IS NULL test
+        would silently never fire. A column that cannot be absent needs a value test."""
+        from app.tasks.prune_unanchored_duplicates import _substance_predicate
+
+        assert "e.status IN ('scheduled')" in _substance_predicate("e")
+
+    def test_empty_jsonb_is_not_mistaken_for_substance(self):
+        """The other direction (gotcha #43). `{}` is what an initialized-but-never-
+        written blob looks like; reading it as substance would withhold the whole
+        population and the rail would do nothing while looking careful."""
+        from app.tasks.prune_unanchored_duplicates import _substance_predicate
+
+        sql = _substance_predicate("e")
+        assert "e.box_score_data IS NULL OR e.box_score_data::text IN ('{}', '[]')" in sql
+        assert ("e.win_probability_sources IS NULL OR "
+                "e.win_probability_sources::text IN ('{}', '[]')") in sql
+
+    def test_every_declared_parent_substance_column_reaches_the_sql(self):
+        """The list and the predicate must not drift — the same failure mode R4 fixed
+        for the hand-maintained FK tuple."""
+        from app.tasks.prune_unanchored_duplicates import _substance_predicate
+        from app.utils.event_fk_inventory import PARENT_SUBSTANCE_COLUMNS
+
+        sql = _substance_predicate("e")
+        missing = [c for c in PARENT_SUBSTANCE_COLUMNS if f"e.{c} IS NULL" not in sql]
+        assert missing == [], f"declared but not enforced: {missing}"
+
+
+class TestR2Finding2ThePinRefusesAtSelectionNotAtAnImpossibleWrite:
+    """The pinned candidate must fail at the REAL refusal point.
+
+    v2 emitted `UPDATE user_pins SET target_id = NULL`, which cannot succeed —
+    `target_id` is `nullable=False` in both the model and the migration. On a real
+    database that raises IntegrityError and the event DELETE is never reached; all 48
+    committed tests were green only because the fake session accepts every UPDATE.
+
+    So there were two defects and the NULL was the smaller one: **a pin is substance.**
+    A row somebody pinned does not "carry nothing". Rail v3 withholds it at the
+    predicate, where a dry run can show it, instead of discovering it at the final
+    write, where nothing can.
+    """
+
+    def test_a_pin_is_classified_as_substance_not_as_a_nullable_pointer(self):
+        from app.utils import event_fk_inventory as inv
+
+        assert "user_pins" in inv.EVENT_PSEUDO_FK_SUBSTANCE
+        assert not hasattr(inv, "EVENT_POINTER_TABLES"), (
+            "the POINTER classification is the defect — deleting the name is what "
+            "stops it being reintroduced by a well-meaning patch"
+        )
+
+    def test_a_pinned_row_is_excluded_by_the_predicate(self):
+        from app.tasks.prune_unanchored_duplicates import _substance_predicate
+
+        sql = _substance_predicate("e")
+        assert "FROM user_pins" in sql
+        assert "pin_type = 'event'" in sql, (
+            "user_pins is polymorphic — an unscoped test would withhold rows pinned "
+            "for some other entity type entirely"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_apply_path_issues_no_pointer_update_at_all(self):
+        """The executable half. Not 'the UPDATE is correct now' — there is no UPDATE."""
+        session = _Session(fixtures=4, total_rows=9, keepers=4, surplus=5,
+                           deletable=5, batch_ids=[11, 12], keeper_ids=[90])
+        out = await prune(
+            session, sport_id=37871, apply=True,
+            expected_min=1, expected_max=99,
+            plan_hash=_plan(session, cap=DEFAULT_MAX_DELETE),
+        )
+        assert out["terminal"] == "complete"
+        updates = [sql for sql, _ in session.writes if sql.strip().startswith("UPDATE")]
+        assert updates == [], (
+            f"the rail still issues a pointer write: {updates}. On a real "
+            f"constraint-bearing database this is an IntegrityError, not a null-out"
+        )
+
+    def test_the_response_no_longer_advertises_nullable_pointer_tables(self):
+        """The operator-facing half: the response called these 'pointer_tables', i.e.
+        'things I will null'. It must not describe an operation the rail cannot do."""
+        from app.tasks.prune_unanchored_duplicates import prune as _p
+        import inspect
+
+        src = inspect.getsource(_p)
+        assert '"pointer_tables"' not in src
+        assert '"pseudo_fk_substance_tables"' in src
+
+
+class TestR2Finding3TheCensusMustAccount:
+    """The operating census must state its exact withheld/deletable populations.
+
+    v2 reported `withheld_anchored` as a count of anchored ROWS while `surplus` counted
+    surplus rows — different units in the same table. One anchored keeper with ten empty
+    siblings reported `withheld_anchored: 1` against ten undeletable rows, leaving nine
+    unexplained. Nothing caught it because nothing was ever required to add up.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_three_buckets_sum_to_surplus(self):
+        session = _Session(fixtures=10, total_rows=30, keepers=10, surplus=20,
+                           deletable=12, withheld_substantive=5,
+                           withheld_due_to_anchor=3)
+        counts = await census(session, sport_id=37871, linked_copies=1)
+
+        assert counts["surplus"] == 20
+        assert counts["surplus_accounted"] == 20
+        assert (counts["withheld_substantive"]
+                + counts["withheld_due_to_anchor"]
+                + counts["deletable"]) == counts["surplus"]
+
+    @pytest.mark.asyncio
+    async def test_a_census_that_does_not_account_REFUSES(self):
+        """Codex's ten-sibling specimen: surplus 10, deletable 0, and only '1' named.
+        Nine rows unexplained must be a refusal, not a footnote — an operator
+        reconciling why the live population shrank has no other signal."""
+        from app.tasks.prune_unanchored_duplicates import CensusDoesNotAccount
+
+        session = _Session(fixtures=1, total_rows=11, keepers=1, surplus=10,
+                           deletable=0, withheld_substantive=0,
+                           withheld_due_to_anchor=1)   # <- the 9-row hole
+        with pytest.raises(CensusDoesNotAccount) as exc:
+            await census(session, sport_id=37871, linked_copies=1)
+        assert "surplus=10" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_the_withheld_population_is_counted_in_ROWS_not_fixtures(self):
+        """The unit bug itself. Ten surplus rows withheld by one anchored copy must
+        report ten, not one."""
+        session = _Session(fixtures=1, total_rows=11, keepers=1, surplus=10,
+                           deletable=0, withheld_substantive=0,
+                           withheld_due_to_anchor=10, anchored_copies=1)
+        counts = await census(session, sport_id=37871, linked_copies=1)
+
+        assert counts["withheld_due_to_anchor"] == 10, "rows, not fixtures"
+        assert counts["anchored_copies"] == 1, "the fixture-unit figure is kept, named"
+
+    @pytest.mark.asyncio
+    async def test_the_no_work_reason_names_all_three_ways_a_row_is_held(self):
+        session = _Session(fixtures=40, total_rows=90, keepers=40, surplus=50,
+                           deletable=0, withheld_substantive=50, batch_ids=[])
+        out = await prune(session, sport_id=37871)
+
+        assert out["terminal"] == "no_work"
+        assert "child row, pin, or a non-empty column on the row itself" in out["reason"]
+
+    @pytest.mark.asyncio
+    async def test_the_response_states_the_parent_columns_it_weighed(self):
+        """R2 finding 3 is 'state the populations', and a population defined by a
+        predicate is not stated until the predicate's terms are visible."""
+        from app.utils.event_fk_inventory import PARENT_SUBSTANCE_COLUMNS
+
+        session = _Session(fixtures=0, total_rows=0, keepers=0, surplus=0,
+                           deletable=0, batch_ids=[])
+        out = await prune(session, sport_id=37871)
+
+        assert out["parent_substance_columns"] == list(PARENT_SUBSTANCE_COLUMNS)
+        assert "home_score" in out["parent_substance_columns"]
