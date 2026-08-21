@@ -86,14 +86,75 @@ leave exactly one wrong candidate in the pool. **A tie-break picks the best
 candidate; it does not make the best candidate correct.** So the gate runs on the
 winner too, and on the one-candidate path, and on the missing-date path.
 
-### The residual, stated rather than hidden
+### The residual queue 385 wrote down — and FF1 closed (queue 387)
 
-Within the bound the gate cannot distinguish a doubleheader's sibling when the
-correct row is *absent* from the pool — the two halves are ~5.5h apart and both
-authorize. Closest-wins resolves it whenever both are present, which is the
-common case. Tightening the bound would trade that residual for refusing real
-postponements; :data:`MAX_SAME_GAME_SECONDS` is deliberately the same number the
-merge invariant uses so there is one bound in the codebase, not two.
+385 stated its own residual honestly: *"within the bound the gate cannot
+distinguish a doubleheader's sibling when the correct row is absent — the two
+halves are ~5.5h apart and both authorize."* Codex (``C-2058-REVIEW``, P1)
+executed that sentence against the real live path and got
+``matched_id='espn-game-2', method='name'``, with the writer compiling
+``espn_id='espn-game-2'`` and adding it to ``claimed``.
+
+The defect underneath the number: **the gate read a fact about what we happened
+to fetch as a fact about which game this is.** Absence of the correct scoreboard
+half converted the wrong half into an authorized identity. No threshold can fix
+that, because a lone row 4h out and a lone row 5.5h out are the same epistemic
+situation — which is why five prior certification rounds each moved a threshold
+and each produced a new specimen class.
+
+So the rule is now about **evidence**, not distance:
+
+* **Uncorroborated, name-only** selection is authoritative only inside
+  :data:`MAX_SAME_GAME_SECONDS`, which is the doubleheader boundary — the gap
+  below which no two same-teams games can both exist.
+* **Corroborated** selection reaches out to
+  :data:`MAX_CORROBORATED_SAME_GAME_SECONDS` (the merge window). Corroboration
+  is one of exactly two things, both of them positive evidence:
+
+  1. a **provider anchor** — the candidate's ``espn_id`` is the id our row
+     already holds, so identity comes from ESPN, not from a clock;
+  2. a **present-and-rejected sibling** — another same-teams row was in the
+     pool and lost the distance comparison. The pool therefore contained the
+     slate's same-teams rows and the winner is not "the only row we fetched".
+
+  Codex's line, kept verbatim because it is the whole rule: *the correct half
+  being present and rejected is real evidence; the correct half being absent is
+  not.*
+
+* Everything else **refuses**, and says which gate refused (gotcha #53).
+
+### The self-contradiction this resolves
+
+``prediction_market_matching._ticker_date_far_from_event`` — an independent
+guard on an independent rail — calls anything beyond **±3h** of a known start
+time a DIFFERENT game, in its own words "(separates doubleheaders ~5h apart)".
+That ±3h is measured, not chosen: a 1,000-row systematic production sample
+(2026-08-12) put 744 linked MLB markets at exactly 0h once the ticker's Eastern
+clock was read correctly, and the ±3h rule reproduced the independently
+measured 24.4% wrong-game rate almost exactly.
+
+385 set the espn_id gate to the 6h **merge** window instead, so the repository
+held two answers to one question. They are resolved here in favour of the
+conservative one, because they are not actually the same question:
+
+* **merge** asks *may these two rows be absorbed into one?* — and ruling 048
+  already requires an id anchor for that, so its window is never the sole
+  evidence;
+* **identity** asks *may this scoreboard row BECOME this event's espn_id?* — a
+  wrong answer is neither visible nor reversible (#1980 measured ±15/±30 id
+  offsets sitting against a perfectly correct ``commence_time``).
+
+Nothing about the merge invariant changed: ``MAX_ABSORPTION_SEPARATION_SECONDS``
+is untouched and still reachable here, as
+:data:`MAX_CORROBORATED_SAME_GAME_SECONDS`, once there is evidence beside it.
+
+### The declared cost
+
+Fail-closed means some real games stop getting an ``espn_id`` from a name match
+— ESPN "TBD" placeholder times, long rain delays, a genuinely lone late row.
+That cost is bounded and reversible: the id arrives on the next sync once ESPN
+posts a real time, or via arm 1 once anything anchors it, and a missing stamp is
+visible. A wrong stamp is neither (gotcha #32's standing trade).
 
 A tie (two candidates equidistant) keeps the earlier one, so the function stays
 deterministic for doubleheaders, which are a real same-day same-teams pair and
@@ -108,19 +169,44 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 from app.utils.event_merge_invariant import MAX_ABSORPTION_SEPARATION_SECONDS
 from app.utils.name_normalization import names_match
 
-#: How far an ESPN scoreboard listing may sit from our ``commence_time`` and
-#: still be believed to be **the same game**.
+#: The **merge** window, reachable here only WITH corroboration.
 #:
-#: Same value, and deliberately the same value, as
-#: ``event_merge_invariant.MAX_ABSORPTION_SEPARATION_SECONDS``: both answer the
-#: one question "are these two records the same real-world game?", and two
-#: independently-tuned answers to one question is how the codebase grows a
-#: contradiction. The merge module's own note measures the tightest true-series
-#: pair in 60 days at **42.0h**, so 6h clears a genuine series by a wide margin
-#: while refusing codex's 24.0h specimen.
+#: ``event_merge_invariant.MAX_ABSORPTION_SEPARATION_SECONDS`` answers "may
+#: these two records be absorbed into one?" — a question ruling 048 already
+#: requires an id anchor to answer, so this number is never that rail's sole
+#: evidence either. Queue 385 imported it as the *identity* bound as well, on
+#: the reasoning that one question deserves one number. FF1's correction is
+#: that they are two questions (see the module docstring), and only the
+#: corroborated arm of the identity question may borrow the merge answer.
+MAX_CORROBORATED_SAME_GAME_SECONDS = MAX_ABSORPTION_SEPARATION_SECONDS
+
+#: The **doubleheader boundary**: how far a *name-only, uncorroborated* ESPN
+#: scoreboard listing may sit from our ``commence_time`` and still be believed
+#: to be the same game.
+#:
+#: This is the repository's own already-measured number, not a new one.
+#: ``prediction_market_matching._ticker_date_far_from_event`` treats ±3h around
+#: a known start time as "same game" and anything beyond as a DIFFERENT game,
+#: explicitly "(separates doubleheaders ~5h apart)". Its docstring block records
+#: the measurement: a 1,000-row systematic production sample (2026-08-12) put
+#: 744 linked MLB markets at exactly 0h once the ticker's Eastern clock was read
+#: correctly, and the ±3h rule reproduced the independently measured 24.4%
+#: wrong-game rate almost exactly.
+#:
+#: **Deliberate divergence, stated rather than silent:** this is now SMALLER
+#: than ``MAX_ABSORPTION_SEPARATION_SECONDS``, which FF1 did not touch. Two
+#: rails, two questions, and identity is the stricter of the two because a wrong
+#: ``espn_id`` is neither visible nor reversible. If you are here to reconcile
+#: them again, reconcile the merge rail DOWN, never this one up.
 #:
 #: Lowering it is safe. Raising it re-opens the manufacturer.
-MAX_SAME_GAME_SECONDS = MAX_ABSORPTION_SEPARATION_SECONDS
+NAME_ONLY_SAME_GAME_SECONDS = 3 * 60 * 60
+
+#: Back-compatible name for the bound that applies when nothing corroborates the
+#: match — which is the default, and the only bound the five sibling rails hit
+#: today. Kept as the exported name because every caller and test that says
+#: "the same-game bound" means the uncorroborated one.
+MAX_SAME_GAME_SECONDS = NAME_ONLY_SAME_GAME_SECONDS
 
 
 def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
@@ -140,13 +226,29 @@ def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
 def authorize_espn_pair(
     espn_date: Optional[datetime],
     commence_time: Optional[datetime],
+    *,
+    corroboration: Optional[str] = None,
 ) -> tuple[bool, str]:
     """May a candidate starting at ``espn_date`` claim to be our game?
 
+    ``corroboration`` is a short token naming *positive evidence of identity*
+    that exists independently of the clock — ``"provider-anchor"`` or
+    ``"slate-sibling-rejected"`` (see :func:`select_authorized_espn_candidate`).
+    Passing one widens the bound from the doubleheader boundary to the merge
+    window; passing ``None`` — the default, and what every caller with no such
+    evidence must pass — keeps the tight bound.
+
+    It is deliberately a *token*, not a bool: a caller that cannot name its
+    evidence does not have any, and a log line reading ``ok-corroborated`` with
+    no source would be exactly the kind of unfalsifiable green gotcha #53 is
+    about.
+
     Returns ``(authorized, reason)``. The reason is a short stable token so a
-    caller can log *which* gate refused — gotcha #53: "nothing matched on names"
-    and "matched on names but failed the same-game check" are different facts,
-    and a rail that reports them identically cannot be debugged.
+    caller can log *which* gate refused — "nothing matched on names", "matched
+    on names but is too far to be this game", and "matched on names, close
+    enough to be a doubleheader sibling, and nothing else says otherwise" are
+    three different facts, and a rail that reports them identically cannot be
+    debugged.
     """
     if commence_time is None:
         return (False, "no-commence-time")
@@ -154,9 +256,17 @@ def authorize_espn_pair(
         return (False, "candidate-has-no-date")
 
     gap = abs((_as_utc(espn_date) - _as_utc(commence_time)).total_seconds())
-    if gap > MAX_SAME_GAME_SECONDS:
+    if gap > MAX_CORROBORATED_SAME_GAME_SECONDS:
         return (False, f"separated-{gap / 3600:.1f}h")
-    return (True, "ok")
+    if gap <= NAME_ONLY_SAME_GAME_SECONDS:
+        return (True, "ok")
+    if corroboration:
+        return (True, f"ok-corroborated:{corroboration}")
+    # Inside the merge window but outside the doubleheader boundary, with no
+    # evidence beside the clock. This is codex's specimen: the row may be this
+    # game, or the other half of a doubleheader whose correct half simply is not
+    # in the pool, and nothing here can tell those apart. Refuse.
+    return (False, f"unverifiable-{gap / 3600:.1f}h-sibling-possible")
 
 
 def select_authorized_espn_candidate(
@@ -165,6 +275,7 @@ def select_authorized_espn_candidate(
     *,
     is_name_match: Callable[[Any], bool],
     exclude_ids: Optional[Iterable[str]] = None,
+    anchor_espn_id: Optional[str] = None,
 ) -> tuple[Optional[Any], str]:
     """The shared primitive every ``espn_id`` writer selects through.
 
@@ -173,6 +284,11 @@ def select_authorized_espn_candidate(
     comes in as a predicate and only the *authority* logic lives here. That is
     the point: five rails disagreeing about names is a quality problem, five
     rails disagreeing about whether time authorizes a stamp is #1980.
+
+    ``anchor_espn_id`` is the id our own row already holds, if any. A candidate
+    carrying that same id is anchored by ESPN's own identity rather than by a
+    name and a clock, so it corroborates (see the module docstring). Pass it
+    whenever the caller has it; passing nothing simply means no anchor.
 
     Returns ``(candidate_or_None, reason)``.
     """
@@ -198,10 +314,27 @@ def select_authorized_espn_candidate(
     # `min` is stable, so an exact tie (a doubleheader) keeps the earlier one.
     best = min(matches, key=_distance)
 
-    authorized, reason = authorize_espn_pair(getattr(best, "date", None), commence_time)
+    # ── corroboration: positive evidence of identity, not a wider clock ──────
+    corroboration: Optional[str] = None
+    best_id = getattr(best, "espn_id", None)
+    if anchor_espn_id and best_id and str(best_id) == str(anchor_espn_id):
+        # ESPN's own id, already on our row. Identity is not being derived from
+        # the name at all — the name match merely located a row we already own.
+        corroboration = "provider-anchor"
+    elif len(matches) > 1:
+        # A same-teams sibling was PRESENT in the pool and lost the distance
+        # comparison. That is a fact about ESPN's slate, not about our fetch:
+        # the pool did contain the other same-teams rows, so the winner is not
+        # "the only row we happened to have". Codex's own distinction — the
+        # correct half being present and rejected is evidence; absent is not.
+        corroboration = "slate-sibling-rejected"
+
+    authorized, reason = authorize_espn_pair(
+        getattr(best, "date", None), commence_time, corroboration=corroboration,
+    )
     if not authorized:
         return (None, reason)
-    return (best, "ok")
+    return (best, reason)
 
 
 def _display(team: Any) -> str:
@@ -214,6 +347,8 @@ def select_espn_candidate(
     home_team: str,
     away_team: str,
     commence_time: datetime,
+    *,
+    anchor_espn_id: Optional[str] = None,
 ) -> tuple[Optional[datetime], Optional[str]]:
     """Return ``(espn_commence_time, espn_id)`` for the best-matching game.
 
@@ -222,10 +357,11 @@ def select_espn_candidate(
     nothing. Callers wanting to know *which* of those two happened should use
     :func:`select_authorized_espn_candidate` and read its reason.
 
-    See the module docstring for why time is the gate and not just the
-    tie-breaker. ``candidates`` is the two-day pool; ``commence_time`` is the
-    Odds API listing's start time, which is the only thing that can tell two
-    games of the same series apart.
+    See the module docstring for why time is an authorization gate rather than a
+    tie-breaker, and why the uncorroborated bound is the doubleheader boundary.
+    ``candidates`` is the two-day pool; ``commence_time`` is the Odds API
+    listing's start time, which is the only thing that can tell two games of the
+    same series apart.
     """
     best, _reason = select_authorized_espn_candidate(
         candidates,
@@ -234,6 +370,7 @@ def select_espn_candidate(
             names_match(home_team, _display(ee.home_team))
             and names_match(away_team, _display(ee.away_team))
         ),
+        anchor_espn_id=anchor_espn_id,
     )
     if best is None:
         return (None, None)

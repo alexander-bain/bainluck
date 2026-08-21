@@ -975,6 +975,9 @@ async def sync_espn_live_events(
                 names_match(home_names, ee.home_team.display_name or ee.home_team.name or "")
                 and names_match(away_names, ee.away_team.display_name or ee.away_team.name or "")
             ),
+            # FF1/#2058: this rail OVERWRITES an existing espn_id, so the id it
+            # already holds is the one piece of identity evidence in the room.
+            anchor_espn_id=getattr(event, "espn_id", None),
         )
         if espn_event is not None:
             match_method = "name_match"
@@ -996,6 +999,7 @@ async def sync_espn_live_events(
 
             espn_event, _llm_reason = select_authorized_espn_candidate(
                 espn_events, event.commence_time, is_name_match=_llm_match,
+                anchor_espn_id=getattr(event, "espn_id", None),
             )
             if espn_event is not None:
                 match_method = "llm"
@@ -1406,6 +1410,7 @@ async def backfill_espn_ids(
                     espn_events,
                     event.commence_time,
                     is_name_match=lambda c: _orientation(c) is not None,
+                    anchor_espn_id=getattr(event, "espn_id", None),
                 )
                 if ee is None:
                     if _reason != "no-name-match":

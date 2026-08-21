@@ -153,14 +153,25 @@ class TestSingleMatchIsUnchanged:
     def test_et_boundary_game_still_resolves_from_the_previous_day_bucket(self):
         """The case the widening exists for: only ONE candidate, a day 'off'.
 
-        A 10pm ET game sits in ESPN's previous-UTC-date bucket. With a single
-        name match the selector must still return it, however far away it looks
-        — that is the original bug the two-day pool fixed.
+        A 10pm ET game sits in ESPN's PREVIOUS-ET-date bucket, so a single-day
+        lookup misses it entirely. With a single name match from the widened
+        pool the selector must still return it — that is the original bug the
+        two-day pool fixed, and FF1 must not un-fix it.
+
+        **FF1 (queue 387) corrected this fixture.** It used to place the lone
+        candidate 4h from ``commence_time`` and assert it resolved "however far
+        away it looks", which is the sentence codex's P1 executed: a lone
+        name-only row hours away is the other half of a doubleheader exactly as
+        readily as it is this game, and nothing in the pool can say which. The
+        ET boundary is about which *bucket* the row is filed under, not about
+        the timestamp disagreeing — a 10:05pm ET game carries the same UTC
+        instant in either bucket. So the fixture now models the real shape: the
+        correct row, reached only because the pool spans two ET days.
         """
-        commence = datetime(2026, 8, 19, 2, 5, tzinfo=UTC)
+        commence = datetime(2026, 8, 19, 2, 5, tzinfo=UTC)  # Aug 18, 10:05pm ET
         only = _Game(
             401816500, "Los Angeles Angels", "Texas Rangers",
-            commence - timedelta(hours=4),
+            commence,  # filed under the 20260818 bucket; same UTC instant
         )
 
         date, espn_id = select_espn_candidate(
@@ -168,6 +179,24 @@ class TestSingleMatchIsUnchanged:
         )
 
         assert (date, espn_id) == (only.date, only.espn_id)
+
+    def test_a_lone_candidate_hours_away_is_no_longer_believed(self):
+        """The other side of the correction above — see #2058 P1 / FF1.
+
+        Kept here, next to the ET-boundary case it used to be confused with, so
+        the distinction is legible: the widened pool is allowed to reach a row
+        in the neighbouring bucket, it is not allowed to adopt a row whose clock
+        says it might be a different game.
+        """
+        commence = datetime(2026, 8, 19, 2, 5, tzinfo=UTC)
+        lone = _Game(
+            401816501, "Los Angeles Angels", "Texas Rangers",
+            commence - timedelta(hours=4),
+        )
+
+        assert select_espn_candidate(
+            [lone], "Los Angeles Angels", "Texas Rangers", commence,
+        ) == (None, None)
 
     def test_no_name_match_returns_nothing(self):
         commence = datetime(2026, 8, 19, 2, 5, tzinfo=UTC)

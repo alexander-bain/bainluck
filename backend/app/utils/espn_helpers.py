@@ -277,6 +277,14 @@ def match_event_to_espn(event, espn_events, espn_by_id, claimed_espn_ids, espn_n
             and espn_names_match(away_names, ee.away_team)
         ),
         exclude_ids=claimed_espn_ids,
+        # FF1/#2058: an id we already hold is ESPN's own identity evidence.
+        # Passed for the callers that need it, but note it cannot fire from
+        # ``espn_sync.process_sport_events``: that caller builds ``espn_by_id``
+        # from this same pool (so arm 1 short-circuits) AND pre-seeds every held
+        # id into ``claimed_espn_ids`` (so the row is excluded anyway). The live
+        # path therefore always runs on the TIGHT, uncorroborated bound, which
+        # is the conservative outcome and is intended.
+        anchor_espn_id=getattr(event, "espn_id", None),
     )
     if matched is not None:
         return matched, "name"
@@ -523,9 +531,18 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     # a hand-picked 24.0h sibling STRAIGHT into this writer. A writer that will
     # compile any id it is handed is a manufacturer regardless of who calls it,
     # so the gate runs again at the point of the write.
+    #
+    # FF1/#2058: this check has NO pool, so it can never see a rejected sibling
+    # — it is therefore the uncorroborated arm by construction, which is what
+    # makes it real defence rather than a copy of the selector's arithmetic. The
+    # one thing it can corroborate is an id-anchored match: ``match_method ==
+    # "espn_id"`` means ESPN's own id already tied this row to this event, so
+    # the clock is not what is being trusted.
     from app.utils.espn_candidate_selection import authorize_espn_pair
     _id_authorized, _id_reason = authorize_espn_pair(
-        getattr(ee, "date", None), getattr(event, "commence_time", None)
+        getattr(ee, "date", None),
+        getattr(event, "commence_time", None),
+        corroboration=("provider-anchor" if match_method == "espn_id" else None),
     )
     if ee.espn_id and ee.espn_id not in claimed_espn_ids and _id_authorized:
         _update_vals["espn_id"] = ee.espn_id
@@ -1237,6 +1254,7 @@ async def backfill_missing_scores(session, stats):
                         _matched, _reason = _select_authorized_espn_candidate(
                             espn_events,
                             ev.commence_time,
+                            anchor_espn_id=getattr(ev, "espn_id", None),
                             is_name_match=lambda ee: (
                                 names_match(
                                     home_names,

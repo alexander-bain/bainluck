@@ -173,11 +173,23 @@ class TestSelectorFailsClosed:
         )
 
     def test_the_et_boundary_case_the_two_day_pool_exists_for_still_resolves(self):
-        """Do not un-fix the bug the widening was for: 4h off is the SAME game."""
-        commence = datetime(2026, 8, 19, 2, 5, tzinfo=UTC)
+        """Do not un-fix the bug the widening was for.
+
+        **AMENDED by FF1 (queue 387, #2058 P1) — the ONLY edit FF1 made to this
+        file.** It used to read "4h off is the SAME game" and assert that a lone
+        4h candidate resolved. That is the assertion codex's P1 executed: a lone
+        name-only row hours out is the other half of a doubleheader exactly as
+        readily as it is this game, and no threshold separates the two without
+        being tuned to a specimen. The ET boundary is about which *bucket* ESPN
+        files a row under, not about the timestamp disagreeing — the same
+        10:05pm ET game carries the same UTC instant in either bucket — so the
+        fixture now models that. The refusal side lives in
+        ``tests/test_espn_lone_sibling_ff1.py``.
+        """
+        commence = datetime(2026, 8, 19, 2, 5, tzinfo=UTC)  # Aug 18, 10:05pm ET
         only = _Game(
             401816500, "Los Angeles Angels", "Texas Rangers",
-            commence - timedelta(hours=4),
+            commence,  # reached only because the pool spans the prev ET bucket
         )
 
         assert select_espn_candidate(
