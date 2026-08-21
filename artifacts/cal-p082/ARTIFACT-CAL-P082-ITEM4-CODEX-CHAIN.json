@@ -1,0 +1,46 @@
+{
+  "queue": "CAL-P082",
+  "item": 4,
+  "issues": [
+    1145,
+    1912,
+    2059
+  ],
+  "captured_at": "2026-08-20T22:27:47.109493+00:00",
+  "verdict": "BOTH RE-CERTS RUNNABLE. The chain is free, both are armed, and neither can now delete the other.",
+  "chain_state": {
+    "CODEX-QUEUE.md": {
+      "queue_id": "C-2058-REVIEW",
+      "status": "done",
+      "verdict": "BLOCK (PR #2058) \u2014 appended to CODEX-REPORT.md",
+      "meaning": "lane4 step 4 applies: a `done` queue means CODEX-NEXT.md gets promoted next."
+    },
+    "CODEX-NEXT.md": {
+      "queue_id": "C-APPLY-PRE-WHICHPRICE-R2",
+      "status": "approved",
+      "runs": "FIRST",
+      "gate_state": "RELEASED \u2014 the amended ruling 103 (commit 810360e1) is on master at ec636bae / v3881, so the queue's verbatim-quote workaround is now belt-and-braces rather than the only path.",
+      "releases": "precondition 1 of ruling 103's three-way conjunction \u2014 the 1.77 apply."
+    },
+    "CODEX-PENDING-C-APPLY-PRE-1912-R3-R2.md": {
+      "queue_id": "C-APPLY-PRE-1912-R3-R2",
+      "status": "approved",
+      "runs": "SECOND",
+      "condition_1_fixes_on_master": "SATISFIED \u2014 dd92b2d0 is on origin/master, carried by merge 2f2d7a11 in ec636bae.",
+      "condition_2_next_slot_free": "NOT satisfied, correctly \u2014 CODEX-NEXT.md holds an approved, unrun queue.",
+      "releases": "the #1912 attended apply to Alex \u2014 the cert chain."
+    }
+  },
+  "THE_INPUT_DEFECT_THIS_WINDOW_FOUND_AND_FIXED": {
+    "defect": "The lane4 chain has DEPTH ONE. `codex-skill-lane4.md` step 4 moves exactly CODEX-NEXT.md over CODEX-QUEUE.md, so CODEX-NEXT.md holds one queue and writing to it deletes what was there. `CODEX-PENDING-C-APPLY-PRE-1912-R3-R2.md` told its reader to 'promote this file over CODEX-NEXT.md' on the merge alone \u2014 which would have DELETED the unrun C-APPLY-PRE-WHICHPRICE-R2, the queue whose GREEN releases the 1.77 apply.",
+    "why_it_was_not_hypothetical": "Both re-certs armed on the SAME merge (810360e1 and dd92b2d0 are both on program/calibration-78), and that merge landed at 22:2xZ while codex was mid-run on C-2058-REVIEW. The collision window was real and open.",
+    "fix": "Promotion is now TWO conditions \u2014 fixes on master AND the next slot free \u2014 with the 'approved queue present' case spelled out as DO NOT OVERWRITE. A successor pointer was added to CODEX-NEXT.md so the ordering survives whichever file is read first.",
+    "PROVED_IN_PRACTICE_WITHIN_THE_HOUR": "INT-102 read the corrected note at ~15:2x PT, wrote 'CONDITION 2 IS NOT SATISFIED, AND THAT IS THE EXPECTED SEQUENCE \u2014 DO NOT OVERWRITE CODEX-NEXT.md' into the pending file, and left CODEX-NEXT.md untouched. The fix was load-bearing on its first reader."
+  },
+  "SECOND_CONTRADICTION_CORRECTED": "The live CODEX-QUEUE.md's conditional-successors list said WHICHPRICE-R2 'arms after the amended-premise fix merges', while CODEX-NEXT.md said 'fireable NOW'. A reader following the live queue would have deferred a queue that was ready. CODEX-QUEUE.md was `status: running` and owned by an active codex session, so it was NOT edited \u2014 the correction went into CODEX-NEXT.md, which is what the next session reads at promotion. The contradiction is now moot either way: the premise IS on master.",
+  "also_corrected": "The directive's premise \u2014 'WHICHPRICE-R2 against the amended premise now on master' \u2014 was not true when written. The amended ruling 103 rode 810360e1 on the unmerged -78 and became true at INT-102, 22:2xZ.",
+  "OUT_OF_THIS_LANE": "Firing lane4 is Alex's or Fable's. This window's job was the inputs, and they are in place: queue `done`, next queue approved and ungated, successor armed and safely behind it.",
+  "codex_next_head": "# Codex Queue C-APPLY-PRE-WHICHPRICE-R2 \u2014 certify the hindsight exclusion against the AMENDED premise\n\n> ## \u2705 PREMISE IS NOW ON MASTER \u2014 INT-102, 2026-08-20 15:2x PT\n>\n> `program/calibration-78` merged and deployed: master **`ec636bae`**, CI `32423398133` 9/9,\n> Heroku **v3881**, `/api/health commit=ec636bae`. The amended-premise measurement this queue\n> certifies is live. **This queue is RUNNABLE NOW and runs FIRST** \u2014 `C-APPLY-PRE-1912-R3-R2`\n> (at `CODEX-PENDING-C-APPLY-PRE-1912-R3-R2.md`) armed on the same merge and waits behind it.\n> The Integrator left this file untouched apart from this notice.\n\n",
+  "codex_pending_head": "# Codex Queue C-APPLY-PRE-1912-R3-R2 \u2014 re-cert the attended apply after R3's three BLOCKs were fixed\n\n> ## \u2705 ARMED BY INT-102 \u2014 2026-08-20 15:2x PT. CONDITION 1 IS NOW SATISFIED.\n>\n> `program/calibration-78` is **MERGED AND DEPLOYED**: commit **`dd92b2d0`** is on `origin/master`,\n> carried by merge `2f2d7a11` in master **`ec636bae`**, CI `32423398133` 9/9 green, Heroku **v3881**,\n> `/api/health` `commit=ec636bae`. Verify yourself:\n> `git -C ~/bainluck log origin/master --oneline | grep dd92b2d0`\n>\n> **CONDITION 2 IS NOT SATISFIED, AND THAT IS THE EXPECTED SEQUENCE \u2014 DO NOT OVERWRITE `CODEX-NEXT.md`.**\n> It currently holds `C-APPLY-PRE-WHICHPRICE-R2`, `status: approved`, **unrun**. Per this file's own\n> two-condition rule that is the \"1 non-empty, 2 shows an approved queue\" case: **run WHICHPRICE-R2\n> first, then promote this file.** Both re-certs armed on the same merge; order between them is\n> arbitrary, losing one is not.\n>\n> The Integrator did not touch `CODEX-NEXT.md`.\n\n\n",
+  "codex_queue_head": "# Codex Queue C-2058-REVIEW \u2014 adversarial review of PR #2058\n\nstatus: done\nowner: codex 2026-08-20\nqueue_id: \"C-2058-REVIEW\"\n"
+}

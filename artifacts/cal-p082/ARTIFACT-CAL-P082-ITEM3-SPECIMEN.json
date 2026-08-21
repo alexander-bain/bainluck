@@ -1,0 +1,322 @@
+{
+  "queue": "CAL-P082",
+  "item": 3,
+  "issues": [
+    2052,
+    2007
+  ],
+  "captured_at": "2026-08-20T22:26:17.940492+00:00",
+  "verdict": "HALF ANSWERED \u2014 the instrument FIRED and labelled it; the terminal it should now carry could not be exercised by the deploy that shipped it.",
+  "deploy": {
+    "release": "v3881",
+    "commit": "ec636bae",
+    "merge": "INT-102 program/calibration-78",
+    "ci": "32423398133 9/9",
+    "created_at": "2026-08-20T22:20:56+00:00"
+  },
+  "specimen": {
+    "task": "precompute_calibration_main",
+    "beat_started_at": "2026-08-20T22:15:00.135654+00:00",
+    "torn_down_at": "2026-08-20T22:21:31.377962+00:00",
+    "survived_ms": 391220,
+    "release_age_s_at_teardown": 35,
+    "seconds_into_the_beat": 391
+  },
+  "what_the_record_now_says": {
+    "last_failure_type": "SystemExit",
+    "last_verdict": "thrown",
+    "last_verdict_reason": "SystemExit",
+    "last_error": "-241",
+    "consecutive_failures": "1",
+    "failures_24h": 4,
+    "incompletes_24h": 0,
+    "last_incomplete_at": "2026-08-19T16:35:45.206007+00:00"
+  },
+  "ANSWERED": "last_failure_type reads \"SystemExit\". Before this teardown it was ABSENT from the Redis hash (pre-merge baseline banked at ARTIFACT-CAL-P082-ITEM3-BASELINE.json, verified against hgetall so the absence was real and not a projection). The field went live at v3877 on 19:35:24Z and this is its FIRST specimen. The class that took a manual heroku-releases cross-reference twice is now IN the record: SystemExit(-241) does not need forensics to be named again.",
+  "NOT_YET_ANSWERED": "It was recorded as a FAILURE, not as `interrupted`. consecutive_failures went 0 -> 1 and failures_24h 3 -> 4; incompletes_24h is still 0. a2fcc54b's teardown handler \u2014 the one that routes SystemExit to record_task_incomplete and writes release_age_s \u2014 shipped IN v3881, and the worker torn down at 22:21:31Z was running v3880. STRUCTURAL, NOT A DEFECT: the dying worker is ALWAYS the pre-release one, so this handler can never be exercised by the deploy that introduces it. The same shape explains why CAL-P081 read last_failure_type as null 20 minutes after v3877 shipped it. The `interrupted` terminal is testable on the NEXT deploy that lands between :15 and :35.",
+  "attribution_computed_by_hand_ONE_LAST_TIME": {
+    "note": "release_age_s is what a2fcc54b will write automatically from HEROKU_RELEASE_CREATED_AT. Recorded here so the first automatic reading has something to be checked against.",
+    "instances": [
+      {
+        "failure": "2026-08-20T16:16:18Z",
+        "release": "v3873 086ce799 16:16:02Z",
+        "release_age_s": 16
+      },
+      {
+        "failure": "2026-08-20T19:35:48Z",
+        "release": "v3877 b86ffdd4 19:35:24Z",
+        "release_age_s": 24
+      },
+      {
+        "failure": "2026-08-20T22:21:31.377962+00:00",
+        "release": "v3881 ec636bae 22:20:56Z",
+        "release_age_s": 35
+      }
+    ]
+  },
+  "COST_MEASURED_ON_THIS_ONE": "The beat was killed 391 s in and STILL BANKED 5 UNITS (rebuild_units_banked 20 -> 24, ledger generation 1787264491343, terminal `cancelled`). Per-unit checkpointing holds under a teardown. But the beat published nothing (outcome.published false, completed_required []), so the hour's remaining ~14 minutes of unit loop are gone. That is the #2052 cost, priced: one deploy landing inside the beat window costs roughly half a beat of re-stage.",
+  "task_metrics_full": {
+    "task": "precompute_calibration_main",
+    "successes_24h": 2,
+    "failures_24h": 4,
+    "incompletes_24h": 0,
+    "starts_24h": 12,
+    "hard_kills_24h": 5,
+    "recent_durations_n": 50,
+    "recent_durations_window_s": 176534.0,
+    "recent_durations_saturated": true,
+    "successes_window_s": 7738.0,
+    "failures_window_s": 22199.0,
+    "incompletes_window_s": null,
+    "starts_window_s": 40278.0,
+    "last_verdict": "thrown",
+    "last_duration_ms": "391220",
+    "last_verdict_reason": "SystemExit",
+    "last_result_summary": {
+      "buckets": 1935,
+      "outcomes": 857010,
+      "generated_at": "2026-08-20T21:33:07.220071+00:00",
+      "payload_bytes": 477220,
+      "compute_ms": 1086875,
+      "serialize_ms": 8,
+      "publish_ms": 149,
+      "publish": {
+        "last_good": "ok",
+        "main": "ok",
+        "durable": "ok",
+        "durable_generation": 1787261587220
+      },
+      "gate": {
+        "ok": true,
+        "first_publish": false,
+        "version_bumped": false,
+        "codes": [],
+        "fingerprint": "68ae112e562883b4",
+        "candidate_population": 857010,
+        "published_population": 856996,
+        "candidate_version": "q268",
+        "published_version": "q268",
+        "baseline_source": "provided",
+        "baseline_probe": null,
+        "observations": [],
+        "observation_details": []
+      },
+      "publication": {
+        "success": true,
+        "errors": [],
+        "durable": "ok",
+        "durable_generation": 1787261587220
+      },
+      "status": "ok",
+      "phase_ledger": {
+        "terminal": "complete",
+        "health": "green",
+        "plan": "measured",
+        "infeasible_phases": [],
+        "checkpoint_action": "fresh",
+        "checkpoint_write": "ok",
+        "ledger_write": "ok",
+        "carried": [],
+        "banked": {},
+        "stages": {
+          "baseline_read": 19,
+          "durable_publish": 126,
+          "publish_gate": 3,
+          "read:closing": 80,
+          "read:date_range": 13955,
+          "read:events": 2677,
+          "read:futures_generation": 45832,
+          "read:futures_unit": 917982,
+          "read:heuristic_excluded": 6796,
+          "read:soccer_2way": 424,
+          "read:spreads": 435,
+          "read:total_markets": 6600,
+          "read:totals": 556,
+          "read:truth_census": 64417,
+          "read:void": 10814,
+          "redis_accelerate": 11,
+          "redis_client": 0,
+          "rss:at:baseline_read": 233,
+          "rss:at:durable_publish": 233,
+          "rss:at:publish_gate": 233,
+          "rss:at:read:closing": 233,
+          "rss:at:read:date_range": 233,
+          "rss:at:read:events": 233,
+          "rss:at:read:futures_generation": 484,
+          "rss:at:read:futures_unit": 562,
+          "rss:at:read:heuristic_excluded": 233,
+          "rss:at:read:soccer_2way": 233,
+          "rss:at:read:spreads": 233,
+          "rss:at:read:total_markets": 233,
+          "rss:at:read:totals": 233,
+          "rss:at:read:truth_census": 233,
+          "rss:at:read:void": 233,
+          "rss:at:redis_accelerate": 233,
+          "rss:at:redis_client": 233,
+          "rss:at:serialize": 233,
+          "rss:at:staged:finalize": 562,
+          "rss:peak_mb": 562,
+          "serialize": 7,
+          "staged:beats_basis:completed": 1,
+          "staged:beats_to_publish": 12,
+          "staged:cursor_reason:resumable": 0,
+          "staged:cursor_resume": 0,
+          "staged:finalize": 25,
+          "staged:served_at": 1787250149,
+          "staged:served_drift_uncheckable": 0,
+          "staged:served_drifted": 128,
+          "staged:served_units": 128,
+          "staged:unit_ms_mean": 131140,
+          "staged:unit_ms_mean_completed": 131140,
+          "staged:unit_ms_worst": 341668,
+          "staged:units_banked": 20,
+          "staged:units_completed_this_beat": 7,
+          "staged:units_done": 20,
+          "staged:units_drift_checkable": 13,
+          "staged:units_drift_uncheckable": 7,
+          "staged:units_drifted": 5,
+          "staged:units_partition": 128,
+          "staged:units_planned": 128,
+          "staged:units_this_beat": 7,
+          "staged:window_left_ms": 400151,
+          "staged:window_stop:unit_too_large": 0
+        },
+        "unmeasured_overhead_ms": 236,
+        "elapsed_ms": 1087069,
+        "phases": {
+          "futures": {
+            "status": "complete",
+            "duration_ms": 979773,
+            "budget_ms": 1223032
+          },
+          "sports": {
+            "status": "complete",
+            "duration_ms": 3706,
+            "budget_ms": 6777
+          },
+          "diagnostics": {
+            "status": "complete",
+            "duration_ms": 103114,
+            "budget_ms": 149714
+          },
+          "aggregate": {
+            "status": "complete",
+            "duration_ms": 52,
+            "budget_ms": 98
+          },
+          "serialize_gate_publish": {
+            "status": "complete",
+            "duration_ms": 188,
+            "budget_ms": 379
+          }
+        },
+        "contract": {
+          "plan": {
+            "soft_limit_ms": 1500000,
+            "hard_limit_ms": 1560000,
+            "cleanup_margin_ms": 120000,
+            "phases": [
+              {
+                "name": "futures",
+                "required": true,
+                "measured_input": true,
+                "budget_ms": 1223032,
+                "statement_timeout_ms": 1193032,
+                "duration_ms": 979773,
+                "status": "complete",
+                "committed": true,
+                "checkpoint_write": "not_attempted",
+                "checkpoint_advanced": false
+              },
+              {
+                "name": "sports",
+                "required": true,
+                "measured_input": true,
+                "budget_ms": 6777,
+                "statement_timeout_ms": 6100,
+                "duration_ms": 3706,
+                "status": "complete",
+                "committed": true,
+                "checkpoint_write": "not_attempted",
+                "checkpoint_advanced": false
+              },
+              {
+                "name": "diagnostics",
+                "required": true,
+                "measured_input": true,
+                "budget_ms": 149714,
+                "statement_timeout_ms": 134743,
+                "duration_ms": 103114,
+                "status": "complete",
+                "committed": true,
+                "checkpoint_write": "not_attempted",
+                "checkpoint_advanced": false
+              },
+              {
+                "name": "aggregate",
+                "required": true,
+                "measured_input": true,
+                "budget_ms": 98,
+                "statement_timeout_ms": 89,
+                "duration_ms": 52,
+                "status": "complete",
+                "committed": true,
+                "checkpoint_write": "not_attempted",
+                "checkpoint_advanced": false
+              },
+              {
+                "name": "serialize_gate_publish",
+                "required": true,
+                "measured_input": true,
+                "budget_ms": 379,
+                "statement_timeout_ms": 342,
+                "duration_ms": 188,
+                "status": "complete",
+                "committed": true,
+                "checkpoint_write": "not_attempted",
+                "checkpoint_advanced": false
+              }
+            ]
+          },
+          "run": {
+            "terminal": "complete",
+            "elapsed_ms": 1087069,
+            "unmeasured_overhead_ms": 236,
+            "published": true,
+            "durable": "ok",
+            "volatile": "ok",
+            "artifact_generation": 1787261587220,
+            "population_version": "q268",
+            "owner": "18f5355c-3212-4927-aade-698136031181:10",
+            "gate": "pass",
+            "health": "green",
+            "previous_preserved": true
+          },
+          "checkpoint": {
+            "version": "q268",
+            "owner": "18f5355c-3212-4927-aade-698136031181:10",
+            "advanced": false,
+            "action": "fresh",
+            "oldest_tail_required": false,
+            "oldest_tail_reached": true
+          },
+          "health": {
+            "artifact_fresh": true,
+            "artifact_generation": 1787261587220,
+            "verdict": "green",
+            "invocation_success_only": false
+          }
+        }
+      }
+    },
+    "consecutive_failures": "1",
+    "last_failure_at": "2026-08-20T22:21:31.377962+00:00",
+    "last_error": "-241",
+    "last_incomplete_at": "2026-08-19T16:35:45.206007+00:00",
+    "last_failure_type": "SystemExit",
+    "last_success_at": "2026-08-20T21:33:07.605641+00:00",
+    "last_started_at": "2026-08-20T22:15:00.135654+00:00",
+    "hard_kills_refuted": "counter-window artifact: last_failure_at=2026-08-20T22:21:31.377962+00:00 post-dates last_started_at=2026-08-20T22:15:00.135654+00:00, so the last run DID reach an end handler; the zero terminal counter is an independently-expiring 24h window on a ~24h cadence, not a kill",
+    "health": "healthy"
+  }
+}
