@@ -430,20 +430,34 @@ def test_the_pass_only_measurement_graded_the_live_beat_unsafe_at_the_old_ttl():
     assert grade.is_shippable is False
 
 
-def test_the_swapped_defaults_now_grade_the_live_beat_safe():
-    """And the same call on the DEFAULTS is what shipping the TTL bought.
+def test_the_defaults_grade_the_live_beat_MARGINAL_and_the_SAFE_result_is_WITHDRAWN():
+    """🔴 **RETRACTION, LAT-P079. This test used to assert SAFE and the claim
+    behind it was `test_the_swapped_defaults_now_grade_the_live_beat_safe`:
+    "the grader's default answer for the live 10 s beat is SAFE for the first
+    time in this program's history".**
 
-    With `MEASURED_WALL_*` swapped to the pass-only triple and the TTL at 65, the
-    grader's default answer for the live 10 s beat is SAFE for the first time in
-    this program's history. This is the positive half of the halt's discharge,
-    and it is asserted through the defaults deliberately — if either constant
-    drifts back, this goes red without anyone having to remember why.
+    That result was true of the constants and false of production. It rested on
+    `MEASURED_WALL_MAX_S = 53.920` (n=17), and the two reads that followed
+    measured **61.282 s** (n=26) and **66.365 s** (n=32). LAT-P079 substituted
+    the honest number and the verdict goes back to MARGINAL:
+    P(10) = 10 * ceil(66.365/10) = **70 s** against a **65 s** TTL.
+
+    The old test's own safeguard — *"if either constant drifts back, this goes
+    red without anyone having to remember why"* — did fire. It just fired for
+    the opposite reason to the one it anticipated: the constant did not drift
+    back, it caught up.
+
+    **What is NOT retracted:** the TTL 45 -> 65 raise itself. It was ratified on
+    a stated MARGINAL grade (see `test_the_ring_wall_grades_the_ratified_ttl_marginal`
+    below, which said so at the time) and it still bought real headroom. What is
+    withdrawn is the stronger "SAFE for the first time" reading that a later
+    reader would have taken from the defaults.
     """
     grade = grade_beat_interval(10.0)
 
-    assert grade.verdict == BeatVerdict.SAFE
-    assert grade.period_at_worst_s == 60.0
-    assert grade.is_shippable is True
+    assert grade.verdict == BeatVerdict.MARGINAL
+    assert grade.period_at_worst_s == 70.0
+    assert grade.is_shippable is False
 
 
 def test_the_ring_wall_grades_the_ratified_ttl_marginal():

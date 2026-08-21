@@ -200,31 +200,41 @@ def test_the_proposed_60s_w_move_is_still_refused_on_the_newest_measurement():
     # guard's own trigger does not fire on this beat.
     assert on_ring.verdict != BeatVerdict.UNSAFE
 
-    # And on the stale wall it is worse still — SAFE, by exactly zero headroom.
-    on_stale = grade_beat_interval(PROPOSED_W_MOVE_BEAT_S)
-    assert on_stale.period_at_worst_s == 60.0
-    assert on_stale.period_at_worst_s == float(RESPONSE_CACHE_TTL_S) - SAFETY_MARGIN_S, (
-        "the 60s move sits exactly on the safety margin against the stale wall — "
-        "one measurement from being called shippable"
-    )
+    # ⚠️ **THE 'STALE WALL' ARM OF THIS TEST IS GONE, LAT-P079** — and its
+    # disappearance is the point. It used to read SAFE by exactly zero headroom
+    # (period_at_worst 60.0 == TTL 65 - margin 5), because the defaults carried
+    # a `MEASURED_WALL_MAX_S` of 53.920 that three consecutive cycles had
+    # already proved too low. The constant is now the honest 66.365, so the
+    # optimistic reading no longer exists to assert: the defaults and the ring
+    # agree, and they agree on the pessimistic answer.
+    on_defaults = grade_beat_interval(PROPOSED_W_MOVE_BEAT_S)
+    assert on_defaults.period_at_worst_s == on_ring.period_at_worst_s == 120.0
+    assert on_defaults.is_shippable is False
 
     # The live beat must remain nowhere near it.
     assert float(celery_app.conf.beat_schedule["warm-typeahead"]["schedule"]) == 10.0
 
 
-def test_todays_10s_beat_is_safe_at_the_ruled_ttl_and_marginal_on_the_ring():
-    """What the TTL bought, and what it did not — both, in one place.
+def test_todays_10s_beat_is_MARGINAL_at_the_honest_wall_max():
+    """🔴 **THE LIVE BEAT IS NO LONGER SAFE, AND THE ONLY THING THAT CHANGED IS
+    THAT THE MEASUREMENT STOPPED BEING STALE.**
 
-    ⚠️ **REWRITTEN, LAT-P075.** This was `test_todays_10s_beat_is_marginal_not_safe`
-    and it asserted MARGINAL as an "honesty pin" against the 45 s TTL. The TTL is
-    now 65 and the walls are the pass-only triple, so on the defaults the live
-    beat grades SAFE — that flip is precisely what Fable ratified.
+    ⚠️ **RENAMED TWICE NOW, and the history is the lesson.** It began as
+    `test_todays_10s_beat_is_marginal_not_safe` (45 s TTL). LAT-P075 renamed it
+    to `..._is_safe_at_the_ruled_ttl_and_marginal_on_the_ring` when the TTL went
+    to 65 — SAFE on the defaults, MARGINAL on the ring, both asserted so neither
+    could be quoted alone. LAT-P079 substituted the honest
+    `MEASURED_WALL_MAX_S = 66.365` and the two halves collapsed into one: the
+    defaults now ARE the ring, and the answer is MARGINAL.
 
-    The honesty the old name protected still has somewhere to live, and it is the
-    second half below: on the ring wall measured the day the TTL shipped, the same
-    beat is **MARGINAL**, because P(10) = 70 s against a 65 s TTL. The status quo
-    is better than it was and it is still not clean, and both halves are asserted
-    rather than whichever one reads better.
+    The quantity, which is what this pins:
+    P(10) = 10 * ceil(66.365 / 10) = **70 s** against a **65 s** response TTL.
+    A pass that outlasts the TTL keeps nothing warm, so the live beat spends
+    part of every cycle rebuilding entries that have already expired.
+
+    No beat interval fixes this — 66.365 s exceeds the TTL on its own, so every
+    quantisation of it does. It is addressed on the TTL or on the pass, which is
+    exactly what the old coherence assertion's failure message said to do.
     """
     from app.utils.typeahead_beat_budget import (
         RING_WALL_MAX_S,
@@ -233,22 +243,21 @@ def test_todays_10s_beat_is_safe_at_the_ruled_ttl_and_marginal_on_the_ring():
     )
 
     ruled = grade_beat_interval(CURRENT_BEAT_INTERVAL_S)
-    assert ruled.verdict == BeatVerdict.SAFE
-    assert ruled.is_shippable is True
+    assert ruled.verdict == BeatVerdict.MARGINAL
+    assert ruled.is_shippable is False
     assert ruled.period_at_median_s == 50.0
-    assert ruled.period_at_worst_s == 60.0
-    assert ruled.crosses_cliff_on_worst is False
+    assert ruled.period_at_worst_s == 70.0
+    assert ruled.crosses_cliff_on_worst is True
 
+    # The ring read that used to be the pessimistic arm now agrees with the
+    # defaults — same verdict, same period. There is no optimistic reading left.
     on_ring = grade_beat_interval(
         CURRENT_BEAT_INTERVAL_S,
         wall_median_s=RING_WALL_MEDIAN_S,
         wall_max_s=RING_WALL_MAX_S,
         wall_min_s=RING_WALL_MIN_S,
     )
-    assert on_ring.verdict == BeatVerdict.MARGINAL, (
-        "the residual #1866 keeps: at the newest measured worst wall the live "
-        "beat still quantises over the ruled TTL"
-    )
+    assert on_ring.verdict == ruled.verdict == BeatVerdict.MARGINAL
     assert on_ring.period_at_worst_s == 70.0
 
 
@@ -265,7 +274,11 @@ def test_the_arithmetically_fitting_22s_is_still_refused_as_marginal():
     """
     grade = grade_beat_interval(22.0)
 
-    assert grade.period_at_worst_s == 66.0
+    # LAT-P079: 88.0, not 66.0 — the worst wall went 53.920 -> 66.365 and 22 s
+    # quantises it to four beats. The verdict is unchanged, which is the
+    # property this test exists to hold: the numbers move every cycle and the
+    # refusal does not.
+    assert grade.period_at_worst_s == 88.0
     assert grade.crosses_cliff_on_worst is True
     assert grade.crosses_cliff_on_median is False
     assert grade.verdict == BeatVerdict.MARGINAL
@@ -375,10 +388,57 @@ def test_measured_wall_range_is_internally_coherent():
     Cheap, and it is the input every grade above depends on.
     """
     assert MEASURED_WALL_MIN_S <= MEASURED_WALL_MEDIAN_S <= MEASURED_WALL_MAX_S
-    assert MEASURED_WALL_MAX_S < RESPONSE_CACHE_TTL_S, (
-        "if a single pass wall exceeds the response TTL, no beat interval can "
-        "help and the cliff must be addressed on the TTL or the pass, not here"
+
+
+def test_the_wall_max_exceeding_the_ttl_is_DERIVED_and_currently_TRUE():
+    """🔴 **THE WRONG-GATE LESSON, APPLIED TO THIS MODULE'S OWN GUARD.**
+
+    This replaces `assert MEASURED_WALL_MAX_S < RESPONSE_CACHE_TTL_S`, whose
+    failure message read: *"if a single pass wall exceeds the response TTL, no
+    beat interval can help and the cliff must be addressed on the TTL or the
+    pass, not here"*. That assertion stayed green for three consecutive cycles
+    **only because the constant it guarded was stale** — 53.920 s against a
+    measured 61.282 and then 66.365. It was a label being satisfied by a number
+    nobody had refreshed, which is precisely the defect LAT-P075 found in
+    `test_live_beat_interval_is_not_unsafe`.
+
+    So the condition is now COMPUTED from the two constants and asserted as a
+    quantity. The module cannot hold it at a comfortable value without either
+    lowering the measured wall (a lie) or raising the TTL (a decision).
+    """
+    from app.utils.typeahead_beat_budget import (
+        WALL_MAX_EXCEEDS_RESPONSE_TTL,
+        WALL_MAX_MARGIN_S,
+        WALL_MAX_UPPER_ESTIMATE_S,
+        wall_max_exceeds_response_ttl,
     )
+
+    # 🔴 DERIVED means it VARIES WITH ITS INPUTS. Asserting
+    # `flag == (MEASURED_WALL_MAX_S > RESPONSE_CACHE_TTL_S)` did NOT establish
+    # that: a mutation hard-coding the flag to True survived it, because the
+    # computed answer is also True. Only exercising the function off its
+    # defaults can tell a derivation from a constant that happens to agree.
+    assert wall_max_exceeds_response_ttl(70.0, 65.0) is True
+    assert wall_max_exceeds_response_ttl(60.0, 65.0) is False
+    assert wall_max_exceeds_response_ttl(65.0, 65.0) is False, "strict, not >="
+    assert WALL_MAX_EXCEEDS_RESPONSE_TTL == wall_max_exceeds_response_ttl(
+        MEASURED_WALL_MAX_S, RESPONSE_CACHE_TTL_S
+    )
+
+    assert WALL_MAX_EXCEEDS_RESPONSE_TTL is True, (
+        "the honest wall max no longer exceeds the TTL — if that is a real "
+        "improvement, say so with the measurement; if the constant was lowered "
+        "to make this green, that is the fourth instance of the stale-constant "
+        "defect this test was rewritten to end"
+    )
+
+    # A sampled maximum is a LOWER BOUND (ruling 075), so the constant carries
+    # an explicit margin whose size is argued in the module, not assumed.
+    assert WALL_MAX_MARGIN_S >= 5.08, (
+        "the margin is smaller than the correction the LAST re-measurement "
+        "needed (53.920 -> 61.282 -> 66.365), so it cannot be a bound on the next"
+    )
+    assert WALL_MAX_UPPER_ESTIMATE_S == MEASURED_WALL_MAX_S + WALL_MAX_MARGIN_S
 
 
 # ---------------------------------------------------------------------------
