@@ -216,6 +216,63 @@ def rendered_card_percents(probabilities: list[Any] | None) -> list[int | None]:
     return [leader, 100 - leader]
 
 
+# ── THE SAME QUESTION, IN FIXED POSITIONS INSTEAD OF SORTED ORDER (UX-P114) ──────
+#
+# `rendered_card_percents` above assumes SERVED ORDER, where index 0 is the headline
+# because both labeling serializers sort descending before calling it. The Discover
+# EVENT card does not sort: it prints the away side on the left and the home side on
+# the right, always, because those positions carry meaning a probability ranking
+# would destroy.
+#
+# It is nonetheless the most exact complement pair in the product. `routes/feed.py`
+# derives the away side as `round(1.0 - current_home_prob, 6)`, so the two numbers on
+# a game card sum to one BY CONSTRUCTION — and the double-rounding defect therefore
+# fires on a fixed, provable condition: whenever `home * 100` lands exactly on `.5`,
+# both sides round up and the card prints 101. It can never print 99. (Let
+# `home*100 = n + f`. `f == 0.5` gives `(n+1) + (100-n)`; every other `f` gives 100.)
+#
+# ** MEASURED ON PRODUCTION 2026-08-21 ** over the 414 scheduled/live events inside
+# the feed's own window, with the blend computed by `compute_aggregate_probability`
+# itself rather than approximated: **34 (8.2%) render a sum of 101**, all 101, none
+# 99. Among them Green Bay Packers @ Denver Broncos (33 + 68), Toronto FC @ Inter
+# Miami CF (50 + 51), Cremonese @ Empoli (41 + 60), and eight UFC bouts. The blend is
+# a weighted MEDIAN, so it frequently IS one source's exact reading — and a Kalshi or
+# sportsbook half-cent quote lands the median on the `.5` grid, which is the same
+# systematic cause #2060 measured on the labeling card.
+#
+# ** THE DERIVED POINT GOES ON THE UNDERDOG. ** A duel has no served order to inherit
+# a headline from, so the rule that replaces it is the one `rendered_card_percents`
+# was written to express: the number a reader anchors on survives untouched, and the
+# side nobody is quoting absorbs the derivation. Positional order (always "away
+# first") would instead move the favourite's number half the time, which is the one
+# number on a game card that anybody checks.
+
+
+def rendered_duel_percents(
+    away_probability: Any, home_probability: Any
+) -> list[int | None]:
+    """The two whole percents a game card prints, returned as ``[away, home]``.
+
+    The positional wrapper over `rendered_card_percents` — same band, same
+    normalize-round-derive, no second constant. The favourite is handed in at index
+    0 so it is the value that survives, and the result is mapped back into away/home
+    order for the caller.
+
+    Anything that is not a complement pair (a missing side, a pair that does not sum
+    into the band) is rendered independently, exactly as before.
+    """
+    pair = [away_probability, home_probability]
+    if not is_complement_pair(pair):
+        return [rendered_percent(away_probability), rendered_percent(home_probability)]
+
+    away = float(away_probability)
+    home = float(home_probability)
+    if away >= home:
+        return rendered_card_percents([away, home])
+    home_pct, away_pct = rendered_card_percents([home, away])
+    return [away_pct, home_pct]
+
+
 def card_fingerprint(
     *,
     title: str | None,

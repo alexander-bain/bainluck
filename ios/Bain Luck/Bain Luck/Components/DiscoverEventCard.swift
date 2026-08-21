@@ -192,9 +192,21 @@ struct NativeEventDiscoverCard: View {
                 if !isDone,
                    let homeProbability = event.currentOdds?.homeProbability,
                    let awayProbability = event.currentOdds?.awayProbability {
+                    // UX-P114 — these two are two sides of ONE question (the feed
+                    // derives away as `1 - home`), so they are decided together or
+                    // they sum to 101. Measured 2026-08-21: 34 of 414 live/upcoming
+                    // events printed 101 here, always 101 and never 99. The server
+                    // decides it; `renderedDuelPercents` is the fallback for a
+                    // cached or pre-deploy payload, driven by the same contract
+                    // table so it cannot answer differently.
+                    let duelFallback = renderedDuelPercents(
+                        away: awayProbability, home: homeProbability
+                    )
+                    let awayPct = event.currentOdds?.awayRenderedPercent ?? duelFallback[0]
+                    let homePct = event.currentOdds?.homeRenderedPercent ?? duelFallback[1]
                     VStack(spacing: 6) {
                         HStack {
-                            Text(formatProbability(awayProbability))
+                            Text(formatProbability(awayProbability, renderedPercent: awayPct))
                                 .font(.title3.weight(.black).monospacedDigit())
                                 .foregroundStyle(awayColor)
                             Spacer()
@@ -202,7 +214,7 @@ struct NativeEventDiscoverCard: View {
                                 .font(.caption2.weight(.medium))
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Text(formatProbability(homeProbability))
+                            Text(formatProbability(homeProbability, renderedPercent: homePct))
                                 .font(.title3.weight(.black).monospacedDigit())
                                 .foregroundStyle(homeColor)
                         }

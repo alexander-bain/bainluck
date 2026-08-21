@@ -117,14 +117,26 @@ struct MenuBarView: View {
                       (event.status == "live" || event.status == "scheduled"),
                       let homeProbability = event.currentOdds?.homeProbability ?? event.openingOdds?.homeProbability else { return nil }
                 let awayProbability = 1.0 - homeProbability
+                // UX-P114 — the menu bar prints both sides, and derives away from
+                // home right above, so it had the same 101. Prefer the server's
+                // card-level percents; `renderedDuelPercents` covers a cached or
+                // pre-deploy payload, and the openingOdds fallback in the guard
+                // above, which the server does not decide percents for.
+                let duelFallback = renderedDuelPercents(
+                    away: awayProbability, home: homeProbability
+                )
+                let homePct = event.currentOdds?.homeRenderedPercent
+                    ?? duelFallback[1] ?? Int((homeProbability * 100).rounded())
+                let awayPct = event.currentOdds?.awayRenderedPercent
+                    ?? duelFallback[0] ?? Int((awayProbability * 100).rounded())
                 return MenuBarGame(
                     id: event.id,
                     homeAbbrev: event.homeTeamData?.abbreviation ?? String(event.homeTeam.split(separator: " ").last ?? ""),
                     awayAbbrev: event.awayTeamData?.abbreviation ?? String(event.awayTeam.split(separator: " ").last ?? ""),
                     homeScore: event.homeScore,
                     awayScore: event.awayScore,
-                    homeProb: Int((homeProbability * 100).rounded()),
-                    awayProb: Int((awayProbability * 100).rounded()),
+                    homeProb: homePct,
+                    awayProb: awayPct,
                     period: [event.espn?.period, event.espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " "),
                     sport: event.sportName ?? event.sport ?? ""
                 )

@@ -18,6 +18,15 @@ export interface CurrentOdds {
   away_moneyline?: number | null;
   home_probability: number | null; // 0.0-1.0
   away_probability: number | null; // 0.0-1.0
+  // UX-P114: the whole percents the card PRINTS for the two probabilities above.
+  // A game card draws both sides at once and the feed derives away as `1 - home`,
+  // so rounding them independently printed 101 whenever the blend landed on a
+  // half-percent (34 of 414 live/upcoming events, 2026-08-21). The decision is made
+  // once on the server because four surfaces draw this strip; optional here, and
+  // every consumer must fall back to `renderedDuelPercents`, because a cached or
+  // pre-deploy payload will not carry it. See contracts/rendered_percent.json.
+  home_rendered_percent?: number | null;
+  away_rendered_percent?: number | null;
   spread: number | null;
   home_spread?: number | null;
   over_under: number | null;
@@ -859,6 +868,16 @@ export interface FeedEventData {
   current_odds?: {
     home_probability: number | null;
     away_probability: number | null;
+    // UX-P114: the whole percents the card PRINTS for the two probabilities
+    // above. The feed derives away as `1 - home`, so a game card draws an exact
+    // complement pair — and rounding the two independently printed 101 whenever
+    // the blend landed on a half-percent (34 of 414 live/upcoming events,
+    // 2026-08-21). Decided once on the server because four surfaces draw this
+    // strip. OPTIONAL, and every consumer falls back to `renderedDuelPercents`:
+    // a Discover response is cached, so "the backend deployed it" is not "this
+    // payload carries it".
+    home_rendered_percent?: number | null;
+    away_rendered_percent?: number | null;
     bookmaker_count?: number;
     source?: string;  // "aggregate" when computed from non-sportsbook sources
   };

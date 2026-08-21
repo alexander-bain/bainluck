@@ -12,6 +12,7 @@ import type { CardActionCallbacks } from "./types";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { probabilityAuthorityClass } from "@/lib/confidence";
+import { renderedDuelPercents } from "@/lib/renderedPercent";
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -33,6 +34,22 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const probWithheld = shouldWithholdProbability(data);
   const homeProb = probWithheld ? null : data.current_odds?.home_probability;
   const awayProb = probWithheld ? null : data.current_odds?.away_probability;
+  // UX-P114 — the two numbers below are two sides of ONE question (the feed
+  // derives away as `1 - home`), so they are decided together or they sum to 101.
+  // Measured 2026-08-21: 34 of 414 live/upcoming events printed 101 here, all 101
+  // and never 99, because a blend landing on an exact half-percent rounds BOTH
+  // sides up. Green Bay @ Denver read 33 + 68.
+  //
+  // The server decides it. The local `renderedDuelPercents` is the fallback for a
+  // payload predating the field — a Discover response is cached, and the native and
+  // widget arms ship on their own schedule, so "the backend deployed" is not the
+  // same as "every payload carries it". Both arms are driven by the same contract
+  // table, so the fallback cannot answer differently from the served value.
+  const servedAwayPct = probWithheld ? null : data.current_odds?.away_rendered_percent;
+  const servedHomePct = probWithheld ? null : data.current_odds?.home_rendered_percent;
+  const [fallbackAwayPct, fallbackHomePct] = renderedDuelPercents(awayProb, homeProb);
+  const awayPct = servedAwayPct ?? fallbackAwayPct;
+  const homePct = servedHomePct ?? fallbackHomePct;
   // UX-P052 (#1690) — the two percentages below are the card's answer to the
   // north-star "read the probability" task, and they were drawn at full
   // authority whatever the SignalBars beside them said. Measured live
@@ -122,9 +139,10 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                 style={{ color: awayColor }}
                 data-testid="event-card-away-probability"
                 data-probability={awayProb}
+                data-rendered-percent={awayPct ?? undefined}
                 data-authority-tier={data.confidence_tier ?? undefined}
               >
-                {formatProbability(awayProb)}
+                {formatProbability(awayProb, { rendered: awayPct })}
               </span>
               <span className="flex items-center gap-1.5 text-text-muted text-[10px]">
                 Win Probability
@@ -135,9 +153,10 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                 style={{ color: homeColor }}
                 data-testid="event-card-home-probability"
                 data-probability={homeProb}
+                data-rendered-percent={homePct ?? undefined}
                 data-authority-tier={data.confidence_tier ?? undefined}
               >
-                {formatProbability(homeProb)}
+                {formatProbability(homeProb, { rendered: homePct })}
               </span>
             </div>
             <div className="h-2.5 rounded-full overflow-hidden flex">

@@ -27,6 +27,7 @@ import { join } from "path";
 import {
   isComplementPair,
   renderedCardPercents,
+  renderedDuelPercents,
   renderedPercent,
 } from "../../lib/renderedPercent";
 
@@ -45,6 +46,15 @@ interface CardCase {
   naive: (number | null)[];
   discriminates?: boolean;
 }
+interface DuelCase {
+  away: number | null;
+  home: number | null;
+  percents: (number | null)[];
+  complement_pair: boolean;
+  naive: (number | null)[];
+  positional: (number | null)[];
+  discriminates?: boolean;
+}
 interface Contract {
   version: number;
   rule: string;
@@ -58,6 +68,9 @@ interface Contract {
   }[];
   cases: Case[];
   card_cases: CardCase[];
+  duel_rule: string;
+  duel_implementations: { runtime: string; path: string; symbol: string }[];
+  duel_cases: DuelCase[];
 }
 
 const CONTRACT: Contract = JSON.parse(readFileSync(CONTRACT_PATH, "utf8"));
@@ -169,6 +182,88 @@ describe("web renders the CARD the way the contract says", () => {
     expect(renderedCardPercents(null)).toEqual([]);
     expect(isComplementPair([0.6, undefined])).toBe(false);
     expect(isComplementPair([NaN, 0.4])).toBe(false);
+  });
+});
+
+// ── THE DUEL RULE (UX-P114) ──────────────────────────────────────────────────
+
+describe("web renders the DUEL the way the contract says", () => {
+  it.each(CONTRACT.duel_cases.map((c) => [`${c.away}v${c.home}`, c] as const))(
+    "%s",
+    (_label, c) => {
+      expect(renderedDuelPercents(c.away, c.home)).toEqual(c.percents);
+      expect(isComplementPair([c.away, c.home])).toBe(c.complement_pair);
+    }
+  );
+
+  it("a game card's two sides always sum to exactly 100 — THE display invariant", () => {
+    const pairs = CONTRACT.duel_cases.filter((c) => c.complement_pair);
+    expect(pairs.length).toBeGreaterThanOrEqual(5);
+    for (const c of pairs) {
+      const rendered = renderedDuelPercents(c.away, c.home) as number[];
+      expect([[c.away, c.home], rendered.reduce((a, b) => a + b, 0)]).toEqual([
+        [c.away, c.home],
+        100,
+      ]);
+    }
+  });
+
+  it("the naive column is arithmetic, not annotation", () => {
+    // It is what the four surfaces printed before the rule, and it is what makes
+    // `discriminates` mean anything. Believed rather than checked, it silently
+    // disarms the row-preservation test below.
+    for (const c of CONTRACT.duel_cases) {
+      expect([[c.away, c.home], [renderedPercent(c.away), renderedPercent(c.home)]]).toEqual([
+        [c.away, c.home],
+        c.naive,
+      ]);
+    }
+  });
+
+  it("the positional column is arithmetic too — the REJECTED alternative", () => {
+    for (const c of CONTRACT.duel_cases) {
+      const expected = isComplementPair([c.away, c.home])
+        ? renderedCardPercents([c.away, c.home])
+        : [renderedPercent(c.away), renderedPercent(c.home)];
+      expect([[c.away, c.home], expected]).toEqual([[c.away, c.home], c.positional]);
+    }
+  });
+
+  it("keeps the rows where independent rounding printed 101", () => {
+    const discriminating = CONTRACT.duel_cases.filter((c) => c.discriminates);
+    expect(discriminating.length).toBeGreaterThanOrEqual(5);
+    for (const c of CONTRACT.duel_cases) {
+      const differs = JSON.stringify(c.percents) !== JSON.stringify(c.naive);
+      expect([[c.away, c.home], differs]).toEqual([
+        [c.away, c.home],
+        Boolean(c.discriminates),
+      ]);
+    }
+  });
+
+  it("still distinguishes favourite-first from away-first derivation", () => {
+    // Without a row where the two disagree, `renderedDuelPercents` could collapse
+    // into a bare `renderedCardPercents([away, home])` and this suite stays green
+    // — while every home favourite has its own number moved by a point.
+    const differing = CONTRACT.duel_cases.filter(
+      (c) => JSON.stringify(c.percents) !== JSON.stringify(c.positional)
+    );
+    expect(differing.length).toBeGreaterThanOrEqual(3);
+    expect(
+      differing.some((c) => c.home !== null && c.away !== null && c.home > c.away)
+    ).toBe(true);
+  });
+
+  it("pins the leave-alone direction too (gotcha #43)", () => {
+    const untouched = CONTRACT.duel_cases.filter((c) => !c.discriminates);
+    expect(untouched.length).toBeGreaterThanOrEqual(5);
+    expect(untouched.some((c) => c.complement_pair)).toBe(true);
+    expect(untouched.some((c) => !c.complement_pair)).toBe(true);
+  });
+
+  it("undefined behaves like null on either side", () => {
+    expect(renderedDuelPercents(undefined, 0.6)).toEqual([null, 60]);
+    expect(renderedDuelPercents(0.6, undefined)).toEqual([60, null]);
   });
 });
 
@@ -292,6 +387,153 @@ d("the Swift CARD table has not drifted from the contract", () => {
   });
 });
 
+d("the Swift DUEL table has not drifted from the contract", () => {
+  const src = readFileSync(SWIFT_TEST, "utf8");
+  const start = src.indexOf("DUEL ROWS BEGIN");
+  const end = src.indexOf("DUEL ROWS END");
+
+  const num = (t: string): number | null => (t.trim() === "nil" ? null : Number(t));
+  const parseList = (s: string): (number | null)[] =>
+    s.trim() === ""
+      ? []
+      : s
+          .split(",")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0)
+          .map(num);
+
+  const rows = () => {
+    const block = src.slice(start, end);
+    // (away, home, [percents], bool, [naive], [positional])
+    return [
+      ...block.matchAll(
+        /\(\s*([\d.]+|nil)\s*,\s*([\d.]+|nil)\s*,\s*\[([^\]]*)\]\s*,\s*(true|false)\s*,\s*\[([^\]]*)\]\s*,\s*\[([^\]]*)\]\s*\)/g
+      ),
+    ].map((m) => ({
+      away: num(m[1]),
+      home: num(m[2]),
+      percents: parseList(m[3]),
+      complement_pair: m[4] === "true",
+      naive: parseList(m[5]),
+      positional: parseList(m[6]),
+    }));
+  };
+
+  it("has the delimited block the drift check reads", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+  });
+
+  it("contains exactly the contract's duel rows, in order", () => {
+    expect(rows()).toEqual(
+      CONTRACT.duel_cases.map((c) => ({
+        away: c.away,
+        home: c.home,
+        percents: c.percents,
+        complement_pair: c.complement_pair,
+        naive: c.naive,
+        positional: c.positional,
+      }))
+    );
+  });
+
+  it("is non-vacuous — the parse finds rows at all", () => {
+    expect(rows().length).toBe(CONTRACT.duel_cases.length);
+    expect(rows().length).toBeGreaterThanOrEqual(10);
+  });
+});
+
+d("native implements the duel rule, and the widget consumes it instead", () => {
+  // Two different obligations, because the widget is a SEPARATE target that
+  // cannot import the main app's utilities ("Widgets cannot share code with the
+  // main app target directly" — WidgetAPIClient's own header). The main app owes
+  // an implementation; the widget owes the ABSENCE of a fourth copy of the band.
+  const impl = readFileSync(SWIFT_IMPL, "utf8");
+  const code = impl
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("///") && !l.trim().startsWith("//"))
+    .join("\n");
+
+  it("the main app defines renderedDuelPercents", () => {
+    expect(code).toContain("func renderedDuelPercents");
+  });
+
+  it("every native surface that prints BOTH sides consumes the decision", () => {
+    // The native gate does not run in CI, so this is the only place a regression
+    // here is caught before someone runs xcodebuild by hand. Four surfaces draw
+    // the pair; each must either read the served percents or go through
+    // `renderedDuelPercents`, and none may round the two sides independently.
+    const surfaces = [
+      "ios/Bain Luck/Bain Luck/Components/DiscoverEventCard.swift",
+      "ios/Bain Luck/Bain Luck/Components/RelatedByTagView.swift",
+      "ios/Bain Luck/Bain Luck/Views/MenuBarView.swift",
+    ];
+    // Comments stripped first, and BOTH sides checked. The first draft of this
+    // check did neither, and two planted mutations survived it: deleting the
+    // fallback still matched the comment that explains the fallback, and dropping
+    // the served value on the AWAY side still matched the HOME side's `??`. A
+    // per-file substring test over commented source is not a test of the code.
+    const codeOf = (src: string) =>
+      src
+        .split("\n")
+        .filter((l) => {
+          const t = l.trim();
+          return !t.startsWith("//") && !t.startsWith("///") && !t.startsWith("*");
+        })
+        .join("\n");
+
+    for (const rel of surfaces) {
+      const code = codeOf(readFileSync(join(REPO_ROOT, rel), "utf8"));
+      // The shared fallback, so a pre-deploy or cached payload still sums to 100.
+      expect([rel, "fallback", /renderedDuelPercents\s*\(/.test(code)]).toEqual([
+        rel,
+        "fallback",
+        true,
+      ]);
+      // The served value PREFERRED over it, on EACH side independently — `??`
+      // proves it is the first choice rather than a variable computed and ignored.
+      for (const side of ["away", "home"] as const) {
+        const field = `${side}RenderedPercent`;
+        expect([rel, side, new RegExp(`${field}\\s*\\n?\\s*\\?\\?`).test(code)]).toEqual([
+          rel,
+          side,
+          true,
+        ]);
+      }
+    }
+  });
+
+  it("the widget reads the served percents rather than re-deriving the band", () => {
+    const widget = join(REPO_ROOT, "ios/Bain Luck/BainLuckWidget/WidgetAPIClient.swift");
+    const decoding = join(
+      REPO_ROOT,
+      "ios/Bain Luck/BainLuckWidget/WidgetFeedDecoding.swift"
+    );
+    expect(existsSync(widget)).toBe(true);
+    expect(readFileSync(decoding, "utf8")).toContain("homeRenderedPercent");
+    expect(readFileSync(widget, "utf8")).toContain("homeRenderedPercent");
+    // The band must NOT appear in the widget target — a copied constant is a
+    // constant that drifts, which is the whole reason the contract exists.
+    //
+    // Comments stripped FIRST, like the sibling check below. Without that this
+    // matches the comment explaining why the band is absent — which it did on the
+    // first run, and a check that flags the documentation of a rule as a
+    // violation of it is a check that gets deleted rather than fixed.
+    const codeOf = (src: string) =>
+      src
+        .split("\n")
+        .filter((l) => {
+          const t = l.trim();
+          return !t.startsWith("//") && !t.startsWith("///") && !t.startsWith("*");
+        })
+        .join("\n");
+    const widgetCode =
+      codeOf(readFileSync(widget, "utf8")) + codeOf(readFileSync(decoding, "utf8"));
+    expect(widgetCode).not.toContain("0.99");
+    expect(widgetCode).not.toContain("1.01");
+  });
+});
+
 d("native implements the card rule, not just the scalar one", () => {
   const impl = readFileSync(SWIFT_IMPL, "utf8");
   const code = impl
@@ -408,6 +650,28 @@ describe("the contract's own registry is honest", () => {
 
   it("declares all three runtimes", () => {
     expect(CONTRACT.implementations.map((i) => i.runtime).sort()).toEqual([
+      "python",
+      "swift",
+      "typescript",
+    ]);
+  });
+
+  it("every declared DUEL implementation exists and names its symbol", () => {
+    // UX-P114 keeps its own registry because the widget target deliberately has
+    // NO implementation — it consumes the served integers — so this list is three
+    // entries, not four, and that asymmetry should be stated rather than inferred.
+    for (const impl of CONTRACT.duel_implementations) {
+      const p = join(REPO_ROOT, impl.path);
+      expect([impl.path, existsSync(p)]).toEqual([impl.path, true]);
+      expect([impl.path, readFileSync(p, "utf8").includes(impl.symbol)]).toEqual([
+        impl.path,
+        true,
+      ]);
+    }
+  });
+
+  it("the duel registry covers all three runtimes too", () => {
+    expect(CONTRACT.duel_implementations.map((i) => i.runtime).sort()).toEqual([
       "python",
       "swift",
       "typescript",

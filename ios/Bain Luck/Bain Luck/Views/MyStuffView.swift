@@ -1102,7 +1102,7 @@ private struct TeamFuturesSection: View {
 
             // Probability
             if isMultiSource {
-                Text(displayProb.map(formatProbability) ?? "—")
+                Text(displayProb.map { formatProbability($0) } ?? "—")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .monospacedDigit()

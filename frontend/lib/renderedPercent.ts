@@ -69,3 +69,36 @@ export function renderedCardPercents(
   if (leader === null) return probabilities.map(renderedPercent);
   return [leader, 100 - leader];
 }
+
+// ── The duel: the same question in FIXED positions (UX-P114) ─────────────────
+//
+// `renderedCardPercents` assumes served order, where index 0 is the headline. The
+// Discover event card does not sort — away is always left, home is always right —
+// yet it is the most exact complement pair in the product, because the feed derives
+// the away side as `1 - home`. So whenever `home * 100` lands on `.5`, both sides
+// round up and the strip prints 101. Measured 2026-08-21: 34 of 414 live/upcoming
+// events (8.2%), all 101, never 99.
+//
+// THE SERVER NOW DECIDES THIS (`current_odds.{away,home}_rendered_percent`), because
+// four surfaces draw this strip and only one of them is this file. This function is
+// the local FALLBACK for a payload from before that field existed — and it is in the
+// contract so the fallback cannot drift from the served answer.
+//
+// See `contracts/rendered_percent.json` (`duel_cases`) for why the FAVOURITE is the
+// side that survives rather than the away side.
+
+export function renderedDuelPercents(
+  awayProbability: number | null | undefined,
+  homeProbability: number | null | undefined,
+): Array<number | null> {
+  const pair = [awayProbability, homeProbability];
+  if (!isComplementPair(pair)) {
+    return [renderedPercent(awayProbability), renderedPercent(homeProbability)];
+  }
+
+  const away = awayProbability as number;
+  const home = homeProbability as number;
+  if (away >= home) return renderedCardPercents([away, home]);
+  const [homePct, awayPct] = renderedCardPercents([home, away]);
+  return [awayPct, homePct];
+}
