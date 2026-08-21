@@ -1151,22 +1151,27 @@ async def heavy_move_falsifier(
     """
     _check_admin_secret(secret, request=request)
 
+    import time
+
     from starlette.concurrency import run_in_threadpool
 
     from app.utils.heavy_routing_falsifier import (
         DEGRADE_P50_RATIO,
         HEAVY_MOVE_EXCEPTION,
-        METRICS_NAME,
-        PRE_MOVE_BASELINE,
+        POST_MOVE_RING_SHARE_REQUIRED,
+        READ_SET,
+        ROUTING_CHANGE_AT_EPOCH,
+        RUN_COUNTER_WINDOW_S,
         grade_move,
+        summarize_movers,
     )
-
-    watched = {b.task: b.metrics_name for b in PRE_MOVE_BASELINE}
 
     def _read():
         from app.tasks.redis_state import get_task_metrics
 
-        return {name: get_task_metrics(name) for name in watched.values()}
+        # READ_SET, never the baseline's names alone: the movers are subjects
+        # of this panel and used to be absent from the dict it interrogated.
+        return {name: get_task_metrics(name) for name in READ_SET}
 
     try:
         observations = await run_in_threadpool(_read)
@@ -1179,21 +1184,9 @@ async def heavy_move_falsifier(
             "reason": "task-metrics could not be read; this is not evidence the move is safe",
         }
 
-    result = grade_move(observations)
-
-    # The two movers themselves, reported for context. They are NOT part of
-    # the grade — the ruling's condition is about the calibration beats the
-    # exception might harm, not about whether the movers got faster.
-    movers = {}
-    for task in sorted(HEAVY_MOVE_EXCEPTION):
-        name = METRICS_NAME[task]
-        obs = observations.get(name) or {}
-        movers[task] = {
-            "metrics_name": name,
-            "successes_24h": obs.get("successes_24h"),
-            "failures_24h": obs.get("failures_24h"),
-            "samples": len(obs.get("recent_durations_ms") or []),
-        }
+    now = time.time()
+    age_s = now - ROUTING_CHANGE_AT_EPOCH
+    result = grade_move(observations, now_epoch=now)
 
     return {
         "status": "ok",
@@ -1202,7 +1195,23 @@ async def heavy_move_falsifier(
         "reason": result.reason,
         "degrade_p50_ratio": DEGRADE_P50_RATIO,
         "exception_tasks": sorted(HEAVY_MOVE_EXCEPTION),
-        "movers": movers,
+        # Carried so a reader never reconstructs the horizon from
+        # `heroku releases` — and so "how old is this grade" is a field rather
+        # than an inference.
+        "horizon": {
+            "routing_change_at_epoch": ROUTING_CHANGE_AT_EPOCH,
+            "routing_change_at": _iso_or_none(ROUTING_CHANGE_AT_EPOCH),
+            "age_since_move_s": round(age_s, 1),
+            "age_since_move_h": round(age_s / 3600.0, 2),
+            "run_counter_window_s": RUN_COUNTER_WINDOW_S,
+            "post_move_ring_share_required": POST_MOVE_RING_SHARE_REQUIRED,
+            "counters_clear_the_move": age_s >= RUN_COUNTER_WINDOW_S,
+        },
+        # The two movers, READ (they were previously absent from the dict this
+        # block queried, so `samples` was 0 by construction). They are still
+        # NOT part of the grade — the ruling's condition is about the
+        # calibration beats the exception might harm — but P4 is theirs.
+        "movers": summarize_movers(observations, age_since_move_s=age_s),
         "beats": [
             {
                 "task": b.task,
@@ -1211,6 +1220,7 @@ async def heavy_move_falsifier(
                 "baseline_p50_s": b.baseline_p50_s,
                 "observed_p50_s": b.observed_p50_s,
                 "ratio": round(b.ratio, 3) if b.ratio is not None else None,
+                "post_move_ring_share": b.post_move_ring_share,
             }
             for b in result.beats
         ],
@@ -1218,6 +1228,16 @@ async def heavy_move_falsifier(
             "REVERT obliges the same window: remove the two names from "
             "HEAVY_TASKS, set both beat entries' literal options.queue back to "
             "'background', and record the reading in docs/rulings/110-*.md. "
-            "INCONCLUSIVE means the falsifier is not armed — it is NOT a pass."
+            "INCONCLUSIVE means the falsifier is not armed — it is NOT a pass. "
+            "pre_horizon means the beat has run but not enough since the move "
+            "for its p50 to be about the move."
         ),
     }
+
+
+def _iso_or_none(epoch: float | None) -> str | None:
+    if epoch is None:
+        return None
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()

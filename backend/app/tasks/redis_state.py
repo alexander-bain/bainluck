@@ -1204,6 +1204,7 @@ def get_task_metrics(task_name: str) -> dict:
         # being precomputed so the reader can pick its own percentile and so a
         # stored aggregate can never drift from the samples behind it.
         durations = []
+        duration_at = []
         duration_stamps = []
         try:
             raw_durations = r.lrange(
@@ -1216,10 +1217,18 @@ def get_task_metrics(task_name: str) -> dict:
                     continue
                 ms, ts = parsed
                 durations.append(ms)
+                # `duration_at` is POSITIONALLY ALIGNED with `durations` and
+                # carries `None` for the pre-LAT-P040 bare form. The window
+                # calculation below wants only the real stamps, but a caller
+                # asking "which of these samples postdate X" needs alignment,
+                # and a list that silently skips unstamped entries would hand
+                # it a confident answer about the wrong samples.
+                duration_at.append(ts)
                 if ts is not None:
                     duration_stamps.append(ts)
         except Exception:
             durations = []
+            duration_at = []
             duration_stamps = []
 
         # LAT-P040 (#835): the duration sample's OWN window. Every other window
@@ -1246,6 +1255,14 @@ def get_task_metrics(task_name: str) -> dict:
             "starts_24h": starts_24h,
             "hard_kills_24h": hard_kills_24h,
             "recent_durations_ms": durations,
+            # LAT-P079 (#2071): the per-sample epoch, newest-first, positionally
+            # aligned with `recent_durations_ms`, `None` for legacy unstamped
+            # entries. The stamps were already being parsed and then thrown
+            # away, which forced every "did this sample happen after X?"
+            # question to be answered by ESTIMATE from a 24h counter. Ruling
+            # 110's falsifier was estimating a three-week horizon for a fact
+            # that is exactly present in the data.
+            "recent_durations_at": duration_at,
             "recent_durations_n": len(durations),
             "recent_durations_window_s": durations_window_s,
             "recent_durations_saturated": len(durations) >= DURATION_HISTORY_LEN,

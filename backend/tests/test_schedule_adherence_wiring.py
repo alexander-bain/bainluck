@@ -321,6 +321,37 @@ class TestDurationSampleCarriesItsOwnWindow:
         assert m["recent_durations_window_s"] == 1800.0
         assert m["recent_durations_saturated"] is False
 
+    def test_the_per_sample_stamps_are_exposed_and_positionally_aligned(self, fake):
+        """LAT-P079 (#2071): the stamps were parsed and then discarded.
+
+        Every "did this sample happen after X?" question was therefore
+        answered by ESTIMATE from a 24h counter — ruling 110's falsifier was
+        estimating a three-week horizon for a fact sitting in the data. The
+        alignment is the load-bearing half: `recent_durations_at[i]` must
+        describe `recent_durations_ms[i]`, or a caller slicing "the post-move
+        samples" gets a confident answer about the wrong runs.
+        """
+        base = 1_786_500_000
+        self._push(fake, [(100, base), (200, base + 600), (300, base + 1800)])
+        m = redis_state.get_task_metrics("t")
+        assert m["recent_durations_ms"] == [300, 200, 100]
+        assert m["recent_durations_at"] == [base + 1800, base + 600, base]
+        assert len(m["recent_durations_at"]) == len(m["recent_durations_ms"])
+
+    def test_a_legacy_unstamped_entry_holds_its_position_as_None(self, fake):
+        """The bare pre-LAT-P040 form has no stamp. It must occupy its slot as
+        `None` rather than be skipped — skipping shifts every later stamp onto
+        the wrong duration, which is worse than having no stamps at all."""
+        base = 1_786_500_000
+        self._push(fake, [(100, base), (200, base + 600)])
+        # a legacy bare entry, pushed at the head the way the old writer did
+        fake.lists[f"{TASK_METRICS_PREFIX}:t:durations"].insert(0, b"555")
+        m = redis_state.get_task_metrics("t")
+        assert m["recent_durations_ms"] == [555, 200, 100]
+        assert m["recent_durations_at"] == [None, base + 600, base]
+        # and the window still comes only from the real stamps
+        assert m["recent_durations_window_s"] == 600.0
+
     def test_a_saturated_sample_says_so(self, fake):
         """At the cap, older runs existed and were dropped.
 
