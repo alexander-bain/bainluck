@@ -1,0 +1,90 @@
+{
+ "chunking_by_source": {
+  "verdict": "REFUTED",
+  "why": "every one of the 6 CTEs is an InitPlan root (materialised) and every one is referenced 2-8 times by CTE Scan. An outer WHERE source = X cannot push into a materialised CTE, so each of 7 source chunks re-runs all 6 in full \u2014 including ranked_outcomes at 94.0% of total cost."
+ },
+ "cost_to_runtime_calibration": {
+  "cost_units_per_ms": 24.42,
+  "linear_extrapolation_full_fold_s": 576,
+  "measured_floor_s": 901.96,
+  "model_understates_by_at_least": 1.57,
+  "note": "market_result_shape (cost 450,184) also refuses to fit the 10 s row-path cap, which the same calibration predicts (~18.4 s) \u2014 so the calibration is consistent where it can be checked, and still understates the whole fold by >=1.57x because the cost model does not price the 1.09 GB external sort.",
+  "point": {
+   "cte": "market_info",
+   "measured_duration_ms": 5347.6,
+   "rows": 791424,
+   "total_cost": 130576
+  }
+ },
+ "does_it_fit_1350_s": {
+  "answer": "NOT SHOWN \u2014 and not measurable today",
+  "blocker": "MAX_TIMEOUT_MS = 1_350_000 rides program/calibration-81, UNMERGED. origin/master is dee32eee and /api/health reports commit dee32eee, so production still clamps at 900_000. Firing the twin today re-measures the already-refuted 900 s.",
+  "measured_floor_s": 901.96,
+  "upper_bound": null
+ },
+ "live_commit": "dee32eee",
+ "materialised_ctes": {
+  "market_info": {
+   "node": "Seq Scan",
+   "plan_rows": 397057,
+   "referenced_by_cte_scans": 8,
+   "total_cost": 131568.3
+  },
+  "market_result_shape": {
+   "node": "Aggregate",
+   "plan_rows": 4565471,
+   "referenced_by_cte_scans": 7,
+   "total_cost": 450183.6
+  },
+  "mex_field_candidates": {
+   "node": "Aggregate",
+   "plan_rows": 1,
+   "referenced_by_cte_scans": 3,
+   "total_cost": 33024.4
+  },
+  "normalized": {
+   "node": "Hash Join",
+   "plan_rows": 1678103,
+   "referenced_by_cte_scans": 2,
+   "total_cost": 33184.8
+  },
+  "ranked_outcomes": {
+   "node": "WindowAgg",
+   "plan_rows": 1678103,
+   "referenced_by_cte_scans": 2,
+   "total_cost": 13216552.9
+  },
+  "virtual_market": {
+   "node": "Hash Join",
+   "plan_rows": 397057,
+   "referenced_by_cte_scans": 2,
+   "total_cost": 173278.5
+  }
+ },
+ "measured_utc": "2026-08-21",
+ "plan_only_explain": {
+  "explain_wall_s": 1.45,
+  "how": "comment-stripped: all 15 semicolons that made db-query answer \"Multi-statement queries not allowed\" are inside SQL comments; stripping them changes no plan",
+  "plan_nodes": 111,
+  "plan_rows": 410,
+  "reachable": true,
+  "sql_fingerprint": "9ad73da5a88cdf8e",
+  "statement_timeout_ms": 25000,
+  "total_cost": 14059222
+ },
+ "schema": "cal-p085-2076-fold-cost/v1",
+ "subject": "#2076 \u2014 the Gate-0 published-twin fold does not fit its statement_timeout",
+ "where_the_cost_is": {
+  "inner_windowagg_total_cost": 2340457,
+  "outer_windowagg_self_cost": 10872432,
+  "outer_windowagg_self_share_of_fold": 0.773,
+  "ranked_outcomes_total_cost": 13216553,
+  "share_of_fold": 0.94,
+  "sort_below": {
+   "approx_bytes": 1094123156,
+   "note": "~1.09 GB \u2014 an external merge sort at any plausible work_mem",
+   "plan_rows": 1678103,
+   "plan_width": 652
+  }
+ }
+}

@@ -5,6 +5,109 @@ author: Alex
 via: Fable, on CAL-P077
 issues: #1145 · #1978 · #2007 · #1912 · #1544
 
+## AMENDMENT 2 — 2026-08-21 (Fable, on CAL-P085): THE NUMBER NOW MEASURES THE POLICY
+
+`C-APPLY-PRE-WHICHPRICE-R2` returned **BLOCK** against amendment 1, on three P1s, and all three
+were right. This amendment discharges them. **The decision is unchanged for the third time; what
+changes is that the headline is now measured under the predicate this ruling actually authorises.**
+
+### P1 #3 — the load-bearing one: the measurement was at the wrong granularity
+
+This ruling approves an exclusion that drops **whole markets**. `PROVENANCE_FOLD_SQL` ended
+`GROUP BY 1, 2, 3, 4`, so market identity was aggregated away **in SQL** and `FoldRow` carried
+none. `3.7630 -> 1.7662 pp` therefore measured a **row-level** policy: on a mixed market it kept
+the clean legs and dropped only the hindsight ones. That is not a policy anyone approved, and on
+that data structure the approved one was **not expressible** — not unimplemented, inexpressible.
+
+Repaired in CAL-P085 (#2087) by aggregating **legs -> market before folding**
+(`WHOLE_MARKET_FOLD_SQL`), and re-measured over the full population, 49 of 49 cells, no sampling,
+every statement fingerprinted:
+
+| policy | row-level | **WHOLE-MARKET** | granularity Δ | n kept |
+|---|---:|---:|---:|---:|
+| `A_today` (control) | 3.7226 | **3.7226** | 0.0000 | 372,293 |
+| `B_exclude_cp_absent` | 2.6560 | 2.8703 | +0.2143 | 300,876 |
+| **`C_exclude_hindsight`** (approved) | 1.7434 | **1.7422** | **−0.0012** | **337,927** |
+| `D_moved_price_only` | 3.8214 | 7.2437 | +3.4223 | 39,921 |
+| `E_pregame_or_unknown_ts` | 2.9007 | 2.9074 | +0.0067 | 38,059 |
+
+**The approved policy's headline is `3.7226 pp -> 1.7422 pp` (Δ −1.9804), dropping 34,366 of
+372,293 rows (9.231%).** The granularity correction is **−0.0012 pp**. Twenty-six of the 32
+cells with a measurable ECE on both sides move by **exactly zero** — they contain no mixed market
+at all; the other 17 of the 49 are below `MIN_CELL_N` under policy C — and the largest
+single-cell move is **−0.0102 pp** (`entertainment/quantity`).
+
+**So the objection was correct AND the number survives it.** Those are not in tension and the
+distinction is the whole reason the gate exists: R2 could not know the delta was 0.0012 pp, because
+nobody had computed it, and "the mixed markets are only 0.0217% so it cannot matter much" is a
+prediction, not a measurement. It is recorded here as a measurement.
+
+**And it was NOT negligible for the comparators**, which is why "recompute the proposed one" would
+have been the wrong repair: `D_moved_price_only` moves **+3.42 pp** under the lift and
+`B_exclude_cp_absent` **+0.21 pp**. This strengthens the general clause below rather than weakening
+it — whole-market, the intuitive fix is not `+0.073 pp` worse than doing nothing, it is
+**+3.52 pp** worse.
+
+**Which legs vote — a design choice this ruling made without writing down.** The apply's CTE is an
+unfiltered `EXISTS` over `futures_outcomes`, so a market is condemned by **any** leg, including
+legs the curve never reads. Measured both ways: deciding on curve-population legs only gives
+**1.7417 pp** on 337,963 rows — **0.0005 pp and 36 rows** from the all-legs reading. Immaterial,
+now on the record, and no longer an unexamined assumption.
+
+Reconciliation, because a new statement that quietly reads a different population would move every
+number below it in the same direction and look like nothing: `A_today` — untouched by any policy —
+agrees with the row-level fold on **all 49 cells**, `n_delta 0`, `delta_pp 0.0`.
+
+Artifact: `artifacts/cal-p085/price-provenance-whole-market.json`,
+SHA-256 `e8b1d7d45df341138675cf28c4ab43799f45c14a6b6d6c03f8e6fe4a0482ec0d`, 113 statement
+fingerprints, 0 missing, 0 cells unmeasured.
+
+### P1 #1 — one denominator, stated consistently
+
+Amendment 1 wrote "99.3%" and "the remaining 0.7%" over a population where neither is the
+complement of 1.34%. The corrected line, replacing amendment 1's quoted block:
+
+> Re-pricing was not declined. It is **unavailable for 98.663% of hindsight rows** — of **35,976**
+> across 49 cells, only **481 (1.337%)** have any `futures_odds_snapshots` row before their own
+> `resolution_date` and **27 (0.075%)** have one before `commence_time`; `hockey/container_member`
+> is **0 of 1,259** and `basketball/quantity` is **0 of 8,387**. For the available **1.337%** it IS
+> available, and those **481 rows are KNOWINGLY EXCLUDED for now**, tracked as a follow-up with the
+> snapshot evidence attached.
+
+The old "0.7%" was **`baseball/quantity` alone** (258/35,976 = 0.717%) wearing the whole
+population's clothes.
+
+### P1 #2 — the residual is 15 cells, not one
+
+Amendment 1 named 258 baseball rows as though they were the re-priceable population. They are
+**53.638% of it**. The other **223 of 481 (46.362%)** sit in 14 further cells, and several are
+above the staged apply queue's own 1% falsifier: `weather/container_member` **24.000%** (6/25),
+`politics/quantity` **7.000%** (7/100), `tech/quantity` **5.714%** (2/35), `entertainment/quantity`
+2.469%, `soccer/quantity` 2.194%, `esports/quantity` 2.007%, `weather/quantity` 1.893%,
+`esports/container_member` 1.210%, plus `weightlifting/quantity` (3/3) and `olympics/quantity`
+(2/2) at 100% of two tiny cells. Full enumeration owed to **#2059**; the follow-up is scoped to all
+481 rows, not to baseball.
+
+### What this amendment does not do
+
+It does not weaken the exclusion, it does not claim a new ruling number, and **it does not treat
+R2's BLOCK as retracting Alex's re-consent to the ~17 h cost.** Those remain two objects: the
+consent was to a **cost**, the BLOCK was about the **benefit**. The benefit is now measured at the
+approved granularity and lands **0.0238 pp** from the figure Alex consented against — inside the
+±0.05 pp band Fable set for "existing consent covers it" (CAL-P085 directive). Of that 0.0238,
+**0.0012 is granularity** and the rest is population drift between the 08-20 and 08-21 reads
+(`A_today` itself moved 3.7630 -> 3.7226).
+
+### The general clause this amendment adds
+
+**A measurement certifies a decision only if it was taken at the decision's granularity — and
+"the difference must be tiny" is a prediction until someone folds it.** Three reviews and a ruling
+passed over `GROUP BY 1, 2, 3, 4` because the *classes* being grouped were the right classes; the
+defect was in what the grouping threw away, not in what it kept. The tell is available without any
+measurement: the policy's own text said "whole markets" and the fold's output row could not name a
+market. When a decision's unit of action is not a column in the evidence, the evidence is about
+something else.
+
 ## AMENDMENT — 2026-08-20 (Alex, via Fable, on CAL-P081): EXCLUDE NOW, RE-PRICE AS FOLLOW-UP
 
 `C-APPLY-PRE-WHICHPRICE` returned **BLOCK** against the premise below, and it was right to. The

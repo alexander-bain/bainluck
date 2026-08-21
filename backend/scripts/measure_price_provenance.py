@@ -51,17 +51,34 @@ from app.utils.calibration_price_provenance import (  # noqa: E402
     PROVENANCE_FOLD_SQL,
     PROPOSED_POLICY,
     REPRICE_FEASIBILITY_SQL,
+    WHOLE_MARKET_FOLD_SQL,
+    WHOLE_MARKET_POLICIES,
     FoldRow,
+    MarketFoldRow,
     class_shares,
     ece,
+    market_level_shares,
+    market_policy_table,
     policy_table,
     reconciles_with_census,
+    reconciles_with_row_fold,
     render_sql,
 )
 
 #: ``db-query`` truncates silently at 1,000 rows and says so in ``truncated``.
 #: A truncated fold is a WRONG fold, not a short one, so it is an error here.
 ROW_CAP = 1000
+
+#: MEASURED 2026-08-21 (CAL-P085), because the docs read the other way. The
+#: ``timeout_ms`` knob documented on ``db-query`` (``500 ms - 25 s``) is
+#: **`explain`-only**: sending it on the row path returns
+#: ``400 {"detail": "`timeout_ms` is only supported with `explain: true`"}``.
+#:
+#: So the row path is **fixed at the 10 s ``statement_timeout``** and there is no
+#: headroom to buy. Partition escalation is not a last resort for this fold, it
+#: is the only budget control there is — which is why :func:`fold_cell` escalates
+#: rather than reporting a cell unmeasured on the first timeout.
+ROW_PATH_STATEMENT_TIMEOUT_S = 10
 
 
 class ReadError(RuntimeError):
@@ -104,21 +121,37 @@ def db_query(sql: str, *, api: str, token: str, limit: int = ROW_CAP) -> dict[st
 MAX_PARTITION_K = 16
 
 
-def _fold_at(cat: str, mt: str, *, api: str, token: str, k: int) -> tuple[list[FoldRow], dict[str, Any]]:
-    rows: list[FoldRow] = []
+def _fold_at(
+    cat: str,
+    mt: str,
+    *,
+    api: str,
+    token: str,
+    k: int,
+    template: str = PROVENANCE_FOLD_SQL,
+    row_class: Any = FoldRow,
+) -> tuple[list[Any], dict[str, Any]]:
+    rows: list[Any] = []
     meta: dict[str, Any] = {"partition_k": k, "durations_ms": [], "fingerprints": []}
     for m in range(k):
-        sql = render_sql(PROVENANCE_FOLD_SQL, cat=cat, mt=mt, k=k, m=m)
+        sql = render_sql(template, cat=cat, mt=mt, k=k, m=m)
         payload = db_query(sql, api=api, token=token)
         meta["durations_ms"].append(payload.get("duration_ms"))
         meta["fingerprints"].append(payload.get("sql_fingerprint"))
-        rows.extend(FoldRow.from_row(r) for r in payload["rows"])
+        rows.extend(row_class.from_row(r) for r in payload["rows"])
     return rows, meta
 
 
 def fold_cell(
-    cat: str, mt: str, *, api: str, token: str, k: int = 1
-) -> tuple[list[FoldRow], dict[str, Any]]:
+    cat: str,
+    mt: str,
+    *,
+    api: str,
+    token: str,
+    k: int = 1,
+    template: str = PROVENANCE_FOLD_SQL,
+    row_class: Any = FoldRow,
+) -> tuple[list[Any], dict[str, Any]]:
     """Fold one cell, escalating the partition on a timeout rather than giving up.
 
     The first full sweep measured 47 of 49 and lost ``soccer/quantity`` (189K
@@ -142,7 +175,9 @@ def fold_cell(
     while True:
         attempted.append(k)
         try:
-            rows, meta = _fold_at(cat, mt, api=api, token=token, k=k)
+            rows, meta = _fold_at(
+                cat, mt, api=api, token=token, k=k, template=template, row_class=row_class
+            )
         except ReadError as exc:
             if "statement_timeout" not in str(exc) or k >= MAX_PARTITION_K:
                 raise
@@ -176,6 +211,15 @@ def main() -> int:
     parser.add_argument("--partition", type=int, default=1, help="MOD(fm.id, k) partitions per cell")
     parser.add_argument("--feasibility", action="store_true", help="also run the re-price feasibility query")
     parser.add_argument("--leg-split", action="store_true", help="also run the leg-split safety query")
+    parser.add_argument(
+        "--whole-market",
+        action="store_true",
+        help=(
+            "CAL-P085 (#2087): also run the market-aware fold and report policies A-E at the "
+            "granularity the approved apply actually runs at. The row-level fold still runs, "
+            "because A_today under both is the reconciliation key."
+        ),
+    )
     parser.add_argument("--out", help="write the artifact here (default: stdout)")
     args = parser.parse_args()
 
@@ -200,13 +244,17 @@ def main() -> int:
 
     started = time.time()
     pooled_rows: list[FoldRow] = []
+    pooled_market_rows: list[MarketFoldRow] = []
     out: dict[str, Any] = {
-        "schema": "calibration-price-provenance/v1",
+        "schema": "calibration-price-provenance/v2" if args.whole_market else "calibration-price-provenance/v1",
         "proposed_policy": PROPOSED_POLICY,
         "policies": sorted(POLICIES),
         "cells": {},
         "unmeasured": {},
     }
+    if args.whole_market:
+        out["whole_market_policies"] = sorted(WHOLE_MARKET_POLICIES)
+        out["whole_market_unmeasured"] = {}
 
     for cat, mt in cells:
         key = f"{cat}/{mt}"
@@ -224,6 +272,36 @@ def main() -> int:
             "policies": policy_table(rows),
             "shares": class_shares(rows),
         }
+
+        # CAL-P085 (#2087). The market-aware fold is a SECOND statement, run and
+        # failed independently: a cell whose whole-market read times out must not
+        # take down the row-level read that already succeeded, and — the whole
+        # point of the P077 discipline — must be named as unmeasured rather than
+        # dropped, because a pooled figure re-folded over whatever survived MOVES
+        # (47 cells read 5.02 pp where 49 read 3.78 pp).
+        if args.whole_market:
+            try:
+                market_rows, market_meta = fold_cell(
+                    cat,
+                    mt,
+                    api=api,
+                    token=token,
+                    k=args.partition,
+                    template=WHOLE_MARKET_FOLD_SQL,
+                    row_class=MarketFoldRow,
+                )
+            except ReadError as exc:
+                out["whole_market_unmeasured"][key] = str(exc)
+                print(f"{key:34} WHOLE-MARKET UNMEASURED — {exc}", file=sys.stderr)
+            else:
+                entry["whole_market"] = {
+                    "read": market_meta,
+                    "policies": market_policy_table(market_rows),
+                    "shares": market_level_shares(market_rows),
+                    "row_fold_reconciliation": reconciles_with_row_fold(market_rows, rows),
+                }
+                pooled_market_rows.extend(market_rows)
+
         if key in census:
             entry["census_reconciliation"] = reconciles_with_census(rows, census[key])
         # The two SIDE probes must not be able to kill the run. Found the hard
@@ -257,11 +335,18 @@ def main() -> int:
         proposed = entry["policies"][PROPOSED_POLICY]
         recon = entry.get("census_reconciliation", {})
         flag = {True: "OK", False: "DIFF", None: "--"}[recon.get("reconciled")]
-        print(
+        line = (
             f"{key:34} n={today['n']:7d} ECE {today['ece']} -> {proposed['ece']} "
-            f"(d {proposed['delta_ece']}) census={flag}",
-            file=sys.stderr,
+            f"(d {proposed['delta_ece']}) census={flag}"
         )
+        if "whole_market" in entry:
+            wm = entry["whole_market"]["policies"]["all_legs"][PROPOSED_POLICY]
+            rec = entry["whole_market"]["row_fold_reconciliation"]
+            wm_flag = {True: "OK", False: "DIFF", None: "--"}[rec.get("reconciled")]
+            line += (
+                f" | WM {wm['ece']} (d {wm['delta_ece']}) n={wm['n']} recon={wm_flag}"
+            )
+        print(line, file=sys.stderr)
 
     # The pooled figure is the headline, so it is computed here rather than left
     # for a reader to assemble — and it is computed by re-folding every cell's
@@ -278,6 +363,20 @@ def main() -> int:
             if result["ece"] is None or baseline is None
             else round(result["ece"] - baseline, 4)
         )
+    # The headline the apply is actually authorised against. Same construction as
+    # the row-level pool above — every cell's rows re-folded TOGETHER, never an
+    # average of per-cell ECEs — so the two are comparable line for line.
+    if args.whole_market:
+        out["pooled_whole_market"] = market_policy_table(pooled_market_rows)
+        out["pooled_whole_market"]["shares"] = market_level_shares(pooled_market_rows)
+        out["pooled_whole_market"]["row_fold_reconciliation"] = reconciles_with_row_fold(
+            pooled_market_rows, pooled_rows
+        )
+        out["whole_market_cells_measured"] = sum(
+            1 for c in out["cells"].values() if "whole_market" in c
+        )
+        out["whole_market_cells_unmeasured"] = len(out["whole_market_unmeasured"])
+
     out["elapsed_s"] = round(time.time() - started, 2)
     out["cells_measured"] = len(out["cells"])
     out["cells_unmeasured"] = len(out["unmeasured"])
@@ -290,7 +389,20 @@ def main() -> int:
         print(f"wrote {args.out}", file=sys.stderr)
     else:
         print(text)
-    return 0 if not out["unmeasured"] else 1
+
+    if args.whole_market:
+        pooled = out["pooled_whole_market"]
+        rec = pooled["row_fold_reconciliation"]
+        print(
+            f"POOLED WHOLE-MARKET  A_today {pooled['all_legs']['A_today']['ece']} "
+            f"-> {PROPOSED_POLICY} {pooled['all_legs'][PROPOSED_POLICY]['ece']} "
+            f"(d {pooled['all_legs'][PROPOSED_POLICY]['delta_ece']}), "
+            f"n {pooled['all_legs']['A_today']['n']} -> "
+            f"{pooled['all_legs'][PROPOSED_POLICY]['n']}; "
+            f"row-fold reconciliation {rec['reconciled']} (n_delta {rec['n_delta']})",
+            file=sys.stderr,
+        )
+    return 0 if not out["unmeasured"] and not out.get("whole_market_unmeasured") else 1
 
 
 if __name__ == "__main__":

@@ -219,6 +219,127 @@ WHERE fm.source = '{source}'
 GROUP BY 1, 2, 3, 4
 """
 
+#: CAL-P085 (#2087) — the SAME fold, at the granularity the apply actually runs at.
+#:
+#: :data:`PROVENANCE_FOLD_SQL` ends ``GROUP BY 1, 2, 3, 4``. Market identity is
+#: aggregated away **in SQL**, before any Python selector can see it, so
+#: :class:`FoldRow` carries none and a whole-market policy is not merely
+#: unimplemented on that structure — it is **not expressible** on it.
+#: ``C-APPLY-PRE-WHICHPRICE-R2`` returned BLOCK on exactly that (P1 #3), and it
+#: was right to: ruling 103 approves an exclusion that drops **whole markets,
+#: winners and losers together**, and the ``3.7630 -> 1.7662 pp`` headline was
+#: measured leg-by-leg. Two different predicates, one number.
+#:
+#: The repair is to **aggregate legs -> market BEFORE folding**, not to carry a
+#: market id through the fold. Carrying the id would return one row per market
+#: (464,777 of them) through a rail that truncates at 1,000 and would have to be
+#: re-aggregated in Python anyway. Aggregating first keeps the statement's output
+#: bounded by ``grade x bin x 3 x 3 x 3`` and leaves the arithmetic where the
+#: pure module can test it.
+#:
+#: **The market-level levels are ORDERED, not flags.** Each is a three-level
+#: ladder whose top level implies the middle one, which is what lets policies
+#: B/C/D/E each be one comparison instead of a bit-vector:
+#:
+#: ``mkt_price_level``     ``all_moved`` => ``no_absent`` => ``has_absent``
+#: ``mkt_capture_level``   ``all_pregame_or_nots`` => ``no_after_res`` => ``has_after_res``
+#:
+#: ``mkt_capture_level_pop`` is the same capture ladder computed over **only the
+#: legs the curve actually reads** (the ``FILTER`` clause), against the plain one
+#: computed over **every leg of the market**. The apply's CTE is an unfiltered
+#: ``EXISTS`` over ``futures_outcomes``, and ruling 103's own
+#: ``101 mixed markets in 464,777`` came from :data:`LEG_SPLIT_SQL`, which is
+#: likewise unfiltered — so the **all-legs** ladder is the one that will run and
+#: the **population-legs** ladder is the sensitivity. They are measured together
+#: because a leg the curve drops can still be the leg that condemns the market,
+#: and "which legs vote" is a design choice this program had never written down.
+#:
+#: ``grade`` moves into the CTE as two boolean aggregates. It was already a
+#: market-level property computed by two correlated ``EXISTS`` subqueries **per
+#: row**; expressing it as ``bool_or`` over the same legs is identical by
+#: construction (the cell predicates are all on ``fm``, so a market is wholly in
+#: or wholly out of a cell) and is what buys back the CTE's extra scan.
+#:
+#: ``MOD(fm.id, {k})`` partitioning stays SAFE here: it partitions on the MARKET
+#: key, and every aggregate below is within-market, so no market is ever split
+#: across two statements. A partitioned run and a ``k=1`` run are the same fold.
+WHOLE_MARKET_FOLD_SQL = """
+WITH mkt AS (
+    SELECT fo.market_id AS market_id,
+           BOOL_OR(fo.resolution_source IS NULL) AS any_ungraded,
+           BOOL_OR(fo.resolution_source IS NOT NULL) AS any_graded,
+           BOOL_OR(fo.calibration_probability IS NULL) AS any_absent,
+           BOOL_AND(fo.calibration_probability IS NOT NULL
+                    AND fo.calibration_probability IS DISTINCT FROM fo.opening_probability
+                   ) AS all_moved,
+           BOOL_OR(fo.opening_captured_at IS NOT NULL
+                   AND fm.resolution_date IS NOT NULL
+                   AND fo.opening_captured_at > fm.resolution_date) AS any_after_res,
+           BOOL_AND(fo.opening_captured_at IS NULL
+                    OR (NOT (fm.resolution_date IS NOT NULL
+                             AND fo.opening_captured_at > fm.resolution_date)
+                        AND NOT (fm.commence_time IS NOT NULL
+                                 AND fo.opening_captured_at > fm.commence_time))
+                   ) AS all_pregame_or_nots,
+           BOOL_OR(fo.opening_captured_at IS NOT NULL
+                   AND fm.resolution_date IS NOT NULL
+                   AND fo.opening_captured_at > fm.resolution_date)
+               FILTER (WHERE {curve_price} > 0 AND {curve_price} < 1
+                         AND fo.opening_probability IS NOT NULL
+                         AND fo.is_winner IS NOT NULL) AS any_after_res_pop,
+           BOOL_AND(fo.opening_captured_at IS NULL
+                    OR (NOT (fm.resolution_date IS NOT NULL
+                             AND fo.opening_captured_at > fm.resolution_date)
+                        AND NOT (fm.commence_time IS NOT NULL
+                                 AND fo.opening_captured_at > fm.commence_time))
+                   )
+               FILTER (WHERE {curve_price} > 0 AND {curve_price} < 1
+                         AND fo.opening_probability IS NOT NULL
+                         AND fo.is_winner IS NOT NULL) AS all_pregame_or_nots_pop
+    FROM futures_outcomes fo
+    JOIN futures_markets fm ON fm.id = fo.market_id
+    WHERE fm.source = '{source}'
+      AND fm.status = '{status}'
+      AND fm.market_type IN ({types})
+      AND COALESCE(fm.llm_sport_category, 'uncategorized') = '{cat}'
+      AND COALESCE(fm.market_type, 'unknown') = '{mt}'
+      AND MOD(fm.id, {k}) = {m}
+    GROUP BY 1
+)
+SELECT CASE WHEN NOT mkt.any_ungraded THEN 'complete'
+            WHEN mkt.any_graded THEN 'incomplete'
+            ELSE 'never' END AS grade,
+       LEAST(FLOOR({curve_price} * 10), 9)::int AS bin,
+       CASE WHEN mkt.all_moved THEN 'all_moved'
+            WHEN NOT mkt.any_absent THEN 'no_absent'
+            ELSE 'has_absent' END AS mkt_price_level,
+       CASE WHEN mkt.all_pregame_or_nots THEN 'all_pregame_or_nots'
+            WHEN NOT mkt.any_after_res THEN 'no_after_res'
+            ELSE 'has_after_res' END AS mkt_capture_level,
+       CASE WHEN mkt.all_pregame_or_nots_pop IS NULL
+                 OR mkt.any_after_res_pop IS NULL THEN 'unknown'
+            WHEN mkt.all_pregame_or_nots_pop THEN 'all_pregame_or_nots'
+            WHEN NOT mkt.any_after_res_pop THEN 'no_after_res'
+            ELSE 'has_after_res' END AS mkt_capture_level_pop,
+       COUNT(*) AS n,
+       SUM({curve_price}) AS sum_prob,
+       SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) AS winners
+FROM futures_outcomes fo
+JOIN futures_markets fm ON fm.id = fo.market_id
+JOIN mkt ON mkt.market_id = fo.market_id
+WHERE fm.source = '{source}'
+  AND fm.status = '{status}'
+  AND fm.market_type IN ({types})
+  AND COALESCE(fm.llm_sport_category, 'uncategorized') = '{cat}'
+  AND COALESCE(fm.market_type, 'unknown') = '{mt}'
+  AND MOD(fm.id, {k}) = {m}
+  AND {curve_price} > 0
+  AND {curve_price} < 1
+  AND fo.opening_probability IS NOT NULL
+  AND fo.is_winner IS NOT NULL
+GROUP BY 1, 2, 3, 4, 5
+"""
+
 #: Does the exclusion split any market's legs? The design rests on the answer
 #: being ~zero, so it is a query and not an assumption.
 LEG_SPLIT_SQL = """
@@ -457,18 +578,278 @@ PROPOSED_POLICY = "C_exclude_hindsight"
 
 
 def policy_table(rows: Iterable[FoldRow]) -> dict[str, dict[str, Any]]:
-    """Every policy's ECE for one cell, each with its Δ against ``A_today``."""
-    materialised = list(rows)
-    baseline = ece(materialised, POLICIES["A_today"])
+    """Every ROW-LEVEL policy's ECE for one cell, each with its Δ against ``A_today``.
+
+    Kept, unchanged in behaviour, as the thing the whole-market table is compared
+    AGAINST. It is not the apply's predicate — see :data:`WHOLE_MARKET_POLICIES`.
+    """
+    return _table(list(rows), POLICIES)
+
+
+# ---------------------------------------------------------------------------
+# CAL-P085 (#2087) — the same policies, at the apply's granularity
+# ---------------------------------------------------------------------------
+
+#: The two market-level ladders emitted by :data:`WHOLE_MARKET_FOLD_SQL`, top
+#: level first. Ordered, and the order is load-bearing: the top level implies
+#: the middle one, so ``!= bottom`` and ``== top`` are the only two comparisons
+#: any whole-market policy needs.
+MARKET_PRICE_LEVELS: tuple[str, ...] = ("all_moved", "no_absent", "has_absent")
+MARKET_CAPTURE_LEVELS: tuple[str, ...] = (
+    "all_pregame_or_nots",
+    "no_after_res",
+    "has_after_res",
+)
+
+#: What the SQL emits when a market's population-legs ladder is undefined — i.e.
+#: the ``FILTER`` matched nothing, so ``BOOL_AND``/``BOOL_OR`` returned NULL.
+#:
+#: This cannot happen for a market that reaches the outer SELECT, because the
+#: outer SELECT applies the same predicate the FILTER does, so any market in the
+#: result has at least one population leg. It is emitted as its own value rather
+#: than folded into a level precisely because it cannot happen: gotcha #53 says a
+#: reading that only exists when an assumption broke must not resolve to the
+#: reassuring value. :class:`MarketFoldRow` raises on it.
+MARKET_LEVEL_UNKNOWN = "unknown"
+
+
+class MarketFoldRow:
+    """One grouped row of :data:`WHOLE_MARKET_FOLD_SQL`, validated.
+
+    Duck-compatible with :class:`FoldRow` on ``bin``/``n``/``sum_prob``/
+    ``winners``, so :func:`ece` folds either without knowing which it has. It
+    deliberately does NOT carry ``price_class``/``capture_class``: those are
+    per-leg, this row is a group of legs whose only shared classification is
+    their market's, and a per-leg attribute here would invite exactly the
+    row-level selector that #2087 is about.
+    """
+
+    __slots__ = (
+        "grade",
+        "bin",
+        "mkt_price_level",
+        "mkt_capture_level",
+        "mkt_capture_level_pop",
+        "n",
+        "sum_prob",
+        "winners",
+    )
+
+    def __init__(
+        self,
+        grade: str,
+        bin_: int,
+        mkt_price_level: str,
+        mkt_capture_level: str,
+        mkt_capture_level_pop: str,
+        n: int,
+        sum_prob: float,
+        winners: int,
+    ) -> None:
+        if grade not in (GRADE_COMPLETE, GRADE_INCOMPLETE, GRADE_NEVER):
+            raise ValueError(f"unknown grade {grade!r}")
+        if mkt_price_level not in MARKET_PRICE_LEVELS:
+            raise ValueError(f"unknown mkt_price_level {mkt_price_level!r}")
+        for label, value in (
+            ("mkt_capture_level", mkt_capture_level),
+            ("mkt_capture_level_pop", mkt_capture_level_pop),
+        ):
+            if value == MARKET_LEVEL_UNKNOWN:
+                raise ValueError(
+                    f"{label} is {MARKET_LEVEL_UNKNOWN!r}: a market reached the fold with no "
+                    "population leg, which the outer predicate makes impossible — the fold and "
+                    "the filter have drifted apart"
+                )
+            if value not in MARKET_CAPTURE_LEVELS:
+                raise ValueError(f"unknown {label} {value!r}")
+        self.grade = grade
+        self.bin = int(bin_)
+        self.mkt_price_level = mkt_price_level
+        self.mkt_capture_level = mkt_capture_level
+        self.mkt_capture_level_pop = mkt_capture_level_pop
+        self.n = int(n)
+        self.sum_prob = float(sum_prob)
+        self.winners = int(winners)
+        if self.n <= 0:
+            raise ValueError("n must be positive")
+        if not (0 <= self.bin <= 9):
+            raise ValueError(f"bin out of range: {self.bin}")
+        if not (0 <= self.winners <= self.n):
+            raise ValueError(f"winners {self.winners} outside 0..{self.n}")
+
+    @classmethod
+    def from_row(cls, row: Sequence[Any]) -> "MarketFoldRow":
+        if len(row) != 8:
+            raise ValueError(f"expected 8 columns, got {len(row)}")
+        return cls(
+            str(row[0]),
+            row[1],
+            str(row[2]),
+            str(row[3]),
+            str(row[4]),
+            row[5],
+            row[6],
+            row[7],
+        )
+
+
+MarketSelector = Callable[[MarketFoldRow], bool]
+
+
+def _wm_complete(row: MarketFoldRow) -> bool:
+    return row.grade == GRADE_COMPLETE
+
+
+#: Policies A-E again, each lifted to the market.
+#:
+#: **The lift is one rule applied five times, not five judgement calls:** a
+#: whole-market policy keeps a market iff EVERY leg of that market satisfies the
+#: row-level selector of the same name. That is the only lift consistent with
+#: ruling 103's "winners and losers together", and it is what makes the two
+#: tables comparable cell-for-cell.
+#:
+#: ``A_today`` is unchanged by the lift and that is a fact worth stating rather
+#: than a coincidence: ``grade`` is ALREADY market-level (it is computed from the
+#: market's outcomes), so the control is the same population under both
+#: granularities — which is what makes it a usable reconciliation key.
+WHOLE_MARKET_POLICIES: dict[str, MarketSelector] = {
+    "A_today": _wm_complete,
+    "B_exclude_cp_absent": lambda r: _wm_complete(r)
+    and r.mkt_price_level != "has_absent",
+    "C_exclude_hindsight": lambda r: _wm_complete(r)
+    and r.mkt_capture_level != "has_after_res",
+    "D_moved_price_only": lambda r: _wm_complete(r)
+    and r.mkt_price_level == "all_moved",
+    "E_pregame_or_unknown_ts": lambda r: _wm_complete(r)
+    and r.mkt_capture_level == "all_pregame_or_nots",
+}
+
+#: The sensitivity: the same two capture policies decided by **only the legs the
+#: curve reads**, instead of every leg of the market.
+#:
+#: Not a proposal. It exists so the artifact can say which legs voted and what
+#: the other reading would have given, because the apply's CTE picks one and
+#: nothing in ruling 103 argues for the choice — it simply makes it.
+WHOLE_MARKET_POPULATION_LEG_POLICIES: dict[str, MarketSelector] = {
+    "C_exclude_hindsight": lambda r: _wm_complete(r)
+    and r.mkt_capture_level_pop != "has_after_res",
+    "E_pregame_or_unknown_ts": lambda r: _wm_complete(r)
+    and r.mkt_capture_level_pop == "all_pregame_or_nots",
+}
+
+
+def _table(
+    rows: Sequence[Any], policies: Mapping[str, Any], baseline_name: str = "A_today"
+) -> dict[str, dict[str, Any]]:
+    baseline = ece(rows, policies[baseline_name]) if baseline_name in policies else None
     out: dict[str, dict[str, Any]] = {}
-    for name, selector in POLICIES.items():
-        result = ece(materialised, selector)
-        if result["ece"] is not None and baseline["ece"] is not None:
+    for name, selector in policies.items():
+        result = ece(rows, selector)
+        if baseline is None:
+            result["delta_ece"] = None
+        elif result["ece"] is not None and baseline["ece"] is not None:
             result["delta_ece"] = round(result["ece"] - baseline["ece"], 4)
         else:
             result["delta_ece"] = None
         out[name] = result
     return out
+
+
+def market_policy_table(rows: Iterable[MarketFoldRow]) -> dict[str, Any]:
+    """Every WHOLE-MARKET policy's ECE for one cell, plus the legs-that-vote sensitivity."""
+    materialised = list(rows)
+    out: dict[str, Any] = {
+        "all_legs": _table(materialised, WHOLE_MARKET_POLICIES),
+    }
+    baseline = out["all_legs"]["A_today"]
+    pop = _table(materialised, WHOLE_MARKET_POPULATION_LEG_POLICIES, baseline_name="")
+    for name, result in pop.items():
+        result["delta_ece"] = (
+            None
+            if result["ece"] is None or baseline["ece"] is None
+            else round(result["ece"] - baseline["ece"], 4)
+        )
+        # The number a reader actually wants: does it matter which legs vote?
+        allv = out["all_legs"][name]
+        result["delta_vs_all_legs_ece"] = (
+            None
+            if result["ece"] is None or allv["ece"] is None
+            else round(result["ece"] - allv["ece"], 4)
+        )
+        result["delta_vs_all_legs_n"] = result["n"] - allv["n"]
+    out["population_legs"] = pop
+    return out
+
+
+def market_level_shares(rows: Iterable[MarketFoldRow]) -> dict[str, dict[str, float]]:
+    """Share of the complete-graded cell sitting at each rung of each ladder."""
+    materialised = [r for r in rows if _wm_complete(r)]
+    total = sum(r.n for r in materialised)
+    if total == 0:
+        return {"price": {}, "capture": {}, "capture_population_legs": {}}
+
+    def share(attr: str, levels: Sequence[str]) -> dict[str, float]:
+        return {
+            level: round(
+                sum(r.n for r in materialised if getattr(r, attr) == level) / total, 6
+            )
+            for level in levels
+        }
+
+    return {
+        "price": share("mkt_price_level", MARKET_PRICE_LEVELS),
+        "capture": share("mkt_capture_level", MARKET_CAPTURE_LEVELS),
+        "capture_population_legs": share(
+            "mkt_capture_level_pop", MARKET_CAPTURE_LEVELS
+        ),
+    }
+
+
+def reconciles_with_row_fold(
+    market_rows: Iterable[MarketFoldRow],
+    row_rows: Iterable[FoldRow],
+    *,
+    tolerance_pp: float = 0.0005,
+) -> dict[str, Any]:
+    """Does the market-aware fold read the SAME population as the row-level one?
+
+    The two statements share a WHERE clause verbatim, so ``A_today`` — the
+    control, which no policy touches — must agree on ``n`` EXACTLY and on ``ece``
+    to within float noise. This is the only check that can catch the new CTE
+    quietly changing what gets counted, which is the failure that would make
+    every number below it wrong in the same direction and therefore invisible.
+
+    ``tolerance_pp`` is float-comparison slack, not population slack. ``n`` is
+    compared for equality with no slack at all; the two reads are minutes apart
+    but ``futures_outcomes`` rows for RESOLVED markets do not move, and a
+    non-zero ``n_delta`` is reported rather than absorbed.
+    """
+    mine = ece(list(market_rows), WHOLE_MARKET_POLICIES["A_today"])
+    theirs = ece(list(row_rows), POLICIES["A_today"])
+    # ``n_delta`` is computed on BOTH paths and is never absent. It is the field
+    # a reader quotes, and the below-floor / empty path is exactly when they are
+    # most likely to quote it — an unmeasurable ECE does not make the row counts
+    # unmeasurable. Omitting it here raised ``KeyError`` in the reader's own
+    # summary line on a sweep where every market-aware read failed: the artifact
+    # was already written, so the run died AFTER succeeding, with a traceback in
+    # place of the honest "1 = partial sweep" exit.
+    n_delta = mine["n"] - theirs["n"]
+    if mine["ece"] is None or theirs["ece"] is None:
+        return {
+            "reconciled": None,
+            "reason": mine.get("reason") or theirs.get("reason") or "no_ece",
+            "n_delta": n_delta,
+            "market_fold": mine,
+            "row_fold": theirs,
+        }
+    delta = abs(mine["ece"] - theirs["ece"])
+    return {
+        "reconciled": bool(delta <= tolerance_pp and n_delta == 0),
+        "delta_pp": round(delta, 6),
+        "n_delta": n_delta,
+        "market_fold": mine,
+        "row_fold": theirs,
+    }
 
 
 def class_shares(rows: Iterable[FoldRow]) -> dict[str, dict[str, float]]:
