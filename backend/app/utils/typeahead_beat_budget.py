@@ -6,9 +6,18 @@ this docstring argues from, and left the argument itself intact.**
 * **The cliff is 65 s, not 45 s.** Fable ratified the TTL raise (GO ruling 4).
   Every "45 s" below is historical. The quantiser table is still correct as
   arithmetic; its verdict column is not.
-* **The worst pass wall is 61.282 s, not 42.6 s** (`RING_WALL_MAX_S`, n=26, the
-  first read of the deployed pass-ring instrument). This is the THIRD time a
-  sampled maximum in this program turned out to be a lower bound.
+* **The worst pass wall is 66.365 s** — AMENDED LAT-P079 from 61.282, which
+  amended 53.920, which amended 42.6. That is the FOURTH consecutive cycle in
+  which a sampled maximum proved a prior sampled maximum too low, so
+  `MEASURED_WALL_MAX_S` now carries an explicit `WALL_MAX_MARGIN_S` argued from
+  the decay of those four corrections rather than being set to a point estimate
+  for a fifth time.
+* 🔴 **AND THE WALL NOW EXCEEDS THE TTL, so the live 10 s beat is MARGINAL, not
+  SAFE.** `WALL_MAX_EXCEEDS_RESPONSE_TTL` is True: P(10) = 70 s against 65 s. No
+  beat interval can fix a single pass that outlasts the cache it fills. LAT-P075's
+  "SAFE for the first time in this program's history" is **withdrawn** — it was a
+  property of a stale constant, not of production. See
+  `test_the_defaults_grade_the_live_beat_MARGINAL_and_the_SAFE_result_is_WITHDRAWN`.
 * **Consequence, and it is the uncomfortable one:** the 60 s W-move this module
   was written to refuse no longer grades UNSAFE at the new TTL, so
   `test_live_beat_interval_is_not_unsafe` — described below as the load-bearing
@@ -186,12 +195,66 @@ CURRENT_BEAT_INTERVAL_S = 10.0
 # `test_the_pass_only_measurement_grades_the_live_beat_unsafe` existed to force.
 MEASURED_WALL_MEDIAN_S = 40.991
 MEASURED_WALL_MIN_S = 32.852
-MEASURED_WALL_MAX_S = 53.920
+
+# ---------------------------------------------------------------------------
+# LAT-P079 — `MEASURED_WALL_MAX_S` RE-DERIVED, and the sampling argument stated
+# rather than implied (ruling 075's form). Owed for three cycles.
+#
+# THE FOUR OBSERVATIONS, each a sampled maximum that proved the previous one
+# too low, and each taken with the same instrument on the same code path:
+#
+#     LAT-P063   42.6   s   (mixed sweep)
+#     LAT-P074   53.920 s   +11.32   pass-only, n=17
+#     LAT-P075   61.282 s   + 7.36   n=26, first read of the deployed instrument
+#     LAT-P078   66.365 s   + 5.08   n=32, 15.6 h horizon, walls_over_response_ttl=1
+#
+# **A SAMPLED MAXIMUM IS A LOWER BOUND, SO THIS CONSTANT IS SET TO THE HIGHEST
+# OBSERVED VALUE AND CARRIES AN EXPLICIT MARGIN** — the previous three cycles
+# each set it to a point estimate and were each wrong within one cycle, which is
+# the whole reason ruling 075 requires the margin to be argued.
+#
+# THE MARGIN, argued from this program's own four points rather than assumed.
+# The increments decay geometrically at a strikingly stable ratio — 7.36/11.32 =
+# 0.650, 5.08/7.36 = 0.690. Taking r = 0.69, the remaining tail sums to
+# 5.08 * r/(1-r) = 11.3 s. So the true maximum is estimated at ~77.7 s.
+#
+# This is an EXTRAPOLATION FROM FOUR POINTS, not a bound, and it is labelled as
+# one. What it is good for is refusing the next point estimate: any margin below
+# ~11 s is smaller than the correction each of the last three cycles needed.
+MEASURED_WALL_MAX_S = 66.365
+WALL_MAX_MARGIN_S = 11.3
+WALL_MAX_UPPER_ESTIMATE_S = MEASURED_WALL_MAX_S + WALL_MAX_MARGIN_S
+
+def wall_max_exceeds_response_ttl(
+    wall_max_s: float = MEASURED_WALL_MAX_S,
+    ttl_s: float = RESPONSE_CACHE_TTL_S,
+) -> bool:
+    """Does a single worst-case pass outlast the cache it is filling?
+
+    🔴 A FUNCTION, not a bare constant, and that is the second thing LAT-P079
+    got wrong before getting it right. The first attempt was
+    ``WALL_MAX_EXCEEDS_RESPONSE_TTL = MEASURED_WALL_MAX_S > RESPONSE_CACHE_TTL_S``
+    with a test asserting ``flag == (MEASURED_WALL_MAX_S > RESPONSE_CACHE_TTL_S)``.
+    **A mutation that hard-coded the flag to ``True`` SURVIVED that test**, because
+    when the computed answer is also ``True`` the assertion cannot tell the two
+    apart. A parameterised function can be shown to vary with its inputs, which
+    is what "derived" has to mean if a test is going to pin it.
+    """
+    return wall_max_s > ttl_s
+
+
+#: The honest maximum now EXCEEDS the response cache TTL — #1866's P4 risk
+#: already realised on the pre-fix system: a pass that outlasts the TTL keeps
+#: nothing warm. Computed, so it cannot be held at a comfortable value by
+#: leaving one of its inputs stale, which is exactly how the old
+#: `MEASURED_WALL_MAX_S < TTL` assertion stayed green for three cycles
+#: (LAT-P075's wrong-gate lesson, applied to this module's own guard).
+WALL_MAX_EXCEEDS_RESPONSE_TTL = wall_max_exceeds_response_ttl()
 
 #: How many production passes stand behind the range above. Recorded because a
 #: maximum drawn from a finite sample is a lower bound on the true maximum, and
 #: every margin computed against it inherits that.
-MEASURED_WALL_SAMPLE_PASSES = 17
+MEASURED_WALL_SAMPLE_PASSES = 32
 
 # ---------------------------------------------------------------------------
 # LAT-P074 — THE PASS-ONLY WALL, MEASURED. And why it is NOT substituted above.

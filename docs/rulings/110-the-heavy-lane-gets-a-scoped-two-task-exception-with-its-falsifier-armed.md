@@ -188,6 +188,66 @@ one (a beat excluded rather than counted as evidence of safety), so this is not 
 hold the grant. The rule change is **filed, not made** — see #2071 for why changing a grading
 rule after its baseline was pinned is the very defect this ruling exists to refuse.
 
+## AMENDMENT 2026-08-21 (LAT-P079) — the falsifier's first read was ungradeable, and two of this ruling's four predictions are RETIRED
+
+The routing merged and deployed as **v3882 / `0c7ccdf2`** at 09:08:40 PT. LAT-P078 took the
+first production read 6 min 55 s later and it returned `HOLD`. **It could not have returned
+anything else, and the instrument has been repaired.** Full evidence:
+`docs/audits/latency/lat-p079-falsifier-horizon.md` and **#2071**.
+
+🔴 **DEFECT 1 — no horizon gate.** `INCONCLUSIVE` fired when *nothing* could be graded; it never
+fired when *everything* was graded against **pre-move data**, which is what every read shortly
+after a deploy is. Three of seven observed p50s matched their pinned baselines to three decimals.
+This is the defect **this ruling's own general clause names** — *a falsifier that cannot go red
+is the wrong-gate defect wearing a safety coat* — committed by the file that names it.
+
+🔴 **DEFECT 2 — the panel could not see its own subjects, and this one corrects LAT-P078.** The
+route read the seven **protected** beats' metrics and then interrogated that dict about the two
+**movers**, which were never in it. `movers[*].samples` was `0` **by construction, permanently**.
+Measured directly at the same instant: `market_shape_backfill` 29 successes / 50 samples,
+`precompute_backfill_progress` 44 successes / 50 samples. LAT-P078 read that `0` and concluded
+"neither moved task has run on `heavy`" — **that conclusion is withdrawn**; its verdict stands on
+its other evidence.
+
+**The two had to be fixed in one pass.** The staged fix for defect 1 was *"`movers[*].samples ==
+0` ⇒ `INCONCLUSIVE`"*, and against the unrepaired read that condition is **never false** — it
+would have converted a gate that could not go red into one that could not go green. Fable's
+directive required the disjoint-baseline repair in the same pass for exactly this reason.
+
+**The horizon is now EXACT.** The duration ring already stored a per-sample timestamp;
+`get_task_metrics` parsed and discarded it. `recent_durations_at` is now exposed, and the grade
+runs on the **post-move samples alone** once there are eight. Without it the gate would have read
+`INCONCLUSIVE` for **weeks** — 2.3 %–36 % of the protected beats' rings are post-move even at a
+hypothetical +25 h — leaving this grant unwatched, which is the one thing this ruling forbids.
+
+### Predictions P1 and P2 are RETIRED, by name
+
+LAT-P077 §4 registered four. P3 (the control) and P4 stand; **P1 (period p95 < 200 s) and P2
+(loss < 20 %) are retired.** LAT-P078 measured **90.6 s and 19 %** with the routing not deployed,
+so both were already satisfied by the null and would have been credited to the intervention.
+
+Re-deriving them against a same-horizon null does not rescue them. Period p95 has been measured at
+**176.5 / 292.7 / 90.6 / ~106–117 s** — a between-window spread of **3.2×** — against a predicted
+effect of shedding ~19 % of one of two slots (~2× on mean wait). **A statistic whose
+between-window spread exceeds the effect being measured cannot discriminate that effect at one
+window per arm.** Retirement is the honest disposition, not a new threshold.
+
+**P4 is promoted to primary** — exact integer run counts, a large predicted change (31→72, 45→96),
+and it can fail: if the counts do not move, the starvation story behind this ruling was wrong. It
+is now computed in the payload. **P5 is added**: at a horizon where the falsifier is no longer
+`pre_horizon`, its verdict is `HOLD` — failable as `REVERT` and, now, as `INCONCLUSIVE`.
+
+### The censored-beats mechanism, banked as gotcha #146
+
+The 2026-08-20 amendment below found that `precompute_backfill_winners_status` is censored **by a
+statistic, not a fact** (a 14 % clip rate saturates any p95). Fable ruled it worth a gotcha; it is
+banked as **#146** — *a percentile at a ceiling is a fact about the CLIP RATE, never about the
+distribution under it*, with the budget-bounded sibling (`compute_calibration_prices`) as the
+mirror case whose remedy is opposite.
+
+**The grant still HOLDS.** Nothing here is a REVERT: no watched beat has degraded, and the honest
+answer today is that none of them can yet be graded.
+
 ## Status
 
 **GRANTED and SHIPPED** on `program/latency-70` with the falsifier armed, 25 tests, 5 mutations
