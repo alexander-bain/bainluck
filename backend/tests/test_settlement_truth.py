@@ -47,7 +47,7 @@ class TestOutcomeInvariant:
 
     @pytest.mark.parametrize(
         "disposition",
-        [d for d in Disposition if d is not Disposition.SETTLED],
+        [d for d in list(Disposition) if d is not Disposition.SETTLED],
     )
     def test_no_other_disposition_may_carry_a_claim(self, disposition):
         """The whole of constraint (a) in one assertion.
@@ -63,7 +63,7 @@ class TestOutcomeInvariant:
             )
 
     def test_licenses_grading_is_exactly_settled(self):
-        licensed = [d for d in Disposition if d.licenses_grading()]
+        licensed = [d for d in list(Disposition) if d.licenses_grading()]
         assert licensed == [Disposition.SETTLED]
 
     def test_purged_is_not_a_source_claim_about_the_market(self):
@@ -524,7 +524,7 @@ def test_every_disposition_is_exercised_by_the_sweep_or_the_positive_arms():
     """
     seen = {shape().disposition for _, shape in _ALL_NON_SETTLED_SHAPES}
     seen.add(Disposition.SETTLED)
-    expected = set(Disposition) - {Disposition.NOT_PROBED_BEYOND_HORIZON}
+    expected = set(list(Disposition)) - {Disposition.NOT_PROBED_BEYOND_HORIZON}
     assert seen == expected, f"unexercised dispositions: {expected - seen}"
 
 
@@ -539,7 +539,7 @@ class TestCandidatePoolNeverGrades:
 
     @pytest.mark.parametrize(
         "disposition",
-        [d for d in Disposition if d is not Disposition.SETTLED],
+        [d for d in list(Disposition) if d is not Disposition.SETTLED],
     )
     def test_grading_is_refused_for_every_unlicensed_disposition(self, disposition):
         with pytest.raises(UnverifiedGradingRefused) as exc:
@@ -557,7 +557,7 @@ class TestCandidatePoolNeverGrades:
         market for probing; it may never settle one. There is no disposition
         reachable from scores alone, which is why this loops the whole vocabulary.
         """
-        for disposition in Disposition:
+        for disposition in list(Disposition):
             if disposition is Disposition.SETTLED:
                 continue
             with pytest.raises(UnverifiedGradingRefused):
