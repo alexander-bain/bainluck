@@ -92,6 +92,13 @@ SERIALIZE_TIMEOUT_S = 10.0
 
 FREE_STATES = {"RELEASED", "FREE"}
 
+#: Ruling 008 as AMENDED 2026-08-21: a takeover needs a dead pid AND activity
+#: stale beyond the lock's own interval. A lock may declare its interval with a
+#: `heartbeat_interval_s:` line; this is the fallback, set generously so that a
+#: long green gate run never looks abandoned. Erring high fails CLOSED (refuses
+#: a takeover), which is the direction 008 exists to protect.
+DEFAULT_ACTIVITY_INTERVAL_S = 1800
+
 ACQUIRED, REFUSED, MALFORMED, NOT_SERIALIZED, NO_IDENTITY = 0, 1, 2, 3, 4
 
 
@@ -104,6 +111,70 @@ def _ps_alive(pid: int) -> bool:
     return subprocess.run(
         ["ps", "-p", str(pid)], capture_output=True
     ).returncode == 0
+
+
+def _ps_started(pid: int) -> Optional[str]:
+    """`ps -o lstart` for a pid, or None. The defence against a RECYCLED pid.
+
+    A pid is only unique among LIVE processes. `owner_pid` alone therefore cannot
+    distinguish "the owner is still running" from "the owner died and the OS
+    handed its number to something else". Pairing it with the start time makes
+    the identity checkable, which is why a claim must re-stamp BOTH or neither.
+    """
+    r = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True
+    )
+    out = r.stdout.strip()
+    return out or None
+
+
+def _heartbeat_path(lock_path: str) -> Optional[str]:
+    """`.../LANE-integrator.lock` -> `.../HEARTBEAT-INTEGRATOR`, if it exists."""
+    base = os.path.basename(lock_path)
+    m = re.match(r"^LANE-(.+)\.lock$", base)
+    if not m:
+        return None
+    cand = os.path.join(os.path.dirname(lock_path), f"HEARTBEAT-{m.group(1).upper()}")
+    return cand if os.path.exists(cand) else None
+
+
+def _activity_age_s(lock_path: str) -> tuple[Optional[float], str]:
+    """Seconds since this lane last DID something, and where that came from.
+
+    Deliberately **mtime, not a written timestamp.** Ruling 008 demoted the
+    heartbeat because it was a human-authored string that drifted in both
+    directions; an mtime is written by the kernel on an actual write. This
+    amendment may only ever VETO a takeover, so it must not reintroduce a signal
+    a typo can forge.
+
+    A future mtime (a skewed clock) yields age 0 — i.e. "fresh" — which REFUSES
+    the takeover. Ahead-drift therefore fails CLOSED here, the exact inversion of
+    the ahead-drift failure that 008 was written for.
+    """
+    newest, src = None, "none"
+    for path, label in ((lock_path, "lock mtime"), (_heartbeat_path(lock_path), "heartbeat mtime")):
+        if not path:
+            continue
+        try:
+            mt = os.stat(path).st_mtime
+        except OSError:
+            continue
+        if newest is None or mt > newest:
+            newest, src = mt, label
+    if newest is None:
+        return None, src
+    return max(0.0, time.time() - newest), src
+
+
+def _declared_interval_s(text: str) -> int:
+    """The lock's OWN interval, per the amendment. Not a global constant.
+
+    A lane heartbeating every 10 minutes is stale at 30; a lane mid-way through a
+    40-minute gate run is not. Letting each lock state its own cadence is what
+    makes "stale beyond its own interval" a testable sentence.
+    """
+    m = re.search(r"(?m)^heartbeat_interval_s:\s*(\d+)", text)
+    return int(m.group(1)) if m else DEFAULT_ACTIVITY_INTERVAL_S
 
 
 def _comm(pid: int) -> str:
@@ -350,6 +421,9 @@ def _verdict(
     owner_identity: Optional[str],
     me: str,
     takeover_ok: bool = False,
+    activity_age_s: Optional[float] = None,
+    activity_src: str = "none",
+    interval_s: int = DEFAULT_ACTIVITY_INTERVAL_S,
 ) -> tuple[str, bool]:
     """Return ``(human verdict, claimable)``.
 
@@ -383,7 +457,42 @@ def _verdict(
         who = owner_identity or f"pid {owner}"
         return f"HELD by a LIVE other ({who}, pid {owner})", False
     if status == "HELD":
-        return f"FREE (owner pid {owner} is dead — takeover, record it)", True
+        # Ruling 008 AS AMENDED 2026-08-21 (Fable, via INT-108). A dead pid is
+        # NO LONGER SUFFICIENT. `owner_pid` is an unvalidated hand-written field,
+        # so "that number is not running" does not establish "nobody is working
+        # here" — the charter case was LANE-lane1.lock naming a dead 38410 while
+        # lane1 was alive and landing commits. Require the second, independent
+        # signal: the lane has also gone QUIET.
+        #
+        # This does not undo what 008 closed. The clock can only ever REFUSE here
+        # (a fresh reading blocks a takeover); it can never grant one, because a
+        # live pid has already returned HELD above. Both drift directions
+        # therefore fail closed.
+        if activity_age_s is not None and activity_age_s < interval_s:
+            if takeover_ok:
+                return (
+                    f"🔴 MALFORMED-INVESTIGATE OVERRIDDEN — dead pid {owner} but "
+                    f"{activity_src} is only {activity_age_s:.0f}s old (< {interval_s}s "
+                    "interval). An operator asserted --takeover over a lane that "
+                    "still looks ACTIVE. If a live lane loses its work, this is why.",
+                    True,
+                )
+            return (
+                f"🔴 MALFORMED-INVESTIGATE (ruling 008 as amended): owner pid {owner} "
+                f"is DEAD but {activity_src} is only {activity_age_s:.0f}s old, inside "
+                f"this lock's own {interval_s}s interval. A dead pid with fresh "
+                "activity is a lock naming the WRONG pid, not an abandoned lane. "
+                "TAKE NOTHING. Find the live owner and have it re-stamp owner_pid "
+                "(and owner_started). Say so loudly in your report — ruling 071: a "
+                "malformed lock reads as HELD.",
+                False,
+            )
+        aged = (
+            f"{activity_src} {activity_age_s:.0f}s old, past this lock's {interval_s}s interval"
+            if activity_age_s is not None
+            else "no activity signal available"
+        )
+        return f"FREE (owner pid {owner} is dead; {aged} — takeover, record it)", True
     return f"UNKNOWN status {status!r} — treat as HELD and stop", False
 
 
@@ -419,11 +528,23 @@ def cmd_check(args) -> int:
     text, status, owner, owner_identity, _ = _read(args.lock)
     me, _live = _identity_or_exit(args)
     alive = _ps_alive(owner) if owner else False
-    verdict, _claimable = _verdict(status, owner, owner_identity, me)
+    age, src = _activity_age_s(args.lock)
+    interval = _declared_interval_s(text)
+    verdict, claimable = _verdict(
+        status, owner, owner_identity, me,
+        activity_age_s=age, activity_src=src, interval_s=interval,
+    )
     print(
         f"status={status} owner_identity={owner_identity} owner_pid={owner} "
-        f"alive={alive} me={me} -> {verdict}"
+        f"alive={alive} activity={'%.0fs' % age if age is not None else 'unknown'}"
+        f"({src}) interval={interval}s me={me} -> {verdict}"
     )
+    # A `check` that reports MALFORMED must not exit 0. Gotcha #54's amendment:
+    # `1` is a result, anything else is a story about the harness — and this IS a
+    # story about the harness. A reader scripting `check` would otherwise get a
+    # clean exit over a lock that must not be touched.
+    if not claimable and verdict.startswith("🔴 MALFORMED"):
+        return MALFORMED
     return ACQUIRED
 
 
@@ -437,8 +558,14 @@ def cmd_claim(args) -> int:
         text, status, owner, owner_identity, m = _read(args.lock)
 
         # --- TEST, before any write. This is the whole ruling. ---
+        # Read activity BEFORE the write, or the write itself makes the lock look
+        # fresh and every takeover self-vetoes.
+        age, src = _activity_age_s(args.lock)
         verdict, claimable = _verdict(
-            status, owner, owner_identity, me, takeover_ok=getattr(args, "takeover", False)
+            status, owner, owner_identity, me,
+            takeover_ok=getattr(args, "takeover", False),
+            activity_age_s=age, activity_src=src,
+            interval_s=_declared_interval_s(text),
         )
         if not claimable:
             print(
@@ -446,7 +573,11 @@ def cmd_claim(args) -> int:
                 f"Stop and say so — do NOT overwrite.",
                 file=sys.stderr,
             )
-            return REFUSED
+            # Two refusals, two exit codes, because they are two different facts.
+            # `1` = "the lane is legitimately busy, come back later". `2` = "this
+            # lock does not make sense, a human must look at it". Collapsing them
+            # teaches a caller to retry a MALFORMED lock forever.
+            return MALFORMED if verdict.startswith("🔴 MALFORMED") else REFUSED
 
         takeover = status == "HELD" and not _is_me(owner_identity, owner, me)
         stamp = _stamp()
@@ -476,6 +607,30 @@ def cmd_claim(args) -> int:
         else:
             new = new[: m.start()] + f"owner_identity: {me}\n" + new[m.start():]
         new = re.sub(r"(?m)^queue:.*$", f"queue: {args.queue}", new, count=1)
+
+        # --- RE-STAMP THE WHOLE IDENTITY, not three fields of it. ---
+        # Ruling 008 as amended, enforcement 3. Until INT-108 this writer updated
+        # `status`, `owner_identity` and `owner_pid` and left `nonce`,
+        # `owner_started` and `claimed_at` holding the PREVIOUS owner's values.
+        # After a takeover the file then paired a LIVE pid with a DEAD process's
+        # start time — and `owner_started` is the only thing that catches a
+        # recycled pid, so the next reader doing the strong check sees a mismatch
+        # and is entitled to call the lock MALFORMED and seize a live lane.
+        # A partial re-stamp manufactures the precise condition the amendment
+        # exists to catch. Found by INT-108 on its own claim, one minute after
+        # banking the ruling.
+        started = _ps_started(live_pid) if live_pid is not None else None
+        for field, value in (
+            ("nonce", me),
+            ("owner_started", f"{started}  (durable `{SESSION_COMM_MARKER}` session process, "
+                              "NOT a subshell)" if started else "unknown"),
+            ("claimed_at", stamp),
+        ):
+            if re.search(rf"(?m)^{field}:", new):
+                new = re.sub(rf"(?m)^{field}:.*$", f"{field}: {value}", new, count=1)
+        # Absent fields are NOT invented. A lock that never carried `nonce` is a
+        # different shape, not a broken one, and silently growing fields under a
+        # lane is how a "repair" becomes an edit to someone else's file.
 
         line = (
             f"- {stamp} — **HELD** by {args.queue}, identity {me}, "
