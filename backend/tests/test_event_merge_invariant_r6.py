@@ -322,8 +322,38 @@ def _census_source(source, path=None):
 
     # 1. Raw SQL — the literal, wherever it appears in the expression, including
     #    inside an f-string (a JoinedStr's constant parts are walked too).
+    #
+    #    DOCSTRINGS ARE EXCLUDED, for the same reason the ORM branch below scopes
+    #    by receiver rather than by "does this function mention Event". A docstring
+    #    cannot delete anything — prose that QUOTES the statement ("call this
+    #    immediately before ``DELETE FROM events WHERE id = :orphan``") is exactly
+    #    the documentation a destructive-rail helper ought to carry, and reporting
+    #    it as a delete site pushes the author toward one of two bad moves: deleting
+    #    the sentence, or padding DELETE_WITHOUT_MERGE_ALLOWLIST with a non-rail. The
+    #    comment on the ORM branch says it best — "an allowlist padded to silence a
+    #    census is how the census stops being read."
+    #
+    #    Real SQL never lives in a docstring: it is a string passed to text(), which
+    #    is not the first statement of a module/class/function body, so nothing that
+    #    can actually execute is skipped here. Found by queue 387 (the merge rails'
+    #    shared repoint helper documents the DELETE it must precede).
+    docstring_nodes = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)):
+            body = getattr(node, "body", None)
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                docstring_nodes.add(id(body[0].value))
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if id(node) in docstring_nodes:
+                continue
             if "DELETE FROM events" in node.value:
                 _record(node.lineno, "sql")
 
@@ -611,6 +641,56 @@ class TestTheCensusSeesBothSpellings:
             "        _rc.delete(_cursor_key)\n"
         )
         assert _census_source(fake) == []
+
+    def test_a_docstring_quoting_the_statement_is_not_a_delete_site(self):
+        """Queue 387's false positive, pinned.
+
+        The merge rails' shared repoint helper documents the DELETE it must run
+        immediately before — which is precisely the documentation a destructive-rail
+        helper should carry, and the census reported it as an unguarded delete. Prose
+        deletes nothing.
+        """
+        fake = (
+            "async def repoint(session):\n"
+            '    """Call this immediately before ``DELETE FROM events WHERE id = :o``."""\n'
+            "    await session.execute(text('UPDATE t SET event_id = :k'))\n"
+        )
+        assert _census_source(fake) == []
+
+    def test_a_real_delete_beside_a_quoting_docstring_is_STILL_reported(self):
+        """The other direction, and the one that matters.
+
+        Skipping docstrings must skip the DOCSTRING, not the function that owns it.
+        A rail that both documents and performs the delete is a real site, and if
+        this passed vacuously the exclusion above would be a hole big enough to hide
+        every rail in — just add a docstring.
+        """
+        fake = (
+            "async def rogue(session):\n"
+            '    """Runs ``DELETE FROM events`` after repointing."""\n'
+            "    await session.execute(text('DELETE FROM events WHERE id = 1'))\n"
+        )
+        assert [(s.name, s.kind) for s in _census_source(fake)] == [("rogue", "sql")]
+
+    def test_a_module_docstring_does_not_suppress_a_function_below_it(self):
+        """Module-level prose is skipped independently of anything in the body."""
+        fake = (
+            '"""This module is about ``DELETE FROM events``."""\n'
+            "async def rogue(session):\n"
+            "    await session.execute(text('DELETE FROM events WHERE id = 1'))\n"
+        )
+        assert [(s.name, s.kind) for s in _census_source(fake)] == [("rogue", "sql")]
+
+    def test_a_non_docstring_string_constant_is_still_reported(self):
+        """Only the FIRST statement of a body is a docstring. A bare string sitting
+        anywhere else is an ordinary constant and must not inherit the exemption."""
+        fake = (
+            "async def rogue(session):\n"
+            "    x = 1\n"
+            "    sql = 'DELETE FROM events WHERE id = 1'\n"
+            "    await session.execute(text(sql))\n"
+        )
+        assert [(s.name, s.kind) for s in _census_source(fake)] == [("rogue", "sql")]
 
     def test_the_orm_shape_is_actually_reachable_in_the_real_sweep(self):
         """Guards the scoping heuristic against being vacuously safe.

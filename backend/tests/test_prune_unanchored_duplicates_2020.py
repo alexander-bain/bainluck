@@ -642,41 +642,25 @@ class TestTheHostileSpecimens:
         assert unclassified_event_children() == ()
         assert set(EVENT_CHILD_DISPOSITIONS) == set(derived)
 
-    def test_r4_the_merge_rails_fk_list_is_still_short_and_that_is_a_LIVE_defect(self):
-        """CHARACTERIZATION, not an endorsement. Read the whole docstring.
-
-        R4 was written about *this* rail, which imported ``_EVENT_FK_TABLES`` from
-        ``app.tasks.sports``. This rail no longer needs the list at all — it deletes
-        only childless rows. **But the list did not get shorter by being unused: the
-        MERGE rail still consumes it, and the merge rail transfers-then-DELETEs the
-        loser event.** So on the deployed tree:
-
-        * ``game_moments`` is repointed by nobody and is ``ON DELETE CASCADE`` — the
-          loser's moments are **silently destroyed** by every merge, named in no
-          response and counted in no total.
-        * ``ranking_judgments`` is repointed by nobody and has **no** ``ON DELETE``
-          action — a merge whose loser holds a judgment **fails** with an FK
-          violation.
-
-        That is a live defect in a different rail, owned by #1798/#2020's merge half,
-        and fixing it here would be an unreviewed behaviour change to a destructive
-        rail this queue was told not to merge. So it is pinned instead: the numbers
-        are asserted so the day someone fixes it, this test goes red and points at the
-        paragraph explaining what they just fixed.
-
-        If you are here because this test failed: good. Delete it and say so.
-        """
-        from app.tasks.sports import _EVENT_FK_TABLES
-        from app.utils.event_fk_inventory import derive_event_child_tables
-
-        derived = set(derive_event_child_tables())
-        missing = derived - set(_EVENT_FK_TABLES)
-
-        assert missing == {"game_moments", "ranking_judgments"}, (
-            "the merge rail's FK drift changed. If it SHRANK, someone fixed the live "
-            "defect this test documents — delete the test. If it GREW, a new child "
-            f"table is being silently cascaded or blocking merges: {missing}"
-        )
+    # ``test_r4_the_merge_rails_fk_list_is_still_short_and_that_is_a_LIVE_defect``
+    # stood here. It was a CHARACTERIZATION test pinning the merge rails' eight-table
+    # hand-list against metadata's ten, and its docstring ended: "If you are here
+    # because this test failed: good. Delete it and say so."
+    #
+    # Saying so (queue 387 item 3): the defect it pinned is FIXED. All three
+    # transfer-then-DELETE rails — ``_merge_duplicate_events_impl``,
+    # ``_merge_degenerate_combat_events_impl`` and
+    # ``reconcile_unanchored_events._absorb`` — now repoint through
+    # ``app.utils.event_child_repoint.repoint_event_children``, whose table list is
+    # DERIVED from ``Base.metadata`` on every call. ``_EVENT_FK_TABLES`` no longer
+    # exists, which is why this test could not merely be inverted in place.
+    #
+    # Its replacement is POSITIVE and lives in ``tests/test_merge_rail_fk_repoint_r4.py``
+    # — positive because a pinned "still broken" number can only ever catch the fix,
+    # never the regression. It asserts that the repoint ISSUES A STATEMENT for each of
+    # the ten derived tables, that no call site holds a literal table list any more,
+    # and that the two children carrying an event-scoped UNIQUE constraint are
+    # pre-deduped rather than left to raise ``IntegrityError`` mid-merge.
 
     def test_r4_the_two_tables_the_old_list_missed_are_present(self):
         """Named individually, because they failed in opposite directions and a
