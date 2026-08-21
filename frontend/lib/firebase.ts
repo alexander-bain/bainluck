@@ -203,6 +203,31 @@ interface BackendAuthData {
 }
 
 /**
+ * Subscribers to BACKEND-ONLY auth transitions (Queue 390).
+ *
+ * Firebase's `onAuthStateChanged` cannot see these. A user signed in through
+ * the Safari-ITP backend-session path has no Firebase user at all, so
+ * `clearBackendAuth()` on sign-out changes localStorage and emits nothing —
+ * every listener keeps believing the session is live. `C-2063-REVIEW` finding 1
+ * reached the admin provider through exactly this gap, and any other consumer
+ * of `onAuthChange` had the same hole.
+ */
+const backendAuthListeners = new Set<() => void>();
+
+function notifyBackendAuthChange(): void {
+  // Copied before iterating: a listener that unsubscribes itself while being
+  // notified would otherwise mutate the set mid-iteration.
+  for (const listener of Array.from(backendAuthListeners)) {
+    try {
+      listener();
+    } catch {
+      // A throwing subscriber must not stop the others from learning that the
+      // session ended — this is the notification that REVOKES access.
+    }
+  }
+}
+
+/**
  * Store backend auth data in localStorage as fallback.
  */
 function storeBackendAuth(data: BackendAuthData): void {
@@ -211,6 +236,7 @@ function storeBackendAuth(data: BackendAuthData): void {
   } catch {
     // localStorage full or blocked — ignore
   }
+  notifyBackendAuthChange();
 }
 
 /**
@@ -239,6 +265,9 @@ function clearBackendAuth(): void {
   } catch {
     // ignore
   }
+  // Announce it. This is the ONLY signal a backend-only sign-out produces —
+  // Firebase never had a user to emit a change for (Queue 390, finding 1).
+  notifyBackendAuthChange();
 }
 
 /**
@@ -555,22 +584,31 @@ export async function getIdToken(): Promise<string | null> {
 export async function onAuthChange(
   callback: (user: FirebaseUser | null) => void
 ): Promise<() => void> {
+  const asBackendUser = (): FirebaseUser | null => {
+    const backendAuth = loadBackendAuth();
+    if (!backendAuth) return null;
+    return {
+      uid: backendAuth.uid,
+      email: backendAuth.email,
+      displayName: backendAuth.displayName,
+      photoURL: backendAuth.photoURL,
+    } as FirebaseUser;
+  };
+
+  // Queue 390: also subscribe to BACKEND-ONLY transitions. Without this, a
+  // backend-session sign-out emits nothing at all — Firebase has no user to
+  // report a change for — and every subscriber goes on believing the session is
+  // live. That silence is how a revoked admin kept authorizing labeling.
+  const onBackendChange = () => callback(asBackendUser());
+  backendAuthListeners.add(onBackendChange);
+  const unsubBackend = () => {
+    backendAuthListeners.delete(onBackendChange);
+  };
+
   const authInstance = await getFirebaseAuth();
   if (!authInstance) {
-    // Check backend-only auth before reporting null
-    const backendAuth = loadBackendAuth();
-    if (backendAuth) {
-      // Create a minimal user-like object for the callback
-      callback({
-        uid: backendAuth.uid,
-        email: backendAuth.email,
-        displayName: backendAuth.displayName,
-        photoURL: backendAuth.photoURL,
-      } as FirebaseUser);
-    } else {
-      callback(null);
-    }
-    return () => {};
+    callback(asBackendUser());
+    return unsubBackend;
   }
 
   const { onAuthStateChanged } = await import("firebase/auth");
@@ -579,20 +617,13 @@ export async function onAuthChange(
       callback(fbUser);
     } else {
       // Firebase says no user — check backend-only auth fallback
-      const backendAuth = loadBackendAuth();
-      if (backendAuth) {
-        callback({
-          uid: backendAuth.uid,
-          email: backendAuth.email,
-          displayName: backendAuth.displayName,
-          photoURL: backendAuth.photoURL,
-        } as FirebaseUser);
-      } else {
-        callback(null);
-      }
+      callback(asBackendUser());
     }
   });
-  return unsub;
+  return () => {
+    unsubBackend();
+    unsub();
+  };
 }
 
 /**

@@ -38,15 +38,43 @@ Alex grants it with one statement, documented in ``docs/admin-identity.md``:
 
 ## Shape of the column
 
-``BOOLEAN NOT NULL DEFAULT false``. On PostgreSQL 11+ an ``ADD COLUMN`` with a
-non-volatile default is a catalog-only change — no table rewrite, no scan — so
-this is safe inside Heroku's ~5-minute release phase even though ``users`` is a
-live table (gotcha #31's concern is index builds and rewrites; this is neither).
+``BOOLEAN NULL``, no server default. On PostgreSQL 11+ an ``ADD COLUMN`` that is
+nullable with no default is a catalog-only change — no table rewrite, no scan —
+so this is safe inside Heroku's ~5-minute release phase even though ``users`` is
+a live table (gotcha #31's concern is index builds and rewrites; this is neither).
 
-``NOT NULL`` rather than nullable-with-default: a three-valued admin flag has a
-``NULL`` state that reads as "unknown", and the only safe reading of an unknown
-privilege is *denied* — which is what ``false`` already says, unambiguously, at
-every call site without a coalesce anyone can forget.
+## AMENDED 2026-08-21 (Queue 390) — this column was ``BOOLEAN NOT NULL DEFAULT
+false`` and had to become nullable
+
+The original argued: *"a three-valued admin flag has a NULL state that reads as
+'unknown', and the only safe reading of an unknown privilege is denied — which is
+what false already says."* That reasoning is correct about a column read ALONE,
+and wrong about this one, because ``_user_is_admin`` OR-s the legacy allowlists
+after it. ``C-2063-REVIEW`` finding 2 (P1) executed the consequence: with
+``DEFAULT_ADMIN_USER_IDS = {364}``, a row at ``id=364, is_admin=False`` still
+resolved to ``{is_admin: true, via: "identity"}``. The documented revoke
+statement — the entire justification for preferring a column over an env var —
+did nothing to the only row anyone would ever run it on.
+
+Two states cannot fix that. Make ``false`` terminal and every pre-existing row
+reads ``false`` on release day, which locks out the legacy admins during exactly
+the rollout window the allowlists were kept for. So the column carries three
+states and ``NULL`` is load-bearing:
+
+* ``true``  — granted.
+* ``false`` — REVOKED; the allowlists do not get a vote.
+* ``NULL``  — no decision recorded; the allowlists still apply.
+
+No coalesce is forgettable here because there is exactly one reader,
+``_user_is_admin``, and its three branches are pinned by
+``tests/test_admin_identity_auth_q390_r2.py`` in both directions.
+
+**This revision has never run in production** — ``SELECT is_admin FROM users``
+answers ``undefined_column`` against the live database, checked by command on
+2026-08-21 — so it is amended in place rather than superseded by a follow-up
+``ALTER``. Gotcha #8 bans deleting or rewriting migrations that have ALREADY run;
+this one has not, and shipping an ``ALTER`` to fix a column the same PR
+introduces would be archaeology for a future reader.
 
 No index. The column is only ever read by primary key or by ``firebase_uid``
 lookup, both of which are already indexed; an index on a boolean whose
@@ -73,8 +101,7 @@ def upgrade() -> None:
         sa.Column(
             "is_admin",
             sa.Boolean(),
-            nullable=False,
-            server_default=sa.text("false"),
+            nullable=True,
         ),
     )
 

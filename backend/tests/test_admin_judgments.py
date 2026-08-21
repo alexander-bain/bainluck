@@ -6,7 +6,14 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.routes import admin_judgments
+from app.routes import admin_judgments, admin_utils
+
+# Queue 390: the ADMIN_TOKEN comparison now lives ONLY in
+# `admin_utils._resolve_admin_principal`. `admin_judgments` used to run its own
+# copy (`_authorize_admin` -> its module-local `_check_admin_secret`), which is
+# the seam these tests patched. Authorization is resolved once now, so the patch
+# has to land where the single owner reads it — patching the old module-local
+# name silently stopped taking effect and every write turned 403.
 
 
 def _client_with_db(db) -> TestClient:
@@ -118,6 +125,9 @@ def test_create_judgment_accepts_json_body(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).post(
         "/admin/ranking-judgments",
@@ -222,6 +232,9 @@ def test_create_judgment_keeps_query_param_write_path(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).post(
         "/admin/ranking-judgments"
@@ -252,6 +265,9 @@ def test_create_judgment_canonicalizes_reason_tag_aliases(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(
@@ -332,6 +348,9 @@ def test_create_judgment_nests_metadata_fixable_interest(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(
@@ -488,6 +507,9 @@ def test_labeling_candidates_low_confidence_stratum(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).get(
         "/admin/ranking-judgments/candidates?secret=ok&strata=low_confidence&limit=10"
@@ -535,6 +557,9 @@ def test_labeling_candidates_returns_stratified_items(monkeypatch):
     )
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -616,6 +641,9 @@ def test_labeling_candidates_excludes_reviewed_market(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).get(
         "/admin/ranking-judgments/candidates"
@@ -636,6 +664,9 @@ def test_create_judgment_accepts_nested_card_snapshot_metadata(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(
@@ -689,6 +720,9 @@ def test_list_judgments_returns_rows_and_summary(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).get(
         "/admin/ranking-judgments?secret=ok&label=love&surface=discover"
@@ -717,6 +751,9 @@ def test_summary_judgments_returns_category_breakdown(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).get("/admin/ranking-judgments/summary?secret=ok")
 
@@ -742,6 +779,9 @@ def test_export_judgments_streams_csv(monkeypatch):
     db = _ReadDB([_ExecuteResult(scalar_rows=[_judgment()])])
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get("/admin/ranking-judgments/export?secret=ok")
@@ -784,6 +824,9 @@ def test_fixable_interest_clusters_groups_rows(monkeypatch):
     )
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -838,6 +881,9 @@ def test_triage_fixable_interest_cluster_updates_matching_rows(monkeypatch):
     db = _WriteReadDB()
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(
@@ -895,6 +941,9 @@ def test_eval_export_returns_json_with_hashed_reviewer(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).get(
         "/admin/ranking-judgments/eval-export?secret=ok&days=30"
@@ -949,6 +998,9 @@ def test_eval_export_csv_format(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).get(
         "/admin/ranking-judgments/eval-export?secret=ok&fmt=csv"
@@ -970,6 +1022,9 @@ def test_eval_export_split_filter(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).get(
         "/admin/ranking-judgments/eval-export?secret=ok&split=test"
@@ -989,6 +1044,9 @@ def test_eval_export_no_pii_in_output(monkeypatch):
     db = _ReadDB([_ExecuteResult(scalar_rows=[judgment])])
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -1012,75 +1070,6 @@ def test_eval_export_requires_auth(monkeypatch):
     )
 
     assert response.status_code == 403
-
-
-async def _fake_resolve_admin_email(_request, _db=None):
-    return "admin@test.com"
-
-
-async def _fake_resolve_admin_email_none(_request, _db=None):
-    return None
-
-
-def test_create_judgment_resolves_native_reviewer_to_admin_email(monkeypatch):
-    """When reviewer=native and the request has a Bearer token, the server
-    resolves the reviewer to the admin's email for per-user reviewed state."""
-    db = _WriteDB()
-    monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
-    )
-    monkeypatch.setattr(
-        admin_judgments, "_resolve_admin_email", _fake_resolve_admin_email,
-    )
-
-    response = _client_with_db(db).post(
-        "/admin/ranking-judgments?secret=ok&label=love&reviewer=native",
-    )
-
-    assert response.status_code == 200
-    assert db.added.reviewer == "admin@test.com"
-
-
-def test_create_judgment_keeps_explicit_reviewer(monkeypatch):
-    """When reviewer is explicitly set (not 'native'), it is not resolved."""
-    db = _WriteDB()
-    monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
-    )
-    monkeypatch.setattr(
-        admin_judgments, "_resolve_admin_email", _fake_resolve_admin_email,
-    )
-
-    response = _client_with_db(db).post(
-        "/admin/ranking-judgments?secret=ok&label=love&reviewer=sam",
-    )
-
-    assert response.status_code == 200
-    assert db.added.reviewer == "sam"
-
-
-def test_create_judgment_native_reviewer_fallback_when_unauthenticated(monkeypatch):
-    """When reviewer=native but no Bearer token (anonymous admin via secret),
-    reviewer stays 'native'."""
-    db = _WriteDB()
-    monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
-    )
-    monkeypatch.setattr(
-        admin_judgments, "_resolve_admin_email", _fake_resolve_admin_email_none,
-    )
-
-    response = _client_with_db(db).post(
-        "/admin/ranking-judgments?secret=ok&label=love&reviewer=native",
-    )
-
-    assert response.status_code == 200
-    assert db.added.reviewer == "native"
-
-
-# ---------------------------------------------------------------------------
-# Coverage endpoint tests
-# ---------------------------------------------------------------------------
 
 
 class _CoverageDB:
@@ -1134,6 +1123,9 @@ def test_coverage_returns_stratum_heatmap_and_queue_health(monkeypatch):
     db = _CoverageDB([j1, j2])
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -1191,6 +1183,9 @@ def test_coverage_window_filter(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).get(
         "/admin/ranking-judgments/coverage?secret=ok&window=7d"
@@ -1220,6 +1215,9 @@ def test_coverage_unknown_stratum_fallback(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).get(
         "/admin/ranking-judgments/coverage?secret=ok"
@@ -1235,6 +1233,9 @@ def test_card_snapshot_preserves_stratum_and_selection_reason(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(
@@ -1277,11 +1278,332 @@ def test_labeling_candidates_firebase_admin_not_shortcircuited(monkeypatch):
     def _raise_secret(secret=None, **kw):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    async def _admin_ok(secret, request, db):
-        return True
+    async def _is_the_admin(_request, _db=None):
+        return SimpleNamespace(id=1, email="alex@example.com", is_admin=True)
 
+    # Queue 390: repointed from `admin_judgments._check_admin_auth` to the arms
+    # `_resolve_admin_principal` actually consults. The regression this test
+    # guards is unchanged and is now exercised for real rather than against a
+    # stubbed boolean: the raising secret check must not short-circuit the
+    # identity arm. Stubbing the gate itself would have made the test survive
+    # the very short-circuit it exists to catch.
+    monkeypatch.setattr(admin_utils, "_check_admin_secret", _raise_secret)
     monkeypatch.setattr(admin_judgments, "_check_admin_secret", _raise_secret)
-    monkeypatch.setattr(admin_judgments, "_check_admin_auth", _admin_ok)
+    monkeypatch.setattr(admin_utils, "_resolve_admin_user", _is_the_admin)
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/candidates?strata=low_confidence&limit=10"
+    )
+    assert response.status_code == 200, response.text
+
+
+# --------------------------------------------------------------------------
+# Reviewer attribution — REWRITTEN 2026-08-21 (Queue 390, C-2063-REVIEW finding 3)
+# --------------------------------------------------------------------------
+#
+# The three tests that lived here asserted the pre-fix rule: "reviewer=native
+# plus ANY successful admin auth resolves to the admin's email". Two of them
+# authorized with the shared secret (`?secret=ok`) and still expected an email —
+# which is the token-path defect stated as a requirement. Attribution is now
+# bound to the ARM that authorized:
+#
+#   identity -> always the verified person, whatever the caller asked for
+#   token    -> whatever the caller asked for; the token identifies nobody
+#
+# So the old expectations are not weakened, they are re-pointed at the arm that
+# can actually justify them. `_resolve_admin_email` is no longer called by this
+# route at all, so patching it would patch nothing — the fakes are gone with it.
+
+
+def _authorize_as_identity(monkeypatch, email="admin@test.com"):
+    """Make the request authorize via IDENTITY, not the shared token."""
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: False
+    )
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: False
+    )
+
+    async def _fake_resolve_admin_user(_request, _db=None):
+        return SimpleNamespace(id=1, email=email, is_admin=True)
+
+    monkeypatch.setattr(
+        admin_utils, "_resolve_admin_user", _fake_resolve_admin_user
+    )
+
+
+def _authorize_as_token(monkeypatch):
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+
+
+def test_create_judgment_identity_write_is_attributed_to_the_admin(monkeypatch):
+    """reviewer=native on an IDENTITY session resolves to that admin's email."""
+    db = _WriteDB()
+    _authorize_as_identity(monkeypatch)
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments?label=love&reviewer=native",
+    )
+
+    assert response.status_code == 200
+    assert db.added.reviewer == "admin@test.com"
+
+
+def test_create_judgment_identity_write_overrides_even_an_explicit_reviewer(
+    monkeypatch,
+):
+    """The finding, as a route test: an identity caller cannot name someone else.
+
+    This is the assertion that INVERTED. The old
+    `test_create_judgment_keeps_explicit_reviewer` required `reviewer=sam` to
+    survive on any authenticated request; the reviewer showed that lets an
+    identity session file gold labels under a name it chose.
+    """
+    db = _WriteDB()
+    _authorize_as_identity(monkeypatch)
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments?label=love&reviewer=sam",
+    )
+
+    assert response.status_code == 200
+    assert db.added.reviewer == "admin@test.com"
+
+
+def test_create_judgment_token_write_keeps_an_explicit_reviewer(monkeypatch):
+    """Delegation survives where it is meaningful: the kid `/play` surface names
+    its reviewer deliberately and authenticates with the shared token."""
+    db = _WriteDB()
+    _authorize_as_token(monkeypatch)
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments?secret=ok&label=love&reviewer=sam",
+    )
+
+    assert response.status_code == 200
+    assert db.added.reviewer == "sam"
+
+
+def test_create_judgment_token_write_keeps_native_and_gets_no_identity(monkeypatch):
+    """The old `..._fallback_when_unauthenticated` case, correctly renamed.
+
+    It was never "unauthenticated" — it was authenticated by the shared token,
+    which is precisely why no email is available to attribute to. Absence is the
+    honest encoding.
+    """
+    db = _WriteDB()
+    _authorize_as_token(monkeypatch)
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments?secret=ok&label=love&reviewer=native",
+    )
+
+    assert response.status_code == 200
+    assert db.added.reviewer == "native"
+    assert "reviewer_identity" not in (db.added.label_metadata or {})
+
+
+def test_coverage_returns_stratum_heatmap_and_queue_health(monkeypatch):
+    j1 = _judgment(
+        id=1,
+        label="love",
+        reviewer="alex",
+        category_at_review="politics",
+        label_metadata={
+            "card_snapshot": {
+                "stratum": "top_feed_like",
+                "selection_reason": "labeling:top_feed_like",
+                "category": "politics",
+            }
+        },
+    )
+    j2 = _judgment(
+        id=2,
+        label="bad",
+        reviewer="alex",
+        category_at_review="weather",
+        label_metadata={
+            "card_snapshot": {
+                "selection_reason": "labeling:weather",
+                "category": "weather",
+            }
+        },
+    )
+    db = _CoverageDB([j1, j2])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/coverage?secret=ok"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_reviewed"] == 2
+    assert body["window"] == "all"
+
+    # by_stratum should have top_feed_like and weather
+    strata_names = [s["stratum"] for s in body["by_stratum"]]
+    assert "top_feed_like" in strata_names
+    assert "weather" in strata_names
+
+    # by_verdict
+    assert body["by_verdict"]["love"] == 1
+    assert body["by_verdict"]["bad"] == 1
+
+    # by_category
+    assert "politics" in body["by_category"]
+    assert "weather" in body["by_category"]
+
+    # reviewer_progress
+    assert len(body["reviewer_progress"]) == 1
+    assert body["reviewer_progress"][0]["total"] == 2
+
+    # queue_health has one entry per DEFAULT_LABELING_STRATA
+    assert len(body["queue_health"]) == len(admin_judgments.DEFAULT_LABELING_STRATA)
+
+    # insufficient_strata flags strata with < 50 labels
+    assert "top_feed_like" in body["insufficient_strata"]
+
+    assert "generated_at" in body
+
+
+def test_coverage_window_filter(monkeypatch):
+    """Passing window=24h filters to recent judgments only."""
+    j_old = _judgment(
+        id=1,
+        label="love",
+        created_at=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        label_metadata={},
+    )
+    j_new = _judgment(
+        id=2,
+        label="bad",
+        created_at=datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc),
+        label_metadata={},
+    )
+    # The endpoint filters in the SQL query, but our mock returns all rows.
+    # We just verify the endpoint accepts the window param without error.
+    db = _CoverageDB([j_old, j_new])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/coverage?secret=ok&window=7d"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["window"] == "7d"
+
+
+def test_coverage_requires_auth(monkeypatch):
+    db = _CoverageDB([])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: False
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/coverage?secret=wrong"
+    )
+
+    assert response.status_code == 403
+
+
+def test_coverage_unknown_stratum_fallback(monkeypatch):
+    """Judgments without stratum info in snapshot are classified as 'unknown'."""
+    j = _judgment(id=1, label="love", label_metadata=None)
+    db = _CoverageDB([j])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/coverage?secret=ok"
+    )
+
+    assert response.status_code == 200
+    strata = [s["stratum"] for s in response.json()["by_stratum"]]
+    assert "unknown" in strata
+
+
+def test_card_snapshot_preserves_stratum_and_selection_reason(monkeypatch):
+    """The stratum and selection_reason fields are now in the allowed snapshot keys."""
+    db = _WriteDB()
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments?secret=ok&label=love",
+        json={
+            "card_snapshot": {
+                "stratum": "weather",
+                "selection_reason": "labeling:weather",
+                "name": "Rain market",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    snapshot = db.added.label_metadata["card_snapshot"]
+    assert snapshot["stratum"] == "weather"
+    assert snapshot["selection_reason"] == "labeling:weather"
+
+
+def test_labeling_candidates_firebase_admin_not_shortcircuited(monkeypatch):
+    """Regression: the workbench sends a Firebase user token in the Bearer header
+    (for reviewer identity), so `_check_admin_secret` RAISES (token != ADMIN_TOKEN).
+    The endpoint must fall back to the Firebase-admin check via `_authorize_admin`
+    and NOT 403. Before the fix, the raising secret check short-circuited the
+    `and`, 403-ing legit admins and breaking the Labeling Workbench.
+    """
+    from fastapi import HTTPException
+
+    market = SimpleNamespace(
+        id=789, name="Will the Fed cut in September?", description=None,
+        llm_sport_category="economics", sport=None, source="kalshi",
+        hook_description=None, image_url=None, group_id=None, resolution_date=None,
+        created_at=datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc),
+        outcomes=[SimpleNamespace(id=1, name="Yes", current_probability=0.5,
+                                  probability_change_24h=0.01, rank=1)],
+    )
+    db = _ReadDB([_ExecuteResult(rows=[]), _ExecuteResult(scalar_rows=[market])])
+
+    def _raise_secret(secret=None, **kw):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    async def _is_the_admin(_request, _db=None):
+        return SimpleNamespace(id=1, email="alex@example.com", is_admin=True)
+
+    # Queue 390: repointed from `admin_judgments._check_admin_auth` to the arms
+    # `_resolve_admin_principal` actually consults. The regression this test
+    # guards is unchanged and is now exercised for real rather than against a
+    # stubbed boolean: the raising secret check must not short-circuit the
+    # identity arm. Stubbing the gate itself would have made the test survive
+    # the very short-circuit it exists to catch.
+    monkeypatch.setattr(admin_utils, "_check_admin_secret", _raise_secret)
+    monkeypatch.setattr(admin_judgments, "_check_admin_secret", _raise_secret)
+    monkeypatch.setattr(admin_utils, "_resolve_admin_user", _is_the_admin)
 
     response = _client_with_db(db).get(
         "/admin/ranking-judgments/candidates?strata=low_confidence&limit=10"

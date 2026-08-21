@@ -242,11 +242,40 @@ class TestIdentityGrantsAdmin:
         The column ships in a deploy; the grant is a manual UPDATE afterwards.
         Between those two moments the allowlist is the only thing holding the
         admin UI open.
+
+        AMENDED 2026-08-21 (Queue 390): this row is now ``is_admin=None``, not
+        ``False``.
+
+        Not a weakened assertion — a corrected DOUBLE. The column became nullable
+        so that a never-granted row and a REVOKED row stop being the same value
+        (``C-2063-REVIEW`` finding 2: with two states, the documented
+        ``UPDATE users SET is_admin = false`` could not outrank the allowlist
+        OR-ed after it). ``None`` is what a real un-granted row holds after this
+        revision, so ``False`` here would no longer be testing the rollout
+        window this test is named for — it would be testing revocation, and
+        asserting that revocation FAILS. The behaviour under test is unchanged
+        and is additionally pinned from the other side by
+        ``test_admin_identity_auth_q390_r2.py``.
+        """
+        monkeypatch.setattr("app.routes.admin_utils.DEFAULT_ADMIN_USER_IDS", {364})
+        db = FakeDB()
+        db.next_row = FakeUser(id=364, email="alex@example.com", is_admin=None)
+        assert await _check_admin_auth(None, _request(bearer=ADMIN_JWT), db) is True
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_false_is_not_the_rollout_state(
+        self, tokens, verifier, monkeypatch
+    ):
+        """The distinction the test above now depends on, asserted directly.
+
+        Added with the amendment so the two states cannot quietly re-merge: if a
+        future change makes ``None`` and ``False`` behave alike again, exactly one
+        of these two tests fails whichever way it goes.
         """
         monkeypatch.setattr("app.routes.admin_utils.DEFAULT_ADMIN_USER_IDS", {364})
         db = FakeDB()
         db.next_row = FakeUser(id=364, email="alex@example.com", is_admin=False)
-        assert await _check_admin_auth(None, _request(bearer=ADMIN_JWT), db) is True
+        assert await _check_admin_auth(None, _request(bearer=ADMIN_JWT), db) is False
 
     def test_user_is_admin_reads_dict_not_getattr(self):
         """A row whose ``is_admin`` was never loaded is NOT an admin.

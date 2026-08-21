@@ -7,8 +7,13 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
-import { getIdToken } from "@/lib/firebase";
+import { getIdToken, onAuthChange } from "@/lib/firebase";
 import { deriveAdminAuthValue } from "@/lib/adminAuthValue";
+import {
+  NO_ADMIN_IDENTITY,
+  adminIdentityAfterAuthChange,
+  type AdminIdentityState,
+} from "@/lib/adminIdentitySession";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -55,8 +60,17 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
   const [input, setInput] = useState("");
   const [checking, setChecking] = useState(true);
   // Identity admin (Queue 386 Item 2, Alex ruling 2026-08-20).
-  const [identityToken, setIdentityToken] = useState<string | null>(null);
-  const [identityEmail, setIdentityEmail] = useState<string | null>(null);
+  //
+  // ONE piece of state, not three (Queue 390, C-2063-REVIEW finding 1 — P1).
+  // The token, the email and the UID they belong to are a single fact about a
+  // single session, and splitting them is what let the credential outlive the
+  // principal: there were two setters, no owner, and nothing that could clear
+  // them together. Bundled, "whose credential is this?" is answerable, and the
+  // reducer in lib/adminIdentitySession.ts is the only thing that answers it.
+  const [identity, setIdentity] =
+    useState<AdminIdentityState>(NO_ADMIN_IDENTITY);
+  const identityToken = identity.token;
+  const identityEmail = identity.email;
   const [showTokenEntry, setShowTokenEntry] = useState(false);
 
   useEffect(() => {
@@ -98,7 +112,7 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
     // No auto-restore of the TOKEN from storage: it must be re-entered each
     // session. Identity is different in kind — it is the browser's existing
     // sign-in, not a credential this app persisted.
-    (async () => {
+    const probe = async (uid: string | null) => {
       try {
         const token = await getIdToken();
         if (cancelled) return;
@@ -109,8 +123,11 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
           if (!cancelled && res.ok) {
             const data: WhoAmI = await res.json();
             if (!cancelled && data.is_admin && data.via === "identity") {
-              setIdentityToken(token);
-              setIdentityEmail(data.email ?? null);
+              setIdentity({
+                uid,
+                token,
+                email: data.email ?? null,
+              });
             }
           }
         }
@@ -119,11 +136,60 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
         // that cannot complete must never be able to GRANT access — only to
         // skip a prompt it could not justify skipping.
       }
+    };
+
+    // Bind the credential to the LIVE principal (Queue 390, finding 1).
+    //
+    // The old effect probed once with `[]` deps and stopped. The provider is
+    // mounted under the persistent /admin layout, so the header's `signOut()`
+    // runs while it stays alive: Firebase and backend storage were cleared, the
+    // React state holding the bearer was not, and that bearer kept authorizing
+    // labeling for the full 30-day token life. `onAuthChange` now also fires on
+    // BACKEND-ONLY sign-out (see lib/firebase.ts), which is the path Firebase
+    // itself cannot report.
+    //
+    // Clearing is synchronous and happens BEFORE any re-probe: the window
+    // between "we know the session changed" and "we know what it changed to"
+    // must not be a window in which the old credential is still emitted.
+    let unsubscribe: (() => void) | null = null;
+    let lastUid: string | null | undefined; // undefined = no emission yet
+
+    onAuthChange((user) => {
+      if (cancelled) return;
+      const uid = user?.uid ?? null;
+      const first = lastUid === undefined;
+      const changed = !first && uid !== lastUid;
+      lastUid = uid;
+
+      setIdentity((current) => adminIdentityAfterAuthChange(current, uid));
+
+      if (first || changed) {
+        // Re-probe for the NEW principal. A uid is not a grant — only the
+        // server knows whether it holds the admin role.
+        if (uid) {
+          void probe(uid).then(() => {
+            if (!cancelled) setChecking(false);
+          });
+          return;
+        }
+      }
       if (!cancelled) setChecking(false);
-    })();
+    })
+      .then((unsub) => {
+        if (cancelled) {
+          unsub();
+          return;
+        }
+        unsubscribe = unsub;
+      })
+      .catch(() => {
+        // Subscription failure must not strand the UI on the loading state.
+        if (!cancelled) setChecking(false);
+      });
 
     return () => {
       cancelled = true;
+      unsubscribe?.();
     };
   }, []);
 

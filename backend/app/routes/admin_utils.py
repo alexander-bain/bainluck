@@ -273,17 +273,47 @@ def _user_is_admin(user) -> bool:
     open a window — however short — in which the admin UI has no admin, and the
     person locked out is the one holding the SQL.
 
-    ``__dict__.get`` rather than ``getattr`` for the new column: ``getattr`` on an
-    ORM attribute that was expired or never loaded triggers a lazy refresh, which
-    raises ``MissingGreenlet`` in an async context (a repeat failure in this
-    codebase). ``__dict__`` reads only what the SELECT actually loaded, and an
-    absent key means "not loaded", which resolves to not-admin — the safe reading
-    of an unknown privilege.
+    THE COLUMN IS AUTHORITATIVE IN BOTH DIRECTIONS (Queue 390, C-2063-REVIEW
+    finding 2). This function previously OR-ed the allowlists *after* the column,
+    which made the advertised revocation decorative for the one row the feature
+    was built for: ``DEFAULT_ADMIN_USER_IDS = {364}``, so
+    ``UPDATE users SET is_admin = false WHERE id = 364`` changed nothing and a
+    compromised session stayed admin until someone shipped code. The reviewer
+    executed it — a civilian JWT on row ``364, is_admin=False`` got
+    ``200 {is_admin: true, via: "identity"}``.
+
+    So the column is now read as THREE states, and the third is why the column
+    had to become nullable:
+
+    * ``True``  — granted. Admin, no allowlist needed.
+    * ``False`` — REVOKED. Denied, and the legacy allowlists do not get a vote.
+    * absent / ``None`` — *no decision recorded*. Only here do the allowlists
+      apply, which is exactly the rollout window they exist for.
+
+    Two states cannot express this. Under the original
+    ``BOOLEAN NOT NULL DEFAULT false`` every pre-existing row reads ``false`` the
+    moment the release lands, so "explicit false denies" and "the allowlists still
+    work before the grant" are contradictory. ``NULL`` is what separates *nobody
+    has decided* from *somebody decided no*.
+
+    ``__dict__.get`` rather than ``getattr``: ``getattr`` on an ORM attribute that
+    was expired or never loaded triggers a lazy refresh, which raises
+    ``MissingGreenlet`` in an async context (a repeat failure in this codebase).
+    ``__dict__`` reads only what the SELECT actually loaded. Note this folds
+    "column not loaded" into the same reading as SQL ``NULL`` — deliberately: a
+    SELECT that did not fetch the column has not shown us a revocation, and
+    inventing one would deny an admin for a query-shape reason.
     """
     if user is None:
         return False
-    if user.__dict__.get("is_admin") is True:
+    explicit = user.__dict__.get("is_admin")
+    if explicit is True:
         return True
+    if explicit is False:
+        # An explicit revocation. Terminal — this is the whole point of the
+        # column, and a fallback that could override it would put the grant back
+        # in source code where it cannot be audited or revoked.
+        return False
     if user.id in _admin_user_ids():
         return True
     return (user.email or "").lower() in _admin_user_emails()
@@ -332,6 +362,83 @@ async def _resolve_admin_user(request: Request, db=None):
     return None
 
 
+class AdminPrincipal:
+    """WHO authorized this request, and by WHICH arm.
+
+    DELIBERATELY NOT A ``@dataclass``, and this comment exists so the next reader
+    does not "clean it up" into one. ``scripts/evals/admin_auth_gate_mutations.py``
+    exercises the auth gate by ``exec``-ing this module's source into a synthetic
+    module that is never registered in ``sys.modules`` — on purpose, so a mutated
+    (deliberately weakened) copy of the auth gate can never leak into the shared
+    module table. ``@dataclass`` resolves annotations via
+    ``sys.modules.get(cls.__module__).__dict__``, which is ``None`` under that
+    loader, so decorating this class turns all eight auth-mutation evals into
+    collection ERRORS — pytest exit 2, the "could not check" code (gotcha #54).
+    A hand-written ``__init__`` costs four lines and keeps the mutation evals
+    able to load the thing they exist to attack.
+
+    Queue 390 (``C-2063-REVIEW`` findings 3 and 4). Authorization used to return
+    a bare ``bool``, so a handler that needed to know *who* had authorized had no
+    way to ask and simply re-ran the identity resolution against the same bearer.
+    Two defects fell out of that one shape:
+
+    * the shared-ADMIN_TOKEN path re-entered Firebase verification on every label
+      write — the "lanes keep tokens, zero change to their path" claim was true of
+      the gate and false of the request; and
+    * attribution had no authoritative record of which arm won, so it guessed
+      from the caller-supplied ``reviewer`` string, which the caller controls.
+
+    A boolean cannot carry a principal. This can.
+
+    ``via`` is ``"token"`` (the shared capability — identifies nobody, so
+    ``user`` and ``email`` are ``None`` and that absence is the honest encoding)
+    or ``"identity"`` (a verified session of a user holding the admin role).
+    """
+
+    __slots__ = ("via", "user", "email")
+
+    def __init__(self, via: str, user=None, email: str | None = None):
+        self.via = via
+        self.user = user
+        self.email = email
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        # Never renders the user row or anything token-shaped.
+        return f"AdminPrincipal(via={self.via!r}, email={self.email!r})"
+
+
+async def _resolve_admin_principal(
+    secret: str | None, request: Request, db=None
+) -> "AdminPrincipal | None":
+    """Resolve admin authorization ONCE, into a principal rather than a boolean.
+
+    ORDER IS LOAD-BEARING and is unchanged from ``_check_admin_auth``: the token
+    arm is a constant-time ``compare_digest`` against an env var and runs FIRST,
+    with no database, no JWT parse and no network. When it wins, this function
+    RETURNS — the identity arm is never reached, which is what makes the lanes'
+    path mechanically the same as before rather than the same by promise.
+
+    Returns ``None`` when neither arm authorizes. Callers must not be able to
+    distinguish which arm declined; a 403 that discloses that is an oracle for
+    probing who holds admin.
+    """
+    # 1. The shared capability. Cheapest, and terminal on success.
+    try:
+        if _check_admin_secret(secret, request=request):
+            return AdminPrincipal(via="token")
+    except Exception:
+        pass
+    # 2. A verified session belonging to a user carrying the admin role.
+    user = await _resolve_admin_user(request, db)
+    if user is None:
+        return None
+    return AdminPrincipal(
+        via="identity",
+        user=user,
+        email=(user.email or "").lower() or None,
+    )
+
+
 async def _check_admin_auth(secret: str | None, request: Request, db=None) -> bool:
     """Admin auth accepting EITHER the ADMIN_TOKEN **or** an admin identity.
 
@@ -348,18 +455,16 @@ async def _check_admin_auth(secret: str | None, request: Request, db=None) -> bo
     failure rather than raising. A malformed JWT in the header is a 403, the same
     403 as a wrong token, with the same body.
     """
-    # 1. ADMIN_TOKEN via Authorization: Bearer header. Queue #252 Item 4: this
-    #    must work even when no ?secret= query value is present — identity-aware
-    #    endpoints previously only tried this when `secret` was truthy, so the
-    #    preferred header form was rejected. _check_admin_secret raises on
-    #    mismatch, so guard it and fall through to the identity check.
-    try:
-        if _check_admin_secret(secret, request=request):
-            return True
-    except Exception:
-        pass
-    # 2. Identity: a verified session of a user carrying the admin role.
-    return await _resolve_admin_user(request, db) is not None
+    # Queue 390: this is now the boolean PROJECTION of `_resolve_admin_principal`
+    # rather than a second hand-copied implementation of the same two arms. The
+    # ordering, the short-circuit and the indistinguishable failure all live
+    # there. A privilege check duplicated is a privilege check that will
+    # eventually disagree with itself about who is an admin — the same reasoning
+    # that produced `_resolve_admin_user`, applied one level up.
+    #
+    # Queue #252 Item 4 still holds: the header form must work with no ?secret=
+    # query value present.
+    return await _resolve_admin_principal(secret, request, db) is not None
 
 
 async def _resolve_admin_email(request: Request, db=None) -> str | None:

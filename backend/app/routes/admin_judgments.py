@@ -22,7 +22,7 @@ from app.routes.admin_utils import (
     _check_admin_auth,
     _check_admin_destructive,
     _check_admin_secret,
-    _resolve_admin_email,
+    _resolve_admin_principal,
 )
 from app.services import get_db, get_db_rw
 from app.utils.card_integrity import display_scale, field_coherence, is_unlabelable
@@ -823,6 +823,40 @@ def _is_generic_reviewer(value: Any) -> bool:
     """
     return isinstance(value, str) and value.strip().lower() in GENERIC_REVIEWERS
 
+
+def reviewer_for_write(
+    *, via: str, admin_email: str | None, requested: Any
+) -> Any:
+    """The operational ``reviewer`` a write is recorded under.
+
+    Queue 390, ``C-2063-REVIEW`` finding 3 (P2). Attribution used to be bound to
+    the authenticated email only when the caller happened to pass one of five
+    generic surface names, which meant an identity-authenticated caller could
+    simply pass something else and keep it. The reviewer executed it: an identity
+    session posted ``reviewer="victim@example.com"`` and the committed row kept
+    that value, while ``label_metadata.reviewer_identity`` separately recorded the
+    real author. The gold tier was right and the OPERATIONAL field — the one
+    reviewed-state and dedup key on — was caller-controlled.
+
+    The rule is now split by ARM, not by the shape of the caller's string:
+
+    * ``via="identity"`` — the writer is a verified person. The row is attributed
+      to that person, always. There is no reason for an authenticated human to
+      file a label under someone else's name, and no way to tell a typo from an
+      impersonation after the fact.
+    * ``via="token"`` — the writer is a shared capability that identifies nobody.
+      Whatever the caller names is preserved, because that is the only
+      attribution available and some of it is deliberate: the kid ``/play``
+      surface names its reviewer on purpose and authenticates this way.
+
+    So delegation survives exactly where it is meaningful and disappears exactly
+    where it was forgeable.
+    """
+    if via == "identity" and admin_email:
+        return admin_email
+    return requested
+
+
 #: The ``label_metadata`` key carrying the authenticated writer's email.
 #: Sits alongside ``reviewer_tier`` (``app/utils/reviewer_tier.py``) because it
 #: answers the second half of the same provenance question: the tier says which
@@ -1133,7 +1167,16 @@ async def create_judgment(
     """
     body = payload.model_dump(exclude_unset=True) if payload else {}
     secret_value = _merged_value(body, "secret", secret)
-    if not await _authorize_admin(secret_value, request, db):
+    # ONE resolution, carried (Queue 390, C-2063-REVIEW finding 4). This used to
+    # authorize with `_authorize_admin` — a boolean — and then ask
+    # `_resolve_admin_email` the same question again for attribution, which
+    # re-entered Firebase/session-JWT verification with whatever was in the
+    # Authorization header. On the shared-ADMIN_TOKEN path that meant every lane's
+    # label write parsed a JWT that is not a JWT, disproving this feature's own
+    # "the lanes' path is unchanged" claim and spending auth-service and log work
+    # to learn nothing. The principal knows which arm won, so nobody has to re-ask.
+    principal = await _resolve_admin_principal(secret_value, request, db)
+    if principal is None:
         raise HTTPException(status_code=403, detail="Admin access required")
 
     label_value = _merged_value(body, "label", label)
@@ -1207,24 +1250,24 @@ async def create_judgment(
     if gate["status"] == "conflict":
         raise HTTPException(status_code=409, detail=gate)
 
-    # Resolve reviewer identity: when the caller passes a SURFACE name rather
-    # than a person, and is authenticated as an admin identity, persist that
-    # admin's email so server-side reviewed-state is per-user, not a shared pool.
+    # Attribution follows the ARM that authorized, not the shape of the string
+    # the caller sent. See `reviewer_for_write` for why: an identity write is
+    # always attributed to the verified person, and caller-named delegation
+    # survives only on the shared-token path, where it is the only attribution
+    # available and is sometimes deliberate (the kid `/play` surface).
     #
-    # Queue 386 Item 2 (Alex ruling 2026-08-20) widened this from `"native"` only
-    # to the whole generic set. The narrow version had a concrete bug: the web
-    # labeling page asks for candidates with `reviewer="native"` (which resolved
-    # to the email) but WROTE them back with `reviewer="web"` (which did not), so
-    # the two halves of the same session keyed reviewed-state differently and web
-    # labels never suppressed their own cards on the next batch.
-    #
-    # Only GENERIC values are overwritten. An explicit non-generic reviewer is a
-    # deliberate attribution by the caller — the kid `/play` surface names its
-    # reviewer on purpose — and must survive untouched.
-    admin_email = await _resolve_admin_email(request, db)
-    reviewer_value = _merged_value(body, "reviewer", reviewer, "alex")
-    if admin_email and _is_generic_reviewer(reviewer_value):
-        reviewer_value = admin_email
+    # Queue 386 Item 2's original motivation still holds and is subsumed: the web
+    # labeling page asked for candidates as `reviewer="native"` but wrote them
+    # back as `reviewer="web"`, so the two halves of one session keyed
+    # reviewed-state differently and web labels never suppressed their own cards.
+    # Binding by arm fixes that case too, and without an allowlist of surface
+    # names to keep in sync.
+    admin_email = principal.email
+    reviewer_value = reviewer_for_write(
+        via=principal.via,
+        admin_email=admin_email,
+        requested=_merged_value(body, "reviewer", reviewer, "alex"),
+    )
 
     surface_value = _merged_value(body, "surface", surface, "discover")
     reason_tags_value = _normalize_reason_tags(
@@ -1359,7 +1402,15 @@ async def list_labeling_candidates(
     limit: int = Query(40, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    if not await _authorize_admin(secret, request, db):
+    # Same single-resolution rule as the write (Queue 390, finding 4): authorize
+    # once, carry the principal. This site had the identical double-verification —
+    # `_authorize_admin` for the gate, then `_resolve_admin_email` with the same
+    # bearer — and it fires on the COMMON path, since `reviewer` is a generic
+    # surface name on essentially every real request. It is a read rather than a
+    # write, so no attribution is forgeable here; fixing it anyway is the
+    # difference between fixing the defect and fixing the specimen.
+    principal = await _resolve_admin_principal(secret, request, db)
+    if principal is None:
         raise HTTPException(status_code=403, detail="Admin access required")
 
     # Resolve reviewer: when the caller names a SURFACE and is authenticated as
@@ -1367,11 +1418,15 @@ async def list_labeling_candidates(
     # Must use the SAME generic set as create_judgment (GENERIC_REVIEWERS) — the
     # two sides being narrower on the write than on the read is exactly the bug
     # that made web labels fail to suppress their own cards on the next batch.
+    #
+    # NOTE the asymmetry with the write, which is deliberate: the write binds
+    # attribution by ARM and ignores the caller's string, because a forged
+    # `reviewer` there lands in the gold corpus. Here `reviewer` only chooses
+    # WHICH reviewed-state to filter by, so honoring an explicit non-generic
+    # value is a legitimate query, not an impersonation.
     effective_reviewer = reviewer
-    if _is_generic_reviewer(reviewer):
-        admin_email = await _resolve_admin_email(request, db)
-        if admin_email:
-            effective_reviewer = admin_email
+    if _is_generic_reviewer(reviewer) and principal.email:
+        effective_reviewer = principal.email
 
     now = datetime.now(timezone.utc)
     selected_strata = _parse_candidate_strata(strata)

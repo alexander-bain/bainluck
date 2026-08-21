@@ -484,9 +484,14 @@ class User(Base):
     # NOT granted by any migration: a migration that writes a privilege grant is
     # a privilege escalation that ships in a diff nobody reads as one. See
     # docs/admin-identity.md for the one-line SQL Alex runs to grant it.
-    is_admin: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="false"
-    )
+    # THREE-VALUED, and the third value is the point (Queue 390, C-2063-REVIEW
+    # finding 2): True = granted, False = REVOKED and terminal, NULL = no
+    # decision recorded, which is the only state where the legacy
+    # ADMIN_USER_IDS / ADMIN_USER_EMAILS allowlists still get a vote. As a
+    # NOT NULL DEFAULT false column, `false` meant both "never granted" and
+    # "revoked", so the documented revocation could not outrank the allowlist
+    # OR-ed after it. `_user_is_admin` is the single reader.
+    is_admin: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
     # Email compliance (CAN-SPAM) — per-type opt-in, all default False
     # Shape: {"digest": false, "bug_updates": false, "market_alerts": false}
