@@ -1114,3 +1114,110 @@ async def typeahead_warmer_last(
         "skipping every time."
     )
     return payload
+
+
+@router.get("/heavy-move/falsifier")
+async def heavy_move_falsifier(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Ruling 110's condition, read rather than argued (#1609, LAT-P077).
+
+    Ruling 110 granted `heavy` a scoped exception for TWO tasks by name
+    (`backfill_market_shapes`, `precompute_backfill_progress`) on a condition:
+    if any calibration heavy-beat's latency degrades measurably after the
+    move, the routing reverts the same window and the rule re-hardens.
+
+    This endpoint is that condition evaluated against production. It reads
+    each watched beat's `recent_durations_ms` from the task-metrics hash and
+    grades it against the baseline pinned pre-move in
+    `app/utils/heavy_routing_falsifier.py`.
+
+    **`verdict` is three-valued and INCONCLUSIVE is not HOLD.** If nothing in
+    the watched set could be graded — all censored at their soft limit, all
+    unreadable, or none has run — the answer is INCONCLUSIVE, because an
+    unarmed falsifier reporting "no degradation" is the exact shape of a gate
+    that cannot fail (gotcha #53, and the wrong-gate rule LAT-P075 applied to
+    its own guard).
+
+    Two of the seven watched beats are ALREADY censored at their 600 s soft
+    limit with zero successes in 24 h. They are reported, and they are
+    excluded from the grade, because a beat clamped at its timeout reports the
+    same number however much worse it gets.
+
+    Off-loop via `run_in_threadpool` for the same reason the warmer ring is:
+    `get_redis_client()` is bounded at 5 s (gotcha #39), and blocking the
+    single uvicorn loop for 5 s under a refreshing dashboard tab is #1994.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.utils.heavy_routing_falsifier import (
+        DEGRADE_P50_RATIO,
+        HEAVY_MOVE_EXCEPTION,
+        METRICS_NAME,
+        PRE_MOVE_BASELINE,
+        grade_move,
+    )
+
+    watched = {b.task: b.metrics_name for b in PRE_MOVE_BASELINE}
+
+    def _read():
+        from app.tasks.redis_state import get_task_metrics
+
+        return {name: get_task_metrics(name) for name in watched.values()}
+
+    try:
+        observations = await run_in_threadpool(_read)
+    except Exception as exc:  # noqa: BLE001
+        # An unreachable Redis must not render as "nothing degraded".
+        return {
+            "status": "unreadable",
+            "error": str(exc)[:300],
+            "verdict": "INCONCLUSIVE",
+            "reason": "task-metrics could not be read; this is not evidence the move is safe",
+        }
+
+    result = grade_move(observations)
+
+    # The two movers themselves, reported for context. They are NOT part of
+    # the grade — the ruling's condition is about the calibration beats the
+    # exception might harm, not about whether the movers got faster.
+    movers = {}
+    for task in sorted(HEAVY_MOVE_EXCEPTION):
+        name = METRICS_NAME[task]
+        obs = observations.get(name) or {}
+        movers[task] = {
+            "metrics_name": name,
+            "successes_24h": obs.get("successes_24h"),
+            "failures_24h": obs.get("failures_24h"),
+            "samples": len(obs.get("recent_durations_ms") or []),
+        }
+
+    return {
+        "status": "ok",
+        "ruling": 110,
+        "verdict": result.verdict,
+        "reason": result.reason,
+        "degrade_p50_ratio": DEGRADE_P50_RATIO,
+        "exception_tasks": sorted(HEAVY_MOVE_EXCEPTION),
+        "movers": movers,
+        "beats": [
+            {
+                "task": b.task,
+                "verdict": b.verdict,
+                "reason": b.reason,
+                "baseline_p50_s": b.baseline_p50_s,
+                "observed_p50_s": b.observed_p50_s,
+                "ratio": round(b.ratio, 3) if b.ratio is not None else None,
+            }
+            for b in result.beats
+        ],
+        "note": (
+            "REVERT obliges the same window: remove the two names from "
+            "HEAVY_TASKS, set both beat entries' literal options.queue back to "
+            "'background', and record the reading in docs/rulings/110-*.md. "
+            "INCONCLUSIVE means the falsifier is not armed — it is NOT a pass."
+        ),
+    }

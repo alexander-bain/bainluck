@@ -694,6 +694,29 @@ HEAVY_TASKS = {
     # lane that #1609 just added 45.9% of a slot to.
     "app.tasks.rebuild_typeahead_index",
     "app.tasks.typeahead_index_sentinel",
+    # --- RULING 110 (#1609, LAT-P077): the SCOPED exception, two tasks BY NAME.
+    # These are the only two entries in this set that are NOT calibration/
+    # precompute/sentinel work, and they are here by an explicit Fable ruling
+    # that names them individually. It is NOT a class, NOT a prefix, and NOT
+    # "big backfills may now use heavy" — the rest of that family stays in
+    # `_HEAVY_KEEP_ON_BACKGROUND` above and the guard test asserts it.
+    #
+    # The grant is CONDITIONAL and its condition is armed in
+    # `app/utils/heavy_routing_falsifier.py`: if any calibration heavy-beat's
+    # latency degrades measurably against the baseline pinned there, the
+    # routing reverts THE SAME WINDOW and the calibration-only rule re-hardens.
+    # `GET /api/admin/heavy-move/falsifier` reads that verdict.
+    #
+    # ⚠️ MEASURED COST, and it does not point the way the census did.
+    # LAT-P076's slot census priced these at 32% + 24% = 56% of one background
+    # slot. From durations (n=50 each) x 24h run counts they are 6.1% + 12.8% =
+    # ~19% observed. AND both run far below schedule (31 of 72 fires, 45 of 96)
+    # BECAUSE they are starved — so `heavy` may inherit up to 41.5% of a slot
+    # while `background` sheds only 19%. That asymmetry is the risk the
+    # falsifier watches; it is not a reason to skip the move, it is the reason
+    # the move is watched. Full arithmetic in the falsifier's docstring.
+    "app.tasks.backfill_market_shapes",
+    "app.tasks.precompute_backfill_progress",
 }
 
 for _heavy_task in HEAVY_TASKS:
@@ -3414,7 +3437,11 @@ celery_app.conf.beat_schedule = {
     "precompute-backfill-progress": {
         "task": "app.tasks.precompute_backfill_progress",
         "schedule": crontab(minute="*/15"),  # Every 15 min — #179/#1052 progress census (density + June ledger)
-        "options": {"queue": "background"},
+        # RULING 110 (LAT-P077): moved background -> heavy under the scoped
+        # two-task exception. Literal must match the effective queue, which
+        # `test_heavy_beat_literals_match_their_effective_queue` reads from
+        # SOURCE TEXT — a revert must change this line too, not just HEAVY_TASKS.
+        "options": {"queue": "heavy"},
     },
     "backfill-combat-wps": {
         "task": "app.tasks.backfill_combat_wps",
@@ -3821,7 +3848,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_market_shapes",
         "schedule": crontab(minute="*/20"),
         "kwargs": {"limit": 40000},
-        "options": {"queue": "background"},
+        # RULING 110 (LAT-P077): moved background -> heavy under the scoped
+        # two-task exception. See the note on `precompute-backfill-progress`.
+        "options": {"queue": "heavy"},
     },
     "audit-canonical-keys-daily": {
         "task": "app.tasks.audit_canonical_keys",

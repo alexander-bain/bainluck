@@ -910,10 +910,23 @@ def free_background_slots(
 # inside the beat loop, where a fault freezes every beat in the system.
 # ---------------------------------------------------------------------------
 
-#: Beat entries whose EFFECTIVE queue is `background`. 57 name it explicitly;
-#: 45 more fall through `task_default_queue`. Pinned by
-#: `test_the_background_queue_carries_102_beats_not_57`.
-BACKGROUND_BEAT_COUNT = 102
+#: Beat entries whose EFFECTIVE queue is `background`. **55** name it
+#: explicitly; **45** more fall through `task_default_queue`. Pinned by
+#: `test_the_background_queue_carries_100_beats_and_45_are_fall_through`.
+#:
+#: 🔴 WAS 102 (57 explicit) UNTIL RULING 110, LAT-P077. Two explicitly-routed
+#: beats — `backfill_market_shapes` and `precompute_backfill_progress` — moved
+#: to `heavy` under a scoped two-task exception, so the EXPLICIT half fell
+#: 57 -> 55 and the total 102 -> 100. The guard test going red on that move is
+#: its designed behaviour, not a break: its own docstring reserved the case
+#: ("someone giving the 45 an explicit home… the count should then be
+#: re-derived"). Re-derived, not adjusted by delta.
+#:
+#: ⚠️ THE FALL-THROUGH DID NOT MOVE, and that is the number worth watching.
+#: 45 beats are still on this queue because nobody chose a queue for them —
+#: the split is the remedy question, and ruling 110 addressed the explicit
+#: half only. The hygiene lever (give the 45 an explicit home) remains open.
+BACKGROUND_BEAT_COUNT = 100
 
 #: Demand on `background` in slot-seconds per hour, EXCLUDING `warm_typeahead`
 #: (which is self-gated by its run lock, so its 360 fires/h are not 360 passes).

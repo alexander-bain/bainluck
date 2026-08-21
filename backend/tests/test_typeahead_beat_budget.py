@@ -666,8 +666,19 @@ def test_rebuild_typeahead_index_is_on_heavy_and_cannot_starve_the_warmer():
     )
 
 
-def test_the_background_queue_carries_102_beats_not_57():
-    """57 is the count of beats that NAME `background`. The queue carries 102.
+def test_the_background_queue_carries_100_beats_and_45_are_fall_through():
+    """55 beats NAME `background`. The queue carries 100.
+
+    🔴 **RE-DERIVED at ruling 110 (LAT-P077): was 57 explicit / 102 total.**
+    `backfill_market_shapes` and `precompute_backfill_progress` moved to
+    `heavy` under the scoped two-task exception, so the EXPLICIT half fell
+    57 -> 55 and the total 102 -> 100. This test going red on that move is the
+    behaviour reserved below, not a break — and the count was RE-DERIVED from
+    the config rather than adjusted by a delta (#1910).
+
+    The fall-through half did NOT move, and that is the point: 45 beats are
+    still here because nobody chose a queue. Ruling 110 addressed two
+    explicitly-routed occupants; it did nothing about the default.
 
     The other 45 arrive through `task_default_queue = "background"` without
     naming anything, and they include the heaviest work on the queue:
@@ -701,9 +712,16 @@ def test_the_background_queue_carries_102_beats_not_57():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 57, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 55, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 102
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 100
+
+    # ruling 110's two movers are OFF this queue and ON heavy — asserted here
+    # too, so a silent revert cannot restore the count without being noticed.
+    from app.utils.heavy_routing_falsifier import HEAVY_MOVE_EXCEPTION
+
+    for task in HEAVY_MOVE_EXCEPTION:
+        assert conf.task_routes[task] == {"queue": "heavy"}
 
 
 def test_the_demand_model_says_oversubscribed_and_the_census_says_90_percent():
