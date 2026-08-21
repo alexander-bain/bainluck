@@ -98,6 +98,19 @@ class Disposition(str, Enum):
     #: Timeout, connection failure, 5xx, or an unparseable body. Not a fact.
     TRANSPORT_ERROR = "transport_error"
 
+    #: The source still HOLDS the record, and the record's form can never yield a
+    #: winner — Polymarket's ``no_resolved`` class (C-DEGRADED-FORM-1, ~8k markets,
+    #: all 365+ days old): present, closed, and carrying no ``outcomePrices`` at all.
+    #:
+    #: Distinct from :attr:`AMBIGUOUS_EMPTY` in the way that matters most, which is
+    #: **permanence**. Ambiguity is a gap in what we asked; this is a gap in what
+    #: exists, and re-probing it forever spends budget to re-learn the same nothing.
+    #: Distinct from :attr:`PURGED` too: nothing was lost to retention — Polymarket
+    #: has no cliff (0 of 70 records gone across 30 days to 3.66 years) — the record
+    #: simply never carried a price. **It belongs OUT of the recoverable denominator,
+    #: which is why it gets a name instead of being folded into a failure bucket.**
+    PRICE_UNDETERMINABLE = "price_undeterminable"
+
     #: We declined to probe: the market is older than the provably-purged horizon,
     #: so a call could only waste budget. Recorded rather than skipped silently, so
     #: "we did not look" never reads as "we looked and found nothing".
@@ -118,7 +131,9 @@ class Disposition(str, Enum):
 
         ``PURGED`` is NOT retryable — the window closed, and retrying it forever is
         how a sweep spends its budget on the already-dead instead of the dying
-        (gotcha #41's inverse, the CAL-P009 lesson).
+        (gotcha #41's inverse, the CAL-P009 lesson). ``PRICE_UNDETERMINABLE`` is not
+        retryable for the mirror-image reason: nothing was lost, and nothing will
+        ever arrive.
         """
         return self in (
             Disposition.AMBIGUOUS_EMPTY,
@@ -366,9 +381,35 @@ def classify_kalshi(
 
 _PRICE_SETTLED = {("0", "1"), ("1", "0")}
 
+#: The NEAR-FORM threshold, adopted verbatim from C-DEGRADED-FORM-1 (2026-08-21).
+#: A decided Polymarket market does not always print exactly ``["0","1"]`` — it
+#: prints things like ``["0.0000005","0.9999945"]``. The measured rule is
+#: ``min(price) < 0.001``, and the census found the **worst observed spread to be
+#: 1.16e-06** — three orders of magnitude inside the threshold, never ambiguous.
+#:
+#: The margin is the point. A threshold set at the worst observation would be a
+#: threshold with no evidence between it and being wrong.
+NEAR_FORM_LOSER_MAX = 0.001
+
+#: A near-form winner must also actually look like a winner. If BOTH prices are
+#: below the threshold the body is malformed, not decided — refusing costs nothing
+#: and emitting would be manufacturing. Not in C-DEGRADED-FORM-1's rule (which
+#: describes real decided markets); added as a guard and flagged as an addition.
+NEAR_FORM_WINNER_MIN = 0.5
+
 
 def _parse_outcome_prices(market: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
-    """Return (winning outcome, evidence) when Gamma reports a decided market."""
+    """Return (winning outcome, evidence) when Gamma reports a decided market.
+
+    Two accepted forms, per C-DEGRADED-FORM-1:
+
+    * **exact** — ``["0","1"]`` / ``["1","0"]``
+    * **near** — one side below :data:`NEAR_FORM_LOSER_MAX`, the other above
+      :data:`NEAR_FORM_WINNER_MIN`
+
+    Anything else returns ``None``, which the caller turns into a non-fact rather
+    than a guess.
+    """
     prices = market.get("outcomePrices")
     outcomes = market.get("outcomes")
     if isinstance(prices, str):
@@ -379,11 +420,53 @@ def _parse_outcome_prices(market: dict[str, Any]) -> tuple[str, dict[str, Any]] 
         return None
     if len(prices) != 2 or len(outcomes) != 2:
         return None
+
     key = (str(prices[0]).strip(), str(prices[1]).strip())
-    if key not in _PRICE_SETTLED:
+    if key in _PRICE_SETTLED:
+        winner = outcomes[1] if key == ("0", "1") else outcomes[0]
+        return str(winner), {
+            "outcomePrices": list(prices),
+            "outcomes": list(outcomes),
+            "form": "exact",
+        }
+
+    try:
+        low, high = float(key[0]), float(key[1])
+    except (TypeError, ValueError):
         return None
-    winner = outcomes[1] if key == ("0", "1") else outcomes[0]
-    return str(winner), {"outcomePrices": list(prices), "outcomes": list(outcomes)}
+
+    loser_first = low < NEAR_FORM_LOSER_MAX <= high and high >= NEAR_FORM_WINNER_MIN
+    loser_second = high < NEAR_FORM_LOSER_MAX <= low and low >= NEAR_FORM_WINNER_MIN
+    if loser_first:
+        return str(outcomes[1]), {
+            "outcomePrices": list(prices),
+            "outcomes": list(outcomes),
+            "form": "near",
+            "loser_price": low,
+        }
+    if loser_second:
+        return str(outcomes[0]), {
+            "outcomePrices": list(prices),
+            "outcomes": list(outcomes),
+            "form": "near",
+            "loser_price": high,
+        }
+    return None
+
+
+def _has_price_field(market: dict[str, Any]) -> bool:
+    """Did the record carry an ``outcomePrices`` field AT ALL?
+
+    The distinction between "present but undecided" and "absent entirely" is what
+    separates a market that may still resolve from Polymarket's ``no_resolved``
+    class, which never will. Collapsing them would put ~8k permanently-undeterminable
+    markets back into the recoverable denominator and make the burn-down report a
+    debt it can never pay down.
+    """
+    prices = market.get("outcomePrices")
+    if isinstance(prices, str):
+        prices = _loads_maybe(prices)
+    return isinstance(prices, list) and len(prices) > 0
 
 
 def _loads_maybe(raw: str) -> Any:
@@ -553,10 +636,27 @@ def classify_polymarket(
     if gamma_markets:
         closed = any(m.get("closed") is True for m in gamma_markets)
         if closed:
+            if not any(_has_price_field(m) for m in gamma_markets):
+                # THE ``no_resolved`` CLASS (C-DEGRADED-FORM-1): closed, held by the
+                # source, and carrying no price field at all. There is nothing to
+                # wait for, so it leaves the recoverable denominator by name rather
+                # than sitting in an ambiguity bucket that implies a future retry.
+                return ProbeOutcome(
+                    Disposition.PRICE_UNDETERMINABLE,
+                    channels=tuple(channels),
+                    reason=(
+                        "gamma market closed and carries no outcomePrices field at "
+                        "all — the no_resolved form, permanently price-undeterminable"
+                    ),
+                    raw=raw,
+                )
             return ProbeOutcome(
                 Disposition.AMBIGUOUS_EMPTY,
                 channels=tuple(channels),
-                reason="gamma market closed but carries no decided outcomePrices",
+                reason=(
+                    "gamma market closed with an outcomePrices field that is not "
+                    "decided — undetermined for now, not undeterminable"
+                ),
                 raw=raw,
             )
         return ProbeOutcome(

@@ -224,6 +224,106 @@ class TestPolymarketPositive:
         assert out.claim.channel == "clob"
 
 
+class TestPolymarketDegradedForms:
+    """C-DEGRADED-FORM-1's finalized rules, adopted verbatim (2026-08-21).
+
+    The no-cliff relief is only real if the degraded forms still yield a winner
+    determination, so these are the tests that decide whether 250,526 markets are
+    recoverable or merely reachable.
+    """
+
+    def test_the_worst_observed_spread_resolves_cleanly(self):
+        """1.16e-06 — the worst the census found, three orders inside the rule."""
+        out = classify_polymarket(
+            200,
+            [{"outcomePrices": ["0.00000116", "0.99999884"], "outcomes": ["No", "Yes"]}],
+        )
+        assert out.disposition is Disposition.SETTLED
+        assert out.claim.winning_outcome == "Yes"
+        assert out.claim.evidence["form"] == "near"
+
+    def test_the_documented_near_form_specimen(self):
+        out = classify_polymarket(
+            200,
+            [{"outcomePrices": ["0.0000005", "0.9999945"], "outcomes": ["A", "B"]}],
+        )
+        assert out.disposition is Disposition.SETTLED
+        assert out.claim.winning_outcome == "B"
+
+    def test_near_form_works_in_the_other_direction(self):
+        out = classify_polymarket(
+            200,
+            [{"outcomePrices": ["0.9999945", "0.0000005"], "outcomes": ["A", "B"]}],
+        )
+        assert out.disposition is Disposition.SETTLED
+        assert out.claim.winning_outcome == "A"
+
+    @pytest.mark.parametrize(
+        "prices",
+        [
+            ["0.001", "0.999"],    # exactly AT the threshold — not below it
+            ["0.01", "0.99"],      # an order of magnitude out
+            ["0.4", "0.6"],
+            ["0.5", "0.5"],
+        ],
+    )
+    def test_prices_outside_the_rule_are_never_settled(self, prices):
+        """The threshold is `< 0.001`. `<=` would widen it on the boundary row."""
+        out = classify_polymarket(200, [{"outcomePrices": prices, "outcomes": ["A", "B"], "closed": False}])
+        assert out.disposition is not Disposition.SETTLED
+        assert out.claim is None
+
+    def test_two_tiny_prices_are_malformed_not_decided(self):
+        """A guard ADDED beyond the adopted rule, and flagged as such.
+
+        ``min(price) < 0.001`` alone is satisfied by ``["0.0000001","0.0000002"]``,
+        which is not a decided market in any reading. Refusing costs nothing;
+        emitting would manufacture a winner from a malformed body.
+        """
+        out = classify_polymarket(
+            200, [{"outcomePrices": ["0.0000001", "0.0000002"], "outcomes": ["A", "B"], "closed": True}]
+        )
+        assert out.disposition is not Disposition.SETTLED
+        assert out.claim is None
+
+    def test_the_no_resolved_class_is_PERMANENTLY_undeterminable(self):
+        """~8k markets, all 365+ days: closed, held, and carrying no price field.
+
+        It must not read as ambiguity — ambiguity implies a retry that will never
+        pay, and it would keep 8k unpayable rows inside the recoverable denominator.
+        """
+        out = classify_polymarket(200, [{"outcomes": ["A", "B"], "closed": True}])
+        assert out.disposition is Disposition.PRICE_UNDETERMINABLE
+        assert out.disposition.is_retryable() is False
+        assert out.disposition.licenses_grading() is False
+        assert out.claim is None
+
+    def test_closed_WITH_an_undecided_price_field_stays_merely_ambiguous(self):
+        """The distinction the ~8k count depends on: absent field vs undecided value."""
+        out = classify_polymarket(
+            200, [{"outcomePrices": ["0.5", "0.5"], "outcomes": ["A", "B"], "closed": True}]
+        )
+        assert out.disposition is Disposition.AMBIGUOUS_EMPTY
+        assert out.disposition.is_retryable() is True
+
+    def test_an_empty_price_LIST_counts_as_no_price_field(self):
+        out = classify_polymarket(200, [{"outcomePrices": [], "outcomes": ["A", "B"], "closed": True}])
+        assert out.disposition is Disposition.PRICE_UNDETERMINABLE
+
+    def test_gamma_serialises_near_form_prices_as_strings_too(self):
+        out = classify_polymarket(
+            200,
+            [
+                {
+                    "outcomePrices": json.dumps(["0.0000005", "0.9999945"]),
+                    "outcomes": json.dumps(["A", "B"]),
+                }
+            ],
+        )
+        assert out.disposition is Disposition.SETTLED
+        assert out.claim.winning_outcome == "B"
+
+
 class TestPolymarketNegativeControls:
     def test_the_empty_200_is_refused_by_name(self):
         """gotcha #53's canonical specimen. `200 []` is a SHAPE, not an absence."""
@@ -373,6 +473,22 @@ _ALL_NON_SETTLED_SHAPES = [
         "clob_two_winners",
         lambda: classify_polymarket(
             200, [], 200, {"tokens": [{"outcome": "A", "winner": True}, {"outcome": "B", "winner": True}]}
+        ),
+    ),
+    (
+        "gamma_no_resolved",
+        lambda: classify_polymarket(200, [{"outcomes": ["A", "B"], "closed": True}]),
+    ),
+    (
+        "gamma_near_form_boundary",
+        lambda: classify_polymarket(
+            200, [{"outcomePrices": ["0.001", "0.999"], "outcomes": ["A", "B"]}]
+        ),
+    ),
+    (
+        "gamma_two_tiny_prices",
+        lambda: classify_polymarket(
+            200, [{"outcomePrices": ["0.0000001", "0.0000002"], "outcomes": ["A", "B"], "closed": True}]
         ),
     ),
 ]
