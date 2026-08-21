@@ -39,6 +39,11 @@ interface LabelingCandidate {
   reasons: string[];
   top_outcomes: LabelingOutcome[];
   rendered_probability: number | null;
+  // The server's opaque digest of the card THIS payload rendered (#1933).
+  // Echoed back verbatim on submit so the write can be refused if the card
+  // re-priced while it sat on screen. Optional only because a candidate served
+  // by a pre-gate backend would not carry one.
+  card_fingerprint?: string | null;
 }
 
 interface HistoryEntry {
@@ -145,6 +150,29 @@ export default function LabelingPage() {
         rendered_probability: candidate.rendered_probability,
         top_outcomes: candidate.top_outcomes?.slice(0, 5) || [],
       },
+      // ── THIS PAGE IS THE THIRD CLIENT OF THIS ENDPOINT (#1933) ───────────
+      //
+      // It writes `surface: "web_discover"` and produced 61 of the store's 88
+      // rows, yet it never echoed the fingerprint the GET has always served —
+      // so under the native arm's capability-bind every label it wrote was
+      // stamped UNBOUND, and `unbound` could never reach zero no matter how
+      // long the iOS build was in the field. The fail-closed flip criterion
+      // would have been unreachable by construction, blocked by a web page.
+      //
+      // A page is re-served by the server on every load, which is exactly the
+      // argument that let the web label pass fail closed on day one. So this
+      // one binds now.
+      //
+      // The key is OMITTED rather than sent as null when the candidate carries
+      // no digest. Those are different claims to the gate: omitted means "this
+      // client has no fingerprint for you" (unbound, counted), while an
+      // explicit null means "I declare the gate and have no value", which is a
+      // client bug and is refused. Only a pre-gate backend can serve a
+      // candidate without one, and against that backend the gate does not
+      // exist to declare.
+      ...(candidate.card_fingerprint
+        ? { card_fingerprint: candidate.card_fingerprint }
+        : {}),
       reviewer: "web",
     };
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -154,6 +182,23 @@ export default function LabelingPage() {
       headers,
       body: JSON.stringify(body),
     });
+    if (res.status === 409) {
+      // The gate refused: this card is not the card on screen any more. Say
+      // which, because "Submit failed: 409" tells the labeller nothing and the
+      // two reasons need opposite responses — a re-price means look again, a
+      // missing digest means reload the page.
+      let reason = "";
+      try {
+        reason = (await res.json())?.detail?.reason ?? "";
+      } catch {
+        /* the shape is best-effort; the status is the signal */
+      }
+      throw new Error(
+        reason === "card_fingerprint_missing"
+          ? "This page is out of date — reload before labelling."
+          : "This card re-priced while it was on screen. Reload to see it as it is now."
+      );
+    }
     if (!res.ok) throw new Error(`Submit failed: ${res.status}`);
   }, [secret]);
 

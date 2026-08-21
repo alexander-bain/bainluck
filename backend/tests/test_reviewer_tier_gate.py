@@ -19,6 +19,7 @@ from app.utils.reviewer_tier import (
     DEFAULT_TIER,
     GOLD_TIERS,
     TIER_ALEX,
+    TIER_KEY,
     TIER_KID,
     TIER_LLM,
     gold_filter,
@@ -206,14 +207,34 @@ def test_admin_write_path_stamps_the_alex_tier():
     The admin surface is Alex's, so it writes `alex` unconditionally. The kid
     surface gets its own route with no path to any other tier — rather than one
     shared route with an `is_kid` boolean someone must remember to pass.
+
+    ** RE-ANCHORED BY UX-P112 (#1933 bullet 2), NOT RELAXED. ** The stamping
+    itself moved into `gold_label_store.gold_label_row`, the one place a gold
+    label is now constructed, so asserting `with_tier(` inside
+    `create_judgment` would only prove where a line of code sits. The property
+    worth pinning is unchanged and is now checked in both halves: the route
+    names `TIER_ALEX` and names nothing else, and the shared constructor is
+    what applies it. Behaviour is asserted underneath, so this cannot pass on
+    the strings alone.
     """
     import inspect
 
     from app.routes import admin_judgments
+    from app.utils import gold_label_store
 
     source = inspect.getsource(admin_judgments.create_judgment)
-    assert "with_tier(" in source
     assert "TIER_ALEX" in source
+    # Unconditional: exactly one tier is named on this write path, and a second
+    # one appearing is the `is_kid`-boolean shape this rule exists to forbid.
+    assert "TIER_KID" not in source and "TIER_LLM" not in source
+    assert source.count("tier=") == 1, "the admin route must name one tier, once"
+
+    # ...and the tier is really applied, by the shared constructor.
+    assert "with_tier(" in inspect.getsource(gold_label_store.gold_label_row)
+    row = gold_label_store.gold_label_row(
+        label="love", surface="discover", reviewer="alex", metadata=None
+    )
+    assert row.label_metadata[TIER_KEY] == TIER_ALEX
 
 
 def test_reviewer_tier_is_metadata_not_a_new_column():

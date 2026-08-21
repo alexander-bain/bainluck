@@ -55,6 +55,12 @@ from app.utils.graded_card import (
     compare_snapshot,
     drift_outcome,
 )
+from app.utils.gold_label_store import (
+    gold_label_row,
+    label_origin,
+    structured_label_metadata,
+    verdict_gold_label,
+)
 from app.utils.label_pass_lifecycle import (
     classify_pending,
     classify_post,
@@ -824,6 +830,85 @@ async def label_pass_verdict(
         features=features or None,
     )
     db.add(new_row)
+
+    # ── AND THE SAME VERDICT LANDS IN THE ONE GOLD STORE (#1933 bullet 2) ────
+    #
+    # Until this line, a label recorded here was invisible to every consumer of
+    # "Alex's labels": `/coverage`, `/eval-export`, the already-reviewed dedup,
+    # the published `tapworthy_at_k`, the dataset exporter and the replay
+    # harness all read `ranking_judgments`, and this route wrote only
+    # `discover_review_decisions`. Measured 2026-08-20, that hid 198 of 286
+    # gradeable futures verdicts — most of a corpus whose smallness is itself a
+    # standing blocker (ruling 016).
+    #
+    # The lifecycle row above is NOT replaced by this one. It is what `/undo`,
+    # the duplicate check, the eval-promote term in `feed.py` and the corrective
+    # few-shot in `enrich_markets.py` read. Two rows, two jobs, joined by
+    # `label_origin.source_decision_id` — which is also what makes the historical
+    # convergence idempotent.
+    #
+    # Flushed before the judgment is built because the origin records the
+    # decision id, and a row that cannot be traced back to its verdict cannot be
+    # reconciled with one either. Same transaction throughout: a gold label
+    # committed without its lifecycle row, or the reverse, is a split store with
+    # extra steps.
+    gold = verdict_gold_label(new_decision)
+    if gold is not None and _is_market_id(proposal.item_type, proposal.item_id):
+        await db.flush()
+        gold_label, mapping = gold
+        snapshot = {
+            "item_type": proposal.item_type,
+            "item_id": proposal.item_id,
+            "market_id": int(proposal.item_id),
+            "category": proposal.category,
+            "archetype": proposal.archetype,
+            # `/coverage` derives its stratum from this prefix, so the converged
+            # rows report which proposal pool they came from instead of piling
+            # into "unknown".
+            "selection_reason": f"labeling:label_pass_{action}",
+        }
+        # This surface's card keys are `title`/`outcomes`/`probability`; the
+        # envelope's are `name`/`top_outcomes`/`rendered_probability`. Mapped
+        # here rather than pre-baked into the snapshot so the derived fields go
+        # through the same "server_derived" stamp every other surface's do —
+        # a snapshot that is server-derived but not MARKED as such is exactly
+        # the ambiguity UX-P110 removed.
+        derived_card = {
+            "name": live_card.get("title"),
+            "top_outcomes": live_card.get("outcomes"),
+            "rendered_probability": live_card.get("probability"),
+            "field_coherent": live_card.get("field_coherent"),
+            "resolution_date": live_card.get("resolution_date"),
+        }
+        db.add(
+            gold_label_row(
+                label=gold_label,
+                surface="label_pass",
+                reviewer="alex",
+                item_type="futures",
+                market_id=int(proposal.item_id),
+                market_name=live_card.get("title") or proposal.item_name,
+                category_at_review=proposal.category,
+                archetype_at_review=proposal.archetype,
+                headline_at_review=live_card.get("title"),
+                metadata=structured_label_metadata(
+                    {"card_snapshot": snapshot},
+                    None,
+                    gate=drift,
+                    live_card=derived_card,
+                    gate_surface="label_pass_verdict",
+                ),
+                origin=label_origin(
+                    surface="label_pass",
+                    source_store="discover_review_decisions",
+                    source_decision_id=new_row.id,
+                    source_decision=new_decision,
+                    source_verdict=body.verdict,
+                    mapping=mapping,
+                ),
+            )
+        )
+
     await db.commit()
 
     return {
@@ -831,6 +916,10 @@ async def label_pass_verdict(
         "decision": new_decision,
         "new_id": new_row.id,
         "applied": applied,
+        # Reported, not merely stored — the same principle the native route
+        # applies to its gate. A caller must be able to see that its label
+        # reached the gold store without going to look in the database.
+        "gold_label": gold[0] if gold else None,
     }
 
 
