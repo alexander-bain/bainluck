@@ -600,6 +600,127 @@ async def calibration_twin_last(request: Request):
     return payload
 
 
+@router.post("/admin/calibration-beat-gauges/run")
+async def calibration_beat_gauges_run(request: Request, inline: bool = False):
+    """CAL-P084 (#2007): take a beat-gauge sample now.
+
+    The sampler is on the beat schedule at :05 and :45, so this exists for two
+    narrow cases and not as the normal path: proving the instrument works on a
+    fresh deploy without waiting up to 40 minutes, and grabbing a beat that a
+    release SIGTERMed both scheduled samples of.
+
+    ``inline=true`` is safe here, unlike on the Gate 0 twin: this reads two small
+    durable rows and writes one, well inside the router's 30 s limit. It is the
+    default-off option only because the enqueued path is what the schedule uses
+    and a run that goes through Celery is the one whose verdict lands in
+    ``task-metrics``.
+    """
+    _check_admin_secret(request=request)
+
+    if inline:
+        from app.tasks.calibration_beat_gauge_sampler import run_beat_gauge_sample
+
+        return await run_beat_gauge_sample()
+
+    from app.routes.admin_utils import _safe_send_task
+
+    result = _safe_send_task("app.tasks.calibration_beat_gauge_sampler")
+    return {"status": "enqueued", "task_id": getattr(result, "id", None)}
+
+
+@router.get("/admin/calibration-beat-gauges")
+async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool = False):
+    """CAL-P084 (#2007): the banked beat-gauge history — the sawtooth, readable.
+
+    This is the endpoint the NEXT promotion's evidence comes from, and the whole
+    reason it exists is that ``durable_state_snapshots`` keeps one row per
+    identity: ``calibration:main:phase_ledger`` is overwritten every beat, so
+    without this ring the bound's descent is observable only by something that
+    happened to be watching at the time. On 2026-08-21 that was a previous
+    window's leftover shell process.
+
+    ``limit`` trims to the most recent N observations (newest last, so a reader
+    scanning down sees the sawtooth in time order). ``full=true`` returns every
+    retained row including its raw gauge map — that is the replayable form, and
+    it is opt-in because it is ~200 KB.
+
+    An unreadable or absent ring answers ``measured: false`` with the envelope's
+    own status named, never an empty ``observations`` list: "the sampler has
+    never run" and "the sampler ran and saw no beats" are different facts and
+    gotcha #53 is the whole reason this instrument exists.
+    """
+    _check_admin_secret(request=request)
+
+    from app.services.durable_snapshots import read_snapshot_standalone
+    from app.tasks.calibration_beat_gauge_sampler import (
+        HISTORY_IDENTITY,
+        HISTORY_SCHEMA,
+        summarise,
+    )
+
+    try:
+        read = await read_snapshot_standalone(
+            HISTORY_IDENTITY, expected_version=HISTORY_SCHEMA, max_age_s=3650 * 86400
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"measured": False, "reason": f"history_read_raised: {type(exc).__name__}"}
+
+    if read.envelope is None:
+        return {
+            "measured": False,
+            "reason": f"history_unreadable: {read.status}",
+            "envelope_status": read.status,
+            "envelope_error_class": read.error_class,
+        }
+
+    payload = read.envelope.payload if isinstance(read.envelope.payload, dict) else {}
+    rows = [r for r in (payload.get("observations") or []) if isinstance(r, dict)]
+
+    out: dict = {
+        "measured": True,
+        "envelope_status": read.status,
+        "artifact_generated_at": read.envelope.generated_at.isoformat(),
+        "history_generation": read.envelope.generation,
+        "schema": payload.get("schema"),
+        "limit": payload.get("limit"),
+        "required_gauges": payload.get("required_gauges"),
+        # Recomputed rather than echoed: the banked summary describes the ring as
+        # it was WRITTEN, and if those two ever disagree the disagreement is the
+        # finding. Both are returned so a reader can see it.
+        "summary": summarise(payload),
+        "summary_as_banked": payload.get("summary"),
+    }
+
+    if full:
+        out["observations"] = rows
+        return out
+
+    bounded = rows[-max(1, min(int(limit or 24), len(rows) or 1)):] if rows else []
+    out["observations"] = [
+        {
+            "generation": r.get("generation"),
+            "generated_at": r.get("generated_at"),
+            "tolerance_pp": r.get("tolerance_pp"),
+            "terminal": r.get("terminal"),
+            "carried": r.get("carried"),
+            "banked": r.get("banked"),
+            "measured": r.get("measured"),
+            "units_banked": (r.get("disclosure") or {}).get("units_banked"),
+            "units_drifted": (r.get("disclosure") or {}).get("units_drifted"),
+            "units_drift_unknown": (r.get("disclosure") or {}).get("units_drift_unknown"),
+            "rebuild_units_banked": (r.get("disclosure") or {}).get("rebuild_units_banked"),
+            "rebuild_units_this_beat": (r.get("disclosure") or {}).get(
+                "rebuild_units_this_beat"
+            ),
+            "gauges_missing_required": r.get("gauges_missing_required"),
+        }
+        for r in bounded
+    ]
+    out["observations_returned"] = len(out["observations"])
+    out["observations_retained"] = len(rows)
+    return out
+
+
 @router.get("/admin/cohort-sums-histogram")
 async def cohort_sums_histogram(
     request: Request,
