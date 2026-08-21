@@ -23,6 +23,7 @@ from app.services import get_db, get_db_rw, OddsAPIService, fetch_current_odds
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prop_window import prop_window_closed
 from app.utils.lifecycle import served_event_status
+from app.utils.graded_card import rendered_duel_percents
 from app.utils import (
     moneyline_to_probability,
     project_scores,
@@ -5810,10 +5811,20 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         hero_home_prob = agg_prob if agg_prob is not None else aggregated["home_probability"]
         hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else aggregated["away_probability"]
 
+        # #2085: the pair above is an exact complement BY CONSTRUCTION, so
+        # rounding each side independently prints 101 whenever `home * 100` lands
+        # on a half-percent (34 of 414 measured events, 8.2%). Serve the two whole
+        # percents the page must PRINT alongside the probabilities themselves —
+        # the probabilities do not move, and the underdog absorbs the derived
+        # point so the favourite's own number survives (`rendered_duel_percents`).
+        _away_pct, _home_pct = rendered_duel_percents(hero_away_prob, hero_home_prob)
+
         response["current_odds"] = {
             "captured_at": latest_time.isoformat(),
             "home_probability": hero_home_prob,
             "away_probability": hero_away_prob,
+            "away_rendered_percent": _away_pct,
+            "home_rendered_percent": _home_pct,
             "spread": aggregated["home_spread"],
             "over_under": aggregated["over_under"],
             "projected_home_score": aggregated["projected_home_score"],
@@ -5879,9 +5890,14 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
 
     # Fallback: if no odds snapshots, use aggregate from alternative sources
     if "current_odds" not in response and agg_prob is not None:
+        # #2085 site 2 — same derive, same 101, same fix as the snapshot path above.
+        _fb_away_prob = round(1.0 - agg_prob, 6)
+        _fb_away_pct, _fb_home_pct = rendered_duel_percents(_fb_away_prob, agg_prob)
         response["current_odds"] = {
             "home_probability": agg_prob,
-            "away_probability": round(1.0 - agg_prob, 6),
+            "away_probability": _fb_away_prob,
+            "away_rendered_percent": _fb_away_pct,
+            "home_rendered_percent": _fb_home_pct,
             "source": "aggregate",
             "bookmaker_count": 0,
         }
@@ -6448,6 +6464,45 @@ def _prop_stat_keys(market, ctx: dict) -> Optional[list]:
         if stat in name_lower:
             return [stat]
     return None
+
+
+def _settled_grade_fields(market, outcome) -> dict:
+    """The authoritative settlement verdict for a game-market row (#2089).
+
+    Returns both keys ALWAYS, so the payload shape never varies; `is_winner` is
+    `None` whenever the grade is not authoritative. `None` is "no verdict" and is
+    a different statement from `False`, which is "this side lost".
+
+    ** BOTH HALVES OF THE GATE ARE LOAD-BEARING. ** `is_winner` is a non-nullable
+    Boolean defaulting to False (gotcha #33), so neither condition alone can tell a
+    grade from an ungraded row:
+
+    * **Market status alone is not enough** — and this is where #2089's own
+      suggested snippet (`fo.is_winner if fm.status == "resolved" else None`) would
+      have gone wrong. Measured on production 2026-08-21 over the newest 400
+      event-linked `status='resolved'` markets: outcomes with no
+      `resolution_source` number **6,032, of which 0 are winners** and 6,032 are
+      the column default; outcomes WITH one number 1,403, split 468/935. Serving
+      the first group would render 6,032 outcomes as "lost" — the same class of
+      false verdict this function exists to prevent, one layer up.
+    * **`resolution_source` alone is not enough** — a market Kalshi has settled
+      often still reads `status='open'` here because polling stops seeing it
+      (gotcha #33), and its rows carry the same default False.
+
+    The same rule already governs player props at the `_build_props_script`
+    consumer below, for the same reason and after a live incident: WNBA props with
+    `resolution_source=None` all rendered a confident "miss".
+    """
+    authoritative = (
+        getattr(market, "status", None) == "resolved"
+        and getattr(outcome, "resolution_source", None) is not None
+    )
+    if not authoritative:
+        return {"is_winner": None, "resolution_source": None}
+    return {
+        "is_winner": bool(getattr(outcome, "is_winner", None)),
+        "resolution_source": getattr(outcome, "resolution_source", None),
+    }
 
 
 def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_under) -> dict:
@@ -7019,6 +7074,7 @@ async def get_game_markets(
                     "market_type": market_type,
                     "market_name": market.name,
                     "outcome_name": o.name,
+                    **_settled_grade_fields(market, o),
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
                     "period": market_period,
@@ -7087,6 +7143,7 @@ async def get_game_markets(
                     "threshold": threshold,
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
+                    **_settled_grade_fields(market, o),
                 })
 
         elif market_type in ("half_spread", "quarter_spread", "half_winner", "quarter_winner"):
@@ -7101,6 +7158,7 @@ async def get_game_markets(
                     "source": market.source,
                     "market_type": market_type,
                     "period": market_period,
+                    **_settled_grade_fields(market, o),
                 })
 
         elif market_type in ("h2h", "3ball"):
@@ -7112,6 +7170,7 @@ async def get_game_markets(
                     outcomes_list.append({
                         "name": o.name,
                         "probability": round(prob, 4),
+                        **_settled_grade_fields(market, o),
                     })
             if outcomes_list:
                 matchups.append({
@@ -7199,6 +7258,7 @@ async def get_game_markets(
                     "outcome_name": o.name,
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
+                    **_settled_grade_fields(market, o),
                 })
 
     # 6. Sort totals and spreads by threshold value
