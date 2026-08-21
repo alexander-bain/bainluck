@@ -19,12 +19,17 @@ What it answers, per token:
   intersection and not an ancestry test,
 * otherwise **LIVE-READY**.
 
-Two deliberate refusals, both gotcha #53 — an absent comparison is not evidence
+Three deliberate refusals, all gotcha #53 — an absent comparison is not evidence
 of health:
 
 * a token whose head cannot be resolved is **UNRESOLVED**, never clean;
 * a run where the never-merge set is empty prints ``containment: NOT RUN`` and
-  says so in the verdict, rather than reporting every branch as uncontained.
+  says so in the verdict, rather than reporting every branch as uncontained;
+* a token with no ``status:`` field is **MALFORMED** and is REPORTED, never
+  silently read as not-ready (**ruling 115**). It is still resolved against git,
+  so a malformed token over unmerged work is flagged as the emergency it is, and
+  the header states coverage as a ratio so a half-blind sweep cannot print a
+  confident list of only what it could see.
 
 Usage::
 
@@ -56,12 +61,27 @@ READY_VALUES = {"ready_for_integration", "ready"}
 
 #: Verdicts, most-blocking first. Order matters: a branch that is BOTH spent and
 #: void is reported void, because the void is the fact that needs acting on.
+#: Ruling 115. First in the order below because a token that cannot be READ is a
+#: prior question to any verdict about the branch it names.
+MALFORMED = "MALFORMED"
 VOID = "VOID"
 UNRESOLVED = "UNRESOLVED"
 MOVED_HEAD = "MOVED-HEAD"
 SPENT = "SPENT"
 LIVE_READY = "LIVE-READY"
 HELD = "HELD"
+
+#: Underlying verdicts that make a MALFORMED token an EMERGENCY rather than
+#: bookkeeping: the branch RESOLVED and is not on base, so there are real commits
+#: nobody is looking at.
+#:
+#: ``UNRESOLVED`` is deliberately NOT in this set. A token whose branch cannot be
+#: resolved might name a live branch or a deleted one, and calling that "real
+#: work" would assert a fact from an absence — the exact error ruling 115 is
+#: about, committed by ruling 115's own enforcement. It gets its own honest
+#: label instead, and does not red ``--strict``, because adding a ``status:``
+#: field would not fix it: the ``branch:`` field is broken too.
+MALFORMED_OVER_LIVE_WORK = {LIVE_READY, MOVED_HEAD}
 
 
 def _clean(value: str) -> str:
@@ -104,16 +124,31 @@ def parse_token(text: str) -> dict:
     return out
 
 
-def is_ready(status) -> bool:
-    """Pure. A token with no ``status:`` field at all is NOT ready.
+class MalformedToken(Exception):
+    """A token stated no status. There is no boolean answer to return."""
 
-    `READY-calibration-75.md` shipped with no status field over real, gate-clean,
-    unmerged work and was therefore invisible to the canonical sweep. That is a
-    token defect to fix in the token — inferring ready from the filename would
-    make every historical token in the directory live again.
+
+def is_ready(status) -> bool:
+    """Pure. **Ruling 115: a missing ``status:`` is MALFORMED, not not-ready.**
+
+    A token with no status field has not said "no" — it has said nothing, and
+    returning ``False`` for both renders an absence in the same bytes as a
+    decision. That silent ``False`` hid live work in five consecutive cycles:
+    `READY-calibration-75.md` (invisible for a full cycle over gate-clean work,
+    named in ruling 113's charter case), and then, in the cycle that banked this
+    ruling, `READY-ux-99.md` and `READY-lane1-386.md` — the first of which had no
+    PR either, so ruling 113's second source could not catch it and only a
+    hand-written directive did.
+
+    Inferring ready from the filename is still refused, for the reason it always
+    was: it would make all 178 historical tokens in the directory live again.
+    Absence cannot be resolved by guessing its direction. It is REPORTED.
+
+    Raises:
+        MalformedToken: ``status`` is None, empty, or whitespace only.
     """
-    if not status:
-        return False
+    if status is None or not str(status).strip():
+        raise MalformedToken("token carries no status: field")
     return status.strip().lower() in READY_VALUES
 
 
@@ -306,8 +341,18 @@ def sweep(handoff_dir, repo, runner=subprocess.run, extra_never_merge=(),
                          else open_pull_requests(runner, repo, base))
 
     rows = []
+    malformed_files = []
     for token in tokens:
-        if not (is_ready(token.get("status")) or token.get("never_merge")):
+        # Ruling 115. A token that states no status is MALFORMED, and MALFORMED is
+        # carried into the report — never dropped by the same `continue` that
+        # discards a token honestly marked `merged`.
+        malformed = False
+        try:
+            ready = is_ready(token.get("status"))
+        except MalformedToken:
+            malformed, ready = True, False
+            malformed_files.append(token["file"])
+        if not (ready or malformed or token.get("never_merge")):
             continue
         branch = token.get("branch")
         resolved = _git(runner, repo, "rev-parse", branch) if branch else None
@@ -321,6 +366,11 @@ def sweep(handoff_dir, repo, runner=subprocess.run, extra_never_merge=(),
                 shared = sorted(own & closure)
 
         on_master = bool(resolved) and _is_ancestor(runner, repo, resolved, base)
+        # Ruling 115 obligation 2: a malformed token is resolved against git like
+        # any other and carries the verdict it WOULD have had, so "malformed over
+        # spent work" (bookkeeping) is distinguishable at a glance from "malformed
+        # over three unmerged commits" (a lane's work with nobody looking).
+        underlying = classify(token, resolved, on_master, shared)
         rows.append({
             "file": token["file"],
             "branch": branch,
@@ -328,7 +378,9 @@ def sweep(handoff_dir, repo, runner=subprocess.run, extra_never_merge=(),
             "resolved_head": resolved,
             "status": token.get("status"),
             "status_is_short_form": (token.get("status") or "").strip().lower() == "ready",
-            "verdict": classify(token, resolved, on_master, shared),
+            "verdict": MALFORMED if malformed else underlying,
+            "underlying": underlying if malformed else None,
+            "over_live_work": bool(malformed and underlying in MALFORMED_OVER_LIVE_WORK),
             "contains_never_merge": [c[:8] for c in shared],
         })
 
@@ -348,6 +400,10 @@ def sweep(handoff_dir, repo, runner=subprocess.run, extra_never_merge=(),
         "containment_ran": bool(never_merge) and not unreadable,
         "open_prs": pr_rows,
         "open_prs_error": pr_error,
+        # Ruling 115 obligation 4: coverage as a RATIO. A sweep that prints only
+        # what it could read can never disclose that it read half of it.
+        "malformed_tokens": sorted(malformed_files),
+        "status_readable": len(tokens) - len(malformed_files),
         "rows": rows,
     }
 
@@ -355,6 +411,17 @@ def sweep(handoff_dir, repo, runner=subprocess.run, extra_never_merge=(),
 def render(result) -> str:
     lines = []
     lines.append(f"READY sweep — {result['handoff_dir']} — {result['tokens_read']} token files read")
+    # Ruling 115 obligation 4 — coverage stated as a ratio, always, so a blind
+    # sweep cannot print a confident list of only what it could see.
+    readable = result.get("status_readable")
+    malformed_files = result.get("malformed_tokens") or []
+    if readable is not None:
+        line = (f"status coverage: {readable} of {result['tokens_read']} tokens carry a "
+                "readable status: field")
+        if malformed_files:
+            line += (f" — {len(malformed_files)} MALFORMED. A missing status is not a quiet "
+                     "'no'; it is silence (ruling 115).")
+        lines.append(line)
     if result["containment_ran"]:
         heads = ", ".join(
             f"{e['head']} ({e['source']})" for e in result["never_merge_heads"]
@@ -375,15 +442,28 @@ def render(result) -> str:
             "This is NOT a clean result (ruling 109 obligation 4, gotcha #53)."
         )
     lines.append("")
-    order = [VOID, UNRESOLVED, MOVED_HEAD, SPENT, LIVE_READY, HELD]
+    order = [MALFORMED, VOID, UNRESOLVED, MOVED_HEAD, SPENT, LIVE_READY, HELD]
     for verdict in order:
         group = [r for r in result["rows"] if r["verdict"] == verdict]
         if not group:
             continue
-        lines.append(f"── {verdict} ({len(group)})")
+        header = f"── {verdict} ({len(group)})"
+        if verdict == MALFORMED:
+            live = sum(1 for r in group if r.get("over_live_work"))
+            unres = sum(1 for r in group if r.get("underlying") == UNRESOLVED)
+            header += (f" — no status: field. {live} sit over UNMERGED work and are "
+                       f"invisible to every sweep; {unres} more cannot be resolved at all "
+                       "(ruling 115)")
+        lines.append(header)
         for row in group:
             head = (row["resolved_head"] or "unresolved")[:8]
             line = f"   {row['file']:<44} {str(row['branch']):<38} {head}"
+            if verdict == MALFORMED:
+                line += f"  would be {row.get('underlying')}"
+                if row.get("over_live_work"):
+                    line += "   ⚠ REAL WORK, INVISIBLE"
+                elif row.get("underlying") == UNRESOLVED:
+                    line += "   ⚠ branch UNRESOLVED — cannot rule out live work"
             if row["contains_never_merge"]:
                 line += "  contains " + ",".join(row["contains_never_merge"])
             if row["status_is_short_form"]:
@@ -435,6 +515,14 @@ def render(result) -> str:
             "never-merge ancestor. Mark them void with the reason in the file. They re-earn "
             "ready only from a branch REBUILT without the ancestor."
         )
+    blind = [r for r in result["rows"] if r["verdict"] == MALFORMED and r.get("over_live_work")]
+    if blind:
+        lines.append(
+            f"RULING 115: {len(blind)} token(s) carry NO status: field over UNMERGED work — "
+            "the sweep cannot see them, and neither can the next Integrator. Add "
+            "`status: ready_for_integration` (or `merged`) to: "
+            + ", ".join(r["file"] for r in blind)
+        )
     return "\n".join(lines)
 
 
@@ -445,7 +533,8 @@ def main(argv=None, runner=subprocess.run, stdout=None) -> int:
     parser.add_argument("--repo", default=".")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--strict", action="store_true",
-                        help="exit 1 if any VOID token is still advertising ready")
+                        help="exit 1 if a VOID token still reads ready, or a MALFORMED "
+                             "token sits over unmerged work (rulings 109, 115)")
     parser.add_argument("--no-prs", action="store_true",
                         help="skip the open-PR source; reported as NOT RUN, never as clean")
     parser.add_argument("--never-merge", action="append", default=[],
@@ -463,8 +552,14 @@ def main(argv=None, runner=subprocess.run, stdout=None) -> int:
                    include_prs=not args.no_prs)
     print(json.dumps(result, indent=2) if args.json else render(result), file=stdout)
 
-    if args.strict and any(r["verdict"] == VOID for r in result["rows"]):
-        return 1
+    if args.strict:
+        # Ruling 115 obligation 5: a defect that cannot red a gate is a defect that
+        # gets written down for five cycles. INT-102 wrote the fix request into its
+        # own queue file and the field was still absent one cycle later.
+        if any(r["verdict"] == VOID for r in result["rows"]):
+            return 1
+        if any(r["verdict"] == MALFORMED and r.get("over_live_work") for r in result["rows"]):
+            return 1
     return 0
 
 

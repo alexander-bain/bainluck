@@ -664,7 +664,7 @@ def test_ruling_numbers_are_unique() -> None:
 #:
 #: No number collision: 110 was claimed in `RULING-CLAIMS.md` and verified free across 490 refs,
 #: and master went on to take 111, 112 and 113 — so the index reads 110..113 with no gap.
-MINIMUM_BANKED_RULINGS = 110
+MINIMUM_BANKED_RULINGS = 111
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

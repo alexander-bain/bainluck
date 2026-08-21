@@ -266,10 +266,138 @@ def test_the_short_form_status_ready_still_counts_as_ready():
     assert sweep_mod.is_ready("ready_for_integration") is True
 
 
-def test_a_token_with_no_status_field_is_not_ready():
-    """READY-calibration-75.md had none. That is a token defect, not an inference."""
-    assert sweep_mod.is_ready(None) is False
-    assert sweep_mod.is_ready("") is False
+def test_a_token_with_no_status_field_is_MALFORMED_not_quietly_not_ready():
+    """Ruling 115. `is_ready(None)` is LOUD — it must not manufacture a boolean.
+
+    A missing field has not said "no". Five consecutive cycles hid live work
+    behind the silent False this replaces: READY-calibration-75.md, then
+    READY-ux-99.md and READY-lane1-386.md in the cycle that banked the ruling.
+    """
+    for absent in (None, "", "   ", "\t\n"):
+        with pytest.raises(sweep_mod.MalformedToken):
+            sweep_mod.is_ready(absent)
+
+    # ...and a status that is PRESENT and simply not ready still answers False.
+    # The ruling separates absence from negation; it does not abolish negation.
+    assert sweep_mod.is_ready("merged") is False
+
+
+def _token_file(tmp_path, name, body):
+    (tmp_path / name).write_text(body, encoding="utf-8")
+
+
+def test_a_malformed_token_over_unmerged_work_is_reported_not_dropped(tmp_path):
+    """The whole ruling, end to end, on the shape that caused it.
+
+    `READY-ux-99.md` carried three unmerged commits and no `status:` field, so the
+    sweep dropped it at the same `continue` that discards an honestly-merged
+    token — and it had no PR either, so ruling 113's second source could not
+    catch it. It must now appear, resolved, flagged, and named in the footer.
+    """
+    _token_file(tmp_path, "READY-live.md", "queue: UX-P112\nbranch: `program/ux-99`\n")
+    _token_file(tmp_path, "READY-spent.md", "queue: old\nbranch: `program/ux-1`\n")
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "gh":
+            return _FakeProc("[]", 0)
+        if "rev-parse" in cmd:
+            return _FakeProc("f" * 40 if "program/ux-99" in cmd else "a" * 40, 0)
+        if "merge-base" in cmd and "--is-ancestor" in cmd:
+            # program/ux-1 resolves to a…a and IS on master; ux-99's f…f is not.
+            return _FakeProc("", 0 if cmd[-2] == "a" * 40 else 1)
+        if "rev-list" in cmd:
+            return _FakeProc("", 0)
+        return _FakeProc("", 0)
+
+    result = sweep_mod.sweep(str(tmp_path), ".", runner=run)
+
+    assert result["status_readable"] == 0
+    assert result["malformed_tokens"] == ["READY-live.md", "READY-spent.md"]
+
+    by_file = {r["file"]: r for r in result["rows"]}
+    assert by_file["READY-live.md"]["verdict"] == "MALFORMED"
+    assert by_file["READY-live.md"]["underlying"] == "LIVE-READY"
+    assert by_file["READY-live.md"]["over_live_work"] is True
+
+    # Malformed over ALREADY-SHIPPED work is bookkeeping, not an emergency, and
+    # the two must stay distinguishable or the loud half becomes noise.
+    assert by_file["READY-spent.md"]["verdict"] == "MALFORMED"
+    assert by_file["READY-spent.md"]["underlying"] == "SPENT"
+    assert by_file["READY-spent.md"]["over_live_work"] is False
+
+    out = sweep_mod.render(result)
+    assert "status coverage: 0 of 2" in out
+    assert "MALFORMED" in out
+    assert "REAL WORK, INVISIBLE" in out
+    assert "RULING 115" in out and "READY-live.md" in out.split("RULING 115")[1]
+    # The bookkeeping one must NOT be dragged into the footer's action list.
+    assert "READY-spent.md" not in out.split("RULING 115")[1]
+
+
+def test_strict_exits_1_on_a_malformed_token_over_live_work(tmp_path):
+    """Obligation 5. INT-102 wrote the fix request down and it was ignored for a
+    cycle; a finding that cannot red a gate is a finding that gets written down."""
+    _token_file(tmp_path, "READY-live.md", "branch: `program/ux-99`\n")
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "gh":
+            return _FakeProc("[]", 0)
+        if "rev-parse" in cmd:
+            return _FakeProc("f" * 40, 0)
+        if "merge-base" in cmd and "--is-ancestor" in cmd:
+            return _FakeProc("", 1)
+        return _FakeProc("", 0)
+
+    out = StringIO()
+    assert sweep_mod.main(["--handoff-dir", str(tmp_path), "--strict"],
+                          runner=run, stdout=out) == 1
+
+    # A well-formed, honestly-merged token in the same directory does not.
+    _token_file(tmp_path, "READY-live.md", "status: merged\nbranch: `program/ux-99`\n")
+    out2 = StringIO()
+    assert sweep_mod.main(["--handoff-dir", str(tmp_path), "--strict"],
+                          runner=run, stdout=out2) == 0
+
+
+def test_an_unresolvable_branch_is_not_claimed_to_be_real_work(tmp_path):
+    """Ruling 115 refusing to commit its OWN error.
+
+    A malformed token whose `branch:` will not resolve might name a live branch
+    or a deleted one. Flagging it "REAL WORK, INVISIBLE" would assert a fact from
+    an absence — precisely what this ruling exists to stop — so it gets an honest
+    label and does NOT red --strict, since adding a status field cannot fix a
+    broken branch field.
+    """
+    _token_file(tmp_path, "READY-nobranch.md", "queue: ancient\n")
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "gh":
+            return _FakeProc("[]", 0)
+        return _FakeProc("", 128)          # git resolves nothing
+
+    result = sweep_mod.sweep(str(tmp_path), ".", runner=run)
+    row = result["rows"][0]
+    assert row["verdict"] == "MALFORMED"
+    assert row["underlying"] == "UNRESOLVED"
+    assert row["over_live_work"] is False
+
+    out = sweep_mod.render(result)
+    assert "cannot rule out live work" in out
+    assert "REAL WORK, INVISIBLE" not in out
+    assert "RULING 115" not in out        # nothing actionable to demand
+
+    strict = StringIO()
+    assert sweep_mod.main(["--handoff-dir", str(tmp_path), "--strict"],
+                          runner=run, stdout=strict) == 0
+
+
+def test_coverage_ratio_is_printed_even_when_every_token_is_readable(tmp_path):
+    """Obligation 4 is unconditional. A ratio only shown when it is bad is a ratio
+    the reader learns to expect the absence of."""
+    _token_file(tmp_path, "READY-a.md", "status: merged\nbranch: `x`\n")
+    result = sweep_mod.sweep(str(tmp_path), ".", runner=_pr_runner([]))
+    assert result["status_readable"] == 1 and result["malformed_tokens"] == []
+    assert "status coverage: 1 of 1" in sweep_mod.render(result)
 
 
 def test_void_outranks_spent_and_moved_head():
