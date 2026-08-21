@@ -1,5 +1,6 @@
 """Events API endpoints."""
 
+import contextvars
 import logging
 import os
 import re
@@ -3978,6 +3979,26 @@ _TEAM_POOL_FETCH_LIMIT = 8
 _POOL_PROMINENT_SPORT_KEYS = tuple(sorted(_SEARCH_PROMINENT_SPORT_KEYS))
 
 
+#: When true, `/typeahead` does NOT record the query in `search:trending:24h`
+#: (LAT-P078/#1866 — see the suppression site for the measurement).
+#:
+#: A ContextVar rather than a function parameter ON PURPOSE. FastAPI turns any
+#: plain-defaulted parameter in a route signature into a QUERY PARAMETER, so a
+#: `suppress_trending: bool = False` argument would let any caller on the public
+#: internet opt their own searches out of the trending count — a
+#: self-service way to poison, or to hide from, the distribution the warmer
+#: heads from. A ContextVar is reachable from the in-process warmer and from
+#: nowhere else.
+#:
+#: `asyncio.gather`/`create_task` copy the current context per task, so the
+#: warmer's `width` concurrent `_warm_one` coroutines each get their own value
+#: and cannot leak the flag into a real user's request. The failure mode if that
+#: were ever wrong is one uncounted user query, never a wrong answer served.
+_suppress_trending_write: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "bainluck_typeahead_suppress_trending_write", default=False
+)
+
+
 @router.get("/typeahead")
 async def typeahead_search(
     q: str = Query(
@@ -4787,16 +4808,33 @@ async def typeahead_search(
         except Exception:
             pass
 
-    # Track query for trending searches (fire-and-forget, no PII)
-    try:
-        from app.tasks.redis_state import get_redis_client
-        rc = get_redis_client()
-        normalized = q.strip().lower()
-        if len(normalized) >= 3:
-            rc.zincrby("search:trending:24h", 1, normalized)
-            rc.expire("search:trending:24h", 86400)
-    except Exception:
-        pass
+    # Track query for trending searches (fire-and-forget, no PII).
+    #
+    # LAT-P078/#1866: SUPPRESSED for the warmer's own calls, and that suppression
+    # is the fix for a closed feedback loop, not a tidiness. `typeahead_warmer`
+    # reads the top-40 of this very zset to decide what to warm, and warms by
+    # calling this route — so before this guard every pass incremented all 40 of
+    # its own head terms by 1. At a ~50s pass that is ~1,700/day per head term
+    # against ~3/day for a real query, so the head was self-sustaining and CLOSED:
+    # once a term was in, it could not fall out, and no organic query could ever
+    # break in. Measured on production 2026-08-21 — the top five scored 5414,
+    # 5411, 5403, 5400, 5399, a spread of 15 across five terms, which is a
+    # round-robin machine and not a human distribution. The result was that the
+    # actual top of real search traffic (`masters winner`, `stanley cup`,
+    # `nba champion` — ranks 1, 2 and 4 in `search_query_logs`) was never warmed
+    # and cost users 4.0-5.2s against a <150ms budget, while the warmer reported
+    # `warmed: 40/40` every pass. A "measured, never guessed" head that measures
+    # the warmer is a guess with an instrument bolted to it.
+    if not _suppress_trending_write.get():
+        try:
+            from app.tasks.redis_state import get_redis_client
+            rc = get_redis_client()
+            normalized = q.strip().lower()
+            if len(normalized) >= 3:
+                rc.zincrby("search:trending:24h", 1, normalized)
+                rc.expire("search:trending:24h", 86400)
+        except Exception:
+            pass
 
     return result
 

@@ -159,8 +159,40 @@ a safety coat (LAT-P075 found exactly that in this program's own
 claimed as a clause here, because clause 14's duplication bar applies until a second unrelated
 case appears.
 
+## AMENDMENT 2026-08-21 (LAT-P078) — the two censored beats re-read, and one claim above is false
+
+Fable promoted the censored-beats disclosure to a work item: *name them, diagnose, fix-or-file
+— a falsifier watching dead beats guards nothing.* Both were re-read from production at a
+15.6 h post-deploy horizon (build `ec636bae` / v3881). Full evidence: **#2071** and
+`docs/audits/latency/lat-p078-censored-beats.md`. Two corrections to the table above:
+
+🔴 **`precompute_backfill_winners_status` — "succ 24 h: 0" is FALSE today. It is 18 successes,
+2 failures.** Its durations are genuinely spread (1 in 10–100 s, 20 in 100–500 s, 22 in
+500–598 s, 7 at >= 598 s), so it carries real gradeable signal. It is censored anyway because
+the rule applies `CENSOR_FRACTION_OF_SOFT_LIMIT` to a **p95**, and a 14 % clip rate puts a p95
+at the ceiling by arithmetic regardless of the other 86 %. The beat is not dead; the statistic
+is saturated.
+
+🔴 **`compute_calibration_prices` — 0 successes is real, but "already failing" is not the right
+reading, and neither is "clamped at its own timeout".** `_compute_calibration_prices` sets
+`_CAL_DEADLINE_S = 540.0` ("soft_time_limit=600, keep a 60 s margin"); 35 of 40 runs stop on
+that self-owned clock and only **3 of 40** ever reach 600 s. It is a cursor-resuming bounded
+sweep whose `part_a_cursor` advanced 220,450,332 -> 220,617,056 between the two reads, and
+`task_verdict` documents `partial` as *"not a failure — a resumable sweep returning `partial`
+is behaving as designed"*. It is **budget-bounded, not timeout-clamped**. Excluding it is still
+correct; the mechanism sentence in this file's table is not. A budget-bounded beat *would* show
+contention — in work-done-per-run, never in duration.
+
+**Net: effective coverage today is 4 of 7, not 3 of 7**, and the error direction is the safe
+one (a beat excluded rather than counted as evidence of safety), so this is not a reason to
+hold the grant. The rule change is **filed, not made** — see #2071 for why changing a grading
+rule after its baseline was pinned is the very defect this ruling exists to refuse.
+
 ## Status
 
 **GRANTED and SHIPPED** on `program/latency-70` with the falsifier armed, 25 tests, 5 mutations
-each caught at exit 1. The post-deploy read is **OWED**: the falsifier cannot be graded until
-the routing is live, and this lane does not deploy.
+each caught at exit 1. The post-deploy read is **STILL OWED, and LAT-P078 could not take it
+either**: `program/latency-70` did not merge, `origin/master` is still its own base
+`ec636bae`, and `GET /api/admin/heavy-move/falsifier` returns **HTTP 404** in production. The
+condition remains unread — not because the instrument is missing, but because the routing it
+grades has not shipped. This lane does not deploy.

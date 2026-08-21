@@ -111,13 +111,45 @@ keeps the pages resident that recompute is the HOT cost (5-27ms), not the 1.4s
 cold cost. It replaces a 30-50s cold window per cycle with a ~20ms one, and it
 only ever fires on an entry that was seconds from expiring anyway.
 
-THE HEAD IS MEASURED, NEVER GUESSED. Three sources, in order, each one real:
+THE HEAD IS MEASURED, NEVER GUESSED — AND FOR THREE CYCLES IT MEASURED THIS TASK
+RATHER THAN ITS USERS (LAT-P078, #1866). Two real sources, now BLENDED:
 
-1. ``search:trending:24h`` — the Redis zset `/typeahead` itself writes on every
-   call (`routes/events.py`). This IS the live typeahead distribution.
-2. ``search_query_logs`` — the /search log (#239 Item 4). Measured 2026-08-14:
-   3,423 rows / 210 distinct over 30 days, top-20 = 36% of volume, top-50 = 69%.
+1. ``search_query_logs`` — the /search log (#239 Item 4). Real submitted intent,
+   time-windowed to 30 days by its own query, written only by `/search`, which
+   this task never calls. Nothing here can pollute it. Measured 2026-08-14:
+   3,423 rows / 210 distinct, top-20 = 36% of volume, top-50 = 69%.
+2. ``search:trending:24h`` — the Redis zset `/typeahead` writes on every call. It
+   measures the surface actually being warmed, including the prefixes a user
+   passes through on the way to a phrase, which `/search` never sees.
 3. ``_STATIC_FLOOR`` — cold-start only, for a fresh Redis and an empty table.
+
+**Source 1 had never selected a single warmed term in production.** `resolve_head`
+was a strict first-non-empty cascade and source 2 is never empty, so the query-log
+arm was unreachable code. That alone would be a composition bug. What made it a
+LOOP is that `_warm_one` warms by calling the route, and the route's last act is
+to `zincrby` the query into source 2 — so every pass voted for its own head, ~1,700
+times a day per term against ~3/day for an organic query. Once a term was in the
+top-40 it could not fall out and nothing could break in.
+
+The signature was unmistakable once looked at. Production, 2026-08-21::
+
+    world cup 5414   red sox 5411   celtics 5403   yankees 5400   patriots 5399
+
+A spread of 15 across the top five is a round-robin process, not a human
+distribution — real traffic over the same period runs 102, 101, 95, 90, 82.
+
+The user-visible cost, measured the same morning at a 15.6h post-deploy horizon:
+the top four real queries by 30-day volume are ``masters winner`` (102),
+``stanley cup`` (101), ``world series`` (95), ``nba champion`` (90), and three of
+those four were COLD at 4.0s, 4.9s and 5.2s against a <150ms budget. ``world
+series`` was warm at 0.25s for no better reason than that it was also locked into
+the zset. The warmer reported ``warmed: 40/40`` on every one of those passes.
+
+So the fix is two halves of one change, and neither works alone: the route stops
+counting the warmer's own calls (`_suppress_trending_write`), and `resolve_head`
+blends instead of cascading (`_QUERY_LOG_SHARE`). Breaking the loop without the
+blend would leave the accumulated ~5,400 all-time scores frozen in place, because
+the route re-`expire`s the key on every write so it never actually rolls 24h.
 
 NOT LOAD-BEARING, deliberately. A cold miss still builds inline in the route, so
 turning this task off makes `/typeahead` slow again — never broken. The tests
@@ -327,6 +359,18 @@ _PASS_RING_KEY = "bainluck:typeahead_warmer:pass_ring"
 #: unbounded key does not merely cost memory, it evicts other people's keys.
 _PASS_RING_MAX = 32
 
+#: How many head terms each ring record carries (LAT-P078/#1866).
+#:
+#: The ring records the head so a client probe is ATTRIBUTABLE — "was the term I
+#: measured actually in the warmed set" was unanswerable from production for four
+#: cycles, and answering it wrong is what produced the withdrawn 80% -> 0% result.
+#: Truncated at 12 of 40 because the ring is 32 records deep on an `allkeys-lru`
+#: instance where an oversized key evicts other people's data (the same reason
+#: `_PASS_RING_MAX` exists), and because the question the ring answers needs a
+#: sample of the head, not a transcript of it. `head_n` carries the true length,
+#: so a truncated list can never be mistaken for a short head.
+_RING_HEAD_SAMPLE = 12
+
 #: Skip counters + the most recent outcome OF ANY KIND. The last-outcome slot is
 #: what makes "the warmer is skipping every beat" distinguishable from "the
 #: warmer has not run at all" without waiting for the ring to fill.
@@ -432,20 +476,93 @@ async def _head_from_query_log(session, limit: int) -> list[str]:
         return []
 
 
+#: Share of the warm budget reserved for the `/search` log's head.
+#:
+#: NOT a taste call. The two sources are not equally trustworthy and the reason
+#: is structural (LAT-P078/#1866):
+#:
+#: * `search_query_logs` is written ONLY by `/search` (`_log_search_query`), which
+#:   the warmer never calls. It is time-windowed by its own query (30 days) and
+#:   records SUBMITTED intent. Nothing in this system can pollute it.
+#: * `search:trending:24h` is written by `/typeahead`, which the warmer DOES call
+#:   — it was a closed loop until the suppression in `routes/events.py` landed,
+#:   and its accumulated scores are still all-time rather than 24h, because the
+#:   route re-`expire`s the key on every write so it never rolls (filed
+#:   separately; not fixed here).
+#:
+#: So the query log gets a GUARANTEED half of the budget, which is what makes the
+#: real head reachable at all, and the zset keeps the other half because it is
+#: the only source that measures the surface actually being warmed — the prefixes
+#: a user passes THROUGH on the way to a phrase, which `/search` never sees.
+#: Neither is allowed to be the whole answer.
+_QUERY_LOG_SHARE = 0.5
+
+
+def _blend_heads(log_head: list[str], zset_head: list[str], limit: int) -> list[str]:
+    """Merge two measured heads into one budget, deduped, order-stable.
+
+    The query-log reservation is a FLOOR, not a quota: if the zset is short, the
+    log fills the remainder, and vice versa. A budget that went unspent because
+    one source ran dry would warm fewer terms than the previous code did, which
+    would make this change a regression on exactly the metric it exists to move.
+    """
+    if limit <= 0:
+        return []
+
+    reserved = min(len(log_head), max(1, round(limit * _QUERY_LOG_SHARE)))
+
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _take(source: list[str], upto: int) -> None:
+        for q in source:
+            if len(out) >= upto:
+                return
+            if q and q not in seen:
+                seen.add(q)
+                out.append(q)
+
+    _take(log_head, reserved)
+    _take(zset_head, limit)
+    # Backfill from whichever source still has terms — the zset half may have
+    # been mostly duplicates of the log half, which is the EXPECTED steady state
+    # once the real head is being warmed and therefore starts trending too.
+    _take(log_head, limit)
+    return out[:limit]
+
+
 async def resolve_head(session, limit: int) -> tuple[list[str], str]:
     """Return `(queries, source)`. `source` is reported so a run is attributable.
 
     Falling back is not a silent degradation here — which source produced the
     head changes what the run MEANS, so it travels in the summary rather than
     being inferred from the query list.
-    """
-    head = _head_from_redis(limit)
-    if head:
-        return head[:limit], "redis:search:trending:24h"
 
-    head = await _head_from_query_log(session, limit)
-    if head:
-        return head[:limit], "db:search_query_logs:30d"
+    🔴 LAT-P078/#1866: this was a strict first-non-empty CASCADE, and that is the
+    defect. `_head_from_redis` is never empty in production, so the query-log arm
+    below was unreachable code and `search_query_logs` — the only unpolluted
+    measurement of real user intent in the system — had never selected a single
+    warmed term. Measured 2026-08-21, the top four real queries by 30-day volume
+    were `masters winner` (102), `stanley cup` (101), `world series` (95),
+    `nba champion` (90); the first, second and fourth were COLD at 4.0s, 4.9s and
+    5.2s against a <150ms budget, while `world series` was warm at 0.25s purely
+    because it also happened to be locked into the zset. Both sources are real
+    and they measure different surfaces, so both now select — a cascade was the
+    wrong shape for two measurements of one population.
+    """
+    zset_head = _head_from_redis(limit)
+    log_head = await _head_from_query_log(session, limit)
+
+    if zset_head and log_head:
+        blended = _blend_heads(log_head, zset_head, limit)
+        n_log = sum(1 for q in blended if q in set(log_head))
+        return blended, f"blend:query_log+trending:{n_log}/{len(blended)}_from_log"
+
+    if zset_head:
+        return zset_head[:limit], "redis:search:trending:24h"
+
+    if log_head:
+        return log_head[:limit], "db:search_query_logs:30d"
 
     return list(_STATIC_FLOOR[:limit]), "static_floor"
 
@@ -503,7 +620,15 @@ def _drop_cached(q: str) -> bool:
 
 async def _warm_one(session, q: str, refresh_ahead: int = REFRESH_AHEAD_SECONDS) -> dict:
     """Run ONE query through the route's own code path. Never raises."""
-    from app.routes.events import typeahead_search
+    from app.routes.events import _suppress_trending_write, typeahead_search
+
+    # LAT-P078/#1866. Running the route's own code path is the point of this
+    # function — it is what makes the warmed body byte-identical to the served
+    # one — but the route's LAST act is to `zincrby` the query into
+    # `search:trending:24h`, which is the zset `resolve_head` reads. Warming
+    # therefore voted for its own head, ~1,700 times a day per term, and the
+    # head could never change. Suppress the vote, keep the code path.
+    _suppress_trending_write.set(True)
 
     started = time.monotonic()
 
@@ -656,6 +781,15 @@ def _pass_ring_record(summary: dict, at: float) -> dict:
         "total": summary.get("total"),
         "concurrency": summary.get("concurrency"),
         "head_source": summary.get("head_source"),
+        # LAT-P078/#1866. `head_source` names the SOURCE; this names the SET.
+        # Without it no client probe is attributable: LAT-P077 spent a window
+        # measuring five `_STATIC_FLOOR` strings believing they were the warmed
+        # set, and the resulting 80% -> 0% -> 45% swing was head composition
+        # wearing a warmer-health label. Truncated because the ring is read by a
+        # human and 40 phrases per record is a wall, not an instrument; the
+        # prefix is enough to answer "was the thing I probed in the head".
+        "head": list(summary.get("head") or ())[:_RING_HEAD_SAMPLE],
+        "head_n": len(summary.get("head") or ()),
         "timeouts": len(summary.get("timeouts") or ()),
         "errors": len(summary.get("errors") or ()),
     }
@@ -772,6 +906,10 @@ async def _warm_typeahead(
             "completed": 0,
             "total": 0,
             "head_source": "none",
+            # Present and EMPTY, never absent — the same-keys contract. A skip
+            # resolved no head, and "resolved nothing" is a different fact from
+            # "this field does not exist on this shape".
+            "head": [],
             "warmed": 0,
             "timeouts": [],
             "errors": [],
@@ -856,6 +994,10 @@ async def _warm_typeahead(
         "completed": len(warmed),
         "total": len(head),
         "head_source": source,
+        # The SET, not just its provenance (LAT-P078/#1866). `_pass_ring_record`
+        # truncates it for the ring; the full list stays in the return value so a
+        # caller that wants all of it is not forced to re-derive the head.
+        "head": list(head),
         "warmed": len(warmed),
         "timeouts": [r["q"] for r in timeouts],
         "errors": [r["q"] for r in errors],
