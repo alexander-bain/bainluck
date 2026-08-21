@@ -56,6 +56,58 @@ AT_RISK_AGE_DAYS = OBSERVED_PRESENT_MAX_AGE_DAYS
 MEASURED_ON = "2026-08-07"
 
 
+# ---------------------------------------------------------------------------
+# 2026-08-21 — A COUNTER-SPECIMEN, and why it gets its own constant
+# ---------------------------------------------------------------------------
+#
+# C-WINNER-TRUTH-2 probed market ``KXITFMATCH-26JUN14FONSZA`` at age **68 days**
+# and got ``event_found_markets_empty`` — the purge shape. That is INSIDE the
+# 74-day bound above, which claims 74d was still fully retrievable.
+#
+# The two readings are not actually in conflict, and the difference matters:
+# ``OBSERVED_PRESENT_MAX_AGE_DAYS`` was measured on four high-volume series
+# (KXNBAPTS/KXNHL/KXMLBHRR/KXNASDAQ100U). The counter-specimen is a low-volume ITF
+# tennis match. So retention is very likely **not uniform across series**, and 74
+# is the bound for the series it was measured on, not for the population.
+#
+# The honest response is NOT to retune the measured constants — they record a real
+# measurement over a stated population, and quietly moving 74 to 68 would destroy
+# that record while making the new number look equally well-founded. Instead the
+# planning horizon gets its own name, its own value, and its own evidence, so a
+# reader can see that one is measured and the other is chosen.
+
+#: Age (days) of the youngest market ever observed purged. Falsifies nothing about
+#: the four-series measurement above; it bounds the POPULATION rather than a series.
+OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES = 68
+
+#: Series the counter-specimen came from, so the next measurement knows where to look.
+COUNTER_SPECIMEN = "KXITFMATCH-26JUN14FONSZA (ITF tennis, purged at 68d, 2026-08-21)"
+
+#: **The horizon capture planning must use.** Deliberately BELOW the counter-specimen
+#: rather than equal to it: 68 is the youngest purge we happened to catch with a
+#: 30-market sample, not the youngest that exists, and a capture sweep that plans to
+#: the edge of its own evidence arrives on the day the data dies. Two days of margin
+#: is cheap; the loss is permanent and un-repurchasable.
+#:
+#: Do NOT use this for skip-work — it would abandon recoverable markets between 66
+#: and 86 days. It answers a different question: "by when must we have ALREADY
+#: captured this", not "is it worth one more call".
+CAPTURE_PLANNING_AGE_DAYS = 66
+
+
+def capture_deadline_days(settled_at: datetime | None, now: datetime | None = None) -> float | None:
+    """Days left to CAPTURE this settlement before planning says it is unsafe.
+
+    Distinct from :func:`days_until_purge`, which answers whether a price is likely
+    still fetchable. This answers whether we should have already fetched it. A
+    negative value means the sweep is late, not that the market is gone — the fetch
+    is still attempted, because :func:`is_provably_purged` (the 86-day upper bound)
+    is what governs skipping.
+    """
+    age = _age_days(settled_at, now)
+    return None if age is None else CAPTURE_PLANNING_AGE_DAYS - age
+
+
 def _age_days(settled_at: datetime | None, now: datetime | None = None) -> float | None:
     """Age of a settlement in days, or None when it cannot be established."""
     if settled_at is None:
