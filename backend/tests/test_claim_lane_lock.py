@@ -28,6 +28,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -49,11 +50,38 @@ def _module():
     return mod
 
 
-def _lock(tmp_path: Path, status: str, pid: object, identity: str | None = None) -> Path:
+#: Default fixture age, in seconds. **Two hours, and that is load-bearing.**
+#: Ruling 008 as amended (2026-08-21) makes a takeover require a dead pid AND
+#: activity stale beyond the lock's interval, and activity is measured from the
+#: file's mtime. A lock written by `_lock()` one millisecond ago is therefore
+#: maximally FRESH, which would turn every pre-existing dead-owner test into a
+#: MALFORMED-INVESTIGATE. Ageing by default keeps those tests meaning what their
+#: names say — "the lane was abandoned" — and the freshness cases below opt in
+#: explicitly, so the distinction is visible at each call site rather than
+#: hidden in a default.
+STALE_AGE_S = 7200
+
+
+def _lock(
+    tmp_path: Path,
+    status: str,
+    pid: object,
+    identity: str | None = None,
+    age_s: float = STALE_AGE_S,
+    extra: str = "",
+) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     p = tmp_path / "LANE-test.lock"
     ident = f"owner_identity: {identity}\n" if identity else ""
-    p.write_text(f"lane: test\nstatus: {status}\n{ident}pid: {pid}\nqueue: none\n")
+    p.write_text(f"lane: test\nstatus: {status}\n{ident}pid: {pid}\nqueue: none\n{extra}")
+    _age(p, age_s)
     return p
+
+
+def _age(p: Path, age_s: float) -> None:
+    """Backdate (or, with a negative age, FUTURE-date) a file's mtime."""
+    t = time.time() - age_s
+    os.utime(p, (t, t))
 
 
 #: A comm string no process will ever have, used to force the UNANCHORED branch.
@@ -139,11 +167,176 @@ def test_an_explicit_release_frees_the_lock_regardless_of_pid(tmp_path, status):
 
 
 def test_a_dead_owner_is_a_takeover_and_says_so(tmp_path):
-    """Ruling 008: `ps` decides. A dead owner frees the lane, on the record."""
+    """Ruling 008: `ps` decides. A dead owner frees the lane, on the record.
+
+    As amended 2026-08-21 the pid is now necessary but no longer sufficient — the
+    lane must ALSO have gone quiet, which `_lock`'s default age supplies.
+    """
     lock = _lock(tmp_path, "HELD", 999999, identity=OTHER)
     result = _claim(lock)
     assert result.returncode == ACQUIRED
     assert "takeover" in (result.stdout + lock.read_text()).lower()
+
+
+# --------------------------------------------------------------------------
+# Ruling 008 AS AMENDED 2026-08-21 (Fable, via INT-108) — a takeover needs a
+# dead pid AND stale activity. A dead pid with FRESH activity is
+# MALFORMED-INVESTIGATE, because `owner_pid` is unvalidated input: "that number
+# is not running" never established "nobody is working here".
+#
+# Charter case: LANE-lane1.lock sat HELD naming a dead pid 38410 while lane1 was
+# alive and landing commits. Read literally, the pre-amendment rule says take it.
+# --------------------------------------------------------------------------
+
+
+def test_a_dead_pid_with_FRESH_activity_is_malformed_not_a_takeover(tmp_path):
+    """THE CHARTER CASE. This is the whole amendment.
+
+    Everything here is identical to the takeover test above except one number —
+    the age of the file. That is the point: the pre-amendment primitive could not
+    tell these two situations apart, and one of them costs a live lane its work.
+    """
+    lock = _lock(tmp_path, "HELD", 999999, identity=OTHER, age_s=5)
+    before = lock.read_text()
+    result = _claim(lock)
+    assert result.returncode == MALFORMED, result.stdout + result.stderr
+    assert "MALFORMED-INVESTIGATE" in result.stderr
+    assert lock.read_text() == before, "a MALFORMED verdict must not write"
+
+
+def test_malformed_and_busy_are_different_exit_codes(tmp_path):
+    """`1` = come back later. `2` = a human must look at this.
+
+    Collapsing them teaches a caller to retry a MALFORMED lock forever, and
+    gotcha #54's amendment is explicit that a non-1 non-zero is a story about the
+    harness rather than a result.
+    """
+    busy = _claim(_lock(tmp_path / "a", "HELD", 1, identity=OTHER))
+    (tmp_path / "b").mkdir(parents=True, exist_ok=True)
+    broken = _claim(_lock(tmp_path / "b", "HELD", 999999, identity=OTHER, age_s=5))
+    assert busy.returncode == REFUSED
+    assert broken.returncode == MALFORMED
+    assert busy.returncode != broken.returncode
+
+
+def test_the_freshness_signal_can_only_VETO_never_grant(tmp_path):
+    """The amendment must not reopen what 008 closed.
+
+    008 demoted the heartbeat because it could fail the lane OPEN — admit a
+    second writer to master. Here the owner is ALIVE and the activity is ancient,
+    which under a staleness-decides rule is exactly the behind-drift case that
+    stole a live owner's work. It must still be HELD: the clock is consulted only
+    after `ps` has already said the owner is gone.
+    """
+    lock = _lock(tmp_path, "HELD", 1, identity=OTHER, age_s=30 * 24 * 3600)
+    result = _claim(lock)
+    assert result.returncode == REFUSED, result.stdout + result.stderr
+    assert "LIVE other" in result.stderr
+
+
+def test_ahead_drift_now_fails_CLOSED_instead_of_open(tmp_path):
+    """A future-dated file was the ORIGINAL 008 failure, inverted.
+
+    Under the old staleness rules a future timestamp made `now - stamp` negative,
+    staleness read "fresh forever", and the lane failed OPEN. As a veto-only
+    signal the same skew can only REFUSE a takeover. Same drift, opposite and
+    safe outcome — which is the argument that this amendment does not undo 008.
+    """
+    lock = _lock(tmp_path, "HELD", 999999, identity=OTHER, age_s=-3600)
+    assert _claim(lock).returncode == MALFORMED
+
+
+def test_a_lock_declares_its_own_interval(tmp_path):
+    """"Stale beyond its OWN interval" — not a global constant.
+
+    A lane heartbeating every 10 minutes is abandoned at 30; a lane 40 minutes
+    into a green gate run is not. One shared number would have to pick one of
+    them to be wrong about.
+    """
+    quick = _lock(
+        tmp_path / "q", "HELD", 999999, identity=OTHER, age_s=120,
+        extra="heartbeat_interval_s: 60\n",
+    )
+    (tmp_path / "s").mkdir(parents=True, exist_ok=True)
+    slow = _lock(
+        tmp_path / "s", "HELD", 999999, identity=OTHER, age_s=120,
+        extra="heartbeat_interval_s: 3600\n",
+    )
+    assert _claim(quick).returncode == ACQUIRED, "120s > its own 60s interval — abandoned"
+    assert _claim(slow).returncode == MALFORMED, "120s < its own 3600s interval — still active"
+
+
+def test_a_fresh_sibling_heartbeat_vetoes_even_when_the_lock_is_old(tmp_path):
+    """Activity is the lane's, not the lock file's.
+
+    A lane that stamps `HEARTBEAT-<LANE>` every few minutes without rewriting its
+    lock is working normally. Reading only the lock's mtime would call it
+    abandoned — and this is the shape the charter case actually had, since lane1
+    was committing rather than editing its lock.
+    """
+    lock = _lock(tmp_path, "HELD", 999999, identity=OTHER, age_s=STALE_AGE_S)
+    hb = tmp_path / "HEARTBEAT-TEST"
+    hb.write_text("phase: mid-gate\n")
+    _age(hb, 10)
+    result = _claim(tmp_path / "LANE-test.lock")
+    assert result.returncode == MALFORMED, result.stdout + result.stderr
+    assert "heartbeat mtime" in result.stderr
+
+
+def test_an_operator_may_override_malformed_but_is_told_what_it_costs(tmp_path):
+    """The escape hatch exists, and it is not quiet.
+
+    Same shape as the existing unknown-pid assertion: a human may vouch, but the
+    output has to say plainly that a still-active lane is about to be taken.
+    """
+    lock = _lock(tmp_path, "HELD", 999999, identity=OTHER, age_s=5)
+    result = _claim(lock, "TEST-1", ME, "--takeover")
+    assert result.returncode == ACQUIRED, result.stdout + result.stderr
+
+
+def test_check_reports_malformed_and_does_not_exit_zero(tmp_path):
+    """A `check` scripted by a successor must not read 0 over an untouchable lock."""
+    lock = _lock(tmp_path, "HELD", 999999, identity=OTHER, age_s=5)
+    result = _run("check", str(lock), "--identity", ME)
+    assert result.returncode == MALFORMED
+    assert "MALFORMED-INVESTIGATE" in result.stdout
+
+
+def test_a_claim_restamps_the_WHOLE_identity_not_three_fields_of_it(tmp_path):
+    """Enforcement 3 — the defect INT-108 found in this primitive while banking.
+
+    `claim` updated status/owner_identity/owner_pid and left `nonce`,
+    `owner_started` and `claimed_at` holding the PREVIOUS owner's values. After a
+    takeover the file then paired a LIVE pid with a DEAD process's start time.
+    `owner_started` is the only defence against a RECYCLED pid, so a successor
+    doing the strong check sees a mismatch — and is entitled to declare the lock
+    MALFORMED and seize a live lane. A partial re-stamp manufactures the exact
+    condition the amendment above exists to catch.
+    """
+    lock = _lock(
+        tmp_path, "HELD", 999999, identity=OTHER,
+        extra="nonce: OLD-NONCE-999\nowner_started: Mon Jan  1 00:00:00 2001\n"
+              "claimed_at: 2001-01-01T00:00 PST\n",
+    )
+    assert _claim(lock).returncode == ACQUIRED
+    text = lock.read_text()
+    assert "OLD-NONCE-999" not in text, "nonce still names the previous owner"
+    assert "Jan  1 00:00:00 2001" not in text, "owner_started still names the DEAD process"
+    assert "2001-01-01T00:00" not in text, "claimed_at still names the previous claim"
+    assert f"nonce: {ME}" in text
+
+
+def test_a_claim_does_not_INVENT_fields_the_lock_never_had(tmp_path):
+    """Repair is not the same as editing someone else's file into a new shape.
+
+    A lock that never carried `nonce` is a different shape, not a broken one.
+    Silently growing fields under a lane is how a "fix" becomes a surprise.
+    """
+    lock = _lock(tmp_path, "HELD", 999999, identity=OTHER)
+    assert _claim(lock).returncode == ACQUIRED
+    text = lock.read_text()
+    assert "nonce:" not in text
+    assert "owner_started:" not in text
 
 
 def test_the_owner_may_reclaim_its_own_held_lock(tmp_path):
