@@ -113,7 +113,21 @@ def grade_p3(payload: dict[str, Any]) -> dict[str, Any]:
     degraded = [b for b in beats if b.get("verdict") == "degraded"]
     pre_horizon = [b for b in beats if b.get("verdict") == "pre_horizon"]
     censored = [b for b in beats if b.get("verdict") == "censored"]
-    gradeable = [b for b in beats if b.get("verdict") not in ("pre_horizon", "censored")]
+    # 🔴 `no_new_runs` IS NOT GRADEABLE, and counting it as such is the same
+    # defect this file was written to avoid, one level down (LAT-P080B).
+    # Measured on the 2026-08-21 18:09 PDT read: the exclusion set was
+    # `(pre_horizon, censored)` only, so two beats with ZERO runs in 24 h were
+    # counted as coverage and the line printed "3/7 beats gradeable" over a read
+    # in which exactly ONE beat produced a ratio. A beat that has not run has
+    # not been observed; it is the purest form of "we learned nothing", and it
+    # cannot be evidence either way (gotcha #53).
+    not_run = [b for b in beats if b.get("verdict") == "no_new_runs"]
+    unreadable = [b for b in beats if b.get("verdict") == "unreadable"]
+    gradeable = [
+        b
+        for b in beats
+        if b.get("verdict") not in ("pre_horizon", "censored", "no_new_runs", "unreadable")
+    ]
 
     if degraded:
         verdict = "FAILED"
@@ -136,6 +150,8 @@ def grade_p3(payload: dict[str, Any]) -> dict[str, Any]:
         "beats_gradeable": len(gradeable),
         "beats_pre_horizon": len(pre_horizon),
         "beats_censored": len(censored),
+        "beats_not_run": len(not_run),
+        "beats_unreadable": len(unreadable),
         "degraded": [
             {"task": b.get("task"), "ratio": b.get("ratio"), "reason": b.get("reason")}
             for b in degraded
@@ -149,6 +165,8 @@ def grade_p3(payload: dict[str, Any]) -> dict[str, Any]:
                 coverage,
                 f"{len(pre_horizon)} pre-horizon" if pre_horizon else "",
                 f"{len(censored)} CENSORED (unobservable, not passing)" if censored else "",
+                f"{len(not_run)} NOT RUN (0 runs in 24h, not passing)" if not_run else "",
+                f"{len(unreadable)} unreadable" if unreadable else "",
             )
             if part
         ),

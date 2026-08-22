@@ -293,3 +293,38 @@ def test_it_grades_the_REAL_production_payload_shape():
 def test_the_two_sources_are_mutually_exclusive_and_one_is_required(flag):
     with pytest.raises(SystemExit):
         main([])
+
+
+# ---------------------------------------------------------------------------
+# LAT-P080B — coverage must not count beats that never ran.
+#
+# Found by the 2026-08-21 18:09 PDT live read: the line printed "3/7 beats
+# gradeable" over a read in which exactly ONE beat produced a ratio. Two of the
+# three were `no_new_runs` — zero runs in 24 h — which is the purest form of
+# "we learned nothing" and cannot be coverage in either direction.
+# ---------------------------------------------------------------------------
+
+
+def test_a_beat_that_never_ran_is_not_counted_as_coverage():
+    g = grade_p3(_payload(beat_verdicts=("hold", "no_new_runs", "no_new_runs", "censored")))
+
+    assert g["beats_gradeable"] == 1, g["note"]
+    assert g["beats_not_run"] == 2
+    assert "1/4 beats gradeable" in g["note"]
+    assert "NOT RUN" in g["note"]
+
+
+def test_an_unreadable_beat_is_not_counted_as_coverage_either():
+    g = grade_p3(_payload(beat_verdicts=("hold", "unreadable")))
+
+    assert g["beats_gradeable"] == 1
+    assert g["beats_unreadable"] == 1
+    assert "1/2 beats gradeable" in g["note"]
+
+
+def test_a_read_of_only_never_ran_beats_is_PRE_HORIZON_not_PASSED():
+    """The whole point: nothing observed must never render as nothing wrong."""
+    g = grade_p3(_payload(beat_verdicts=("no_new_runs", "no_new_runs")))
+
+    assert g["verdict"] == "PRE_HORIZON"
+    assert g["verdict"] != "PASSED"
