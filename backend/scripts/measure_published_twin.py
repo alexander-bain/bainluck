@@ -9,6 +9,28 @@ own disclosed drift** — the restated Gate 0 invariant, not equality.
     python3 scripts/measure_published_twin.py --plan-only     # print the SQL
     python3 scripts/measure_published_twin.py --payload p.json  # offline replay
 
+CAL-P086B — ``--bank``, the one-off-dyno shape (#2076)
+------------------------------------------------------
+    heroku run:detached -a bainluck -- \\
+      python3 scripts/measure_published_twin.py --bank --timeout-ms 5400000
+
+#2076's option 1 (raise the budget) is refuted at 240 s, 900 s and 1,350 s, and
+options 2/3 (narrow/chunk) are refuted by plan — a tail-filtered chunk costs
+1.0000x the unfiltered fold and the root-filtered form leaves the binding chunk
+at 0.7616x over a 3-way partition. What is left is CAL-P079's finding: the
+reader belongs on a host whose budget is its own. **1,350,000 ms is the CELERY
+task's ceiling** (``soft_time_limit=1800``), not the query's; a one-off dyno has
+no such limit.
+
+``--bank`` therefore runs the SAME function the beat runs
+(``run_published_twin``) at ``ONE_OFF_MAX_TIMEOUT_MS``, rather than
+re-implementing the fold here — a gate that fires on a dyno must be the gate the
+beat would have fired. And it banks the durable snapshot, which is the half that
+was actually missing: this script's ``--out`` file and its stdout BOTH die with a
+detached dyno (gotcha #48 — never trust a detached run's stdout; prove it with a
+durable row). After it finishes, read it at
+``GET /api/admin/calibration-twin/last``.
+
 Read-only by construction: one SELECT, no write, no DDL, no task. It is bounded
 by an explicit ``statement_timeout`` because CAL-P077's first 49-cell sweep died
 in an UNCOVERED branch after measuring thirty cells, and losing the cheap cells
@@ -49,6 +71,13 @@ def _parse_args(argv=None):
     )
     p.add_argument("--payload", help="a saved /api/calibration body, for offline replay")
     p.add_argument("--timeout-ms", type=int, default=DEFAULT_TIMEOUT_MS)
+    p.add_argument(
+        "--bank",
+        action="store_true",
+        help="run through the worker and BANK the durable snapshot, at the "
+        "one-off-dyno ceiling. Use this on `heroku run:detached`, where a file "
+        "and a stdout both die with the dyno.",
+    )
     p.add_argument(
         "--api",
         default=os.environ.get("BAINLUCK_API", "https://api.bainluck.com"),
@@ -157,6 +186,53 @@ def _bound_only(args) -> int:
     return 0 if bound is not None else 2
 
 
+# Bound at module scope so a test can substitute it, and so the import cost of
+# the worker (which pulls in a large slice of the app) is paid only by the
+# ``--bank`` path.
+async def _run_published_twin(*, timeout_ms: int, ceiling=None) -> dict:
+    from app.tasks.calibration_published_twin_worker import run_published_twin
+
+    return await run_published_twin(timeout_ms=timeout_ms, ceiling=ceiling)
+
+
+async def _bank(args) -> int:
+    """Run the worker's own path and require the durable write to have landed.
+
+    Exit codes extend the script's existing vocabulary rather than replacing it,
+    because a caller reading them should not have to know which mode ran
+    (gotcha #54's amendment: the VALUE of a non-zero exit is the story).
+
+    * ``0`` agrees, banked
+    * ``1`` disagrees, banked -- the gate working
+    * ``2`` unmeasurable -- the gate could not run
+    * ``3`` **the artifact was not banked.** New, and specific to this mode: on
+      a detached dyno the durable row IS the result, so a run whose verdict is
+      perfect and whose durable write failed has produced nothing any reader
+      will ever see. Reporting that as ``0`` would be gotcha #53 at the exact
+      point this mode exists to defend.
+    """
+    from app.tasks.calibration_published_twin_worker import ONE_OFF_MAX_TIMEOUT_MS
+
+    artifact = await _run_published_twin(
+        timeout_ms=args.timeout_ms, ceiling=ONE_OFF_MAX_TIMEOUT_MS
+    )
+    text_out = json.dumps(artifact, indent=2, default=str)
+    if args.out:
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text_out)
+    print(text_out)
+
+    if artifact.get("durable") != "published":
+        return 3
+    verdict = artifact.get("verdict")
+    if verdict == "disagrees":
+        return 1
+    if verdict != "agrees":
+        return 2
+    return 0
+
+
 async def main(argv=None) -> int:
     args = _parse_args(argv)
 
@@ -166,6 +242,9 @@ async def main(argv=None) -> int:
 
     if args.bound_only:
         return _bound_only(args)
+
+    if args.bank:
+        return await _bank(args)
 
     rows, duration_s, fold_error = await _fold(timeout_ms=args.timeout_ms)
     payload, payload_error = _load_payload(args)

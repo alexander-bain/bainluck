@@ -103,6 +103,31 @@ VERDICT_AGREES = "agrees"
 VERDICT_DISAGREES = "disagrees"
 VERDICT_UNMEASURABLE = "unmeasurable"
 
+#: The sources the fold's population can ever produce. MEASURED, not assumed
+#: (CAL-P086B, 2026-08-21):
+#:
+#:     SELECT source, count(*) FROM futures_markets WHERE status = 'resolved'
+#:     GROUP BY 1  ->  polymarket 569,781 | kalshi 225,274 | datagolf 295
+#:
+#: The published curve carries **seven** sources. The other four —
+#: ``odds_api``, ``odds_api_bookmaker``, ``odds_api_totals``,
+#: ``odds_api_spreads`` — are built by separate SQL in
+#: ``precompute_calibration.py`` (:3677, :3729, :3778, and the bookmaker path at
+#: :3838) over a different population, so ``_calibration_population_ctes()``
+#: cannot emit a row for them no matter how long the fold is allowed to run.
+#:
+#: Measured share, same day, against ``GET /api/calibration``: **203 of 285
+#: published cells (71.2%)**, 874 of 1,934 buckets, and 135,102 of 867,101
+#: outcomes (15.58%) sit outside this set.
+#:
+#: This constant exists so that fact is a DECLARATION with a number rather than
+#: an emergent property of a SQL file nobody reads to the bottom. Widening it
+#: without widening the fold would be a lie in the flattering direction: it
+#: would move real gaps from ``published_only_in_scope`` (a disagreement) into
+#: ``published_only_out_of_scope`` (a declared limit), which is precisely the
+#: move ruling 087 says an exclusion must be mutation-tested against.
+FOLD_POPULATION_SOURCES = frozenset({"kalshi", "polymarket", "datagolf"})
+
 
 #: The DB-direct fold over the canonical population. ``deduped`` is the final
 #: published-row CTE the frozen chain ends on, and ``adj_opening_probability`` is
@@ -224,19 +249,48 @@ def reconcile(
       whole cell is a bigger finding than a cell that moved two points, and an
       instrument that quietly compares the intersection would report its
       cleanest number on its worst day.
+
+    CAL-P086B: ``published_only`` is SPLIT, and the split changes the verdict
+    -------------------------------------------------------------------------
+    Counting a published-only bucket was honest but not sufficient, because the
+    **verdict** never looked at the count. Measured 2026-08-21: the fold's
+    population can produce three of the payload's seven sources, so **203 of
+    285 published cells (71.2%)** were landing in ``published_only`` every run
+    — and ``agrees`` was still reachable over the remaining 28.8%. ``agrees`` is
+    the word a certifier reads; the list underneath it is not.
+
+    So the bucket is split on the distinction gotcha #53 exists to protect:
+
+    * ``published_only_out_of_scope`` — the source is not in
+      :data:`FOLD_POPULATION_SOURCES`. The twin could **never** have seen it.
+      A declared, counted limit. Does not affect the verdict.
+    * ``published_only_in_scope`` — the source IS one the fold covers, and the
+      cell still has no twin row. That is the twin and the producer disagreeing
+      about the population, and it **forces** ``disagrees``.
+
+    ``published_only`` is retained as the union so an existing reader loses no
+    rows. ``db_only`` is deliberately unchanged: the twin seeing MORE than the
+    payload is a different and less alarming asymmetry, and folding it into this
+    change would be a second behaviour change hiding inside the first.
     """
     bound = tolerance_pp(staged)
 
     published: dict[tuple[str, str], dict[int, float]] = {}
+    # Bucket sizes, kept alongside the rates so the scope block can report a
+    # share of OUTCOMES and not only a share of cells. The two differ a lot
+    # here — 71.2% of cells are out of scope but only 15.58% of outcomes are —
+    # and quoting whichever is more flattering is the failure this block exists
+    # to prevent.
+    published_n: dict[tuple[str, str], dict[int, int]] = {}
     for entry in published_buckets:
         if not isinstance(entry, Mapping):
             continue
         bucket = entry.get("bucket_idx")
         if bucket is None:
             continue
+        n = entry.get("n")
         rate = entry.get("actual_rate")
         if rate is None:
-            n = entry.get("n")
             winners = entry.get("winners")
             if isinstance(n, int) and n > 0 and isinstance(winners, int):
                 rate = winners / n
@@ -244,6 +298,7 @@ def reconcile(
             continue
         key = (str(entry.get("source")), str(entry.get("category")))
         published.setdefault(key, {})[int(bucket)] = float(rate)
+        published_n.setdefault(key, {})[int(bucket)] = int(n) if isinstance(n, int) else 0
 
     compared: list[dict[str, Any]] = []
     outside: list[dict[str, Any]] = []
@@ -272,19 +327,60 @@ def reconcile(
             if bound is not None and delta_pp > bound:
                 outside.append(record)
 
+    published_only_in_scope: list[dict[str, Any]] = []
+    published_only_out_of_scope: list[dict[str, Any]] = []
+    sources_out_of_scope: set[str] = set()
+    outcomes_published = 0
+    outcomes_out_of_scope = 0
+    outcomes_compared = 0
+
     for key, buckets in published.items():
         for bucket in buckets:
+            n_here = published_n.get(key, {}).get(bucket, 0)
+            outcomes_published += n_here
+            in_scope = key[0] in FOLD_POPULATION_SOURCES
+            if not in_scope:
+                sources_out_of_scope.add(key[0])
+                outcomes_out_of_scope += n_here
             if bucket not in db_cells.get(key, {}):
-                published_only.append(
-                    {"source": key[0], "category": key[1], "bucket_idx": bucket}
-                )
+                record = {
+                    "source": key[0],
+                    "category": key[1],
+                    "bucket_idx": bucket,
+                    "n": n_here,
+                }
+                published_only.append(record)
+                (
+                    published_only_in_scope if in_scope else published_only_out_of_scope
+                ).append(record)
+            else:
+                outcomes_compared += n_here
 
     if bound is None:
         verdict = VERDICT_UNMEASURABLE
-    elif outside:
+    elif outside or published_only_in_scope:
+        # An in-scope published cell with no twin row is the twin and the
+        # producer disagreeing about the POPULATION. Before CAL-P086B this was
+        # counted and then ignored by the verdict.
         verdict = VERDICT_DISAGREES
     else:
         verdict = VERDICT_AGREES
+
+    scope = {
+        "fold_population_sources": sorted(FOLD_POPULATION_SOURCES),
+        "sources_out_of_scope": sorted(sources_out_of_scope),
+        "buckets_published": sum(len(b) for b in published.values()),
+        "buckets_compared": len(compared),
+        "buckets_out_of_scope": len(published_only_out_of_scope),
+        "buckets_in_scope_missing": len(published_only_in_scope),
+        "outcomes_published": outcomes_published,
+        "outcomes_out_of_scope": outcomes_out_of_scope,
+        "pct_published_outcomes_in_scope": (
+            round(100.0 * (outcomes_published - outcomes_out_of_scope) / outcomes_published, 4)
+            if outcomes_published
+            else None
+        ),
+    }
 
     return {
         "verdict": verdict,
@@ -295,7 +391,14 @@ def reconcile(
         "outside": outside,
         "worst_delta_pp": max((r["delta_pp"] for r in compared), default=None),
         "db_only": db_only,
+        # The union, retained so an existing reader loses no rows.
         "published_only": published_only,
+        # ... and the split, which is what the verdict now reads.
+        "published_only_in_scope": published_only_in_scope,
+        "published_only_out_of_scope": published_only_out_of_scope,
         "cells_db": len(db_cells),
         "cells_published": len(published),
+        # Always present, including on an unmeasurable run: a reader must never
+        # have to infer coverage from a missing key.
+        "scope": scope,
     }

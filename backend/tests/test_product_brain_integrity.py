@@ -683,7 +683,12 @@ def test_ruling_numbers_are_unique() -> None:
 #: 116 was verified free against the ledger AND the merged tree before it was written;
 #: `lane1/q353-process`, which was told to renumber its colliding 056 upward, is redirected
 #: to **117** in the same turn. Ruling 088 / #1910 — count, never add a delta.
-MINIMUM_BANKED_RULINGS = 113
+# ⚠️ DECLARED COLLISION (CAL-P086B, ruling 088). `program/calibration-53` ALSO raises this
+# constant, to 116 (it banks rulings 057/058/059). This branch raises it to 114 (it banks 117).
+# The two branches are INDEPENDENT and both are ready. Whichever merges second will conflict
+# here, and **the correct merged value is neither side's: it is 117** — master's 113 files, plus
+# -53's three, plus this branch's one. Do not take a side; count the merged tree.
+MINIMUM_BANKED_RULINGS = 114
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
