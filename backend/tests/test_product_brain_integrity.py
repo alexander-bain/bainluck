@@ -683,12 +683,19 @@ def test_ruling_numbers_are_unique() -> None:
 #: 116 was verified free against the ledger AND the merged tree before it was written;
 #: `lane1/q353-process`, which was told to renumber its colliding 056 upward, is redirected
 #: to **117** in the same turn. Ruling 088 / #1910 — count, never add a delta.
-# ⚠️ DECLARED COLLISION (CAL-P086B, ruling 088). `program/calibration-53` ALSO raises this
-# constant, to 116 (it banks rulings 057/058/059). This branch raises it to 114 (it banks 117).
-# The two branches are INDEPENDENT and both are ready. Whichever merges second will conflict
-# here, and **the correct merged value is neither side's: it is 117** — master's 113 files, plus
-# -53's three, plus this branch's one. Do not take a side; count the merged tree.
-MINIMUM_BANKED_RULINGS = 114
+#:
+#: Raised to **119** by INT-110's post-freeze drain. FOUR branches in this merge add ruling
+#: files, and the collision CAL-P086B declared in advance is the reason this comment exists:
+#: `program/calibration-53` banks **057/058/059** and raised the constant to 116;
+#: `program/calibration-84` banks **117** and raised it to 114. Both were ready, both were
+#: independent, and — as -84's own note predicted verbatim — **neither side's number was
+#: right**. `int/int-109` then banks **118** and `lane1/q353-process` banks **119** (its
+#: colliding 056 was redirected to 117, then to 119, as each earlier target was taken while
+#: it waited). A declared collision resolved by arithmetic would have been wrong four times
+#: over in a single cycle; resolved by counting it is right once.
+#: COUNTED on the merged tree: `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = **119**.
+#: Ruling 088 / #1910 — count, never add a delta, never take a side.
+MINIMUM_BANKED_RULINGS = 119
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
