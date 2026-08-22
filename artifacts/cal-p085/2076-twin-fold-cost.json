@@ -1,0 +1,132 @@
+{
+ "budget_series": {
+  "ceiling_lever": "EXHAUSTED \u2014 1_350_000 ms is the largest the task can honour (soft_time_limit 1800 s leaves 450 s of headroom). There is no larger budget to try inside this task shape.",
+  "note": "Three budgets, three identical outcomes. The fold has never once finished; it has only ever been cancelled, and each time it spent essentially the entire budget it was given. The ~1.2-2.0 s overhead is the cancellation path, not progress.",
+  "points": [
+   {
+    "db_rows": 0,
+    "fold_duration_s": 241.18,
+    "overhead_s": 1.18,
+    "timeout_ms": 240000,
+    "window": "CAL-P083"
+   },
+   {
+    "db_rows": 0,
+    "fold_duration_s": 901.96,
+    "overhead_s": 1.96,
+    "timeout_ms": 900000,
+    "window": "CAL-P084"
+   },
+   {
+    "db_rows": 0,
+    "fold_duration_s": 1351.95,
+    "overhead_s": 1.95,
+    "timeout_ms": 1350000,
+    "window": "CAL-P085"
+   }
+  ]
+ },
+ "chunking_by_source": {
+  "verdict": "REFUTED",
+  "why": "every one of the 6 CTEs is an InitPlan root (materialised) and every one is referenced 2-8 times by CTE Scan. An outer WHERE source = X cannot push into a materialised CTE, so each of 7 source chunks re-runs all 6 in full \u2014 including ranked_outcomes at 94.0% of total cost."
+ },
+ "cost_to_runtime_calibration": {
+  "cost_units_per_ms": 24.42,
+  "linear_extrapolation_full_fold_s": 576,
+  "measured_floor_s": 901.96,
+  "model_understates_by_at_least": 1.57,
+  "note": "market_result_shape (cost 450,184) also refuses to fit the 10 s row-path cap, which the same calibration predicts (~18.4 s) \u2014 so the calibration is consistent where it can be checked, and still understates the whole fold by >=1.57x because the cost model does not price the 1.09 GB external sort.",
+  "point": {
+   "cte": "market_info",
+   "measured_duration_ms": 5347.6,
+   "rows": 791424,
+   "total_cost": 130576
+  }
+ },
+ "does_it_fit_1350_s": {
+  "answer": "NO \u2014 MEASURED, NOT ESTIMATED",
+  "db_cells": 0,
+  "db_rows": 0,
+  "enqueue_to_start_lag_s": 396,
+  "enqueued_utc": "2026-08-21T18:55:14Z",
+  "fold_duration_s": 1351.95,
+  "measured_utc": "2026-08-21T19:24:23Z",
+  "note": "Ran on the deployed raised ceiling (program/calibration-81 merged as 81187ae4, master a13239f1). The clamp accepted timeout_ms=1350000, so the raise is live. The fold consumed the whole budget again.",
+  "started_utc": "2026-08-21T19:01:50Z",
+  "terminal": "failed",
+  "timeout_ms": 1350000,
+  "unmeasurable_reason": "QueryCanceledError: canceling statement due to statement timeout",
+  "verdict": "unmeasurable"
+ },
+ "live_commit": "dee32eee",
+ "materialised_ctes": {
+  "market_info": {
+   "node": "Seq Scan",
+   "plan_rows": 397057,
+   "referenced_by_cte_scans": 8,
+   "total_cost": 131568.3
+  },
+  "market_result_shape": {
+   "node": "Aggregate",
+   "plan_rows": 4565471,
+   "referenced_by_cte_scans": 7,
+   "total_cost": 450183.6
+  },
+  "mex_field_candidates": {
+   "node": "Aggregate",
+   "plan_rows": 1,
+   "referenced_by_cte_scans": 3,
+   "total_cost": 33024.4
+  },
+  "normalized": {
+   "node": "Hash Join",
+   "plan_rows": 1678103,
+   "referenced_by_cte_scans": 2,
+   "total_cost": 33184.8
+  },
+  "ranked_outcomes": {
+   "node": "WindowAgg",
+   "plan_rows": 1678103,
+   "referenced_by_cte_scans": 2,
+   "total_cost": 13216552.9
+  },
+  "virtual_market": {
+   "node": "Hash Join",
+   "plan_rows": 397057,
+   "referenced_by_cte_scans": 2,
+   "total_cost": 173278.5
+  }
+ },
+ "measured_utc": "2026-08-21",
+ "options": {
+  "1_raise_the_statement_timeout": "DEAD \u2014 refuted at 240 s, 900 s and now 1350 s, and 1350 s is the ceiling of the task shape.",
+  "2_chunk_by_source": "REFUTED from the query plan \u2014 6 materialised CTEs, each referenced 2-8 times, so an outer source filter cannot push down and 7 chunks re-run all 6.",
+  "3_narrow_at_market_info": "OPEN and now the leading candidate. 0.93% of cost but 8x referenced and everything downstream is built from it, so a filter THERE propagates. Frozen-builder edit \u2014 needs its own scoped ruling-009 exception.",
+  "4_attack_ranked_outcomes": "OPEN. 94.0% of cost; 77% of the whole fold is that one node self-cost over a ~1.09 GB external sort."
+ },
+ "plan_only_explain": {
+  "explain_wall_s": 1.45,
+  "how": "comment-stripped: all 15 semicolons that made db-query answer \"Multi-statement queries not allowed\" are inside SQL comments; stripping them changes no plan",
+  "plan_nodes": 111,
+  "plan_rows": 410,
+  "reachable": true,
+  "sql_fingerprint": "9ad73da5a88cdf8e",
+  "statement_timeout_ms": 25000,
+  "total_cost": 14059222
+ },
+ "schema": "cal-p085-2076-fold-cost/v1",
+ "subject": "#2076 \u2014 the Gate-0 published-twin fold does not fit its statement_timeout",
+ "where_the_cost_is": {
+  "inner_windowagg_total_cost": 2340457,
+  "outer_windowagg_self_cost": 10872432,
+  "outer_windowagg_self_share_of_fold": 0.773,
+  "ranked_outcomes_total_cost": 13216553,
+  "share_of_fold": 0.94,
+  "sort_below": {
+   "approx_bytes": 1094123156,
+   "note": "~1.09 GB \u2014 an external merge sort at any plausible work_mem",
+   "plan_rows": 1678103,
+   "plan_width": 652
+  }
+ }
+}
