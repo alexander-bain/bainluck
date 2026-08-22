@@ -3,6 +3,14 @@
 Queue 386 Item 2, Alex ruling 2026-08-20: *Alex's Google-authenticated session
 should unlock `/admin/labeling` without the pasted admin secret.*
 
+**AMENDED IN PLACE 2026-08-21 (Queue 390): the column went from ``BOOLEAN NOT
+NULL DEFAULT false`` to nullable, and the three-valued reading below is the
+amended one, not the original.** Legitimate because this revision has never run
+in production — gotcha #8 binds revisions that HAVE run. Full reasoning, and the
+by-command evidence for "never run", are in the ``## AMENDED`` section further
+down. Read that section before reasoning about why this column has no default.
+Blessed by Fable, queue 391 item 2a, 2026-08-22.
+
 ## Why a column and not another env var
 
 Admin identity already existed before this revision, but it lived in

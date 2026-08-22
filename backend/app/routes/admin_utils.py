@@ -362,6 +362,10 @@ async def _resolve_admin_user(request: Request, db=None):
     return None
 
 
+# DO NOT decorate this with `@dataclass` — it breaks the auth-gate mutation evals
+# outright (pytest exit 2, "could not check"). The full reason is the second
+# paragraph of the docstring; this line exists above the class because that is
+# where the decorator gets typed, and a docstring is read after.
 class AdminPrincipal:
     """WHO authorized this request, and by WHICH arm.
 
