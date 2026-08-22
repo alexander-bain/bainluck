@@ -1,0 +1,65 @@
+{
+  "clause": "LAT-P079 P4 tail",
+  "grade": {
+    "claim": "on a FULLY post-fix ring at least 24 deep, does the pass wall still exceed the 65s response-cache TTL?",
+    "clause": "P4-tail",
+    "never_recommend": "LOWERING MEASURED_WALL_MAX_S. A sampled maximum is a LOWER BOUND (ruling 075) and this program has raised it four times (42.6 -> 53.92 -> 61.282 -> 66.365). A lower read is consistent with a smaller sample of the same distribution.",
+    "payload_status": "ok",
+    "pinned": {
+      "baseline_tail_samples": 32,
+      "lat_p079_post_fix_arm": {
+        "max": 45.952,
+        "n": 8,
+        "over_ttl": 0,
+        "p50": 43.31,
+        "p95": 45.421
+      },
+      "max_history_s": [
+        42.6,
+        53.92,
+        61.282,
+        66.365
+      ],
+      "measured_wall_max_s": 66.365,
+      "response_cache_ttl_s": 65,
+      "wall_max_exceeds_response_ttl": true,
+      "wall_max_margin_s": 11.3
+    },
+    "reason": "post-fix wall max 44.883s over n=32 does not reach the 65s TTL, and 0 of 32 walls are over it. \ud83d\udd34 THIS IS NOT 'THE TAIL IMPROVED'. A sampled maximum is a lower bound; four prior maxima were each proved too low. What would make it mean more: a second independent fully-post-fix ring at the same depth agreeing, or a wall bound that is derived rather than sampled. `MEASURED_WALL_MAX_S` is NOT lowered on this read.",
+    "ring_split": {
+      "arm_counts": {
+        "post_fix": 32,
+        "pre_fix": 0,
+        "unknown": 0
+      },
+      "post_fix": {
+        "max": 44.883,
+        "min": 6.299,
+        "n": 32,
+        "p50": 34.92,
+        "p95": 42.458
+      },
+      "post_fix_walls_over_response_ttl": 0,
+      "pre_fix": {
+        "max": null,
+        "min": null,
+        "n": 0,
+        "p50": null,
+        "p95": null
+      },
+      "records_total": 32,
+      "records_without_a_wall": 0,
+      "unknown": {
+        "max": null,
+        "min": null,
+        "n": 0,
+        "p50": null,
+        "p95": null
+      }
+    },
+    "still_exceeds_ttl": false,
+    "verdict": "NOT_REFUTED"
+  },
+  "issue": 1866,
+  "verdict": "NOT_REFUTED"
+}
