@@ -1,4 +1,4 @@
-# RULING 056 — The shared tree stays on master; branch work lives in worktrees
+# RULING 121 — The shared tree stays on master; branch work lives in worktrees
 
 date: 2026-08-14
 author: Alex
