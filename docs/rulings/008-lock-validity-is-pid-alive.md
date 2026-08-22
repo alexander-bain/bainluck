@@ -155,3 +155,62 @@ A pid alive on **another machine**, or a lane whose process has hung rather than
 out of scope today: every lane runs on the same host, and a hung owner still holds the lock,
 which is the safe direction. If lanes ever run across hosts, this ruling needs a successor —
 recorded here so the gap is inherited rather than rediscovered.
+
+---
+
+## AMENDMENT 2026-08-22 (INT-109) — freshness must be EXPLAINED before it can veto
+
+**The MALFORMED-INVESTIGATE row above says "take nothing". Read literally it says take nothing
+*ever*, and that is wrong: it has no exit. This amendment supplies one — the word INVESTIGATE was
+always doing that work, and the table did not say what the investigation is or what resolves it.**
+
+Corrected row:
+
+| lock says | pid | activity | verdict |
+|---|---|---|---|
+| `HELD` | dead | **fresh** | 🔴 MALFORMED-INVESTIGATE — take nothing **yet**. Investigate. The freshness must be EXPLAINED; if the explanation is the named process's own exit, it is a takeover after all. |
+
+### The case that forced it, one cycle after the amendment shipped
+
+INT-109 opened against a lock reading `HELD`, `owner_pid: 75719`. First read: **pid ALIVE**,
+`owner_started` matching `ps -o lstart` exactly, owning session's transcript written **2 minutes
+earlier**. INT-109 refused the claim and reported BLOCKED — correct, and the behaviour this ruling
+exists to produce. Alex then stated at the keyboard that no other owner existed.
+
+Re-measured twice, 16:05:38 and 16:07:28 PDT:
+
+* pid 75719 dead — **and its whole process group with it**, `75588` (launcher) and `75914` (mux);
+* the owning session's transcript **frozen at 16:04:11 across both re-measures**;
+* **every remaining live `claude` pid mapped to a different lane, by that lane's own lock** —
+  `29756` lane1, `69572` calibration, `24321` ux, `29096` latency, `62573` me.
+
+The "fresh activity" was the **shutdown flush of the dying process**. Under the unamended wording
+the lane would have been unclaimable indefinitely: the pid can never come back to life to clear the
+condition, and the timestamp can never get younger. A rule whose blocking state has no exit is not
+conservative, it is stuck — and the cost lands on the one lane that is the sole writer of master.
+
+### The three tests that separate a death rattle from a heartbeat
+
+Freshness is discounted only when ALL THREE hold. Any one alone is too weak.
+
+1. **The process GROUP is gone**, not just the named pid. A lingering child would have survived, and
+   its survival is what "the pid field is wrong" looks like.
+2. **The activity does not ADVANCE on re-measure.** One timestamp is a photograph; two are a
+   derivative. A live owner writes again, a corpse does not. Measure twice, spaced.
+3. **Every live candidate process is accounted for on another lane.** This is the load-bearing one,
+   and it is the only test that rules out the case the amendment was actually written for — a live
+   owner running under a pid the lock names wrongly. It must be affirmative: *this* process belongs
+   to *that* lane's lock. "I found nobody" is an absence (gotcha #53); "I found everybody, and none
+   of them is here" is a measurement.
+
+A human at the keyboard saying the window is closed is **corroboration, never the artefact** — the
+same standing that INT-108's own takeover gave it. It may prompt a re-measure. It may not replace
+one.
+
+### What does NOT change
+
+The veto-never-grant formulation stands exactly as banked: **the clock may only ever VETO a
+takeover, never grant one.** This amendment does not let a timestamp hand anyone a lane. It says
+that a veto, like any other claim, can be **rebutted by measurement** — and that the rebuttal is
+three specific measurements rather than a judgement call. Ahead-drift still cannot admit a second
+writer, because tests 1 and 3 are about processes, not clocks, and no timestamp can forge them.
