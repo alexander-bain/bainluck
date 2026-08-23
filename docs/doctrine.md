@@ -513,3 +513,110 @@ condition was *"`program/calibration-75` merges, master's highest clause reads 1
 and the UX lane writes `### 19.` unchanged"*. Both halves are now true
 (`origin/master` = `724fd22c`, highest clause **18**), and it is written here
 unchanged, at the number it was claimed at, **without a fifth renumber**.
+
+---
+
+### 20. A hand-written field is unvalidated input, not a measurement.
+
+A perfect test applied to a field nobody validated inherits the field's error.
+`ps -p <pid>` answers *"is that pid alive"* flawlessly and says nothing whatever
+about whether the file names the **right** pid — yet a rule that reads the field
+as though it were an instrument treats the two as one question.
+
+The tell is grammatical: wherever a check consumes a value some earlier human
+typed, it is reading a **claim**, and a claim can be false in ways the check is
+not built to notice. Validate the field, or pair it with something the writer
+could not forge.
+
+*Charter case (ruling **008**, INT-108 amendment, 2026-08-21).* `LANE-lane1.lock`
+read `HELD` with `owner_pid: 38410`, a dead pid — while lane1 was alive and
+landing two commits. Read literally the rule said *dead pid, therefore free,
+therefore take the lane*. The correct answer was to take nothing and go find out
+why a live lane's lock named a dead process.
+
+*Corollary — affirmative accounting beats absence,* and it is clause 1 in the
+identity direction: **"I found nobody" is an absence; "I found everybody, and
+none of them is here" is a measurement.** Ruling 008's third takeover test is
+the affirmative form — each live candidate process mapped to *another* lane by
+that lane's own lock — and it is the only one of the three that can rule out a
+live owner filed under the wrong pid.
+
+*Same family:* ruling **022** (one shared claim primitive) and its live defect —
+a partial re-stamp that refreshes `owner_pid` but leaves the previous owner's
+`owner_started` **manufactures** this condition rather than merely failing to
+catch it.
+
+### 21. An untrusted signal may VETO, never GRANT.
+
+When a signal is too unreliable to decide a question, the choice is not
+binary — trust it or delete it. Give it the **asymmetric** half of the
+authority: let it refuse, and never let it permit. A signal that can only block
+cannot manufacture permission, so its failure modes collapse into the safe
+direction by construction rather than by discipline.
+
+The test for which half is safe: ask what each drift direction *does*. If one
+direction merely blocks something legitimate and the other admits something
+dangerous, the signal keeps the blocking power and loses the admitting power.
+
+*Charter case (ruling **008**).* Heartbeat timestamps were demoted from oracle to
+veto. Ahead-drift (a future stamp) had **admitted a second writer to master**;
+as a pure veto the same drift can only refuse a takeover. Behind-drift is never
+consulted at all, because the pid test has already answered HELD and stopped.
+"Both keys turn, or nobody enters."
+
+*The counterweight, so this is not read as "vetoes are free":* a veto is still a
+claim, and clause 22 is what stops it becoming permanent.
+
+### 22. A blocking state with no exit is not conservative — it is stuck.
+
+Every refusal needs a stated condition that clears it, and the condition has to
+be **reachable**. A guard whose blocking branch can only be satisfied by
+something that can never happen is not a cautious guard; it is an outage with
+good intentions, and it will be read as caution right up until someone notices
+nothing has moved.
+
+Check it the cheap way: name the event that clears the block, then ask who or
+what produces that event. If the answer is the thing the block already
+established is gone, there is no exit.
+
+*Charter case (ruling **008**, INT-109 amendment, 2026-08-22).* `MALFORMED-
+INVESTIGATE` said "take nothing" with no exit — the named pid can never come
+back to life to clear the condition, and a timestamp can never get younger. So
+the lane was unclaimable **indefinitely**, and the cost landed on the sole writer
+of master. The amendment supplied the exit the word INVESTIGATE had always
+implied: the freshness must be **EXPLAINED**, and when the explanation is the
+named process's own shutdown flush, it is a takeover after all.
+
+*Corollary — one timestamp is a photograph; two are a derivative.* The way out
+of that particular block is a **re-measure, spaced**: a live owner writes again,
+a corpse does not. Wherever a single reading is being asked to establish
+liveness, motion, or progress, take the second one.
+
+*And the standing of a human saying "it's fine":* corroboration, never the
+artefact. It may prompt a re-measure; it may not replace one.
+
+### 23. Discipline tightened and then violated in BOTH directions is a mechanism failure, not a discipline failure.
+
+One violation is a mistake. Repeated violations **in opposite directions**,
+after the rule has already been sharpened, are diagnostic: they say the
+mechanism is asking a human-written artifact to carry a safety property, and no
+amount of further care will make it do so. Symmetry is the signal — a
+one-directional failure can still be carelessness, but drifting *both* ways
+means the requirement is unmeetable, not unmet.
+
+The remedy is to remove the artifact from the decision, not to write a firmer
+rule about maintaining it.
+
+*Charter case (ruling **008**).* Every earlier attempt tightened the discipline
+around the heartbeat — stamp at each phase boundary, read from `date`, never
+future-date — and it was violated anyway, **ahead ×2 and behind ×1**, with
+opposite costs (fails-open admits a second writer; fails-closed steals a live
+lane's work). The rule silently picked a side depending on which way a human's
+clock had slipped. Neither failure is available to a rule that never reads the
+clock.
+
+*The trap this closes is recursive, and ruling 008's own history contains it:*
+the INT-108 amendment's first instinct was "keep `owner_pid` accurate" — which is
+the same discipline fix that had already failed twice in that very file.
+**Proposing the failed remedy is easy precisely because it is always locally
+reasonable.**
