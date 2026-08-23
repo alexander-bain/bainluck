@@ -29,7 +29,15 @@ of health:
   silently read as not-ready (**ruling 115**). It is still resolved against git,
   so a malformed token over unmerged work is flagged as the emergency it is, and
   the header states coverage as a ratio so a half-blind sweep cannot print a
-  confident list of only what it could see.
+  confident list of only what it could see;
+* a token whose ``status:`` is outside :data:`STATUS_VOCABULARY` is
+  **UNKNOWN-STATUS** and is reported the same way (**ruling 118**). Same defect
+  as ruling 115, one layer along: ``status in READY_VALUES`` treated an
+  unrecognised value and a missing one identically, so fourteen hand-written
+  statuses were being dropped by the same ``continue``. Human prose belongs in
+  ``note:``, which is parsed and printed. ``--strict`` reds on ALL of these,
+  not only the ones over live work — see :func:`main` for why the asymmetry
+  with MALFORMED is deliberate.
 
 Usage::
 
@@ -59,11 +67,86 @@ DEFAULT_HANDOFF_DIR = ".claude/handoff"
 #: silently normalising it, so the token gets fixed.
 READY_VALUES = {"ready_for_integration", "ready"}
 
+#: **Ruling 118 — the status field is a CLOSED VOCABULARY.**
+#:
+#: Every value a ``status:`` line is allowed to take. Anything else is
+#: ``UNKNOWN-STATUS`` and is REPORTED, never silently read as "not ready".
+#:
+#: Why a closed set and not a free string: the sweep's ready test is
+#: ``status in READY_VALUES``, so *every* unrecognised value already behaved
+#: identically to a missing one — dropped by the ``continue`` below, absent from
+#: every verdict group, invisible to every grep. That is ruling 115's defect
+#: exactly, one layer along: ruling 115 closed the case where a token says
+#: NOTHING, and left open the case where a token says something no reader
+#: understands. Measured on the day this was banked, 14 of 194 tokens sat in the
+#: second case, wearing 11 distinct hand-written values::
+#:
+#:     '⛔ STILL VISIBLE, NOT MERGE-ELIGIBLE — no ready_for_integration token.'
+#:     'BOUNCED by INT-087 — merged as 72b7ed7a, REVERTED as e61ef179.'
+#:     'merged + DDL HALF NOW DISCHARGED — INT-075, 2026-08-17. All three ...'
+#:     'superseded-by-READY-lane1-1991'   'BLOCKED_codex_C-SEN-1'   ...
+#:
+#: The third is the one that settles the argument: it *starts* with the word
+#: ``merged`` and is not equal to it, so a literal-bytes grep for
+#: ``status: merged`` — which is how a human audits 194 files — skips it. The
+#: prose is not the problem; the prose being in the MACHINE FIELD is. Human
+#: sentences belong in ``note:``, which this script parses and prints beside the
+#: verdict precisely so nobody has to smuggle them into ``status:`` again.
+#:
+#: Kept deliberately small. A value earns a place here only if a reader must
+#: BRANCH on it; everything else is a defined value plus a ``note:``.
+STATUS_VOCABULARY = {
+    # merge offers
+    "ready_for_integration",  # the long form, the one to write
+    "ready",                  # short form — accepted, and REPORTED so it gets fixed
+    # terminal
+    "merged",
+    "partially_merged",       # some branches of a multi-branch token landed. Real and distinct:
+                              # collapsing it to `merged` asserts something false about the rest.
+    "bounced",                # merged and then REVERTED. Ancestry survives a revert and content
+                              # does not, so this can never be folded into `merged` (cal-43/#2076).
+    "void",                   # ruling 109
+    "superseded",             # a later token replaces it — name the successor in `note:`
+    "withdrawn",              # the lane pulled it back
+    # not terminal, not an offer
+    "blocked",                # say WHY in `note:`, not in the status
+    "held",
+    "never_merge",            # containment head — both spellings, the field is `never_merge:`
+    "never-merge",
+    # ruling 118, and the reason it is a VOCABULARY entry rather than a code exemption:
+    # a token can be deliberately visible while carrying no merge claim at all. Before this
+    # existed, the only way to express it was to omit `status:` — which ruling 115 correctly
+    # calls silence. `excused` is how that intent is SAID.
+    "excused",
+}
+
+#: Tokens whose absent ``status:`` is a DOCUMENTED deliberate choice, excused by
+#: name until the owning lane writes ``status: excused``.
+#:
+#: This is an allowlist of exactly one, and it is spelled out rather than
+#: inferred, because "the sweep decided this omission looked intentional" is the
+#: guess ruling 115 forbids. The reason string is printed in the report, so the
+#: excusal argues for itself in front of the next reader instead of being a
+#: silent skip.
+DELIBERATE_OMISSIONS = {
+    "READY-calibration-52.md": (
+        "deliberate, documented at PROGRAM-CALIBRATION-QUEUE.md:2294 — visible, not "
+        "merge-eligible. Owed: the lane writes `status: excused` and this entry is deleted."
+    ),
+}
+
 #: Verdicts, most-blocking first. Order matters: a branch that is BOTH spent and
 #: void is reported void, because the void is the fact that needs acting on.
 #: Ruling 115. First in the order below because a token that cannot be READ is a
 #: prior question to any verdict about the branch it names.
 MALFORMED = "MALFORMED"
+#: Ruling 118. Ranked immediately after MALFORMED and for the same reason: a
+#: status nobody can interpret is a prior question to any verdict about the
+#: branch, and it fails in the identical direction — invisibly, as "not ready".
+UNKNOWN_STATUS = "UNKNOWN-STATUS"
+#: Ruling 118. A token that says, in the vocabulary, that it is deliberately not
+#: an offer. Distinct from MALFORMED (which is silence) and from HELD.
+EXCUSED = "EXCUSED"
 VOID = "VOID"
 UNRESOLVED = "UNRESOLVED"
 MOVED_HEAD = "MOVED-HEAD"
@@ -82,6 +165,36 @@ HELD = "HELD"
 #: label instead, and does not red ``--strict``, because adding a ``status:``
 #: field would not fix it: the ``branch:`` field is broken too.
 MALFORMED_OVER_LIVE_WORK = {LIVE_READY, MOVED_HEAD}
+
+
+def normalize_status(status):
+    """Pure. The single spelling rule for a status value. ``None`` stays ``None``.
+
+    Case and surrounding whitespace are not meaning: ``SUPERSEDED`` and
+    ``superseded`` were both in the directory on the day ruling 118 was banked,
+    and treating them as two values would have made the vocabulary argue with
+    itself. Nothing else is normalised — in particular a trailing clause is NOT
+    stripped down to its first word, because ``merged + DDL HALF NOW
+    DISCHARGED`` must come back UNKNOWN rather than quietly becoming ``merged``.
+    Silently repairing the token is how the prose survives.
+    """
+    if status is None:
+        return None
+    return str(status).strip().lower()
+
+
+class UnknownStatus(Exception):
+    """Ruling 118: the token stated a status outside the closed vocabulary.
+
+    Deliberately NOT a subclass of :class:`MalformedToken`. They are different
+    facts with different fixes — silence needs a field added, an unknown value
+    needs a word changed or moved to ``note:`` — and an ``except MalformedToken``
+    somewhere would otherwise swallow this the day it was introduced.
+    """
+
+    def __init__(self, value):
+        self.value = value
+        super().__init__(f"status {value!r} is outside the closed vocabulary (ruling 118)")
 
 
 def _clean(value: str) -> str:
@@ -106,11 +219,16 @@ def parse_token(text: str) -> dict:
     Only the FIRST occurrence of each field counts. Tokens quote other tokens in
     their prose (a report will happily contain the string ``status: merged``
     inside a paragraph about a previous cycle), and the header is the claim.
+
+    ``note`` is parsed for ruling 118: it is the field the prose is supposed to
+    live in, so the sweep has to actually READ it and print it. A field the tool
+    ignores is a field nobody fills in.
     """
-    out = {"status": None, "branch": None, "head": None, "never_merge": False}
+    out = {"status": None, "branch": None, "head": None, "never_merge": False,
+           "note": None}
     for line in text.splitlines():
         stripped = line.strip()
-        for key in ("status", "branch", "head", "never_merge"):
+        for key in ("status", "branch", "head", "never_merge", "note"):
             if out.get(key) not in (None, False):
                 continue
             prefix = key + ":"
@@ -144,12 +262,23 @@ def is_ready(status) -> bool:
     was: it would make all 178 historical tokens in the directory live again.
     Absence cannot be resolved by guessing its direction. It is REPORTED.
 
+    **Ruling 118** adds the second half of the same idea: a status the reader
+    does not recognise has also not said "no". It raises :class:`UnknownStatus`
+    rather than returning ``False``, because returning ``False`` renders
+    ``BLOCKED_codex_C-SEN-1`` and ``merged`` in the same bytes — one is a lane
+    waiting on a gate, the other is finished work, and the sweep was calling
+    them the same thing.
+
     Raises:
         MalformedToken: ``status`` is None, empty, or whitespace only.
+        UnknownStatus: ``status`` is outside :data:`STATUS_VOCABULARY`.
     """
     if status is None or not str(status).strip():
         raise MalformedToken("token carries no status: field")
-    return status.strip().lower() in READY_VALUES
+    value = normalize_status(status)
+    if value not in STATUS_VOCABULARY:
+        raise UnknownStatus(str(status).strip())
+    return value in READY_VALUES
 
 
 def classify(token: dict, resolved_head, on_master: bool, shared) -> str:
@@ -342,17 +471,38 @@ def sweep(handoff_dir, repo, runner=subprocess.run, extra_never_merge=(),
 
     rows = []
     malformed_files = []
+    unknown_status_files = []
+    excused_files = []
     for token in tokens:
         # Ruling 115. A token that states no status is MALFORMED, and MALFORMED is
         # carried into the report — never dropped by the same `continue` that
         # discards a token honestly marked `merged`.
-        malformed = False
+        # Ruling 118 adds the sibling case: a status OUTSIDE the closed vocabulary
+        # is UNKNOWN-STATUS, and is carried into the report by the same route, for
+        # the same reason — it was being dropped by that identical `continue`.
+        malformed = unknown = excused = False
         try:
             ready = is_ready(token.get("status"))
         except MalformedToken:
-            malformed, ready = True, False
-            malformed_files.append(token["file"])
-        if not (ready or malformed or token.get("never_merge")):
+            ready = False
+            # Ruling 118: an omission the owning lane documented is EXCUSED by name,
+            # not MALFORMED. Everything else is still silence.
+            if token["file"] in DELIBERATE_OMISSIONS:
+                excused = True
+                excused_files.append(token["file"])
+            else:
+                malformed = True
+                malformed_files.append(token["file"])
+        except UnknownStatus:
+            unknown, ready = True, False
+            unknown_status_files.append(token["file"])
+        else:
+            # `excused` is a real vocabulary value, so a token that SAYS it lands
+            # here rather than in the MalformedToken arm above.
+            if normalize_status(token.get("status")) == "excused":
+                excused = True
+                excused_files.append(token["file"])
+        if not (ready or malformed or unknown or excused or token.get("never_merge")):
             continue
         branch = token.get("branch")
         resolved = _git(runner, repo, "rev-parse", branch) if branch else None
@@ -371,16 +521,34 @@ def sweep(handoff_dir, repo, runner=subprocess.run, extra_never_merge=(),
         # spent work" (bookkeeping) is distinguishable at a glance from "malformed
         # over three unmerged commits" (a lane's work with nobody looking).
         underlying = classify(token, resolved, on_master, shared)
+        # Ruling 118 inherits ruling 115's obligation 2 verbatim: an unreadable
+        # token is still resolved against git and carries the verdict it WOULD
+        # have had, so "unknown status over spent work" (bookkeeping) is
+        # distinguishable at a glance from "unknown status over live commits".
+        if malformed:
+            verdict = MALFORMED
+        elif unknown:
+            verdict = UNKNOWN_STATUS
+        elif excused:
+            verdict = EXCUSED
+        else:
+            verdict = underlying
+        # NOT named `unreadable`: that name belongs to the never-merge closure's
+        # unreadable-heads list in this same function, and shadowing it made the
+        # sweep raise on the return statement.
+        status_unreadable = malformed or unknown
         rows.append({
             "file": token["file"],
             "branch": branch,
             "token_head": token.get("head"),
             "resolved_head": resolved,
             "status": token.get("status"),
-            "status_is_short_form": (token.get("status") or "").strip().lower() == "ready",
-            "verdict": MALFORMED if malformed else underlying,
-            "underlying": underlying if malformed else None,
-            "over_live_work": bool(malformed and underlying in MALFORMED_OVER_LIVE_WORK),
+            "status_is_short_form": normalize_status(token.get("status")) == "ready",
+            "note": token.get("note"),
+            "verdict": verdict,
+            "underlying": underlying if (status_unreadable or excused) else None,
+            "over_live_work": bool(status_unreadable and underlying in MALFORMED_OVER_LIVE_WORK),
+            "excused_reason": DELIBERATE_OMISSIONS.get(token["file"]) if excused else None,
             "contains_never_merge": [c[:8] for c in shared],
         })
 
@@ -403,7 +571,15 @@ def sweep(handoff_dir, repo, runner=subprocess.run, extra_never_merge=(),
         # Ruling 115 obligation 4: coverage as a RATIO. A sweep that prints only
         # what it could read can never disclose that it read half of it.
         "malformed_tokens": sorted(malformed_files),
-        "status_readable": len(tokens) - len(malformed_files),
+        # Ruling 118 obligation: coverage counts a status the reader cannot
+        # INTERPRET against the same ratio as one that is absent. Both are
+        # tokens the sweep did not understand, and a ratio that quietly counted
+        # `BLOCKED_codex_C-SEN-1` as "readable" would be the ratio lying about
+        # exactly the thing it exists to disclose.
+        "unknown_status_tokens": sorted(unknown_status_files),
+        "excused_tokens": sorted(excused_files),
+        "status_readable": len(tokens) - len(malformed_files) - len(unknown_status_files),
+        "status_vocabulary": sorted(STATUS_VOCABULARY),
         "rows": rows,
     }
 
@@ -415,12 +591,17 @@ def render(result) -> str:
     # sweep cannot print a confident list of only what it could see.
     readable = result.get("status_readable")
     malformed_files = result.get("malformed_tokens") or []
+    unknown_files = result.get("unknown_status_tokens") or []
     if readable is not None:
         line = (f"status coverage: {readable} of {result['tokens_read']} tokens carry a "
                 "readable status: field")
         if malformed_files:
             line += (f" — {len(malformed_files)} MALFORMED. A missing status is not a quiet "
                      "'no'; it is silence (ruling 115).")
+        if unknown_files:
+            line += (f" — {len(unknown_files)} UNKNOWN-STATUS, outside the closed vocabulary. "
+                     "A status nobody can interpret fails in the same direction as a missing "
+                     "one: silently, as 'not ready' (ruling 118).")
         lines.append(line)
     if result["containment_ran"]:
         heads = ", ".join(
@@ -442,32 +623,45 @@ def render(result) -> str:
             "This is NOT a clean result (ruling 109 obligation 4, gotcha #53)."
         )
     lines.append("")
-    order = [MALFORMED, VOID, UNRESOLVED, MOVED_HEAD, SPENT, LIVE_READY, HELD]
+    order = [MALFORMED, UNKNOWN_STATUS, VOID, UNRESOLVED, MOVED_HEAD, SPENT, LIVE_READY,
+             HELD, EXCUSED]
     for verdict in order:
         group = [r for r in result["rows"] if r["verdict"] == verdict]
         if not group:
             continue
         header = f"── {verdict} ({len(group)})"
-        if verdict == MALFORMED:
+        if verdict in (MALFORMED, UNKNOWN_STATUS):
             live = sum(1 for r in group if r.get("over_live_work"))
             unres = sum(1 for r in group if r.get("underlying") == UNRESOLVED)
-            header += (f" — no status: field. {live} sit over UNMERGED work and are "
+            what = ("no status: field" if verdict == MALFORMED
+                    else "status outside the closed vocabulary (ruling 118) — move the prose "
+                         "to note: and use a defined value")
+            header += (f" — {what}. {live} sit over UNMERGED work and are "
                        f"invisible to every sweep; {unres} more cannot be resolved at all "
-                       "(ruling 115)")
+                       f"({'ruling 115' if verdict == MALFORMED else 'ruling 118'})")
+        elif verdict == EXCUSED:
+            header += (" — deliberately not a merge offer, and SAYS so. Listed, never hidden: "
+                       "an excusal that cannot be seen is indistinguishable from an oversight")
         lines.append(header)
         for row in group:
             head = (row["resolved_head"] or "unresolved")[:8]
             line = f"   {row['file']:<44} {str(row['branch']):<38} {head}"
-            if verdict == MALFORMED:
+            if verdict in (MALFORMED, UNKNOWN_STATUS, EXCUSED):
                 line += f"  would be {row.get('underlying')}"
                 if row.get("over_live_work"):
                     line += "   ⚠ REAL WORK, INVISIBLE"
                 elif row.get("underlying") == UNRESOLVED:
                     line += "   ⚠ branch UNRESOLVED — cannot rule out live work"
+            if verdict == UNKNOWN_STATUS:
+                line += f"\n        status: {row.get('status')!r}"
+            if row.get("excused_reason"):
+                line += f"\n        excused: {row['excused_reason']}"
             if row["contains_never_merge"]:
                 line += "  contains " + ",".join(row["contains_never_merge"])
             if row["status_is_short_form"]:
                 line += "   [status: ready — short form, fix the token]"
+            if row.get("note"):
+                line += f"\n        note: {row['note']}"
             lines.append(line)
         lines.append("")
     # ---- ruling 113: the second source, and its NOT-RUN discipline ----
@@ -523,6 +717,28 @@ def render(result) -> str:
             "`status: ready_for_integration` (or `merged`) to: "
             + ", ".join(r["file"] for r in blind)
         )
+    unknown_rows = [r for r in result["rows"] if r["verdict"] == UNKNOWN_STATUS]
+    if unknown_rows:
+        hidden = [r for r in unknown_rows if r.get("over_live_work")]
+        line = (
+            f"RULING 118: {len(unknown_rows)} token(s) state a status outside the closed "
+            "vocabulary, so every sweep has silently read them as 'not ready'. Replace the "
+            "value with one of "
+            + ", ".join(sorted(result.get("status_vocabulary") or STATUS_VOCABULARY))
+            + " and move the sentence to a `note:` line: "
+            + ", ".join(r["file"] for r in unknown_rows)
+        )
+        if hidden:
+            # The whole argument for the ruling, stated with names in it. A count
+            # persuades nobody; "this branch has commits and nobody is looking"
+            # is the same fact and it gets fixed.
+            line += (
+                "\n            ⚠ " + str(len(hidden)) + " of those sit over UNMERGED work and "
+                "were invisible to every prior sweep: "
+                + ", ".join(f"{r['file']} ({r['branch']}, would be {r['underlying']})"
+                            for r in hidden)
+            )
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -533,8 +749,9 @@ def main(argv=None, runner=subprocess.run, stdout=None) -> int:
     parser.add_argument("--repo", default=".")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--strict", action="store_true",
-                        help="exit 1 if a VOID token still reads ready, or a MALFORMED "
-                             "token sits over unmerged work (rulings 109, 115)")
+                        help="exit 1 if a VOID token still reads ready, a MALFORMED "
+                             "token sits over unmerged work, or any token states a status "
+                             "outside the closed vocabulary (rulings 109, 115, 118)")
     parser.add_argument("--no-prs", action="store_true",
                         help="skip the open-PR source; reported as NOT RUN, never as clean")
     parser.add_argument("--never-merge", action="append", default=[],
@@ -559,6 +776,18 @@ def main(argv=None, runner=subprocess.run, stdout=None) -> int:
         if any(r["verdict"] == VOID for r in result["rows"]):
             return 1
         if any(r["verdict"] == MALFORMED and r.get("over_live_work") for r in result["rows"]):
+            return 1
+        # Ruling 118, and the same obligation applied to its own defect. An
+        # out-of-vocabulary status is red on sight — NOT only when it sits over
+        # live work, which is where it differs from MALFORMED above.
+        #
+        # The asymmetry is deliberate. A missing status can be an ancient merged
+        # token nobody will ever touch again, so redding on all 13 of those would
+        # make --strict permanently red and therefore ignored. An unknown status
+        # is different in kind: someone TYPED it, this cycle or another, and the
+        # fix is one word plus a `note:` line. The set is small, closed, and
+        # drainable — which is the only honest reason to gate on all of it.
+        if any(r["verdict"] == UNKNOWN_STATUS for r in result["rows"]):
             return 1
     return 0
 

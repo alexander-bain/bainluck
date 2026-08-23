@@ -517,3 +517,237 @@ def test_no_prs_flag_is_reported_as_NOT_RUN_not_as_absence(tmp_path):
                              include_prs=False)
     assert result["open_prs_error"] == "disabled"
     assert "open PRs: NOT RUN" in sweep_mod.render(result)
+
+
+# ---------------------------------------------------------------------------
+# Ruling 118 — the status field is a CLOSED VOCABULARY
+#
+# Ruling 115 closed the case where a token says NOTHING. These cover the case it
+# left open: a token that says something no reader understands. Both failed in
+# the same direction, through the same `continue`, and the second one was worse
+# in one specific way — someone TYPED it, so it looks deliberate and reads as
+# decided, when in fact no code path anywhere consumed it.
+# ---------------------------------------------------------------------------
+
+
+def test_a_status_outside_the_vocabulary_raises_instead_of_answering_False():
+    """The core of ruling 118. `is_ready` must not manufacture a boolean here.
+
+    Every one of these was live in `.claude/handoff` on the day the ruling was
+    banked. Returning False for them rendered `BLOCKED_codex_C-SEN-1` (a lane
+    waiting on a gate) in the same bytes as `merged` (finished work).
+    """
+    for value in (
+        "BLOCKED_RENUMBER",
+        "BLOCKED_codex_C-SEN-1",
+        "superseded-by-READY-lane1-1991",
+        "BOUNCED by INT-087 — merged as 72b7ed7a, REVERTED as e61ef179.",
+        "⛔ STILL VISIBLE, NOT MERGE-ELIGIBLE — no ready_for_integration token.",
+    ):
+        with pytest.raises(sweep_mod.UnknownStatus):
+            sweep_mod.is_ready(value)
+
+
+def test_a_status_that_merely_STARTS_with_a_vocabulary_word_is_still_unknown():
+    """`merged + DDL HALF NOW DISCHARGED — INT-075…` is the specimen that settles
+    the design: it starts with a real value and is not equal to it, so a
+    literal-bytes grep for `status: merged` — which is how a human audits 194
+    files — skips it. Normalising it down to its first word would 'fix' the
+    report while leaving the prose in the machine field, so the sweep must
+    REFUSE it rather than repair it.
+    """
+    with pytest.raises(sweep_mod.UnknownStatus):
+        sweep_mod.is_ready("merged + DDL HALF NOW DISCHARGED — INT-075, 2026-08-17.")
+
+    assert sweep_mod.is_ready("merged") is False  # the real value still answers
+
+
+def test_unknown_status_is_not_a_subclass_of_malformed():
+    """They are different facts with different fixes — a field added vs a word
+    changed. If `UnknownStatus` ever inherits from `MalformedToken`, an existing
+    `except MalformedToken` swallows it and ruling 118 silently stops applying.
+    """
+    assert not issubclass(sweep_mod.UnknownStatus, sweep_mod.MalformedToken)
+
+
+def test_case_and_whitespace_are_not_meaning():
+    """`SUPERSEDED` and `superseded` were both in the directory. Treating them as
+    two values would make the vocabulary argue with itself."""
+    assert sweep_mod.normalize_status("  SUPERSEDED \n") == "superseded"
+    assert sweep_mod.is_ready("READY_FOR_INTEGRATION") is True
+    assert sweep_mod.is_ready(" NEVER-MERGE ") is False
+    assert sweep_mod.normalize_status(None) is None
+
+
+def test_an_unknown_status_over_live_work_is_reported_not_dropped(tmp_path):
+    """End to end, on the shape that caused the ruling.
+
+    `READY-lane1-q353-process.md` said `BLOCKED_RENUMBER` over a branch that
+    resolves and is NOT on master. Before this, the sweep dropped it at the same
+    `continue` that discards an honestly-merged token, so a LIVE-READY branch was
+    invisible to the ready-set — and unlike ruling 115's cases, the token looked
+    fully filled in.
+    """
+    _token_file(tmp_path, "READY-hidden.md",
+                "status: BLOCKED_RENUMBER\nbranch: `lane1/q353-process`\n")
+    _token_file(tmp_path, "READY-done.md",
+                "status: `BOUNCED by INT-087 — merged as 72b7ed7a.`\nbranch: `program/cal-67`\n")
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "gh":
+            return _FakeProc("[]", 0)
+        if "rev-parse" in cmd:
+            return _FakeProc("f" * 40 if "lane1/q353-process" in cmd else "a" * 40, 0)
+        if "merge-base" in cmd and "--is-ancestor" in cmd:
+            return _FakeProc("", 0 if cmd[-2] == "a" * 40 else 1)
+        return _FakeProc("", 0)
+
+    result = sweep_mod.sweep(str(tmp_path), ".", runner=run)
+
+    by_file = {r["file"]: r for r in result["rows"]}
+    assert by_file["READY-hidden.md"]["verdict"] == "UNKNOWN-STATUS"
+    assert by_file["READY-hidden.md"]["underlying"] == "LIVE-READY"
+    assert by_file["READY-hidden.md"]["over_live_work"] is True
+
+    # Unknown over already-shipped work is bookkeeping, and must stay
+    # distinguishable from the emergency or the loud half becomes noise.
+    assert by_file["READY-done.md"]["verdict"] == "UNKNOWN-STATUS"
+    assert by_file["READY-done.md"]["underlying"] == "SPENT"
+    assert by_file["READY-done.md"]["over_live_work"] is False
+
+    # Coverage counts an uninterpretable status against the same ratio as an
+    # absent one. A ratio that called `BLOCKED_RENUMBER` "readable" would be
+    # lying about precisely the thing it exists to disclose.
+    assert result["status_readable"] == 0
+    assert result["unknown_status_tokens"] == ["READY-done.md", "READY-hidden.md"]
+    assert result["malformed_tokens"] == []
+
+    out = sweep_mod.render(result)
+    assert "UNKNOWN-STATUS" in out
+    assert "BLOCKED_RENUMBER" in out           # the offending value is QUOTED, not summarised
+    assert "RULING 118" in out
+    assert "READY-hidden.md" in out.split("RULING 118")[1]
+
+
+def test_strict_reds_on_an_unknown_status_even_over_spent_work(tmp_path):
+    """The deliberate asymmetry with MALFORMED, pinned.
+
+    A missing status can be an ancient merged token nobody will touch again, so
+    redding on all of those would make --strict permanently red and therefore
+    ignored. An unknown status was TYPED by someone and is fixed by one word plus
+    a `note:` line, so the whole set is drainable and the whole set is gated.
+    """
+    _token_file(tmp_path, "READY-spent.md",
+                "status: BLOCKED_RENUMBER\nbranch: `program/old`\n")
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "gh":
+            return _FakeProc("[]", 0)
+        if "rev-parse" in cmd:
+            return _FakeProc("a" * 40, 0)
+        if "merge-base" in cmd and "--is-ancestor" in cmd:
+            return _FakeProc("", 0)          # on master = SPENT
+        return _FakeProc("", 0)
+
+    out = StringIO()
+    rc = sweep_mod.main(["--handoff-dir", str(tmp_path), "--strict"],
+                        runner=run, stdout=out)
+    assert rc == 1
+    assert "UNKNOWN-STATUS" in out.getvalue()
+
+    # ...and the same tree without the offending value is green, so the gate is
+    # measuring the ruling and not merely always failing.
+    (tmp_path / "READY-spent.md").write_text(
+        "status: merged\nnote: was BLOCKED_RENUMBER; renumber done by CAL-P086\n"
+        "branch: `program/old`\n", encoding="utf-8")
+    assert sweep_mod.main(["--handoff-dir", str(tmp_path), "--strict"],
+                          runner=run, stdout=StringIO()) == 0
+
+
+def test_the_note_field_is_parsed_and_printed(tmp_path):
+    """A field the tool ignores is a field nobody fills in. The ruling moves the
+    prose to `note:`, so `note:` has to appear in the report or the prose goes
+    straight back into `status:`."""
+    parsed = sweep_mod.parse_token("status: blocked\nnote: waiting on C-SEN-1\n")
+    assert parsed["note"] == "waiting on C-SEN-1"
+
+    _token_file(tmp_path, "READY-b.md",
+                "status: ready_for_integration\nbranch: `program/x`\n"
+                "note: rebased onto a13239f1 at INT-108's ask\n")
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "gh":
+            return _FakeProc("[]", 0)
+        if "rev-parse" in cmd:
+            return _FakeProc("f" * 40, 0)
+        if "merge-base" in cmd and "--is-ancestor" in cmd:
+            return _FakeProc("", 1)
+        return _FakeProc("", 0)
+
+    out = sweep_mod.render(sweep_mod.sweep(str(tmp_path), ".", runner=run))
+    assert "note: rebased onto a13239f1 at INT-108's ask" in out
+
+
+def test_a_documented_omission_is_EXCUSED_by_name_and_still_listed(tmp_path):
+    """Ruling 118's excusal clause, and its limit.
+
+    `READY-calibration-52.md` omits `status:` deliberately, documented at
+    PROGRAM-CALIBRATION-QUEUE.md:2294. It is EXCUSED — but it is still PRINTED,
+    with the reason, because an excusal nobody can see is indistinguishable from
+    an oversight. Any OTHER file with the same omission is still MALFORMED:
+    the allowlist is by name, never by shape, or the sweep is back to guessing
+    which silences were meant (the guess ruling 115 forbids).
+    """
+    _token_file(tmp_path, "READY-calibration-52.md", "branch: `program/calibration-52`\n")
+    _token_file(tmp_path, "READY-other.md", "branch: `program/other`\n")
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "gh":
+            return _FakeProc("[]", 0)
+        if "rev-parse" in cmd:
+            return _FakeProc("f" * 40, 0)
+        if "merge-base" in cmd and "--is-ancestor" in cmd:
+            return _FakeProc("", 1)
+        return _FakeProc("", 0)
+
+    result = sweep_mod.sweep(str(tmp_path), ".", runner=run)
+    by_file = {r["file"]: r for r in result["rows"]}
+
+    assert by_file["READY-calibration-52.md"]["verdict"] == "EXCUSED"
+    assert by_file["READY-other.md"]["verdict"] == "MALFORMED"
+    assert result["malformed_tokens"] == ["READY-other.md"]
+    assert result["excused_tokens"] == ["READY-calibration-52.md"]
+
+    out = sweep_mod.render(result)
+    assert "EXCUSED" in out
+    assert "PROGRAM-CALIBRATION-QUEUE.md:2294" in out
+    # An excusal must not red the gate, and must not silence its neighbour either.
+    assert "READY-calibration-52.md" not in out.split("RULING 115")[1]
+    assert "READY-other.md" in out.split("RULING 115")[1]
+
+
+def test_the_word_excused_is_a_status_so_the_lane_can_stop_omitting_the_field(tmp_path):
+    """The by-name allowlist is a bridge, not the destination. Once the lane
+    writes `status: excused`, the token is EXCUSED on its own say-so with no
+    entry in `DELIBERATE_OMISSIONS` — which is what lets that dict shrink to
+    empty instead of accumulating one line per lane forever."""
+    _token_file(tmp_path, "READY-anything.md",
+                "status: excused\nbranch: `program/z`\n"
+                "note: visible, not merge-eligible — stacked on an unmerged base\n")
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "gh":
+            return _FakeProc("[]", 0)
+        if "rev-parse" in cmd:
+            return _FakeProc("f" * 40, 0)
+        if "merge-base" in cmd and "--is-ancestor" in cmd:
+            return _FakeProc("", 1)
+        return _FakeProc("", 0)
+
+    result = sweep_mod.sweep(str(tmp_path), ".", runner=run)
+    assert "READY-anything.md" not in sweep_mod.DELIBERATE_OMISSIONS
+    assert result["rows"][0]["verdict"] == "EXCUSED"
+    assert result["excused_tokens"] == ["READY-anything.md"]
+    # It is NOT a merge offer, so it must never appear in the ready set.
+    assert result["rows"][0]["underlying"] == "LIVE-READY"
+    assert sweep_mod.is_ready("excused") is False
