@@ -165,7 +165,7 @@ from app.utils.personalization import (
     compute_event_multiplier,
     compute_futures_multiplier,
 )
-from app.routes.admin_utils import _check_admin_auth, _resolve_admin_email
+from app.routes.admin_utils import _resolve_admin_principal
 from app.routes.events import _build_team_lookup, _format_team_data
 
 logger = logging.getLogger(__name__)
@@ -1725,9 +1725,12 @@ async def get_feed(
     # finalizer). None until the golf stage runs (skipped / non-leader paths).
     _golf_provenance: str | None = None
 
-    if (debug or exclude_reviewed) and not await _check_admin_auth(secret, request, db):
-        _set_feed_timing_header(response, _started_at)
-        raise HTTPException(status_code=403, detail="Admin access required")
+    admin_principal = None
+    if debug or exclude_reviewed:
+        admin_principal = await _resolve_admin_principal(secret, request, db)
+        if admin_principal is None:
+            _set_feed_timing_header(response, _started_at)
+            raise HTTPException(status_code=403, detail="Admin access required")
 
     # #240 Item 4: server-side Discover default. The native default tab calls
     # GET /api/feed?limit=50 with NO mode/event_pct and was served the RAW,
@@ -2390,10 +2393,9 @@ async def get_feed(
             # Resolve reviewer: when "native" and authenticated via Bearer token,
             # use the admin's email for per-user reviewed state.
             effective_reviewer = reviewer
-            if reviewer == "native":
-                admin_email = await _resolve_admin_email(request, db)
-                if admin_email:
-                    effective_reviewer = admin_email
+            if reviewer == "native" and admin_principal is not None:
+                if admin_principal.email:
+                    effective_reviewer = admin_principal.email
 
             reviewed_keys = await _load_reviewed_ranking_keys(
                 db,

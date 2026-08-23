@@ -28,12 +28,58 @@ export interface AdminIdentityState {
   email: string | null;
 }
 
+export interface AdminIdentityEpochState {
+  epoch: number;
+  uid: string | null;
+}
+
+export interface AdminIdentityProbeStamp {
+  epoch: number;
+  uid: string;
+}
+
 /** No identity credential is held. The only safe resting state. */
 export const NO_ADMIN_IDENTITY: AdminIdentityState = {
   uid: null,
   token: null,
   email: null,
 };
+
+/** Advance the authorization generation whenever the observed principal changes. */
+export function adminIdentityEpochAfterAuthChange(
+  current: AdminIdentityEpochState,
+  nextUid: string | null,
+): AdminIdentityEpochState {
+  if (current.uid === nextUid) return current;
+  return { epoch: current.epoch + 1, uid: nextUid };
+}
+
+/** Stamp a whoami request with the generation and principal that issued it. */
+export function stampAdminIdentityProbe(
+  current: AdminIdentityEpochState,
+): AdminIdentityProbeStamp | null {
+  if (!current.uid) return null;
+  return { epoch: current.epoch, uid: current.uid };
+}
+
+/** True only while this response still belongs to the live auth generation. */
+export function adminIdentityProbeIsCurrent(
+  current: AdminIdentityEpochState,
+  stamp: AdminIdentityProbeStamp,
+): boolean {
+  return current.epoch === stamp.epoch && current.uid === stamp.uid;
+}
+
+/** Fold a completed whoami response into identity state, fail-closed on drift. */
+export function adminIdentityAfterProbe(
+  current: AdminIdentityState,
+  epochState: AdminIdentityEpochState,
+  stamp: AdminIdentityProbeStamp,
+  granted: AdminIdentityState,
+): AdminIdentityState {
+  if (!adminIdentityProbeIsCurrent(epochState, stamp)) return current;
+  return granted;
+}
 
 /**
  * Fold a new auth-principal observation into the held identity credential.

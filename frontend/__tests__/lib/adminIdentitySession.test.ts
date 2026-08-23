@@ -23,6 +23,9 @@
 import {
   NO_ADMIN_IDENTITY,
   adminIdentityAfterAuthChange,
+  adminIdentityAfterProbe,
+  adminIdentityEpochAfterAuthChange,
+  stampAdminIdentityProbe,
   type AdminIdentityState,
 } from "@/lib/adminIdentitySession";
 
@@ -93,6 +96,81 @@ describe("adminIdentityAfterAuthChange", () => {
   });
 });
 
+describe("whoami response epochs", () => {
+  it("does not restore a bearer when a delayed response arrives after logout", () => {
+    const issuedUnder = adminIdentityEpochAfterAuthChange(
+      { epoch: 0, uid: null },
+      SIGNED_IN.uid,
+    );
+    const stamp = stampAdminIdentityProbe(issuedUnder);
+    expect(stamp).not.toBeNull();
+
+    const afterLogout = adminIdentityEpochAfterAuthChange(issuedUnder, null);
+    const delivered = adminIdentityAfterProbe(
+      NO_ADMIN_IDENTITY,
+      afterLogout,
+      stamp!,
+      SIGNED_IN,
+    );
+
+    expect(delivered).toBe(NO_ADMIN_IDENTITY);
+    expect(delivered.token).toBeNull();
+  });
+
+  it("does not restore account A when its delayed response arrives after a switch", () => {
+    const issuedUnder = adminIdentityEpochAfterAuthChange(
+      { epoch: 4, uid: null },
+      SIGNED_IN.uid,
+    );
+    const stamp = stampAdminIdentityProbe(issuedUnder);
+    expect(stamp).not.toBeNull();
+
+    const afterSwitch = adminIdentityEpochAfterAuthChange(
+      issuedUnder,
+      "firebase-uid-someone-else",
+    );
+    const delivered = adminIdentityAfterProbe(
+      NO_ADMIN_IDENTITY,
+      afterSwitch,
+      stamp!,
+      SIGNED_IN,
+    );
+
+    expect(delivered).toBe(NO_ADMIN_IDENTITY);
+    expect(delivered.uid).toBeNull();
+  });
+
+  it("does apply the response while its issuing epoch is still current", () => {
+    const current = adminIdentityEpochAfterAuthChange(
+      { epoch: 0, uid: null },
+      SIGNED_IN.uid,
+    );
+    const stamp = stampAdminIdentityProbe(current);
+    expect(stamp).not.toBeNull();
+
+    expect(
+      adminIdentityAfterProbe(NO_ADMIN_IDENTITY, current, stamp!, SIGNED_IN),
+    ).toBe(SIGNED_IN);
+  });
+
+  it("does not invalidate an in-flight probe on a same-principal refresh", () => {
+    const issuedUnder = adminIdentityEpochAfterAuthChange(
+      { epoch: 0, uid: null },
+      SIGNED_IN.uid,
+    );
+    const stamp = stampAdminIdentityProbe(issuedUnder);
+    const refreshed = adminIdentityEpochAfterAuthChange(
+      issuedUnder,
+      SIGNED_IN.uid,
+    );
+
+    expect(refreshed).toBe(issuedUnder);
+    expect(
+      adminIdentityAfterProbe(NO_ADMIN_IDENTITY, refreshed, stamp!, SIGNED_IN),
+    ).toBe(SIGNED_IN);
+  });
+});
+
 // --------------------------------------------------------------------------
 // The wiring. Without this, every assertion above could pass against a module
 // nothing imports — the reducer would be correct and the provider still broken.
@@ -115,6 +193,12 @@ describe("AdminAuthProvider is bound to the live principal", () => {
 
   it("routes every identity transition through the reducer", () => {
     expect(source).toContain("adminIdentityAfterAuthChange");
+  });
+
+  it("stamps whoami probes and applies responses through the epoch guard", () => {
+    expect(source).toContain("stampAdminIdentityProbe");
+    expect(source).toContain("adminIdentityAfterProbe");
+    expect(source).not.toContain("setIdentity({");
   });
 
   it("no longer holds the token in a setter that nothing can clear", () => {

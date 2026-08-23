@@ -292,6 +292,9 @@ def test_create_judgment_canonicalizes_the_ux_p117_aliases(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).post(
         "/admin/ranking-judgments"
@@ -313,6 +316,9 @@ def test_create_judgment_routes_a_reasoned_bad_to_a_defect_cluster(monkeypatch):
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
 
     response = _client_with_db(db).post(
         "/admin/ranking-judgments?secret=ok&label=bad&reason_tags=stale"
@@ -331,6 +337,9 @@ def test_create_judgment_files_no_defect_for_a_praised_card(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(
         admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_utils, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     # `stale`, not a praise tag: it is the tag that WOULD route on a Bad, so this

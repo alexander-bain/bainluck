@@ -5,6 +5,7 @@ import {
   useContext,
   useState,
   useEffect,
+  useRef,
   type ReactNode,
 } from "react";
 import { getIdToken, onAuthChange } from "@/lib/firebase";
@@ -12,6 +13,12 @@ import { deriveAdminAuthValue } from "@/lib/adminAuthValue";
 import {
   NO_ADMIN_IDENTITY,
   adminIdentityAfterAuthChange,
+  adminIdentityAfterProbe,
+  adminIdentityEpochAfterAuthChange,
+  adminIdentityProbeIsCurrent,
+  stampAdminIdentityProbe,
+  type AdminIdentityEpochState,
+  type AdminIdentityProbeStamp,
   type AdminIdentityState,
 } from "@/lib/adminIdentitySession";
 
@@ -71,6 +78,10 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
     useState<AdminIdentityState>(NO_ADMIN_IDENTITY);
   const identityToken = identity.token;
   const identityEmail = identity.email;
+  const authEpochRef = useRef<AdminIdentityEpochState>({
+    epoch: 0,
+    uid: null,
+  });
   const [showTokenEntry, setShowTokenEntry] = useState(false);
 
   useEffect(() => {
@@ -112,10 +123,15 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
     // No auto-restore of the TOKEN from storage: it must be re-entered each
     // session. Identity is different in kind — it is the browser's existing
     // sign-in, not a credential this app persisted.
-    const probe = async (uid: string | null) => {
+    const probe = async (stamp: AdminIdentityProbeStamp) => {
       try {
         const token = await getIdToken();
-        if (cancelled) return;
+        if (
+          cancelled ||
+          !adminIdentityProbeIsCurrent(authEpochRef.current, stamp)
+        ) {
+          return;
+        }
         if (token) {
           const res = await fetch(`${API_URL}/api/admin/whoami`, {
             headers: { Authorization: `Bearer ${token}` },
@@ -123,11 +139,19 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
           if (!cancelled && res.ok) {
             const data: WhoAmI = await res.json();
             if (!cancelled && data.is_admin && data.via === "identity") {
-              setIdentity({
-                uid,
+              const granted: AdminIdentityState = {
+                uid: stamp.uid,
                 token,
                 email: data.email ?? null,
-              });
+              };
+              setIdentity((current) =>
+                adminIdentityAfterProbe(
+                  current,
+                  authEpochRef.current,
+                  stamp,
+                  granted,
+                ),
+              );
             }
           }
         }
@@ -161,13 +185,27 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
       const changed = !first && uid !== lastUid;
       lastUid = uid;
 
+      // The epoch is the authorization boundary, not a timing optimization.
+      // Logout and account switch both advance it before state is cleared, so
+      // even an already-arriving whoami response from the old principal cannot
+      // restore its bearer. Same-principal refresh emissions preserve it.
+      authEpochRef.current = adminIdentityEpochAfterAuthChange(
+        authEpochRef.current,
+        uid,
+      );
+
       setIdentity((current) => adminIdentityAfterAuthChange(current, uid));
 
       if (first || changed) {
         // Re-probe for the NEW principal. A uid is not a grant — only the
         // server knows whether it holds the admin role.
         if (uid) {
-          void probe(uid).then(() => {
+          const stamp = stampAdminIdentityProbe(authEpochRef.current);
+          if (!stamp) {
+            if (!cancelled) setChecking(false);
+            return;
+          }
+          void probe(stamp).then(() => {
             if (!cancelled) setChecking(false);
           });
           return;
@@ -189,6 +227,10 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
 
     return () => {
       cancelled = true;
+      authEpochRef.current = {
+        epoch: authEpochRef.current.epoch + 1,
+        uid: null,
+      };
       unsubscribe?.();
     };
   }, []);

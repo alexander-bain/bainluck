@@ -321,6 +321,31 @@ class TestFeedDebug:
 
 
 class TestFeedReviewedFiltering:
+    async def test_shared_token_reviewed_filter_does_not_reverify_identity(
+        self, client, monkeypatch
+    ):
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+        verify_calls = []
+
+        def recording_verifier(token, allow_session_token=True):
+            verify_calls.append(token)
+            return None
+
+        monkeypatch.setattr(
+            "app.services.firebase_auth.verify_id_token", recording_verifier
+        )
+
+        response = await client.get(
+            "/api/feed?exclude_reviewed=true&reviewer=native",
+            headers={"Authorization": "Bearer test-admin"},
+        )
+
+        assert response.status_code == 200
+        assert verify_calls == [], (
+            "The reviewed filter re-verified the shared ADMIN_TOKEN through the "
+            f"identity arm: {verify_calls}"
+        )
+
     def test_review_key_for_feed_item_uses_type_and_data_id(self):
         item = {"type": "futures", "data": {"id": "123"}}
 
