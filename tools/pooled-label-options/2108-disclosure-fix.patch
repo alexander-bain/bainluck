@@ -1,0 +1,213 @@
+--- a/frontend/lib/calibrationPopulation.ts
++++ b/frontend/lib/calibrationPopulation.ts
+@@ -33,11 +33,27 @@
+  * (or a disclosure) that is itself a false claim is worse than the bug it
+  * replaces.
+  *
+- * Pooling is not everywhere and not nowhere: exactly **2 of 128** rows pool —
+- * football and hockey — and hockey is the specimen the class was filed on. A
+- * rule that fired on every row would be noise; one that fired on none would
+- * have missed the case that prompted it.
++ * Pooling is COMMON, not rare, and the first draft of this comment got that
++ * exactly backwards. It said "exactly 2 of 128 rows pool — football and
++ * hockey". Measured against the live payload with the page's own functions
++ * (`tools/calibration-divergence/run.sh`, re-run 2026-08-23):
+  *
++ *   - 136 distinct RAW payload categories fold to 58 normalized keys
++ *   - 7 of those 58 keys pool: baseball(4) basketball(8) football(5)
++ *     hockey(4) mma(2) soccer(55) tennis(7)
++ *   - of the 15 rendered rows, 6 pool — soccer alone folds 55
++ *
++ * 128 was neither population. The reason it matters is that "2 of 128" was the
++ * argument for this being a narrow, targeted rule; at 6 of 15 rendered rows it
++ * is the COMMON case, and a disclosure the common case has to survive is a
++ * different object from a footnote about hockey.
++ *
++ * ** Do not restate a census here as a constant. ** The numbers above are dated
++ * because they move: between 2026-08-22 and 2026-08-23 tennis went from 3 to 4
++ * published members with no code change, purely because the payload gained a
++ * `by_category` row. Every count this module puts ON SCREEN is derived from the
++ * arguments it is handed, never from this comment.
++ *
+  * ── DERIVED, NOT WRITTEN ────────────────────────────────────────────────────
+  *
+  * Every sentence here is computed from the SAME inputs the number is computed
+@@ -96,8 +112,21 @@
+   title: string;
+ }
+ 
+-function label(cats: string[]): string {
++/**
++ * How many members to name before collapsing to "and N more".
++ *
++ * Not cosmetic. `soccer` folds 55 payload categories, and the uncapped form
++ * enumerated all 55 inside a tooltip — a wall of identifiers is not a
++ * disclosure, it is a way of technically having said something. The COUNT is
++ * always printed, so the cap never hides the size.
++ */
++const MEMBER_NAME_CAP = 4;
++
++function label(cats: string[], cap = Infinity): string {
+   if (cats.length <= 1) return cats[0] ?? "";
++  if (cats.length > cap) {
++    return `${cats.slice(0, cap).join(", ")} and ${cats.length - cap} more`;
++  }
+   return `${cats.slice(0, -1).join(", ")} and ${cats[cats.length - 1]}`;
+ }
+ 
+@@ -123,10 +152,28 @@
+   // The pooling clause leads when it applies, because it is the larger and the
+   // less guessable of the two differences: a reader can imagine a cohort filter,
+   // but cannot imagine that "Hockey" silently means four payload categories.
+-  const poolingClause = pools
+-    ? `pools the published categories ${label(pooled)}`
+-    : null;
++  //
++  // The members are split by whether the API actually publishes them, because
++  // "published" is the word doing the work here — it is what tells a reader
++  // they could go and verify. For soccer it was true of 1 member in 55. Calling
++  // 54 unlookup-able identifiers "published" is the same class of error as
++  // UX-P115's `SETTLED_NO_GRADE_LABEL`: a disclosure that is itself a false
++  // claim is worse than the bug it replaces.
++  const publishedNames = new Set(published.map(p => p.category));
++  const pooledPublished = pooled.filter(c => publishedNames.has(c));
++  const pooledUnpublished = pooled.filter(c => !publishedNames.has(c));
+ 
++  const poolingClause = !pools
++    ? null
++    : pooledPublished.length === 0
++      ? `pools ${pooled.length} payload categories, none of them published in ` +
++        `\`by_category\` (${label(pooled, MEMBER_NAME_CAP)})`
++      : pooledUnpublished.length === 0
++        ? `pools ${pooled.length} published categories (${label(pooledPublished, MEMBER_NAME_CAP)})`
++        : `pools ${pooled.length} payload categories — ${pooledPublished.length} published ` +
++          `in \`by_category\` (${label(pooledPublished, MEMBER_NAME_CAP)}) and ` +
++          `${pooledUnpublished.length} not published (${label(pooledUnpublished, MEMBER_NAME_CAP)})`;
++
+   const clauses = [poolingClause, cohortClause].filter(Boolean) as string[];
+ 
+   let sentence = `This row ${clauses.join(", and is ")}.`;
+@@ -153,8 +200,17 @@
+  * The section-level sentence: what the ECE column as a whole describes.
+  *
+  * Stated once at the top rather than repeated per row, because the cohort is a
+- * property of the table and repeating it 128 times is how a disclosure becomes
++ * property of the table and repeating it 15 times is how a disclosure becomes
+  * furniture nobody reads.
++ *
++ * ** BOTH ARGUMENTS MUST COME FROM THE SAME POPULATION. ** `pooledRowCount` and
++ * `totalRowCount` are printed as a fraction, so a caller that counts the
++ * numerator over every normalized key and the denominator over the RENDERED
++ * rows prints a ratio of two different things. That shipped: the page passed 7
++ * (all 58 keys, including the unrendered `mma`) over 15 (rendered rows), and a
++ * reader who hovered all 15 rows found 6. A disclosure whose own count does not
++ * survive being checked is worse than no disclosure. The caller is where this
++ * is enforced; this doc is here so the next caller knows the contract.
+  */
+ export function describeCategoryTablePopulation(
+   cohort: CohortKey,
+@@ -168,7 +224,9 @@
+   if (pooledRowCount <= 0) return base;
+   return (
+     base +
+-    ` ${pooledRowCount} of ${totalRowCount} rows also pool several published ` +
++    // "payload categories", not "published categories" — same #2108 defect 3
++    // as the per-row clause. Most folded members are NOT in `by_category`.
++    ` ${pooledRowCount} of ${totalRowCount} rows also pool several payload ` +
+     `categories under one label — hover a row to see exactly which.`
+   );
+ }
+--- a/frontend/app/calibration/page.tsx
++++ b/frontend/app/calibration/page.tsx
+@@ -1469,23 +1469,39 @@
+         </p>
+         {/* UX-P118 item 5: WHICH POPULATION. The API publishes a per-category
+             ECE over the whole population; this table renders one over the active
+-            cohort, and two of its rows additionally pool several published
++            cohort, and SIX of its fifteen rows additionally pool several payload
+             categories. Both numbers are correct about their own population —
+             unlabelled, the pair reads as a contradiction to anyone who curls the
+             API (hockey: 0.95pp published, 2.25pp here on 2026-08-21). The
+             sentence is DERIVED from the same inputs the numbers are, so it
+-            cannot drift from the predicate it describes. */}
+-        <p
+-          className="text-xs text-text-muted mb-4"
+-          data-testid="calibration-category-population-note"
+-          data-pooled-rows={[...pooledByCategory.values()].filter(v => v.length > 1).length}
+-        >
+-          {describeCategoryTablePopulation(
+-            cohort.key,
+-            [...pooledByCategory.values()].filter(v => v.length > 1).length,
+-            categoryMetrics.length
+-          )}
+-        </p>
++            cannot drift from the predicate it describes.
++
++            #2108 defect 2: the numerator below MUST be counted over the rows
++            this table actually RENDERS, not over every normalized key.
++            `pooledByCategory` is built from every bucket in the payload, so it
++            contains keys that never reach the screen — `mma` pools and is not
++            rendered. Counting it gave "7 of 15", a fraction whose halves come
++            from two different populations, and a reader who hovered all fifteen
++            rows found six. Derive both from `categoryMetrics`. */}
++        {(() => {
++          const pooledRendered = categoryMetrics.filter(
++            cm => (pooledByCategory.get(cm.category) ?? []).length > 1
++          ).length;
++          return (
++            <p
++              className="text-xs text-text-muted mb-4"
++              data-testid="calibration-category-population-note"
++              data-pooled-rows={pooledRendered}
++              data-total-rows={categoryMetrics.length}
++            >
++              {describeCategoryTablePopulation(
++                cohort.key,
++                pooledRendered,
++                categoryMetrics.length
++              )}
++            </p>
++          );
++        })()}
+         {/* CAL-P067 item 4 (Fable ruling): the selection-bias disclosure. This
+             is deliberately NOT phrased as a sample-size caveat — the two look
+             alike and have opposite remedies. More data fixes a small sample; it
+--- a/frontend/__tests__/lib/calibrationPopulation.test.ts
++++ b/frontend/__tests__/lib/calibrationPopulation.test.ts
+@@ -47,9 +47,18 @@
+     expect(d.pools).toBe(true);
+     expect(d.pooledFrom).toEqual([...HOCKEY_POOL].sort());
+     // BOTH axes, or the sentence is a false account of the number beside it.
+-    expect(d.sentence).toContain("pools the published categories");
++    expect(d.sentence).toContain("pools 4 payload categories");
+     expect(d.sentence).toContain("icehockey_nhl");
+     expect(d.sentence).toContain("traded outcomes only");
++    // #2108 defect 3: only the members the API actually publishes may be
++    // called published. HOCKEY_POOL's two Swedish leagues are not in
++    // PUBLISHED, so the sentence must separate them rather than sweep all
++    // four under the word that invites the reader to go and verify.
++    expect(d.sentence).toContain("2 published in");
++    expect(d.sentence).toContain("2 not published");
++    expect(d.sentence).not.toMatch(
++      /pools (the published categories|4 published categories)/
++    );
+   });
+ 
+   it("reconciles against the figure the API publishes under the same name", () => {
+@@ -97,8 +106,14 @@
+     expect(d.publishedEce).toBeNull();
+     expect(d.publishedN).toBeNull();
+     expect(d.sentence).not.toContain("The API publishes");
+-    // …but the pooling half still has to be stated.
+-    expect(d.sentence).toContain("pools the published categories");
++    // …but the pooling half still has to be stated. The displayed name is not
++    // a payload key here, so NOTHING in the pool is published — the sentence
++    // must say so outright rather than name a "published" set that is empty.
++    expect(d.sentence).toContain("pools 2 payload categories");
++    expect(d.sentence).toContain("none of them published");
++    // The point is that NO member may be counted as published, not that the
++    // phrase is absent — "none of them published in `by_category`" contains it.
++    expect(d.sentence).not.toMatch(/\d+ published in/);
+   });
+ 
+   it("does not present a published category whose ece is null as a figure", () => {
