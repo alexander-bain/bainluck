@@ -45,6 +45,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _mutation_guard import guarded_targets  # noqa: E402
+
 BACKEND = Path(__file__).resolve().parents[2]
 
 WARMER = BACKEND / "app" / "tasks" / "typeahead_warmer.py"
@@ -154,7 +156,7 @@ def _run_oracles() -> tuple[bool, str]:
     return proc.returncode == 0, (tail[-1] if tail else "<no output>")
 
 
-def main() -> int:
+def _main() -> int:
     BACKUP_DIR.mkdir(exist_ok=True)
     original = {t: _sha(t) for t in TARGETS}
     backups = {}
@@ -213,6 +215,21 @@ def main() -> int:
     print("target restored, SHA matches original")
     return 0 if (not survived and not not_applied) else 1
 
+
+
+def main() -> int:
+    """Run the harness with an UNCONDITIONAL restore around it — #2107 sibling.
+
+    `_main()` still restores after each mutant, exactly as before; this is the
+    net under it. The incident it exists for is `bcdcd95f`, where a harness
+    died at **exit 143** between writing a mutant and restoring it, and the
+    mutant rode a commit. `try/finally` alone does not survive SIGTERM, so the
+    guard installs the handler that gives `finally` something to run on — see
+    `_mutation_guard.py` for the four failure cases and which one is not
+    catchable.
+    """
+    with guarded_targets(TARGETS, BACKUP_DIR, 'lat_p056_typeahead_warmer'):
+        return _main()
 
 if __name__ == "__main__":
     raise SystemExit(main())
