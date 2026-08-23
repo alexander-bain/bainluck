@@ -344,7 +344,9 @@ def test_the_censoring_rule_still_lets_a_real_degradation_through():
     """A gate that could not go red is the defect LAT-P079 minted and caught."""
     obs = _all_holding()
     victim = BASELINE_BY_TASK["app.tasks.precompute_source_intelligence"]
-    obs[victim.metrics_name] = _obs(victim.p50_s * (DEGRADE_P50_RATIO + 0.5))
+    # #2116: BOTH gates. `degrade_trips_at_s` is the beat's own effective
+    # threshold, so this stays a real degradation as the floors evolve.
+    obs[victim.metrics_name] = _obs(victim.degrade_trips_at_s + 1.0)
 
     assert grade_move(obs, now_epoch=AT_HORIZON).verdict == "REVERT"
 

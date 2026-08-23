@@ -1167,6 +1167,8 @@ async def heavy_move_falsifier(
 
     from app.utils.heavy_routing_falsifier import (
         BASELINE_BY_TASK,
+        CONSUMER_FLOOR_S,
+        beat_payload,
         DEGRADE_P50_RATIO,
         HEAVY_MOVE_EXCEPTION,
         POST_MOVE_RING_SHARE_REQUIRED,
@@ -1205,6 +1207,11 @@ async def heavy_move_falsifier(
         "verdict": result.verdict,
         "reason": result.reason,
         "degrade_p50_ratio": DEGRADE_P50_RATIO,
+        # #2116. The ratio alone was 67x more sensitive to the beat that matters
+        # least, so a beat now degrades only when the ratio AND an absolute
+        # delta in seconds both trip. The floor is per-consumer and every beat
+        # declares which class it is in.
+        "consumer_floor_s": dict(CONSUMER_FLOOR_S),
         "exception_tasks": sorted(HEAVY_MOVE_EXCEPTION),
         # Carried so a reader never reconstructs the horizon from
         # `heroku releases` — and so "how old is this grade" is a field rather
@@ -1223,35 +1230,10 @@ async def heavy_move_falsifier(
         # NOT part of the grade — the ruling's condition is about the
         # calibration beats the exception might harm — but P4 is theirs.
         "movers": summarize_movers(observations, age_since_move_s=age_s),
-        "beats": [
-            {
-                "task": b.task,
-                "verdict": b.verdict,
-                "reason": b.reason,
-                "baseline_p50_s": b.baseline_p50_s,
-                "observed_p50_s": b.observed_p50_s,
-                "ratio": round(b.ratio, 3) if b.ratio is not None else None,
-                "post_move_ring_share": b.post_move_ring_share,
-                # #2071. `censored_side` distinguishes "never was readable"
-                # (tells a reader nothing) from "was readable, has newly pinned"
-                # (the loudest fact on the panel). `observed_clip_rate` rides on
-                # HOLD too: a beat can hold on its median while a rising share
-                # of its runs clip at the clamp, and a panel printing only the
-                # median would show that as no change at all.
-                "censored_side": b.censored_side,
-                "observed_clip_rate": b.observed_clip_rate,
-                # Ruling 120. A baseline is a claim about the system we run in,
-                # and a pin taken across a dated step reads as a constant
-                # forever — #2102 found one here reading ~6x against a healthy
-                # beat. Printing the regime beside the number is what lets a
-                # reader tell a measurement from an artefact without going back
-                # to the source.
-                "baseline_regime": (
-                    BASELINE_BY_TASK[b.task].regime if b.task in BASELINE_BY_TASK else None
-                ),
-            }
-            for b in result.beats
-        ],
+        # ONE producer for this block, shared with
+        # `scripts/falsifier_offline_mirror.py`. Both used to build it by hand and
+        # #2116 drifted them on its first run — see `beat_payload`.
+        "beats": [beat_payload(b) for b in result.beats],
         "note": (
             "REVERT obliges the same window: remove the two names from "
             "HEAVY_TASKS, set both beat entries' literal options.queue back to "

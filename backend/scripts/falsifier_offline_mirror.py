@@ -71,7 +71,9 @@ from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.utils.heavy_routing_falsifier import (  # noqa: E402
+    CONSUMER_FLOOR_S,
     DEGRADE_P50_RATIO,
+    beat_payload,
     HEAVY_MOVE_EXCEPTION,
     POST_MOVE_RING_SHARE_REQUIRED,
     READ_SET,
@@ -137,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         "verdict": result.verdict,
         "reason": result.reason,
         "degrade_p50_ratio": DEGRADE_P50_RATIO,
+        "consumer_floor_s": dict(CONSUMER_FLOOR_S),
         "exception_tasks": sorted(HEAVY_MOVE_EXCEPTION),
         "horizon": {
             "routing_change_at_epoch": ROUTING_CHANGE_AT_EPOCH,
@@ -147,20 +150,10 @@ def main(argv: list[str] | None = None) -> int:
             "counters_clear_the_move": age_s >= RUN_COUNTER_WINDOW_S,
         },
         "movers": summarize_movers(observations, age_since_move_s=age_s),
-        "beats": [
-            {
-                "task": b.task,
-                "verdict": b.verdict,
-                "reason": b.reason,
-                "baseline_p50_s": b.baseline_p50_s,
-                "observed_p50_s": b.observed_p50_s,
-                "ratio": round(b.ratio, 3) if b.ratio is not None else None,
-                "post_move_ring_share": b.post_move_ring_share,
-                "censored_side": b.censored_side,
-                "observed_clip_rate": b.observed_clip_rate,
-            }
-            for b in result.beats
-        ],
+        # Shared with the route (`beat_payload`), never re-typed. This block
+        # used to be a hand copy and #2116 caught it emitting `null` for six
+        # new fields while still being read as the authoritative re-grade.
+        "beats": [beat_payload(b) for b in result.beats],
     }
 
     if args.out:

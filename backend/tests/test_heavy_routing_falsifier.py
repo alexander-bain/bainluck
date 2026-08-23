@@ -67,6 +67,23 @@ def _all_holding():
     return {b.metrics_name: _obs(b.p50_s) for b in PRE_MOVE_BASELINE}
 
 
+def _materially_degraded_p50(beat) -> float:
+    """A p50 that clears BOTH gates — the ratio AND #2116's materiality floor.
+
+    ONE definition, imported by every "the falsifier can go red" test in this
+    file. Before #2116 these tests each wrote their own multiple of the pinned
+    p50 (`* 2.0`, `* (DEGRADE_P50_RATIO + 0.5)`), which was fine while the ratio
+    was the only gate and became wrong the moment a second one existed: on
+    `precompute_source_intelligence` (pinned 17.5s) a doubling is +17.5s, under
+    the 60s floor its consumer class asks for, so five guards that exist to
+    prove the falsifier CAN fire would have quietly started asserting that it
+    does not. Deriving the number from the beat means the next threshold change
+    updates them all or reds them all — never some.
+    """
+    return beat.degrade_trips_at_s + 1.0
+
+
+
 # ---------------------------------------------------------------------------
 # The exception's SHAPE: two tasks, by name, not a class
 # ---------------------------------------------------------------------------
@@ -193,7 +210,7 @@ def test_baseline_soft_limits_match_the_configured_tasks():
 def test_falsifier_actually_fires_on_a_degraded_beat():
     obs = _all_holding()
     victim = BASELINE_BY_TASK["app.tasks.precompute_source_intelligence"]
-    obs[victim.metrics_name] = _obs(victim.p50_s * (DEGRADE_P50_RATIO + 0.5))
+    obs[victim.metrics_name] = _obs(_materially_degraded_p50(victim))
 
     result = grade_move(obs, now_epoch=AT_HORIZON)
     assert result.verdict == "REVERT"
@@ -205,7 +222,7 @@ def test_one_degraded_beat_is_enough():
     """The grant is conditional on ALL of them; any single failure revokes it."""
     obs = _all_holding()
     victim = BASELINE_BY_TASK["app.tasks.compute_fair_fight_comparison"]
-    obs[victim.metrics_name] = _obs(victim.p50_s * 2.0)
+    obs[victim.metrics_name] = _obs(_materially_degraded_p50(victim))
     assert grade_move(obs, now_epoch=AT_HORIZON).verdict == "REVERT"
 
 
@@ -214,15 +231,30 @@ def test_unchanged_production_holds():
 
 
 def test_threshold_boundary_is_not_inverted():
-    """Just under the ratio holds; just over it reverts."""
+    """Just under the effective threshold holds; just over it reverts.
+
+    #2116 changed WHICH boundary binds, not whether there is one. `degrade_trips_at_s`
+    is `max(ratio trip, floor trip)` — on this beat the floor is the binding
+    gate (+60s beats +4.4s), so testing the ratio edge alone would now be
+    testing a line nothing stands on.
+
+    🔴 Worth recording, because it is a real property of the current pins and
+    not an accident of this test: with these floors NO gradeable beat has the
+    ratio as its binding gate below its own censor point. The ratio is stricter
+    than the floor only on `precompute_backfill_winners_status`, whose ratio
+    trip (648.0s) sits ABOVE its censor point (588.0s), so the censor takes it
+    first. The ratio has not been removed; it has been left as the outer bound
+    it always was for slow beats.
+    """
     victim = BASELINE_BY_TASK["app.tasks.precompute_source_intelligence"]
+    trip = victim.degrade_trips_at_s
 
     under = _all_holding()
-    under[victim.metrics_name] = _obs(victim.p50_s * (DEGRADE_P50_RATIO - 0.01))
+    under[victim.metrics_name] = _obs(trip - 0.5)
     assert grade_move(under, now_epoch=AT_HORIZON).verdict == "HOLD"
 
     over = _all_holding()
-    over[victim.metrics_name] = _obs(victim.p50_s * (DEGRADE_P50_RATIO + 0.01))
+    over[victim.metrics_name] = _obs(trip + 0.5)
     assert grade_move(over, now_epoch=AT_HORIZON).verdict == "REVERT"
 
 
@@ -403,7 +435,7 @@ def test_the_horizon_gate_does_not_suppress_a_real_revert_after_it_opens():
     """It delays the verdict; it must never disarm it."""
     obs = _all_holding()
     victim = BASELINE_BY_TASK["app.tasks.precompute_source_intelligence"]
-    obs[victim.metrics_name] = _obs(victim.p50_s * 2.0)
+    obs[victim.metrics_name] = _obs(_materially_degraded_p50(victim))
     assert grade_move(obs, now_epoch=AT_HORIZON).verdict == "REVERT"
 
 
@@ -493,11 +525,13 @@ def test_a_stamped_ring_grades_on_its_post_move_samples_alone():
     beat = BASELINE_BY_TASK["app.tasks.precompute_source_intelligence"]
     v = grade_beat(
         beat,
-        _stamped(beat.p50_s, beat.p50_s * 2.0, n_pre=40, n_post=10),
+        _stamped(
+            beat.p50_s, _materially_degraded_p50(beat), n_pre=40, n_post=10
+        ),
         age_since_move_s=3600.0,  # ONE HOUR — no 24h wait needed
     )
     assert v.verdict == "degraded"
-    assert v.observed_p50_s == pytest.approx(beat.p50_s * 2.0)
+    assert v.observed_p50_s == pytest.approx(_materially_degraded_p50(beat))
     assert v.post_move_ring_share == 0.2
 
 
