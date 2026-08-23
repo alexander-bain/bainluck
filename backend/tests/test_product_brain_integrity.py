@@ -683,7 +683,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: 116 was verified free against the ledger AND the merged tree before it was written;
 #: `lane1/q353-process`, which was told to renumber its colliding 056 upward, is redirected
 #: to **117** in the same turn. Ruling 088 / #1910 — count, never add a delta.
-MINIMUM_BANKED_RULINGS = 115
+MINIMUM_BANKED_RULINGS = 117
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

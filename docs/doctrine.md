@@ -513,3 +513,107 @@ condition was *"`program/calibration-75` merges, master's highest clause reads 1
 and the UX lane writes `### 19.` unchanged"*. Both halves are now true
 (`origin/master` = `724fd22c`, highest clause **18**), and it is written here
 unchanged, at the number it was claimed at, **without a fifth renumber**.
+
+---
+
+# MECHANICAL SPECS — enforced by the Integrator, not judged by it
+
+Everything above this line is a **clause**: a sentence a reader applies with judgement.
+Everything below is a **spec**: a rule the Integrator executes without any. They live in
+one file because a spec whose reasoning is somewhere else gets edited by someone who
+never read the reasoning — but they are numbered separately (specs are named, not
+numbered) so a spec can never be mistaken for a doctrine clause, and so adding one
+cannot collide with a clause number another lane has claimed.
+
+## MECHANICAL SPEC — `beat_cost`
+
+**Owner:** the `latency` program. **Authority:** ruling 127 item 3 (PROGRAM CHARTER
+AMENDMENT, Fable 2026-08-23, Alex ruled).
+**Status: SPECIFIED 2026-08-23. ENFORCEMENT BEGINS THE CYCLE AFTER THIS SECTION MERGES
+TO MASTER** — a gate that starts refusing merges before its threshold is published
+refuses them for a reason nobody can read.
+
+### The named failure it prices
+
+CAL-P078's rolling re-stage (v3874, 2026-08-20 10:45:57 PDT) took
+`precompute_calibration_main` from a p50 of **163 s to 1,263 s — 7.74×** — on the one
+beat a user-facing page waits on, with no declaration anywhere. That silence cost three
+latency cycles establishing the step was not caused by ruling 110's routing change, plus
+one falsifier baseline that read ~6× against a perfectly healthy beat until ruling 123
+re-pinned it.
+
+**The flag does not forbid the change.** That re-stage was correct and would have been
+approved. It makes a regime change arrive **announced**, so the next reader of that
+beat's latency knows they are looking at a new regime rather than a regression.
+
+#### 1. The field — mandatory, `none` explicit
+
+Every READY token and every PR description carries a `beat_cost:` line, exactly as they
+carry `migration_slot:` and `beat_schedule_change:`. **`beat_cost: none` is a valid and
+common value and must be written out.** A missing field is not `none` — it is silence,
+and a reader cannot tell silence from a decision (ruling 115's clause, applied to a
+third instrument).
+
+**The Integrator's whole job here is presence, not correctness.** It refuses a merge
+whose token omits the field. It does not evaluate the number — evaluating it would
+require the before/after only the changing lane holds.
+
+#### 2. When the value must be something other than `none`
+
+Declare when a change moves any beat's measured p50 by **both**
+
+* **≥ 1.25×**, **and**
+* **≥ 60 s absolute**
+
+— deliberately the same two-gate shape as ruling 126's degradation predicate, and for
+the same reason: a pure ratio is sharpest where a beat matters least, so a bare ratio
+would demand a declaration for +4 s on a 17 s beat and excuse +297 s on the beat a page
+waits on.
+
+**Or when either of these is true after the change, whatever the p50 did**, because both
+are failure modes a median cannot see:
+
+* `p95 / soft_time_limit ≥ 0.80` — headroom. A beat at 94 % is one bad day from
+  `SoftTimeLimitExceeded`.
+* `p50 × runs_24h ≥ 3,600 s/day` — one worker-slot-hour per day. A beat that doubles its
+  p50 and halves its frequency costs the same capacity, and a p50 alone cannot say so.
+
+#### 3. The value is MEASURED, never typed
+
+    source ~/.claude/.env
+    python3 backend/scripts/measure_beat_cost.py --task <metrics_name>
+    python3 backend/scripts/measure_beat_cost.py --all-watched
+
+The script prints the block to paste. This is not convenience: lane1's doctrine clause
+**20** — *a hand-written field is unvalidated input, not a measurement* — is the reason.
+A field a human types is a claim, and the Integrator cannot tell a careful claim from a
+careless one, so the only enforceable version is one whose value came from a command.
+
+Declaration shape:
+
+    beat_cost: <metrics_name> p50 <before>s -> <after>s (<ratio>x, +<abs>s)
+               p95/soft <pct> · slot_s/day <n> · measured <ISO8601> via measure_beat_cost.py
+
+`beat_cost: none` needs no numbers.
+
+#### 4. Two traps the measurement itself must not fall into
+
+* **Zero counters over a live ring mean the counters EXPIRED, not that the beat is
+  idle.** `successes_24h`/`failures_24h` roll; the duration ring does not. The script's
+  own first run reported `runs_24h 0` and therefore `slot_seconds_per_day 0` for
+  `precompute_calibration_main` — a beat costing ~1,300 s an hour, rendered as costing
+  nothing, in the exact field a reader would use to decide a declaration was unnecessary.
+  It now reports **UNKNOWN** with the reason. (#2110 defect (b), one level out.)
+* **A beat's `soft_time_limit` is not always its clamp.** Where a task imposes a tighter
+  budget on itself (`compute_calibration_prices` stops at its own 540 s, not at the
+  configured 600 s), the self-imposed budget is the denominator. See
+  `BeatBaseline.effective_clamp_s`.
+
+#### 5. Baseline at specification time — the flag is not theoretical
+
+Measured 2026-08-23 against production, `--all-watched`: **four of the seven watched
+beats already sit at or past the 80 % headroom threshold** —
+`precompute_backfill_winners_status` **102 %** (its p95 is over its soft limit),
+`calibration_prices` 95 %, `precompute_calibration_main` 94 %, `coverage_metrics` 80 %.
+Any change touching those beats needs a declaration on the headroom gate alone,
+regardless of what it does to their medians.
