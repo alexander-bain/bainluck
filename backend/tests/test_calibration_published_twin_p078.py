@@ -64,7 +64,11 @@ class TestThePopulationIsTheCanonicalOne:
         """A pooled comparison is how a 41 pp cell hid behind a -6.58 pp gap."""
         sql = published_population_fold_sql()
         assert "d.source" in sql and "d.category" in sql
-        assert "GROUP BY 1, 2, 3" in sql
+        # CAL-P088 / #2111: FOUR grouping dimensions now. ``price_moved`` is the
+        # payload's fourth key, and folding by three compared a pooled DB rate
+        # against one arbitrary stratum.
+        assert "d.price_moved" in sql
+        assert "GROUP BY 1, 2, 3, 4" in sql
 
     def test_it_is_a_read(self):
         """Comments are stripped FIRST, and finding that out was the point.
@@ -121,8 +125,12 @@ class TestTheBoundIsEarnedNotChosen:
 class TestTheReconciliation:
     @staticmethod
     def _cells(rate: float, n: int = 100):
-        return {("kalshi", "sports"): {3: {"n": n, "winners": int(n * rate),
-                                           "sum_prob": n * 0.35}}}
+        # CAL-P088 / #2111: the bucket key is (bucket_idx, price_moved). These
+        # fixtures do not set ``price_moved`` on the published side either, so
+        # both sides normalize to ``None`` and every assertion below is
+        # unchanged in meaning — only the key's SHAPE moved.
+        return {("kalshi", "sports"): {(3, None): {"n": n, "winners": int(n * rate),
+                                                   "sum_prob": n * 0.35}}}
 
     @staticmethod
     def _published(rate: float):
@@ -228,7 +236,10 @@ class TestTheFold:
         ]
         cells = fold_rows_to_cells(rows)
         assert set(cells) == {("kalshi", "sports")}
-        assert cells[("kalshi", "sports")][3]["winners"] == 8
+        # CAL-P088 / #2111: these rows carry no ``price_moved`` attribute, so it
+        # normalizes to ``None`` — the CELL key is unchanged, the BUCKET key is
+        # now a pair.
+        assert cells[("kalshi", "sports")][(3, None)]["winners"] == 8
 
     def test_a_null_bucket_row_is_not_a_bucket(self):
         rows = [SimpleNamespace(source="kalshi", category="sports", bucket_idx=None,

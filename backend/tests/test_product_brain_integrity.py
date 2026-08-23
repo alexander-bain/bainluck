@@ -688,7 +688,23 @@ def test_ruling_numbers_are_unique() -> None:
 # The two branches are INDEPENDENT and both are ready. Whichever merges second will conflict
 # here, and **the correct merged value is neither side's: it is 117** — master's 113 files, plus
 # -53's three, plus this branch's one. Do not take a side; count the merged tree.
-MINIMUM_BANKED_RULINGS = 114
+#
+# ⚠️ CAL-P088 DEEPENS THAT COLLISION BY TWO, DELIBERATELY AND UNDER PROTEST.
+# `program/calibration-86` banks rulings **124** and **125**, so this constant goes
+# 114 -> 115 (with 124) -> 116 (with 125) on this branch.
+#
+# The CAL-P088 directive said this constant should stay UNTOUCHED, and it cannot:
+# `test_the_floor_tracks_reality_and_is_raised_when_a_ruling_is_banked` asserts
+# `banked == MINIMUM_BANKED_RULINGS` — EXACT equality, not `>=` — and its message says
+# "Raise it to N in this same commit". Two of this file's three assertions are `>=`, which is
+# what made "leave it alone" look available; the third is not. Leaving it would have shipped
+# a red gate, so the constant moves and the collision is DECLARED rather than avoided.
+#
+# The merged value is still nobody's side. Counting the full merge — master's 113, plus -53's
+# three, plus -84's one (117), plus this branch's two (124, 125) — the correct merged value is
+# **119**. Do not take a side; run `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` on the merged
+# tree (ruling 088 / #1910 — count, never add a delta).
+MINIMUM_BANKED_RULINGS = 115
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

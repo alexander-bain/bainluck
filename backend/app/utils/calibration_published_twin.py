@@ -103,6 +103,36 @@ VERDICT_AGREES = "agrees"
 VERDICT_DISAGREES = "disagrees"
 VERDICT_UNMEASURABLE = "unmeasurable"
 
+#: **RULING 124 — the MIN-N FLOOR on ``published_only_in_scope``.**
+#:
+#: An in-scope published bucket carrying ``n <= 2`` outcomes is REPORTED, and
+#: can never ALONE force ``disagrees``.
+#:
+#: Why a floor at all. CAL-P086B made an in-scope published cell with no twin
+#: row force ``disagrees``, and that was right — before it, ``agrees`` was
+#: reachable over 28.8% of the curve and **a fold that produced nothing read as
+#: agreement**, i.e. Gate 5 could be met by a timeout. But it also made the
+#: verdict answer to the KEY SET rather than to tolerance, and
+#: ``published_only_in_scope`` is **not tolerance-scaled**: one thin bucket
+#: forces ``disagrees`` at any bound, including the 100 pp bound the bank's own
+#: 128/128 drift currently pins. The tail of a partitioned population is always
+#: populated by ones and twos, so a rule that weighs them equally is a rule that
+#: can never go green for reasons unrelated to what it grades.
+#:
+#: Why 2, and why this is not an escape hatch. MEASURED on the 2026-08-22
+#: payload (``ARTIFACT-CAL-P087-GATE0-SPLIT-PRE-READ.json``): **159 of the 608
+#: in-scope bucket keys carry ``n <= 2``**, so **449 survive the floor** and
+#: Gate 0 still reads RED today. ``agrees``-by-timeout stays dead — a fold that
+#: produces nothing leaves all 449 unmatched. That property is the ruling's
+#: precondition, not a happy accident, and
+#: ``test_cal_p088_min_n_floor.py::test_floor_cannot_resurrect_agrees_by_timeout``
+#: pins it.
+#:
+#: The floor is REPORTED, never silent (gotcha #53): suppressed keys are
+#: published under ``published_only_in_scope_below_floor`` with their own
+#: counts, so "no thin cells" and "thin cells discounted" are distinguishable.
+MIN_IN_SCOPE_N_FLOOR = 2
+
 #: The sources the fold's population can ever produce. MEASURED, not assumed
 #: (CAL-P086B, 2026-08-21):
 #:
@@ -139,17 +169,35 @@ FOLD_POPULATION_SOURCES = frozenset({"kalshi", "polymarket", "datagolf"})
 #: reported per (source, category) cell and a pooled comparison would let two
 #: cells' errors cancel — which is exactly how the 41 pp
 #: ``hockey/container_member`` cell hid behind a −6.58 pp pooled gap for months.
+#:
+#: #2111: ``price_moved`` is the FOURTH grouping dimension, and it is not
+#: optional. The producer's own published-bucket query
+#: (``precompute_calibration.py:2800``) reads
+#: ``SELECT bucket_idx, source, category, price_moved, is_nonexclusive_bundle
+#: ... FROM bucketed`` — where ``bucketed`` is ``SELECT * FROM deduped`` — and
+#: then merges the bundle rows back on the original FOUR keys in Python, which
+#: is why the served payload carries no ``is_nonexclusive_bundle`` field and why
+#: FOUR is the whole key. Measured against the live payload 2026-08-23:
+#: ``(source, category, bucket_idx)`` yields 1,483 distinct keys over 1,938 rows
+#: (**455 collapsed**); adding ``price_moved`` yields **1,938 distinct, 0
+#: collapsed**, and adding ``is_nonexclusive_bundle`` on top changes nothing.
+#:
+#: Folding by three while the payload reports four is not a smaller comparison,
+#: it is a WRONG one: it compares a pooled DB rate against whichever single
+#: stratum happened to come last in list order. ``deduped`` carries the column,
+#: so this costs one grouping dimension and no extra scan.
 FOLD_TAIL_SQL = """
 SELECT
     d.source                                                    AS source,
     d.category                                                  AS category,
+    d.price_moved                                               AS price_moved,
     LEAST(FLOOR(d.adj_opening_probability * 10)::int, 9)        AS bucket_idx,
     COUNT(*)                                                    AS n,
     SUM(CASE WHEN d.is_winner THEN 1 ELSE 0 END)                AS winners,
     SUM(d.adj_opening_probability)                              AS sum_prob
 FROM deduped d
-GROUP BY 1, 2, 3
-ORDER BY 1, 2, 3
+GROUP BY 1, 2, 3, 4
+ORDER BY 1, 2, 3, 4
 """
 
 
@@ -166,21 +214,63 @@ def published_population_fold_sql() -> str:
     return "WITH " + _calibration_population_ctes() + FOLD_TAIL_SQL
 
 
-def fold_rows_to_cells(rows: Iterable[Any]) -> dict[tuple[str, str], dict[int, dict]]:
-    """``(source, category) -> {bucket_idx: {n, winners, sum_prob}}``.
+def normalize_price_moved(value: Any) -> Optional[bool]:
+    """Canonicalize a ``price_moved`` value to ``True`` / ``False`` / ``None``.
+
+    #2111. The two sides of this comparison arrive from different transports —
+    one from a JSON payload, one from a database driver — and a key is only a
+    key if both sides spell it the same way. ``None`` is preserved as a THIRD
+    value rather than folded into ``False``: a row whose price-movement is
+    unknown is not a row whose price did not move, and collapsing them here
+    would be a miniature of the very defect this function exists to fix.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "t", "yes", "y", "1"}:
+            return True
+        if lowered in {"false", "f", "no", "n", "0"}:
+            return False
+        return None
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return None
+
+
+#: The published-side bucket key, and now the DB side's too. ``bucket_idx``
+#: alone was the #2111 defect.
+BucketKey = tuple[int, Optional[bool]]
+
+
+def fold_rows_to_cells(
+    rows: Iterable[Any],
+) -> dict[tuple[str, str], dict[BucketKey, dict]]:
+    """``(source, category) -> {(bucket_idx, price_moved): {n, winners, sum_prob}}``.
 
     Accepts driver rows or plain objects, the same accessor dance the rest of
     this codebase does, because a reader that only works against one row type is
     a reader that cannot be tested without a database.
+
+    #2111: the inner key gained ``price_moved`` and the outer key deliberately
+    did NOT. The CELL is still ``(source, category)`` — that is the unit the
+    payload reports, the unit ``cells_db`` / ``cells_published`` count, and the
+    unit the 41 pp ``hockey/container_member`` finding was expressed in. Pushing
+    ``price_moved`` up into the cell key would have doubled those two counts and
+    silently changed what every existing reader of them means, which is a second
+    behaviour change hiding inside a bug fix.
     """
-    cells: dict[tuple[str, str], dict[int, dict]] = {}
+    cells: dict[tuple[str, str], dict[BucketKey, dict]] = {}
     for row in rows:
         m = dict(row._mapping) if hasattr(row, "_mapping") else dict(vars(row))
         key = (str(m.get("source")), str(m.get("category")))
         bucket = m.get("bucket_idx")
         if bucket is None:
             continue
-        cells.setdefault(key, {})[int(bucket)] = {
+        bkey: BucketKey = (int(bucket), normalize_price_moved(m.get("price_moved")))
+        cells.setdefault(key, {})[bkey] = {
             "n": int(m.get("n") or 0),
             "winners": int(m.get("winners") or 0),
             "sum_prob": float(m.get("sum_prob") or 0.0),
@@ -229,15 +319,15 @@ def tolerance_pp(staged: Any) -> Optional[float]:
 
 def reconcile(
     *,
-    db_cells: Mapping[tuple[str, str], Mapping[int, Mapping[str, Any]]],
+    db_cells: Mapping[tuple[str, str], Mapping[BucketKey, Mapping[str, Any]]],
     published_buckets: Iterable[Mapping[str, Any]],
     staged: Any,
 ) -> dict[str, Any]:
     """Compare the DB-direct fold against a served payload, within its own bound.
 
     ``published_buckets`` is the payload's bucket list; each entry is expected to
-    carry ``source``, ``category``, ``bucket_idx`` and an observed rate under
-    either ``actual_rate`` or ``winners``/``n``.
+    carry ``source``, ``category``, ``bucket_idx``, ``price_moved`` and an
+    observed rate under either ``actual_rate`` or ``winners``/``n``.
 
     Every bucket lands in exactly one of four places, and the last two are the
     ones that make the verdict trustworthy:
@@ -272,16 +362,59 @@ def reconcile(
     rows. ``db_only`` is deliberately unchanged: the twin seeing MORE than the
     payload is a different and less alarming asymmetry, and folding it into this
     change would be a second behaviour change hiding inside the first.
+
+    CAL-P088 / #2111: the bucket key carries ``price_moved``
+    -------------------------------------------------------
+    The payload's bucket rows are keyed on FOUR dimensions. This function keyed
+    on three, so **455 of 1,937 rows were overwritten** — rate *and* ``n``. Two
+    consequences, and the second is the one that made it apply-blocking:
+
+    * the fold's POOLED rate was compared against whichever ``price_moved``
+      stratum happened to come last in list order — not a comparison of the same
+      quantity;
+    * ``scope.outcomes_published`` discarded the overwritten rows' ``n`` and read
+      **526,462 against a payload total of 869,978 — 39.5% short** — so every
+      percentage in the scope block was computed over a short denominator.
+
+    It was harmless only while ``db_rows`` was 0. The first fold that succeeds is
+    exactly the run Gate 5 waits on, so it had to land first.
+
+    Both sides now carry the dimension: :data:`FOLD_TAIL_SQL` groups by
+    ``price_moved`` (``deduped`` carries the column — the producer's own query
+    selects it) and the key is ``(bucket_idx, price_moved)``. The CELL stays
+    ``(source, category)``. ``scope.published_rows_read`` /
+    ``published_rows_collapsed`` report the collapse rather than asserting it
+    away, because the acceptance criterion is that it can never return SILENTLY.
+
+    CAL-P088 / RULING 124: the MIN-N FLOOR
+    --------------------------------------
+    An in-scope miss with ``n <= 2`` (:data:`MIN_IN_SCOPE_N_FLOOR`) is reported
+    but cannot ALONE force ``disagrees``. See the constant for the measurement
+    that makes this safe: 449 of 608 in-scope keys sit above the floor, so a
+    fold that produces nothing still reads RED and ``agrees``-by-timeout stays
+    dead.
     """
     bound = tolerance_pp(staged)
 
-    published: dict[tuple[str, str], dict[int, float]] = {}
+    published: dict[tuple[str, str], dict[BucketKey, float]] = {}
     # Bucket sizes, kept alongside the rates so the scope block can report a
     # share of OUTCOMES and not only a share of cells. The two differ a lot
     # here — 71.2% of cells are out of scope but only 15.58% of outcomes are —
     # and quoting whichever is more flattering is the failure this block exists
     # to prevent.
-    published_n: dict[tuple[str, str], dict[int, int]] = {}
+    # ``None`` means the payload did not DISCLOSE a size for this bucket, which
+    # is not the same fact as a size of zero and must not be discounted by
+    # RULING 124's floor. Same asymmetry :func:`tolerance_pp` uses for an
+    # undisclosed bank: the unknown direction is the one that cannot invent a
+    # pass.
+    published_n: dict[tuple[str, str], dict[BucketKey, Optional[int]]] = {}
+    # #2111: rows that arrived with a key already present. By construction of
+    # the four-dimension key this is 0 against a well-formed payload, and it is
+    # COUNTED rather than asserted because the acceptance criterion is that the
+    # collapse can never return SILENTLY. An assertion would crash the gate; a
+    # counter makes the next occurrence a number in the artifact.
+    rows_seen = 0
+    rows_collapsed = 0
     for entry in published_buckets:
         if not isinstance(entry, Mapping):
             continue
@@ -297,8 +430,17 @@ def reconcile(
         if rate is None:
             continue
         key = (str(entry.get("source")), str(entry.get("category")))
-        published.setdefault(key, {})[int(bucket)] = float(rate)
-        published_n.setdefault(key, {})[int(bucket)] = int(n) if isinstance(n, int) else 0
+        # #2111: the payload's bucket rows are keyed on FOUR dimensions, not
+        # three. Keying on three overwrote 455 of 1,937 rows — rate AND n — so
+        # the fold's pooled rate was compared against whichever price_moved
+        # stratum happened to come last, and scope.outcomes_published dropped
+        # the discarded row's n and read 39.5% short of the payload's own total.
+        bkey: BucketKey = (int(bucket), normalize_price_moved(entry.get("price_moved")))
+        rows_seen += 1
+        if bkey in published.get(key, {}):
+            rows_collapsed += 1
+        published.setdefault(key, {})[bkey] = float(rate)
+        published_n.setdefault(key, {})[bkey] = int(n) if isinstance(n, int) else None
 
     compared: list[dict[str, Any]] = []
     outside: list[dict[str, Any]] = []
@@ -307,19 +449,21 @@ def reconcile(
 
     for key, buckets in db_cells.items():
         for bucket, stats in buckets.items():
+            bucket_idx, price_moved = bucket
             mine = observed_rate(stats)
             theirs = published.get(key, {}).get(bucket)
             if mine is None:
                 continue
             if theirs is None:
                 db_only.append(
-                    {"source": key[0], "category": key[1], "bucket_idx": bucket,
-                     "n": int(stats.get("n") or 0)}
+                    {"source": key[0], "category": key[1], "bucket_idx": bucket_idx,
+                     "price_moved": price_moved, "n": int(stats.get("n") or 0)}
                 )
                 continue
             delta_pp = abs(mine - theirs) * 100.0
             record = {
-                "source": key[0], "category": key[1], "bucket_idx": bucket,
+                "source": key[0], "category": key[1], "bucket_idx": bucket_idx,
+                "price_moved": price_moved,
                 "db_rate": mine, "published_rate": theirs,
                 "delta_pp": delta_pp, "n": int(stats.get("n") or 0),
             }
@@ -334,9 +478,17 @@ def reconcile(
     outcomes_out_of_scope = 0
     outcomes_compared = 0
 
+    # RULING 124: the in-scope misses that are thick enough to speak for
+    # themselves, and the thin ones that are reported but cannot force a
+    # verdict alone.
+    published_only_in_scope_below_floor: list[dict[str, Any]] = []
+    outcomes_in_scope_below_floor = 0
+
     for key, buckets in published.items():
         for bucket in buckets:
-            n_here = published_n.get(key, {}).get(bucket, 0)
+            bucket_idx, price_moved = bucket
+            n_known = published_n.get(key, {}).get(bucket)
+            n_here = n_known or 0
             outcomes_published += n_here
             in_scope = key[0] in FOLD_POPULATION_SOURCES
             if not in_scope:
@@ -346,22 +498,50 @@ def reconcile(
                 record = {
                     "source": key[0],
                     "category": key[1],
-                    "bucket_idx": bucket,
+                    "bucket_idx": bucket_idx,
+                    "price_moved": price_moved,
                     "n": n_here,
                 }
                 published_only.append(record)
-                (
-                    published_only_in_scope if in_scope else published_only_out_of_scope
-                ).append(record)
+                if not in_scope:
+                    published_only_out_of_scope.append(record)
+                else:
+                    published_only_in_scope.append(record)
+                    # RULING 124. Note the record lands in BOTH lists: the union
+                    # ``published_only_in_scope`` keeps every row so no reader
+                    # loses one, and the below-floor list names the subset the
+                    # verdict discounts. A floor that removed rows from the
+                    # reported set would be indistinguishable from a fold that
+                    # found them.
+                    #
+                    # ``n_known is not None`` is load-bearing: a bucket whose
+                    # size the payload never disclosed is NOT a thin bucket, and
+                    # discounting it would let an undisclosed population buy
+                    # silence — the exact move ``tolerance_pp`` refuses one level
+                    # up. Undisclosed counts toward the verdict.
+                    if n_known is not None and n_known <= MIN_IN_SCOPE_N_FLOOR:
+                        published_only_in_scope_below_floor.append(record)
+                        outcomes_in_scope_below_floor += n_here
             else:
                 outcomes_compared += n_here
 
+    # RULING 124: only the misses ABOVE the floor can force a verdict.
+    in_scope_above_floor = (
+        len(published_only_in_scope) - len(published_only_in_scope_below_floor)
+    )
+
     if bound is None:
         verdict = VERDICT_UNMEASURABLE
-    elif outside or published_only_in_scope:
+    elif outside or in_scope_above_floor > 0:
         # An in-scope published cell with no twin row is the twin and the
         # producer disagreeing about the POPULATION. Before CAL-P086B this was
         # counted and then ignored by the verdict.
+        #
+        # RULING 124 narrows WHICH of them may force it — never whether they are
+        # reported. ``n <= 2`` is discounted because the rule is not
+        # tolerance-scaled and the tail of any partitioned population is thin by
+        # construction; 449 of the 608 in-scope keys measured on 2026-08-22 sit
+        # above the floor, so this cannot resurrect ``agrees``-by-timeout.
         verdict = VERDICT_DISAGREES
     else:
         verdict = VERDICT_AGREES
@@ -373,6 +553,21 @@ def reconcile(
         "buckets_compared": len(compared),
         "buckets_out_of_scope": len(published_only_out_of_scope),
         "buckets_in_scope_missing": len(published_only_in_scope),
+        # RULING 124. Both numbers, always: the floor's whole legitimacy is that
+        # the discounted set is visible beside the deciding one.
+        "min_in_scope_n_floor": MIN_IN_SCOPE_N_FLOOR,
+        "buckets_in_scope_missing_below_floor": len(
+            published_only_in_scope_below_floor
+        ),
+        "buckets_in_scope_missing_above_floor": in_scope_above_floor,
+        "outcomes_in_scope_missing_below_floor": outcomes_in_scope_below_floor,
+        # #2111. ``published_rows_read`` is the payload's own row count as this
+        # function saw it and ``published_rows_collapsed`` is how many of them
+        # shared a four-dimension key. The pair is what makes the fix checkable
+        # from the artifact alone: a non-zero collapse is now a REPORTED number
+        # instead of a silent overwrite of a rate and an n.
+        "published_rows_read": rows_seen,
+        "published_rows_collapsed": rows_collapsed,
         "outcomes_published": outcomes_published,
         "outcomes_out_of_scope": outcomes_out_of_scope,
         "pct_published_outcomes_in_scope": (
@@ -396,6 +591,10 @@ def reconcile(
         # ... and the split, which is what the verdict now reads.
         "published_only_in_scope": published_only_in_scope,
         "published_only_out_of_scope": published_only_out_of_scope,
+        # RULING 124: the discounted subset, reported under its own key. It is a
+        # SUBSET of ``published_only_in_scope``, not a fourth disjoint bucket —
+        # the union above still carries every row.
+        "published_only_in_scope_below_floor": published_only_in_scope_below_floor,
         "cells_db": len(db_cells),
         "cells_published": len(published),
         # Always present, including on an unmeasurable run: a reader must never

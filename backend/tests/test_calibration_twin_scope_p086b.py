@@ -74,7 +74,7 @@ class TestScopeIsDeclaredAndSplit:
     def test_an_out_of_scope_published_cell_does_not_make_the_verdict_disagree(self):
         """odds_api* cells are a declared scope limit, not a finding."""
         out = reconcile(
-            db_cells={("kalshi", "nba"): {5: _cell(0.55)}},
+            db_cells={("kalshi", "nba"): {(5, None): _cell(0.55)}},
             published_buckets=[
                 _pub("kalshi", "nba", 5, 0.55),
                 _pub("odds_api", "nba", 5, 0.99),
@@ -89,7 +89,7 @@ class TestScopeIsDeclaredAndSplit:
     def test_an_in_scope_published_cell_with_no_twin_row_is_a_DISAGREEMENT(self):
         """This is the case that was previously silent."""
         out = reconcile(
-            db_cells={("kalshi", "nba"): {5: _cell(0.55)}},
+            db_cells={("kalshi", "nba"): {(5, None): _cell(0.55)}},
             published_buckets=[
                 _pub("kalshi", "nba", 5, 0.55),
                 _pub("polymarket", "politics", 2, 0.20),
@@ -102,7 +102,7 @@ class TestScopeIsDeclaredAndSplit:
 
     def test_published_only_is_still_the_union_so_old_readers_do_not_lose_rows(self):
         out = reconcile(
-            db_cells={("kalshi", "nba"): {5: _cell(0.55)}},
+            db_cells={("kalshi", "nba"): {(5, None): _cell(0.55)}},
             published_buckets=[
                 _pub("kalshi", "nba", 5, 0.55),
                 _pub("polymarket", "politics", 2, 0.20),
@@ -119,7 +119,7 @@ class TestScopeIsDeclaredAndSplit:
 class TestTheVerdictCarriesItsOwnCoverage:
     def test_agrees_states_how_much_of_the_curve_it_compared(self):
         out = reconcile(
-            db_cells={("kalshi", "nba"): {5: _cell(0.55)}},
+            db_cells={("kalshi", "nba"): {(5, None): _cell(0.55)}},
             published_buckets=[
                 _pub("kalshi", "nba", 5, 0.55),
                 _pub("odds_api", "nba", 5, 0.99, n=900),
@@ -160,7 +160,7 @@ class TestTheVerdictCarriesItsOwnCoverage:
 class TestTheOldBehaviourThatMustNotChange:
     def test_a_cell_outside_tolerance_still_disagrees(self):
         out = reconcile(
-            db_cells={("kalshi", "nba"): {5: _cell(0.90)}},
+            db_cells={("kalshi", "nba"): {(5, None): _cell(0.90)}},
             published_buckets=[_pub("kalshi", "nba", 5, 0.10)],
             staged=STAGED_TIGHT,
         )
@@ -174,8 +174,8 @@ class TestTheOldBehaviourThatMustNotChange:
         the first."""
         out = reconcile(
             db_cells={
-                ("kalshi", "nba"): {5: _cell(0.55)},
-                ("kalshi", "mlb"): {1: _cell(0.15)},
+                ("kalshi", "nba"): {(5, None): _cell(0.55)},
+                ("kalshi", "mlb"): {(1, None): _cell(0.15)},
             },
             published_buckets=[_pub("kalshi", "nba", 5, 0.55)],
             staged=STAGED_WIDE,
@@ -190,9 +190,9 @@ class TestTheProductionShapeItWasWrittenFor:
 
     def test_the_real_seven_source_shape_agrees_and_declares_71_percent_out_of_scope(self):
         db_cells = {
-            ("kalshi", "nba"): {5: _cell(0.55)},
-            ("polymarket", "politics"): {2: _cell(0.20)},
-            ("datagolf", "golf"): {7: _cell(0.75)},
+            ("kalshi", "nba"): {(5, None): _cell(0.55)},
+            ("polymarket", "politics"): {(2, None): _cell(0.20)},
+            ("datagolf", "golf"): {(7, None): _cell(0.75)},
         }
         published = [
             _pub("kalshi", "nba", 5, 0.55),
@@ -221,8 +221,8 @@ class TestTheProductionShapeItWasWrittenFor:
         (ruling 087): drop one in-scope cell from the fold and the verdict must
         flip. If it does not, the split is bookkeeping."""
         db_cells = {
-            ("kalshi", "nba"): {5: _cell(0.55)},
-            ("datagolf", "golf"): {7: _cell(0.75)},
+            ("kalshi", "nba"): {(5, None): _cell(0.55)},
+            ("datagolf", "golf"): {(7, None): _cell(0.75)},
         }
         published = [
             _pub("kalshi", "nba", 5, 0.55),
