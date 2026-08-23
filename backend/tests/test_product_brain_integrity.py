@@ -714,7 +714,13 @@ def test_ruling_numbers_are_unique() -> None:
 #: INT-111 (wave 2, 2026-08-23): `program/latency-74` lands the HELD **119**, closing the
 #: gap from the middle exactly as the note above predicted. COUNTED on the merged tree =
 #: **120**. The branch declared 114 and HEAD 119; as ever, neither side's number was right.
-MINIMUM_BANKED_RULINGS = 120
+#:
+#: INT-111 (wave 2, cont.): `program/calibration-86` banks **124** and **125** (renumbered
+#: from 122/123, which were lost to a claim race). COUNTED on the merged tree = **122**.
+#: The branch declared 116 against a base of 119 — a third specimen of the stale-declared
+#: floor. Alex, INT-111: ignore EVERY declared value; the ledger and the tree are the only
+#: authorities.
+MINIMUM_BANKED_RULINGS = 122
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
