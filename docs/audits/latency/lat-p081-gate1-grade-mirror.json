@@ -1,0 +1,81 @@
+{
+  "failed_predictions": [
+    "P3",
+    "P4"
+  ],
+  "falsifier_reason": "1 calibration heavy-beat(s) degraded: precompute_calibration_main. Ruling 110's exception is revoked; revert the routing this window.",
+  "falsifier_verdict": "REVERT",
+  "grades": [
+    {
+      "beats_censored": 1,
+      "beats_gradeable": 2,
+      "beats_not_run": 2,
+      "beats_pre_horizon": 2,
+      "beats_total": 7,
+      "beats_unreadable": 0,
+      "claim": "no protected beat degrades (p50 ratio <= 1.25x)",
+      "coverage": "2/7 beats gradeable",
+      "degraded": [
+        {
+          "ratio": 6.104,
+          "reason": "p50 1310.6s is 6.10x its pre-move 214.7s (threshold 1.25x), on a ring 48% post-move",
+          "task": "app.tasks.precompute_calibration_main"
+        }
+      ],
+      "note": "2/7 beats gradeable, 2 pre-horizon, 1 CENSORED (unobservable, not passing), 2 NOT RUN (0 runs in 24h, not passing)",
+      "prediction": "P3",
+      "verdict": "FAILED"
+    },
+    {
+      "claim": "both moved tasks' 24h run counts RISE (31->72, 45->96) \u2014 starved, not idle",
+      "movers": [
+        {
+          "observed": true,
+          "p4": "flat_or_fell",
+          "pre_move_runs_24h": 31,
+          "runs_24h": 28,
+          "scheduled_fires_24h": 72,
+          "task": "app.tasks.backfill_market_shapes"
+        },
+        {
+          "observed": true,
+          "p4": "flat_or_fell",
+          "pre_move_runs_24h": 45,
+          "runs_24h": 43,
+          "scheduled_fires_24h": 96,
+          "task": "app.tasks.precompute_backfill_progress"
+        }
+      ],
+      "note": "",
+      "prediction": "P4",
+      "verdict": "FAILED"
+    },
+    {
+      "age_since_move_h": 24.0,
+      "beats_still_pre_horizon": [
+        "app.tasks.compute_fair_fight_comparison",
+        "app.tasks.precompute_source_intelligence"
+      ],
+      "claim": "past the horizon the falsifier reads HOLD (failable as REVERT and as INCONCLUSIVE)",
+      "counters_clear_the_move": true,
+      "falsifier_verdict": "REVERT",
+      "min_post_move_samples_required": 8,
+      "prediction": "P5",
+      "verdict": "PRE_HORIZON"
+    }
+  ],
+  "horizon": {
+    "age_since_move_h": 24.0,
+    "age_since_move_s": 86413.0,
+    "counters_clear_the_move": true,
+    "post_move_ring_share_required": 0.5,
+    "routing_change_at_epoch": 1787328520.0,
+    "run_counter_window_s": 86400.0
+  },
+  "retired_predictions": {
+    "P1": "period p95 < 200 s \u2014 pre-satisfied by the null (90.6 s, routing not deployed)",
+    "P2": "loss < 20 % \u2014 pre-satisfied by the null (19 %, routing not deployed)"
+  },
+  "revert_obliged": false,
+  "ruling": 110
+}

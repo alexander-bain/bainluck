@@ -710,7 +710,11 @@ def test_ruling_numbers_are_unique() -> None:
 #: to `latency` and 120 to `lane1`, so **121 is correct and the directive is superseded by the
 #: instrument it asked us to verify against** ("renumber 119, ledger-verified" — the ledger
 #: is the authority, and it had moved).
-MINIMUM_BANKED_RULINGS = 119
+#:
+#: INT-111 (wave 2, 2026-08-23): `program/latency-74` lands the HELD **119**, closing the
+#: gap from the middle exactly as the note above predicted. COUNTED on the merged tree =
+#: **120**. The branch declared 114 and HEAD 119; as ever, neither side's number was right.
+MINIMUM_BANKED_RULINGS = 120
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

@@ -148,6 +148,67 @@ METRICS_NAME: Mapping[str, str] = {
 }
 
 
+# Degradation thresholds. Deliberately generous: the falsifier exists to catch
+# a real regression on the calibration lane, not to trip on ordinary variance
+# in beats whose p50/p95 spread is already an order of magnitude wide.
+DEGRADE_P50_RATIO = 1.25
+CENSOR_FRACTION_OF_SOFT_LIMIT = 0.98
+
+
+@dataclass(frozen=True)
+class Reading:
+    """A percentile that knows whether it is a NUMBER or a BOUND (#2071).
+
+    🔴 **The reporting shape is the fix.** `CENSOR_FRACTION_OF_SOFT_LIMIT` used
+    to be applied once, to a beat's `p95`, and everywhere else a percentile
+    travelled as a naked float that any caller could compare. A percentile
+    sitting at a clamp is not a measurement of the distribution — it is a
+    measurement of the clamp — and `for_grading()` returns `None` for exactly
+    that case, so a censored read cannot be graded into a pass or a fail by
+    someone who did not think about it. `seconds` is still carried, because a
+    reader legitimately wants to know the bound.
+
+    No `__lt__`, no `__float__`, `order=False`: a type that coerced to a float
+    would be a censored value grading as a pass with extra steps.
+
+    `implied_min_clip_rate` is `1 - quantile` and is a **lower bound, derived,
+    never measured**. A p95 at the clamp proves at least 5 % of runs were
+    clipped and nothing more; a p50 at the clamp proves at least 50 %. This is
+    the arithmetic #2071 turns on — *any* clip rate above 5 % pins a p95, so the
+    old rule discarded a beat over the 7 runs it could not read while ignoring
+    the 43 it could.
+    """
+
+    seconds: float
+    clamp_s: float
+    quantile: float
+    label: str
+
+    @property
+    def censored(self) -> bool:
+        return self.seconds >= CENSOR_FRACTION_OF_SOFT_LIMIT * self.clamp_s
+
+    @property
+    def state(self) -> str:
+        return "censored" if self.censored else "observed"
+
+    def for_grading(self) -> float | None:
+        """The value, or `None` when it is a bound rather than a value."""
+        return None if self.censored else self.seconds
+
+    @property
+    def implied_min_clip_rate(self) -> float:
+        return round(1.0 - self.quantile, 6) if self.censored else 0.0
+
+    def describe(self) -> str:
+        if not self.censored:
+            return f"{self.label} {self.seconds:.1f}s"
+        return (
+            f"{self.label} {self.seconds:.1f}s CENSORED at the {self.clamp_s:.0f}s "
+            f"clamp (>= {self.implied_min_clip_rate:.0%} of runs clipped)"
+        )
+
+
 @dataclass(frozen=True)
 class BeatBaseline:
     """A watched beat's pre-move reading. Pinned, dated, and never recomputed.
@@ -165,27 +226,59 @@ class BeatBaseline:
     successes_24h: int
     failures_24h: int
     note: str = ""
+    #: The clamp a run actually stops on, when the task imposes one on ITSELF
+    #: that is tighter than its configured `soft_time_limit`. `None` means the
+    #: soft limit IS the clamp. See `clamp_note`.
+    self_imposed_budget_s: float | None = None
+    clamp_note: str = ""
 
     @property
     def metrics_name(self) -> str:
         return METRICS_NAME[self.task]
 
     @property
-    def censored(self) -> bool:
-        """True when p95 sits at the soft time limit, so worse cannot be seen.
+    def effective_clamp_s(self) -> float:
+        """The smaller of the configured timeout and the task's own budget.
 
-        A beat clamped at its own timeout reports the SAME number however much
-        further behind it falls. Grading it would manufacture a `hold` out of
-        a saturated instrument, which is the flattering direction.
+        #2071's correction, made executable. Ruling 110 said
+        `compute_calibration_prices` was "clamped at its 600 s soft limit"; it
+        is not. `_compute_calibration_prices` sets `_CAL_DEADLINE_S = 540.0` and
+        stops there — 35 of 40 runs stop on the 540 s clock the task owns and
+        only 3 of 40 ever reach 600 s. Censoring against the CONFIGURED limit
+        therefore measured the wrong ceiling: it declared the beat unreadable
+        for a reason that was not the reason, and would have kept declaring it
+        so even if the 600 s limit were raised.
         """
-        return self.p95_s >= CENSOR_FRACTION_OF_SOFT_LIMIT * self.soft_time_limit_s
+        if self.self_imposed_budget_s is None:
+            return float(self.soft_time_limit_s)
+        return min(float(self.soft_time_limit_s), float(self.self_imposed_budget_s))
 
+    @property
+    def p95(self) -> Reading:
+        return Reading(self.p95_s, self.effective_clamp_s, 0.95, "p95")
 
-# Degradation thresholds. Deliberately generous: the falsifier exists to catch
-# a real regression on the calibration lane, not to trip on ordinary variance
-# in beats whose p50/p95 spread is already an order of magnitude wide.
-DEGRADE_P50_RATIO = 1.25
-CENSOR_FRACTION_OF_SOFT_LIMIT = 0.98
+    @property
+    def p50(self) -> Reading:
+        return Reading(self.p50_s, self.effective_clamp_s, 0.5, "p50")
+
+    @property
+    def censored(self) -> bool:
+        """True when the statistic used to GRADE this beat is itself saturated.
+
+        🔴 This used to read `p95`, and that is #2071. The grade is computed on
+        the p50 (`DEGRADE_P50_RATIO` compares medians), so censoring on the p95
+        excluded beats whose grading statistic was perfectly readable. Measured:
+        `precompute_backfill_winners_status` has a 14 % clip rate, which pins
+        any p95 by arithmetic, while its p50 sits at 518.4 s — 86 % of its
+        clamp, with real headroom, and its durations span two and a half orders
+        of magnitude. It was thrown away with 43 readable runs in hand.
+
+        The p95 is still computed and still reported — a genuinely pinned beat
+        must stay visible — but it no longer decides. Excluding a beat is the
+        SAFE error direction (an exclusion never certifies safety), which is
+        exactly why it needed a rule that could stop.
+        """
+        return self.p50.censored
 
 # ---------------------------------------------------------------------------
 # THE HORIZON (LAT-P079, defect 1)
@@ -274,10 +367,20 @@ def _post_move_split(
 # BEFORE the routing change of ruling 110 shipped. n is that endpoint's
 # `recent_durations_ms` ring.
 #
-# Two of the seven are ALREADY CENSORED at their 600 s soft limit and carry
-# ZERO successes in 24 h. They are watched and reported, but they cannot
-# falsify anything, and this file says so rather than counting them as
-# evidence of safety.
+# 🔴 AMENDED BY #2071 (LAT-P080B). This block used to read: "Two of the seven
+# are ALREADY CENSORED at their 600 s soft limit and carry ZERO successes in
+# 24 h." Both halves were wrong about at least one beat, and the correction
+# raised effective coverage from 3 of 7 to **4 of 7**:
+#
+#   * `precompute_backfill_winners_status` — "zero successes" was FALSE (18 / 2
+#     on the 2026-08-21 read) and it was excluded by a p95 that a 14 % clip rate
+#     pins by arithmetic. It is GRADEABLE.
+#   * `compute_calibration_prices` — still excluded, but it is clamped at the
+#     540 s budget it imposes on ITSELF, not at the 600 s soft limit, and its
+#     `partial` terminal is by design rather than a failure.
+#
+# The numbers below are the pre-move reading and are NOT refreshed to the later
+# ones. A baseline re-derived after the change is the change grading itself.
 # ---------------------------------------------------------------------------
 PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
     BeatBaseline(
@@ -301,8 +404,20 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
         samples=37,
         successes_24h=0,
         failures_24h=1,
-        note="CENSORED at the 600s soft limit, 0 successes/24h. Already failing "
-        "before the move; cannot show degradation.",
+        note="CENSORED — but at its own 540s budget, not at the 600s soft limit, "
+        "and it is NOT failing (#2071). 0 successes/24h is by design: it is a "
+        "cursor-resuming bounded sweep whose terminal is `partial`, which "
+        "task_verdict documents as not a failure, and its cursor advances "
+        "monotonically (part_a 220,450,332 -> 220,617,056 over 20h). 35 of 40 "
+        "runs stop on the 540s clock the task owns; only 3 of 40 reach 600s.",
+        self_imposed_budget_s=540.0,
+        clamp_note="_compute_calibration_prices sets _CAL_DEADLINE_S = 540.0 "
+        "('soft_time_limit=600, keep a 60s margin'). Budget-bounded, not "
+        "timeout-clamped — a real distinction, because a budget-bounded beat "
+        "WOULD show contention, just in work-done per run (stopped_at, cursor "
+        "delta) rather than in duration. A p50 comparator cannot see that; the "
+        "work-done comparator #2071 proposes needs fields task-metrics does not "
+        "carry today, so this beat stays excluded and says why.",
     ),
     BeatBaseline(
         task="app.tasks.compute_time_horizon_calibration",
@@ -359,8 +474,15 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
         samples=50,
         successes_24h=0,
         failures_24h=2,
-        note="CENSORED at the 600s soft limit, 0 successes/24h, 2 failures. "
-        "Already failing before the move; cannot show degradation.",
+        note="GRADEABLE since #2071, and the two claims that excluded it were "
+        "both wrong. 'ZERO successes in 24h' was FALSE on the 2026-08-21 read: "
+        "18 successes / 2 failures. Its p95 is at the 600s clamp because 14% of "
+        "runs clip there — and any clip rate above 5% pins a p95 by arithmetic "
+        "— but its p50 is 518.4s with real headroom and its durations span two "
+        "and a half orders of magnitude (1 of 50 in 10-100s, 20 in 100-500s, 22 "
+        "in 500-598s, 7 at the ceiling). It carries exactly the signal the "
+        "falsifier wants. The pinned counters below are the pre-move reading "
+        "and are deliberately NOT refreshed to the later numbers.",
     ),
 )
 
@@ -417,6 +539,15 @@ class BeatVerdict:
     observed_p50_s: float | None = None
     ratio: float | None = None
     post_move_ring_share: float | None = None
+    #: WHICH side saturated, when `verdict == "censored"` (#2071). `"baseline"`
+    #: means the beat was never readable and tells a reader nothing new;
+    #: `"observation"` means it WAS readable and has newly pinned, which is the
+    #: loudest fact the panel can carry and must not render the same.
+    censored_side: str | None = None
+    #: The post-move clip rate, COUNTED from the ring rather than bounded from a
+    #: percentile. The observation carries every sample, so reporting a bound
+    #: here would throw away data we hold.
+    observed_clip_rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -465,12 +596,21 @@ def grade_beat(
         return BeatVerdict(baseline.task, "unreadable", "no observation supplied")
 
     if baseline.censored:
+        budget = (
+            f" (its own {baseline.effective_clamp_s:.0f}s budget, not the "
+            f"{baseline.soft_time_limit_s}s soft limit — budget-bounded, not "
+            "timeout-clamped)"
+            if baseline.self_imposed_budget_s is not None
+            else f" ({baseline.effective_clamp_s:.0f}s soft limit)"
+        )
         return BeatVerdict(
             baseline.task,
             "censored",
-            f"baseline p95 {baseline.p95_s:.1f}s is at the {baseline.soft_time_limit_s}s "
-            "soft limit — degradation is not observable on this beat",
+            f"baseline {baseline.p50.describe()}{budget} — the statistic this "
+            "beat is graded on is itself saturated, so degradation is not "
+            f"observable here. Its {baseline.p95.describe()}.",
             baseline_p50_s=baseline.p50_s,
+            censored_side="baseline",
         )
 
     observed = _p50(observation.get("recent_durations_ms"))
@@ -546,6 +686,49 @@ def grade_beat(
             )
         share = round(share, 3)
 
+    # --- the OBSERVATION-side censor (#2071) --------------------------------
+    # 🔴 The mirror of the defect #2071 named, and the more dangerous half.
+    # `CENSOR_FRACTION_OF_SOFT_LIMIT` was only ever applied to the BASELINE, so
+    # nothing stopped a saturated OBSERVATION from being graded. Worked example
+    # on the beat #2071 is about: `precompute_backfill_winners_status` at a
+    # post-move p50 of 600 s means every run now hits the ceiling — the worst
+    # outcome this instrument exists to catch — and 600.0/518.4 = 1.16x is under
+    # the 1.25x threshold, so it returned **HOLD**. A saturated instrument read
+    # as evidence of safety.
+    #
+    # It grades `censored`, not `degraded`, for the same reason the horizon gate
+    # refuses to fire a spurious REVERT: a statistic that cannot be seen is not
+    # evidence in EITHER direction, and a false revocation of ruling 110's grant
+    # is a real cost. `censored_side` carries the difference to the reader, and
+    # `grade_move` names it, because a beat that was readable and has newly
+    # pinned is the loudest fact the panel can hold.
+    clamp_ms = baseline.effective_clamp_s * 1000 * CENSOR_FRACTION_OF_SOFT_LIMIT
+    graded_samples = post_move if post_move is not None else [
+        d for d in (observation.get("recent_durations_ms") or []) if d is not None
+    ]
+    clip_rate = (
+        round(sum(1 for d in graded_samples if float(d) >= clamp_ms) / len(graded_samples), 4)
+        if graded_samples
+        else None
+    )
+    observed_reading = Reading(observed, baseline.effective_clamp_s, 0.5, "observed p50")
+    if observed_reading.censored:
+        return BeatVerdict(
+            baseline.task,
+            "censored",
+            f"🔴 NEWLY SATURATED: {observed_reading.describe()} against a "
+            f"readable pre-move p50 of {baseline.p50_s:.1f}s "
+            f"({clip_rate:.0%} of post-move runs at the clamp). The beat was "
+            "gradeable before the move and is not now, so this reading is "
+            "neither a pass nor a fail — but it is the one censored state that "
+            "is evidence of something, and it must not be read as a quiet night.",
+            baseline_p50_s=baseline.p50_s,
+            observed_p50_s=observed,
+            post_move_ring_share=share,
+            censored_side="observation",
+            observed_clip_rate=clip_rate,
+        )
+
     # `post_move_ring_share` rides on the PASSING verdicts too, not only the
     # refusing ones: "how much of this grade is actually about the move" is
     # exactly the question a reader has when the answer is HOLD.
@@ -560,16 +743,22 @@ def grade_beat(
             observed,
             ratio,
             share,
+            observed_clip_rate=clip_rate,
         )
+    # The clip rate rides on HOLD too, and that is the point of #2071: a beat
+    # can hold on its p50 while a rising share of its runs clip at the clamp,
+    # and a panel that only printed the median would show that as no change.
     return BeatVerdict(
         baseline.task,
         "hold",
         f"p50 {observed:.1f}s vs pre-move {baseline.p50_s:.1f}s, "
-        f"on a ring {share:.0%} post-move",
+        f"on a ring {share:.0%} post-move"
+        + (f", {clip_rate:.0%} of runs at the clamp" if clip_rate else ""),
         baseline.p50_s,
         observed,
         ratio,
         share,
+        observed_clip_rate=clip_rate,
     )
 
 
@@ -674,6 +863,20 @@ def grade_move(
             tuple(beats),
         )
 
+    # #2071: a beat that WAS readable and has newly pinned is not an ordinary
+    # exclusion. It is the only censored state that carries information, and it
+    # rides on the top-level reason in every outcome — including HOLD, where a
+    # saturated sibling beside four holding beats would otherwise be invisible.
+    saturated = [b for b in beats if b.censored_side == "observation"]
+    saturated_note = (
+        " ⚠️ NEWLY SATURATED (readable before the move, pinned at the clamp now, "
+        "so neither passing nor failing): "
+        + ", ".join(b.task.rsplit(".", 1)[-1] for b in saturated)
+        + "."
+        if saturated
+        else ""
+    )
+
     gradeable = [b for b in beats if b.verdict == "hold"]
     if not gradeable:
         pre_horizon = [b for b in beats if b.verdict == "pre_horizon"]
@@ -683,18 +886,18 @@ def grade_move(
                 f"{len(pre_horizon)} of {len(beats)} watched beats are still PRE-HORIZON "
                 f"{age / 3600.0:.1f}h after the routing change — their p50s are drawn mostly "
                 "from pre-move samples, so grading them would compare the distribution "
-                "against itself. This is NOT evidence the move is safe.",
+                "against itself. This is NOT evidence the move is safe." + saturated_note,
                 tuple(beats),
             )
         return MoveVerdict(
             "INCONCLUSIVE",
             "no watched beat could be graded (all censored, unreadable, or not run) "
-            "— this is NOT evidence the move is safe",
+            "— this is NOT evidence the move is safe" + saturated_note,
             tuple(beats),
         )
     return MoveVerdict(
         "HOLD",
         f"{len(gradeable)} of {len(beats)} watched beats graded, none degraded "
-        f"at a {age / 3600.0:.1f}h horizon",
+        f"at a {age / 3600.0:.1f}h horizon" + saturated_note,
         tuple(beats),
     )

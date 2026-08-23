@@ -1134,16 +1134,26 @@ async def heavy_move_falsifier(
     `app/utils/heavy_routing_falsifier.py`.
 
     **`verdict` is three-valued and INCONCLUSIVE is not HOLD.** If nothing in
-    the watched set could be graded — all censored at their soft limit, all
+    the watched set could be graded — all censored at their clamp, all
     unreadable, or none has run — the answer is INCONCLUSIVE, because an
     unarmed falsifier reporting "no degradation" is the exact shape of a gate
     that cannot fail (gotcha #53, and the wrong-gate rule LAT-P075 applied to
     its own guard).
 
-    Two of the seven watched beats are ALREADY censored at their 600 s soft
-    limit with zero successes in 24 h. They are reported, and they are
-    excluded from the grade, because a beat clamped at its timeout reports the
-    same number however much worse it gets.
+    **ONE of the seven is excluded, not two (#2071, LAT-P080B).** Censoring is
+    applied to the STATISTIC the grade is computed on, not to the beat's p95: a
+    clip rate above 5 % pins a p95 by arithmetic, so the old rule discarded
+    `precompute_backfill_winners_status` over the 7 runs it could not read while
+    ignoring the 43 it could. `compute_calibration_prices` remains excluded, and
+    against its OWN 540 s budget rather than the 600 s soft limit — it is
+    budget-bounded, not timeout-clamped.
+
+    Censoring also applies to the OBSERVATION now, which it never did. A beat
+    whose post-move p50 has newly pinned at the clamp used to grade
+    ``600.0/518.4 = 1.16x`` and return HOLD — a saturated instrument read as
+    evidence of safety. It reads `censored` with `censored_side:
+    "observation"`, and `reason` names it, because it is the one censored state
+    that is evidence of something.
 
     Off-loop via `run_in_threadpool` for the same reason the warmer ring is:
     `get_redis_client()` is bounded at 5 s (gotcha #39), and blocking the
@@ -1221,6 +1231,14 @@ async def heavy_move_falsifier(
                 "observed_p50_s": b.observed_p50_s,
                 "ratio": round(b.ratio, 3) if b.ratio is not None else None,
                 "post_move_ring_share": b.post_move_ring_share,
+                # #2071. `censored_side` distinguishes "never was readable"
+                # (tells a reader nothing) from "was readable, has newly pinned"
+                # (the loudest fact on the panel). `observed_clip_rate` rides on
+                # HOLD too: a beat can hold on its median while a rising share
+                # of its runs clip at the clamp, and a panel printing only the
+                # median would show that as no change at all.
+                "censored_side": b.censored_side,
+                "observed_clip_rate": b.observed_clip_rate,
             }
             for b in result.beats
         ],

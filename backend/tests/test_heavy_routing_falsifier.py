@@ -251,17 +251,22 @@ def test_beat_that_has_not_run_is_not_graded_as_holding():
 
 
 def test_censored_beats_cannot_manufacture_a_pass():
-    """Two beats sit at their 600s soft limit with 0 successes/24h.
-
-    A beat clamped at its own timeout reports the same number however much
-    worse it gets, so grading it would turn a saturated instrument into
+    """A beat whose GRADING statistic is pinned reports the same number however
+    much worse it gets, so grading it would turn a saturated instrument into
     evidence of safety.
+
+    🔴 NARROWED FROM TWO BEATS TO ONE by #2071 (LAT-P080B), and the narrowing is
+    the fix rather than a relaxation. This used to censor on `p95`, and a 14 %
+    clip rate pins any p95 by arithmetic — so
+    `precompute_backfill_winners_status` was discarded over the 7 runs it could
+    not read while its p50 (518.4 s, 86 % of the clamp, durations spanning two
+    and a half orders of magnitude) sat there readable. The remaining exclusion
+    is `compute_calibration_prices`, and it is censored against its OWN 540 s
+    budget rather than the 600 s soft limit. Full argument and the
+    observation-side mirror: `tests/test_falsifier_censoring_2071.py`.
     """
     censored = [b for b in PRE_MOVE_BASELINE if b.censored]
-    assert {b.task for b in censored} == {
-        "app.tasks.compute_calibration_prices",
-        "app.tasks.precompute_backfill_winners_status",
-    }
+    assert {b.task for b in censored} == {"app.tasks.compute_calibration_prices"}
     for beat in censored:
         # even a catastrophic reading on a censored beat is reported as censored
         assert grade_beat(beat, _obs(beat.p50_s * 10), age_since_move_s=RUN_COUNTER_WINDOW_S * 2).verdict == "censored"

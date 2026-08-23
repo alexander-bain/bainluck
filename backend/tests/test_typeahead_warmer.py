@@ -90,8 +90,33 @@ def _patch_session_factory(made: list):
 
 
 class _FakeRedis:
+    """A Redis stand-in for the warmer's reads.
+
+    LAT-P080B/#2072: `members` used to be handed back verbatim from one immortal
+    zset, which is exactly the shape the defect had. They are now SEEDED INTO
+    HOUR BUCKETS and read back through the real `ZUNIONSTORE` path, so the fake
+    agrees with Redis rather than with the code (ruling 072) and a head that
+    only works on an all-time key can no longer pass here.
+
+    The seed lands in the bucket for the current wall-clock hour and the read
+    sums 25 buckets around that same instant, so an hour boundary crossing
+    mid-test moves the seed from bucket 0 to bucket 1 and changes nothing. That
+    is a window, not a clock branch (gotcha #44).
+    """
+
     def __init__(self, members=(), lock_taken=False, ttls=None, last_pass_start=None):
+        from app.utils import search_trending as _st
+
         self._members = list(members)
+        self.zsets = {}
+        if self._members:
+            # Descending scores so `zrevrange` returns them in seed order — the
+            # tests below assert on head ORDER, which is the property the zset
+            # carried before and must keep carrying.
+            bucket = _st.bucket_key(time.time())
+            self.zsets[bucket] = {
+                m: float(len(self._members) - i) for i, m in enumerate(self._members)
+            }
         self.store = {}
         if lock_taken:
             self.store[warmer._LOCK_KEY] = b"1"
@@ -104,10 +129,38 @@ class _FakeRedis:
             self.store[warmer._LAST_PASS_START_KEY] = repr(float(last_pass_start)).encode()
         self.deleted = []
         self.ttls = dict(ttls or {})
+        self.expires = {}
 
-    def zrevrange(self, key, start, stop):
-        assert key == "search:trending:24h"
-        return [m.encode() for m in self._members[start:stop + 1]]
+    def zincrby(self, key, amount, member):
+        z = self.zsets.setdefault(key, {})
+        z[member] = z.get(member, 0.0) + float(amount)
+        return z[member]
+
+    def zunionstore(self, dest, keys, aggregate=None):
+        merged = {}
+        for k in keys:
+            for member, score in (self.zsets.get(k) or {}).items():
+                merged[member] = merged.get(member, 0.0) + score
+        if merged:
+            self.zsets[dest] = merged
+        else:
+            self.zsets.pop(dest, None)
+        return len(merged)
+
+    def zrevrange(self, key, start, stop, withscores=False):
+        z = self.zsets.get(key) or {}
+        ordered = sorted(z.items(), key=lambda kv: (-kv[1], kv[0]))
+        page = ordered[start:None if stop == -1 else stop + 1]
+        if withscores:
+            return [(m.encode(), s) for m, s in page]
+        return [m.encode() for m in page]
+
+    def expire(self, key, seconds):
+        # Deliberately NOT `self.ttls`: that dict is the three-valued `ttl()`
+        # fixture the refresh-ahead tests depend on, and folding bucket TTLs
+        # into it would let one concern silently answer for the other.
+        self.expires[key] = int(seconds)
+        return key in self.zsets or key in self.store
 
     def set(self, key, value, nx=False, ex=None):
         if nx and key in self.store:
@@ -1287,13 +1340,18 @@ class TestTheWarmerDoesNotVoteForItsOwnHead:
         from app.routes import events as events_route
 
         src = inspect.getsource(events_route.typeahead_search)
-        assert 'zincrby("search:trending:24h"' in src, (
+        # RE-POINTED by LAT-P080B/#2072: the bare `zincrby` on the all-time key
+        # is gone and the write goes through `search_trending.record_query`.
+        # The CALL is matched, not the bare name, because the name also appears
+        # in the comment above the guard.
+        call = "record_query(get_redis_client()"
+        assert call in src, (
             "the trending write moved; re-point this guard at its new home"
         )
 
         guard = "if not _suppress_trending_write.get():"
         assert guard in src, "the trending write is no longer guarded (#1866)"
-        assert src.index(guard) < src.index('zincrby("search:trending:24h"'), (
+        assert src.index(guard) < src.index(call), (
             "the guard must precede the write it guards"
         )
 

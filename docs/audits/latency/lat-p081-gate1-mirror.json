@@ -1,0 +1,129 @@
+{
+  "_mirror": {
+    "expires_when": "program/latency-74 deploys; the live endpoint is authoritative then",
+    "measurement_source": "production task-metrics via GET /api/admin/celery/task-metrics/{name}",
+    "not_a_second_measurement": true,
+    "source": "OFFLINE MIRROR \u2014 grading re-run locally on program/latency-74",
+    "why": "the #2071 censoring-mirror fix is server-side and UNMERGED; production a13239f1 grades with the old p95-censoring rule, so the live endpoint cannot answer the question the directive asked"
+  },
+  "beats": [
+    {
+      "baseline_p50_s": 214.7,
+      "censored_side": null,
+      "observed_clip_rate": 0.0,
+      "observed_p50_s": 1310.617,
+      "post_move_ring_share": 0.48,
+      "ratio": 6.104,
+      "reason": "p50 1310.6s is 6.10x its pre-move 214.7s (threshold 1.25x), on a ring 48% post-move",
+      "task": "app.tasks.precompute_calibration_main",
+      "verdict": "degraded"
+    },
+    {
+      "baseline_p50_s": 538.2,
+      "censored_side": "baseline",
+      "observed_clip_rate": null,
+      "observed_p50_s": null,
+      "post_move_ring_share": null,
+      "ratio": null,
+      "reason": "baseline p50 538.2s CENSORED at the 540s clamp (>= 50% of runs clipped) (its own 540s budget, not the 600s soft limit \u2014 budget-bounded, not timeout-clamped) \u2014 the statistic this beat is graded on is itself saturated, so degradation is not observable here. Its p95 599.9s CENSORED at the 540s clamp (>= 5% of runs clipped).",
+      "task": "app.tasks.compute_calibration_prices",
+      "verdict": "censored"
+    },
+    {
+      "baseline_p50_s": 302.0,
+      "censored_side": null,
+      "observed_clip_rate": null,
+      "observed_p50_s": 302.017,
+      "post_move_ring_share": null,
+      "ratio": null,
+      "reason": "0 runs in the last 24h \u2014 nothing has happened since the move to grade",
+      "task": "app.tasks.compute_time_horizon_calibration",
+      "verdict": "no_new_runs"
+    },
+    {
+      "baseline_p50_s": 147.8,
+      "censored_side": null,
+      "observed_clip_rate": null,
+      "observed_p50_s": 157.606,
+      "post_move_ring_share": 0.089,
+      "ratio": null,
+      "reason": "4 post-move samples in a 45-deep ring (9%) at a 24.0h horizon \u2014 under the 8 this p50 needs before it describes the move rather than the baseline",
+      "task": "app.tasks.compute_fair_fight_comparison",
+      "verdict": "pre_horizon"
+    },
+    {
+      "baseline_p50_s": 17.5,
+      "censored_side": null,
+      "observed_clip_rate": null,
+      "observed_p50_s": 18.003,
+      "post_move_ring_share": 0.083,
+      "ratio": null,
+      "reason": "4 post-move samples in a 48-deep ring (8%) at a 24.0h horizon \u2014 under the 8 this p50 needs before it describes the move rather than the baseline",
+      "task": "app.tasks.precompute_source_intelligence",
+      "verdict": "pre_horizon"
+    },
+    {
+      "baseline_p50_s": 480.1,
+      "censored_side": null,
+      "observed_clip_rate": null,
+      "observed_p50_s": 480.157,
+      "post_move_ring_share": null,
+      "ratio": null,
+      "reason": "0 runs in the last 24h \u2014 nothing has happened since the move to grade",
+      "task": "app.tasks.snapshot_coverage_metrics",
+      "verdict": "no_new_runs"
+    },
+    {
+      "baseline_p50_s": 518.4,
+      "censored_side": null,
+      "observed_clip_rate": 0.4167,
+      "observed_p50_s": 576.514,
+      "post_move_ring_share": 0.48,
+      "ratio": 1.112,
+      "reason": "p50 576.5s vs pre-move 518.4s, on a ring 48% post-move, 42% of runs at the clamp",
+      "task": "app.tasks.precompute_backfill_winners_status",
+      "verdict": "hold"
+    }
+  ],
+  "degrade_p50_ratio": 1.25,
+  "exception_tasks": [
+    "app.tasks.backfill_market_shapes",
+    "app.tasks.precompute_backfill_progress"
+  ],
+  "horizon": {
+    "age_since_move_h": 24.0,
+    "age_since_move_s": 86413.0,
+    "counters_clear_the_move": true,
+    "post_move_ring_share_required": 0.5,
+    "routing_change_at_epoch": 1787328520.0,
+    "run_counter_window_s": 86400.0
+  },
+  "movers": {
+    "app.tasks.backfill_market_shapes": {
+      "failures_24h": 0,
+      "metrics_name": "market_shape_backfill",
+      "observed": true,
+      "p4": "flat_or_fell",
+      "pre_move_runs_24h": 31,
+      "runs_24h": 28,
+      "samples": 50,
+      "scheduled_fires_24h": 72,
+      "successes_24h": 28
+    },
+    "app.tasks.precompute_backfill_progress": {
+      "failures_24h": 0,
+      "metrics_name": "precompute_backfill_progress",
+      "observed": true,
+      "p4": "flat_or_fell",
+      "pre_move_runs_24h": 45,
+      "runs_24h": 43,
+      "samples": 50,
+      "scheduled_fires_24h": 96,
+      "successes_24h": 43
+    }
+  },
+  "reason": "1 calibration heavy-beat(s) degraded: precompute_calibration_main. Ruling 110's exception is revoked; revert the routing this window.",
+  "ruling": 110,
+  "status": "ok",
+  "verdict": "REVERT"
+}
