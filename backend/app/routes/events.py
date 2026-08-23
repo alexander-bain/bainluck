@@ -7,6 +7,8 @@ import re
 import time
 
 logger = logging.getLogger(__name__)
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -10141,14 +10143,92 @@ async def debug_event_snapshots(
     }
 
 
-# In-memory cache for team lookup data (colors/logos change very rarely)
+# In-memory cache for team lookup data (colors/logos change very rarely).
+#
+# 🔴 THE CACHE HOLDS `TeamSnapshot`, NEVER `Team` — #2107, a P0 that took
+# `/api/feed` to 500 on EVERY request for hours with no deploy behind it.
+#
+# It used to hold live ORM `Team` instances. Those belong to the session of
+# whichever request happened to populate the cache; the moment that session
+# closes they are detached, and an async rollback anywhere on that session
+# EXPIRES every object it owns (gotcha #6, verbatim). A detached-and-expired
+# instance raises `DetachedInstanceError` on the first attribute read, so
+# `_format_team_data` blew up — and because the cache is process-global and
+# shared, ONE rollback poisoned it for EVERY subsequent request on that dyno
+# until the 5-minute TTL rebuilt it. The rebuild was one rollback away from
+# being poisoned again, which is why it read as ~50% flakiness across two
+# dynos rather than as a clean break. Sentry BAILUCK-ZK, first seen
+# 2026-08-22T13:14:02Z; observed working at 12:40 and 10-for-10 down at 13:20.
+#
+# A TTL is not a fix for this and never was: it bounds how long a poisoning
+# lasts, not whether one can happen. The only thing that closes the class is
+# putting data in the cache that has no session to be detached from.
 _team_cache: dict = {}
 _team_cache_time: float = 0
 _TEAM_CACHE_TTL = 300  # 5 minutes
 
 
+@dataclass(frozen=True)
+class TeamSnapshot:
+    """A detached, plain-data copy of the `Team` columns the routes read.
+
+    Deliberately NOT an ORM object and deliberately not a dict: every consumer
+    of `_build_team_lookup` reads attributes (`team.primary_color`,
+    `getattr(team, "standings_data", None)`, …), so a snapshot with the same
+    attribute surface is a drop-in that touches no call site. `frozen=True`
+    because a process-global value that any request can mutate is the same
+    shape of bug wearing different clothes.
+
+    The JSONB columns are deep-copied at build time for the same reason:
+    `standings_data` and `season_stats` are handed straight into API response
+    dicts, and a caller that mutated one would be mutating the shared cache.
+    """
+
+    id: int | None = None
+    sport_id: int | None = None
+    name: str | None = None
+    slug: str | None = None
+    abbreviation: str | None = None
+    primary_color: str | None = None
+    secondary_color: str | None = None
+    logo_url_small: str | None = None
+    logo_url_large: str | None = None
+    current_record: str | None = None
+    alternate_names: tuple = ()
+    standings_data: dict | None = None
+    season_stats: dict | None = None
+
+
+def _snapshot_team(team) -> TeamSnapshot:
+    """Copy a live `Team` row into a detached `TeamSnapshot`.
+
+    MUST be called while the row's session is still open — that is the whole
+    point. Every read of `team.<column>` here is the last one that needs a
+    session; nothing downstream of this function has one to lose.
+    """
+    alt = team.alternate_names or []
+    return TeamSnapshot(
+        id=team.id,
+        sport_id=team.sport_id,
+        name=team.name,
+        slug=getattr(team, "slug", None),
+        abbreviation=team.abbreviation,
+        primary_color=team.primary_color,
+        secondary_color=team.secondary_color,
+        logo_url_small=team.logo_url_small,
+        logo_url_large=team.logo_url_large,
+        current_record=team.current_record,
+        alternate_names=tuple(alt),
+        standings_data=deepcopy(getattr(team, "standings_data", None)),
+        season_stats=deepcopy(getattr(team, "season_stats", None)),
+    )
+
+
 def _dedupe_team_name_lookup(teams) -> dict:
-    """Map team names → Team object with a cross-league ambiguity guard.
+    """Map team names → team record with a cross-league ambiguity guard.
+
+    Takes anything exposing ``.name`` / ``.alternate_names`` / ``.sport_id``;
+    `_build_team_lookup` passes `TeamSnapshot` (never live ORM rows — #2107).
 
     A bare mascot ("Panthers", "Saints") is an ``alternate_names`` entry for
     teams across multiple leagues (Carolina Panthers NFL, Florida Panthers NHL,
@@ -10184,7 +10264,7 @@ def _dedupe_team_name_lookup(teams) -> dict:
 
 
 async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
-    """Build a mapping of team names to Team objects for color/logo data.
+    """Build a mapping of team names to `TeamSnapshot` for color/logo data.
 
     Matches on exact name or alternate_names JSONB array.
     Only returns teams that have ESPN enrichment (color or logo).
@@ -10192,6 +10272,11 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     Uses an in-memory cache since the teams table is small (~500 rows)
     and team colors/logos change very rarely. This avoids N JSONB ?
     conditions per request (previously one per team name).
+
+    The values are `TeamSnapshot`, NOT `Team` — see the cache comment above
+    for #2107. The snapshot is taken here, one statement after the rows are
+    loaded and while their session is still open; nothing that survives this
+    function holds a reference to an ORM row.
     """
     import time
 
@@ -10214,9 +10299,15 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     )
     teams = result.scalars().all()
 
-    # Build full lookup: map all known names to team objects, with a
+    # Detach BEFORE anything else touches these rows. Deduping over snapshots
+    # rather than over ORM rows also means the ambiguity guard's `.sport_id` /
+    # `.alternate_names` reads happen here, inside the live-session window,
+    # instead of at some later request's mercy.
+    snapshots = [_snapshot_team(t) for t in teams]
+
+    # Build full lookup: map all known names to team snapshots, with a
     # cross-league ambiguity guard (see _dedupe_team_name_lookup).
-    full_lookup = _dedupe_team_name_lookup(teams)
+    full_lookup = _dedupe_team_name_lookup(snapshots)
 
     _team_cache = full_lookup
     _team_cache_time = now
@@ -10309,8 +10400,18 @@ def _compute_standings_context(home_team, away_team, home_name: str, away_name: 
     return context
 
 
-def _format_team_data(team: Team) -> dict:
-    """Format team data for API response."""
+def _format_team_data(team) -> dict:
+    """Format team data for API response.
+
+    Accepts a live `Team` or a detached `TeamSnapshot`; every read below is a
+    plain attribute, which is exactly why the snapshot is a drop-in (#2107).
+
+    The JSONB payloads are copied on the way out. The source is now a
+    process-global cache entry, so handing a caller the live object would let
+    any route that edits its own response dict in place rewrite what every
+    other request sees — a shared-mutable-global bug wearing the clothes of a
+    response formatter.
+    """
     data = {
         "team_id": team.id,
         "slug": getattr(team, "slug", None),
@@ -10324,7 +10425,7 @@ def _format_team_data(team: Team) -> dict:
         data["abbreviation"] = team.abbreviation
     # Include standings if available
     if getattr(team, "standings_data", None):
-        data["standings"] = team.standings_data
+        data["standings"] = deepcopy(team.standings_data)
     # Include season stats if available
     if getattr(team, "season_stats", None):
         data["season_stats"] = team.season_stats
