@@ -8,6 +8,7 @@ from typing import Optional
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -2012,4 +2013,119 @@ class TypeaheadIndex(Base):
         UniqueConstraint("entity_type", "entity_id", name="uq_typeahead_index_entity"),
         # The reconcile cursor's ordering, and the sentinel's staleness scan.
         Index("ix_typeahead_index_type_refreshed", "entity_type", "refreshed_at"),
+    )
+
+
+class SettlementCapture(Base):
+    """What a settlement source SAID, recorded before its retention window closes.
+
+    Queue 389 Item 1 (#2077). Append-only, additive, and deliberately **write-only
+    with respect to grading**: nothing in the capture path may write
+    ``futures_outcomes.is_winner``. The capture answers "what did the source say,
+    and when did we ask" — a separate, later, reviewable step decides what to do
+    about it.
+
+    WHY A TABLE AND NOT A JSONB COLUMN. Three reasons, in order of weight:
+
+    1. **The population is the point.** C-CLIFF-CENSUS-1 dates the whole burn-down
+       (273,682 verifiable-missing across five buckets, the oldest expiring
+       2026-08-28 and the largest 2026-11-03). Answering "which buckets have we
+       saved" is a GROUP BY, and a JSONB blob hanging off ``futures_markets``
+       cannot be grouped without a scan of the table we are auditing.
+    2. **Captures are plural per market.** A market probed at 60 days remaining and
+       re-probed at 10 produces two records, and the second must not overwrite the
+       first — an ``AMBIGUOUS_EMPTY`` that later resolves to ``SETTLED`` is exactly
+       the history the audit needs.
+    3. **``DurableStateSnapshot`` is explicitly not this.** It is one latest row per
+       identity, and C117 ruled that domain JSONB tables must not be repurposed as
+       durable-state primitives. The same reasoning forbids the reverse.
+
+    The row records the **raw response**, not just the parse. A parse can be wrong;
+    a recorded body lets a later reader re-derive the verdict without re-probing a
+    source that may by then have purged the record. That is the whole insurance
+    policy: the capture window closes permanently, so what we fail to store today
+    is not recoverable at any price tomorrow.
+    """
+
+    __tablename__ = "settlement_captures"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    #: The market whose settlement we probed. Indexed for the per-market history
+    #: read; NOT unique, because re-probes are the point (see reason 2 above).
+    market_id: Mapped[int] = mapped_column(
+        ForeignKey("futures_markets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    #: ``kalshi`` / ``polymarket`` / ``datagolf``.
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    #: The EXACT settlement key used — the full Kalshi ticker or the Polymarket
+    #: ``conditionId``/event id. Recorded rather than re-derived because
+    #: C-WINNER-TRUTH-1 got a false mismatch rate from a truncated ticker, and a
+    #: capture whose key cannot be reproduced cannot be re-checked.
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    #: One of ``app.utils.settlement_truth.Disposition``. Stored as text rather
+    #: than a PG enum so adding a disposition is a code change, not a migration —
+    #: the vocabulary is expected to grow as new response shapes are met.
+    disposition: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+
+    #: The source's own winning-outcome label, verbatim and un-normalised.
+    #: **NULL unless ``disposition == 'settled'``** — enforced by a CHECK
+    #: constraint below, so the invariant survives a caller that forgets it.
+    winning_outcome: Mapped[Optional[str]] = mapped_column(Text)
+
+    #: Which HTTP channel actually answered (``kalshi_market``, ``kalshi_event``,
+    #: ``gamma``, ``clob``). Provenance: a Gamma claim and a CLOB claim have
+    #: different retention and different reliability.
+    answered_by: Mapped[Optional[str]] = mapped_column(String(40))
+
+    #: Every channel consulted with its HTTP status, in order. This is what makes
+    #: the gotcha #53 disambiguation auditable rather than merely asserted.
+    channels: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    #: The raw bodies, keyed by channel, truncated by the writer. Constraint (a).
+    raw_response: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    #: Human-readable WHY, always populated for a non-settled disposition.
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+
+    #: Why this market entered the sweep — one of
+    #: ``settlement_truth.CANDIDATE_REASONS``. A candidate reason is a reason to
+    #: LOOK, never evidence: ``scores_derivable`` in particular is a guess wearing
+    #: arithmetic, because closed events keep frozen mid-game scores.
+    candidate_reason: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    #: Days of retention left at the moment of capture, per
+    #: ``kalshi_retention.days_until_purge``. Negative means we probed past the
+    #: measured cliff on purpose. This is the column the burn-down groups on.
+    days_remaining_at_capture: Mapped[Optional[int]] = mapped_column(Integer)
+
+    #: Which sweep run wrote this, so a bad run is identifiable and excludable
+    #: wholesale without guessing from timestamps.
+    sweep_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+    #: Version of the PROBE PROTOCOL that produced the disposition. If the
+    #: classifier's rules change, old rows must not be silently re-read under the
+    #: new vocabulary — they were produced by a different question.
+    protocol_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    __table_args__ = (
+        # The invariant of the whole design, enforced by the DATABASE and not only
+        # by the dataclass: a settlement may exist only under the disposition that
+        # licenses it. A caller that bypasses the writer still cannot record a
+        # winner it was not told.
+        CheckConstraint(
+            "(disposition = 'settled') = (winning_outcome IS NOT NULL)",
+            name="ck_settlement_capture_winner_requires_settled",
+        ),
+        # The burn-down read: "what have we saved, per bucket, per source".
+        Index("ix_settlement_captures_sweep_disp", "sweep_id", "disposition"),
+        # The re-probe read: newest capture per market.
+        Index("ix_settlement_captures_market_time", "market_id", "captured_at"),
     )
