@@ -250,6 +250,83 @@ def test_beat_that_has_not_run_is_not_graded_as_holding():
     assert v.verdict == "no_new_runs"
 
 
+def test_no_new_runs_is_never_asserted_over_a_LIVE_ring():
+    """#2110 defect (b). Zero counters + a fresh ring sample is not silence.
+
+    The counters and the ring are different instruments with different
+    lifetimes. `successes_24h` / `failures_24h` EXPIRE — each window opens at
+    its own first increment — and the ring does not. So a beat whose counters
+    lapsed reads `0 runs in the last 24h` while its ring holds a sample from
+    two hours ago, and the falsifier declared "nothing has happened since the
+    move to grade" about a beat that had just run.
+
+    Measured on production 2026-08-23 this was THREE of the seven watched
+    beats (`compute_time_horizon_calibration`, `coverage_metrics`,
+    `calibration_prices`), each with a ring sample from the same day. Since
+    `no_new_runs` counts as ungradeable in `grade_move`, the effect was an
+    instrument disarming itself on evidence of liveness.
+    """
+    beat = BASELINE_BY_TASK["app.tasks.precompute_source_intelligence"]
+    age = RUN_COUNTER_WINDOW_S * 3
+    now = ROUTING_CHANGE_AT_EPOCH + age
+
+    def obs(newest_offset_s, n=12):
+        # A ring of post-move samples ending `newest_offset_s` before `now`.
+        return {
+            "recent_durations_ms": [beat.p50_s * 1000] * n,
+            "recent_durations_at": [
+                now - newest_offset_s - i * 3600 for i in reversed(range(n))
+            ],
+            "successes_24h": 0,
+            "failures_24h": 0,
+        }
+
+    live = grade_beat(beat, obs(2 * 3600), age_since_move_s=age)
+    assert live.verdict != "no_new_runs", live.reason
+    assert live.verdict == "hold", live.reason
+
+    # Genuinely quiet: the ring agrees with the counters, so the verdict holds.
+    quiet = grade_beat(beat, obs(30 * 3600), age_since_move_s=age)
+    assert quiet.verdict == "no_new_runs"
+    assert "30.0h old" in quiet.reason
+
+    # And an unstamped ring cannot corroborate either way — it must say so
+    # rather than quietly siding with the counters (gotcha #53).
+    unstamped = grade_beat(
+        beat,
+        {"recent_durations_ms": [1000.0] * 12, "successes_24h": 0, "failures_24h": 0},
+        age_since_move_s=age,
+    )
+    assert unstamped.verdict == "no_new_runs"
+    assert "no timestamps to corroborate" in unstamped.reason
+
+
+def test_every_baseline_declares_which_regime_it_pins():
+    """Ruling 120, made a gate rather than a paragraph.
+
+    A baseline is a claim about the system we run in. #2102 found one pin here
+    that straddled a dated 7.74x step and therefore read ~6x against a
+    perfectly healthy beat forever — a falsifier stuck on REVERT is as
+    unwatched as one stuck on HOLD. Every beat now has to answer the question
+    that pin could not.
+    """
+    for beat in PRE_MOVE_BASELINE:
+        assert beat.regime and len(beat.regime) > 20, (
+            f"{beat.task} does not say which regime its baseline describes"
+        )
+
+    repinned = BASELINE_BY_TASK["app.tasks.precompute_calibration_main"]
+    assert repinned.p50_s == 1187.8, "the ruling-120 re-pin was reverted"
+    assert "regime B" in repinned.regime.lower() or "B (" in repinned.regime
+    # The old pin's whole problem, kept as a live assertion: a p50 of 214.7s
+    # against a p95 of 1302.1s is a mixture across a boundary, and the re-pin
+    # has to be internally consistent instead.
+    assert repinned.p50_s < repinned.p95_s <= repinned.max_s
+    assert repinned.p50_s > repinned.p95_s * 0.5, (
+        "p50 far below p95 is the straddling signature this ruling removed"
+    )
+
+
 def test_censored_beats_cannot_manufacture_a_pass():
     """A beat whose GRADING statistic is pinned reports the same number however
     much worse it gets, so grading it would turn a saturated instrument into
@@ -561,35 +638,111 @@ def test_p4_is_gated_by_the_same_horizon_as_everything_else():
         assert early[task]["observed"] is True  # readable, just not yet meaningful
 
 
+def _movers(successes, *, window_s=None, age=None):
+    """Seed both movers with a run count, optionally with a counter window."""
+    obs = {}
+    for t in HEAVY_MOVE_EXCEPTION:
+        entry = {
+            "recent_durations_ms": [1000.0] * 50,
+            "successes_24h": successes(MOVER_PRE_MOVE[t]),
+            "failures_24h": 0,
+        }
+        if window_s is not None:
+            entry["successes_window_s"] = window_s
+        obs[METRICS_NAME[t]] = entry
+    return summarize_movers(obs, age_since_move_s=age or RUN_COUNTER_WINDOW_S * 2)
+
+
 def test_p4_can_pass_and_can_fail():
     """A prediction that cannot fail is the defect this cycle is about."""
-    age = RUN_COUNTER_WINDOW_S * 2
-
-    rose = summarize_movers(
-        {
-            METRICS_NAME[t]: {
-                "recent_durations_ms": [1000.0] * 50,
-                "successes_24h": MOVER_PRE_MOVE[t].scheduled_fires_24h,
-                "failures_24h": 0,
-            }
-            for t in HEAVY_MOVE_EXCEPTION
-        },
-        age_since_move_s=age,
-    )
+    rose = _movers(lambda pre: pre.runs_24h + 5)
     assert {rose[t]["p4"] for t in HEAVY_MOVE_EXCEPTION} == {"rose"}
 
-    flat = summarize_movers(
+    flat = _movers(lambda pre: pre.runs_24h)
+    assert {flat[t]["p4"] for t in HEAVY_MOVE_EXCEPTION} == {"flat_or_fell"}
+
+
+def test_a_mover_AT_schedule_passes_and_does_not_grade_flat_or_fell():
+    """#2110 defect (a), half two — the prediction's own ceiling.
+
+    P4 is *"the movers' run counts RISE TOWARD SCHEDULE, because they are
+    starved rather than idle"*. Schedule is where success lives. A mover
+    running every single time it is asked to has satisfied the prediction
+    completely and has nowhere left to rise — and it used to grade
+    `flat_or_fell`, i.e. FAILED, for being exactly there. This is the case the
+    old `test_p4_can_pass_and_can_fail` was seeding when it asserted `rose`:
+    it fed `successes_24h = scheduled_fires_24h` and called the answer a rise.
+    """
+    at = _movers(lambda pre: pre.scheduled_fires_24h)
+    assert {at[t]["p4"] for t in HEAVY_MOVE_EXCEPTION} == {"at_schedule"}
+
+    # And it is reachable slightly under schedule too, because a beat never
+    # quite hits its nominal fire count — an overlapping run, a dyno cycle.
+    near = _movers(lambda pre: int(pre.scheduled_fires_24h * 0.92))
+    assert {near[t]["p4"] for t in HEAVY_MOVE_EXCEPTION} == {"at_schedule"}
+
+    # The pass is not a blanket: comfortably under schedule still discriminates.
+    under = _movers(lambda pre: int(pre.scheduled_fires_24h * 0.7))
+    assert "at_schedule" not in {under[t]["p4"] for t in HEAVY_MOVE_EXCEPTION}
+
+
+def test_p4_rate_corrects_a_partial_counter_window():
+    """#2110 defect (a), half one — the counters are not 24h counts.
+
+    Each window "opens at its own first increment", so a mover read six hours
+    in shows roughly a quarter of its day and used to grade `flat_or_fell` for
+    being EARLY. Same run count, same everything, one extra field — and the
+    verdict has to change, because the fact it describes has.
+    """
+    quarter_day = RUN_COUNTER_WINDOW_S / 4
+
+    uncorrected = _movers(lambda pre: pre.runs_24h // 2)
+    assert {uncorrected[t]["p4"] for t in HEAVY_MOVE_EXCEPTION} == {"flat_or_fell"}
+
+    corrected = _movers(lambda pre: pre.runs_24h // 2, window_s=quarter_day)
+    # Both movers stop grading FAILED. They land on different passing verdicts
+    # because they have different schedules (72 vs 96 fires/day), and asserting
+    # one label for both would be asserting a coincidence: 15x4 = 60 clears
+    # `backfill_market_shapes`' pre-move 31 but not 0.9x72, while 22x4 = 88
+    # clears `precompute_backfill_progress`' 0.9x96.
+    assert "flat_or_fell" not in {corrected[t]["p4"] for t in HEAVY_MOVE_EXCEPTION}
+    assert corrected["app.tasks.backfill_market_shapes"]["p4"] == "rose"
+    assert corrected["app.tasks.precompute_backfill_progress"]["p4"] == "at_schedule"
+
+    for task in HEAVY_MOVE_EXCEPTION:
+        row = corrected[task]
+        # The raw counter is still reported beside the correction, so a reader
+        # can see the arithmetic rather than take the verdict on faith.
+        assert row["runs_24h"] == MOVER_PRE_MOVE[task].runs_24h // 2
+        assert row["runs_per_24h"] == pytest.approx(row["runs_24h"] * 4)
+        assert row["successes_window_s"] == quarter_day
+
+
+def test_the_rate_correction_never_extrapolates_from_a_sliver():
+    """A 30-minute window carrying 3 runs must not project to 144 a day.
+
+    The correction is allowed to help in one direction only. Scaling is capped
+    at 4x — the counter's nominal span divided by a quarter of it — so a
+    freshly-opened window cannot manufacture a pass out of three observations.
+    """
+    sliver = RUN_COUNTER_WINDOW_S / 48  # 30 minutes
+    rows = _movers(lambda pre: 3, window_s=sliver)
+    for task in HEAVY_MOVE_EXCEPTION:
+        assert rows[task]["runs_per_24h"] == pytest.approx(12.0)
+        assert rows[task]["p4"] == "flat_or_fell"
+
+
+def test_an_unreadable_rate_is_not_rendered_as_a_slow_one():
+    """Absent counters grade `unreadable_rate`, never `flat_or_fell` (#53)."""
+    rows = summarize_movers(
         {
-            METRICS_NAME[t]: {
-                "recent_durations_ms": [1000.0] * 50,
-                "successes_24h": MOVER_PRE_MOVE[t].runs_24h,
-                "failures_24h": 0,
-            }
+            METRICS_NAME[t]: {"recent_durations_ms": [1000.0] * 50}
             for t in HEAVY_MOVE_EXCEPTION
         },
-        age_since_move_s=age,
+        age_since_move_s=RUN_COUNTER_WINDOW_S * 2,
     )
-    assert {flat[t]["p4"] for t in HEAVY_MOVE_EXCEPTION} == {"flat_or_fell"}
+    assert {rows[t]["p4"] for t in HEAVY_MOVE_EXCEPTION} == {"unreadable_rate"}
+    assert {rows[t]["runs_per_24h"] for t in HEAVY_MOVE_EXCEPTION} == {None}
 
 
 def test_mover_pre_move_counts_match_the_ruling():

@@ -1166,6 +1166,7 @@ async def heavy_move_falsifier(
     from starlette.concurrency import run_in_threadpool
 
     from app.utils.heavy_routing_falsifier import (
+        BASELINE_BY_TASK,
         DEGRADE_P50_RATIO,
         HEAVY_MOVE_EXCEPTION,
         POST_MOVE_RING_SHARE_REQUIRED,
@@ -1239,6 +1240,15 @@ async def heavy_move_falsifier(
                 # median would show that as no change at all.
                 "censored_side": b.censored_side,
                 "observed_clip_rate": b.observed_clip_rate,
+                # Ruling 120. A baseline is a claim about the system we run in,
+                # and a pin taken across a dated step reads as a constant
+                # forever — #2102 found one here reading ~6x against a healthy
+                # beat. Printing the regime beside the number is what lets a
+                # reader tell a measurement from an artefact without going back
+                # to the source.
+                "baseline_regime": (
+                    BASELINE_BY_TASK[b.task].regime if b.task in BASELINE_BY_TASK else None
+                ),
             }
             for b in result.beats
         ],
