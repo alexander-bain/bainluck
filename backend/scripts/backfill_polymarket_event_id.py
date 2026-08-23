@@ -81,7 +81,12 @@ from sqlalchemy import text
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.tasks.base import get_task_session  # noqa: E402
+# Import the MODULE, not the attribute. Binding `get_task_session` into this
+# namespace snapshots whatever object `app.tasks.base` held at import time, so a
+# later reassignment there — a test double, a pooled variant — is not observed
+# here. A one-shot rail that writes production rows should resolve its session
+# factory at CALL time (CodeQL py/import-of-mutable-attribute).
+from app.tasks import base as tasks_base  # noqa: E402
 
 PROVENANCE_VALUE = "group_id_backfill_q390"
 
@@ -129,7 +134,7 @@ async def census() -> dict[str, Any]:
         WHERE source = 'polymarket'
         """
     )
-    async with get_task_session() as session:
+    async with tasks_base.get_task_session() as session:
         row = (await session.execute(sql, {"prov": PROVENANCE_VALUE})).mappings().one()
     out = dict(row)
     out["reconciles"] = (
@@ -159,7 +164,7 @@ async def key_shape_census() -> dict[str, Any]:
         WHERE {ELIGIBLE}
         """
     )
-    async with get_task_session() as session:
+    async with tasks_base.get_task_session() as session:
         row = (await session.execute(sql)).mappings().one()
     out = dict(row)
     out["clean"] = all(
@@ -190,7 +195,7 @@ async def dry_run(limit: int) -> list[dict[str, Any]]:
         LIMIT :limit
         """
     )
-    async with get_task_session() as session:
+    async with tasks_base.get_task_session() as session:
         rows = (await session.execute(sql, {"limit": limit})).mappings().all()
     return [dict(r) for r in rows]
 
@@ -243,7 +248,7 @@ async def apply(batch_size: int, max_rows: int | None, stamp_provenance: bool) -
         params: dict[str, Any] = {"cursor": cursor, "batch_size": size}
         if stamp_provenance:
             params["prov"] = PROVENANCE_VALUE
-        async with get_task_session() as session:
+        async with tasks_base.get_task_session() as session:
             ids = (await session.execute(sql, params)).scalars().all()
             await session.commit()
         if not ids:
@@ -276,7 +281,7 @@ async def verify_gamma(sample: int) -> dict[str, Any]:
         LIMIT :sample
         """
     )
-    async with get_task_session() as session:
+    async with tasks_base.get_task_session() as session:
         rows = (
             await session.execute(sql, {"prov": PROVENANCE_VALUE, "sample": sample})
         ).mappings().all()
@@ -363,6 +368,15 @@ async def main() -> int:
     if not any([args.census, args.dry_run, args.apply, args.verify_gamma]):
         ap.error("pick one of --census / --dry-run / --apply / --verify-gamma")
 
+    # Bound before the guard so the apply path cannot read an unbound name. The
+    # implication `--apply => the census ran` holds today, but it is carried by two
+    # separate `if` conditions kept in agreement by hand, and the failure mode is an
+    # UnboundLocalError raised AFTER the rows are written — the read below sits in
+    # "CENSUS AFTER", past the apply. Made structural rather than argued about
+    # (CodeQL py/uninitialized-local-variable).
+    c: dict[str, Any] | None = None
+    k: dict[str, Any] | None = None
+
     if args.census or args.dry_run or args.apply:
         c = await census()
         k = await key_shape_census()
@@ -391,6 +405,11 @@ async def main() -> int:
         print("\nNo rows were modified.")
 
     if args.apply:
+        # The census gate above is what makes the apply legible; refuse rather than
+        # write blind if some future edit lets these two conditions drift apart.
+        if c is None:
+            print("REFUSING: --apply reached without a census.")
+            return 2
         print(f"== APPLY (batch={args.batch_size}, provenance={args.stamp_provenance}) ==")
         result = await apply(args.batch_size, args.limit, args.stamp_provenance)
         print(f"  rows_written {result['rows_written']:,} in {result['batches']} batches")
