@@ -21,7 +21,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | polymarket-evidence-census | polymarket-evidence
              | pm-never-graded-census | pm-never-graded
              | event-create-from-truth | team-identity-mapping-repair
-             | event-espn-id | label-store-converge }
+             | event-espn-id | label-store-converge
+             | label-defect-routes }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -36,7 +37,8 @@ transactional session and RETURNS its own before/after census in the response bo
      registered it — and the two guard tests caught the omission before the
      push, which answers whether this comment is decoration. Re-synced again
      2026-08-20, UX-P112, adding label-store-converge in the commit that
-     registered it.)
+     registered it. Re-synced again 2026-08-21, UX-P118, adding
+     label-defect-routes in the commit that registered it.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -341,6 +343,19 @@ _REPAIRS = {
     # criterion is measured over). Accepts ?limit=.
     "label-store-converge": (
         "app.tasks.converge_label_stores",
+        "repair",
+    ),
+    # UX-P118 (#2094): route the already-tagged negative judgments into the
+    # defect clusters. UX-P117 wired `defect_route()` into both write paths, but
+    # forward-only — the 71 rows already tagged bad/kill keep their reasons and
+    # still route nowhere, so `/fixable-interest/clusters` has returned an empty
+    # list for the life of the store. Never overwrites an existing
+    # `fixable_interest` (a human's ReviewTab `fix_type` outranks an inferred
+    # one), rewrites no stored tag (canonicalisation happens on read), and does
+    # not set `create_issue_candidate`. The dry run PROJECTS the resulting
+    # cluster list using the route's own `_cluster_identity`. Accepts ?limit=.
+    "label-defect-routes": (
+        "app.tasks.backfill_defect_routes",
         "repair",
     ),
 }

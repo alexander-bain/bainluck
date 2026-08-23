@@ -20,6 +20,10 @@ import {
 } from "@/lib/calibrationMath";
 import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
 import {
+  describeCategoryPopulation,
+  describeCategoryTablePopulation,
+} from "@/lib/calibrationPopulation";
+import {
   anyNotProvable,
   provabilityPresentation,
   type ProvabilityCell,
@@ -339,6 +343,26 @@ export default function CalibrationPage() {
         graded_share: cell.graded_share,
         provability_reason: cell.provability_reason,
       });
+    }
+    return map;
+  }, [data]);
+
+  // UX-P118 item 5: which PAYLOAD categories each displayed row is measured
+  // over. Computed from `data.buckets` — the RAW keys — because `normalized`
+  // has already applied `normalizeCat` and the pre-image is exactly what has
+  // been lost by the time the table renders. On the 2026-08-21 payload this is
+  // 2 rows of 128 (football, hockey), and hockey is the specimen the two-ECEs
+  // disclosure was filed on.
+  const pooledByCategory = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const b of data?.buckets ?? []) {
+      const key = normalizeCat(b.category);
+      const seen = map.get(key);
+      if (seen) {
+        if (!seen.includes(b.category)) seen.push(b.category);
+      } else {
+        map.set(key, [b.category]);
+      }
     }
     return map;
   }, [data]);
@@ -1463,6 +1487,25 @@ export default function CalibrationPage() {
         <p className="text-xs text-text-muted mb-4">
           Calibration metrics by market category. Categories with fewer than {minCategoryOutcomes.toLocaleString()} resolved outcomes are excluded &mdash; a sub-category chart below that sample size is statistical noise, not a calibration signal.
         </p>
+        {/* UX-P118 item 5: WHICH POPULATION. The API publishes a per-category
+            ECE over the whole population; this table renders one over the active
+            cohort, and two of its rows additionally pool several published
+            categories. Both numbers are correct about their own population —
+            unlabelled, the pair reads as a contradiction to anyone who curls the
+            API (hockey: 0.95pp published, 2.25pp here on 2026-08-21). The
+            sentence is DERIVED from the same inputs the numbers are, so it
+            cannot drift from the predicate it describes. */}
+        <p
+          className="text-xs text-text-muted mb-4"
+          data-testid="calibration-category-population-note"
+          data-pooled-rows={[...pooledByCategory.values()].filter(v => v.length > 1).length}
+        >
+          {describeCategoryTablePopulation(
+            cohort.key,
+            [...pooledByCategory.values()].filter(v => v.length > 1).length,
+            categoryMetrics.length
+          )}
+        </p>
         {/* CAL-P067 item 4 (Fable ruling): the selection-bias disclosure. This
             is deliberately NOT phrased as a sample-size caveat — the two look
             alike and have opposite remedies. More data fixes a small sample; it
@@ -1506,10 +1549,20 @@ export default function CalibrationPage() {
                 const prov = provabilityPresentation(cm);
                 const notProvable = prov.showNotProvableBadge;
                 const shareUnknown = prov.showUnknownBadge;
+                // UX-P118 item 5: this row's own population, naming BOTH axes.
+                const pop = describeCategoryPopulation(
+                  cm.category,
+                  pooledByCategory.get(cm.category) ?? [cm.category],
+                  data?.by_category ?? [],
+                  cohort.key
+                );
                 return (
                 <tr key={cm.category} className="border-t border-surface-border"
                   data-testid="calibration-category-row" data-category={cm.category} data-n={cm.n}
                   data-provability={cm.provability ?? "unset"}
+                  data-pools={pop.pools ? "true" : "false"}
+                  data-pooled-from={pop.pooledFrom.join(",")}
+                  data-published-ece={pop.publishedEce ?? ""}
                   data-graded-share={cm.graded_share ?? ""}>
                   <td className="py-2 pr-4 font-medium text-text-primary">
                     {categoryLabel(cm.category)}
@@ -1531,9 +1584,22 @@ export default function CalibrationPage() {
                         {prov.badgeLabel}
                       </span>
                     )}
+                    {/* A pooled row's label is not the payload key it looks
+                        like. Marked visibly rather than only in a tooltip,
+                        because the reader who needs it is the one comparing
+                        against the API and he is not hovering. */}
+                    {pop.pools && (
+                      <span
+                        data-testid="calibration-pooled-categories-badge"
+                        title={pop.title}
+                        className="ml-2 align-middle inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border border-surface-border text-text-muted"
+                      >
+                        {pop.pooledFrom.length} categories
+                      </span>
+                    )}
                   </td>
                   <td className="py-2 pr-4 text-right tabular-nums">{cm.n.toLocaleString()}</td>
-                  <td className={`py-2 pr-4 text-right tabular-nums ${
+                  <td title={pop.title} className={`py-2 pr-4 text-right tabular-nums ${
                     notProvable
                       ? "font-normal text-text-muted line-through decoration-orange-400/60"
                       : `font-semibold ${cm.ece < 3 ? "text-green-600" : cm.ece < 5 ? "text-blue-600" : "text-orange-600"}`
