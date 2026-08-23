@@ -704,7 +704,7 @@ def test_ruling_numbers_are_unique() -> None:
 # three, plus -84's one (117), plus this branch's two (124, 125) — the correct merged value is
 # **119**. Do not take a side; run `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` on the merged
 # tree (ruling 088 / #1910 — count, never add a delta).
-MINIMUM_BANKED_RULINGS = 115
+MINIMUM_BANKED_RULINGS = 116
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
