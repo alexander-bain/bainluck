@@ -689,12 +689,27 @@ def test_ruling_numbers_are_unique() -> None:
 #: `program/calibration-53` banks **057/058/059** and raised the constant to 116;
 #: `program/calibration-84` banks **117** and raised it to 114. Both were ready, both were
 #: independent, and — as -84's own note predicted verbatim — **neither side's number was
-#: right**. `int/int-109` then banks **118** and `lane1/q353-process` banks **119** (its
-#: colliding 056 was redirected to 117, then to 119, as each earlier target was taken while
-#: it waited). A declared collision resolved by arithmetic would have been wrong four times
-#: over in a single cycle; resolved by counting it is right once.
+#: right**. `int/int-109` then banks **118**, and `lane1/q353-process` banks **121**.
 #: COUNTED on the merged tree: `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = **119**.
 #: Ruling 088 / #1910 — count, never add a delta, never take a side.
+#:
+#: ⚠️ **119 IS A COUNT, NOT A CEILING, AND THIS CYCLE IS THE CASE THAT SEPARATES THEM.**
+#: The highest-numbered file here is **121**, and 119/120 are absent — not lost, HELD.
+#: `program/latency-74` holds **119** and `lane1` holds **120** in `RULING-CLAIMS.md`; both
+#: are banked on branches outside this merge (latency-74 is suspended), so their files land
+#: later and the gap closes from the middle. A reader who "fixes" 121 down to 119 to make the
+#: series contiguous silently takes a number another lane has claimed — which is precisely the
+#: collision ruling 116 exists to prevent, arrived at from the tidy direction.
+#:
+#: `q353-process` is the whole argument for claiming through the ledger rather than measuring
+#: the tree. Its ruling was written as **056** on 2026-08-14 and spent five cycles being
+#: redirected — to 116 (INT-104), then 117 (ruling 116's own text), then 119 (Fable's INT-110
+#: directive) — and every one of those targets was taken by another lane before it merged.
+#: It landed only when the lane stopped taking the next free number and took the next
+#: **claimed-free** one. Fable's directive said 119; the ledger, written after it, records 119
+#: to `latency` and 120 to `lane1`, so **121 is correct and the directive is superseded by the
+#: instrument it asked us to verify against** ("renumber 119, ledger-verified" — the ledger
+#: is the authority, and it had moved).
 MINIMUM_BANKED_RULINGS = 119
 
 
