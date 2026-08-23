@@ -4002,6 +4002,48 @@ _suppress_trending_write: contextvars.ContextVar[bool] = contextvars.ContextVar(
 )
 
 
+def _record_trending(q: str) -> None:
+    """Count one `/typeahead` query, from EITHER of the route's two exits (#2117).
+
+    🔴 THE HELPER EXISTS BECAUSE THE FUNCTION HAS TWO EXITS AND THE WRITE HAD
+    ONE HOME. `typeahead_search` returns early on a cache hit, hundreds of lines
+    above the full build's return, and the trending write was the build's LAST
+    statement. So the counter that decides what the warmer warms was conditioned
+    on whether we had already warmed it: **a warmed term could never be
+    re-elected, only displaced by something not yet warmed.** Measured on
+    production 2026-08-23 with a paired control — `stanley cup` (warmed, HIT)
+    recorded NOTHING while two never-warmed probes each recorded 1.
+
+    THE MIRROR OF #1866, which is why it survived that fix. #1866 stopped the
+    warmer voting FOR its own head. Nobody then asked whether a REAL user's vote
+    for a warmed term could still land. It could not, so between the two fixes
+    the head could only drain — production reads `{"trending": []}` and
+    `resolve_head` falls through to `db:search_query_logs:30d` on 40/40 slots.
+
+    ⚠️ **THE GUARD LIVES HERE, INSIDE, and that is the load-bearing detail.**
+    Two call sites each carrying their own `if not _suppress_trending_write` is
+    gotcha #128 — a rule in two consumers has two verdicts, and the repaired
+    copy hides the broken one. It also matters WHICH copy would rot: the warmer
+    warms by calling this route, and on a warm pass the entry it is refreshing
+    is frequently still live, so **the warmer's own calls are
+    disproportionately cache hits**. A hit path that counted without the guard
+    would re-open #1866's closed loop on precisely the traffic that closed it,
+    and more efficiently than the original bug.
+
+    Fire-and-forget in both directions: a trending counter never fails a user's
+    request, and `record_query` swallows its own Redis errors too.
+    """
+    if _suppress_trending_write.get():
+        return
+    try:
+        from app.tasks.redis_state import get_redis_client
+        from app.utils.search_trending import record_query
+
+        record_query(get_redis_client(), q)
+    except Exception:
+        pass
+
+
 @router.get("/typeahead")
 async def typeahead_search(
     q: str = Query(
@@ -4065,10 +4107,26 @@ async def typeahead_search(
         try:
             _rc = get_redis_client()
             _cached = _rc.get(_cache_key)
-            if _cached:
-                return _json.loads(_cached)
+            _hit = _json.loads(_cached) if _cached else None
         except Exception:
-            pass
+            # Redis down, or a corrupt entry: fall through and rebuild. Both
+            # were already this block's behaviour and both must stay.
+            _hit = None
+        if _hit is not None:
+            # #2117: COUNT BEFORE RETURNING. This is the exit the trending write
+            # could not see, and the reason a warmed term became uncountable.
+            #
+            # OUTSIDE the try above, on purpose. Inside it, an exception from
+            # this call would skip the `return` and silently convert a cache HIT
+            # into a full cold build — a counter defect traded for a latency
+            # one, on the hottest path in the API. `_record_trending` swallows
+            # its own errors, so this is belt and braces; the ordering is what
+            # makes that claim structural instead of a promise about a callee.
+            #
+            # Only on the HIT branch: a miss falls through and is counted at the
+            # other exit, so counting here as well would double every query.
+            _record_trending(q)
+            return _hit
 
     # LAT-P007: start the request budget AFTER the cache read — a cache hit has
     # already returned above and never touches the database.
@@ -4836,14 +4894,11 @@ async def typeahead_search(
     # `record_query` writes an hour-scoped bucket instead. The two fixes are
     # halves of one head: #1866 stops NEW pollution, #2072 drains the OLD, and
     # either one alone leaves the warmer heading from a frozen top-40.
-    if not _suppress_trending_write.get():
-        try:
-            from app.tasks.redis_state import get_redis_client
-            from app.utils.search_trending import record_query
-
-            record_query(get_redis_client(), q)
-        except Exception:
-            pass
+    # LAT-P083/#2117: and the write now lives in `_record_trending`, called from
+    # BOTH of this function's exits. It had one home and the function had two
+    # ways out, so a term served from cache — i.e. a term we had successfully
+    # warmed — was never counted. See `_record_trending` for the measurement.
+    _record_trending(q)
 
     return result
 

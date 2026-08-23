@@ -103,6 +103,14 @@ class FakeRedis:
         self.expires_at[key] = self.now + float(seconds)
         return True
 
+    # #2117: `record_query` pipelines its two writes into ONE round trip, so
+    # this double needs to speak pipeline. Deliberately a real buffer-then-apply
+    # rather than a pass-through, so `self.commands` still records the same
+    # ("zincrby", ...) / ("expire", ...) pairs every assertion in this file
+    # already reads — the transport changed, the observable behaviour did not.
+    def pipeline(self, transaction=True):
+        return _Pipeline(self)
+
     def zunionstore(self, dest, keys, aggregate=None):
         self._reap()
         self.commands.append(("zunionstore", dest, tuple(keys)))
@@ -343,18 +351,24 @@ def test_the_legacy_all_time_key_is_no_longer_written_by_the_route():
     """
     from app.routes import events as events_route
 
-    src = inspect.getsource(events_route.typeahead_search)
-    assert f'zincrby("{st.LEGACY_TRENDING_KEY}"' not in src, (
+    # RE-POINTED by LAT-P083/#2117: the write moved out of the route body into
+    # `events._record_trending`, so both exits could reach one copy of it. The
+    # module is read as a whole for the legacy-key check — a bare `zincrby` on
+    # the all-time key is forbidden ANYWHERE in this file, not just inside the
+    # one function it used to live in, which is a wider net than before.
+    module_src = inspect.getsource(events_route)
+    helper_src = inspect.getsource(events_route._record_trending)
+    assert f'zincrby("{st.LEGACY_TRENDING_KEY}"' not in module_src, (
         "the all-time key is being written again (#2072)"
     )
     # The CALL, not the bare name: the name also appears in the comment above
     # the guard, so a substring search would compare the guard against prose.
     call = "record_query(get_redis_client()"
-    assert call in src, "the trending write moved; re-point this guard"
+    assert call in helper_src, "the trending write moved; re-point this guard"
 
-    guard = "if not _suppress_trending_write.get():"
-    assert guard in src, "the trending write is no longer guarded (#1866)"
-    assert src.index(guard) < src.index(call), (
+    guard = "if _suppress_trending_write.get():"
+    assert guard in helper_src, "the trending write is no longer guarded (#1866)"
+    assert helper_src.index(guard) < helper_src.index(call), (
         "the guard must precede the write it guards — #1866 and #2072 are two "
         "halves of one head, and losing either re-freezes it"
     )
@@ -404,3 +418,26 @@ def test_the_warmer_heads_from_the_window_not_from_all_time():
         head = warmer._head_from_redis(40)
 
     assert head == ["nba champion"], f"warmer still heading from all-time: {head}"
+
+
+class _Pipeline:
+    """Buffers `record_query`'s two commands and applies them on `execute()`."""
+
+    def __init__(self, rc):
+        self._rc = rc
+        self._queued = []
+
+    def zincrby(self, key, amount, member):
+        self._queued.append(("zincrby", (key, amount, member)))
+        return self
+
+    def expire(self, key, seconds):
+        self._queued.append(("expire", (key, seconds)))
+        return self
+
+    def execute(self):
+        out = []
+        for name, args in self._queued:
+            out.append(getattr(self._rc, name)(*args))
+        self._queued.clear()
+        return out
