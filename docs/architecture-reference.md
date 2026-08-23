@@ -11,7 +11,7 @@ The BainLuck aggregated probability is the product's most important output. Ever
 ### `compute_aggregate_probability()` (`utils/aggregation.py`)
 
 Three-tier fallback:
-1. **`Event.win_probability_sources`** (JSONB) — multi-source weighted average
+1. **`Event.win_probability_sources`** (JSONB) — multi-source weighted **median** (staleness-decayed, share-capped)
 2. **`Event.espn_win_prob_home`** — ESPN-only fallback
 3. **`Event.opening_home_probability`** — pre-game opening odds
 
@@ -23,7 +23,7 @@ Source weights: `betting: 3.0, espn: 1.5, stat_model: 1.0, kalshi: 0.8, polymark
 Sources (ESPN, Kalshi, Polymarket, Odds API, stat model, DataGolf, MLB)
   -> win_prob_snapshots table (per-source, timestamped)
   -> Event.win_probability_sources JSONB (latest per-source)
-  -> compute_aggregate_probability() (weighted average)
+  -> compute_aggregate_probability() (weighted MEDIAN, staleness-decayed, share-capped)
   -> Feed cards, event detail hero, OddsChart
 ```
 
