@@ -1,0 +1,96 @@
+{
+ "script": "gate0_split_pre_read.py",
+ "queue": "CAL-P087",
+ "read_at_utc": "2026-08-22T13:15:31Z",
+ "payload": {
+  "generated_at": "2026-08-22T11:38:22.004446+00:00",
+  "total_outcomes": 869978,
+  "staged": {
+   "measured": true,
+   "staged_at": "2026-08-22T08:35:12+00:00",
+   "staged_age_s": 16818,
+   "units_banked": 128,
+   "units_this_beat": 8,
+   "units_drifted": 128,
+   "units_drift_checkable": 128,
+   "units_drift_unknown": 0,
+   "units_drifted_as_of": "2026-08-22T08:35:12+00:00",
+   "bank_advanced_this_beat": true,
+   "frozen_over_drift": true,
+   "rebuild_units_this_beat": 8,
+   "rebuild_units_banked": 28,
+   "rolling_restage": true
+  },
+  "tolerance_pp": 100.0
+ },
+ "twin_last_run": {
+  "artifact_generated_at": "2026-08-21T19:24:23.789042+00:00",
+  "measured": false,
+  "reason": "artifact_unreadable: malformed",
+  "verdict": "unmeasurable",
+  "terminal": "failed",
+  "fold_duration_s": 1351.95,
+  "timeout_ms": 1350000,
+  "db_rows": 0,
+  "db_cells": 0,
+  "payload_error": "published_read_failed: redis call did not complete"
+ },
+ "census_of_served_payload": {
+  "fold_population_sources": [
+   "datagolf",
+   "kalshi",
+   "polymarket"
+  ],
+  "cells_in_scope": 83,
+  "cells_out_of_scope": 203,
+  "cells_total": 286,
+  "pct_cells_out_of_scope": 70.98,
+  "bucket_keys_in_scope": 608,
+  "bucket_keys_out_of_scope": 874,
+  "payload_bucket_rows_in_scope": 1063,
+  "payload_bucket_rows_out_of_scope": 874,
+  "price_moved_rows_collapsed_by_reconcile": 455,
+  "outcomes_in_scope": 734780,
+  "outcomes_out_of_scope": 135198,
+  "in_scope_bucket_keys_with_n_le_2": 159,
+  "sources_out_of_scope": [
+   "odds_api",
+   "odds_api_bookmaker",
+   "odds_api_spreads",
+   "odds_api_totals"
+  ]
+ },
+ "reconcile_over_todays_inputs": {
+  "verdict_new_rule": "disagrees",
+  "verdict_old_rule": "agrees",
+  "tolerance_pp": 100.0,
+  "compared": 0,
+  "outside": 0,
+  "db_only": 0,
+  "published_only": 1482,
+  "published_only_in_scope": 608,
+  "published_only_out_of_scope": 874,
+  "cells_db": 0,
+  "cells_published": 286,
+  "scope": {
+   "fold_population_sources": [
+    "datagolf",
+    "kalshi",
+    "polymarket"
+   ],
+   "sources_out_of_scope": [
+    "odds_api",
+    "odds_api_bookmaker",
+    "odds_api_spreads",
+    "odds_api_totals"
+   ],
+   "buckets_published": 1482,
+   "buckets_compared": 0,
+   "buckets_out_of_scope": 874,
+   "buckets_in_scope_missing": 608,
+   "outcomes_published": 526462,
+   "outcomes_out_of_scope": 135198,
+   "pct_published_outcomes_in_scope": 74.3195
+  }
+ }
+}

@@ -1,0 +1,77 @@
+{
+ "schema": "calibration-apply-befores/v1",
+ "queue": "CAL-P087",
+ "issue": 1145,
+ "pins_for": "QUEUE-STAGED-CAL-APPLY-HINDSIGHT-EXCLUSION.md section 5b",
+ "pinned_at_utc": "2026-08-22T13:17:48Z",
+ "purpose": "The apply's closing report must quote these two pairs as FROZEN befores. Both are true; neither on its own is an honest report of what happened.",
+ "full_population": {
+  "kind": "re-anchored from a banked artifact, NOT re-measured",
+  "before_ece_pp": 3.7226,
+  "after_projected_ece_pp": 1.7422,
+  "n_rows": 372293,
+  "rows_dropped": 34366,
+  "rows_dropped_pct": 9.231,
+  "cells_measured": 49,
+  "cells_unmeasured": 0,
+  "policy": "C_exclude_hindsight",
+  "source_artifact": "artifacts/cal-p085/price-provenance-whole-market.json",
+  "source_artifact_schema": "calibration-price-provenance/v2",
+  "source_artifact_elapsed_s": 411.15,
+  "source_artifact_committed_at_utc": "2026-08-21T11:54:59-07:00",
+  "source_artifact_commit": "b29edb4454a6253dcdba4fb90ed20bf8266f159b",
+  "why_not_re_measured": "The whole-market fold ran 411.15 s and folds the population #2076 has never got through inside 1,350 s on the twin rail. Re-running it during the freeze is not available, so the pin is the banked artifact's value with the artifact's own provenance attached."
+ },
+ "rendered_cohort": {
+  "kind": "RE-MEASURED live at pinned_at_utc",
+  "metric": "ece over aggregateBuckets(buckets, price_moved !== false), pp",
+  "before_ece_pp": 1.3615,
+  "before_mce_pp": 1.26,
+  "cohort_n": 526138,
+  "full_n": 869978,
+  "bins": 10,
+  "after_expectation": "little movement \u2014 see why_they_differ",
+  "payload_generated_at": "2026-08-22T11:38:22.004446+00:00",
+  "payload_population_version": "q268",
+  "payload_total_outcomes": 869978,
+  "payload_total_markets": 797351,
+  "payload_staged": {
+   "measured": true,
+   "staged_at": "2026-08-22T08:35:12+00:00",
+   "staged_age_s": 16957,
+   "units_banked": 128,
+   "units_this_beat": 8,
+   "units_drifted": 128,
+   "units_drift_checkable": 128,
+   "units_drift_unknown": 0,
+   "units_drifted_as_of": "2026-08-22T08:35:12+00:00",
+   "bank_advanced_this_beat": true,
+   "frozen_over_drift": true,
+   "rebuild_units_this_beat": 8,
+   "rebuild_units_banked": 28,
+   "rolling_restage": true
+  },
+  "full_population_ece_pp_same_read": 1.3995,
+  "prior_measurements_of_the_same_quantity": {
+   "CAL-P086B_2026-08-21": {
+    "ece_pp": 1.3509,
+    "cohort_n": 525601
+   },
+   "C-CALPAGE-SKEPTIC-1": {
+    "ece_pp": 1.37,
+    "cohort_n": 525601
+   }
+  },
+  "not_this_number": {
+   "mce_opening_price": 1.66,
+   "mce_closing_line": 1.88,
+   "note": "The payload's own mce_* fields are a THIRD, different metric. Section 5b forbids substituting one for another."
+  }
+ },
+ "why_they_differ": "The page's cohort filter (price_moved !== false) already excludes most of the hindsight legs the apply removes \u2014 those legs are price_moved = true with an after_resolution capture, so the exclusion lands almost entirely outside the denominator the chart renders.",
+ "guardrail_cells_to_recheck_post_apply": [
+  "hockey",
+  "basketball"
+ ],
+ "guardrail_note": "C-CALPAGE-SKEPTIC-1 predicted both would breach the 5 pp guardrail on the live page and neither did (1.94 / 1.44). If they remain clean post-apply, the report must say so explicitly: it means the exclusion landed where the curve does not show it."
+}
