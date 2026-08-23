@@ -450,6 +450,12 @@ class TestGetGameMarketsFormatting:
                 "outcome_name": "Over 105.5",
                 "movement": 0.05,
                 "period": "2H",
+                # #2089: every game-market row carries the settlement verdict.
+                # Both None here because this market is not authoritatively
+                # graded — an ungraded row states NO verdict, never a bare
+                # `false` (gotcha #33's default-false trap).
+                "is_winner": None,
+                "resolution_source": None,
                 "_market_id": 101,
                 "_external_id": "KXNBA2HTOTAL-26MAY17BOSNYK",
             }
@@ -492,6 +498,9 @@ class TestGetGameMarketsFormatting:
                 "source": "kalshi",
                 "market_type": "half_spread",
                 "period": "2H",
+                # #2089 — ungraded row, so no verdict (see the note above).
+                "is_winner": None,
+                "resolution_source": None,
             }
         ]
 
@@ -630,6 +639,9 @@ class TestGetGameMarketsFormatting:
                 "source": "kalshi",
                 "market_type": "half_spread",
                 "period": "2H",
+                # #2089 — ungraded row, so no verdict (see the note above).
+                "is_winner": None,
+                "resolution_source": None,
             }
         ]
 

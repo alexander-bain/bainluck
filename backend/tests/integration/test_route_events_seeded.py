@@ -479,9 +479,15 @@ class TestEventDetailCurrentOdds:
         # Weighted-MEDIAN blend (#240 Item 1), matching the chart's blend line.
         # Sources: betting=0.65 (w=3.0), espn=0.62 (w=1.5); betting carries the
         # majority weight so the median is 0.65 (was 0.64 under the old mean).
+        # #2085: `*_rendered_percent` are the two whole percents the page PRINTS,
+        # served so both sides round once against each other instead of
+        # independently (which prints 101 on a half-percent blend). The
+        # probabilities themselves are unchanged — that is the point of the pair.
         assert body["current_odds"] == {
             "home_probability": 0.65,
             "away_probability": 0.35,
+            "away_rendered_percent": 35,
+            "home_rendered_percent": 65,
             "source": "aggregate",
             "bookmaker_count": 0,
         }
@@ -607,12 +613,17 @@ class TestGameMarketsPopulatedShape:
         resp = await game_markets_client.get("/api/events/2/game-markets")
         body = resp.json()
         spread = body["spreads"][0]
+        # #2089: every game-market row now carries the settlement verdict. Both
+        # keys are None here because this fixture's market is `status='open'` —
+        # an ungraded row must state NO verdict, never a bare `false` (gotcha #33).
         assert spread == {
             "market_name": "Celtics at 76ers Spread",
             "outcome_name": "Celtics -4.5",
             "threshold": 4.5,
             "probability": 0.54,
             "source": "kalshi",
+            "is_winner": None,
+            "resolution_source": None,
         }
         period = body["period_markets"][0]
         assert period["market_type"] == "half_total"
