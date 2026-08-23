@@ -54,6 +54,10 @@ from app.utils.aggregation import (
     compute_aggregate_probability as _compute_aggregate_probability,
 )
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
+from app.utils.feed_event_candidates import (
+    EVENT_CANDIDATE_BUDGET,
+    event_candidate_ids,
+)
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
 from app.utils.discover_bundles import (
     assemble_awards_theme_bundles,
@@ -4852,40 +4856,46 @@ async def _score_events(
     # completed=False). Only include "live" events that have actually started.
     live_start_cutoff = now + timedelta(hours=1)  # Small buffer for clock drift
 
-    query = (
-        select(Event)
-        .join(Sport, Event.sport_id == Sport.id)
-        .options(selectinload(Event.sport))
-        .where(
-            or_(
-                and_(
-                    Event.status == "live",
-                    Event.commence_time <= live_start_cutoff,
-                ),
-                and_(
-                    Event.status == "scheduled",
-                    Event.commence_time >= now,
-                    Event.commence_time <= upcoming_cutoff,
-                ),
-                and_(
-                    Event.status.in_(["completed", "closed"]),
-                    Event.commence_time >= recent_cutoff,
-                ),
-            )
+    # Candidate predicate, accumulated in ONE list so the duplicate-collapse /
+    # per-tier-quota pass below can be computed over exactly the rows this
+    # request asked for (#2065). Quotas taken over an unfiltered pool would hand
+    # a filtered request the wrong slice.
+    candidate_conditions = [
+        or_(
+            and_(
+                Event.status == "live",
+                Event.commence_time <= live_start_cutoff,
+            ),
+            and_(
+                Event.status == "scheduled",
+                Event.commence_time >= now,
+                Event.commence_time <= upcoming_cutoff,
+            ),
+            and_(
+                Event.status.in_(["completed", "closed"]),
+                Event.commence_time >= recent_cutoff,
+            ),
         )
-    )
+    ]
 
     if sport_filter:
-        query = query.where(Sport.key.ilike(f"%{sport_filter}%"))
+        candidate_conditions.append(Sport.key.ilike(f"%{sport_filter}%"))
 
     # Push static tags to SQL via GIN containment index (@>)
     # Only for tags that don't change after event creation (sport, league, tier, etc.)
     if static_tag_filter:
         import json as _json_mod
 
-        query = query.where(
+        candidate_conditions.append(
             Event.event_tags.op("@>")(cast(_json_mod.dumps(static_tag_filter), JSONB))
         )
+
+    query = (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(selectinload(Event.sport))
+        .where(*candidate_conditions)
+    )
 
     # For my_teams_only, push team filtering to SQL so we don't miss events
     # beyond the safety cap (the 7-day window can have 1000+ events across
@@ -4916,9 +4926,22 @@ async def _score_events(
         query = query.where(Sport.key.in_(MY_STUFF_ALLOWED_SPORT_KEYS))
         query = query.limit(200)  # Safety cap (user's teams only)
     else:
-        # Prioritize live > recently completed > scheduled so the 500-row
-        # cap doesn't crowd out live events when thousands of scheduled
-        # events exist across all sports.
+        # #2065: one ORDER BY + one LIMIT 500 across all three status tiers let a
+        # single tier — and a single SPORT — starve every other one. On
+        # 2026-08-21 it did: 2,911 live `esports` rows resolving to TEN distinct
+        # matchups (mean 291 copies each, zero singletons) took 488 of the 500
+        # slots, so ZERO scheduled and ZERO finished events were admitted and the
+        # feed served one real game, twice.
+        #
+        # Admit ids through an exact-duplicate collapse followed by per-tier
+        # quotas instead. Same total budget (500), same within-tier ordering; the
+        # fix is how the budget is DIVIDED. Still one round trip — the pass is an
+        # inlined subquery, not a second execute.
+        query = query.where(
+            Event.id.in_(event_candidate_ids(candidate_conditions))
+        )
+        # Retained so ordering downstream of this function is unchanged, and as a
+        # belt-and-braces bound if the quotas are ever edited to sum higher.
         query = query.order_by(
             case(
                 (Event.status == "live", 0),
@@ -4927,7 +4950,7 @@ async def _score_events(
             ),
             Event.commence_time.desc(),
         )
-        query = query.limit(500)  # Safety cap (all events)
+        query = query.limit(EVENT_CANDIDATE_BUDGET)  # Safety cap (all events)
 
     result = await db.execute(query)
     events = result.scalars().all()
