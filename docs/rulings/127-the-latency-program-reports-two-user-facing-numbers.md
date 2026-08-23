@@ -51,6 +51,22 @@ a 1/10 sample. Reported **always** with three companions, none of them optional:
   magnitude on a change that touched no code path a user waits on.
 * `newest_sample_age_s`, because a warm number from an hour ago is a claim about an hour ago.
 
+🔴 **TAKE THE FEED READ FIRST, BEFORE ANY PROBING — the lane's own traffic enters the census.**
+`/api/feed` is `always_sampled`, so **every** request this lane makes to it lands in the window it
+then reports as organic. Measured this cycle: a read at 15:09 PDT returned `n=13`; a read at
+15:34 PDT, after a 4½-minute `#2107` watch run, returned `n=24` — **7 of the 24 were mine**, and
+they were disproportionately cache hits, which moves the very `by_cache_status` split the headline
+is reported on.
+
+This is the *third* instance of one shape in one cycle: probe terms voting in the trending counter
+they measure; probe traffic populating the typeahead latency row; watch probes populating the feed
+latency row. The general form is already banked below for writes; the reads need it too —
+**a census that samples every request counts the observer.**
+
+**Protocol, therefore:** take the `feed p50` reading as the **first** production read of the cycle,
+before any probe, watch or smoke run touches `/api/feed`; and if that is impossible, subtract the
+lane's own request count and say so. Never report a contaminated `n` as organic.
+
 **`typeahead p50` — PROBE, because organic volume cannot carry it.**
 `backend/scripts/probe_typeahead_userfelt.py --terms-from file --terms-file
 docs/audits/latency/headline-probe-terms.txt`, reported as **p50 AND cold-share together**.
