@@ -1,0 +1,77 @@
+{
+  "$comment": [
+    "UX-P117 / #2060 item 1 — THE SIX CHIPS ONE TAP AFTER 'BAD', AND WHERE EACH ROUTES.",
+    "",
+    "Ruling 021: when several consumers must agree about the same input, the unit to",
+    "share is the DECISION, not the ingredient. Three runtimes render this chip row —",
+    "Python declares the vocabulary and the routes, Swift draws the chips on the",
+    "native surface, TypeScript draws them on /admin/labeling — and no import spans",
+    "them. So the shared unit is this table.",
+    "",
+    "WHY IT MATTERS. The chips exist to turn a Bad into ROUTABLE DEFECT EVIDENCE.",
+    "Measured on production 2026-08-21: 88 ranking_judgments, ZERO carrying",
+    "`label_metadata.fixable_interest`, and 71 of them bad/kill WITH reason tags. The",
+    "cluster endpoints skip any row without that key, so both had returned an empty",
+    "list for the life of the store while Alex had flagged `stale` 35 separate times.",
+    "The label was recorded and the complaint was dropped, every time.",
+    "",
+    "THE PART THAT IS EASY TO GET WRONG IS `tag`, NOT `display`. The stored tag is",
+    "the STORE's canonical spelling, so 'Confusing' stores `unclear` and 'Boring'",
+    "stores `low_stakes` — the corpus already holds 16 and 6 rows under those names.",
+    "A surface that shipped `confusing` as a new tag would split the tally the chips",
+    "exist to grow, which is exactly what had already happened: /admin/labeling wrote",
+    "`boring` (2 rows) beside native's `low_stakes` (6 rows), one complaint counted",
+    "twice, each half too small to look like anything. Canonicalisation lives in",
+    "app/utils/discover_reason_tags.py and nowhere else.",
+    "",
+    "`fix_type` values are NOT new. They are the vocabulary the web ReviewTab's",
+    "FIX_TYPES select already offers and the cluster endpoints already group by, so a",
+    "native chip tap lands in the SAME cluster as a web triage of the same problem.",
+    "",
+    "ORDER IS THE TAP ORDER, by measured frequency of the complaint each names, so",
+    "the most common answer is the shortest reach on a phone. `stale` leads because",
+    "it is 40% of the corpus."
+  ],
+  "chips": [
+    { "tag": "stale",             "display": "Stale",             "fix_type": "staleness" },
+    { "tag": "wrong_probability", "display": "Wrong probability", "fix_type": "data_bug" },
+    { "tag": "unclear",           "display": "Confusing",         "fix_type": "missing_context" },
+    { "tag": "duplicate",         "display": "Duplicate",         "fix_type": "duplicate_variant" },
+    { "tag": "bad_image",         "display": "Bad image",         "fix_type": "bad_image" },
+    { "tag": "low_stakes",        "display": "Boring",            "fix_type": "ranking_rule" }
+  ],
+  "$aliases_comment": [
+    "Spellings a surface already writes that MUST fold onto a chip tag. Each of",
+    "these was found in the store or in a shipped client, not invented here.",
+    "`boring` and `too_high`/`too_low` were unregistered before UX-P117 and so were",
+    "preserved verbatim as unknown tags."
+  ],
+  "aliases": {
+    "boring": "low_stakes",
+    "confusing": "unclear",
+    "needs_context": "unclear",
+    "no_context": "unclear",
+    "bad image": "bad_image",
+    "wrong_image": "bad_image",
+    "too_high": "wrong_probability",
+    "too_low": "wrong_probability",
+    "niche": "too_niche"
+  },
+  "$notification_comment": [
+    "#2060 item 6 — the labelling nudge rides the EXISTING morning digest as a",
+    "notification ACTION rather than as a second push (notifications v1 is",
+    "digest-only by standing ruling).",
+    "",
+    "It is an action and not the tap target because a push has ONE tap target and",
+    "the digest's is the most interesting market of the day. Overwriting it would",
+    "take the market away from the one person who most wants it. The client",
+    "registers the category unconditionally; the SERVER attaches it only for an",
+    "admin recipient, because the digest renders one payload and broadcasts it —",
+    "an unconditional line would tell the whole user base to go and label."
+  ],
+  "notification": {
+    "category": "morning_digest_admin",
+    "action": "label_today",
+    "deep_link": "/admin/labeling"
+  }
+}

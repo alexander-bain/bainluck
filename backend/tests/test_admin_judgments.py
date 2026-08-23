@@ -238,7 +238,13 @@ def test_create_judgment_keeps_query_param_write_path(monkeypatch):
         "drift_gate": {"bound": False, "reason": "no_market_target"},
     }
     assert db.added.label == "bad"
-    assert db.added.reason_tags == ["boring", "duplicate"]
+    # `boring` -> `low_stakes` since UX-P117. This test is about the QUERY-PARAM
+    # write path, not about spellings — the tag is incidental and alias behaviour
+    # is owned by `test_create_judgment_canonicalizes_reason_tag_aliases` below.
+    # It changed here because `boring` was an UNREGISTERED tag until this queue
+    # and so used to pass through verbatim, which is exactly the fork that left
+    # 2 production `boring` rows sitting beside 6 `low_stakes` ones.
+    assert db.added.reason_tags == ["low_stakes", "duplicate"]
     assert db.added.reviewer == "sam"
 
 
@@ -255,6 +261,71 @@ def test_create_judgment_canonicalizes_reason_tag_aliases(monkeypatch):
 
     assert response.status_code == 200
     assert db.added.reason_tags == ["fun_or_weird", "unclear", "duplicate"]
+
+
+def test_create_judgment_canonicalizes_the_ux_p117_aliases(monkeypatch):
+    """The three spellings shipped clients were writing with no canonical home.
+
+    `boring` is what `/admin/labeling` has always sent and `too_high`/`too_low`
+    are two of the web ReviewTab's chips; none was registered, so all three were
+    preserved verbatim as unknown tags and counted separately from the complaint
+    they name. Measured on production 2026-08-21: 2 `boring` rows beside 6
+    `low_stakes`, one complaint under two names.
+    """
+    db = _WriteDB()
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments"
+        "?secret=ok&label=bad&reason_tags=boring,too_high,confusing"
+    )
+
+    assert response.status_code == 200
+    assert db.added.reason_tags == ["low_stakes", "wrong_probability", "unclear"]
+
+
+def test_create_judgment_routes_a_reasoned_bad_to_a_defect_cluster(monkeypatch):
+    """#2060 item 1, end to end through the real route.
+
+    The unit test proves `defect_route`; this proves the ROUTE calls it, which is
+    the half that was missing for the store's whole life — 88 rows, zero
+    `fixable_interest`, 71 tagged negatives going nowhere.
+    """
+    db = _WriteDB()
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments?secret=ok&label=bad&reason_tags=stale"
+    )
+
+    assert response.status_code == 200
+    assert db.added.label_metadata["fixable_interest"] == {
+        "fix_type": "staleness",
+        "derived_from": "reason_tags",
+        "reason_tags_routed": ["stale"],
+    }
+
+
+def test_create_judgment_files_no_defect_for_a_praised_card(monkeypatch):
+    """The other direction (gotcha #43): a `love` must not manufacture a defect."""
+    db = _WriteDB()
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
+    )
+
+    # `stale`, not a praise tag: it is the tag that WOULD route on a Bad, so this
+    # exercises the LABEL gate. A praise tag routes nowhere whatever the label
+    # is, which made the first draft of this assertion vacuous (mutation M1).
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments?secret=ok&label=love&reason_tags=stale"
+    )
+
+    assert response.status_code == 200
+    assert "fixable_interest" not in (db.added.label_metadata or {})
 
 
 def test_create_judgment_nests_metadata_fixable_interest(monkeypatch):

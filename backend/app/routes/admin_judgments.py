@@ -8,6 +8,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -46,8 +47,12 @@ from app.utils.gold_label_store import (
     normalize_card_snapshot as _normalize_card_snapshot,
     structured_label_metadata as _structured_label_metadata,
 )
+from app.utils.gold_progress import gold_progress
 from app.utils.labeling_queue import load_reviewed_ranking_keys
 from app.utils.reviewer_tier import TIER_ALEX
+
+#: Alex's timezone. The gold-set day boundary, and the only place it is written.
+GOLD_PROGRESS_TIMEZONE = "America/Los_Angeles"
 
 router = APIRouter(prefix="/admin/ranking-judgments", tags=["admin-judgments"])
 logger = logging.getLogger(__name__)
@@ -1160,6 +1165,9 @@ async def create_judgment(
             reviewer_value = admin_email
 
     surface_value = _merged_value(body, "surface", surface, "discover")
+    reason_tags_value = _normalize_reason_tags(
+        _merged_value(body, "reason_tags", reason_tags)
+    )
 
     judgment = gold_label_row(
         surface=surface_value,
@@ -1177,9 +1185,7 @@ async def create_judgment(
             or _merged_value(body, "market_name", market_name)
         ),
         label=label_value,
-        reason_tags=_normalize_reason_tags(
-            _merged_value(body, "reason_tags", reason_tags)
-        ),
+        reason_tags=reason_tags_value,
         better_than=_merged_value(body, "better_than", better_than),
         worse_than=_merged_value(body, "worse_than", worse_than),
         notes=_merged_value(body, "notes", notes),
@@ -1203,6 +1209,13 @@ async def create_judgment(
             _merged_value(body, "label_metadata", None),
             gate=gate,
             live_card=live_row,
+            # ONE derivation, hoisted above this call and passed to both
+            # consumers (doctrine clause 5). Re-normalising the tags here would
+            # be a second derivation that merely agrees — and the one that
+            # decides the defect route would be free to drift from the one
+            # actually stored on the row.
+            label=label_value,
+            reason_tags=reason_tags_value,
         ),
         # This surface elicits the gold label itself — Alex taps love/fine/bad/
         # kill on the card. Nothing is inferred, and the row says so, because the
@@ -1439,6 +1452,66 @@ async def list_judgments(
         "summary": summary,
         "judgments": [_serialize_judgment(judgment) for judgment in rows],
     }
+
+
+@router.get("/progress")
+async def labeling_progress(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    secret: str | None = Query(None),
+    reviewer: str | None = Query(None),
+):
+    """The gold-set progress meter the labelling surfaces show (#2060 item 4).
+
+    ── WHY THIS IS NOT A FIELD ON ``/coverage`` ─────────────────────────────────
+
+    ``/coverage`` answers a different question and pays a different price: it
+    pulls every ``RankingJudgment`` row into Python and then runs
+    ``_labeling_stratum_query`` once per stratum at ``limit=200`` each, plus a
+    second full scan for the flip window. That is correct for a dashboard someone
+    opens occasionally and wrong for a header that redraws after every vote —
+    twenty times a session, on a phone, between taps.
+
+    This is two grouped aggregates that never leave the database, so the meter
+    costs the same at 88 rows and at 250.
+
+    ── THE DAY BUCKET IS PACIFIC, IN SQL, ON PURPOSE ────────────────────────────
+
+    ``AT TIME ZONE 'America/Los_Angeles'`` rather than a UTC bucket the server
+    re-labels afterwards. Alex labels in the evening; a UTC day rolls over at 5pm
+    PT, so his 8pm session would land on tomorrow, "today" would read zero on a
+    night he actually worked, and the streak would break. Postgres owns the
+    DST-aware arithmetic and the app does not re-derive it.
+    """
+    if not await _authorize_admin(secret, request, db):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    pacific_day = func.to_char(
+        func.timezone(GOLD_PROGRESS_TIMEZONE, RankingJudgment.created_at),
+        "YYYY-MM-DD",
+    )
+
+    day_query = select(pacific_day.label("day"), func.count(RankingJudgment.id))
+    total_query = select(func.count(RankingJudgment.id))
+    if reviewer:
+        day_query = day_query.where(RankingJudgment.reviewer == reviewer)
+        total_query = total_query.where(RankingJudgment.reviewer == reviewer)
+
+    day_rows = (await db.execute(day_query.group_by(pacific_day))).all()
+    total = (await db.execute(total_query)).scalar_one()
+
+    counts = {row[0]: row[1] for row in day_rows if row[0]}
+    today = datetime.now(ZoneInfo(GOLD_PROGRESS_TIMEZONE)).date()
+
+    progress = gold_progress(
+        total=int(total or 0),
+        today_count=int(counts.get(today.isoformat(), 0)),
+        days=counts.keys(),
+        today=today,
+    )
+    progress["timezone"] = GOLD_PROGRESS_TIMEZONE
+    progress["reviewer"] = reviewer
+    return progress
 
 
 @router.get("/coverage")
