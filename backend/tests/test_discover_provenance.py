@@ -98,6 +98,28 @@ class TestEnumAndAllowlistAgree:
         That is strictly stronger — it catches a second head no matter which
         parent is declared — and it does not have to be edited again by the next
         lane that lands a migration ahead of this one.
+
+        ## AMENDED 2026-08-23 (lane1 queue 393) — "ahead" was only half the cases
+
+        `heads == [play.revision]` survives a migration landing **ahead** of this
+        one (as a parent, which is what INT-096 hit) and does **not** survive one
+        landing **after** it (as a child) — at which point this revision is no
+        longer the head, correctly, and the assertion reds over a chain that is
+        again perfectly linear. The docstring above promised it would not need
+        editing by "the next lane that lands a migration"; that promise held for
+        parents and not for children, and the #1946 folded revision
+        (`anchors_and_captures`) is the first child.
+
+        So the proxy was replaced with a NARROWER proxy, not with the property.
+        The property the failure message names is exactly two things:
+
+        1. there is **one** head — a second one fails the Heroku release phase;
+        2. this revision is **on the chain that reaches it**, i.e. it still runs.
+
+        Being the head is neither of those. It is a statement about what happens
+        to be newest, which is a moving target by construction — every migration
+        ever written stops being the head. Asserted directly below, so the next
+        child does not red this again.
         """
         from alembic.config import Config
         from alembic.script import ScriptDirectory
@@ -107,10 +129,21 @@ class TestEnumAndAllowlistAgree:
 
         script = ScriptDirectory.from_config(Config("alembic.ini"))
         heads = list(script.get_heads())
-        assert heads == [play.revision], (
-            f"expected exactly one alembic head and for it to be the play "
-            f"revision {play.revision!r}, got {heads!r} — a second head fails "
-            f"the Heroku release phase and the site does not deploy at all"
+        assert len(heads) == 1, (
+            f"expected exactly ONE alembic head, got {heads!r} — a second head "
+            f"fails the Heroku release phase and the site does not deploy at all"
+        )
+
+        # `play` must still be REACHED by an upgrade to head. Walking head -> base
+        # is what proves it is on the live chain rather than stranded on a branch
+        # that nothing runs; it holds whether `play` is the head itself or has
+        # since acquired descendants.
+        chain_to_head = {r.revision for r in script.iterate_revisions(heads[0], "base")}
+        assert play.revision in chain_to_head, (
+            f"the play revision {play.revision!r} is not on the chain from head "
+            f"{heads[0]!r} to base — it has been orphaned onto a branch that "
+            f"`alembic upgrade heads` will never execute, so the seventh enum "
+            f"value never reaches the database"
         )
 
         # And the chain really reaches the base this revision exists to amend:
