@@ -696,7 +696,11 @@ def test_ruling_numbers_are_unique() -> None:
 #: holders_found = 0. `origin/master` = `fe28d2c3`, whose highest ruling FILE is **125** —
 #: 126 and 127 are this lane's own, claimed-and-unmerged on `program/latency-75`, so the count
 #: on THIS branch is ahead of master's and will be re-counted at merge, never re-derived.
-MINIMUM_BANKED_RULINGS = 119
+#: LAT-P086 raises it 119 -> 121 (rulings 130 and 131), COUNTED from this tree
+#: (`ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = 121), never by adding a delta —
+#: ruling 088's corollary. Same 575-ref sweep for `docs/rulings/13[01]-`,
+#: holders_found = 0, `origin/master` = `b5c2a750` whose highest ruling FILE is still 125.
+MINIMUM_BANKED_RULINGS = 121
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
