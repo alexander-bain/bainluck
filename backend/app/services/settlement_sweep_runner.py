@@ -60,6 +60,7 @@ from app.utils.settlement_sweep_plan import (
     bucket_for,
     burn_down,
     plan_sweep,
+    tier_counts,
 )
 from app.utils.settlement_sweep_query import (
     ALREADY_CAPTURED_SQL,
@@ -145,6 +146,11 @@ class SweepReport:
 
     selected: int = 0
     selected_by_bucket: dict[str, int] = field(default_factory=dict)
+    #: Selected rows by probe-history tier (#2175). This is the number that shows
+    #: whether the sweep is spending its budget on rows that can answer or
+    #: re-asking ones the source already declined. A pass whose selection is mostly
+    #: ``stable_nonanswer`` is the livelock, visible before the results come back.
+    selected_by_tier: dict[str, int] = field(default_factory=dict)
     #: Left behind by the BUDGET, per bucket. The number that says whether another
     #: run is needed before the next deadline.
     skipped_by_bucket: dict[str, int] = field(default_factory=dict)
@@ -183,6 +189,7 @@ class SweepReport:
             "fetch_capped": self.fetch_capped,
             "selected": self.selected,
             "selected_by_bucket": self.selected_by_bucket,
+            "selected_by_tier": self.selected_by_tier,
             "skipped_by_bucket": self.skipped_by_bucket,
             "captured": self.captured,
             "by_disposition": self.by_disposition,
@@ -342,6 +349,7 @@ async def run_sweep(
     selected, skipped = plan_sweep(candidates, budget, now)
     report.selected = len(selected)
     report.selected_by_bucket = burn_down(selected, now)
+    report.selected_by_tier = tier_counts(selected)
     report.skipped_by_bucket = skipped
 
     if dry_run:

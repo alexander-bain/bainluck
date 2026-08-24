@@ -129,7 +129,10 @@ class FakeSession:
             return _Result(self.cohort_rows)
         if "already_this_sweep" in sql:
             return _Result([self.exclusions])
-        if sql.strip().startswith("SELECT m.id"):
+        # Dispatch on the bind name, not on a literal prefix: CANDIDATE_SQL is the
+        # only paged query, and matching ":fetch_limit" survives reformatting of
+        # the SELECT list (a prefix match did not — #2175).
+        if ":fetch_limit" in sql:
             return _Result(self.candidate_rows)
         if "SELECT 1 FROM settlement_captures" in sql and "market_id" in sql:
             hit = params.get("market_id") in self.already_captured
@@ -154,6 +157,19 @@ class FakeSession:
 
 def _candidate_row(market_id: int, age_days: float, ticker: str | None = None):
     return (market_id, "kalshi", ticker or f"KXTEST-{market_id}", _at_age(age_days))
+
+
+def _candidate_row_with_history(
+    market_id: int, age_days: float, *, attempts: int, stable_nonanswers: int,
+    ticker: str | None = None,
+):
+    """The six-column shape the real CANDIDATE_SQL returns (#2175).
+
+    The four-column ``_candidate_row`` stays valid on purpose: ``rows_to_candidates``
+    tolerates a row with no history and reads it as never-probed, which is the tier
+    served first.
+    """
+    return _candidate_row(market_id, age_days, ticker) + (attempts, stable_nonanswers)
 
 
 async def _always(outcome):
@@ -637,3 +653,47 @@ def test_fetch_limit_gives_the_planner_a_population_to_plan_over():
     over anything — there is nothing to prefer it over."""
     assert fetch_limit_for(100) > 100
     assert fetch_limit_for(10_000_000) <= 20_000
+
+
+# ---------------------------------------------------------------------------
+# Probe history reaches the runner (#2175)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_budget_spends_on_the_never_probed_row_not_the_stale_one():
+    """The livelock, end to end through the runner.
+
+    Both rows are in the terminal bucket. Market 1 is closer to its deadline but has
+    already answered ``ambiguous_empty`` three times; market 2 has never been probed.
+    Under the pure-deadline ordering the sweep spent its whole budget re-asking
+    market 1 and market 2 was never reached — 341 rows sat in exactly that state
+    across three paced passes. The row we have never asked goes first.
+    """
+    session = FakeSession(
+        cohort_rows=[(_at_age(60), 1, 1), (_at_age(55), 1, 1)],
+        candidate_rows=[
+            _candidate_row_with_history(1, 65, attempts=3, stable_nonanswers=3),
+            _candidate_row_with_history(2, 60, attempts=0, stable_nonanswers=0),
+        ],
+    )
+    report = await run_sweep(
+        session, budget=1, now=NOW, probe_fn=await _always(_settled())
+    )
+    assert report.selected == 1
+    assert {row["market_id"] for row in session.inserted} == {2}
+    assert report.selected_by_tier == {"never_probed": 1}
+
+
+async def test_a_row_with_no_history_columns_is_read_as_never_probed():
+    """The four-column row is not a legacy shape to be tolerated grudgingly — a
+    market with no capture rows genuinely has no history, and the tier that gets
+    served first is the right default for it."""
+    session = FakeSession(
+        cohort_rows=[(_at_age(60), 1, 1)],
+        candidate_rows=[_candidate_row(1, 60)],
+    )
+    report = await run_sweep(
+        session, budget=1, now=NOW, probe_fn=await _always(_settled())
+    )
+    assert report.selected_by_tier == {"never_probed": 1}
+    assert report.to_dict()["selected_by_tier"] == {"never_probed": 1}

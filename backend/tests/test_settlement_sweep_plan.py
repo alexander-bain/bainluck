@@ -16,11 +16,26 @@ from app.utils.settlement_sweep_plan import (
     BUCKETS,
     NON_TERMINAL_RESERVE,
     TERMINAL_BUCKET,
+    TIER_NEVER_PROBED,
+    TIER_STABLE_NONANSWER,
+    TIER_TRANSIENT_ONLY,
     Candidate,
+    attempt_tier_from_dispositions,
     bucket_for,
     burn_down,
     order_candidates,
     plan_sweep,
+    tier_counts,
+)
+from app.utils.settlement_sweep_query import (
+    RETRYABLE_DISPOSITIONS,
+    TERMINAL_DISPOSITIONS,
+)
+from app.utils.settlement_truth import (
+    STABLE_NONANSWER_DISPOSITION_VALUES,
+    TRANSIENT_DISPOSITION_VALUES,
+    Disposition,
+    is_stable_nonanswer,
 )
 
 #: A fixed instant. The suite never reads the wall clock, so it cannot go red in
@@ -28,11 +43,21 @@ from app.utils.settlement_sweep_plan import (
 NOW = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
 
 
-def candidate(market_id: int, days_remaining: float | None, reason: str = "missing_winner") -> Candidate:
+def candidate(
+    market_id: int,
+    days_remaining: float | None,
+    reason: str = "missing_winner",
+    *,
+    attempts: int = 0,
+    stable_nonanswers: int = 0,
+) -> Candidate:
     """Build a candidate with an exact days-remaining, derived from ``NOW``.
 
     ``days_remaining = CAPTURE_PLANNING_AGE_DAYS - age``, so
     ``age = CAPTURE_PLANNING_AGE_DAYS - days_remaining``.
+
+    ``attempts`` / ``stable_nonanswers`` default to the never-probed shape, so every
+    test written before #2175 keeps meaning what it meant.
     """
     if days_remaining is None:
         resolution = None
@@ -45,6 +70,8 @@ def candidate(market_id: int, days_remaining: float | None, reason: str = "missi
         external_id=f"KXTEST-{market_id}",
         resolution_date=resolution,
         candidate_reason=reason,
+        attempts=attempts,
+        stable_nonanswers=stable_nonanswers,
     )
 
 
@@ -206,3 +233,217 @@ class TestClockDiscipline:
         assert near == pytest.approx(70, abs=0.01)
         assert far == pytest.approx(-330, abs=0.01)
         assert bucket_for(far) == "expired"
+
+
+class TestProbeHistoryTiering:
+    """#2175 — the terminal bucket livelocked on rows the source had already declined.
+
+    The defect these guard is a COMPOSITION of two correct behaviours:
+    ``ambiguous_empty`` is rightly non-terminal (so it is re-probed), and the
+    planner is rightly oldest-first (so it is re-probed FIRST). Every test below
+    fails against the pre-#2175 planner, which is the point — see the
+    red-first receipt in the queue 405 report.
+    """
+
+    def test_a_never_probed_row_outranks_an_older_stale_one_in_the_same_bucket(self):
+        """The defect itself, in one assertion.
+
+        The stale row is OLDER, so the pre-fix key put it first and it stayed first
+        on every subsequent pass. Both rows are in the terminal bucket.
+        """
+        stale = candidate(1, 1.0, attempts=3, stable_nonanswers=3)
+        fresh = candidate(2, 6.0)
+
+        ordered = order_candidates([stale, fresh], NOW)
+
+        assert [c.market_id for c in ordered] == [2, 1]
+
+    def test_a_binding_budget_spends_on_the_row_that_can_answer(self):
+        """The consequence: with room for one probe, do not re-ask the unanswerable."""
+        stale = candidate(1, 0.5, attempts=4, stable_nonanswers=4)
+        transient = candidate(2, 3.0, attempts=1, stable_nonanswers=0)
+        fresh = candidate(3, 6.0)
+
+        selected, skipped = plan_sweep([stale, transient, fresh], budget=1, now=NOW)
+
+        assert [c.market_id for c in selected] == [3]
+        assert skipped[TERMINAL_BUCKET] == 2
+
+    def test_transient_failures_outrank_stable_nonanswers(self):
+        """A 429 is a channel failure; a 200-with-nothing is the source's answer.
+
+        227 rows stuck on ``rate_limited`` (#2174) sat behind 341 unanswerable ones.
+        """
+        stale = candidate(1, 1.0, attempts=1, stable_nonanswers=1)
+        transient = candidate(2, 1.0, attempts=1, stable_nonanswers=0)
+
+        ordered = order_candidates([stale, transient], NOW)
+
+        assert [c.market_id for c in ordered] == [2, 1]
+
+    def test_stale_rows_are_still_probed_when_the_budget_allows(self):
+        """The fix must be an ORDER, not an exclusion.
+
+        If tier 2 became unreachable this would be ``AMBIGUOUS_EMPTY`` promoted to
+        terminal by the back door — "we could not tell" recorded as "we are done
+        asking", which is the one conversion the capture program exists to refuse.
+        """
+        stale = candidate(1, 1.0, attempts=9, stable_nonanswers=9)
+        fresh = candidate(2, 6.0)
+
+        selected, skipped = plan_sweep([stale, fresh], budget=2, now=NOW)
+
+        assert {c.market_id for c in selected} == {1, 2}
+        assert not skipped
+
+    def test_the_deadline_bucket_still_outranks_probe_history(self):
+        """Bucket rank stays the OUTERMOST key, and that is not negotiable.
+
+        A stale row in the dying bucket must still beat a pristine row with sixty
+        days of slack: the terminal bucket is the one that stops existing, and
+        trading a permanent loss for a temporary one is not an improvement.
+        """
+        dying_but_stale = candidate(1, 2.0, attempts=5, stable_nonanswers=5)
+        fresh_but_safe = candidate(2, 70.0)
+
+        ordered = order_candidates([dying_but_stale, fresh_but_safe], NOW)
+
+        assert [c.market_id for c in ordered] == [1, 2]
+
+    def test_repeated_asks_yield_to_less_asked_rows_in_the_same_tier(self):
+        """Within a tier, spread the retries instead of grinding one subset."""
+        asked_often = candidate(1, 1.0, attempts=8, stable_nonanswers=8)
+        asked_once = candidate(2, 1.0, attempts=1, stable_nonanswers=1)
+
+        ordered = order_candidates([asked_often, asked_once], NOW)
+
+        assert [c.market_id for c in ordered] == [2, 1]
+
+    def test_ordering_is_still_deterministic_to_the_row(self):
+        """Ties break on market_id, so a rehearsal and its run select the same rows."""
+        cands = [candidate(i, 3.0, attempts=1, stable_nonanswers=1) for i in (7, 3, 9, 1)]
+        assert [c.market_id for c in order_candidates(cands, NOW)] == [1, 3, 7, 9]
+        assert [c.market_id for c in order_candidates(list(reversed(cands)), NOW)] == [
+            1,
+            3,
+            7,
+            9,
+        ]
+
+
+class TestAttemptTier:
+    def test_a_never_probed_market_is_tier_zero(self):
+        assert candidate(1, 5.0).attempt_tier() == TIER_NEVER_PROBED
+
+    def test_channel_failures_alone_are_tier_one(self):
+        assert candidate(1, 5.0, attempts=3).attempt_tier() == TIER_TRANSIENT_ONLY
+
+    def test_any_stable_nonanswer_is_tier_two(self):
+        c = candidate(1, 5.0, attempts=3, stable_nonanswers=1)
+        assert c.attempt_tier() == TIER_STABLE_NONANSWER
+
+    def test_tier_is_ever_not_last(self):
+        """A later 429 does not un-tell us what the source already said.
+
+        Reading only the most recent disposition would let one transient failure
+        promote a known-unanswerable market back to the head of the queue — the
+        livelock wearing a hat.
+        """
+        history = [
+            Disposition.AMBIGUOUS_EMPTY.value,
+            Disposition.RATE_LIMITED.value,
+        ]
+        assert attempt_tier_from_dispositions(history) == TIER_STABLE_NONANSWER
+
+    def test_an_empty_history_is_never_probed(self):
+        assert attempt_tier_from_dispositions([]) == TIER_NEVER_PROBED
+
+    def test_an_unrecognised_disposition_defaults_to_urgent_not_stale(self):
+        """Over-including into the urgent tier costs a probe; under-including costs
+        the row. A value from a future protocol version must not silently sort to
+        the back of the queue."""
+        assert attempt_tier_from_dispositions(["some_future_disposition"]) == (
+            TIER_TRANSIENT_ONLY
+        )
+        assert not is_stable_nonanswer("some_future_disposition")
+        assert not is_stable_nonanswer(None)
+
+    @pytest.mark.parametrize(
+        "carrier", sorted(STABLE_NONANSWER_DISPOSITION_VALUES)
+    )
+    def test_every_stable_disposition_carries_the_demotion_not_just_one(self, carrier):
+        """The tier is a property of the PARTITION, never of one string.
+
+        ``ambiguous_empty`` is the disposition the 341 owed rows happen to carry, so
+        a fix could special-case that one word, pass the regression test, and starve
+        identically the first time the head refills with ``open_no_settlement``. Each
+        member of the stable set is asserted separately so that shortcut cannot
+        survive: demoting one word leaves the other three green here and red in
+        production.
+        """
+        assert attempt_tier_from_dispositions([carrier]) == TIER_STABLE_NONANSWER
+        assert is_stable_nonanswer(carrier)
+
+    @pytest.mark.parametrize(
+        "carrier", sorted(STABLE_NONANSWER_DISPOSITION_VALUES)
+    )
+    def test_a_binding_budget_prefers_the_unasked_row_whatever_the_carrier(
+        self, carrier
+    ):
+        """G1 with the carrier varied — the selection, not the sort position.
+
+        Both rows sit in the terminal bucket and the answered one is closer to its
+        deadline, so under the pre-fix key it won every time. The budget binds at
+        one, so this asserts who gets probed rather than who sorts where.
+        """
+        answered = candidate(
+            1, 1.0, attempts=3,
+            stable_nonanswers=3 if is_stable_nonanswer(carrier) else 0,
+        )
+        unasked = candidate(2, 6.0)
+        selected, _ = plan_sweep([answered, unasked], budget=1, now=NOW)
+        assert [c.market_id for c in selected] == [2]
+
+    def test_tier_counts_names_every_tier_it_reports(self):
+        cands = [
+            candidate(1, 5.0),
+            candidate(2, 5.0, attempts=1),
+            candidate(3, 5.0, attempts=1, stable_nonanswers=1),
+            candidate(4, 5.0, attempts=2, stable_nonanswers=2),
+        ]
+        assert tier_counts(cands) == {
+            "never_probed": 1,
+            "transient_only": 1,
+            "stable_nonanswer": 2,
+        }
+
+
+class TestDispositionPartition:
+    """The stable/transient split must be exhaustive and disjoint over the
+    non-terminal set — the same guard ``TERMINAL | RETRYABLE`` already carries.
+
+    Without this, a disposition added later defaults into a tier nobody chose.
+    """
+
+    def test_the_partition_covers_the_retryable_set_exactly(self):
+        assert (
+            TRANSIENT_DISPOSITION_VALUES | STABLE_NONANSWER_DISPOSITION_VALUES
+        ) == RETRYABLE_DISPOSITIONS
+
+    def test_the_partition_is_disjoint(self):
+        assert not (TRANSIENT_DISPOSITION_VALUES & STABLE_NONANSWER_DISPOSITION_VALUES)
+
+    def test_no_terminal_disposition_leaked_into_the_planning_partition(self):
+        both = TRANSIENT_DISPOSITION_VALUES | STABLE_NONANSWER_DISPOSITION_VALUES
+        assert not (both & TERMINAL_DISPOSITIONS)
+
+    def test_the_livelock_disposition_is_stable_and_still_not_terminal(self):
+        """Both halves matter. Stable is why it stops hogging the head of the queue;
+        non-terminal is why it is still asked at all."""
+        assert Disposition.AMBIGUOUS_EMPTY.value in STABLE_NONANSWER_DISPOSITION_VALUES
+        assert Disposition.AMBIGUOUS_EMPTY.value not in TERMINAL_DISPOSITIONS
+
+    def test_rate_limiting_is_transient_not_stable(self):
+        """#2174's population must stay in the tier that gets retried first."""
+        assert Disposition.RATE_LIMITED.value in TRANSIENT_DISPOSITION_VALUES
+        assert Disposition.TRANSPORT_ERROR.value in TRANSIENT_DISPOSITION_VALUES
