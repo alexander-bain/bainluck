@@ -429,12 +429,195 @@ def test_delete_judgment_requires_auth(monkeypatch):
 
     db = _DeleteDB(_judgment(id=99))
     monkeypatch.setattr(admin_judgments, "_check_admin_secret", _reject)
+    monkeypatch.setattr(
+        admin_judgments, "_resolve_reviewer_identity", _identity(None)
+    )
 
     response = _client_with_db(db).delete("/admin/ranking-judgments/99?secret=wrong")
 
     assert response.status_code == 403
     assert db.deleted is None
     assert db.committed is False
+
+
+# --- UX-P125 item 3a — UNDO IS NOT AN ADMIN OPERATION ------------------------
+#
+# Alex's device session: every undo returned "Admin access required to undo."
+# (`DiscoverLabelingViewModel.swift:302`, its rendering of a 403). The write
+# and the un-write disagreed about who the caller was. A judgment is POSTed
+# through `_authorize_admin`, which accepts a Firebase/session identity, and the
+# row is stamped with THAT REVIEWER'S OWN EMAIL. The delete ran
+# `_check_admin_destructive`, which is the token path only — ADMIN_TOKEN **and**
+# ADMIN_TOKEN_DESTRUCTIVE, in headers, neither of which a phone has or should.
+#
+# So the surface that exists to make one-tap grading fearless could write a
+# mis-tap and could never take it back. Undo is not a destructive operator
+# action on someone else's data; it is a reviewer retracting a sentence they
+# just wrote. It is authorized by OWNERSHIP.
+#
+# The operator path stays — an attended admin with both tokens may still remove
+# any row — but it is now the fallback, not the only door.
+
+ALEX = "alex@bainluck.com"
+
+
+def _identity(email):
+    async def _resolve(request, db):
+        return email
+
+    return _resolve
+
+
+class _GoldSetDB:
+    """A gold set that actually loses the row.
+
+    `_DeleteDB` records that `db.delete` was called. That proves the route asked;
+    it does not prove the row left. The directive's acceptance is "row GONE from
+    the gold set", so this models the set as a list, serves the lookup FROM that
+    list, and removes on delete — a re-read after the call is a real re-read.
+    """
+
+    def __init__(self, rows):
+        self.rows = list(rows)
+        self.committed = False
+        self._pending_delete = None
+
+    def _lookup(self, judgment_id):
+        for row in self.rows:
+            if row.id == judgment_id:
+                return row
+        return None
+
+    async def execute(self, statement):
+        # The route's only query is the single-row lookup by id. Reading the id
+        # out of the compiled statement is more machinery than this needs; the
+        # tests below hold one row per set, so serve the head of what remains.
+        rows = self.rows
+        return SimpleNamespace(scalar_one_or_none=lambda: rows[0] if rows else None)
+
+    async def delete(self, row):
+        self._pending_delete = row
+
+    async def commit(self):
+        # Read-your-writes: the row is gone from the set before the response is
+        # written, so an immediate re-list cannot still count it.
+        if self._pending_delete is not None:
+            self.rows = [r for r in self.rows if r is not self._pending_delete]
+            self._pending_delete = None
+        self.committed = True
+
+
+def test_reviewer_undoes_their_own_judgment_without_any_admin_credential(monkeypatch):
+    from fastapi import HTTPException
+
+    judgment = _judgment(id=99, label="kill", reviewer=ALEX)
+    db = _GoldSetDB([judgment])
+
+    # The point of the test, stated as a trap: if the route reaches for an admin
+    # credential AT ALL, this raises and the test fails. Ownership must carry it
+    # alone.
+    def _no_admin_credential(*_args, **_kwargs):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_destructive", _no_admin_credential
+    )
+    monkeypatch.setattr(admin_judgments, "_resolve_reviewer_identity", _identity(ALEX))
+
+    response = _client_with_db(db).delete("/admin/ranking-judgments/99")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "deleted"
+    assert response.json()["label"] == "kill"
+    # GONE, not merely asked-about.
+    assert db.rows == []
+    assert db.committed is True
+
+
+def test_reviewer_identity_match_is_case_insensitive(monkeypatch):
+    from fastapi import HTTPException
+
+    def _no_admin_credential(*_args, **_kwargs):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_destructive", _no_admin_credential
+    )
+    monkeypatch.setattr(admin_judgments, "_resolve_reviewer_identity", _identity(ALEX))
+
+    db = _GoldSetDB([_judgment(id=99, reviewer="Alex@BainLuck.com  ")])
+    response = _client_with_db(db).delete("/admin/ranking-judgments/99")
+
+    # An email that round-trips through a provider with different casing is the
+    # same reviewer. Refusing here would reproduce the reported bug for a reason
+    # nobody could see on screen.
+    assert response.status_code == 200
+    assert db.rows == []
+
+
+def test_reviewer_cannot_undo_another_reviewers_judgment(monkeypatch):
+    from fastapi import HTTPException
+
+    def _no_admin_credential(*_args, **_kwargs):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_destructive", _no_admin_credential
+    )
+    monkeypatch.setattr(
+        admin_judgments, "_resolve_reviewer_identity", _identity("someone@else.com")
+    )
+
+    judgment = _judgment(id=99, reviewer=ALEX)
+    db = _GoldSetDB([judgment])
+    response = _client_with_db(db).delete("/admin/ranking-judgments/99")
+
+    assert response.status_code == 403
+    # And the refusal says WHY, because "Invalid admin secret" sent Alex looking
+    # for a token when the answer was that the row was not his.
+    assert "another reviewer" in response.json()["detail"].lower()
+    assert db.rows == [judgment]
+    assert db.committed is False
+
+
+def test_unattributed_row_still_needs_the_operator_gate(monkeypatch):
+    # Rows written through ADMIN_TOKEN carry `reviewer="native"`/`"alex"` — a
+    # literal, not an identity. Nobody OWNS those, so no signed-in user may
+    # delete one by being signed in; the attended operator path is the only door.
+    from fastapi import HTTPException
+
+    def _no_admin_credential(*_args, **_kwargs):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_destructive", _no_admin_credential
+    )
+    monkeypatch.setattr(admin_judgments, "_resolve_reviewer_identity", _identity(ALEX))
+
+    judgment = _judgment(id=99, reviewer="native")
+    db = _GoldSetDB([judgment])
+    response = _client_with_db(db).delete("/admin/ranking-judgments/99")
+
+    assert response.status_code == 403
+    assert db.rows == [judgment]
+
+
+def test_attended_operator_can_still_delete_any_row(monkeypatch):
+    # The capability that existed before this change did not go away; it stopped
+    # being the ONLY one.
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_destructive", lambda secret, **kw: True
+    )
+    monkeypatch.setattr(
+        admin_judgments, "_resolve_reviewer_identity", _identity("someone@else.com")
+    )
+
+    db = _GoldSetDB([_judgment(id=99, reviewer=ALEX, label="bad")])
+    response = _client_with_db(db).delete("/admin/ranking-judgments/99")
+
+    assert response.status_code == 200
+    assert response.json()["label"] == "bad"
+    assert db.rows == []
 
 
 def test_labeling_candidate_strata_parser_ignores_unknown_values():
