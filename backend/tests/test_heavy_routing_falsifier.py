@@ -233,10 +233,13 @@ def test_unchanged_production_holds():
 def test_threshold_boundary_is_not_inverted():
     """Just under the effective threshold holds; just over it reverts.
 
-    #2116 changed WHICH boundary binds, not whether there is one. `degrade_trips_at_s`
-    is `max(ratio trip, floor trip)` — on this beat the floor is the binding
-    gate (+60s beats +4.4s), so testing the ratio edge alone would now be
-    testing a line nothing stands on.
+    #2116 changed WHICH boundary binds, not whether there is one.
+    `degrade_trips_at_s` is `min(max(ratio trip, floor trip), ceiling trip)`
+    since the per-consumer ceiling shipped (2026-08-24) — on this beat the floor
+    is still the binding gate (+60s beats the ratio's +4.4s and the ceiling's
+    +120s), so testing the ratio edge alone would be testing a line nothing
+    stands on. Reading the property rather than re-deriving it is why this test
+    needed no edit when a third gate was added.
 
     🔴 Worth recording, because it is a real property of the current pins and
     not an accident of this test: with these floors NO gradeable beat has the

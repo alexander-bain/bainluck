@@ -10466,6 +10466,17 @@ def _format_team_data(team) -> dict:
     any route that edits its own response dict in place rewrite what every
     other request sees — a shared-mutable-global bug wearing the clothes of a
     response formatter.
+
+    🔴 `season_stats` was NOT copied until 2026-08-24 (C-2107-R1 P3, carried by
+    Fable's LAT-P084 item 4). This docstring said "payloads", plural, and the
+    code did it for one of two — which is the most durable way for a defect to
+    survive a review, because the prose a reader checks against already claims
+    the fix. `TeamSnapshot` deep-copies at BUILD time, so the escape was narrow:
+    one deepcopy per cache entry, then that single dict handed by reference to
+    every request for the entry's whole lifetime. Narrow is not absent, and a
+    per-request response dict is the one object callers feel entitled to edit.
+    `test_team_cache_detachment.py` now asserts identity on BOTH fields at once,
+    so the pair cannot drift apart again.
     """
     data = {
         "team_id": team.id,
@@ -10483,7 +10494,7 @@ def _format_team_data(team) -> dict:
         data["standings"] = deepcopy(team.standings_data)
     # Include season stats if available
     if getattr(team, "season_stats", None):
-        data["season_stats"] = team.season_stats
+        data["season_stats"] = deepcopy(team.season_stats)
     return data
 
 

@@ -166,6 +166,9 @@ from app.utils.personalization import (
     compute_futures_multiplier,
 )
 from app.routes.admin_utils import _check_admin_auth, _resolve_admin_email
+from app.utils.principal_independent_cache import (
+    bind_reuse_sink as _bind_shared_reuse_sink,
+)
 from app.routes.events import _build_team_lookup, _format_team_data
 
 logger = logging.getLogger(__name__)
@@ -370,6 +373,7 @@ def _emit_feed_stage_observability(
     counts: dict[str, int],
     started_at: float,
     golf_provenance: str | None = None,
+    shared_reuse: list[str] | None = None,
 ) -> None:
     """Attach identity-free stage headers and emit a sampled structured log line.
 
@@ -398,6 +402,17 @@ def _emit_feed_stage_observability(
         # allowlist, so a free-form / identity-bearing value can never leak.
         if golf_provenance in _ALLOWED_GOLF_PROVENANCE:
             response.headers["X-Feed-Golf-Provenance"] = golf_provenance
+        # #2143: which principal-INDEPENDENT artifacts this request REUSED rather
+        # than rebuilt. Re-filtered against the allowlist here as well as at the
+        # source, because this is the byte that leaves the process: a share is
+        # only worth having if it can be confirmed still working in production,
+        # and a diagnostic header is only safe if its vocabulary is closed.
+        if shared_reuse:
+            from app.utils.principal_independent_cache import SHARED_ARTIFACT_NAMES
+
+            names = [n for n in shared_reuse if n in SHARED_ARTIFACT_NAMES]
+            if names:
+                response.headers["X-Feed-Shared"] = ",".join(sorted(set(names)))[:200]
         if total_ms >= FEED_STAGE_ALWAYS_LOG_MS or (
             random.random() < _feed_stage_sample_rate()
         ):
@@ -470,6 +485,7 @@ def _finalize_feed_response(
     started_at: float,
     counts: dict[str, int],
     golf_provenance: str | None = None,
+    shared_reuse: list[str] | None = None,
 ) -> None:
     """Single truthful finalizer for EVERY successful /api/feed return path.
 
@@ -498,6 +514,7 @@ def _finalize_feed_response(
         counts=counts,
         started_at=started_at,
         golf_provenance=golf_provenance,
+        shared_reuse=shared_reuse,
     )
 
 
@@ -1725,6 +1742,21 @@ async def get_feed(
     # finalizer). None until the golf stage runs (skipped / non-leader paths).
     _golf_provenance: str | None = None
 
+    # #2143: which principal-INDEPENDENT build artifacts this request REUSED
+    # rather than rebuilt. Fixed allowlisted names only (see
+    # `principal_independent_cache.SHARED_ARTIFACT_NAMES`) — surfaced on
+    # X-Feed-Shared so the share can be confirmed still working in production
+    # without a timing argument.
+    _shared_reuse: list[str] = []
+    # Bind it as this request's ambient sink. The second shared artifact
+    # (`canonical_counts`) is resolved three frames down inside `_score_futures`;
+    # a contextvar avoids threading a diagnostic through a scoring signature,
+    # which is how the stage headers ended up missing from five return paths and
+    # had to be re-centralized in Queue 275. Each request runs in its own task
+    # and therefore its own context copy, so the binding does not need an
+    # explicit reset to stay request-scoped.
+    _bind_shared_reuse_sink(_shared_reuse)
+
     if (debug or exclude_reviewed) and not await _check_admin_auth(secret, request, db):
         _set_feed_timing_header(response, _started_at)
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -2187,7 +2219,39 @@ async def get_feed(
                 _skip_concepts = True
         if not _skip_concepts:
             try:
-                concept_items = await _score_event_concepts(db, now, sport, ctx)
+                # #2143: the concept build is principal-INDEPENDENT — it takes
+                # `ctx` and never reads it (zero occurrences in its body), and it
+                # returns plain dicts, no ORM rows. It cost 865-1249ms on EVERY
+                # cold build, per principal, for a bit-identical result. Share it
+                # across principals, keyed only on its real inputs: the sport
+                # filter and a coarse clock bucket (the build embeds `now`-derived
+                # headlines and pin state, so the bucket plus the TTL are what
+                # bound how stale that text can get).
+                #
+                # `_score_event_concepts` itself is untouched — several suites
+                # read it with `inspect.getsource`, and the sharing belongs at the
+                # call site anyway, where the principal-independence of the inputs
+                # is visible.
+                from app.utils.principal_independent_cache import (
+                    get_or_build as _shared_get_or_build,
+                    time_bucket as _shared_time_bucket,
+                )
+
+                _concept_key = (
+                    sport or "all",
+                    tuple(sorted(static_tag_filter or ())),
+                    _shared_time_bucket(now, 30),
+                )
+
+                async def _build_concepts():
+                    return await _score_event_concepts(db, now, sport, ctx)
+
+                concept_items = await _shared_get_or_build(
+                    "concepts",
+                    _concept_key,
+                    _build_concepts,
+                    reuse_sink=_shared_reuse,
+                )
                 if concept_items:
                     feed_items.extend(concept_items)
             except Exception as e:
@@ -2698,6 +2762,7 @@ async def get_feed(
                 paginated, total=total, returned=len(paginated)
             ),
             golf_provenance=_golf_provenance,
+            shared_reuse=_shared_reuse,
         )
         return payload
     except BaseException:
@@ -7448,6 +7513,32 @@ async def _get_championship_probabilities(db: AsyncSession) -> dict[int, float]:
     return cache
 
 
+async def _query_canonical_source_counts(
+    db: AsyncSession,
+    keys: Optional[set[str]],
+) -> tuple[dict[str, int], dict[str, list[str]]]:
+    """The one group-by, returning (counts, source-names) — no caching, no
+    globals. Extracted (#2143) so the keyed and unkeyed branches share the query
+    while caching on entirely different terms."""
+    query = select(
+        FuturesMarket.canonical_market_key,
+        func.count(func.distinct(FuturesMarket.source)).label("source_count"),
+        func.array_agg(func.distinct(FuturesMarket.source)).label("sources"),
+    ).where(FuturesMarket.canonical_market_key.isnot(None))
+    if keys is not None:
+        query = query.where(FuturesMarket.canonical_market_key.in_(keys))
+    query = query.group_by(FuturesMarket.canonical_market_key)
+
+    result = await db.execute(query)
+    rows = result.all()
+    counts = {row.canonical_market_key: row.source_count for row in rows}
+    names = {
+        row.canonical_market_key: sorted(row.sources) if row.sources else []
+        for row in rows
+    }
+    return counts, names
+
+
 async def _get_canonical_source_counts(
     db: AsyncSession,
     keys: Optional[set[str]] = None,
@@ -7477,28 +7568,46 @@ async def _get_canonical_source_counts(
     if keys is not None and not keys:
         return {}
 
-    query = select(
-        FuturesMarket.canonical_market_key,
-        func.count(func.distinct(FuturesMarket.source)).label("source_count"),
-        func.array_agg(func.distinct(FuturesMarket.source)).label("sources"),
-    ).where(FuturesMarket.canonical_market_key.isnot(None))
     if keys is not None:
-        query = query.where(FuturesMarket.canonical_market_key.in_(keys))
-    query = query.group_by(FuturesMarket.canonical_market_key)
+        # #2143: the keyed branch is the HOT one — feed scoring reaches it on
+        # every cold build and it cost 683-702ms per request in the 2026-08-24
+        # two-principal decomposition. Note what the branch below does NOT do:
+        # it never populates `_canonical_source_counts_cache`, because a keyed
+        # result is a PARTIAL map and storing it as the full one would silently
+        # answer "no sources" for every key outside that candidate set. So the
+        # cache this function already has is, on the path that matters,
+        # unreachable by construction — not misconfigured, unreachable.
+        #
+        # The correct shared unit is therefore the (key set → counts) pair, not
+        # the whole table. The candidate key set comes from candidate-base v2,
+        # which is itself principal-independent, so two principals in the same
+        # window present the SAME set and share the answer; a different set
+        # simply misses and rebuilds, which can never be wrong.
+        from app.utils.principal_independent_cache import (
+            digest_of as _shared_digest_of,
+            get_or_build as _shared_get_or_build,
+        )
 
-    result = await db.execute(query)
-    rows = result.all()
-    cache = {row.canonical_market_key: row.source_count for row in rows}
-    names_cache = {
-        row.canonical_market_key: sorted(row.sources) if row.sources else []
-        for row in rows
-    }
-    if keys is not None:
+        async def _build_keyed() -> list:
+            counts, names = await _query_canonical_source_counts(db, keys)
+            # A list-of-two-dicts, not a tuple: the shared store round-trips
+            # through deepcopy and a plain-data walk, and a list keeps the
+            # returned shape identical on the stored and freshly-built paths.
+            return [counts, names]
+
+        pair = await _shared_get_or_build(
+            "canonical_counts",
+            ("keys", _shared_digest_of(keys)),
+            _build_keyed,
+        )
+        cache, names_cache = pair[0], pair[1]
         _canonical_source_names_cache = {
             **((_canonical_source_names_cache or {})),
             **names_cache,
         }
         return cache
+
+    cache, names_cache = await _query_canonical_source_counts(db, keys)
 
     _canonical_source_counts_cache = cache
     _canonical_source_names_cache = names_cache

@@ -71,6 +71,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.utils.heavy_routing_falsifier import (  # noqa: E402
+    CONSUMER_CEILING_S,
     CONSUMER_FLOOR_S,
     DEGRADE_P50_RATIO,
     beat_payload,
@@ -140,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
         "reason": result.reason,
         "degrade_p50_ratio": DEGRADE_P50_RATIO,
         "consumer_floor_s": dict(CONSUMER_FLOOR_S),
+        "consumer_ceiling_s": dict(CONSUMER_CEILING_S),
         "exception_tasks": sorted(HEAVY_MOVE_EXCEPTION),
         "horizon": {
             "routing_change_at_epoch": ROUTING_CHANGE_AT_EPOCH,

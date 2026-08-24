@@ -208,16 +208,87 @@ CENSOR_FRACTION_OF_SOFT_LIMIT = 0.98
 #   3. the floor is CAPPED at the point the censor takes over, so it can never
 #      make a beat ungradeable by itself (`floor_capped_by_censor`).
 #
-# RESIDUAL, STATED: the floor is a MINIMUM, so the ratio still governs slow
-# beats and the sensitivity spread narrows from 67x to ~5x — it does not
-# INVERT. Making the user-facing beat the most sensitive needs a per-consumer
-# CEILING as well, which tightens REVERT and is therefore a decision about
-# ruling 110's grant that this lane does not get to make. Named in #2116 and in
-# the LAT-P083 report as the un-taken second half.
+# RESIDUAL, STATED (LAT-P083): the floor is a MINIMUM, so the ratio still
+# governs slow beats and the sensitivity spread narrows from 67x to ~5x — it
+# does not INVERT. Making the user-facing beat the most sensitive needs a
+# per-consumer CEILING as well, which tightens REVERT and is therefore a
+# decision about ruling 110's grant that this lane does not get to make.
+#
+# 🟢 RESIDUAL CLOSED 2026-08-24 — see THE PER-CONSUMER CEILING below. Fable's
+# LAT-P084 directive APPROVED the ceiling as instrument work, with the design
+# constraint that "floors and ceilings come from the same measured consumer
+# classification, capped both directions". They do: one table's keys, below.
 CONSUMER_FLOOR_S: Mapping[str, float] = {
     "user_page": 30.0,
     "operator_panel": 60.0,
     "no_reader": 120.0,
+}
+
+# ---------------------------------------------------------------------------
+# THE PER-CONSUMER CEILING (#2116 second half, Fable directive 2026-08-24)
+# ---------------------------------------------------------------------------
+# 🔴 A FLOOR FIXED THE SIGN OF THE ABSURDITY. IT DID NOT FIX THE DIRECTION.
+#
+# The named decision this instrument exists to serve is **"when does a
+# user-facing regression revert ruling 110's grant?"** With the floor alone the
+# instrument still answered it worst where it mattered most:
+#
+#     precompute_calibration_main     user_page       +297.0s to REVERT
+#     precompute_source_intelligence  operator_panel  + 60.0s to REVERT
+#
+# The one beat a public page waits on needed a FIVE-MINUTE median regression;
+# an admin precompute needed one minute. The floor is a minimum, so above it the
+# ratio governs again and the ratio is proportional — the whole disease.
+#
+# The ceiling is an ABSOLUTE cap on the trip point, keyed on the SAME measured
+# `BeatBaseline.consumer` classification. A beat degrades when EITHER
+#
+#     (a) the ratio trips AND the delta clears the consumer's FLOOR, or
+#     (b) the delta clears the consumer's CEILING, whatever the ratio did.
+#
+# so the trip point is bounded from both sides:
+#
+#     effective trip delta = min( max(ratio delta, floor), ceiling )
+#
+# THE NUMBERS, AND WHY THEY TILE. Each class's ceiling is exactly the next
+# looser class's floor:
+#
+#     user_page       [ 30s ..  60s ]
+#     operator_panel  [ 60s .. 120s ]
+#     no_reader       [120s .. 240s ]
+#
+# That is not tidiness either — it is what makes the ordering a property of the
+# SCHEME rather than of today's seven pins. The bands touch at their endpoints
+# and never cross, so no future baseline can make an admin beat strictly more
+# sensitive than a visitor-facing one. Contiguity also means there is no delta
+# that falls in nobody's band. Measured over the real pins the spread goes
+# 4.95x -> 2.0x and `user_page` is now the joint-minimum, which is the inversion
+# LAT-P083 said it could not perform.
+#
+# The ceiling values are the floors read one class tighter, and the floors'
+# arguments carry over unchanged: 60s is what an operator's own tooling can
+# resolve, so a user-facing beat that has slipped a full operator-visible unit
+# is unambiguously degraded; 120s is a step change on an unread beat; 240s is
+# two of those.
+#
+# WHAT THIS IS NOT. A ceiling TIGHTENS a gate, which is the mirror-image failure
+# mode from the floor's, and it gets the mirror-image guards — all executable in
+# `tests/test_falsifier_consumer_ceiling.py`:
+#
+#   1. a ceiling trip is NAMED (`ceiling_exceeded`, `absolute_ceiling_s`) and
+#      its reason says the ratio did NOT trip. Otherwise a reader re-derives the
+#      ratio, sees it under 1.25x, and concludes the panel is broken.
+#   2. the ceiling is CAPPED BY THE CENSOR exactly as the floor is
+#      (`ceiling_capped_by_censor`). A ceiling above a beat's remaining headroom
+#      is unreachable — the beat saturates first — which is a dead gate wearing
+#      a strict gate's clothes.
+#   3. the ceiling sits STRICTLY ABOVE its own floor, or the `immaterial` band
+#      is empty and the ceiling has silently deleted #2116.
+#   4. the ceiling never fires on an IMPROVEMENT. A delta is signed.
+CONSUMER_CEILING_S: Mapping[str, float] = {
+    "user_page": 60.0,
+    "operator_panel": 120.0,
+    "no_reader": 240.0,
 }
 
 
@@ -370,15 +441,54 @@ class BeatBaseline:
         return self.materiality_floor_s < self.declared_materiality_floor_s
 
     @property
+    def declared_absolute_ceiling_s(self) -> float:
+        """The ceiling its consumer class asks for, BEFORE the censor cap."""
+        return CONSUMER_CEILING_S[self.consumer]
+
+    @property
+    def absolute_ceiling_s(self) -> float:
+        """The ceiling actually applied: the declared one, capped by the censor.
+
+        🔴 Capped for the SAME reason the floor is, and it is not symmetry for
+        its own sake. A declared ceiling larger than the beat's remaining
+        headroom is a gate that can never fire, because the beat saturates and
+        grades `censored` before the delta could reach it. On the current pins
+        this binds on three beats (`compute_time_horizon_calibration` 240 -> 240,
+        `snapshot_coverage_metrics` 240 -> 107.9, `precompute_backfill_winners_
+        status` 120 -> 69.6) and `ceiling_capped_by_censor` says so on the panel.
+
+        Never below the applied FLOOR: the censor caps both, and if a cap pushed
+        the ceiling under the floor then `min(max(ratio, floor), ceiling)` would
+        make the ceiling the only gate and silently delete #2116's materiality
+        band for that beat. Where the headroom forces them equal — as it does on
+        `snapshot_coverage_metrics` at 107.9s — the band is legitimately a point:
+        that beat has 107.9s of readable range and no more, which is a fact
+        about the clamp, not a choice.
+        """
+        headroom = self.censor_threshold_s - self.p50_s
+        capped = max(0.0, min(self.declared_absolute_ceiling_s, headroom))
+        return max(capped, self.materiality_floor_s)
+
+    @property
+    def ceiling_capped_by_censor(self) -> bool:
+        return self.absolute_ceiling_s < self.declared_absolute_ceiling_s
+
+    @property
     def degrade_trips_at_s(self) -> float:
-        """The observed p50 at which BOTH gates trip. Printed, never inferred.
+        """The observed p50 at which the beat degrades. Printed, never inferred.
 
         A reader asking "what would it actually take to revert this?" should get
-        a number, not a threshold and a baseline to multiply.
+        a number, not three thresholds and a baseline to combine.
+
+        `min(max(ratio, floor), ceiling)` — bounded both directions. The floor
+        raises the trip point for FAST beats the ratio over-reads; the ceiling
+        lowers it for SLOW beats the ratio under-reads. Between them the ratio
+        governs, unchanged.
         """
-        return max(
+        two_gate = max(
             self.p50_s * DEGRADE_P50_RATIO, self.p50_s + self.materiality_floor_s
         )
+        return min(two_gate, self.p50_s + self.absolute_ceiling_s)
 
     @property
     def p95(self) -> Reading:
@@ -834,6 +944,13 @@ class BeatVerdict:
     absolute_delta_s: float | None = None
     materiality_floor_s: float | None = None
     ratio_exceeded: bool | None = None
+    #: #2116's second half. The ceiling that applied, and whether the delta
+    #: cleared it. Carried on EVERY verdict for the same reason `ratio_exceeded`
+    #: is: "the ceiling was nowhere near" and "the ceiling fired" must not
+    #: render as the same absent value, and a `degraded` that the ratio did not
+    #: cause is unauditable without them.
+    absolute_ceiling_s: float | None = None
+    ceiling_exceeded: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -1060,7 +1177,14 @@ def grade_beat(
     ratio = observed / baseline.p50_s if baseline.p50_s else None
     delta = observed - baseline.p50_s
     floor = baseline.materiality_floor_s
+    ceiling = baseline.absolute_ceiling_s
     ratio_exceeded = ratio is not None and ratio > DEGRADE_P50_RATIO
+    # A delta is SIGNED. A beat that got 400s faster has not "cleared" anything,
+    # and `abs()` here would be the classic way a tightened gate starts reverting
+    # on improvements. `ceiling > 0` guards the degenerate no-headroom beat,
+    # which the censor already took above but which must not be reachable by a
+    # future reordering of these branches.
+    ceiling_exceeded = ceiling > 0.0 and delta >= ceiling
 
     # --- THE MATERIALITY FLOOR (#2116) --------------------------------------
     # 🔴 BOTH gates, always AND. A pure ratio is most sensitive where a beat
@@ -1092,6 +1216,8 @@ def grade_beat(
             absolute_delta_s=round(delta, 3),
             materiality_floor_s=floor,
             ratio_exceeded=True,
+            absolute_ceiling_s=ceiling,
+            ceiling_exceeded=ceiling_exceeded,
         )
 
     if ratio_exceeded:
@@ -1110,6 +1236,39 @@ def grade_beat(
             absolute_delta_s=round(delta, 3),
             materiality_floor_s=floor,
             ratio_exceeded=True,
+            absolute_ceiling_s=ceiling,
+            ceiling_exceeded=ceiling_exceeded,
+        )
+
+    # --- THE PER-CONSUMER CEILING (#2116 second half) -----------------------
+    # 🔴 The ratio did NOT trip, and this still degrades. That is the whole
+    # point: on `precompute_calibration_main` a +90s median regression is 1.08x,
+    # so under the ratio alone the beat a public page waits on could slip a
+    # minute and a half and grade `hold`. The reason has to say the ratio did
+    # not fire, or the first reader to re-derive 1.08x against a 1.25x threshold
+    # will conclude the panel is broken and stop trusting it.
+    if ceiling_exceeded:
+        return BeatVerdict(
+            baseline.task,
+            "degraded",
+            f"p50 {observed:.1f}s is +{delta:.1f}s over its pre-move "
+            f"{baseline.p50_s:.1f}s — AT OR OVER the {ceiling:.0f}s absolute "
+            f"ceiling for a '{baseline.consumer}' beat. The {DEGRADE_P50_RATIO}x "
+            f"ratio did NOT trip ({ratio:.2f}x) and is not what fired here: a "
+            f"ratio scales the bar with the beat's own p50, so a slow beat can "
+            f"absorb a large absolute regression without moving it. Ruling 110's "
+            f"'degrades measurably' IS +{delta:.1f}s on this consumer. "
+            f"Ring {share:.0%} post-move",
+            baseline.p50_s,
+            observed,
+            ratio,
+            share,
+            observed_clip_rate=clip_rate,
+            absolute_delta_s=round(delta, 3),
+            materiality_floor_s=floor,
+            ratio_exceeded=False,
+            absolute_ceiling_s=ceiling,
+            ceiling_exceeded=True,
         )
     # The clip rate rides on HOLD too, and that is the point of #2071: a beat
     # can hold on its p50 while a rising share of its runs clip at the clamp,
@@ -1128,6 +1287,8 @@ def grade_beat(
         absolute_delta_s=round(delta, 3),
         materiality_floor_s=floor,
         ratio_exceeded=False,
+        absolute_ceiling_s=ceiling,
+        ceiling_exceeded=False,
     )
 
 
@@ -1273,6 +1434,19 @@ def beat_payload(b: "BeatVerdict") -> dict[str, Any]:
         ),
         "floor_capped_by_censor": (
             baseline.floor_capped_by_censor if baseline else None
+        ),
+        # #2116's second half, the per-consumer ceiling. Printed alongside the
+        # floor and never instead of it: the trip point is now bounded from BOTH
+        # directions, and a reader auditing a `degraded` needs to know which
+        # bound fired. A `degraded` with `ratio_exceeded: false` is a CEILING
+        # trip and is only legible if the ceiling is on the page.
+        "ceiling_exceeded": b.ceiling_exceeded,
+        "absolute_ceiling_s": b.absolute_ceiling_s,
+        "declared_absolute_ceiling_s": (
+            baseline.declared_absolute_ceiling_s if baseline else None
+        ),
+        "ceiling_capped_by_censor": (
+            baseline.ceiling_capped_by_censor if baseline else None
         ),
         # Ruling 120. A baseline is a claim about the system we run in, and a
         # pin taken across a dated step reads as a constant forever — #2102

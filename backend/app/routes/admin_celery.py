@@ -1167,6 +1167,7 @@ async def heavy_move_falsifier(
 
     from app.utils.heavy_routing_falsifier import (
         BASELINE_BY_TASK,
+        CONSUMER_CEILING_S,
         CONSUMER_FLOOR_S,
         beat_payload,
         DEGRADE_P50_RATIO,
@@ -1212,6 +1213,14 @@ async def heavy_move_falsifier(
         # delta in seconds both trip. The floor is per-consumer and every beat
         # declares which class it is in.
         "consumer_floor_s": dict(CONSUMER_FLOOR_S),
+        # #2116's second half (2026-08-24). The floor fixed the SIGN of the
+        # asymmetry; the ceiling fixes its DIRECTION. Both tables are keyed on
+        # the same measured `consumer` classification and the bands tile
+        # ([30,60] / [60,120] / [120,240]), so a user-facing beat can never need
+        # a larger absolute regression than an admin one. Published beside the
+        # floor because a `degraded` with `ratio_exceeded: false` is a ceiling
+        # trip, and it is unreadable without this table.
+        "consumer_ceiling_s": dict(CONSUMER_CEILING_S),
         "exception_tasks": sorted(HEAVY_MOVE_EXCEPTION),
         # Carried so a reader never reconstructs the horizon from
         # `heroku releases` — and so "how old is this grade" is a field rather

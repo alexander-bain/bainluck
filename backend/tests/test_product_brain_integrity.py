@@ -738,14 +738,32 @@ def test_ruling_numbers_are_unique() -> None:
 #: was surrendered in a claim race (calibration-86 renumbered 122/123 -> 124/125).
 #: Do not "tidy" 125 down to 123.
 #:
-#: INT-113 (wave 3, 2026-08-24): **125**, COUNTED on this merged tree, not derived.
-#: `program/latency-75`'s held tail banks 126 and 127, so the count rises 123 -> 125
-#: while the branch side of this merge still declared **117**. Neither side's number
-#: was right, which is ruling 088's whole point. Highest file is now **127**; **120**
-#: and **122** remain absent and HELD, so the count still trails the highest number by
-#: two and that gap is correct. Verified index <-> files in BOTH directions: 125 files,
-#: 125 index lines, zero orphans either way.
-MINIMUM_BANKED_RULINGS = 125
+#: INT-113 (wave 3, 2026-08-24): **127**, COUNTED on this merged tree, not derived.
+#: This wave merged latency-75's held tail (rulings **126**, **127**) AND, on Alex's
+#: mid-cycle addendum, `program/latency-76` WHOLE (rulings **128**, **129**), so the
+#: count rises 123 -> 127 in one stage.
+#:
+#: A THIRD specimen of the stale-declared floor in a single wave, and the cleanest yet:
+#: HEAD declared **125** and the branch declared **119**. Both were honestly counted --
+#: HEAD on the stage before latency-76 was merged, the branch against its own base at
+#: `40de2d86` -- and both were stale the moment the other landed. Neither side's number
+#: was right. That is ruling 088 exactly: a declaration is a measurement of a tree that
+#: no longer exists by the time the merge resolves it.
+#:
+#: The branch's own provenance is preserved because it is the part that does not go
+#: stale: **128** and **129** were claimed in `RULING-CLAIMS.md` after a `git fetch` in
+#: the same turn, swept across all local and remote refs (128 -> 587 refs, 129 -> 595
+#: refs), holders_found = 0 for both. Next free number is **130**.
+#:
+#: STILL A COUNT, NOT A CEILING. Highest file is now **129**; **120** and **122** remain
+#: absent and HELD, not lost -- 120 is claimed by `lane1` in `RULING-CLAIMS.md` and 122
+#: was surrendered in a claim race (calibration-86 renumbered 122/123 -> 124/125). The
+#: count therefore trails the highest number by two, and that gap is CORRECT. Do not
+#: "tidy" 129 down to 127.
+#:
+#: Verified index <-> files in BOTH directions on the merged tree: 127 files, 127 index
+#: lines, zero orphans either way, ascending, no duplicates.
+MINIMUM_BANKED_RULINGS = 127
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
