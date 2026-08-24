@@ -26,17 +26,22 @@ THREE THINGS THIS REFUSES TO DO, each because the program has been burned by it
    (gotcha #53) — the trade backfill recorded ten weeks of SUCCESS on exactly
    this confusion.
 2. **Span a restart silently.** A restart clears every process-global, so it
-   also clears the state the watch is watching. `process_id` (added to
-   `/api/health` by this same fix) changes on restart even when `dyno` does
-   not; a day whose samples straddle two process ids is recorded with
-   `restarted: true` and does NOT count toward the seven. The worker-horizon
-   half of this program has been defeated five times by exactly this, always
-   discovered afterwards in a number that would not add up.
+   also clears the state the watch is watching. A window in which a worker's
+   `uptime_seconds` RESETS — or in which a worker is born mid-window — is
+   recorded with `restarted: true` and does NOT count toward the seven. The
+   worker-horizon half of this program has been defeated five times by exactly
+   this, always discovered afterwards in a number that would not add up.
+   **Corrected 2026-08-24 (LAT-P085):** this test used to be `len(processes) >
+   1`, i.e. "two ids answered" — but production runs one web dyno with
+   `WEB_CONCURRENCY=2`, so two stable ids answer always (ruling 129: the two
+   leaders were WEB_CONCURRENCY, not the dyno count). The predicate was
+   unconditionally true and the falsifier could never bank a day. See
+   `_detect_restart`.
 3. **Infer coverage.** Which processes answered is RECORDED, not assumed.
-   There is one web dyno as of 2026-08-23 (`heroku ps`: `web (Standard-2X) …
-   web.1`), so the cert window's "both dynos" is not satisfiable today and the
-   watch says so rather than quietly reporting it as met. If web scales, the
-   coverage line starts showing more ids and the assertion becomes real
+   As of 2026-08-24 that is ONE web dyno x `WEB_CONCURRENCY=2` = two workers
+   (`worker_count`), so the cert window's "both dynos" is not satisfiable today
+   and the watch says so rather than quietly reporting it as met. If web scales,
+   the coverage line starts showing more ids and the assertion becomes real
    without an edit here.
 
 USAGE
@@ -122,12 +127,30 @@ def _identify_process(api: str) -> dict:
 
 def run_probe(api: str, minutes: int, interval: float, limit: int) -> dict:
     """1 req/min against `/api/feed`, recording every status and every process."""
-    deadline = time.monotonic() + minutes * 60
+    started_monotonic = time.monotonic()
+    deadline = started_monotonic + minutes * 60
     statuses: Counter = Counter()
     processes: Counter = Counter()
     commits: Counter = Counter()
     failures: list[dict] = []
+    # pid -> {"first_uptime", "last_uptime", "born_at_elapsed"}. Seeing N process
+    # ids is NOT a restart (see `_detect_restart`); an uptime that resets is.
+    uptimes: dict[str, dict] = {}
     samples = 0
+
+    def _note_uptime(ident: dict) -> None:
+        pid, up = ident.get("process_id"), ident.get("uptime_seconds")
+        if not pid or up is None:
+            return
+        elapsed = time.monotonic() - started_monotonic
+        rec = uptimes.get(pid)
+        if rec is None:
+            uptimes[pid] = {"first_uptime": up, "last_uptime": up,
+                            "born_at_elapsed": round(elapsed - up, 1)}
+        else:
+            if up < rec["last_uptime"]:
+                rec["went_backwards"] = True
+            rec["last_uptime"] = up
 
     while True:
         stamp = datetime.now(timezone.utc).isoformat()
@@ -143,6 +166,7 @@ def run_probe(api: str, minutes: int, interval: float, limit: int) -> dict:
                 processes[ident["process_id"]] += 1
             if ident.get("commit"):
                 commits[ident["commit"]] += 1
+            _note_uptime(ident)
         elif samples % 5 == 1:
             # Coverage sampling: every fifth probe, cheap enough to run all day.
             ident = _identify_process(api)
@@ -150,6 +174,7 @@ def run_probe(api: str, minutes: int, interval: float, limit: int) -> dict:
                 processes[ident["process_id"]] += 1
             if ident.get("commit"):
                 commits[ident["commit"]] += 1
+            _note_uptime(ident)
 
         if time.monotonic() >= deadline:
             break
@@ -157,6 +182,7 @@ def run_probe(api: str, minutes: int, interval: float, limit: int) -> dict:
 
     server_errors = sum(n for s, n in statuses.items() if s != "None" and int(s) >= 500)
     transport = statuses.get("None", 0)
+    restarted, restart_reasons = _detect_restart(uptimes)
     return {
         "samples": samples,
         "statuses": dict(statuses),
@@ -165,8 +191,48 @@ def run_probe(api: str, minutes: int, interval: float, limit: int) -> dict:
         "failures": failures[:50],
         "process_ids": dict(processes),
         "commits": dict(commits),
-        "restarted": len(processes) > 1,
+        # Ruling 129: a dyno runs WEB_CONCURRENCY workers, so the worker count is
+        # dynos x WEB_CONCURRENCY. Recorded, not inferred (docstring point 3).
+        "worker_count": len(processes),
+        "uptimes": uptimes,
+        "restarted": restarted,
+        "restart_reasons": restart_reasons,
     }
+
+
+def _detect_restart(uptimes: dict[str, dict]) -> tuple[bool, list[str]]:
+    """A restart is an uptime that RESETS — not a second process id.
+
+    `restarted` was `len(processes) > 1`, which reads "more than one worker
+    answered" as "the web process restarted mid-window". Ruling 129 (banked on
+    this branch at 79f1313b) is exactly that correction in the other direction:
+    the two leaders were WEB_CONCURRENCY, not the dyno count. Production runs
+    ONE web dyno with `WEB_CONCURRENCY=2`, so two stable process ids answer
+    every hour of every day — measured 2026-08-24, both reporting uptime 6,701 s
+    and climbing together. The old predicate was therefore not merely
+    imprecise, it was **unconditionally true**, and every window it would ever
+    grade was INCONCLUSIVE. A seven-day falsifier that cannot bank day one is
+    not a strict falsifier; it is a broken one, and it fails in the direction
+    where nobody goes looking, because "not yet closed" is the expected reading.
+
+    Two direct signals, both from `uptime_seconds`, which was already collected:
+
+    * an id whose uptime went BACKWARDS between samples — it restarted;
+    * an id BORN during the window (`elapsed - uptime` meaningfully positive) —
+      it did not exist when the window opened, so something started it.
+
+    A 60 s tolerance absorbs boot and clock jitter. Neither signal fires for N
+    stable long-lived workers, which is the healthy shape this must not flag.
+    """
+    reasons: list[str] = []
+    for pid, rec in uptimes.items():
+        if rec.get("went_backwards"):
+            reasons.append(f"{pid[:12]} uptime reset mid-window")
+        elif rec.get("born_at_elapsed", 0.0) > 60.0:
+            reasons.append(
+                f"{pid[:12]} was born {rec['born_at_elapsed']:.0f}s into the window"
+            )
+    return bool(reasons), reasons
 
 
 # --------------------------------------------------------------- arm A: sentry
@@ -227,7 +293,8 @@ def grade_window(probe: dict, sentry: dict, counts_as_day: bool) -> dict:
     elif probe["restarted"]:
         verdict = "INCONCLUSIVE"
         reasons.append(
-            "the web process restarted mid-window, which clears the very state under watch"
+            "a web worker restarted mid-window, which clears the very state under "
+            "watch: " + "; ".join(probe.get("restart_reasons") or ["unspecified"])
         )
     elif probe["transport_errors"] > 0:
         verdict = "INCONCLUSIVE"

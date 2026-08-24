@@ -119,3 +119,64 @@ def test_counts_as_day_is_explicit_and_overrides_the_label(label, flag, expected
     but `--counts-as-day` must win — that is the whole point of adding it."""
     resolved = flag if flag is not None else (label == "day")
     assert resolved is expected
+
+
+# ------------------------------------------------------------------ restarts
+
+
+def test_two_stable_workers_are_not_a_restart():
+    """Ruling 129: one dyno x WEB_CONCURRENCY=2 = two ids, forever, healthily.
+
+    The old predicate was `len(processes) > 1`, which made this shape — the
+    ONLY shape production ever has — report `restarted: true`, so every window
+    graded INCONCLUSIVE and the seven-day falsifier could never bank a day.
+    Measured 2026-08-24: both workers reported uptime 6,701s, climbing together.
+    """
+    mod = _load()
+    uptimes = {
+        "4211ad2cfb66": {"first_uptime": 6000, "last_uptime": 6701, "born_at_elapsed": -6000.0},
+        "c586a31af980": {"first_uptime": 6000, "last_uptime": 6702, "born_at_elapsed": -6000.0},
+    }
+    restarted, reasons = mod._detect_restart(uptimes)
+    assert restarted is False, reasons
+    assert reasons == []
+
+
+def test_uptime_going_backwards_is_a_restart():
+    mod = _load()
+    uptimes = {
+        "aaa": {"first_uptime": 6000, "last_uptime": 12, "born_at_elapsed": -6000.0,
+                "went_backwards": True},
+    }
+    restarted, reasons = mod._detect_restart(uptimes)
+    assert restarted is True
+    assert "uptime reset" in reasons[0]
+
+
+def test_a_worker_born_mid_window_is_a_restart():
+    """Seen 1800s in with only 300s of uptime: it did not exist at window open."""
+    mod = _load()
+    uptimes = {"bbb": {"first_uptime": 300, "last_uptime": 400, "born_at_elapsed": 1500.0}}
+    restarted, reasons = mod._detect_restart(uptimes)
+    assert restarted is True
+    assert "born 1500s into the window" in reasons[0]
+
+
+def test_boot_jitter_inside_tolerance_is_not_a_restart():
+    """A worker that predates the window by a hair must not trip the detector."""
+    mod = _load()
+    uptimes = {"ccc": {"first_uptime": 100, "last_uptime": 160, "born_at_elapsed": 45.0}}
+    restarted, _ = mod._detect_restart(uptimes)
+    assert restarted is False
+
+
+def test_a_scale_up_mid_window_is_flagged():
+    """One stable worker plus one that appears late: coverage changed under us."""
+    mod = _load()
+    uptimes = {
+        "stable": {"first_uptime": 6000, "last_uptime": 6600, "born_at_elapsed": -6000.0},
+        "fresh": {"first_uptime": 30, "last_uptime": 90, "born_at_elapsed": 2400.0},
+    }
+    restarted, reasons = mod._detect_restart(uptimes)
+    assert restarted is True
+    assert len(reasons) == 1 and reasons[0].startswith("fresh")
