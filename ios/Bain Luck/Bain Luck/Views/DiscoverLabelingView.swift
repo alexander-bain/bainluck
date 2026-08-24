@@ -470,7 +470,35 @@ struct DiscoverLabelingView: View {
         }
     }
 
+    /// The four verdicts, and ONE line saying what the fourth one is for.
+    ///
+    /// UX-P125 item 3b. Alex graded a session on the device and guessed wrong
+    /// about Kill — reasonably, because nothing on screen distinguishes it from
+    /// Bad, and four buttons in a row read as one scale. They are not one scale.
+    /// Love/Fine/Bad grade how INTERESTING a card is and all three keep it in
+    /// the feed; Kill is a different axis entirely — it says this card should
+    /// never be shown to anyone, and it is the only one of the four with a
+    /// consequence outside the corpus.
+    ///
+    /// A tooltip would not have fixed this: the mis-tap happens at full speed in
+    /// a Rapid pass, and a hover does not exist on a phone. The line is always
+    /// visible, directly under the buttons it describes, and costs one row.
     private var verdictButtons: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            verdictButtonRow
+
+            Text("Love / Fine / Bad grade interestingness. Kill = never show anyone.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(
+                    "Love, Fine and Bad grade how interesting a card is. "
+                        + "Kill means never show this card to anyone."
+                )
+        }
+    }
+
+    private var verdictButtonRow: some View {
         HStack(spacing: 8) {
             ForEach(labels, id: \.0) { key, title in
                 Button(title) {
