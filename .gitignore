@@ -154,3 +154,10 @@ _to_delete/
 # without ever being actionable — noise that trains readers to skim the untracked
 # list, which is where a real stray file hides.
 *.claimlock
+
+# Generated calibration report. Three scripts write this exact root path
+# (calibration_analysis.py, build_calibration_report.py, build_calibration_report_svg.py),
+# which is how a 2026-05-26 snapshot got committed and then sat at the repo root for three
+# months reading like a current report. Snapshots belong in docs/archive/ under a dated
+# name, added deliberately with `git add -f`.
+/calibration_report.html
