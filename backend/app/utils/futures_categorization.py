@@ -871,6 +871,123 @@ def _non_sport_override(market_name: str) -> Optional[str]:
     return None
 
 
+# --- Positive-evidence scoring (F3, queue 402) -------------------------------
+#
+# SPORT_PATTERNS used to be consumed first-match-wins. That made the ORDER of the
+# list the classifier, so one ambiguous English word decided the sport and the
+# rest of the title was never read: "New Zealand Darts **Masters**" -> golf,
+# "**World Series** of Darts" -> baseball, "Practical **Magic** 2 - Rotten
+# Tomatoes score" -> basketball. The wrong value is then persisted into
+# `llm_sport_category`, which is the first term of the canonical market key, so
+# a single mis-read word contaminates the key, the feed and every league page
+# (queue 401 census: ~49 live specimens).
+#
+# The fix is to score ALL matches instead of taking the first, weighting each by
+# how much the matched TEXT actually commits to that category:
+#
+#   ambiguous match  -> 1   "Masters", "World Cup", "Magic" -- real words that
+#                           name the sport only some of the time
+#   ordinary match   -> 3   "PGA", "NL Manager", "WTA"
+#   strong match     -> 5   "Rotten Tomatoes", "PDC", "Darts" -- these commit
+#
+# A lone ambiguous match still wins if nothing competes, which is what keeps
+# "Masters Tournament Winner" -> golf. It loses the moment a competitor has real
+# evidence, which is what moves "New Zealand Darts Masters" -> darts. Ties fall
+# back to SPORT_PATTERNS order, so undisputed behaviour is unchanged.
+
+_AMBIGUOUS_WEIGHT = 1
+_DEFAULT_WEIGHT = 3
+_STRONG_WEIGHT = 5
+
+# Matched text that is a common English word or a name shared across domains.
+# Keyed on the text the pattern actually matched, normalized, NOT on the pattern
+# -- most of these live inside big team-name alternations where their siblings
+# ("celtics", "yankees") are perfectly unambiguous.
+_AMBIGUOUS_EVIDENCE = frozenset({
+    # Tournament words shared by golf / darts / snooker / esports / tennis.
+    "masters", "the open", "open",
+    # Shared by baseball / darts / poker ("World Series of ...").
+    "world series",
+    # Shared by soccer / chess / cricket / rugby ("... World Cup").
+    "world cup",
+    # Shared by soccer and darts ("Premier League Darts").
+    "premier league",
+    # NBA/NHL team names that are ordinary nouns.
+    "magic", "thunder", "heat", "jazz", "nets", "kings", "wizards", "suns",
+    "bucks", "hawks", "lightning", "avalanche", "rockets", "blazers",
+    # MLB/NFL team names that are ordinary nouns.
+    "giants", "angels", "athletics", "rays", "marlins", "chargers", "bills",
+    "saints", "bears", "titans", "eagles", "cardinals", "browns",
+})
+
+# Evidence that genuinely commits to a domain. These run IN ADDITION to
+# SPORT_PATTERNS and exist because the ambiguous token above would otherwise win
+# unopposed. Note `\bdarts\b` is PLURAL on purpose: "Dart" is the surname of an
+# NFL quarterback (Jaxson Dart) and a tennis player (Harriet Dart), and matching
+# it would trade one mis-tag class for another.
+_STRONG_EVIDENCE_PATTERNS = [
+    (re.compile(r"\bdarts\b|\b(pdc|world\s+matchplay|ally\s+pally|nine[\s-]?dart)\b", re.I), "darts"),
+    (re.compile(r"\b(rotten\s+tomatoes|tomatometer|box\s+office|opening\s+weekend)\b", re.I), "entertainment"),
+    (re.compile(r"\b(valorant|most\s+kills|single\s+map|esports)\b", re.I), "esports"),
+    (re.compile(r"\b(mayoral|next\s+governor|ballot\s+measure)\b", re.I), "politics"),
+    (re.compile(r"\bchess\b", re.I), "chess"),
+    (re.compile(r"\bsnooker\b", re.I), "snooker"),
+]
+
+# Domains we can RECOGNISE but have no category for. Matching one is a veto: it
+# proves the market is not the sport an ambiguous token suggested, without
+# claiming to know what it is. Returning None hands the row to the LLM fallback,
+# which is strictly better than persisting a confident wrong answer -- a wrong
+# sport corrupts the canonical key, a missing one just leaves it to the next
+# stage. (Directive 2026-08-24: "positive-evidence scoring plus the non-sport
+# veto".)
+_VETO_ONLY_CATEGORIES = frozenset({"snooker"})
+
+
+def _evidence_weight(matched_text: str) -> int:
+    """Weight a single pattern hit by how much its matched TEXT commits."""
+    normalized = re.sub(r"[^a-z0-9]+", " ", matched_text.lower()).strip()
+    if normalized in _AMBIGUOUS_EVIDENCE:
+        return _AMBIGUOUS_WEIGHT
+    return _DEFAULT_WEIGHT
+
+
+def score_sport_evidence(search_text: str) -> dict[str, int]:
+    """Total the evidence for every category present in ``search_text``.
+
+    Exposed (not underscore-private) because the C1 regression corpus and any
+    future audit need to see the breakdown, not just the verdict.
+    """
+    scores: dict[str, int] = {}
+    for pattern, category in SPORT_PATTERNS:
+        match = pattern.search(search_text)
+        if match:
+            scores[category] = scores.get(category, 0) + _evidence_weight(match.group(0))
+    for pattern, category in _STRONG_EVIDENCE_PATTERNS:
+        if pattern.search(search_text):
+            scores[category] = scores.get(category, 0) + _STRONG_WEIGHT
+    return scores
+
+
+def _best_category(search_text: str) -> Optional[str]:
+    """Pick the highest-scoring category, breaking ties by SPORT_PATTERNS order."""
+    scores = score_sport_evidence(search_text)
+    if not scores:
+        return None
+
+    # Tie-break by first appearance in SPORT_PATTERNS, so that where the new
+    # scorer has no opinion the old first-match-wins answer is preserved.
+    order: dict[str, int] = {}
+    for index, (pattern, category) in enumerate(SPORT_PATTERNS):
+        if category not in order and pattern.search(search_text):
+            order[category] = index
+
+    winner = max(scores, key=lambda c: (scores[c], -order.get(c, len(SPORT_PATTERNS))))
+    if winner in _VETO_ONLY_CATEGORIES:
+        return None
+    return winner
+
+
 def categorize_by_rules(market_name: str, sport_key: Optional[str] = None) -> Optional[str]:
     """
     Try to categorize a market using regex pattern matching.
@@ -929,9 +1046,14 @@ def categorize_by_rules(market_name: str, sport_key: Optional[str] = None) -> Op
     # Try regex pattern matching (includes team names, league names, keywords)
     # Must run BEFORE bare matchup detection — team name patterns are more
     # reliable than the seasonal inference that bare matchup uses.
-    for pattern, category in SPORT_PATTERNS:
-        if pattern.search(search_text):
-            return category
+    #
+    # Scored, not first-match-wins: every matching pattern votes, weighted by how
+    # much its matched text commits to the category (see score_sport_evidence).
+    # A veto-only domain returns None here rather than falling through to bare
+    # matchup inference, which would re-guess a sport we just proved it isn't.
+    scores = score_sport_evidence(search_text)
+    if scores:
+        return _best_category(search_text)
 
     # Try bare matchup detection with seasonal inference (Team at Team)
     # Only used when no sport-specific keyword matched above.
