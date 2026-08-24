@@ -1,0 +1,233 @@
+{
+ "label": "before",
+ "verdict": "RED",
+ "ratio_threshold": 0.25,
+ "expected_indexes": [
+  "ix_teams_fts_name",
+  "ix_teams_fts_abbrev",
+  "ix_teams_fts_altnames"
+ ],
+ "terms": {
+  "yankees": {
+   "fts_ms": [
+    389.45,
+    406.533,
+    382.747
+   ],
+   "ctrl_ms": [
+    227.577,
+    293.639,
+    284.988
+   ],
+   "fts_median_ms": 389.4,
+   "ctrl_median_ms": 285.0,
+   "ratio": 1.367,
+   "bitmap_or": false,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_teams_fts_name",
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "ids": [
+    865,
+    6610
+   ]
+  },
+  "celtics": {
+   "fts_ms": [
+    403.26,
+    425.592,
+    423.037
+   ],
+   "ctrl_ms": [
+    296.892,
+    301.534,
+    275.55
+   ],
+   "fts_median_ms": 423.0,
+   "ctrl_median_ms": 296.9,
+   "ratio": 1.425,
+   "bitmap_or": false,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_teams_fts_name",
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "ids": [
+    100,
+    1035,
+    2236,
+    16921,
+    17931
+   ]
+  },
+  "red sox": {
+   "fts_ms": [
+    389.402,
+    383.445,
+    403.923
+   ],
+   "ctrl_ms": [
+    293.923,
+    303.983,
+    258.941
+   ],
+   "fts_median_ms": 389.4,
+   "ctrl_median_ms": 293.9,
+   "ratio": 1.325,
+   "bitmap_or": false,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_teams_fts_name",
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "ids": [
+    853,
+    10709,
+    12912
+   ]
+  },
+  "world cup": {
+   "fts_ms": [
+    194.525,
+    206.193,
+    141.435
+   ],
+   "ctrl_ms": [
+    100.679,
+    123.552,
+    136.552
+   ],
+   "fts_median_ms": 194.5,
+   "ctrl_median_ms": 123.6,
+   "ratio": 1.574,
+   "bitmap_or": false,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_teams_fts_name",
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "ids": []
+  },
+  "stanley cup": {
+   "fts_ms": [
+    195.722,
+    196.23,
+    239.391
+   ],
+   "ctrl_ms": [
+    200.804,
+    149.473,
+    187.448
+   ],
+   "fts_median_ms": 196.2,
+   "ctrl_median_ms": 187.4,
+   "ratio": 1.047,
+   "bitmap_or": false,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_teams_fts_name",
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "ids": []
+  },
+  "nba champion": {
+   "fts_ms": [
+    120.315,
+    180.628,
+    161.226
+   ],
+   "ctrl_ms": [
+    143.358,
+    98.432,
+    145.644
+   ],
+   "fts_median_ms": 161.2,
+   "ctrl_median_ms": 143.4,
+   "ratio": 1.125,
+   "bitmap_or": false,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_teams_fts_name",
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "ids": []
+  },
+  "masters winner": {
+   "fts_ms": [
+    160.737,
+    133.339,
+    163.478
+   ],
+   "ctrl_ms": [
+    137.441,
+    140.935,
+    130.875
+   ],
+   "fts_median_ms": 160.7,
+   "ctrl_median_ms": 137.4,
+   "ratio": 1.169,
+   "bitmap_or": false,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_teams_fts_name",
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "ids": []
+  },
+  "world series": {
+   "fts_ms": [
+    183.778,
+    163.34,
+    140.526
+   ],
+   "ctrl_ms": [
+    125.14,
+    101.542,
+    124.137
+   ],
+   "fts_median_ms": 163.3,
+   "ctrl_median_ms": 124.1,
+   "ratio": 1.316,
+   "bitmap_or": false,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_teams_fts_name",
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "ids": []
+  }
+ }
+}
