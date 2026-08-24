@@ -160,6 +160,7 @@ from app.utils.labeling_queue import (
     review_key_for_feed_item as _review_key_for_feed_item,
 )
 from app.utils.name_normalization import names_match as _team_name_matches
+from app.utils.outcome_display import display_rank_order
 from app.utils.personalization import (
     PersonalizationContext,
     compute_event_multiplier,
@@ -5553,6 +5554,15 @@ async def _score_sports_mode_futures(
             key=lambda o: float(o.current_probability) if o.current_probability else 0,
             reverse=True,
         )
+        # UX-P126/F5: nothing UNRANKABLE may hold a leader or top-N slot. Runs BEFORE
+        # the top-10 slice and leader pick, same reason the phantom-book filter in
+        # `_score_futures` does: a placeholder that outranks the real prices doesn't
+        # just clutter the card, it NAMES THE WRONG LEADER.
+        sorted_outcomes = display_rank_order(
+            sorted_outcomes,
+            lambda o: o.name,
+            lambda o: float(o.current_probability) if o.current_probability else None,
+        )
         outcomes_data = []
         leader_name = None
         leader_prob = None
@@ -6743,6 +6753,19 @@ async def _score_futures(
                     for o, keep in zip(sorted_outcomes, phantom_keep_mask)
                     if keep
                 ]
+
+            # UX-P126/F5: and neither may an anonymized reserved slot ("Party C",
+            # "Coach N") or a ~100% "Other". Same insertion point and the same
+            # reasoning as the phantom filter directly above — this is the LAST thing
+            # before the top-10 slice and the leader pick, so whatever survives here
+            # is what the card is allowed to say.
+            sorted_outcomes = display_rank_order(
+                sorted_outcomes,
+                lambda o: o.name,
+                lambda o: (
+                    float(o.current_probability) if o.current_probability else None
+                ),
+            )
 
             for o in sorted_outcomes[:10]:  # Score based on top 10 outcomes
                 prob = float(o.current_probability) if o.current_probability else None

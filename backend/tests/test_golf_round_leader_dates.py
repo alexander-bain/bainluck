@@ -69,13 +69,19 @@ class TestKeyAlignmentWithWinnerMarket:
             base = _GOLF_ROUND_STRIP_RE.sub("", round_name).strip()
             assert _normalize_tournament(base) == _normalize_tournament(winner_name), round_name
 
-    def test_unstripped_name_would_NOT_match(self):
-        # Regression: without the strip, a non-major tournament's round-leader
-        # name slugifies with the round suffix and misses the winner key. (The
-        # majors still match via the hardcoded pattern, so test a non-major.)
+    def test_unstripped_name_now_matches_too_and_strip_is_idempotent(self):
+        # This assertion used to run the other way — it pinned the defect. Without
+        # the caller's strip, a non-major round-leader name slugified WITH its round
+        # suffix and missed the winner key, so `_GOLF_ROUND_STRIP_RE` was the only
+        # thing aligning them. UX-P126/F4 moved the market-type tail into
+        # `_normalize_tournament` itself (a tournament that fragments into one key
+        # per market type also fragments into one CARD per market type — measured
+        # live: the TOUR Championship's 13 markets across 7 keys), so the alignment
+        # now holds with or without the caller's strip. Keep BOTH directions
+        # asserted: the strip stays defense-in-depth, and it must be idempotent.
         round_name = "Genesis Scottish Open End of Round 2 Leader"
         winner_key = _normalize_tournament("Genesis Scottish Open - Winner")
-        assert _normalize_tournament(round_name) != winner_key
+        assert _normalize_tournament(round_name) == winner_key
         base = _GOLF_ROUND_STRIP_RE.sub("", round_name).strip()
         assert _normalize_tournament(base) == winner_key
 
