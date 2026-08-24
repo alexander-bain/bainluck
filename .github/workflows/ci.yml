@@ -306,6 +306,33 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration mode-price source scope (real Postgres)
+        # #2098 / ruling 125, cert C-2098-SOURCE-1 §3d. `vm_id` is source-blind
+        # on its `e:` arm, so two sources on one event share it; `mode_prices`
+        # grouped and joined on `vm_id` ALONE, and one source's modal price
+        # therefore DELETED the other source's legs at that price (measured:
+        # 4 Polymarket legs deleting 23 Kalshi legs on e:14887630).
+        #
+        # §3d requires this NOT be a string assertion on the SQL — string
+        # assertions on this module's frozen SQL have already produced one false
+        # sense of coverage. The claim is relational, so it needs a fixture with
+        # one event_id reachable from two sources, and that needs the service
+        # container. It runs LAST in this job because it create_all/drop-free
+        # seeds and then deletes its own rows.
+        #
+        # The file is two-armed like the CREATE-wave gate above: it also
+        # EXECUTES the reverted (pre-fix) SQL and asserts the suppression comes
+        # back, so a green run means red-first was proved rather than that
+        # nothing objected. Same skip-detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_mode_price_source_scope_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/modescope.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/modescope.txt; then
+            echo "::error::calibration mode-price source scope SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

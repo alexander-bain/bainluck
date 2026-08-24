@@ -2307,18 +2307,47 @@ def _calibration_population_ctes(
             -- prices must NOT drive (nor be removed by) mode detection — else a
             -- uniform field (10 members @ 0.10) would be wiped. Incomplete fields
             -- are dropped anyway; exclude both so only publishable rows vote.
+            --
+            -- #2098 / RULING 125 — the mode is a fact about ONE SOURCE's legs,
+            -- so it may only delete THAT source's legs.
+            --
+            -- ``vm_id`` is source-blind on its ``e:`` arm (``'e:' || event_id``,
+            -- while ``event_sizes`` counts per ``(event_id, source)``), so two
+            -- sources carrying >=3 resolved markets on one event share a vm_id.
+            -- Every neighbouring aggregate is source-scoped deliberately —
+            -- ``vm_stats`` GROUPs BY ``(vm_id, source)``, ``clean_vms`` JOINs on
+            -- both — and this one was not: it grouped on ``vm_id`` alone and the
+            -- join below matched on ``vm_id`` alone. A mode detected among one
+            -- source's legs therefore DELETED the other source's legs sitting at
+            -- the same price. Measured whole-domain (CAL-P087,
+            -- ``artifacts/cal-p087/ARTIFACT-CAL-P087-2098-CROSS-SUPPRESSION.json``):
+            -- 35 rows over 2 vm_ids; on ``e:14887630`` FOUR Polymarket legs
+            -- deleted TWENTY-THREE Kalshi legs.
+            --
+            -- Ruling 125: a join that can DELETE a row must carry every
+            -- dimension that identifies the row. Note this is three lines, not
+            -- the two the staged spec named — ``mode_prices`` must also PROJECT
+            -- ``source``, or the new join conjunct cannot be written.
+            --
+            -- Guarded by ``tests/integration/
+            -- test_calibration_mode_price_source_scope_pg.py`` against a real
+            -- Postgres, two-armed: it also executes the REVERTED SQL and asserts
+            -- the suppression comes back, so green means red-first was proved
+            -- rather than that nothing objected.
             mode_prices AS (
-                SELECT vm_id, adj_opening_probability AS mode_price
+                SELECT vm_id, source, adj_opening_probability AS mode_price
                 FROM normalized
                 WHERE is_multi AND eligible >= 3 AND is_liquid
                   AND NOT is_mex_normalized AND NOT is_field_incomplete
-                GROUP BY vm_id, adj_opening_probability, eligible
+                GROUP BY vm_id, source, adj_opening_probability, eligible
                 HAVING COUNT(*) > GREATEST(eligible * 0.5, 2)
             ),
             deduped AS (
                 SELECT ro.* FROM normalized ro
                 LEFT JOIN mode_prices mp
-                  ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
+                  ON mp.vm_id = ro.vm_id
+                  AND mp.source = ro.source
+                  AND mp.mode_price = ro.adj_opening_probability
                 WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
                     AND NOT ro.is_malformed_binary
                     AND NOT ro.is_esports_bundle

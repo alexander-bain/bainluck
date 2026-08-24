@@ -46,15 +46,38 @@ def collision_script():
 
 
 def test_every_substitution_anchor_appears_exactly_once(collision_script) -> None:
-    """One occurrence each — not zero (a no-op), not two (an ambiguous edit)."""
+    """One occurrence each — not zero (a no-op), not two (an ambiguous edit).
+
+    CAL-P090 made this DIRECTION-AWARE, and the reason is that the defect being
+    measured got fixed. Before `program/calibration-88` the chain was the
+    source-BLIND one and the script substituted forwards; after it, the chain is
+    the source-SCOPED one and the script reverts. Either way the instrument only
+    works if all three anchors are anchored, so what this asserts is unchanged in
+    substance: the chain matches exactly ONE of the two states, on all three
+    anchors CONSISTENTLY.
+
+    The consistency clause is the load-bearing half. A mixed state — say the
+    GROUP BY carrying `source` while the join does not — is a half-applied edit,
+    and it is precisely the state in which one substitution matches nothing, the
+    two folds collapse to identical, and the measurement reports zero collisions
+    having measured nothing (gotcha #53). Asserting each anchor independently
+    would have permitted it.
+    """
     chain = _calibration_population_ctes()
-    for name in ("MODE_PRICES_FROM", "MODE_GROUPBY_FROM", "JOIN_FROM"):
-        anchor = getattr(collision_script, name)
-        assert chain.count(anchor) == 1, (
-            f"{name} matches {chain.count(anchor)} times in the population chain, "
-            f"expected exactly 1. With 0 matches the two folds are identical and the "
-            f"#2098 measurement reports zero collisions having measured nothing."
-        )
+    names = ("MODE_PRICES", "MODE_GROUPBY", "JOIN")
+    blind = {n: chain.count(getattr(collision_script, f"{n}_FROM")) for n in names}
+    scoped = {n: chain.count(getattr(collision_script, f"{n}_TO")) for n in names}
+
+    is_blind = all(v == 1 for v in blind.values())
+    is_scoped = all(v == 1 for v in scoped.values())
+    assert is_blind != is_scoped, (
+        "the population chain matches NEITHER the source-blind nor the "
+        "source-scoped mode_prices shape consistently, or matches both — so at "
+        "least one substitution anchor would match nothing and the #2098 "
+        "measurement would compare a fold against itself and report zero "
+        f"collisions having measured nothing. blind_counts={blind} "
+        f"scoped_counts={scoped}"
+    )
 
 
 def test_the_substituted_chain_actually_differs(collision_script) -> None:
