@@ -259,15 +259,39 @@ def summarize(state_path: Path) -> int:
 
     rows = [json.loads(line) for line in state_path.read_text().splitlines() if line.strip()]
     days = [r for r in rows if r.get("counts_toward_seven") is not None and r.get("is_day")]
+
+    # A streak of ROWS is not a streak of DAYS. The original counter walked
+    # `days` backwards and incremented per row, with no reference to the calendar
+    # whatsoever — so seven windows run back-to-back in a single afternoon
+    # satisfied a falsifier that says "seven consecutive days", and the artifact
+    # it wrote would have read as closure evidence to every future reader. The
+    # falsifier's unit is a DAY; count days.
+    #
+    # One clean window per UTC date is what a date contributes. Two clean windows
+    # on the same date are still one day; a FAILED window anywhere on a date
+    # disqualifies that whole date, because the day was not clean.
+    by_date: dict[str, bool] = {}
+    for row in days:
+        date = (row.get("started_at") or "")[:10]
+        if not date:
+            continue
+        clean = bool(row.get("counts_toward_seven"))
+        by_date[date] = clean if date not in by_date else (by_date[date] and clean)
+
     streak = 0
-    for row in reversed(days):
-        if row.get("counts_toward_seven"):
-            streak += 1
-        else:
+    cursor = None
+    for date in sorted(by_date, reverse=True):
+        if not by_date[date]:
             break
+        day = datetime.strptime(date, "%Y-%m-%d").date()
+        if cursor is not None and (cursor - day).days != 1:
+            break  # a calendar gap ends the streak; "consecutive" means consecutive
+        cursor = day
+        streak += 1
 
     print(f"#2107 watch — {state_path}")
-    print(f"  windows recorded: {len(rows)}   day-windows: {len(days)}")
+    print(f"  windows recorded: {len(rows)}   day-windows: {len(days)}"
+          f"   distinct UTC dates: {len(by_date)}")
     for row in days[-10:]:
         print(
             f"   {row.get('started_at', '?')[:19]}  {row['grade']['verdict']:<13}"
@@ -275,6 +299,11 @@ def summarize(state_path: Path) -> int:
             f" sentry24h={row['sentry'].get('count_24h')}"
             f" processes={len(row['probe'].get('process_ids') or {})}"
         )
+    non_day = len(rows) - len(days)
+    if non_day:
+        print(f"  NOTE: {non_day} window(s) recorded with is_day=false — these can NEVER "
+              f"bank, whatever their verdict. Check the --label/--counts-as-day used.")
+    print(f"  clean UTC dates: {sorted(d for d, c in by_date.items() if c)}")
     print(f"  consecutive clean days: {streak}/{REQUIRED_CLEAN_DAYS}")
     if streak >= REQUIRED_CLEAN_DAYS:
         print("  VERDICT: CLOSABLE — the 7-day falsifier was not refuted.")
@@ -289,7 +318,12 @@ def main() -> int:
     ap.add_argument("--minutes", type=int, default=60, help="probe window length")
     ap.add_argument("--interval", type=float, default=60.0, help="seconds between probes")
     ap.add_argument("--limit", type=int, default=20, help="/api/feed?limit=")
-    ap.add_argument("--label", default="day", help="'day' counts toward the seven; anything else does not")
+    ap.add_argument("--label", default="day",
+                    help="free-text annotation for the window (see --counts-as-day)")
+    ap.add_argument("--counts-as-day", dest="counts_as_day",
+                    action=argparse.BooleanOptionalAction, default=None,
+                    help="whether this window banks toward the seven. Defaults to "
+                         "(--label == 'day') for backward compatibility.")
     ap.add_argument("--state", type=Path, default=DEFAULT_STATE)
     ap.add_argument("--summarize", action="store_true")
     args = ap.parse_args()
@@ -303,16 +337,27 @@ def main() -> int:
         return RC_CANNOT_MEASURE
 
     started = datetime.now(timezone.utc)
+    # Resolve the banking decision BEFORE the hour of probing, and say it out loud.
+    # `--label` used to double as the switch: any descriptive label silently set
+    # `counts_toward_seven=false`, and the window burned an hour before anyone
+    # could see it had never been eligible. Worse, a false `counts_toward_seven`
+    # reads to a later reader as "the fix regressed" when it means "the label was
+    # wrong" — the same shape as gotcha #53, two causes collapsed into one value.
+    counts_as_day = args.counts_as_day
+    if counts_as_day is None:
+        counts_as_day = args.label == "day"
     print(f"#2107 watch — probing {api}/api/feed every {args.interval:.0f}s for {args.minutes}m")
+    print(f"   label={args.label!r}  BANKS TOWARD THE SEVEN: {counts_as_day}"
+          f"{'' if counts_as_day else '  <-- this window can never bank; pass --counts-as-day to change that'}")
 
     probe = run_probe(api, args.minutes, args.interval, args.limit)
     sentry = sentry_24h_count(os.getenv("SENTRY_AUTH_TOKEN"))
-    grade = grade_window(probe, sentry, counts_as_day=(args.label == "day"))
+    grade = grade_window(probe, sentry, counts_as_day=counts_as_day)
 
     row = {
         "issue": 2107,
         "label": args.label,
-        "is_day": args.label == "day",
+        "is_day": counts_as_day,
         "started_at": started.isoformat(),
         "ended_at": datetime.now(timezone.utc).isoformat(),
         "probe": probe,
