@@ -77,7 +77,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 #: Schema of the persisted artifact. Bump when the payload shape changes; the
 #: reader refuses an unexpected version rather than guessing at the difference.
-CENSUS_SCHEMA = "cohort-cell-census/v1"
+CENSUS_SCHEMA = "cohort-cell-census/v2"
 
 #: Durable slot for the checkpoint + final artifact. One identity, overwritten
 #: as the run advances, so a resumed run and a reader see the same address.
@@ -99,6 +99,40 @@ GRADE_COMPLETE = "complete"
 GRADE_INCOMPLETE = "incomplete"
 GRADE_NEVER = "never"
 GRADE_CLASSES: tuple[str, ...] = (GRADE_COMPLETE, GRADE_INCOMPLETE, GRADE_NEVER)
+
+# ---------------------------------------------------------------------------
+# Calibration-truth eligibility — the SECOND axis, added by CAL-P093 (#1978).
+#
+# WHY THIS EXISTS, because the cell ranking it corrects was already being worked
+# as a queue. The grade twins above ask "did anything grade this market?".
+# Eligibility asks a different and, for a calibration number, prior question:
+# "may the grade that exists GRADE A PUBLISHED FORECAST?" — see
+# ``app.utils.resolution_authority.CALIBRATION_TRUTH_ELIGIBLE_SOURCES``. A leg
+# graded ``pass2_loser`` is fully ``complete`` on the grade axis and is dropped
+# by the published curve on the eligibility axis, so the two axes are orthogonal
+# and a census that carries only the first reports an ECE for rows no user's
+# curve ever contained.
+#
+# MEASURED, CAL-P093 (2026-08-24), the reason this is not a refactor:
+# ``basketball/quantity`` reads **24.27 pp over n=13,067** unfiltered and
+# **5.73 pp over n=2,104** restricted to truth-eligible legs. Of the 18.54 pp
+# difference, the single largest term is 1,690 ``pass2_loser`` markets that are
+# priced coherently (pair sum 0.9954) and carry **zero winning legs** — a
+# resolved two-leg mutually-exclusive market in which nothing won. Those rows
+# are already excluded from the published curve at
+# ``precompute_calibration.py`` and they were never excluded here.
+#
+# ``ece_all`` / ``ece_venue`` / the grade twins are UNCHANGED and keep mirroring
+# ``GET /api/admin/cohort-provenance-split``. This is additive, exactly as the
+# grade twins were: the fix for a number that means the wrong thing is a second
+# number that says which, not a redefinition of the first (gotcha #53 — an
+# absent distinction and a made distinction must not share a rendering).
+#
+# NOT a re-grade. Nothing here writes ``is_winner`` (gotcha #21): the poison
+# cohort is reported out of the eligible twin and left exactly where it is.
+TRUTH_ELIGIBLE = "eligible"
+TRUTH_INELIGIBLE = "ineligible"
+TRUTH_CLASSES: tuple[str, ...] = (TRUTH_ELIGIBLE, TRUTH_INELIGIBLE)
 
 #: Below this many ids a range that still times out is IRREDUCIBLE and must be
 #: reported as an absence with its bounds, never halved into invisibility. 25 is
@@ -146,7 +180,9 @@ def classify_market_grade(legs_total: int, legs_graded: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def bin_key(league: str, market_type: str, grade: str, bucket: int) -> str:
+def bin_key(
+    league: str, market_type: str, grade: str, bucket: int, truth: str
+) -> str:
     """A JSON-safe composite key.
 
     A string rather than a tuple because this dictionary is persisted into a
@@ -154,16 +190,29 @@ def bin_key(league: str, market_type: str, grade: str, bucket: int) -> str:
     round-trip through JSON — it comes back as a list, which is unhashable, and
     the resumed run would rebuild an empty accumulator while reporting the
     banked page count. That failure looks exactly like a working resume.
+
+    ``truth`` is the fifth component as of ``v2``. It is REQUIRED and has no
+    default: a default would let a v1-shaped caller fold every row into one
+    eligibility class silently, and the resulting ``ece_eligible`` would equal
+    ``ece_all`` — which is precisely the wrong number wearing the right name.
+    The schema bump is what protects a persisted v1 checkpoint; the missing
+    default is what protects a stale caller.
     """
-    return f"{league}\x1f{market_type}\x1f{grade}\x1f{bucket}"
+    return f"{league}\x1f{market_type}\x1f{grade}\x1f{bucket}\x1f{truth}"
 
 
-def parse_bin_key(key: str) -> tuple[str, str, str, int]:
+def parse_bin_key(key: str) -> tuple[str, str, str, int, str]:
     """Inverse of :func:`bin_key`. Raises on a malformed key rather than
     returning a default — a key we cannot parse is a checkpoint we cannot
-    trust, and the run must fail loudly instead of reducing over a fragment."""
-    league, market_type, grade, bucket = key.split("\x1f")
-    return league, market_type, grade, int(bucket)
+    trust, and the run must fail loudly instead of reducing over a fragment.
+
+    A v1 (four-part) key raises here rather than being upgraded in place. The
+    checkpoint reader already refuses a version it does not expect
+    (``expected_version=CENSUS_SCHEMA``), so reaching this with a short key
+    means something bypassed that guard, and inventing the missing component is
+    how a fold silently attributes ineligible rows to the eligible twin."""
+    league, market_type, grade, bucket, truth = key.split("\x1f")
+    return league, market_type, grade, int(bucket), truth
 
 
 def fold_page(
@@ -179,13 +228,20 @@ def fold_page(
     staged-futures cursor next door IS idempotent, and a reader who assumes the
     same here gets a census that is quietly 2x on one page.
 
-    Rows carry ``league``, ``market_type``, ``grade``, ``bin``, ``n``,
-    ``sum_prob``, ``winners`` — attribute access, so a SQLAlchemy ``Row`` and a
-    test's simple namespace are interchangeable.
+    Rows carry ``league``, ``market_type``, ``grade``, ``truth``, ``bin``,
+    ``n``, ``sum_prob``, ``winners`` — attribute access, so a SQLAlchemy ``Row``
+    and a test's simple namespace are interchangeable. ``truth`` is read with
+    plain attribute access and NOT ``getattr(row, "truth", ...)``: a row that
+    has lost the column must raise, because the fallback value would land every
+    row in one eligibility class and the twin would look measured.
     """
     for row in rows:
         key = bin_key(
-            str(row.league), str(row.market_type), str(row.grade), int(row.bin)
+            str(row.league),
+            str(row.market_type),
+            str(row.grade),
+            int(row.bin),
+            str(row.truth),
         )
         slot = accumulator.get(key)
         if slot is None:
@@ -330,12 +386,21 @@ def _bins_for(
     league: str,
     market_type: str,
     grades: Sequence[str],
+    truths: Sequence[str] = TRUTH_CLASSES,
 ) -> list[dict[str, float]]:
-    """The 10 bin aggregates for one cell restricted to ``grades``."""
+    """The 10 bin aggregates for one cell restricted to ``grades`` (and ``truths``).
+
+    ``truths`` defaults to BOTH classes so every existing caller keeps its
+    existing population — the eligibility axis is opt-in at the call site, which
+    is what makes ``ece_all``/``ece_venue``/the grade twins byte-identical to v1
+    on the same rows.
+    """
     out: dict[int, dict[str, float]] = {}
     for key, slot in accumulator.items():
-        k_league, k_type, k_grade, k_bin = parse_bin_key(key)
+        k_league, k_type, k_grade, k_bin, k_truth = parse_bin_key(key)
         if k_league != league or k_type != market_type or k_grade not in grades:
+            continue
+        if k_truth not in truths:
             continue
         agg = out.setdefault(k_bin, {"n": 0.0, "sum_prob": 0.0, "winners": 0.0})
         agg["n"] += float(slot.get("n") or 0)
@@ -393,8 +458,17 @@ def build_report(
             accumulator, league, market_type, (GRADE_INCOMPLETE,)
         )
         never_bins = _bins_for(accumulator, league, market_type, (GRADE_NEVER,))
+        # The eligibility twin. Grades are unrestricted on purpose: eligibility
+        # is a per-LEG property and already implies a real grade (every eligible
+        # source is non-NULL), so intersecting it with the market-level grade
+        # axis would silently drop eligible legs sitting in partially-graded
+        # markets — the exact cohort ``repair_pm_never_graded`` leaves alone.
+        eligible_bins = _bins_for(
+            accumulator, league, market_type, GRADE_CLASSES, (TRUTH_ELIGIBLE,)
+        )
 
         n_all = int(sum(b["n"] for b in all_bins))
+        n_eligible = int(sum(b["n"] for b in eligible_bins))
         n_venue = int(sum(b["n"] for b in venue_bins))
         n_complete = int(sum(b["n"] for b in complete_bins))
         n_incomplete = int(sum(b["n"] for b in incomplete_bins))
@@ -416,6 +490,7 @@ def build_report(
         ece_venue, fb_venue = ece_from_bins(venue_bins)
         ece_complete, fb_complete = ece_from_bins(complete_bins)
         ece_incomplete, fb_incomplete = ece_from_bins(incomplete_bins)
+        ece_eligible, fb_eligible = ece_from_bins(eligible_bins)
 
         cells.append(
             {
@@ -442,6 +517,18 @@ def build_report(
                 "incomplete_share": (
                     round(n_incomplete / n_all, 3) if n_all else None
                 ),
+                # The eligibility twin (CAL-P093). ``n_eligible`` is reported
+                # beside it and is load-bearing: on the four cells measured so
+                # far it is 3.7%–51% of ``n_all``, so an ``ece_eligible`` read
+                # without its n invites the reading that the cell got better
+                # rather than that most of it was never on the curve.
+                "n_eligible": n_eligible,
+                "eligible_share": (
+                    round(n_eligible / n_all, 3) if n_all else None
+                ),
+                "ece_eligible": ece_eligible,
+                "gap_eligible": gap_from_bins(eligible_bins),
+                "ece_label_eligible": "fallback-nonparity" if fb_eligible else None,
                 "ece_all": ece_all,
                 "ece_venue": ece_venue,
                 "ece_complete": ece_complete,
@@ -485,6 +572,12 @@ def build_report(
             "complete+incomplete together and is kept for parity with "
             "GET /api/admin/cohort-provenance-split. A cell with measured=false "
             "carries a reason and NO trustworthy ECE — an absent measurement is "
-            "never a clean zero (gotcha #53)."
+            "never a clean zero (gotcha #53). ece_eligible is the SECOND axis "
+            "(CAL-P093): legs whose resolution_source may grade a published "
+            "forecast (CALIBRATION_TRUTH_ELIGIBLE_SOURCES). It is the number "
+            "comparable to the published curve; ece_all is not, because it "
+            "includes the pass2_loser/clean_resolution rows precompute_"
+            "calibration already excludes. Rank cells by ece_eligible x "
+            "n_eligible, never by ece_all."
         ),
     }

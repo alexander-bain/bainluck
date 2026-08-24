@@ -74,6 +74,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.utils.resolution_authority import CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL
 from app.utils.cohort_cell_census import (
     CENSUS_IDENTITY,
     CENSUS_SCHEMA,
@@ -84,6 +85,8 @@ from app.utils.cohort_cell_census import (
     build_report,
     cell_id,
     classify_market_grade,
+    TRUTH_ELIGIBLE,
+    TRUTH_INELIGIBLE,
     fold_page,
 )
 
@@ -152,9 +155,13 @@ _GRADE_SQL = """
     GROUP BY fo.market_id
 """
 
-_BINS_SQL = """
+_BINS_SQL = f"""
     SELECT fo.market_id AS market_id,
            LEAST(FLOOR(COALESCE(fo.calibration_probability, fo.opening_probability) * 10), 9)::int AS bin,
+           CASE
+               WHEN fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
+               THEN '{TRUTH_ELIGIBLE}' ELSE '{TRUTH_INELIGIBLE}'
+           END AS truth,
            COUNT(*) AS n,
            SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) AS sum_prob,
            SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) AS winners
@@ -164,8 +171,15 @@ _BINS_SQL = """
       AND COALESCE(fo.calibration_probability, fo.opening_probability) < 1
       AND fo.opening_probability IS NOT NULL
       AND fo.is_winner IS NOT NULL
-    GROUP BY 1, 2
+    GROUP BY 1, 2, 3
 """
+# The ``truth`` CASE is a projected column, NOT a WHERE clause, and that is the
+# whole design: filtering here would change ``ece_all`` and break parity with
+# GET /api/admin/cohort-provenance-split, which this census exists to reproduce.
+# Splitting the group instead keeps every v1 number identical and adds the
+# eligible subset beside it. A NULL resolution_source falls to ``ineligible``
+# through the ELSE — matching ``is_calibration_truth_eligible``'s fail-closed
+# contract, where an unclassified or missing source can never grade a forecast.
 
 
 async def _bounded(session, sql: str, params: dict, timeout_ms: int):
@@ -402,6 +416,7 @@ async def run_cohort_cell_census(
                         # that leg B kept. ``never`` is the conservative read and
                         # the irreducible-range record is what explains it.
                         grade=grades.get(mid, "never"),
+                        truth=str(r.truth),
                         bin=int(r.bin),
                         n=r.n,
                         sum_prob=r.sum_prob,
