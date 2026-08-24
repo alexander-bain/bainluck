@@ -46,6 +46,27 @@ eyeball ship-gates in the evening. Everything else runs itself.
 - A window finishes its queue? It stages its own next queue and continues, or
   ends cleanly and tells you it's done for the day.
 
+## Lane4 (codex) and the cert window: missions come from files, not your clipboard
+
+Both non-Claude windows are self-serve. Their missions live in the handoff bus:
+
+| Window | Mission file | Results land in |
+|---|---|---|
+| Lane4 (codex) | `.claude/handoff/CODEX-QUEUE.md` | `CODEX-REPORT.md` (+ `CODEX-CERT-LOG.md` row for certs) |
+| Cert window (other model) | `.claude/handoff/CERT-QUEUE.md` | same |
+
+Fable (or the triage lane, on Fable's directive) stages missions by writing those files.
+The windows poll them, execute, and append results. You paste into those windows only for
+out-of-band overrides — if you find yourself couriering routine missions by hand, the bus
+has drifted and that is a process bug to raise with Fable, not a workload to absorb.
+
+Three standing rules the bus enforces:
+1. A queue-file `status: done` means the mission finished RUNNING — never that it passed.
+   Verdicts live in the report and the cert log.
+2. The fix's author never runs its cert (lane4 wrote it → the cert window certifies it,
+   and vice versa).
+3. The cert window never audits its own prior cert subjects.
+
 ## Evening (about 10 minutes)
 
 1. In the Integrator window: confirm the final `/integrate` ran (it merges the
