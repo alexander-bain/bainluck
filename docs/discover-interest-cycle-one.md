@@ -89,21 +89,33 @@ exist`, culprit `/api/admin/db-query`) is a hand-typed admin query with a wrong 
 
 ### 1a. Repeat rate — measured, with an explicit limit on what it proves
 
-12 pulls over 43 minutes (17:54:48Z → 18:37:01Z), cadences of ~80 s and ~10 min deliberately
+13 pulls over 53 minutes (17:54:48Z → 18:47:26Z), cadences of ~80 s and ~10 min deliberately
 crossing the 60 s anon response-cache TTL, three surfaces each, all on one deployed commit
-(`b5c2a750` — stamped per pull, so this is one population and not a straddled release):
+(`b5c2a750` — stamped per pull, so this is one population and not a straddled release).
+
+Through the first 12 pulls / 43 minutes there was **one card set across all 36 slates** — nothing
+entered, nothing left. The 13th adds one more transition:
 
 ```
-anon      12 pulls  ->  1 distinct ordering,  1 distinct card set
-session   12 pulls  ->  2 distinct orderings, 1 distinct card set
-debug     12 pulls  ->  2 distinct orderings, 1 distinct card set   <- cache-disabled, cold build
+anon      13 pulls  ->  2 ordering(s)  1 card set     <- cache-served, lags the others
+session   13 pulls  ->  3 ordering(s)  2 card sets
+debug     13 pulls  ->  3 ordering(s)  2 card sets    <- cache-disabled, cold build
 ```
 
-**One card set across all 36 slates. Nothing ever entered and nothing ever left.** And the two
-orderings differ by a single adjacent swap at ranks 2–3 in the final pull — which turns out to be
-tie-break noise between two cards the demotion cap had already flattened to the same integer, not
-a ranking decision. §1c has the specimens. Read as churn, this page produced *one* event in 43
-minutes and that event carried no information.
+**Two events in 53 minutes, and neither is a ranking decision.** In order:
+
+1. **18:37:01Z — a tie resolving arbitrarily.** Ranks 2 and 3 swapped. Both cards were pinned at
+   display score *exactly 35* by the demotion cap, so the swap is tie-break noise between two
+   cards the correctness rules had already erased the difference between. §1c has the specimens.
+2. **18:47:26Z — the world forcing a rotation.** `event:14959572` (Lazio @ Bologna) left and
+   `event:14959571` (Fiorentina @ AS Roma) entered. The reason is lifecycle, not interest: Lazio
+   @ Bologna **completed at 18:45:27Z** and Fiorentina @ AS Roma **kicked off at 18:45:00Z**. The
+   feed rotated a finished game out for a starting one within two minutes. Correct behaviour, and
+   the replacement lands at the same capped 35.
+
+So the honest churn verdict for the window: **the page turns over when the world forces it to —
+a game ends, a game begins — and not once because the ranker judged something more interesting.**
+The 18 non-event cards never moved at all.
 
 The `debug` surface is what rules out the cache: it is `cache: disabled_debug`, a cold rebuild
 every pull, ~5 s each. **So the stability is the ranker, not the response cache.**
@@ -119,20 +131,19 @@ stdev, at weight 0.2, cannot re-order a base score spanning 109 points. A full r
 market in the database is therefore *invisible by arithmetic*, not by coincidence. Waiting longer
 does not test a different mechanism; it tests the same one at a larger `n`.
 
-**What this still does NOT prove:** 43 minutes is not "twice a day". Base score moves on inputs
+**What this still does NOT prove:** 53 minutes is not "twice a day". Base score moves on inputs
 this window cannot exercise — the slate turning over as events settle, new markets being created,
 prices moving materially. The hourly series (§5) samples those. But the precompute crossing means
 cycle one is no longer *waiting* for its answer on the ranking question; it has one.
 
-**What this DOES prove, and it is the harder finding:** the anon and session surfaces returned
-**the same twenty cards on every one of the twelve pulls**. Carrying a stable `x-session-id`
-changed nothing. (The single order difference on the last pull is the *cache*, not
-personalization: `anon` was still serving the pre-swap slate that `session` and `debug` had both
-already left. It resolves the same way as everything else in §1c — a tie between two capped
-cards.) Given §0 this is expected rather than surprising: with impressions dark, a returning user
-is indistinguishable from a first-time visitor by construction. *Today, a returning user sees 100%
-repeats.* That is a real answer to the directive's question; it is just not an answer about
-ranking.
+**What this DOES prove, and it is the harder finding:** the `anon` and `session` surfaces never
+diverged on anything personalization could explain. Carrying a stable `x-session-id` changed
+nothing. Where they differ at all, `anon` is simply *behind* — it is the cache-served surface, so
+it kept showing the pre-swap slate and then the finished game for one more pull after `session`
+and `debug` had both moved on. Latency, not taste. Given §0 that is expected rather than
+surprising: with impressions dark, a returning user is indistinguishable from a first-time visitor
+by construction. *Today, a returning user sees 100% repeats.* That is a real answer to the
+directive's question; it is just not an answer about ranking.
 
 ### 1b. Who is actually opening it twice
 
@@ -204,10 +215,9 @@ What the correctness-tuned rules are doing to the mix:
   carry display score **exactly 35** — the `event_pct < 0.3` non-exceptional cap. Nothing about
   those two games influenced their rank; the cap did.
 
-  **And this is the only thing that moved all cycle.** Across 12 pulls and 43 minutes, the entire
-  page changed exactly once: at 18:37:01Z, ranks 2 and 3 swapped, on the `session` and `debug`
-  surfaces only (`anon` was cache-served and identical). Nothing entered, nothing left, no other
-  card moved. The two cards that swapped:
+  **And it produced the only non-lifecycle movement of the cycle.** At 18:37:01Z ranks 2 and 3
+  swapped, on the `session` and `debug` surfaces only (`anon` was cache-served and lagging).
+  Nothing entered, nothing left, no other card moved. The two cards that swapped:
 
   ```
   event:14959572   Lazio @ Bologna        (Serie A, LIVE, 1 source: betting)   display 35
@@ -215,10 +225,16 @@ What the correctness-tuned rules are doing to the mix:
   ```
 
   Two live games, flattened to the same integer by the same cap, trading places because a tie has
-  no stable order. **Discover's only movement in 43 minutes was tie-break noise between two cards
-  the correctness rules had already erased the difference between.** These are also the only two
-  live games on the page — the cards with the strongest claim to being *newly* worth looking at —
-  and the rule that decided their rank could not see that they were live.
+  no stable order. **The one thing the ranker did on its own initiative in 53 minutes was resolve
+  a tie it had itself created.** These are also the only two live games on the page — the cards
+  with the strongest claim to being *newly* worth looking at — and the rule that decided their
+  rank could not see that they were live.
+
+  Ten minutes later the cap swallowed the sequel. Lazio @ Bologna completed at 18:45:27Z and was
+  replaced by Fiorentina @ AS Roma, kicked off at 18:45:00Z — **also capped at 35**, also one
+  source, also `sport_key: None`. A game finishing and a game starting are the two most
+  interesting things that happened on this page all hour, and the scoring rules rendered both as
+  the same number.
 
 - **The score the user could see does not order the page.** Reading display scores down the served
   slate: `40, 35, 35, 89, 85, 83, 82, 85, 43, 88, 88, 78, 80, 87, 71, 68, 52, 51, 85, 44`. Rank 9
@@ -532,9 +548,9 @@ Analyse with:
 python3 tools/discover-interest/analyze-captures.py /tmp/ux-p124-captures
 ```
 
-The 43-minute result (§1a) is complete: **one card set across 36 slates, spanning a full
-`precompute_interestingness` run**, with a single adjacent swap between two cap-tied cards as the
-only movement. The multi-hour series keeps running past the end of this
+The 53-minute result (§1a) is complete: **36 of 39 slates were one identical card set, spanning a
+full `precompute_interestingness` run.** Its two transitions are a cap-tie resolving arbitrarily
+and a game ending — neither a ranking decision. The multi-hour series keeps running past the end of this
 cycle; it samples the inputs the short window cannot exercise (events settling out of the slate,
 new market creation, material price movement), and it is the honest way to distinguish "the
 ranker is deterministic" — which §1a proves — from "the *page* is static across a day", which
