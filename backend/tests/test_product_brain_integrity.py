@@ -763,7 +763,7 @@ def test_ruling_numbers_are_unique() -> None:
 #:
 #: Verified index <-> files in BOTH directions on the merged tree: 127 files, 127 index
 #: lines, zero orphans either way, ascending, no duplicates.
-MINIMUM_BANKED_RULINGS = 127
+MINIMUM_BANKED_RULINGS = 128
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
