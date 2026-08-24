@@ -1,6 +1,6 @@
 # Bain Luck — Product Requirements Document
 
-*Last full revision: 2026-07-14 (Fable + Alex). Prior revision: 2026-05-15. This document is the product's voice; the [GitHub Issues board](https://github.com/alexander-bain/bainluck/issues) is the only source of priority and status; `docs/PRODUCT-BRAIN.md` holds the standing judgment behind staging calls.*
+*Last full revision: 2026-08-24 (Fable + Alex). Prior revisions: 2026-07-14, 2026-05-15. This document is the product's voice; the [GitHub Issues board](https://github.com/alexander-bain/bainluck/issues) is the only source of priority and status; `docs/PRODUCT-BRAIN.md` holds the standing judgment behind staging calls.*
 
 ## 1. Vision & North Star
 
@@ -27,6 +27,8 @@ The product's owner-ratified quality bar (2026-07-13): **"fast and natural to us
 - **The Kalshi-free fortnight** — the owner logs 14 straight days of daily phone use in which Bain Luck answered every question he had and he never opened Kalshi.
 - **No embarrassing charts** — every chart a user can open renders ≥1 point per open hour (provider-candle granularity via candlestick/CLOB backfills). Live game charts are dense by construction (32s polling).
 - **Settled means settled** — one system-wide settled language: heroes show winners (not stale percentages), cards show results (not live-style chips), props show *the script, graded* (hit/miss, never 100% bars), charts show the completed journey.
+- **The latency charter (added 2026-08-24, Alex ruling):** the latency program is graded on two user-facing numbers that open every one of its reports — **feed p50 and typeahead p50** — with deltas per cycle. The first honest measurement (2026-08-24): feed p50 16ms warm but **37.5% of loads miss at ~4.1s** — the miss share/cost is the standing target. Instrument work is permitted only when it unblocks a named decision, and any program's change that raises a measured beat cost past the declared threshold must carry a beat-cost budget line the Integrator enforces.
+- **The public docs invite verification (bar passed 2026-08-24):** every public claim about methodology, counts, and tests must survive the adversarial check a skeptical visitor would run (`rg` the code, `curl` the meter). Counts are never copied into prose — prose points at the meter. C-PUBLIC-FACE-2 certified the current README/docs against this bar.
 
 ---
 
@@ -69,6 +71,8 @@ Challenge links, head-to-head accuracy, shared cards — social as a garnish on 
 ### Discover Feed (`/`, default)
 Ranked stream of the most interesting predictions right now. Higher/Lower game, daily challenges, streaks. LLM hooks (bounded, async) + deterministic explanations (first-page comprehension never depends on the LLM). Market-quality classifier suppresses filler and ladders; diversity caps prevent single-topic floods (scoped by card type — game events are never capped into an empty tab). Bounded personalization; soft dismiss propagation; graceful end-of-feed state. Interestingness scoring blended at capped weight.
 
+**The interestingness program (chartered 2026-08-24):** Discovery interestingness — what Discover ranks, why, and whether a person who opens the app twice a day sees something worth the second open — becomes the UX program's headline once the calibration disclosure ships. First cycle: measure what Discover actually serves (the demotion and cap rules were tuned for correctness, never for interest), define the interestingness signal with the owner ruling on taste, ship one visible ranking change. The blend weights get calibrated against labeled data (the owner's gold label set, then one Prolific audience-calibration run validating that his taste proxies the audience).
+
 ### Search / Instant Answers
 Full-text-ranked search across events, concepts, futures, and teams. The bar: the right entity, merged, first, fast. Gold-set regression protected by the Flow Sentinel.
 
@@ -85,17 +89,19 @@ Politics, Entertainment, Economics, Weather (+ Preferences): themed dashboards w
 Pins, follows, prediction stats, Your Teams' Odds (one card per team, seasons labeled). Settled events render settled.
 
 ### Calibration Report (`/calibration`)
-The public trust engine: honest reliability curves across 1M+ priced resolved outcomes, per-source and per-category, with per-bucket sample counts, confidence intervals, small-bucket suppression, click-through example outcomes per bucket, a corrections log, and a well-traded default with a skeptic's toggle. Categories with known capture artifacts are excluded with on-page explanations rather than silently blended. (July 2026: headline honest MCE ≈ 1.6pp; kalshi source ECE ≈ 1.0pp; weather healed 7.0 → 1.7pp by fixing OUR capture, which is the house methodology: assume our bug, never "the market was wrong.")
+The public trust engine: honest reliability curves across ~890K priced resolved outcomes (the meter, `GET /api/calibration`, is the count — never prose), per-source and per-category, with per-bucket sample counts, confidence intervals, small-bucket suppression, click-through examples, a corrections log, and a well-traded default with a skeptic's toggle.
+
+**The August 2026 honesty program (status dated 2026-08-24):** the headline number was discovered to include hindsight — legs priced after their outcome was knowable. The whole-market fold repair takes the full-population number from **3.72pp to ~1.74pp**, and the attended apply is staged behind its deployment gates. Alongside it ships the display-honesty ruling (Option C): pooled categories keep their pooled, traded-only number but **name the fold** — the member list expands to the complete list, with published-vs-unpublished members distinguished and the API's own figure quoted as an anchor. Thin cells (n≤2) are reported but cannot alone flip the agreement gate (min-n floor). The closing report for any calibration apply must quote **both population pairs** — full-population truth and the rendered cohort — because the page's traded-only cohort already hides part of the story. House methodology unchanged: **assume our bug, never "the market was wrong"** (weather healed 7.0 → 1.7pp by fixing OUR capture; the soccer mid-band anomaly is under the same discipline, re-test ~09-01).
 
 ### Games & Social
 Higher/Lower, daily challenges, friend challenges, prediction stats.
 
 ### Platforms (P7 posture)
-- **iPhone app** — the primary consumption target; App Store re-submission gated on the owner's dogfood + calibration credibility.
+- **iPhone app** — the primary consumption target; App Store re-submission gated on the owner's dogfood + calibration credibility (the burn-down is triaged: open cells, one known mechanism, the rest ruled noise).
 - **Web** — full experience + the debugging/admin surface.
 - **Apple Watch** — exists today; top-priority secondary surface: glanceable followed teams/events + a 3-card "cocktail banter" mini-Discover fed by the digest's selection pipeline. Complication ships when the widget target is wired.
 - **iPad / macOS** — near-term parity that never feels second-class (shared SwiftUI codebase; payload-v2 keeps display semantics server-side so all platforms heal together); each gets a truly-great pass post-iPhone-bar (iPad: multi-column second screen; Mac: menu-bar glance + keyboard-first search).
-- **Morning digest** — email today; push v1 = the same brief, opt-in.
+- **Morning digest** — email today; push v1 = the same brief, opt-in. (Push infrastructure caveat, 2026-08-24: iOS device tokens have never been registered in production — the client-side path is under live diagnosis; the digest's push v1 waits on it.)
 
 ### Admin (the operator's cockpit)
 `/admin` opens with health tiles (green/amber/red with tracked-issue badges), a "Waiting on you" queue of genuinely-human asks, an inline eval/grading queue (Rapid mode: 25 keystrokes per 25-item gold-set batch, with undo), autopilot beat tiles, and deep pages behind each tile. The operator's judgment is spent on ship gates and taste calls — detection belongs to sentinels.
@@ -106,9 +112,11 @@ Higher/Lower, daily challenges, friend challenges, prediction stats.
 
 Sources: The Odds API (~$119/mo), Kalshi, Polymarket, ESPN, StatPal (~$99/mo), DataGolf (~$30/mo), MLB Stats API, TMDB, Pexels, OpenAI (~$10/mo), Wikipedia (person images).
 
-Core subsystems: **Event Registry** (find-or-create cascade with structured matching incl. completed events; invariant-guarded against cross-merges); **Entity Registry + one matching engine** (canonical entities/aliases; source adapters supply grammar; shadow-mode cutovers earn production per link type); **Probability Aggregation** (weighted blend; source-agnostic resilience); **Market Grouping** (`group_id` powers dedup, cross-source, calibration); **Feed Ranking** (candidate pools + quality classifier + caps + bounded personalization + replay harness); **Quota Guard** (three-mode circuit breaker); **Backfill Autopilot** (dedicated beat-scheduled pricing/resolution tasks, budget-guarded, idempotent, with `backfill-progress` observability: per-month density, the June-gap ledger, recoverable-vs-excluded denominators).
+Core subsystems: **Event Registry** (find-or-create cascade; an id-less claim never absorbs — ruling 048; provider id anchor channel `event_provider_anchors` under construction); **Entity Registry + one matching engine** (canonical entities/aliases; source adapters supply grammar; shadow-mode cutovers earn production per link type); **Probability Aggregation** (weighted median with staleness decay; hand-set priors honestly labeled as such, with a fitted-skill replacement harness specified that ships only if it beats them out-of-time); **Market Grouping** (`group_id` powers dedup, cross-source, calibration); **Feed Ranking** (candidate pools + quality classifier + caps + bounded personalization + replay harness); **Quota Guard** (three-mode circuit breaker); **Backfill Autopilot** (beat-scheduled, budget-guarded, idempotent, with observability).
 
-Quality machinery: four-layer matching audit (L1 existence, L2 market→event, L3 futures surfacing, L4 completeness — target 100%); grid accuracy; feed-quality audit (boring-rate@20 = 0, explanation-coverage 20/20); **Flow Sentinel** (nightly user-flow regression w/ auto-filed evidence packs); **Calibration Sentinel** (cohort mining → auto-filed issues); the dogfood loop (owner phone sessions → evidence-packed P0s, often same-day fixed).
+**Settlement truth capture (program added 2026-08):** provider retention is measured, not assumed — Kalshi market data purges at ≥74/<86 days (event shells survive; Polymarket bulk shows no cliff), so settlement evidence is captured into `settlement_captures` on a planning horizon of 66 days, Kalshi-first weekly sweeps, budgeted against an independently re-derived at-risk census. A capture missed past the cliff is permanently unverifiable; the calendar is therefore a hard wall, not a preference.
+
+Quality machinery: four-layer matching audit (L1 existence, L2 market→event, L3 futures surfacing, L4 completeness — target 100%); grid accuracy (Grid Sentinel verdicts: RED means REAL); feed-quality audit (boring-rate@20 = 0, explanation-coverage 20/20); **Flow Sentinel** (nightly user-flow regression w/ auto-filed evidence packs); **Calibration Sentinel** (cohort mining → auto-filed issues); independent certification of high-consequence changes (the fix's author never runs its cert); the dogfood loop (owner phone sessions → evidence-packed P0s, often same-day fixed).
 
 ---
 
@@ -118,13 +126,16 @@ Quality machinery: four-layer matching audit (L1 existence, L2 market→event, L
 
 **Engagement:** guesses/session (3+), challenge completion, streak retention, card CTR, share rate, weekly return, digest open rate (when push ships).
 
-**Reliability & data quality (July 2026 values):**
+**Reliability & data quality (values dated 2026-08-24):**
 - Flow Sentinel: green nights (target: file-nothing ≥ 6/7)
 - Matching: L1–L4 at 100% on audit; duplicate events: 0 (sentinel-guarded)
-- Calibration: honest MCE ≈ 1.6pp; every source ≤ ~2.6pp; corrections logged publicly
+- Calibration: full-population honest number lands at ~1.74pp when the hindsight apply completes (from 3.72pp); rendered traded-only cohort ~1.36pp; every apply's closing report quotes both pairs; corrections logged publicly
+- Latency: feed p50 + typeahead p50 open every latency report with deltas; standing target = the feed miss share/cost (37.5% at ~4.1s at first measurement)
 - Backfill SLA: ≥95% of post-Jul-2 resolved outcomes priced, vs the *recoverable* denominator; per-source density (≥15 pts poly/DataGolf; cadence-honest bar for Kalshi)
+- Settlement capture: every Kalshi sweep runs before its bucket's retention wall; missed-wall rows are reported as permanently lost, never silently dropped
 - No-embarrassing-charts: % of user-visible charts ≥1 pt/open-hour (candlestick scoreboard)
 - The Kalshi-free fortnight: 0/14 days logged (starts when the phone build stabilizes)
+- Strangers reached: reported weekly on the Monday scoreboard; "not yet measurable" is printed, never omitted, until the GA4 tripwire ships (#454)
 
 ---
 
@@ -138,8 +149,9 @@ Quality machinery: four-layer matching audit (L1 existence, L2 market→event, L
 6. **Settled means settled** — resolved things look resolved everywhere, immediately.
 7. **Assume our bug** — a miscalibrated curve or diverging source is our capture/linkage/grading error until exhaustively proven otherwise.
 8. **Detection by machines, judgment by humans** — sentinels find and file; the owner's eyeball is the ship gate, never the smoke detector.
-9. **Transparency builds the brand** — public calibration, public corrections, source attribution.
+9. **Transparency builds the brand** — public calibration, public corrections, source attribution, and public docs that invite the skeptic's own verification commands.
 10. **Respect attention** — one good notification a day beats ten mediocre ones; no forced auth.
+11. **A number a reader cannot reconstruct is not honest yet** — every rendered figure exists on a nameable axis, and where the page pools or filters, it says so on-screen (the Option-C disclosure standard).
 
 ---
 
@@ -153,7 +165,7 @@ Bain Luck is **NOT**: a sportsbook or betting interface; a trading platform; a p
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 7,000+ tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), ~19,000 tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (realtime + background workers) | Heroku Redis |
 | Web | Next.js 14 | Vercel |
@@ -162,7 +174,7 @@ Bain Luck is **NOT**: a sportsbook or betting interface; a trading platform; a p
 | Analytics / Errors | GA4 + Firebase / Sentry | — |
 | LLM | GPT-4o-mini (bounded enrichment + advisory evals) | OpenAI |
 
-CI on every push: backend pytest + frontend build (ESLint gate), serialized Heroku deploy. Ops runs on a three-lane queue protocol with atomic claims, drive-mode, and headless cranks (`.claude/handoff/README.md`).
+CI on every push: backend pytest + frontend build (ESLint gate) + typecheck ratchet, serialized Heroku deploy. Ops runs on Operating Model v4: three program worktrees (ux, latency, calibration) + a single-writer Integrator holding the lane lock for every master push + a triage lane + independent certification windows, coordinated through the `.claude/handoff/` bus (`.claude/handoff/README.md`, `DAILY-OPERATIONS.md`).
 
 ---
 
@@ -172,9 +184,12 @@ CI on every push: backend pytest + frontend build (ESLint gate), serialized Hero
 |----------|---------|
 | [GitHub Issues](https://github.com/alexander-bain/bainluck/issues) | The only source of priority and status |
 | `docs/PRODUCT-BRAIN.md` | Standing rulings and the reasoning behind them |
+| `docs/doctrine.md` | General clauses lifted out of rulings |
+| `DAILY-OPERATIONS.md` (repo root) | The owner's runbook for the operating model |
 | `docs/architecture-reference.md` | System design detail |
 | `docs/feature-reference.md` / `completed-features.md` | Feature detail / shipped log |
 | `docs/gotchas-reference.md` | The full hard-won gotcha catalog |
 | `docs/design-system.md` | Visual language incl. the settled-state system |
 | `docs/hill-climb-guide.md` / `quality-audit.md` | Measurement playbooks |
 | `docs/strategy-instant-answers.md` | The search program |
+| `docs/aggregation-weighting-methodology.md` | How the hand-set priors get replaced, honestly |
