@@ -720,7 +720,24 @@ def test_ruling_numbers_are_unique() -> None:
 #: The branch declared 116 against a base of 119 — a third specimen of the stale-declared
 #: floor. Alex, INT-111: ignore EVERY declared value; the ledger and the tree are the only
 #: authorities.
-MINIMUM_BANKED_RULINGS = 122
+#:
+#: INT-112 (wave 3, 2026-08-24): `program/latency-75` @ `10209343` banks **123**.
+#: COUNTED on the FINAL merged tree (all three merges applied — latency-75 pinned,
+#: ux-107 amended, calibration-87 added): `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l`
+#: = **123**, cross-checked index <-> files in BOTH directions (123 = 123, no orphan
+#: file, no orphan index line, ascending, no duplicates).
+#:
+#: Alex, INT-112: "every declared value so far has been wrong" — declared this wave
+#: were 119 (master), 121, and 123. The counted answer happens to equal one of them,
+#: and that is a coincidence, not a corroboration: the branch side of this very merge
+#: declared **115**, which is four BELOW master's own floor. Count the tree; never
+#: read a declaration, not even a lucky one.
+#:
+#: STILL A COUNT, NOT A CEILING. Highest file is **125**; **120** and **122** are
+#: absent and HELD, not lost — 120 is claimed by `lane1` in `RULING-CLAIMS.md` and 122
+#: was surrendered in a claim race (calibration-86 renumbered 122/123 -> 124/125).
+#: Do not "tidy" 125 down to 123.
+MINIMUM_BANKED_RULINGS = 123
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
