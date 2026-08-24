@@ -4,7 +4,10 @@ Guards the ONE source of truth so the detail page can't drift back to showing
 "Other 100%" while search shows the real leader.
 """
 
+import pytest
+
 from app.utils.outcome_display import (
+    display_rank_order,
     is_placeholder_outcome_name,
     normalize_display_probs,
     leader_pick_order,
@@ -206,3 +209,208 @@ class TestDetailUsesSharedPipeline:
         assert "is_placeholder_outcome_name" in src
         assert "normalize_display_probs" in src
         assert "leader_pick_order" in src
+
+
+# ===========================================================================
+# UX-P126 / F5 — never rank a placeholder (#1696, display half)
+# ===========================================================================
+
+
+class TestF5RolePlaceholders:
+    """`Party`, `Manager`, `Driver` and `Coach` were in NO placeholder regex, so 69
+    markets ranked an enumerated slot as their answer. Every name below was read off
+    production on 2026-08-24."""
+
+    @pytest.mark.parametrize("name", [
+        "Party A", "Party C", "Party Z", "Party AA", "Party AF",
+        "Manager A", "Manager K", "Manager Z", "Manager AD",
+        "Driver A", "Driver J",
+        "Coach A", "Coach N", "Coach T",
+    ])
+    def test_role_slots_are_placeholders(self, name):
+        assert is_placeholder_outcome_name(name) is True, name
+
+    @pytest.mark.parametrize("name", ["Party 2", "Party 9", "Party 40"])
+    def test_party_also_enumerates_numerically(self, name):
+        # One 40-way coalition ladder numbers its slots instead of lettering them.
+        assert is_placeholder_outcome_name(name) is True, name
+
+    @pytest.mark.parametrize("name", [
+        # Real entities that START with a role word — the OTHER direction.
+        "Party of Regions", "Labour Party", "Party for Freedom",
+        "Manager United",            # not a letter
+        "Coach Prime", "Coach Cal",
+        "Driver 44",                 # a NUMBERED driver is a real identity
+        "Driver Ricciardo",
+        # And the pre-existing survivors must be untouched by the widening.
+        "Team GB", "Team USA", "Cleveland Cavaliers", "Donald Trump",
+        "Yes", "No", "Democratic", "Republican",
+    ])
+    def test_real_names_survive_the_widening(self, name):
+        assert is_placeholder_outcome_name(name) is False, name
+
+    def test_coach_k_is_a_slot_here_and_that_is_deliberate(self):
+        # "Coach K" is a real nickname in college basketball. In THIS corpus it is
+        # n=2 sitting inside an unbroken Coach A..T enumeration on anonymized
+        # next-head-coach markets, so it is a slot like its 19 siblings. Recorded
+        # explicitly so the trade-off is a decision on the record, not an accident:
+        # if a market ever ships "Coach K" as a real nominee it will need a name,
+        # and the fix is to ingest the name, not to un-suppress the letter.
+        assert is_placeholder_outcome_name("Coach K") is True
+
+    def test_the_letter_bound_is_not_truncated_at_L(self):
+        # A bound that stops at L leaves "Coach N"/"Party X" ranking — which is the
+        # defect, not a narrower version of the fix.
+        for letter in "MNOPQRSTUVWXYZ":
+            assert is_placeholder_outcome_name(f"Party {letter}") is True, letter
+
+
+class TestF5DominantField:
+    """A field outcome priced ~100% is an untraded midpoint / no-bid ask, never an
+    answer. It must not hold a leader OR a top-N slot."""
+
+    def test_other_at_100_leaves_the_top_n(self):
+        # /api/futures/16631690 live 2026-08-24: a real leader headlined correctly
+        # and "Other" at 100% sat at served position 2 — inside every top-N.
+        outs = [
+            {"name": "Byrum Brown", "probability": 0.475},
+            {"name": "Other", "probability": 1.0},
+            {"name": "Duce Robinson", "probability": 0.475},
+            {"name": "Brendan Sorsby", "probability": 0.465},
+        ]
+        ranked = display_rank_order(
+            outs, lambda o: o["name"], lambda o: o["probability"]
+        )
+        assert [o["name"] for o in ranked[:3]] == [
+            "Byrum Brown", "Duce Robinson", "Brendan Sorsby",
+        ]
+        # Demoted, not deleted — the field's share stays visible.
+        assert ranked[-1]["name"] == "Other"
+        assert len(ranked) == 4
+
+    def test_a_field_that_carries_real_mass_keeps_its_rank(self):
+        # THE OTHER DIRECTION. A wide-open race where "Other" genuinely holds most
+        # of the mass is INFORMATION. Only the ~100% artifact is suppressed.
+        outs = [
+            {"name": "Other", "probability": 0.55},
+            {"name": "Gavin Newsom", "probability": 0.22},
+        ]
+        ranked = display_rank_order(
+            outs, lambda o: o["name"], lambda o: o["probability"]
+        )
+        assert [o["name"] for o in ranked] == ["Other", "Gavin Newsom"]
+
+    def test_threshold_boundary(self):
+        below = [{"name": "Other", "probability": 0.89}, {"name": "Real", "probability": 0.1}]
+        at = [{"name": "Other", "probability": 0.9}, {"name": "Real", "probability": 0.1}]
+        key, prob = (lambda o: o["name"]), (lambda o: o["probability"])
+        assert display_rank_order(below, key, prob)[0]["name"] == "Other"
+        assert display_rank_order(at, key, prob)[0]["name"] == "Real"
+
+    def test_leader_pick_order_still_demotes_a_plurality_field_one_slot(self):
+        # The pre-F5 behaviour is preserved for sub-threshold fields.
+        outs = [{"name": "Other", "probability": 0.52},
+                {"name": "Cleveland Cavaliers", "probability": 0.27}]
+        leader_pick_order(outs)
+        assert outs[0]["name"] == "Cleveland Cavaliers"
+        assert outs[1]["name"] == "Other"
+
+    def test_leader_pick_order_pushes_a_dominant_field_all_the_way_down(self):
+        outs = [{"name": "Other", "probability": 1.0},
+                {"name": "Democratic", "probability": 0.585},
+                {"name": "Republican", "probability": 0.405}]
+        leader_pick_order(outs)
+        assert [o["name"] for o in outs] == ["Democratic", "Republican", "Other"]
+
+
+class TestF5NeverEmpties:
+    """A sort helper must never turn a card into nothing. Honest-empty is a
+    SURFACE decision (ruling 027); a silently zero-outcome card is worse than a
+    labelled one."""
+
+    def test_an_all_placeholder_market_is_returned_unchanged(self):
+        outs = [{"name": f"Party {c}", "probability": 1.0} for c in "ABC"]
+        ranked = display_rank_order(
+            outs, lambda o: o["name"], lambda o: o["probability"]
+        )
+        assert len(ranked) == 3
+        assert [o["name"] for o in ranked] == ["Party A", "Party B", "Party C"]
+
+    def test_an_all_field_market_is_returned_unchanged(self):
+        outs = [{"name": "Other", "probability": 1.0},
+                {"name": "The Field", "probability": 0.95}]
+        ranked = display_rank_order(
+            outs, lambda o: o["name"], lambda o: o["probability"]
+        )
+        assert [o["name"] for o in ranked] == ["Other", "The Field"]
+
+    def test_a_real_fifty_fifty_field_renders_untouched(self):
+        # The directive's explicit both-directions ask: a real 50/50 still renders.
+        outs = [{"name": "Yes", "probability": 0.5}, {"name": "No", "probability": 0.5}]
+        ranked = display_rank_order(
+            outs, lambda o: o["name"], lambda o: o["probability"]
+        )
+        assert [o["name"] for o in ranked] == ["Yes", "No"]
+        assert [o["probability"] for o in ranked] == [0.5, 0.5]
+
+    def test_missing_probabilities_do_not_crash_or_reorder(self):
+        outs = [{"name": "Alice"}, {"name": "Other"}, {"name": "Bob", "probability": None}]
+        ranked = display_rank_order(
+            outs, lambda o: o.get("name"), lambda o: o.get("probability")
+        )
+        assert [o["name"] for o in ranked] == ["Alice", "Other", "Bob"]
+
+
+class TestF5LiveSpecimens:
+    """Production shapes read off the API on 2026-08-24, kept as regression anchors
+    so a future refactor has to reproduce the actual user-visible fix."""
+
+    def test_party_c_100_percent_becomes_democratic_vs_republican(self):
+        # /api/futures/112910 "Which party wins 2028 US Presidential Election?"
+        # served 15 rows led by "Party C 100%". The site's biggest political
+        # question was unreadable.
+        outs = [{"name": f"Party {c}", "probability": 1.0} for c in "CJIKFEDBGHLA"]
+        outs += [
+            {"name": "Democratic", "probability": 0.585},
+            {"name": "Republican", "probability": 0.405},
+            {"name": "Other", "probability": 1.0},
+        ]
+        ranked = display_rank_order(
+            outs, lambda o: o["name"], lambda o: o["probability"]
+        )
+        assert [o["name"] for o in ranked] == ["Democratic", "Republican", "Other"]
+
+    def test_next_magic_head_coach_leads_with_a_person(self):
+        # /api/futures/16631686 served "Coach H 100%" over 15 real candidates.
+        outs = [{"name": f"Coach {c}", "probability": 1.0} for c in "HJLNACB"]
+        outs += [
+            {"name": "Other", "probability": 1.0},
+            {"name": "Sean Sweeney", "probability": 1.0},
+            {"name": "Sam Cassell", "probability": 0.101},
+        ]
+        ranked = display_rank_order(
+            outs, lambda o: o["name"], lambda o: o["probability"]
+        )
+        assert ranked[0]["name"] == "Sean Sweeney"
+        assert ranked[1]["name"] == "Sam Cassell"
+        assert ranked[-1]["name"] == "Other"
+
+
+class TestF5FeedUsesSharedPipeline:
+    """#993's lesson was THREE divergent copies. The feed built `top_outcomes` off
+    raw `sorted_outcomes` and never went through this module at all — so it was
+    copy three, and the leader it named was its own. Source-level assertion,
+    mirroring TestDetailUsesSharedPipeline."""
+
+    @pytest.mark.parametrize("fn_name", ["_score_futures", "_score_sports_mode_futures"])
+    def test_feed_ranks_through_display_rank_order_before_slicing_top_n(self, fn_name):
+        import inspect
+        from app.routes import feed
+
+        src = inspect.getsource(getattr(feed, fn_name))
+        assert "display_rank_order" in src, fn_name
+        # ORDER matters: filtering after the slice would leave the placeholder in
+        # the leader slot and merely shorten the list behind it.
+        assert src.index("display_rank_order") < src.index("sorted_outcomes[:10]"), (
+            f"{fn_name}: display_rank_order must run BEFORE the top-10 slice"
+        )
