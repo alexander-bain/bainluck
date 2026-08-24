@@ -281,6 +281,45 @@ def _is_tradeable_opening(prob: Optional[float], has_trading: bool) -> bool:
     return bool(has_trading) and prob is not None and 0.0 < prob < 1.0
 
 
+def sub_market_metadata(
+    *, event_id, matchup_title: Optional[str]
+) -> Optional[dict]:
+    """``market_metadata`` for a decomposed Polymarket sub-market, at mint time.
+
+    Queue 390 Item 2a, from ``C-INGEST-EID-AUDIT-1``. The sub-market loop used to
+    build this inline as ``{"matchup_title": ...}`` or ``None``, throwing away an
+    ``event.id`` that is in scope in the same iteration — the parent row two
+    branches earlier stamps it from the same variable. Measured cost:
+    **5,065 of 7,815 rows minted in 48h (64.8%) are bare-hex ``no_eid``**,
+    ~2,500/day, and every reader of the canonical
+    ``market_metadata->>'polymarket_event_id'`` path sees a miss on them and falls
+    back to parsing ``group_id`` — a column that happens to contain the id, not a
+    contract that promises it.
+
+    Three rules, each of which a specimen in the test file depends on:
+
+    * The key is **top level**. The census tests with jsonb ``?``, which does not
+      see nested keys — the Ramírez specimen carries ``shape.container_group`` and
+      is still counted ``no_eid``, correctly.
+    * The value is a **string**, matching what ``group_id``'s
+      ``split_part(...,':',2)`` yields, so the minted rows and the backfilled rows
+      are comparable rather than merely both present.
+    * A missing id stamps **nothing**. A placeholder would satisfy the census
+      while pointing at nothing, turning a countable gap into an invisible one —
+      which is the same mistake as gotcha #53, made on purpose.
+
+    Returns ``None`` rather than ``{}`` when there is nothing to say: the caller
+    passes this straight into the insert, and an empty object would overwrite
+    populated metadata on re-ingest.
+    """
+    meta: dict = {}
+    if matchup_title:
+        meta["matchup_title"] = matchup_title
+    if event_id is not None and str(event_id) != "":
+        meta["polymarket_event_id"] = str(event_id)
+    return meta or None
+
+
 def _tags_to_category(tags: list[str]) -> tuple[str, Optional[str]]:
     """
     Map Polymarket tags to (internal_category, llm_sport_category).
@@ -942,10 +981,13 @@ async def _process_event_batch(
                         # into existing metadata (never clobber) with the same
                         # COALESCE(md,'{}') || jsonb_build_object idiom the backfill
                         # uses, so re-ingests and prior backfills stay idempotent.
-                        sub_meta_insert = (
-                            {"matchup_title": _group_matchup_title}
-                            if _group_matchup_title
-                            else None
+                        # Queue 390 Item 2a: stamp the event id the loop is already
+                        # holding. `event.id` is right there — the parent row above
+                        # writes it from the same variable — and dropping it here is
+                        # what made 64.8% of a 48h mint bare-hex `no_eid`.
+                        sub_meta_insert = sub_market_metadata(
+                            event_id=event.id,
+                            matchup_title=_group_matchup_title,
                         )
                         sub_set = {
                             "name": sub_name,
@@ -954,14 +996,28 @@ async def _process_event_batch(
                             "event_id": parent_event_id,
                             "updated_at": func.now(),
                         }
-                        if _group_matchup_title:
+                        if sub_meta_insert:
+                            # MERGE, never clobber — same COALESCE(md,'{}') || idiom
+                            # the backfill uses, so re-ingests and prior backfills
+                            # stay idempotent (#173/#1024).
+                            #
+                            # The merge now covers the event id too, which means a
+                            # re-ingest REPAIRS an existing bare-hex row rather than
+                            # only fixing rows minted from here on. Polymarket
+                            # re-serves open events continuously, so this recovers a
+                            # slice of the historical class for free — the one-shot
+                            # group_id backfill still owns the rest, including every
+                            # row whose event has since closed.
                             from sqlalchemy import cast as _sa_cast, literal as _sa_literal
                             from sqlalchemy.dialects.postgresql import JSONB as _PG_JSONB
+                            _sub_meta_pairs: list = []
+                            for _k, _v in sub_meta_insert.items():
+                                _sub_meta_pairs.extend([_k, _v])
                             sub_set["market_metadata"] = func.coalesce(
                                 FuturesMarket.market_metadata,
                                 _sa_cast(_sa_literal("{}"), _PG_JSONB),
                             ).op("||")(
-                                func.jsonb_build_object("matchup_title", _group_matchup_title)
+                                func.jsonb_build_object(*_sub_meta_pairs)
                             )
 
                         sub_stmt = pg_insert(FuturesMarket).values(
