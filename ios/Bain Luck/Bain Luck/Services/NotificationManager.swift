@@ -38,6 +38,29 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     @Published var isPermissionGranted = false
 
+    /// Why APNS registration failed, if it did — surfaced, not just logged.
+    ///
+    /// #2109 / UX-P125 item 4. The verdict on the zero-registration bug was
+    /// "client side, before the wire", and the reason it took a verdict to
+    /// establish that is sitting right here: the failure callback logged at
+    /// `.info`, called the failure "skipped", and stored nothing. So a hard
+    /// entitlement rejection and a simulator with no APNS at all produced the
+    /// same single grey line, in a log nobody reads, on a device nobody is
+    /// attached to — and `isPermissionGranted == true` alongside it read as
+    /// "push is set up". Permission granted and registration failed is exactly
+    /// the state the report described, and nothing in the app could say so.
+    ///
+    /// Non-nil here means: the OS refused to issue a device token. There will be
+    /// no APNS token, therefore no FCM token, therefore no row in
+    /// `device_tokens`, therefore no delivery — however green the permission
+    /// prompt looked.
+    @Published private(set) var apnsRegistrationFailure: String?
+
+    /// True once APNS has handed us a device token. Paired with
+    /// `isPermissionGranted` this distinguishes the three states that used to
+    /// look alike: not asked, asked-and-refused, and granted-but-unregistered.
+    @Published private(set) var isAPNSRegistered = false
+
     /// The raw APNS device token, hex-encoded. FCM CANNOT send to this.
     private(set) var deviceToken: String?
 
@@ -260,6 +283,10 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         let hex = data.map { String(format: "%02x", $0) }.joined()
         self.deviceToken = hex
         registeredTokenByKind[.apns] = nil
+        // Success clears the failure: a device that recovers (re-signed build,
+        // network back) must not keep reporting the old refusal forever.
+        apnsRegistrationFailure = nil
+        isAPNSRegistered = true
         logger.info("APNS device token received (\(hex.prefix(8))...)")
         // Hand the raw token to Messaging so it can mint the FCM registration
         // token. Without this the SDK has no APNS token to pair and the fetch
@@ -284,9 +311,33 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         handleFCMToken(fcmToken)
     }
 
-    /// Called from the AppDelegate when APNS registration fails.
+    /// Called from the AppDelegate when APNS registration FAILS.
+    ///
+    /// It used to say "APNS registration skipped", at `.info`, and stop there.
+    /// Every word of that was wrong in a way that cost #2109 a whole cycle:
+    /// "skipped" describes a decision not to try, this is the OS refusing after
+    /// we tried; `.info` is the level for things that went to plan; and storing
+    /// nothing meant the app's own state said push was fine. Zero device tokens
+    /// with permission granted is precisely what this callback firing looks
+    /// like from the server — and precisely what it looked like from the client
+    /// too, which is to say, like nothing at all.
+    ///
+    /// So: `.error`, the NSError domain/code (the entitlement rejection and a
+    /// simulator's "no APNS" are different codes and the distinction is the
+    /// whole diagnosis), and a published field so the failure is legible
+    /// somewhere other than a console nobody has attached.
     func didFailToRegisterForRemoteNotifications(error: Error) {
-        logger.info("APNS registration skipped: \(error.localizedDescription)")
+        let ns = error as NSError
+        let detail = "\(ns.domain) \(ns.code): \(ns.localizedDescription)"
+        apnsRegistrationFailure = detail
+        isAPNSRegistered = false
+        logger.error(
+            """
+            APNS registration FAILED — no device token will be issued, so no push \
+            can be delivered to this install regardless of permission state. \
+            \(detail, privacy: .public)
+            """
+        )
     }
 
     // MARK: - Private
