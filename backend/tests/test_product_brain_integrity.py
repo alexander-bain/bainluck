@@ -683,7 +683,20 @@ def test_ruling_numbers_are_unique() -> None:
 #: 116 was verified free against the ledger AND the merged tree before it was written;
 #: `lane1/q353-process`, which was told to renumber its colliding 056 upward, is redirected
 #: to **117** in the same turn. Ruling 088 / #1910 — count, never add a delta.
-MINIMUM_BANKED_RULINGS = 117
+#:
+#: Raised to **118** by `program/latency-76` (LAT-P084) banking ruling **128** ("a gate is
+#: bounded in BOTH directions or in neither" — Fable, #2116, the per-consumer ceiling that
+#: closes ruling 126's stated residual). COUNTED on this branch, both sides:
+#: `git ls-tree -r --name-only 40de2d86 -- docs/rulings/ | grep -v README | wc -l` = **117**
+#: on the base, `ls docs/rulings/*.md | grep -v README | wc -l` = **118** after. Not a delta
+#: added to 117 — the base was counted independently and happened to agree, which is the only
+#: way ruling 088's rule can be satisfied and the only way it can be checked.
+#: 128 was claimed in `RULING-CLAIMS.md` after a `git fetch` in the same turn and verified free
+#: across all **587** local and remote refs (`git for-each-ref refs/heads refs/remotes`),
+#: holders_found = 0. `origin/master` = `fe28d2c3`, whose highest ruling FILE is **125** —
+#: 126 and 127 are this lane's own, claimed-and-unmerged on `program/latency-75`, so the count
+#: on THIS branch is ahead of master's and will be re-counted at merge, never re-derived.
+MINIMUM_BANKED_RULINGS = 118
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
