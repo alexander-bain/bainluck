@@ -1,0 +1,68 @@
+{
+ "yankees": {
+  "ids": [
+   865,
+   6610
+  ],
+  "names": [
+   "New York Yankees",
+   "New York Yankees"
+  ],
+  "n": 2
+ },
+ "celtics": {
+  "ids": [
+   100,
+   16921,
+   1035,
+   17931,
+   2236
+  ],
+  "names": [
+   "Boston Celtics",
+   "Boston Celtics",
+   "Celtic",
+   "Celtic",
+   "Celtic"
+  ],
+  "n": 5
+ },
+ "red sox": {
+  "ids": [
+   853,
+   10709,
+   12912
+  ],
+  "names": [
+   "Boston Red Sox",
+   "Boston Red Sox",
+   "Worcester Red Sox"
+  ],
+  "n": 3
+ },
+ "world cup": {
+  "ids": [],
+  "names": [],
+  "n": 0
+ },
+ "stanley cup": {
+  "ids": [],
+  "names": [],
+  "n": 0
+ },
+ "nba champion": {
+  "ids": [],
+  "names": [],
+  "n": 0
+ },
+ "masters winner": {
+  "ids": [],
+  "names": [],
+  "n": 0
+ },
+ "world series": {
+  "ids": [],
+  "names": [],
+  "n": 0
+ }
+}
