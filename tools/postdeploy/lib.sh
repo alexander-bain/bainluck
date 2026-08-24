@@ -35,8 +35,24 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export REPO_ROOT
 
+# `~/.claude/.env` is where the credentials live, and it uses `export FOO=...`,
+# not `: "${FOO:=...}"`. Sourcing it therefore OVERWRITES whatever the caller
+# set — so `BAINLUCK_API=http://127.0.0.1:8791 ./some-check.sh` silently ran
+# against PRODUCTION instead. That is not a cosmetic override bug: it is how a
+# mutation test of `checks/proof-2060-labeling-card.sh` came back green while
+# reading real, unmutated data, which would have certified a check that cannot
+# fail. Caller-set values are captured first and restored after, so the env file
+# supplies what is missing and never replaces what was chosen. (Same shape as
+# #2120: a tool that honours an override only when nothing overrides it.)
+__caller_api="${BAINLUCK_API:-}"
+__caller_web="${BAINLUCK_WEB:-}"
+__caller_admin_token="${ADMIN_TOKEN:-}"
 # shellcheck disable=SC1090
 [ -f "$HOME/.claude/.env" ] && . "$HOME/.claude/.env"
+[ -n "$__caller_api" ] && BAINLUCK_API="$__caller_api"
+[ -n "$__caller_web" ] && BAINLUCK_WEB="$__caller_web"
+[ -n "$__caller_admin_token" ] && ADMIN_TOKEN="$__caller_admin_token"
+unset __caller_api __caller_web __caller_admin_token
 : "${BAINLUCK_API:=https://api.bainluck.com}"
 : "${BAINLUCK_WEB:=https://bainluck.com}"
 export BAINLUCK_API BAINLUCK_WEB
@@ -64,6 +80,41 @@ api_get() {
   local path="$1" out="$2" attempts="${3:-6}" i=1 code
   while [ "$i" -le "$attempts" ]; do
     code=$(curl -s --max-time 120 -o "$out" -w '%{http_code}' "$BAINLUCK_API$path")
+    case "$code" in
+      200) return 0 ;;
+      429|500|502|503|504)
+        say "   [retry $i/$attempts] HTTP $code on $path"
+        sleep $(( i * 10 ))
+        ;;
+      *)
+        say "   HTTP $code on $path"
+        return 1
+        ;;
+    esac
+    i=$(( i + 1 ))
+  done
+  say "   gave up after $attempts attempts on $path (last HTTP $code)"
+  return 1
+}
+
+# api_get_admin <path> <outfile> [max_attempts]
+# The authenticated twin of `api_get`, with the same retry discipline. It exists
+# so an admin read is never hand-rolled as a bare `curl`: the admin routes are
+# behind the same 60/min limiter as everything else, and a throttled response
+# parses as `None` — which a caller reads as a phantom regression rather than as
+# "I was not answered". The token goes in the `Authorization: Bearer` header and
+# ONLY there; the `?secret=` query transport was removed (Queue #252 item 3), so
+# a URL carrying it gets a 403 and would also have leaked the token into every
+# shell history and log line that echoed the path.
+api_get_admin() {
+  local path="$1" out="$2" attempts="${3:-6}" i=1 code
+  if [ -z "${ADMIN_TOKEN:-}" ]; then
+    say "   ADMIN_TOKEN unset — source ~/.claude/.env"
+    return 1
+  fi
+  while [ "$i" -le "$attempts" ]; do
+    code=$(curl -s --max-time 120 -o "$out" -w '%{http_code}' \
+      -H "Authorization: Bearer $ADMIN_TOKEN" "$BAINLUCK_API$path")
     case "$code" in
       200) return 0 ;;
       429|500|502|503|504)

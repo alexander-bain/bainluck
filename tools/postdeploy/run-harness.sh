@@ -124,14 +124,56 @@ done
 # read as a list of BRANCHES. So the runner says outright which unmerged
 # branches nothing here covers — a green harness over an uncovered branch is the
 # specific lie this section prevents.
+#
+# UX-P123: coverage is read from each check's DECLARATION, not from its file
+# body. The first version grepped the whole file for the branch name, which this
+# header already described as "declares … via its own REF" — the text was right
+# and the implementation was not. Two live false positives resulted:
+#
+#   * `run-harness.sh`'s OWN header names `program/ux-104` while explaining the
+#     ux-104 coverage gap, so the runner marked that branch covered by talking
+#     about it. Delete `proof-2060-defect-routes.sh` and the row stayed green.
+#   * `checks/gate-branch-surface.sh` names ux-100 and ux-105 in the prose
+#     explaining why it does NOT cover them, which marked both covered.
+#
+# Prose that mentions a branch is the opposite of a proof of it, so a mechanism
+# that reads the two as the same thing fails in the direction that hides work.
+# A check now declares coverage on ONE line and only that line is read:
+#
+#     REF="${REF:-program/ux-104}"          one branch (the existing convention)
+#     COVERS="program/ux-106 program/ux-107"   several
+#
+# `COVERS` wins when both are present. A check with neither declares nothing and
+# covers nothing — which is correct for shared plumbing like
+# `compare-calibration-baseline.sh`.
+
+# declared_refs <script> — the branch refs a check DECLARES it gates on.
+# Reads the declaration line only; the body is never consulted.
+declared_refs() {
+  local f="$1" line
+  line="$(grep -m1 -E '^[[:space:]]*COVERS=' "$f" 2>/dev/null)"
+  [ -z "$line" ] && line="$(grep -m1 -E '^[[:space:]]*REF=' "$f" 2>/dev/null)"
+  [ -z "$line" ] && return 0
+  printf '%s\n' "$line" | grep -oE 'program/ux-[0-9]+' | sort -u
+}
+
 hdr "BRANCH COVERAGE"
-say "  Each check declares the branch it gates on via its own REF. Branches in"
-say "  the local stack with no check naming them are listed here as UNCOVERED."
+say "  Each check declares the branch it gates on via its own REF/COVERS line."
+say "  Branches in the local stack that no check DECLARES are UNCOVERED. A check"
+say "  merely mentioning a branch in prose does not cover it (UX-P123)."
+uncovered=0
 for br in $(git -C "$REPO_ROOT" branch --list 'program/ux-1[0-9][0-9]' --format='%(refname:short)' | sort); do
-  if grep -qs -- "$br" "$HERE"/*.sh "$HERE"/checks/*.sh; then
-    covered="covered"
+  namers=""
+  for f in "${SCRIPTS[@]}"; do
+    if declared_refs "$f" | grep -qx -- "$br"; then
+      namers="$namers $(basename "$f")"
+    fi
+  done
+  if [ -n "$namers" ]; then
+    covered="covered by:$namers"
   else
-    covered="UNCOVERED — no check names it"
+    covered="UNCOVERED — no check declares it"
+    uncovered=$(( uncovered + 1 ))
   fi
   if git -C "$REPO_ROOT" merge-base --is-ancestor "$br" origin/master 2>/dev/null; then
     state="merged"
@@ -140,6 +182,13 @@ for br in $(git -C "$REPO_ROOT" branch --list 'program/ux-1[0-9][0-9]' --format=
   fi
   printf '  %-22s %-10s %s\n' "$br" "$state" "$covered"
 done
+say ""
+if [ "$uncovered" -eq 0 ]; then
+  say "  BRANCH COVERAGE: complete — every branch in the stack is declared by a check."
+else
+  say "  BRANCH COVERAGE: $uncovered branch(es) UNCOVERED. That is a harness gap, not a"
+  say "  green run — the row above is the whole point of this table."
+fi
 
 say ""
 say "  the #2094 APPLY is deliberately not run from here:"
