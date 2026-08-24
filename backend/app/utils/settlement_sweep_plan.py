@@ -77,6 +77,7 @@ week one rather than waiting for the small buckets to be perfect.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -125,13 +126,30 @@ def bucket_for(days_remaining: float | None) -> str:
     filters them reports a clean run over a population it never defined, and the
     difference between "nothing to do" and "we excluded it" is exactly the
     distinction gotcha #53 is about.
+
+    THE EDGES ARE FLOORED, AND THAT IS NOT A ROUNDING PREFERENCE. ``days_remaining``
+    is a float over a continuous clock, but :data:`BUCKETS` is written in whole days
+    with INCLUSIVE ends — so ``0-7`` then ``8-14`` leaves the open interval
+    ``(7, 8)`` in no bucket at all. Before this floor, a row with 7.4 days of life
+    fell through every branch and was named ``future``: sorted BEHIND the 61-74
+    bucket by :func:`order_candidates`, and reported to a human as not-yet-at-risk
+    while it was eight days from being unrecoverable. Measured against production
+    2026-08-24, the four such gaps — ``(7,8) (14,15) (30,31) (60,61)`` — held 1,201
+    of the 20,499 in-window rows, 149 of them in the gap adjacent to the terminal
+    bucket.
+
+    Flooring closes all four and rounds toward URGENCY: 7.9 days remaining is
+    treated as 7, landing in the terminal bucket that is taken to exhaustion.
+    Over-including into the more urgent bucket costs a probe; under-including costs
+    the row.
     """
     if days_remaining is None:
         return "unknown"
     if days_remaining < 0:
         return "expired"
+    whole = math.floor(days_remaining)
     for label, low, high in BUCKETS:
-        if low <= days_remaining <= high:
+        if low <= whole <= high:
             return label
     return "future"
 
