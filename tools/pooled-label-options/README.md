@@ -2,7 +2,8 @@
 
 ```bash
 tools/pooled-label-options/run.sh                       # curl production, then render
-CAL_PAYLOAD=/tmp/cal.json tools/.../run.sh --no-fetch   # render a saved payload
+tools/pooled-label-options/run.sh --no-fetch            # render the saved payload
+#   payload default: /tmp/pooled-label-options/cal.json  (CAL_PAYLOAD overrides)
 ```
 
 Writes a one-pager to `$OPTIONS_OUT` (default `/tmp/pooled-label-options.md`). A rendered

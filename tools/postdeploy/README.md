@@ -19,7 +19,7 @@ anything not yet in reports `NOT DEPLOYED` rather than a misleading pass.
 | `proof-2084-duel-sum.sh` | every served duel pair sums to 100 and the favourite prints its own rounding | `program/ux-101` |
 | `proof-2086-settled-markets.sh` | the settled `status` is served; **picks a specimen and hands Alex a URL** | `program/ux-102` |
 | `verify-2094-backfill.sh` | the defect-route backfill's dry-run census + **cluster projection**; `--apply` commits and re-checks idempotence | `program/ux-105` |
-| `compare-calibration-baseline.sh` | `/tmp/cal.json` baseline vs a fresh curl — shape held, movement reported | — |
+| `compare-calibration-baseline.sh` | a frozen `/tmp/cal-baseline/` baseline vs a fresh curl — shape held, movement reported, degraded tiers UNKNOWN | — |
 | `lib.sh` | the deploy gate, retrying transport, verdict vocabulary | — |
 
 ## Verdicts
@@ -46,7 +46,8 @@ reason this harness exists is that they have repeatedly been recorded as one.
 ## Baseline capture, before the deploy
 
 ```bash
-tools/postdeploy/compare-calibration-baseline.sh --capture   # writes /tmp/cal.json
+tools/postdeploy/compare-calibration-baseline.sh --capture   # writes /tmp/cal-baseline/baseline.json
+tools/postdeploy/compare-calibration-baseline.sh --capture --force   # re-take it on purpose
 # … deploy …
 tools/postdeploy/compare-calibration-baseline.sh             # compares
 ```

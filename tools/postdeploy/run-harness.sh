@@ -24,7 +24,7 @@
 #
 # ## It also fixes #2120 from the CALLER side
 #
-# Three tools default to `/tmp/cal.json` — one treats it as a frozen baseline
+# Three tools USED TO default to `/tmp/cal.json` — one treated it as a frozen baseline
 # and two `curl -o` into it. UX-P121 watched that collision produce
 # `calibration: FAIL — keys DISAPPEARED` against a payload that had not changed:
 # the "baseline" was five seconds NEWER than the fresh fetch it was compared to.
