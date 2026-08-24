@@ -1,0 +1,2840 @@
+{
+ "_provenance": {
+  "captured": "2026-08-24 (PDT)",
+  "queue": "LAT-P086 (F1)",
+  "request": "GET https://api.bainluck.com/api/futures/compare?key=entertainment::game_prop:2026",
+  "response": "HTTP 200, 0.600193s, 61290 bytes",
+  "note": "The route was DELETED by this queue. This file is the only remaining record of what it returned."
+ },
+ "canonical_key": "entertainment::game_prop:2026",
+ "sources": [
+  "kalshi",
+  "polymarket"
+ ],
+ "source_markets": [
+  {
+   "source": "kalshi",
+   "market_id": 59172754,
+   "name": "Dune vs Avengers: Highest Rotten Tomatoes Score",
+   "outcome_count": 2
+  },
+  {
+   "source": "kalshi",
+   "market_id": 52984975,
+   "name": "Yellow Submarine vs. Power Rangers: Map 2",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794340,
+   "name": "Will Itzy release a song in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794341,
+   "name": "Will IVE release a song in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794342,
+   "name": "Will Aespa release a song in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794343,
+   "name": "Will Blackpink release a song in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794344,
+   "name": "Will Illit release a song in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794345,
+   "name": "Will Le Sserafim release a song in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794347,
+   "name": "Will NewJeans release a song in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794408,
+   "name": "Will Beyonc\u00e9 wear Versace at the Met Gala?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794446,
+   "name": "Will Nicole Kidman wear Dolce & Gabbana at the Met Gala?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794447,
+   "name": "Will Nicole Kidman wear Dior at the Met Gala?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794450,
+   "name": "Will Nicole Kidman wear Balenciaga at the Met Gala?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794635,
+   "name": "Will Drake officially release Iceman by May 8, 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794674,
+   "name": "Will France be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794683,
+   "name": "Will Poland be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794684,
+   "name": "Will Serbia be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794690,
+   "name": "Will Bulgaria be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794691,
+   "name": "Will Croatia be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794701,
+   "name": "Will United Kingdom be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794707,
+   "name": "Will Switzerland be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794712,
+   "name": "Will Germany be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794713,
+   "name": "Will Greece be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794724,
+   "name": "Will Italy be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794726,
+   "name": "Will Serbia be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794727,
+   "name": "Will Ukraine be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794735,
+   "name": "Will Moldova be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794736,
+   "name": "Will Cyprus be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794737,
+   "name": "Will Denmark be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794740,
+   "name": "Will San Marino be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794748,
+   "name": "Will Georgia be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794749,
+   "name": "Will Germany be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794755,
+   "name": "Will Australia be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794756,
+   "name": "Will Azerbaijan be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794757,
+   "name": "Will Cyprus be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794770,
+   "name": "Will Romania be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794773,
+   "name": "Will Ukraine be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794777,
+   "name": "Will Moldova be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794679,
+   "name": "Will Ukraine be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794680,
+   "name": "Will Cyprus be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794681,
+   "name": "Will Finland be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794685,
+   "name": "Will Sweden be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794686,
+   "name": "Will Armenia be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13795150,
+   "name": "Will Haitham get engaged on Love is Blind: Sweden: Season 3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13795156,
+   "name": "Will Christofer get engaged on Love is Blind: Sweden: Season 3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13795171,
+   "name": "Will Gabriel get engaged on Love is Blind: Sweden: Season 3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794687,
+   "name": "Will Albania be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794689,
+   "name": "Will Belgium be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794728,
+   "name": "Will Albania be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13795339,
+   "name": "Will Mother's Milk die in \"The Boys: Season 5\"?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13795342,
+   "name": "Will Billy Butcher die in \"The Boys: Season 5\"?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793617,
+   "name": "Will San Marino advance through the first Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794695,
+   "name": "Will Italy be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794697,
+   "name": "Will Moldova be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794698,
+   "name": "Will Montenegro be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794699,
+   "name": "Will Norway be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849847,
+   "name": "Will Dynasty Ballard get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794711,
+   "name": "Will Croatia be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794718,
+   "name": "Will Romania be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794750,
+   "name": "Will Israel be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794764,
+   "name": "Will Sweden be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794704,
+   "name": "Will Greece be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794705,
+   "name": "Will Israel be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794706,
+   "name": "Will Latvia be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13797389,
+   "name": "Will Clavicular be banned from Kick by April 30?",
+   "outcome_count": 4
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13797656,
+   "name": "Will Big Tobacco buy Alp nicotine pouches?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13797659,
+   "name": "Will Big Tobacco buy Fre nicotine pouches?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13797660,
+   "name": "Will Big Tobacco buy Sesh nicotine pouches?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13797877,
+   "name": "Tobey Maguire as Spider-Man?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13795172,
+   "name": "Will Ibrahim get engaged on Love is Blind: Sweden: Season 3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793636,
+   "name": "Will Bulgaria advance through the second Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794676,
+   "name": "Will Malta be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794678,
+   "name": "Will Romania be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794738,
+   "name": "Will Poland be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794741,
+   "name": "Will Sweden be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794729,
+   "name": "Will Belgium be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794731,
+   "name": "Will Georgia be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794732,
+   "name": "Will Lithuania be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794733,
+   "name": "Will Malta be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794778,
+   "name": "Will Norway be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794700,
+   "name": "Will San Marino be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794714,
+   "name": "Will Israel be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 20149148,
+   "name": "Will \"People\" be said 111+ times during the first episode of the Joe Rogan Experience this week?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13825290,
+   "name": "Will the NYT front-page headlines say \"Elon\" or  \"Musk\" this week?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13825293,
+   "name": "Will the NYT front-page headlines say \"Donald\" or \"Trump\" this week?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849743,
+   "name": "Will MrBeast say \"Briefcase\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13782109,
+   "name": "Will Alex Warren have a #1 hit in May?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794677,
+   "name": "Will Portugal be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794688,
+   "name": "Will Austria be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794747,
+   "name": "Will Denmark be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 20566141,
+   "name": "Will MrBeast say \"Eliminate\" or \"Eliminated\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 20566747,
+   "name": "Will \"Banana\" be said 10+ times during the IEM Atlanta 2026 Grand Finals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 20566755,
+   "name": "Will \"Collat\" or \"Collateral\" be said during the IEM Atlanta 2026 Grand Finals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 20566759,
+   "name": "Will \"Disgusting\" be said during the IEM Atlanta 2026 Grand Finals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 20566764,
+   "name": "Will \"Posture\" be said during the IEM Atlanta 2026 Grand Finals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 20566766,
+   "name": "Will \"Monster\" be said during the IEM Atlanta 2026 Grand Finals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 20566770,
+   "name": "Will \"No Kit\" be said during the IEM Atlanta 2026 Grand Finals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794758,
+   "name": "Will Czechia be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794772,
+   "name": "Will Switzerland be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 16625606,
+   "name": "Will the NYT front-page headlines say \"Gunman\" this week?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 16631968,
+   "name": "Will \"Chocolate\" be said during the first episode of the Joe Rogan Experience this week?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793392,
+   "name": "Will Will Sawin win the 2026 Fields Medal?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793397,
+   "name": "Will Aleksandr Logunov win the 2026 Fields Medal?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793399,
+   "name": "Will Julian Sahasrabudhe win the 2026 Fields Medal?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794413,
+   "name": "Will Beyonc\u00e9 wear Roberto Cavalli at the Met Gala?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 16631965,
+   "name": "Will \"Influencer\" be said during the first episode of the Joe Rogan Experience this week?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 16631970,
+   "name": "Will \"Awesome\" be said during the first episode of the Joe Rogan Experience this week?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 27378194,
+   "name": "New \"Stranger Things\" episode released by July 31? ",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794451,
+   "name": "Will Nicole Kidman wear Armani Priv\u00e9 at the Met Gala?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794631,
+   "name": "Will Drake officially release Iceman by March 31, 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794634,
+   "name": "Will Drake officially release Iceman by June 30, 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13846823,
+   "name": "Will \"Six Seven\" be said on ICEMAN?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794745,
+   "name": "Will Albania be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13791165,
+   "name": "Will Drake release Iceman before GTA VI?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13791159,
+   "name": "New Playboi Carti Album before GTA VI?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13791163,
+   "name": "Will bitcoin hit $1m before GTA VI?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13846820,
+   "name": "Will \"Trump\" or \"Obama\" be said on ICEMAN?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13795349,
+   "name": "Will Ashley Barrett die in \"The Boys: Season 5\"?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794633,
+   "name": "Will Drake officially release Iceman by May 31, 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742478,
+   "name": "Will \"Table\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13807597,
+   "name": "Will Duyen Ha be eliminated from Top Chef: Season 23 this week?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 16625281,
+   "name": "Will Ariana Grande feature Troye Sivan on Petal?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13791149,
+   "name": "Taylor Swift pregnant by March 31?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793621,
+   "name": "Will Lithuania advance through the first Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793641,
+   "name": "Will Switzerland advance through the second Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793634,
+   "name": "Will Ukraine advance through the second Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794721,
+   "name": "Will Czechia be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794725,
+   "name": "Will Montenegro be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794753,
+   "name": "Will Poland be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794775,
+   "name": "Will Croatia be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794675,
+   "name": "Will Lithuania be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794682,
+   "name": "Will Georgia be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794762,
+   "name": "Will Montenegro be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794449,
+   "name": "Will Nicole Kidman wear Louis Vuitton at the Met Gala?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792711,
+   "name": "Will Phoebe Bridgers attend Taylor Swift's wedding?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794407,
+   "name": "Will Beyonc\u00e9 wear Balmain & Olivier Rousteing at the Met Gala?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793628,
+   "name": "Will Serbia advance through the first Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793504,
+   "name": "Will The Weeknd have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433852,
+   "name": "Will \"Mickey Mouse\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635025,
+   "name": "Will \"Love\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 20566139,
+   "name": "Will MrBeast say \"Dollar\" 10+ times during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13782106,
+   "name": "Will Don Toliver have a #1 hit in May?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13846825,
+   "name": "Will \"Pinocchio\" be said on ICEMAN?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13847946,
+   "name": "Will Drake feature Lil Yachty on ICEMAN?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13847947,
+   "name": "Will Drake feature DJ Khaled on ICEMAN?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13847948,
+   "name": "Will Drake feature Kendrick Lamar on ICEMAN?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13847951,
+   "name": "Will Drake feature PARTYNEXTDOOR on ICEMAN?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13847952,
+   "name": "Will Drake feature Young Thug on ICEMAN?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849434,
+   "name": "Will MrBeast say \"Movie\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849435,
+   "name": "Will MrBeast say \"Insane\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849438,
+   "name": "Will MrBeast say \"Apple\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849439,
+   "name": "Will MrBeast say \"Chocolate\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849440,
+   "name": "Will MrBeast say \"Sponsor\" or \"Sponsored\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849441,
+   "name": "Will MrBeast say \"Tesla\" or \"Lamborghini\" during his next video?",
+   "outcome_count": 0
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849444,
+   "name": "Will MrBeast say \"Sport\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849445,
+   "name": "Will MrBeast say \"Africa\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849446,
+   "name": "Will MrBeast say \"Thank You\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849447,
+   "name": "Will MrBeast say \"Impressive\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849448,
+   "name": "Will MrBeast say \"Super Mario Galaxy\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849449,
+   "name": "Will MrBeast say \"America\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849450,
+   "name": "Will MrBeast say \"Technology\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849632,
+   "name": "Will Marciele Albuquerque be in the top 3 of Big Brother Brasil 26?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849633,
+   "name": "Will Solange Couto be in the top 3 of Big Brother Brasil 26?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849638,
+   "name": "Will Milena Moreira be in the top 3 of Big Brother Brasil 26?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849639,
+   "name": "Will Chaiany Andrade be in the top 3 of Big Brother Brasil 26?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849640,
+   "name": "Will Juliano Floss be in the top 3 of Big Brother Brasil 26?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849641,
+   "name": "Will Samira Sagr be in the top 3 of Big Brother Brasil 26?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13780508,
+   "name": "Will MrBeast say \"America\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849734,
+   "name": "Will MrBeast say \"Dollar\" 10+ times during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849736,
+   "name": "Will MrBeast say \"Contestant\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849738,
+   "name": "Will MrBeast say \"Insane\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849740,
+   "name": "Will MrBeast say \"Donated\" or \"Raised\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849741,
+   "name": "Will MrBeast say \"Car\" or \"Supercar\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849742,
+   "name": "Will MrBeast say \"Jet\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849744,
+   "name": "Will MrBeast say \"Island\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849747,
+   "name": "Will MrBeast say \"MrBeast\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849748,
+   "name": "Will MrBeast say \"Subscribe\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849751,
+   "name": "Will MrBeast say \"My Wife\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849819,
+   "name": "Will Alex Henderson get engaged on Love is Blind: Ohio?",
+   "outcome_count": 0
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849820,
+   "name": "Will Kevan Jones get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849821,
+   "name": "Will Tyler Hunt get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849822,
+   "name": "Will Christine Hamilton get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849824,
+   "name": "Will Alex Lowrie get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849823,
+   "name": "Will Tyler Lanier get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849825,
+   "name": "Will Connor Spies get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849826,
+   "name": "Will Devo Anderson get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849827,
+   "name": "Will Mike Gibney get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849828,
+   "name": "Will Steven Sunday get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849829,
+   "name": "Will Amber Morrison get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849830,
+   "name": "Will Bri McNees get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849831,
+   "name": "Will Bry Thomas get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849832,
+   "name": "Will Emma Betsinger get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849833,
+   "name": "Will Jessica Barrett get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849834,
+   "name": "Will Rosalyn Ransaw get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849835,
+   "name": "Will Brennan O'Callaghan get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849836,
+   "name": "Will Chris Fusco get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849837,
+   "name": "Will Miguel Lopez get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849838,
+   "name": "Will Haramol Gill get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849839,
+   "name": "Will Jordan Faeth get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849840,
+   "name": "Will Kevin Verhoef get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849841,
+   "name": "Will Parker Knapp get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849842,
+   "name": "Will Victor St. John get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849843,
+   "name": "Will Ashley Carpenter get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849844,
+   "name": "Will Brittany S. get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849845,
+   "name": "Will Elissa Finley get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849846,
+   "name": "Will Brittany Wicker get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849848,
+   "name": "Will Jennifer Underwood get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849849,
+   "name": "Will Keya Kellum get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849850,
+   "name": "Will Priyanka Grandhi get engaged on Love is Blind: Ohio?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13780509,
+   "name": "Will MrBeast say \"Sport\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849860,
+   "name": "Critical Discord Incident by March 31, 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849861,
+   "name": "Critical Discord Incident by January 31, 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849862,
+   "name": "Critical Discord Incident by June 30, 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849863,
+   "name": "Critical Discord Incident by May 31, 2026?",
+   "outcome_count": 0
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849864,
+   "name": "Critical Discord Incident by April 30, 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13780510,
+   "name": "Will MrBeast say \"Calendar\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794694,
+   "name": "Will Germany be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794702,
+   "name": "Will Australia be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794754,
+   "name": "Will Portugal be in the top 10 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792367,
+   "name": "Will the US confirm that aliens exist by May 31?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792919,
+   "name": "Will Nettspend release an album in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13847862,
+   "name": "Drake Iceman sculpture Date Revealed by May 4?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 16631852,
+   "name": "Will \"In the Grey\" score at least 55 on the Rotten Tomatoes Tomatometer?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 16631859,
+   "name": "Will \"Obsession\" score at least 60 on the Rotten Tomatoes Tomatometer?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793498,
+   "name": "Will Kendrick Lamar have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 20566750,
+   "name": "Will \"Deagle\" be said 10+ times during the IEM Atlanta 2026 Grand Finals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22915647,
+   "name": "Trump declassifies new UFO files by December 31?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22915648,
+   "name": "Trump declassifies new UFO files by May 31?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 16625270,
+   "name": "Will Ariana Grande feature Tyla on Petal?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13796129,
+   "name": "Will Olivia Rodrigo release a new original album by August 31?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793347,
+   "name": "New \"Stranger Things\" episode released by June 30? ",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793342,
+   "name": "New \"Stranger Things\" episode released by December 31? ",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793343,
+   "name": "New \"Stranger Things\" episode released by February 28? ",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793344,
+   "name": "New \"Stranger Things\" episode released by March 15? ",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793346,
+   "name": "New \"Stranger Things\" episode released by March 31? ",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793345,
+   "name": "New \"Stranger Things\" episode released by April 30? ",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793506,
+   "name": "Will Kanye West have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 27593081,
+   "name": "Will \"Pressure\" score at least 80 on the Rotten Tomatoes Tomatometer?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 27593123,
+   "name": "Will \"AI\" be said 45+ times during the next episode of the All-In Podcast?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794673,
+   "name": "Will Czechia be in the top 3 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57574270,
+   "name": "Will MrBeast say \"Contestant\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 16631866,
+   "name": "Will \"The Sheep Detectives\" score at least 65 on the Rotten Tomatoes Tomatometer?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 27988227,
+   "name": "Will The Weeknd have a #1 hit in the US in June?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433847,
+   "name": "Will \"Hundred\" or \"Thousand\" or \"Million\" be said 10+ times during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794742,
+   "name": "Will Switzerland be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794743,
+   "name": "Will United Kingdom be in the top 5 at Eurovision 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794338,
+   "name": "Will Babymonster release a song in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794346,
+   "name": "Will Twice release a song in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 20566142,
+   "name": "Will MrBeast say \"Prize\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13780379,
+   "name": "Will Donald Trump dance on May 31, 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635023,
+   "name": "Will \"Different\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635024,
+   "name": "Will \"Tesla\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635026,
+   "name": "Will \"System\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635027,
+   "name": "Will \"Government\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635028,
+   "name": "Will \"Attention\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635029,
+   "name": "Will \"People\" be said 200+ times during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635030,
+   "name": "Will \"Dude\" be said 20+ times during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635031,
+   "name": "Will \"World\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635032,
+   "name": "Will \"Hundred\" or \"Thousand\" or \"Million\" be said 15+ times during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635034,
+   "name": "Will \"Hantavirus\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635036,
+   "name": "Will \"Canada\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635037,
+   "name": "Will \"Probably\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635038,
+   "name": "Will \"Instagram\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635039,
+   "name": "Will \"Pretty\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635040,
+   "name": "Will \"Believe\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635041,
+   "name": "Will \"Alien\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635042,
+   "name": "Will \"Imagine\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635043,
+   "name": "Will \"Guitar\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 30635044,
+   "name": "Will \"Texas\" be said during the first Joe Rogan Experience of the week of June 1?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792718,
+   "name": "Will Max Martin attend Taylor Swift's wedding?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792049,
+   "name": "Will A$AP Rocky release a new song in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792054,
+   "name": "Will Olivia Rodrigo release a new song in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792292,
+   "name": "New Half-Life game by December 31?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792710,
+   "name": "Will Danielle Haim attend Taylor Swift's wedding?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792723,
+   "name": "Will Brittany Mahomes attend Taylor Swift's wedding?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792921,
+   "name": "Will Harry Styles release an album in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792924,
+   "name": "Will Lana Del Rey release an album in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792930,
+   "name": "Will A$AP Rocky release an album in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792932,
+   "name": "Will Jay Z release an album in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792934,
+   "name": "Will Sabrina Carpenter release an album in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13792935,
+   "name": "Will Travis Scott release an album in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793477,
+   "name": "Will Justin Bieber perform at the 2026 Todo Mundo no Rio music festival?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793478,
+   "name": "Will Taylor Swift perform at the 2026 Todo Mundo no Rio music festival?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793479,
+   "name": "Will Beyonc\u00e9 perform at the 2026 Todo Mundo no Rio music festival?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793480,
+   "name": "Will Rihanna perform at the 2026 Todo Mundo no Rio music festival?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793481,
+   "name": "Will Coldplay perform at the 2026 Todo Mundo no Rio music festival?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793482,
+   "name": "Will U2 perform at the 2026 Todo Mundo no Rio music festival?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793483,
+   "name": "Will Shakira perform at the 2026 Todo Mundo no Rio music festival?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793484,
+   "name": "Will Adele perform at the 2026 Todo Mundo no Rio music festival?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793340,
+   "name": "New \"Stranger Things\" episode released by January 14? ",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793476,
+   "name": "Will Britney Spears perform at the 2026 Todo Mundo no Rio music festival?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793493,
+   "name": "Will A$AP Rocky have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793494,
+   "name": "Will Bad Bunny have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793495,
+   "name": "Will Doja Cat have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793496,
+   "name": "Will Ed Sheeran have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793497,
+   "name": "Will Harry Styles have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793623,
+   "name": "Will Poland advance through the first Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793499,
+   "name": "Will Luke Combs have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793500,
+   "name": "Will Olivia Rodrigo have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793501,
+   "name": "Will Playboi Carti have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793502,
+   "name": "Will Rihanna have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793503,
+   "name": "Will SZA have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793505,
+   "name": "Will Tyler, The Creator have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793508,
+   "name": "Will Billie Eilish have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793509,
+   "name": "Will Drake have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793511,
+   "name": "Will Jack Harlow have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793625,
+   "name": "Will Sweden advance through the first Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793512,
+   "name": "Will Lil Baby have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793515,
+   "name": "Will Post Malone have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793517,
+   "name": "Will Travis Scott have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793626,
+   "name": "Will Croatia advance through the first Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793520,
+   "name": "Will Mariah Carey have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793631,
+   "name": "Will Luxembourg advance through the second Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793614,
+   "name": "Will Israel advance through the first Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793615,
+   "name": "Will Estonia advance through the first Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793616,
+   "name": "Will Montenegro advance through the first Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793639,
+   "name": "Will Armenia advance through the second Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793640,
+   "name": "Will Cyprus advance through the second Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793643,
+   "name": "Will Denmark advance through the second Eurovision Semi-Final?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793668,
+   "name": "Will Jules Vaughn die in Euphoria: Season 3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 18995745,
+   "name": "Will xQc beat Forsen's Minecraft speedrun record by May 31, 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742466,
+   "name": "Will \"People\" be said 111+ times during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742467,
+   "name": "Will \"Fuck\" or \"Fucking\" be said 20+ times during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742468,
+   "name": "Will \"Hundred\" or \"Thousand\" or \"Million\" be said 10+ times during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742464,
+   "name": "Will \"Microsoft\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 0
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742465,
+   "name": "Will \"Scam\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742469,
+   "name": "Will \"Laptop\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742470,
+   "name": "Will \"Gold\" or \"Golden\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742471,
+   "name": "Will \"Dude\" be said 10+ times during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742472,
+   "name": "Will \"Algorithm\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742473,
+   "name": "Will \"Hegemony\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742474,
+   "name": "Will \"Understand\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742475,
+   "name": "Will \"Conspiracy\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742476,
+   "name": "Will \"Hantavirus\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742477,
+   "name": "Will \"Mickey Mouse\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742479,
+   "name": "Will \"Plastic\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742480,
+   "name": "Will \"Amsterdam\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22742481,
+   "name": "Will \"Pyramid\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 22915649,
+   "name": "Trump declassifies new UFO files by May 22?",
+   "outcome_count": 0
+  },
+  {
+   "source": "polymarket",
+   "market_id": 23292446,
+   "name": "Will \"Prediction\" be said during the next episode of the All-In Podcast?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 23602640,
+   "name": "Will Candace Owens or Hunter Biden say \"Million\" or \"Billion\" 10+ times on Thursday?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 23602651,
+   "name": "Will Candace Owens or Hunter Biden say \"Ukraine\" on Thursday?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433845,
+   "name": "Will \"People\" be said 111+ times during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433846,
+   "name": "Will \"Fuck\" or \"Fucking\" be said 20+ times during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433848,
+   "name": "Will \"Dude\" be said 10+ times during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433849,
+   "name": "Will \"Hantavirus\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433850,
+   "name": "Will \"Algorithm\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433851,
+   "name": "Will \"Hegemony\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433853,
+   "name": "Will \"Table\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433854,
+   "name": "Will \"Plastic\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433855,
+   "name": "Will \"Microsoft\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433856,
+   "name": "Will \"Understand\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433857,
+   "name": "Will \"Amsterdam\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433858,
+   "name": "Will \"Laptop\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433859,
+   "name": "Will \"Pyramid\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433860,
+   "name": "Will \"Conspiracy\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433861,
+   "name": "Will \"Gold\" or \"Golden\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 26433862,
+   "name": "Will \"Scam\" be said during the next episode of the Joe Rogan Experience?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127231,
+   "name": "Will \"People\" be said 100+ times during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127232,
+   "name": "Will \"Dude\" be said 20+ times during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127233,
+   "name": "Will \"Hantavirus\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127234,
+   "name": "Will \"Tesla\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127235,
+   "name": "Will \"Instagram\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127236,
+   "name": "Will \"Attention\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127237,
+   "name": "Will \"System\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127238,
+   "name": "Will \"Guitar\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127239,
+   "name": "Will \"People\" be said 200+ times during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127241,
+   "name": "Will \"Probably\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127242,
+   "name": "Will \"Love\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127243,
+   "name": "Will \"Government\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127244,
+   "name": "Will \"Alien\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127245,
+   "name": "Will \"Imagine\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32127246,
+   "name": "Will \"Texas\" be said during the first Joe Rogan Experience of the week of June 8?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32548362,
+   "name": "Will MrBeast say \"YouTube\" or \"YouTuber\" during his next gaming YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32599965,
+   "name": "Will Starmer say \"Mr. Speaker\" 30+ times during the next Prime Minister's Questions event?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32599971,
+   "name": "Will Starmer say \"Apologize\" during the next Prime Minister's Questions event?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32599972,
+   "name": "Will Starmer say \"Constituent\" or \"Constituency\" during the next Prime Minister's Questions event?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32599974,
+   "name": "Will Starmer say \"Defense\" during the next Prime Minister's Questions event?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 32599975,
+   "name": "Will Starmer say \"European Union\" during the next Prime Minister's Questions event?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 34110380,
+   "name": "Will \"The Invite\" score at least 90 on the Rotten Tomatoes Tomatometer?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 34674475,
+   "name": "Will MrBeast say \"Karl\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 34674486,
+   "name": "Will MrBeast say \"Briefcase\" or \"Suitcase\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 34792570,
+   "name": "Will anyone say \"Fish\" during Rick and Morty E4 S9?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 34792574,
+   "name": "Will anyone say \"Six Seven\" during Rick and Morty E4 S9?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 34792576,
+   "name": "Will anyone say \"Password\" during Rick and Morty E4 S9?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 34792586,
+   "name": "Will anyone say \"Rick\" 10+ times during Rick and Morty E4 S9?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 34792590,
+   "name": "Will anyone say \"God\" during Rick and Morty E4 S9?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 34792592,
+   "name": "Will anyone say \"AI\" or \"Artificial Intelligence\" during Rick and Morty E4 S9?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 35419557,
+   "name": "Will \"Pizza\" be said during the first Joe Rogan Experience of the week of June 15?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 35960689,
+   "name": "Trump declassifies new UFO files by June 22?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 35960690,
+   "name": "Trump declassifies new UFO files by June 30?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 37096987,
+   "name": "Will \"Nvidia\" be in the headlines this week?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 37805457,
+   "name": "Will anyone say \"Clone\" during Rick and Morty E5 S9?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 37805465,
+   "name": "Will anyone say \"Six Seven\" during Rick and Morty E5 S9?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 37805467,
+   "name": "Will anyone say \"Morty\" 20+ times during Rick and Morty E5 S9?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 58456430,
+   "name": "Will the #1 global Netflix show have at least 12 million views this week?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849430,
+   "name": "Will MrBeast say \"Thousand\" or \"Million\" 10+ times during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849436,
+   "name": "Will MrBeast say \"Huge amount\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849442,
+   "name": "Will MrBeast say \"This Year\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849451,
+   "name": "Will MrBeast say \"Calendar\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849527,
+   "name": "Another 7.0 or above earthquake by March 31, 2026?",
+   "outcome_count": 0
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849529,
+   "name": "Another 7.0 or above earthquake by May 31, 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849631,
+   "name": "Will Jonas Sulzbach be in the top 3 of Big Brother Brasil 26?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849737,
+   "name": "Will MrBeast say \"Challenge\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13849750,
+   "name": "Will MrBeast say \"Karl\" during his next YouTube video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 58951852,
+   "name": "Will B\u00e9ty advance to the Semifinals or Finals of AGT Season 21 during the Quarterfinals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 58951860,
+   "name": "Will Cris Sosa advance to the Semifinals or Finals of AGT Season 21 during the Quarterfinals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 58951862,
+   "name": "Will Elsie advance to the Semifinals or Finals of AGT Season 21 during the Quarterfinals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 58951871,
+   "name": "Will Kameron Marshall advance to the Semifinals or Finals of AGT Season 21 during the Quarterfinals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 58951881,
+   "name": "Will Sando advance to the Semifinals or Finals of AGT Season 21 during the Quarterfinals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 58951882,
+   "name": "Will The CommUNITY ATL Choir advance to the Semifinals or Finals of AGT Season 21 during the Quarterfinals?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13780492,
+   "name": "Will MrBeast say \"Charity\" during his next video?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13793516,
+   "name": "Will Sabrina Carpenter have a #1 song on the Billboard Hot 100 in 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13796130,
+   "name": "Will Olivia Rodrigo release a new original album by June 12?",
+   "outcome_count": 4
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13796132,
+   "name": "Will either Tate brother be arrested by April 30?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13796133,
+   "name": "Will either Tate brother be arrested by March 31?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13796134,
+   "name": "Will either Tate brother be arrested by June 30?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13800987,
+   "name": "Will any of the stolen KitKats be recovered by April 15?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 16623090,
+   "name": "Will Noah Kahan have a #1 hit in the US in May?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 27467308,
+   "name": "Will Benjamin Netanyahu be TIME Person of the Year 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 27467309,
+   "name": "Will Alysa Liu be TIME Person of the Year 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305341,
+   "name": "Will Big Brother episode not air?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305344,
+   "name": "Will anyone say \"Prize\" 5+ times during Big Brother E11?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305349,
+   "name": "Will anyone say \"Villain\" during Big Brother E11?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 56813677,
+   "name": "Will anyone say \"Evict\" during Big Brother E10?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305230,
+   "name": "Will anyone say \"Mercy\" during House of the Dragon E7 S3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305232,
+   "name": "Will anyone say \"Jail\" during House of the Dragon E7 S3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305234,
+   "name": "Will anyone say \"Storm\" during House of the Dragon E7 S3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305303,
+   "name": "Will anyone say \"Prize\" 5+ times during Big Brother E13?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305304,
+   "name": "Will anyone say \"Power\" 5+ times during Big Brother E13?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305321,
+   "name": "Will Big Brother episode not air?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305326,
+   "name": "Will anyone say \"Evict\" during Big Brother E12?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305334,
+   "name": "Will anyone say \"Veto\" during Big Brother E12?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305354,
+   "name": "Will anyone say \"Detective\" during Big Brother E11?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305362,
+   "name": "Will Big Brother episode not air?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305214,
+   "name": "Will anyone say \"Dragon\" 20+ times during House of the Dragon E7 S3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305215,
+   "name": "Will anyone say \"Grace\" 20+ times during House of the Dragon E7 S3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305225,
+   "name": "Will anyone say \"Conquest\" during House of the Dragon E7 S3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305226,
+   "name": "Will anyone say \"Council\" during House of the Dragon E7 S3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 57305227,
+   "name": "Will anyone say \"Marriage\" during House of the Dragon E7 S3?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 27467327,
+   "name": "Will Pope Leo XIV be TIME Person of the Year 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 27467324,
+   "name": "Will Taylor Swift be TIME Person of the Year 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 27467323,
+   "name": "Will Zohran Mamdani be TIME Person of the Year 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 27467310,
+   "name": "Will Dario Amodei be TIME Person of the Year 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 27467311,
+   "name": "Will Shehbaz Sharif be TIME Person of the Year 2026?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13797870,
+   "name": "Ryan Reynolds as Deadpool?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 16631975,
+   "name": "Will \"Pyramid\" be said during the first episode of the Joe Rogan Experience this week?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13797883,
+   "name": "Jon Favreau as Happy Hogan?",
+   "outcome_count": 2
+  },
+  {
+   "source": "polymarket",
+   "market_id": 13794339,
+   "name": "Will I-dle release a song in 2026?",
+   "outcome_count": 2
+  }
+ ],
+ "outcomes": [
+  {
+   "name": "Yes",
+   "team_id": null,
+   "by_source": {
+    "polymarket": {
+     "probability": 1.0,
+     "american_odds": null,
+     "rank": 1,
+     "yes_bid": 0.999,
+     "yes_ask": 1.0
+    }
+   }
+  },
+  {
+   "name": "August 31",
+   "team_id": null,
+   "by_source": {
+    "polymarket": {
+     "probability": 0.9975,
+     "american_odds": -39900,
+     "rank": 1,
+     "yes_bid": 0.995,
+     "yes_ask": 1.0
+    }
+   }
+  },
+  {
+   "name": "Yellow Submarine",
+   "team_id": null,
+   "by_source": {
+    "kalshi": {
+     "probability": 0.99,
+     "american_odds": -9900,
+     "rank": 1,
+     "yes_bid": 0.0,
+     "yes_ask": 1.0
+    }
+   }
+  },
+  {
+   "name": "Dune: Part Three",
+   "team_id": null,
+   "by_source": {
+    "kalshi": {
+     "probability": 0.84,
+     "american_odds": -525,
+     "rank": 1,
+     "yes_bid": 0.76,
+     "yes_ask": 0.92
+    }
+   }
+  },
+  {
+   "name": "June 12",
+   "team_id": null,
+   "by_source": {
+    "polymarket": {
+     "probability": 0.735,
+     "american_odds": -277,
+     "rank": 2,
+     "yes_bid": 0.56,
+     "yes_ask": 0.91
+    }
+   }
+  },
+  {
+   "name": "Avengers: Doomsday",
+   "team_id": null,
+   "by_source": {
+    "kalshi": {
+     "probability": 0.155,
+     "american_odds": 545,
+     "rank": 2,
+     "yes_bid": 0.06,
+     "yes_ask": 0.25
+    }
+   }
+  },
+  {
+   "name": "May 31",
+   "team_id": null,
+   "by_source": {
+    "polymarket": {
+     "probability": 0.047,
+     "american_odds": 2028,
+     "rank": 1,
+     "yes_bid": 0.03,
+     "yes_ask": 0.064
+    }
+   }
+  },
+  {
+   "name": "Power Rangers",
+   "team_id": null,
+   "by_source": {
+    "kalshi": {
+     "probability": 0.01,
+     "american_odds": 9900,
+     "rank": 2,
+     "yes_bid": 0.0,
+     "yes_ask": 1.0
+    }
+   }
+  },
+  {
+   "name": "April 30",
+   "team_id": null,
+   "by_source": {
+    "polymarket": {
+     "probability": 0.0005,
+     "american_odds": 199900,
+     "rank": 2,
+     "yes_ask": 0.001
+    }
+   }
+  },
+  {
+   "name": "No",
+   "team_id": null,
+   "by_source": {
+    "polymarket": {
+     "probability": null,
+     "american_odds": null,
+     "rank": 2
+    }
+   }
+  }
+ ],
+ "outcome_count": 10
+}
