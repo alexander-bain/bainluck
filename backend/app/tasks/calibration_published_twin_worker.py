@@ -183,6 +183,48 @@ and it would have been the FIRST thing a finished fold got wrong. Fixed in
 :func:`app.utils.calibration_published_twin.reconcile` by splitting
 ``published_only`` into out-of-scope (a declared, counted limit) and in-scope
 (a population disagreement, which now forces ``disagrees``).
+
+CAL-P089 (#2076) — THE SECOND BLOCKER, FIXED. THE READ RAIL WAS THE READ RAIL.
+-------------------------------------------------------------------------------
+CAL-P084's "blocker 2" above was the ``staged`` block, and fixing it uncovered a
+different second blocker on the ceiling run of 2026-08-21T19:24
+(``fold_duration_s 1351.95``, ``db_rows 0``): ``payload_error:
+"published_read_failed: redis call did not complete"``. CAL-P088 was ordered to
+diagnose it read-only and did (``docs/audits/calibration/
+cal-p088-published-read-failed-mechanism.md``); the Fable directive of
+2026-08-23 ratified that report in full and ordered the fix. It is three legs,
+and **not one of them is about the fold**:
+
+**Leg A — the message was FALSE for the most ordinary cause.** ``is_ok`` is
+``status == OK``, so a nil reply (``RedisResult(MISS)``) failed it and an absent
+key reported *"redis call did not complete"*. The call completed. It returned
+nil. The ``published_absent`` branch below that gate was **unreachable dead
+code** — inside a function whose docstring promises *"a miss and a Redis failure
+are DIFFERENT facts and are named differently"*. Gotcha #53, in the module
+written to stop Gate 0 reporting agreement it cannot justify. The typed status
+now decides, and it is carried onto the artifact
+(``payload_main_status`` / ``payload_last_good_status``) rather than only into
+prose, because prose is what conflated the facts in the first place.
+
+**Leg B — the twin was the ONLY ``main`` consumer with no fallback.** A 2 h TTL
+on a 50 MB ``allkeys-lru`` instance makes absence the COMMON case, not an
+incident; the repo documents it in ``precompute_calibration.py`` and every other
+consumer falls back to the 7 d durable copy. See :data:`PUBLISHED_LAST_GOOD_KEY`.
+
+**Leg C — a request-path deadline over a background client's cold start.** 600 ms
+around a client budgeted for ~18 s of legitimate reconnect, on a read the fold
+guarantees is the process's first Redis touch after 22 minutes. See
+:data:`TWIN_REDIS_DEADLINE_MS`.
+
+⛔ **``precompute_calibration.py`` is byte-untouched. Ruling 009's exception
+stays UNSPENT** — nothing here is the frozen builder, and nothing here changes
+what is published. This is the READER.
+
+**SEQUENCING, and it is load-bearing.** This must be **DEPLOYED** before §5c of
+``QUEUE-STAGED-CAL-APPLY-HINDSIGHT-EXCLUSION.md`` fires. A ``heroku run:detached``
+one-off dyno runs the DEPLOYED slug (gotcha #48), so firing the ``--bank`` fold
+against a slug without this change spends the whole attended window — up to
+90 minutes of fold — and then fails on blocker 2 exactly as 2026-08-21 did.
 """
 
 from __future__ import annotations
@@ -201,6 +243,48 @@ TWIN_SCHEMA = "calibration-published-twin/v1"
 #: The Redis key the request path's tier 2 serves from. Read here so the twin's
 #: subject is the PUBLISHED artifact, not a recompute.
 PUBLISHED_MAIN_KEY = "bainluck:calibration:main"
+
+#: The DURABLE sibling of :data:`PUBLISHED_MAIN_KEY`, and the twin's fallback.
+#:
+#: CAL-P089 leg B. ``main`` carries ``_MAIN_CACHE_TTL`` = **2 h** on a 50 MB
+#: ``allkeys-lru`` instance, and ``precompute_calibration.py`` documents the
+#: consequence in its own words: main *"is evicted long before ``last_good``
+#: (7d)"*. So an absent ``main`` is not an incident — it is the ORDINARY state of
+#: any hour that did not just publish, and every other consumer already handles
+#: it: the route at tier 2b (``routes/calibration.py``), the publish gate at
+#: ``_read_published_baseline``. The twin was the only one that did not, which
+#: cost Gate 0 its entire verdict over a copy sitting right there.
+#:
+#: Reading it is not a downgrade of the twin's subject. When ``main`` is absent
+#: the route serves ``last_good`` **to real readers**, so the durable copy IS
+#: "the artifact readers actually get" — which is the sentence this module's
+#: header uses to justify reading Redis at all rather than recomputing.
+PUBLISHED_LAST_GOOD_KEY = "bainluck:calibration:main:last_good"
+
+#: The budget every Redis op in this worker is graded at. **This is not
+#: :data:`app.utils.request_cache.REDIS_OP_DEADLINE_MS` and must not become it.**
+#:
+#: CAL-P089 leg C. That constant is **600 ms**, and its own comment says why:
+#: it is an availability bound for the **request path**, sized "well under the
+#: 30 s Heroku router H12 cutoff". This worker is not the request path. Its
+#: client (``get_async_redis_client``) is provisioned for a **5 000 ms** socket
+#: connect with ``Retry(EqualJitterBackoff(cap=1.0, base=0.05), 3)`` — a
+#: legitimate reconnect is budgeted at up to **3 x (5 s + <=1 s) ~ 18 s**, so the
+#: client's own recovery path was up to **30x larger than the deadline it ran
+#: under**. Any operation needing even one reconnect could not complete. That is
+#: deterministic, not probabilistic.
+#:
+#: And the fold guarantees a reconnect is needed. Both ``read_served_disclosure``
+#: calls go to **Postgres** durable snapshots, so the post-fold payload read is
+#: the **first Redis touch of the entire run** — 1,351.95 s after the process
+#: last spoke to Redis, i.e. **54x** the client's 25 s ``health_check_interval``
+#: and far past Heroku Redis's idle reap. The pooled connection is near-certain
+#: to be dead on checkout.
+#:
+#: 20 s = the ~18 s reconnect ceiling plus margin. It is affordable here and
+#: nowhere else: the task is ``soft_time_limit=1800`` against a fold ceiling of
+#: 1 350 s, leaving 450 s for exactly these reads and the durable write.
+TWIN_REDIS_DEADLINE_MS = 20_000
 
 #: The instrument's own budget, from ``scripts/measure_published_twin.py``.
 #:
@@ -281,32 +365,157 @@ def clamp_timeout_ms(value: Any, *, ceiling: Any = MAX_TIMEOUT_MS) -> int:
     return max(MIN_TIMEOUT_MS, min(cap, ms))
 
 
-async def _read_published_payload() -> tuple[dict, Optional[str]]:
-    """The payload the request path serves. Returns ``(payload, error)``.
+def _decode_published(raw: Any) -> tuple[Optional[dict], str]:
+    """``(payload, status)`` for one raw Redis value. Never raises.
 
-    Never raises. A miss and a Redis failure are DIFFERENT facts and are named
-    differently — an absent key means the producer has not published, which is
-    a real finding about the producer; a failed client is a fact about us.
+    ``undecodable`` and ``wrong_shape`` are statuses rather than terminal errors
+    because of Queue 300B's finding one consumer over: a truncated ``main`` — an
+    eviction caught mid-write, a partial read — is a **miss**, not a transport
+    fault, and letting it terminate the read means one poisoned key takes a
+    perfectly healthy durable sibling down with it.
     """
+    try:
+        payload = json.loads(raw)
+    except Exception:  # noqa: BLE001 — a corrupt value is not a readable payload
+        return None, "undecodable"
+    if not isinstance(payload, dict):
+        return None, "wrong_shape"
+    return payload, "ok"
+
+
+async def _read_one_key(
+    rcmod: Any, client: Any, key: str, *, retry: bool
+) -> tuple[Optional[dict], str, int]:
+    """Read + decode ONE key. ``(payload_or_None, status, attempts)``.
+
+    ``retry`` re-reads exactly once, and only after a **failure** (timeout /
+    error) — never after a clean miss, which would just be slower for the same
+    answer. The retry is not redundant with the pre-touch: ``ping()`` warms the
+    ONE connection the pool hands it, and the following ``get()`` may check out
+    a *different* idle-dead connection. Warming a connection is not warming a
+    pool.
+    """
+    attempts = 0
+    status = "error"
+    while attempts < (2 if retry else 1):
+        attempts += 1
+        res = await rcmod.bounded_redis_call(
+            lambda: client.get(key), deadline_ms=TWIN_REDIS_DEADLINE_MS
+        )
+        status = getattr(res, "status", "error")
+        if status == "ok":
+            payload, decode_status = _decode_published(res.value)
+            return payload, decode_status, attempts
+        if status == "miss":
+            return None, "miss", attempts
+    return None, status, attempts
+
+
+async def _read_published_payload() -> tuple[dict, Optional[str], dict]:
+    """The payload a reader is served. ``(payload, error, meta)``. Never raises.
+
+    A miss and a Redis failure are DIFFERENT facts and are named differently —
+    an absent key means the producer has not published, which is a real finding
+    about the producer; a failed client is a fact about us.
+
+    CAL-P089 (#2076 blocker 2) is that the sentence above was a promise this
+    function did not keep, and the three ways it did not keep it:
+
+    **Leg A — the promise was inverted for the most ordinary cause.**
+    ``bounded_redis_call`` returns ``RedisResult(MISS)`` for a nil reply and
+    ``is_ok`` is ``status == OK``, so the old ``if not res.is_ok`` gate swallowed
+    the miss and answered *"redis call did not complete"* — false; the call
+    completed and returned nil. The ``published_absent`` branch below it was
+    **unreachable dead code**. Now the typed status decides, and it is carried
+    out on ``meta`` as well as in the message, because the message is prose and
+    prose is what conflated the two facts in the first place.
+
+    **Leg B — the fallback.** See :data:`PUBLISHED_LAST_GOOD_KEY`. A ``main``
+    that is absent, poisoned or unreadable falls through to the durable copy the
+    route itself serves in that situation. It is used, never silently: ``meta``
+    names the key the payload came from and the fix is worthless if the record
+    cannot say which copy was graded.
+
+    Declared, not refused — deliberately, and it is the route's own resolution
+    (Queue 324 / ruling 025: *"Declaring is not refusing"*). An ancient
+    ``last_good`` graded against today's database yields ``disagrees``, which is
+    the HARSH direction and safe for a gate; the artifact names the fallback and
+    the payload's ``generated_at`` so a reader can attribute it. Refusing instead
+    would hand back the ``unmeasurable`` this whole change exists to remove.
+
+    **Leg C — the budget.** See :data:`TWIN_REDIS_DEADLINE_MS`. Every op here is
+    graded at the background deadline, and the connection is pre-touched so the
+    reconnect the fold guarantees is paid outside the read.
+    """
+    meta: dict = {
+        "payload_source": None,
+        "fallback_used": False,
+        "main_status": None,
+        "last_good_status": None,
+        "pretouch_status": None,
+        "read_attempts": 0,
+    }
     try:
         from app.utils import request_cache as _rc
 
         rc = await _rc.get_shared_async_redis()
-        res = await _rc.bounded_redis_call(lambda: rc.get(PUBLISHED_MAIN_KEY))
-    except Exception as exc:  # noqa: BLE001 — recorded, never swallowed
-        return {}, f"published_read_raised: {type(exc).__name__}: {exc}"
 
-    if not getattr(res, "is_ok", False):
-        return {}, "published_read_failed: redis call did not complete"
-    if res.value is None:
-        return {}, f"published_absent: {PUBLISHED_MAIN_KEY} is not set"
-    try:
-        payload = json.loads(res.value)
-    except Exception as exc:  # noqa: BLE001
-        return {}, f"published_undecodable: {type(exc).__name__}: {exc}"
-    if not isinstance(payload, dict):
-        return {}, f"published_wrong_shape: {type(payload).__name__}"
-    return payload, None
+        # Pre-touch. The reconnect the fold makes near-certain is paid HERE, on
+        # an op with a budget that can afford it, instead of being charged to
+        # the read. Best-effort by construction: a failing PING is recorded and
+        # never returned, because turning an optimisation into a gate would
+        # replace one unmeasurable with another.
+        ping = await _rc.bounded_redis_call(
+            lambda: rc.ping(), deadline_ms=TWIN_REDIS_DEADLINE_MS
+        )
+        meta["pretouch_status"] = getattr(ping, "status", "error")
+
+        payload, main_status, attempts = await _read_one_key(
+            _rc, rc, PUBLISHED_MAIN_KEY, retry=True
+        )
+        meta["main_status"] = main_status
+        meta["read_attempts"] = attempts
+        if main_status == "ok" and payload is not None:
+            meta["payload_source"] = PUBLISHED_MAIN_KEY
+            return payload, None, meta
+
+        lg_payload, lg_status, _lg_attempts = await _read_one_key(
+            _rc, rc, PUBLISHED_LAST_GOOD_KEY, retry=False
+        )
+        meta["last_good_status"] = lg_status
+        if lg_status == "ok" and lg_payload is not None:
+            meta["payload_source"] = PUBLISHED_LAST_GOOD_KEY
+            meta["fallback_used"] = True
+            return lg_payload, None, meta
+    except Exception as exc:  # noqa: BLE001 — recorded, never swallowed
+        meta["main_status"] = meta["main_status"] or "raised"
+        return {}, f"published_read_raised: {type(exc).__name__}: {exc}", meta
+
+    # Neither key produced a payload. Which fact that is depends on HOW they
+    # failed, and getting this attribution right is the whole of leg A: a
+    # transport failure that reads as "the producer never published" sends the
+    # next reader to audit the wrong system.
+    statuses = (meta["main_status"], meta["last_good_status"])
+    if any(s in ("timeout", "error") for s in statuses):
+        return (
+            {},
+            "published_read_failed: redis call did not complete "
+            f"(main={meta['main_status']}, last_good={meta['last_good_status']})",
+            meta,
+        )
+    if any(s in ("undecodable", "wrong_shape") for s in statuses):
+        return (
+            {},
+            "published_unreadable: neither copy decoded "
+            f"(main={meta['main_status']}, last_good={meta['last_good_status']})",
+            meta,
+        )
+    return (
+        {},
+        f"published_absent: neither {PUBLISHED_MAIN_KEY} nor "
+        f"{PUBLISHED_LAST_GOOD_KEY} is set",
+        meta,
+    )
 
 
 async def read_served_disclosure() -> tuple[Optional[dict], Optional[int], Optional[str]]:
@@ -420,6 +629,7 @@ def build_artifact(
     payload: dict,
     payload_error: Optional[str],
     timeout_ms: int,
+    payload_meta: Optional[dict] = None,
     staged: Any = None,
     staged_error: Optional[str] = None,
     rotation_note: Optional[str] = None,
@@ -449,6 +659,15 @@ def build_artifact(
     # what the published artifact itself carried, so the day the producer starts
     # writing one the disagreement is visible instead of silently preferred.
     payload_staged = payload.get("staged")
+
+    # CAL-P089 (#2076 blocker 2). WHICH copy was graded, and how the read got
+    # there, are now on the record. CAL-P088's finding was not only that the
+    # read failed — it was that three different facts reached the reader as one
+    # byte-identical string, so the ceiling run's second blocker was
+    # unattributable from the artifact. A fix that healed the read and left the
+    # record mute would not have closed that. `payload_source` defaults to the
+    # fresh key so every pre-CAL-P089 caller keeps its exact meaning.
+    meta = payload_meta or {}
     verdict = reconcile(
         db_cells=cells,
         published_buckets=payload.get("buckets") or [],
@@ -464,7 +683,12 @@ def build_artifact(
         "fold_duration_s": round(fold_duration_s, 2),
         "fold_error": fold_error,
         "payload_error": payload_error,
-        "payload_source": PUBLISHED_MAIN_KEY,
+        "payload_source": meta.get("payload_source") or PUBLISHED_MAIN_KEY,
+        "payload_fallback_used": bool(meta.get("fallback_used")),
+        "payload_main_status": meta.get("main_status"),
+        "payload_last_good_status": meta.get("last_good_status"),
+        "payload_pretouch_status": meta.get("pretouch_status"),
+        "payload_read_attempts": meta.get("read_attempts"),
         "published_generated_at": payload.get("generated_at"),
         "published_availability": payload.get("availability"),
         "staged": staged,
@@ -532,7 +756,7 @@ async def run_published_twin(
     staged_before, gen_before, staged_error = await read_served_disclosure()
 
     rows, fold_duration_s, fold_error = await _fold(timeout_ms=budget)
-    payload, payload_error = await _read_published_payload()
+    payload, payload_error, payload_meta = await _read_published_payload()
 
     # AFTER, to find out whether the subject rotated underneath the fold.
     staged_after, gen_after, staged_error_after = await read_served_disclosure()
@@ -556,6 +780,7 @@ async def run_published_twin(
         fold_error=fold_error,
         payload=payload,
         payload_error=payload_error,
+        payload_meta=payload_meta,
         timeout_ms=budget,
         staged=staged,
         staged_error=staged_error,
