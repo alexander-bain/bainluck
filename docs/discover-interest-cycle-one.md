@@ -68,10 +68,16 @@ beat. This is gotcha #53 in task form: a run that exported nothing is indistingu
 with nothing to export, and it has been recording success throughout the outage. Whatever fixes
 the column should also give this table a write-rate floor that can go red.
 
-**No issue was filed and no fix was written — this cycle was scoped `measurement only`.** The fix
-is one line (make the model column match the deployed enum, or drop `provenance` from the INSERT
-column list and let the server default apply). Recommend filing at `priority:p1` and treating the
-missing alarm as the second half of the bug.
+**Filed as [#2156](https://github.com/alexander-bain/bainluck/issues/2156)** (`type:bug`,
+`priority:p1`, `area:discover`, `area:backend`, `needs-agent`). **No fix was written — this cycle
+was scoped `measurement only`** — but filing was not optional: CLAUDE.md is explicit that GitHub
+Issues is the only source of priority and status, so a six-day production outage that lives in a
+doc has no owner and no priority. The fix itself is one line (make the model column match the
+deployed enum, or drop `provenance` from the INSERT column list and let the server default
+apply). The issue carries the missing alarm as the second half of the bug, and requires a
+real-Postgres test rather than a mock session — `92b9b786`'s own commit message already explains
+why: a unit test, a mock session, and a migration-source assertion were *all green* while the
+defect was live, because the recording double does not enforce PostgreSQL's enum type.
 
 *Unrelated, so nobody chases it:* Sentry **BAINLUCK-YM** (`column "interaction_type" does not
 exist`, culprit `/api/admin/db-query`) is a hand-typed admin query with a wrong column name — its
@@ -83,18 +89,21 @@ exist`, culprit `/api/admin/db-query`) is a hand-typed admin query with a wrong 
 
 ### 1a. Repeat rate — measured, with an explicit limit on what it proves
 
-11 pulls over 32 minutes (17:54:48Z → 18:26:51Z), cadences of ~80 s and ~10 min deliberately
+12 pulls over 43 minutes (17:54:48Z → 18:37:01Z), cadences of ~80 s and ~10 min deliberately
 crossing the 60 s anon response-cache TTL, three surfaces each, all on one deployed commit
 (`b5c2a750` — stamped per pull, so this is one population and not a straddled release):
 
 ```
-anon      11 pulls  ->  1 distinct ordering,  1 distinct card set
-session   11 pulls  ->  1 distinct ordering,  1 distinct card set
-debug     11 pulls  ->  1 distinct ordering,  1 distinct card set   <- cache-disabled, cold build
+anon      12 pulls  ->  1 distinct ordering,  1 distinct card set
+session   12 pulls  ->  2 distinct orderings, 1 distinct card set
+debug     12 pulls  ->  2 distinct orderings, 1 distinct card set   <- cache-disabled, cold build
 ```
 
-Not "20/20 held over" — **byte-for-byte the same twenty cards in the same order, 33 times.** Zero
-churn is the weak way to say it; the strong way is that the ranker emitted one answer.
+**One card set across all 36 slates. Nothing ever entered and nothing ever left.** And the two
+orderings differ by a single adjacent swap at ranks 2–3 in the final pull — which turns out to be
+tie-break noise between two cards the demotion cap had already flattened to the same integer, not
+a ranking decision. §1c has the specimens. Read as churn, this page produced *one* event in 43
+minutes and that event carried no information.
 
 The `debug` surface is what rules out the cache: it is `cache: disabled_debug`, a cold rebuild
 every pull, ~5 s each. **So the stability is the ranker, not the response cache.**
@@ -110,16 +119,20 @@ stdev, at weight 0.2, cannot re-order a base score spanning 109 points. A full r
 market in the database is therefore *invisible by arithmetic*, not by coincidence. Waiting longer
 does not test a different mechanism; it tests the same one at a larger `n`.
 
-**What this still does NOT prove:** 32 minutes is not "twice a day". Base score moves on inputs
+**What this still does NOT prove:** 43 minutes is not "twice a day". Base score moves on inputs
 this window cannot exercise — the slate turning over as events settle, new markets being created,
 prices moving materially. The hourly series (§5) samples those. But the precompute crossing means
 cycle one is no longer *waiting* for its answer on the ranking question; it has one.
 
 **What this DOES prove, and it is the harder finding:** the anon and session surfaces returned
-**identical** slates, card for card. Carrying a stable session id changed nothing. Given §0 that
-is expected rather than surprising — with impressions dark, a returning user is indistinguishable
-from a first-time visitor by construction. *Today, a returning user sees 100% repeats.* That is
-a real answer to the directive's question; it is just not an answer about ranking.
+**the same twenty cards on every one of the twelve pulls**. Carrying a stable `x-session-id`
+changed nothing. (The single order difference on the last pull is the *cache*, not
+personalization: `anon` was still serving the pre-swap slate that `session` and `debug` had both
+already left. It resolves the same way as everything else in §1c — a tie between two capped
+cards.) Given §0 this is expected rather than surprising: with impressions dark, a returning user
+is indistinguishable from a first-time visitor by construction. *Today, a returning user sees 100%
+repeats.* That is a real answer to the directive's question; it is just not an answer about
+ranking.
 
 ### 1b. Who is actually opening it twice
 
@@ -190,6 +203,29 @@ What the correctness-tuned rules are doing to the mix:
 - **The Discover event demotion is not a tiebreak, it is the score.** Both event cards on the page
   carry display score **exactly 35** — the `event_pct < 0.3` non-exceptional cap. Nothing about
   those two games influenced their rank; the cap did.
+
+  **And this is the only thing that moved all cycle.** Across 12 pulls and 43 minutes, the entire
+  page changed exactly once: at 18:37:01Z, ranks 2 and 3 swapped, on the `session` and `debug`
+  surfaces only (`anon` was cache-served and identical). Nothing entered, nothing left, no other
+  card moved. The two cards that swapped:
+
+  ```
+  event:14959572   Lazio @ Bologna        (Serie A, LIVE, 1 source: betting)   display 35
+  event:15186676   Levante @ CA Osasuna   (La Liga,  LIVE, 1 source: betting)  display 35
+  ```
+
+  Two live games, flattened to the same integer by the same cap, trading places because a tie has
+  no stable order. **Discover's only movement in 43 minutes was tie-break noise between two cards
+  the correctness rules had already erased the difference between.** These are also the only two
+  live games on the page — the cards with the strongest claim to being *newly* worth looking at —
+  and the rule that decided their rank could not see that they were live.
+
+- **The score the user could see does not order the page.** Reading display scores down the served
+  slate: `40, 35, 35, 89, 85, 83, 82, 85, 43, 88, 88, 78, 80, 87, 71, 68, 52, 51, 85, 44`. Rank 9
+  scores 43 and rank 10 scores 88. The sort is on the uncapped `_rank_score` float while the
+  displayed integer comes off the capped-and-clamped display chain (§2a), so the two disagree by
+  construction. Not user-facing today, but it means any future "why is this ranked here" surface
+  built on the visible number will be wrong.
 - **`top20_max_category<=5` is the one failing strict target** (`max_category_count = 6`,
   `category_spread = 13`). The oversubscribed bucket is `"?"` — the *category-less* cards
   (bundles, concepts, tournaments, events), which escape the category diversity cap because they
@@ -496,8 +532,9 @@ Analyse with:
 python3 tools/discover-interest/analyze-captures.py /tmp/ux-p124-captures
 ```
 
-The 32-minute result (§1a) is complete: **one ordering across 33 slates, spanning a full
-`precompute_interestingness` run.** The multi-hour series keeps running past the end of this
+The 43-minute result (§1a) is complete: **one card set across 36 slates, spanning a full
+`precompute_interestingness` run**, with a single adjacent swap between two cap-tied cards as the
+only movement. The multi-hour series keeps running past the end of this
 cycle; it samples the inputs the short window cannot exercise (events settling out of the slate,
 new market creation, material price movement), and it is the honest way to distinguish "the
 ranker is deterministic" — which §1a proves — from "the *page* is static across a day", which
