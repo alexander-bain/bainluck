@@ -416,19 +416,35 @@ class TestEveryPublisherCallSiteInThisRailHasAnAfterRead:
     """
 
     def test_no_publish_call_returns_on_status_alone(self):
+        """RETIRED AS A COUNT, kept as the entry point (CAL-P092).
+
+        This was a source-string census: ``count("publish_snapshot_standalone(\\n")``
+        against ``count("after-read proved")``. ``C-APPLY-PRE-1912-R3-R3`` [P1]
+        executed it against a scratch source with a fifth publisher and no read —
+        it failed ``5 != 4``, and adding **only the comment** ``# after-read
+        proved`` made it PASS ``5 == 5``. It counted prose, not a
+        publisher-to-reader relationship, so the closure it claimed was false.
+
+        The rule now lives in ``tests/lib_publisher_after_read.py`` as an
+        AST/callgraph analysis — every publisher call's enclosing function must
+        show a consumer-facing read dominating every successful return path — and
+        the cert's mutation is retained as a permanent red test in
+        ``test_repair_pm_never_graded_durability_p092.py``. This test delegates
+        rather than being deleted so the name that used to give false assurance
+        now gives real assurance.
+        """
         import inspect
 
-        source = inspect.getsource(rail)
-        # Each `publish_snapshot_standalone(` call must be followed, before the
-        # enclosing function can return True, by a read-back. The cheap, robust
-        # proxy: the rail's publisher call count and its after-read count agree.
-        publishes = source.count("publish_snapshot_standalone(\n")
-        proved = source.count("after-read proved")
-        assert publishes >= 4, "the census moved — re-derive it, do not lower it"
-        assert proved == publishes, (
-            f"{publishes} publisher call sites but only {proved} claim an after-read. "
-            "A new durable write was added without one — that is the "
-            "C-APPLY-PRE-1912-R3-R2 finding, again."
+        from tests.lib_publisher_after_read import audit_module, describe
+
+        result = audit_module(inspect.getsource(rail))
+        assert len(result["sites"]) >= 4, (
+            "the census moved — re-derive it, do not lower it"
+        )
+        assert result["violations"] == [], (
+            "a durable write acknowledges and returns success without reading it "
+            "back — the C-APPLY-PRE-1912-R3-R2 finding, again:\n"
+            + describe(result["violations"])
         )
 
     def test_the_acknowledgement_statuses_are_still_only_a_precondition(self):

@@ -1,0 +1,12 @@
+{
+ "artifact": "artifacts/cal-p092/price-provenance-whole-market-r4.json",
+ "checked": {
+  "cells_row_fold": 49,
+  "cells_whole_market": 49,
+  "pooled": 2
+ },
+ "note": "The cell average is printed as the counter-example, not as a measurement: it is what an artifact of answers can produce, and it is not the pooled figure.",
+ "problems": [],
+ "unweighted_cell_average_C_whole_market": 6.9891,
+ "verdict": true
+}
