@@ -185,6 +185,13 @@ def test_the_ratio_still_governs_when_it_is_the_stricter_gate():
     floor at +60 s, so the ratio is the binding constraint and the floor changes
     nothing about it. A floor that quietly loosened a slow beat would be the
     "loosening `DEGRADE_P50_RATIO`" #2102 fenced off.
+
+    NOTE 2026-08-24: since the ceiling shipped, the binding gate on THIS beat is
+    the ceiling (+69.6 s, censor-capped from 120 s), not the ratio (+129.6 s).
+    The assertion below is unchanged and still true — the floor is still the
+    loosest of the three — and the +61 s reading still `hold`s because it is
+    under the ceiling too. What the ceiling proves here is the direction the
+    floor could not: the slow beat got STRICTER, not looser.
     """
     baseline = BASELINE_BY_TASK["app.tasks.precompute_backfill_winners_status"]
     assert baseline.materiality_floor_s < baseline.p50_s * (DEGRADE_P50_RATIO - 1.0)
@@ -295,28 +302,48 @@ def test_the_censor_still_fires_regardless_of_the_floor():
 
 
 def test_the_residual_asymmetry_is_bounded_and_named():
-    """67x -> ~5x, and the direction is UNCHANGED. Both halves are the claim.
+    """67.9x -> 4.95x -> 2.0x, and at the third number it INVERTS.
 
-    The floor narrows the spread of "absolute seconds required to fire a
-    REVERT" across the gradeable set. It does not invert it: the ratio still
-    governs slow beats, so the beat a page waits on still needs the largest
-    absolute move. Inverting that needs a per-consumer CEILING, which tightens
-    REVERT and is Fable's call.
+    RE-DERIVED 2026-08-24 (LAT-P084). This test used to pin `3.0 < spread < 6.0`
+    and its own failure message anticipated exactly this edit: *"or the floor
+    became a ceiling; re-derive before loosening this bound"*. A per-consumer
+    ceiling shipped (`CONSUMER_CEILING_S`), the bound is re-derived from
+    measurement rather than loosened, and the residual it named is CLOSED:
+
+        ratio only     1187.8 / 17.5                       = 67.9x
+        + floor        296.95 / 60.0   user_page WORST     =  4.95x
+        + ceiling      120.0  / 60.0   user_page JOINT-BEST=  2.00x
+
+    Two changes, and the second one is the point. It reads
+    `degrade_trips_at_s` — the trip the instrument ACTUALLY applies — rather
+    than re-deriving `max(ratio, floor)` inline. The old inline form would have
+    kept printing 4.95x after the ceiling shipped, i.e. it would have gone on
+    passing while measuring an instrument that no longer exists.
+
+    The residual 2.0x is deliberate and is NOT the same defect shrunk: it is
+    `no_reader` (120s) over `user_page` (60s), which is the ordering we want. A
+    spread of exactly 1.0 would mean the consumer classification stopped
+    mattering at all.
     """
     trips = {
-        b.task: max(b.p50_s * (DEGRADE_P50_RATIO - 1.0), b.materiality_floor_s)
+        b.task: (b.consumer, b.degrade_trips_at_s - b.p50_s)
         for b in PRE_MOVE_BASELINE
         if not b.censored
     }
-    spread = max(trips.values()) / min(trips.values())
+    deltas = [d for _, d in trips.values()]
+    spread = max(deltas) / min(deltas)
 
-    # Before the floor this was 1187.8 / 17.5 = 67.9x.
-    assert spread < 6.0, trips
-    assert spread > 3.0, (
-        "the spread collapsed further than the floor can explain — either a "
-        "baseline moved or the floor became a ceiling; re-derive before "
-        "loosening this bound"
+    assert spread < 2.5, trips
+    assert spread > 1.5, (
+        "the classes have collapsed onto one another — a spread near 1.0 means "
+        "the measured consumer classification no longer changes the answer, "
+        "which is #2116 and its second half both undone"
     )
+
+    # THE INVERSION, asserted rather than described. Before the ceiling, the
+    # user-facing beat needed the LARGEST absolute regression in the set.
+    user_page = [d for c, d in trips.values() if c == "user_page"]
+    assert user_page and max(user_page) <= min(deltas), trips
 
 
 def test_the_route_and_the_offline_mirror_share_one_beat_payload_producer():
@@ -375,6 +402,14 @@ def test_the_user_facing_beat_is_watched_by_the_censor_not_the_ratio():
     the beat a page waits on shows up as saturation before it could ever show up
     as a ratio. That was true before this change and the floor must not alter
     it — the floor is 30 s there, far inside the gap.
+
+    NOTE 2026-08-24: this test's TITLE is now historical. The censor is no
+    longer what watches that beat — the 60 s `user_page` ceiling is, and it
+    fires 222 s before saturation would. The three assertions below are facts
+    about the ratio, the floor and the censor, all still true and all still
+    worth pinning; what has changed is that "the residual is survivable because
+    the censor eventually catches it" is no longer the argument being made. It
+    was a consolation for the gap, and the gap is closed.
     """
     baseline = BASELINE_BY_TASK["app.tasks.precompute_calibration_main"]
     censor_at = CENSOR_FRACTION_OF_SOFT_LIMIT * baseline.effective_clamp_s
