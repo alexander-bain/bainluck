@@ -48,6 +48,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from _mutation_guard import guarded_targets  # noqa: E402
+
 BACKEND = Path(__file__).resolve().parents[2]
 EVENTS = BACKEND / "app/routes/events.py"
 GUARD = BACKEND / "app/utils/sql_read_guard.py"
@@ -430,7 +432,7 @@ def _run_oracle(oracle: str) -> bool:
     return proc.returncode == 0
 
 
-def main() -> int:
+def _main() -> int:
     files = {EVENTS, GUARD, PRODUCER, REGISTRY_GEN}
     backups: dict[Path, Path] = {}
     tmp = Path(tempfile.mkdtemp(prefix="lat-p035-mutations-"))
@@ -484,6 +486,20 @@ def main() -> int:
         print(f"  SURVIVED  {mutant_id}: {why}")
     return 1 if (survived or unapplied) else 0
 
+
+
+def main() -> int:
+    """Guarded entry point — this harness's own `try/finally` is not enough.
+
+    It restores on exceptions, which is most of the cases. It does NOT restore
+    on **SIGTERM**, because Python's default disposition kills the interpreter
+    without unwinding, and SIGTERM (exit 143, the 10-minute tool cap) is the
+    signal that actually put a mutant into `bcdcd95f`. So these two harnesses
+    were counted as "already guarded" against the wrong hazard.
+    `tests/test_mutation_guard.py` pins that with a control.
+    """
+    with guarded_targets(sorted({EVENTS, GUARD, PRODUCER, REGISTRY_GEN}), "/tmp/lat_word_test_guard_backups", 'search_word_test'):
+        return _main()
 
 if __name__ == "__main__":
     raise SystemExit(main())

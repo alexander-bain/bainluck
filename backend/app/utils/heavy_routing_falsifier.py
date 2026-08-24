@@ -226,6 +226,15 @@ class BeatBaseline:
     successes_24h: int
     failures_24h: int
     note: str = ""
+    #: WHICH REGIME this baseline describes — ruling 120's requirement, made a
+    #: field rather than a sentence in prose so the endpoint can print it and a
+    #: test can assert every beat answers.
+    #:
+    #: A baseline is a claim about the system we run in. If the system stepped
+    #: between the pin and today, the pin describes a system that no longer
+    #: exists and its ratio is a constant, not a measurement. #2102 caught
+    #: exactly one such pin here and it read 6x forever.
+    regime: str = "single — no dated step between the pin and today"
     #: The clamp a run actually stops on, when the task imposes one on ITSELF
     #: that is tighter than its configured `soft_time_limit`. `None` means the
     #: soft limit IS the clamp. See `clamp_note`.
@@ -294,6 +303,20 @@ ROUTING_CHANGE_AT_EPOCH: float = 1787328520.0
 OBSERVATION_RING_DEPTH = 50
 RUN_COUNTER_WINDOW_S = 86_400.0
 
+# P4 counts a mover as AT SCHEDULE at this fraction of its scheduled fires
+# (#2110 defect a). Not 1.0, because a beat can never quite reach its nominal
+# fire count — a run that overlaps the next tick, a dyno cycle, a deploy — and
+# a threshold nothing can reach is a threshold that only ever grades FAILED.
+# 0.9 says "running essentially every time it is asked to", which is what
+# "no longer starved" means and is what ruling 110's P4 actually predicted.
+AT_SCHEDULE_FRACTION = 0.9
+
+# How recent a ring sample has to be before it CONTRADICTS a zero run counter
+# (#2110 defect b). Same span as the counters nominally claim, so the two
+# instruments are compared on the same footing: within this window the ring is
+# the better witness, because it does not expire and they do.
+RING_LIVENESS_WINDOW_S = 86_400.0
+
 # How many POST-MOVE samples a p50 needs before it is allowed to grade.
 #
 # The grade is computed on the post-move samples ALONE (see `_post_move_split`),
@@ -361,6 +384,64 @@ def _post_move_split(
             post.append(float(ms))
     return post, len(durations)
 
+
+def _runs_per_24h(observation: Mapping[str, Any]) -> float | None:
+    """Runs per 24 h, each counter rate-corrected against ITS OWN window.
+
+    #2110 defect (a), half one. `successes_24h` and `failures_24h` are named
+    for 24 h and are not 24 h counts — each window opens at that counter's own
+    first increment, which is exactly why `successes_window_s` and
+    `failures_window_s` are published alongside them. #2102 measured the
+    consequence: the two windows on one beat were 15.54 h and 16.48 h, and
+    dividing one by the other produced a headline ("3 of 5 runs failing") that
+    was an artefact of the mismatch.
+
+    A counter with a window is scaled to a full day. A counter with no window
+    is taken at face value, which is the pre-#2102 behaviour and the best
+    available; a counter at zero contributes zero either way. Returns `None`
+    only when NEITHER counter can be read at all, so an unreadable rate is
+    never rendered as a slow one.
+    """
+    total = 0.0
+    readable = False
+    for count_key, window_key in (
+        ("successes_24h", "successes_window_s"),
+        ("failures_24h", "failures_window_s"),
+    ):
+        raw = observation.get(count_key)
+        if raw is None:
+            continue
+        readable = True
+        count = float(raw)
+        window = observation.get(window_key)
+        try:
+            window_s = float(window) if window is not None else 0.0
+        except (TypeError, ValueError):
+            window_s = 0.0
+        if window_s > 0:
+            # Never scale UP past the counter's own nominal span: a 30-minute
+            # window carrying 3 runs would otherwise project to 144/day off
+            # three observations. Clamping at the nominal window keeps the
+            # correction honest in the direction it is allowed to help.
+            total += count * (RUN_COUNTER_WINDOW_S / max(window_s, RUN_COUNTER_WINDOW_S / 4))
+        else:
+            total += count
+    return total if readable else None
+
+
+def _newest_sample_at(observation: Mapping[str, Any]) -> float | None:
+    """The most recent stamp in the duration ring, or None if it has none.
+
+    The ring's liveness witness (#2110 defect b). `None` means "this ring
+    cannot speak to liveness", which is a different fact from "this beat has
+    not run" and must not be read as the second (gotcha #53).
+    """
+    stamps = observation.get("recent_durations_at")
+    if not isinstance(stamps, (list, tuple)):
+        return None
+    usable = [float(s) for s in stamps if s is not None]
+    return max(usable) if usable else None
+
 # ---------------------------------------------------------------------------
 # PRE-MOVE BASELINE — measured 2026-08-20T16:40-16:47Z against production
 # build v3873 (`086ce799`), via GET /api/admin/celery/task-metrics/<name>,
@@ -386,14 +467,47 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
     BeatBaseline(
         task="app.tasks.precompute_calibration_main",
         soft_time_limit_s=1500,
-        p50_s=214.7,
-        p95_s=1302.1,
-        max_s=1357.2,
-        samples=50,
-        successes_24h=21,
-        failures_24h=1,
+        # 🔴 RE-PINNED 2026-08-23 by ruling 120. WAS p50 214.7 / p95 1302.1 /
+        # max 1357.2 — a MIXTURE STATISTIC taken across a regime boundary.
+        #
+        # CAL-P078's rolling re-stage shipped in v3874 (`724fd22c`, 2026-08-20
+        # 10:45:57 PDT) and took this beat from a p50 of 163 s to a p50 of
+        # 1,263 s — a 7.74x DATED, DELIBERATE step, `units_this_beat` going
+        # from 0 to every-unit (#2102). The old pin's median was a regime-A
+        # value and its p95/max were regime-B values, so it read ~6x against
+        # every future observation of the perfectly healthy beat, forever, no
+        # matter how many samples accumulated. A conditional grant whose
+        # falsifier is stuck on REVERT is exactly as unwatched as one stuck on
+        # HOLD.
+        #
+        # The re-pin is from LAT-P081's byte-pinned ring artefact
+        # (`docs/audits/latency/lat-p081-gate1-pcm-ring.json`, captured
+        # 2026-08-22T15:51Z), restricted to samples that are BOTH post-v3874
+        # AND pre-routing-change — regime B, before ruling 110's move. n=22,
+        # min 140.2 s.
+        #
+        # That double restriction is the whole design and it is why the live
+        # ring could not be used: this ring has since rolled completely over
+        # (oldest live sample 2026-08-21T14:38Z, 48 of 50 post-move), so a
+        # baseline drawn from production TODAY would absorb the very move it
+        # is supposed to grade — the change grading itself. The pre-move,
+        # post-step window is only 22.4 h wide and exists in exactly one
+        # committed artefact.
+        p50_s=1187.8,
+        p95_s=1396.4,
+        max_s=1397.8,
+        samples=22,
+        successes_24h=12,
+        failures_24h=8,
+        regime="B (post-CAL-P078 rolling re-stage, v3874 2026-08-20 10:45:57 PDT), "
+        "pre-move — the regime we run in",
         note="the hourly :15 warmer — the one beat a user-facing page waits on. "
-        "p95 is 87% of its soft limit, so it is gradeable but has little headroom.",
+        "Re-pinned by ruling 120 from regime B; the pre-v3874 numbers described "
+        "a beat that has not existed since 2026-08-20. p95 1396.4s is 93% of "
+        "its 1500s soft limit, so it is gradeable with 103.6s of headroom and "
+        "very little of it — a genuine degradation shows up as saturation here "
+        "before it shows up as a ratio, which is what the observation-side "
+        "censor (#2071) is for.",
     ),
     BeatBaseline(
         task="app.tasks.compute_calibration_prices",
@@ -404,6 +518,7 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
         samples=37,
         successes_24h=0,
         failures_24h=1,
+        regime="single — cross-checked 2026-08-23: pre-v3874 p50 537.9s (n=31) vs post-v3874 550.2s (n=12), no step. EXCLUDED anyway, on its own budget.",
         note="CENSORED — but at its own 540s budget, not at the 600s soft limit, "
         "and it is NOT failing (#2071). 0 successes/24h is by design: it is a "
         "cursor-resuming bounded sweep whose terminal is `partial`, which "
@@ -428,6 +543,7 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
         samples=40,
         successes_24h=0,
         failures_24h=0,
+        regime="single — cross-checked 2026-08-23: pre-v3874 p50 302.0s (n=32) vs post-v3874 301.4s (n=12), 0.2% apart. The tightest beat in the set.",
         note="unusually tight distribution (302.0-304.0s); 0 runs in the last 24h, "
         "so `no_new_runs` is the expected verdict until it fires.",
     ),
@@ -440,6 +556,7 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
         samples=37,
         successes_24h=3,
         failures_24h=0,
+        regime="single — cross-checked 2026-08-23: pre-v3874 p50 147.2s (n=32) vs post-v3874 160.8s (n=12), +9%. No step; well inside this beat's own spread.",
         note="gradeable with real headroom.",
     ),
     BeatBaseline(
@@ -451,6 +568,7 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
         samples=40,
         successes_24h=2,
         failures_24h=0,
+        regime="single, and it is the one MOVING — cross-checked 2026-08-23: pre-v3874 p50 17.4s (n=32) vs post-v3874 26.7s (n=12), +53%. That post window CONTAINS the routing move, so this is a candidate SIGNAL rather than a regime problem, and it is the beat this instrument said would show it first. 9s in absolute terms, n=12: watch, do not conclude.",
         note="the cleanest subject in the set: tight, fast, far from its limit. "
         "If the move hurts the heavy lane, this is where it shows first.",
     ),
@@ -463,6 +581,7 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
         samples=10,
         successes_24h=0,
         failures_24h=0,
+        regime="single — cross-checked 2026-08-23: pre-v3874 p50 480.1s (n=8) vs post-v3874 480.2s (n=3). Weakest evidence in the set, and unchanged.",
         note="only 10 samples and 0 runs in 24h; weak but readable.",
     ),
     BeatBaseline(
@@ -474,6 +593,7 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
         samples=50,
         successes_24h=0,
         failures_24h=2,
+        regime="single, BUT UNVERIFIABLE FROM TODAY'S RING and that is worth saying plainly: this beat's ring has rolled completely over (oldest live sample 2026-08-21T14:47Z, 50 of 50 post-v3874), so the pre-v3874 arm no longer exists to cross-check against. The pin is retained on the LAT-P077 reading. Live post-move p50 541.4s is 1.04x it, consistent with no step — but that is an argument from the absence of a jump, not from a comparison.",
         note="GRADEABLE since #2071, and the two claims that excluded it were "
         "both wrong. 'ZERO successes in 24h' was FALSE on the 2026-08-21 read: "
         "18 successes / 2 failures. Its p95 is at the 600s clamp because 14% of "
@@ -624,13 +744,52 @@ def grade_beat(
 
     runs = (observation.get("successes_24h") or 0) + (observation.get("failures_24h") or 0)
     if runs == 0:
-        return BeatVerdict(
-            baseline.task,
-            "no_new_runs",
-            "0 runs in the last 24h — nothing has happened since the move to grade",
-            baseline_p50_s=baseline.p50_s,
-            observed_p50_s=observed,
-        )
+        # 🔴 #2110 defect (b): `no_new_runs` MUST NOT be asserted over a LIVE
+        # RING. The counters and the ring are different instruments with
+        # different lifetimes, and this line used to trust only the counter.
+        #
+        # `successes_24h` / `failures_24h` are not 24 h counts — each window
+        # "opens at its own first increment" (`redis_state.py`'s own comment,
+        # which is why `successes_window_s` exists), and they EXPIRE. The ring
+        # does not. So a beat whose counters have lapsed reads `0 runs in the
+        # last 24h` while its ring carries a sample from two hours ago.
+        #
+        # Measured on production 2026-08-23, this was not hypothetical — it was
+        # THREE of the seven watched beats, every one of them demonstrably
+        # alive:
+        #
+        #   compute_time_horizon_calibration  0/0, newest ring sample 13:06:57Z
+        #   coverage_metrics                  0/0, newest ring sample 03:07:50Z
+        #   calibration_prices                0/0, newest ring sample 14:19:28Z
+        #
+        # Each was being reported as "nothing has happened since the move to
+        # grade" about a beat that had just run. `no_new_runs` is one of the
+        # states `grade_move` counts as ungradeable, so this shrank the graded
+        # set and pushed the whole panel toward INCONCLUSIVE — an instrument
+        # disarming itself on evidence of liveness.
+        #
+        # The ring is the better witness precisely BECAUSE it does not expire.
+        # `now` is reconstructed exactly from the caller's own arithmetic, so
+        # no clock is read here (gotcha #44) and no parameter is defaulted into
+        # existence for a caller who never considered the horizon.
+        newest = _newest_sample_at(observation)
+        now_epoch = ROUTING_CHANGE_AT_EPOCH + age_since_move_s
+        if newest is not None and (now_epoch - newest) <= RING_LIVENESS_WINDOW_S:
+            pass  # the counters lapsed; the beat is alive. Grade it.
+        else:
+            age_note = (
+                f"; newest ring sample is {(now_epoch - newest) / 3600.0:.1f}h old"
+                if newest is not None
+                else "; ring carries no timestamps to corroborate"
+            )
+            return BeatVerdict(
+                baseline.task,
+                "no_new_runs",
+                "0 runs on the success/failure counters, and the ring does not "
+                f"contradict them{age_note} — nothing has happened since the move to grade",
+                baseline_p50_s=baseline.p50_s,
+                observed_p50_s=observed,
+            )
 
     # --- the horizon gate (LAT-P079, defect 1) ------------------------------
     # Preferred path: the ring is timestamped, so the post-move samples are
@@ -803,22 +962,58 @@ def summarize_movers(
             continue
 
         runs = (obs.get("successes_24h") or 0) + (obs.get("failures_24h") or 0)
+        rate = _runs_per_24h(obs)
         proven = post_move_runs_lower_bound(runs, age_since_move_s)
+
+        # 🔴 #2110 defect (a), BOTH halves. This used to read
+        # `runs > pre.runs_24h`, comparing a raw counter sum against a 24 h
+        # figure and calling anything else `flat_or_fell`.
+        #
+        # HALF ONE — the counters are not 24 h counts. Each window "opens at
+        # its own first increment" (`redis_state.py`), which is why
+        # `successes_window_s` exists and why #2102's "3 of 5 runs failing"
+        # was an artefact of dividing two differently-windowed counters. A
+        # mover read at a 6 h horizon shows ~a quarter of its day's runs and
+        # grades `flat_or_fell` for being early. `_runs_per_24h` rate-corrects
+        # each counter against ITS OWN window before adding them.
+        #
+        # HALF TWO, and it is the one that made the prediction untestable: the
+        # prediction is *"the movers' run counts RISE TOWARD SCHEDULE, because
+        # they are starved rather than idle."* Schedule is its CEILING. A
+        # mover at 100 % of schedule has satisfied the prediction completely
+        # and cannot rise further — yet it graded `flat_or_fell`, i.e. FAILED,
+        # for being exactly where success is defined to be. `at_schedule` is
+        # therefore a PASS, checked BEFORE the comparison, and the honest
+        # reading of a starved task that stopped being starved.
         if proven is None:
             p4 = "pre_horizon"
-        elif runs > pre.runs_24h:
+        elif rate is None:
+            p4 = "unreadable_rate"
+        elif rate >= pre.scheduled_fires_24h * AT_SCHEDULE_FRACTION:
+            p4 = "at_schedule"
+        elif rate > pre.runs_24h:
             p4 = "rose"
         else:
             p4 = "flat_or_fell"
+
         out[task] = {
             "metrics_name": name,
             "observed": True,
             "successes_24h": obs.get("successes_24h"),
             "failures_24h": obs.get("failures_24h"),
             "runs_24h": runs,
+            #: The rate-corrected figure the grade is actually computed on.
+            #: Reported beside the raw counters rather than instead of them,
+            #: so a reader can see the correction rather than take it on faith.
+            "runs_per_24h": None if rate is None else round(rate, 1),
+            "successes_window_s": obs.get("successes_window_s"),
+            "failures_window_s": obs.get("failures_window_s"),
             "samples": len([d for d in (obs.get("recent_durations_ms") or []) if d is not None]),
             "pre_move_runs_24h": pre.runs_24h,
             "scheduled_fires_24h": pre.scheduled_fires_24h,
+            "at_schedule_threshold_24h": round(
+                pre.scheduled_fires_24h * AT_SCHEDULE_FRACTION, 1
+            ),
             "p4": p4,
         }
     return out

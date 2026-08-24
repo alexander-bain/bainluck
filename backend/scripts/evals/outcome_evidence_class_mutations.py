@@ -54,6 +54,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _mutation_guard import guarded_targets  # noqa: E402
+
 BACKEND = Path(__file__).resolve().parents[2]
 
 REGISTRY = BACKEND / "scripts" / "evals" / "search_gold_probes.json"
@@ -169,7 +171,7 @@ def _run_oracles() -> tuple[bool, str]:
     return proc.returncode == 0, (tail[-1] if tail else "<no output>")
 
 
-def main() -> int:
+def _main() -> int:
     original = {path: _sha(path) for path in BACKUPS}
     for path, backup in BACKUPS.items():
         shutil.copy2(path, backup)
@@ -236,6 +238,21 @@ def main() -> int:
         print(f"  restored {path.name} sha {sha[:16]}")
     return 0 if (not survived and not not_applied) else 1
 
+
+
+def main() -> int:
+    """Run the harness with an UNCONDITIONAL restore around it — #2107 sibling.
+
+    `_main()` still restores after each mutant, exactly as before; this is the
+    net under it. The incident it exists for is `bcdcd95f`, where a harness
+    died at **exit 143** between writing a mutant and restoring it, and the
+    mutant rode a commit. `try/finally` alone does not survive SIGTERM, so the
+    guard installs the handler that gives `finally` something to run on — see
+    `_mutation_guard.py` for the four failure cases and which one is not
+    catchable.
+    """
+    with guarded_targets(tuple(BACKUPS), BACKUPS, 'lat_p052_outcome_evidence_class'):
+        return _main()
 
 if __name__ == "__main__":
     raise SystemExit(main())

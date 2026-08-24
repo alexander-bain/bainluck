@@ -3,6 +3,7 @@
 import os
 import subprocess
 import time
+import uuid
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,26 @@ from app.services.odds_api import OddsAPIService
 router = APIRouter()
 
 _PROCESS_START = time.time()
+
+# Which PROCESS answered — #2107.
+#
+# The bug that made this necessary was a poisoned module-global cache: a
+# per-PROCESS fault, invisible to any check that only knows which release is
+# deployed. Two things could not be measured while it was live:
+#
+#   1. **Coverage.** "Zero 500s" over a sampling window means nothing unless
+#      you can show the samples reached every process. With one web dyno
+#      today that is trivially true; the moment web scales, it stops being.
+#   2. **Restarts.** A restart clears any process-global state, so a probe
+#      that spans one silently resets its own horizon — the failure this
+#      program has already been defeated by five times on the worker side.
+#      `process_id` changes on restart even when `dyno` does not.
+#
+# `DYNO` is set by Heroku (`web.1`); absent locally, which is honest rather
+# than fabricated. `process_id` is minted at import, so it is per-process even
+# where several processes share one dyno name.
+DYNO = os.getenv("DYNO") or None
+PROCESS_ID = uuid.uuid4().hex[:12]
 
 # Get git commit at startup (cached)
 def _get_git_commit():
@@ -83,6 +104,8 @@ async def api_health_check():
             "redis": redis_ok,
             "commit": GIT_COMMIT,
             "uptime_seconds": int(time.time() - _PROCESS_START),
+            "dyno": DYNO,
+            "process_id": PROCESS_ID,
         },
     )
 
