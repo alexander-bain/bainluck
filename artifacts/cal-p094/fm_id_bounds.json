@@ -1,0 +1,25 @@
+{
+  "columns": [
+    "min_id",
+    "max_id",
+    "est_rows",
+    "est_outcome_rows"
+  ],
+  "rows": [
+    [
+      1,
+      59527140,
+      858938,
+      3686004
+    ]
+  ],
+  "row_count": 1,
+  "truncated": false,
+  "duration_ms": 16.5,
+  "sql_fingerprint": "c7c09d1cf8bb3f85",
+  "status": "ok",
+  "wall_ms": 429.5,
+  "label": "fm_id_bounds",
+  "note": "CAL-P094: id bounds for the range fold",
+  "timeout_ms_requested": 10000
+}

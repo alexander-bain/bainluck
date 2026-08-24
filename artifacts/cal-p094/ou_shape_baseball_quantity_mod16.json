@@ -1,0 +1,10 @@
+{
+  "status": "failed",
+  "reason": "statement_timeout",
+  "correlation_id": "f8c6cac94219",
+  "http_status": 400,
+  "wall_ms": 10528.0,
+  "label": "ou_shape_baseball_quantity_mod16",
+  "note": "CAL-P094 item1: O/U pair shape, baseball/quantity, MOD(fm.id,16) fold",
+  "timeout_ms_requested": 10000
+}

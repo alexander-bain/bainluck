@@ -1,0 +1,76 @@
+{
+  "explain": true,
+  "analyzed": false,
+  "explain_mode": "FORMAT JSON",
+  "sql_fingerprint": "e610b5575d602919",
+  "statement_timeout_ms": 15000,
+  "duration_ms": 417.3,
+  "plan": [
+    {
+      "Plan": {
+        "Node Type": "Sort",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 130690.99,
+        "Total Cost": 130691.11,
+        "Plan Rows": 228,
+        "Plan Width": 34,
+        "Sort Key": [
+          "llm_sport_category",
+          "market_type"
+        ],
+        "Plans": [
+          {
+            "Node Type": "Aggregate",
+            "Strategy": "Hashed",
+            "Partial Mode": "Simple",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 130688.52,
+            "Total Cost": 130689.21,
+            "Plan Rows": 228,
+            "Plan Width": 34,
+            "Group Key": [
+              "llm_sport_category",
+              "market_type"
+            ],
+            "Planned Partitions": 0,
+            "Plans": [
+              {
+                "Node Type": "Seq Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Relation Name": "futures_markets",
+                "Alias": "fm",
+                "Startup Cost": 0.0,
+                "Total Cost": 130431.69,
+                "Plan Rows": 102734,
+                "Plan Width": 22,
+                "Filter": "(((market_type)::text = ANY ('{quantity,container_member}'::text[])) AND ((llm_sport_category)::text = ANY ('{esports,baseball}'::text[])) AND ((source)::text = 'polymarket'::text) AND ((status)::text = 'resolved'::text))"
+              }
+            ]
+          }
+        ]
+      },
+      "JIT": {
+        "Functions": 6,
+        "Options": {
+          "Inlining": false,
+          "Optimization": false,
+          "Expressions": true,
+          "Deforming": true
+        }
+      }
+    }
+  ],
+  "truncated": false,
+  "plan_bytes": 1164,
+  "response_cap_bytes": 262144,
+  "status": "ok",
+  "wall_ms": 658.9,
+  "label": "plan_roster_count",
+  "note": "CAL-P094: plan for the roster count that timed out",
+  "timeout_ms_requested": 15000
+}

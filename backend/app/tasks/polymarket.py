@@ -19,6 +19,10 @@ from app.utils.feed_market_quality import (
 )
 from app.utils.winner_field_coherence import count_near_certain, field_is_incoherent
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.pair_opening_coherence import (
+    OK as PAIR_OPENING_OK,
+    classify_pair_opening,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -929,7 +933,7 @@ async def _process_event_batch(
                     parent_event_id = _parent_eid_r.scalar_one_or_none()
 
                     for market in event.markets:
-                        prob = _resolve_market_probability(market)
+                        prob, prob_source = _resolve_market_probability_with_source(market)
 
                         if prob is None or prob <= 0:
                             continue
@@ -1002,6 +1006,34 @@ async def _process_event_batch(
                         # tradeable opening — stamping it produced the impossible
                         # both-sides=1.0 binaries (#137 opening artifact).
                         sub_has_open = _is_tradeable_opening(prob, sub_has_trading)
+
+                        # THE PAIR GATE. Both legs of one binary must come from the
+                        # same normalised upstream pair and sum to ~1, or NEITHER
+                        # leg is stamped as an opening. `opening_probability` is what
+                        # `calibration_probability` falls back to, so a leg stamped
+                        # from a price whose partner disagrees becomes a published
+                        # forecast we are then graded on -- 5,566 such markets exist
+                        # and 631 arrived after the 2026-07-08 Under-side fix, because
+                        # that fix corrected WHICH price the Under leg copied without
+                        # ever checking the two prices against each other.
+                        # `app/utils/pair_opening_coherence.py` carries the census.
+                        sub_under_raw = (
+                            market.outcome_prices[1]
+                            if market.outcome_prices and len(market.outcome_prices) > 1
+                            else None
+                        )
+                        sub_pair_verdict = classify_pair_opening(
+                            prob, sub_under_raw, price_source=prob_source
+                        )
+                        if sub_pair_verdict != PAIR_OPENING_OK:
+                            stats["pair_opening_refused"] = (
+                                stats.get("pair_opening_refused", 0) + 1
+                            )
+                            stats[f"pair_opening_{sub_pair_verdict}"] = (
+                                stats.get(f"pair_opening_{sub_pair_verdict}", 0) + 1
+                            )
+                            sub_has_open = False
+
                         sub_opening = prob if sub_has_open else None
                         sub_opening_am = over_american if sub_has_open else None
                         sub_opening_at = now if sub_has_open else None
@@ -1083,8 +1115,18 @@ async def _process_event_batch(
                             # wrong side — the #137 poly-Under sign-flip class.
                             sub_under_has_open = _is_tradeable_opening(
                                 under_prob, sub_has_trading
-                            )
+                            ) and sub_pair_verdict == PAIR_OPENING_OK
                             sub_under_opening = under_prob if sub_under_has_open else None
+                            # These two used to be gated on the OVER leg's
+                            # `sub_opening_at` and on bare `sub_has_trading`, so an
+                            # Under leg could carry an opening with no capture
+                            # timestamp (breaking every capture-age read of it) or a
+                            # timestamp and American odds with no opening at all.
+                            # One leg, one gate.
+                            sub_under_opening_am = (
+                                under_american if sub_under_has_open else None
+                            )
+                            sub_under_opening_at = now if sub_under_has_open else None
 
                             under_update: dict = {
                                 "current_probability": under_prob,
@@ -1110,8 +1152,8 @@ async def _process_event_batch(
                                 current_probability=under_prob,
                                 current_american_odds=under_american,
                                 opening_probability=sub_under_opening,
-                                opening_american_odds=under_american if sub_has_trading else None,
-                                opening_captured_at=sub_opening_at,
+                                opening_american_odds=sub_under_opening_am,
+                                opening_captured_at=sub_under_opening_at,
                                 rank=2,
                                 volume=sub_vol,
                             ).on_conflict_do_update(
@@ -1562,10 +1604,34 @@ def _is_placeholder_outcome(market) -> bool:
 
 
 def _resolve_market_probability(market) -> float | None:
+    """Resolve the Yes-side probability, discarding which source produced it.
+
+    Thin wrapper over :func:`_resolve_market_probability_with_source` for the call
+    sites that only want the number. Kept as the primary name because most of them
+    do, and because changing every caller to unpack a tuple would put churn in
+    files this fix has no business touching.
     """
-    Resolve the Yes-side probability for a Polymarket market.
+    prob, _source = _resolve_market_probability_with_source(market)
+    return prob
+
+
+def _resolve_market_probability_with_source(market) -> tuple[float | None, str | None]:
+    """
+    Resolve the Yes-side probability for a Polymarket market, and name its source.
 
     Priority: outcomePrices[0] → bid/ask midpoint → lastTradePrice.
+
+    THE SOURCE IS RETURNED BECAUSE THE PAIR WRITER NEEDS IT. Only
+    ``outcome_prices`` is a leg of the same upstream-normalised pair as
+    ``outcome_prices[1]``; a midpoint we computed, a trade from an earlier moment,
+    and a one-sided ask are all different instruments. Writing the Under leg from
+    the raw complement while the Over leg came from one of those built pairs that
+    sum to 1 only by luck — measured at 5,566 markets, 631 of them still arriving
+    after the 2026-07-08 Under-side fix. See
+    :mod:`app.utils.pair_opening_coherence`, which is the gate that consumes this.
+
+    A source label is only meaningful alongside a non-None probability; every
+    ``return None`` path below returns ``(None, None)``.
 
     Skips placeholder markets that Polymarket creates as reserved slots
     (e.g., "Player B", "Player S"). These have:
@@ -1578,7 +1644,7 @@ def _resolve_market_probability(market) -> float | None:
     """
     # Reject known placeholder markets before examining prices
     if _is_placeholder_outcome(market):
-        return None
+        return None, None
 
     # #151 cp-capture guard: real price discovery leaves orderbook/trade evidence.
     # A live bid, a real (sub-max) ask, or a last trade all count. Gamma's
@@ -1615,16 +1681,16 @@ def _resolve_market_probability(market) -> float | None:
     # current quotes are garbage.
     if is_fabricated_midpoint(prob, market.best_bid, market.best_ask):
         if market.last_trade_price is not None and 0 < market.last_trade_price < 1:
-            return float(market.last_trade_price)
-        return None
+            return float(market.last_trade_price), "last_trade_price"
+        return None, None
 
     if prob is not None and prob > 0:
         # A mid-range outcomePrice with no orderbook and no trade is a
         # placeholder/synthetic quote, not price discovery — skip the snapshot
         # (it is re-captured next cycle once a real bid/trade appears).
         if 0.05 < prob < 0.95 and not has_market:
-            return None
-        return prob
+            return None, None
+        return prob, "outcome_prices"
 
     # Midpoint fallback: both bid and ask must be present and positive, and the
     # book must be tradeable. #1578: a midpoint WE compute from a wide book is
@@ -1635,20 +1701,20 @@ def _resolve_market_probability(market) -> float | None:
     if (market.best_bid is not None and market.best_bid > 0
             and market.best_ask is not None and market.best_ask > 0
             and not _poly_book_is_untradeable(market.best_bid, market.best_ask)):
-        return (market.best_bid + market.best_ask) / 2
+        return (market.best_bid + market.best_ask) / 2, "bid_ask_midpoint"
 
     # Last trade fallback
     if market.last_trade_price is not None and market.last_trade_price > 0:
-        return market.last_trade_price
+        return market.last_trade_price, "last_trade_price"
 
     # Ask-only fallback: reject if ask >= 0.99 (placeholder/no real market)
     if (market.best_ask is not None
             and market.best_ask > 0
             and market.best_ask < 0.99):
-        return market.best_ask
+        return market.best_ask, "best_ask"
 
     # No reliable price — skip this market
-    return None
+    return None, None
 
 
 def _extract_outcome_name(question: str, event_title: str) -> str:
