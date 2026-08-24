@@ -302,6 +302,193 @@ TOURNAMENT_DISPLAY_NAMES = {
 
 MAJOR_TOURNAMENTS = {"masters", "pga_championship", "us_open", "the_open"}
 
+
+# ============================================================================
+# Fold discriminators — LEVEL and TOUR (UX-P126 / F4)
+# ============================================================================
+#
+# `_normalize_tournament`'s Priority-1 patterns are SUBSTRING matches. Any market
+# whose name merely CONTAINS a major's noun was claimed by that major's key, so
+# unrelated events folded onto one card. Measured live 2026-08-24, key `masters`
+# claimed 22 open markets spanning SEVEN distinct real-world events:
+#
+#   * Masters Tournament Winner            (odds_api — the actual Augusta major)
+#   * Husqvarna British Masters ... x6     (DP World Tour, datagolf + kalshi)
+#   * DP World Tour: British Masters x7    (the same event, polymarket)
+#   * Asia Masters 2026 Winner             (not golf)
+#   * Masters London 2026 x4               (Valorant)
+#   * New Zealand Darts Masters: Winner    (darts)
+#   * Hitpoint Masters 2026 Summer: Winner (esports)
+#
+# The user-visible cost is NOT a messy card — it is a MISSING one. The folded key
+# inherits Augusta's DataGolf schedule (`_TOURN_TO_SCHED_KEY`), whose end_date is
+# April, so `_filter_stale_tournaments` drops the whole group. On 2026-08-24 the
+# Husqvarna British Masters — a real DP World Tour event teeing off in three days,
+# with 13 open markets across three sources — was absent from `/api/golf` entirely,
+# while the Tour Championship (identical Aug-27..30 dates) rendered fine.
+#
+# Two discriminators gate the claim; gender is handled separately by `_WOMENS_RE`.
+
+# LEVEL: "Masters" alone is the major. Every other event qualifies the word with a
+# sponsor, a place, or a discipline. Claim the major only when nothing qualifies it.
+_MASTERS_TOKEN_RE = re.compile(r"\bmasters\b", re.I)
+_MASTERS_ALLOWED_BEFORE = {"the", ""}
+_MASTERS_ALLOWED_AFTER = {"tournament", "golf", "winner", "champion", "champions",
+                          "odds", "field", "top", ""}
+
+
+def _word_at(tokens: list[str], index: int) -> str:
+    """Alphanumeric-only form of a boundary token, or '' when absent."""
+    if not tokens:
+        return ""
+    return re.sub(r"[^a-z0-9]", "", tokens[index].lower())
+
+
+# A clause separator ends the qualifier's reach. "PGA Tour: Masters Tournament" is
+# Augusta with a source prefix, not an event called "Tour Masters" — without this,
+# the level guard refused a legitimate Polymarket major.
+_CLAUSE_END_RE = re.compile(r"[:\-–—,(|]\s*$")
+
+
+def _preceding_word(text_before: str) -> str:
+    """The qualifier immediately before a token, or '' across a clause boundary."""
+    if not text_before.strip() or _CLAUSE_END_RE.search(text_before):
+        return ""
+    return _word_at(text_before.split(), -1)
+
+
+def _is_the_masters(market_name: str) -> bool:
+    """True only when 'Masters' in this name means the Augusta major."""
+    for match in _MASTERS_TOKEN_RE.finditer(market_name):
+        prev = _preceding_word(market_name[: match.start()])
+        nxt = _word_at(market_name[match.end():].split(), 0)
+        if prev and not (prev in _MASTERS_ALLOWED_BEFORE or prev.isdigit()):
+            continue
+        if nxt and not (nxt in _MASTERS_ALLOWED_AFTER or nxt.isdigit()):
+            continue
+        return True
+    return False
+
+
+# LEVEL, the same shape for `the_open`. Its specific arms ("Open Championship",
+# "British Open") are unambiguous and bypass the check entirely, so the major's own
+# card is never at risk. The bare `the open` arm is the loose one: it claimed
+# "Will Anthropic sign the Open Weights and American AI Leadership letter?", where
+# "open" is an ADJECTIVE. In golf it is a noun — terminal, or followed by a golf
+# market-type word.
+_THE_OPEN_BARE_RE = re.compile(r"\bthe\s+open\b", re.I)
+_THE_OPEN_SPECIFIC_RE = re.compile(r"open\s+championship|british\s+open", re.I)
+_THE_OPEN_ALLOWED_AFTER = {
+    "championship", "champion", "winner", "golf", "tournament", "odds", "field",
+    "top", "make", "cut", "round", "rounds", "leader", "finish", "finishers",
+    "hole", "holes", "first", "second", "third", "fourth", "final", "playoff",
+    "at", "in", "this", "next", "by", "before", "after", "",
+}
+
+
+def _is_the_open(market_name: str) -> bool:
+    """True only when 'the Open' in this name means The Open Championship."""
+    if _THE_OPEN_SPECIFIC_RE.search(market_name):
+        return True
+    for match in _THE_OPEN_BARE_RE.finditer(market_name):
+        nxt = _word_at(market_name[match.end():].split(), 0)
+        if nxt and not (nxt in _THE_OPEN_ALLOWED_AFTER or nxt.isdigit()):
+            continue
+        return True
+    return False
+
+
+# TOUR: a men's major is played on the PGA Tour; a market that explicitly declares
+# one of these other tours is, by that declaration, a different event. `pga` is NOT
+# here (Polymarket prefixes majors with "PGA Tour:"), and `lpga` is NOT here
+# (gender is the `_womens` suffix's job, and `us_open_womens` is a real card).
+_MAJOR_EXCLUSIVE_TOURS = {"dp_world", "korn_ferry", "sunshine", "asian", "tgl", "liv"}
+
+_DECLARED_TOUR_PATTERNS = [
+    (re.compile(r"\bdp\s+world\s+tour\b|\beuropean\s+tour\b", re.I), "dp_world"),
+    (re.compile(r"\bkorn\s+ferry\b|\bnationwide\s+tour\b", re.I), "korn_ferry"),
+    (re.compile(r"\bsunshine\s+tour\b", re.I), "sunshine"),
+    (re.compile(r"\basian\s+tour\b", re.I), "asian"),
+    (re.compile(r"\bliv\s+golf\b", re.I), "liv"),
+    (re.compile(r"\btgl\b|tomorrow'?s?\s+golf\s+league", re.I), "tgl"),
+]
+
+# Kalshi encodes the tour in the ticker prefix, ahead of the event name.
+_KALSHI_TICKER_TOUR_RE = [
+    (re.compile(r"^kxdpworldtour", re.I), "dp_world"),
+    (re.compile(r"^kxkornferry", re.I), "korn_ferry"),
+    (re.compile(r"^kxliv", re.I), "liv"),
+]
+
+
+def _declared_tour(market_name: str, external_id: str | None = None) -> str | None:
+    """The tour this market explicitly declares, or None when it declares nothing.
+
+    Absence is permissive on purpose: cross-source folding is the product, and the
+    odds_api major ("Masters Tournament Winner") declares no tour at all. Only an
+    explicit CONTRADICTION blocks a fold.
+    """
+    eid = external_id or ""
+    if eid.startswith("datagolf:"):
+        parts = eid.split(":")
+        if len(parts) >= 2:
+            mapped = _datagolf_tour_to_key(parts[1])
+            if mapped:
+                return mapped
+    for pattern, tour in _KALSHI_TICKER_TOUR_RE:
+        if pattern.search(eid):
+            return tour
+    for pattern, tour in _DECLARED_TOUR_PATTERNS:
+        if pattern.search(market_name):
+            return tour
+    return None
+
+
+# The market-type tail that turns one tournament into one card. Separator optional.
+_MARKET_TYPE_SUFFIX_RE = re.compile(
+    r"\s*(?:[-–:]\s*)?(?:"
+    r"Tournament\s+Winner|Winner|Champion"
+    r"|Top\s+\d+(?:\s+Finish(?:ers)?)?"
+    r"|(?:To\s+)?Make\s+(?:the\s+)?Cut"
+    r"|(?:End\s+of\s+)?Round\s+\d+\s+Leader"
+    r"|(?:First|Second|Third|Fourth|Final)\s+Round\s+Leader"
+    r"|Hole[-\s]?in[-\s]?One"
+    r")\s*\??\s*$",
+    re.I,
+)
+
+
+_TOUR_PREFIX_RE = re.compile(
+    r"^(?:PGA\s+Tour|DP\s+World\s+Tour|European\s+Tour|LPGA|Korn\s+Ferry\s+Tour"
+    r"|Asian\s+Tour|Sunshine\s+Tour):\s*",
+    re.I,
+)
+
+
+def _strip_market_chrome(name: str) -> str:
+    """Drop the tour prefix and the market-type tail, leaving the event name."""
+    clean = _MARKET_TYPE_SUFFIX_RE.sub("", name)
+    clean = _TOUR_PREFIX_RE.sub("", clean)
+    return re.sub(r"\s*\?\s*$", "", clean).strip()
+
+
+def _slug_tournament(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
+def _major_claim_allowed(key: str, market_name: str, external_id: str | None) -> bool:
+    """Gate a Priority-1 major claim on the LEVEL and TOUR discriminators."""
+    if key == "masters" and not _is_the_masters(market_name):
+        return False
+    if key == "the_open" and not _is_the_open(market_name):
+        return False
+    if key in MAJOR_TOURNAMENTS:
+        declared = _declared_tour(market_name, external_id)
+        if declared in _MAJOR_EXCLUSIVE_TOURS:
+            return False
+    return True
+
+
 # PGA Tour Signature Events — elevated purse/field, top-tier regular season events
 _SIGNATURE_EVENTS = {
     "arnold_palmer_invitational",
@@ -489,8 +676,17 @@ def _golf_winner_renorm_factor(
     return None
 
 
-# Women's / LPGA detection
-_WOMENS_RE = re.compile(r"\b(?:lpga|women'?s?|ladies)\b", re.I)
+# Women's / LPGA detection — THE ONE GENDER DISCRIMINATOR (UX-P126 / F4).
+#
+# There used to be two. The fold key at `get_golf` used this regex; the completed-
+# tournament path used an inline `women|lpga|chevron|amundi`. They disagreed in both
+# directions: the inline one knew the two sponsor-named LPGA majors (Chevron, Amundi
+# Evian) that this one did not, and this one knew "ladies" and the possessive
+# boundary that the inline one did not. A Chevron Championship market therefore
+# folded onto a MEN'S key here while being labelled `is_womens: true` there — the
+# same market, two answers, on two surfaces. A discriminator that two callers
+# implement twice is not a discriminator.
+_WOMENS_RE = re.compile(r"\b(?:lpga|women'?s?|ladies|chevron|amundi)\b", re.I)
 
 # ============================================================================
 # Tour classification — classify each tournament by tour
@@ -1049,7 +1245,11 @@ def _match_key(name: str) -> str:
     return clean
 
 
-def _normalize_tournament(market_name: str, schedule: list[dict] | None = None) -> str:
+def _normalize_tournament(
+    market_name: str,
+    schedule: list[dict] | None = None,
+    external_id: str | None = None,
+) -> str:
     """Extract tournament key from a market name. Returns 'other' if no match."""
     # #950: de-obfuscate scrambled major trademarks (e.g. Polymarket's "uptspt
     # Open") so the event merges onto the canonical major card, not an orphan.
@@ -1058,6 +1258,12 @@ def _normalize_tournament(market_name: str, schedule: list[dict] | None = None) 
     for pattern, key in _TOURNAMENT_PATTERNS:
         if pattern.search(market_name):
             if key == "the_open" and _NOT_THE_OPEN_RE.search(market_name):
+                continue
+            # UX-P126/F4: LEVEL + TOUR discriminators. A substring match is not a
+            # claim — "British Masters" is not Augusta, and a market declaring the
+            # DP World Tour is not a men's major. Falling through here sends the
+            # market to Priority 2/3/4, where it earns its own key.
+            if not _major_claim_allowed(key, market_name, external_id):
                 continue
             return key
 
@@ -1075,26 +1281,35 @@ def _normalize_tournament(market_name: str, schedule: list[dict] | None = None) 
                 return schedule_key
 
     # Priority 3: Hardcoded tour event regex
-    tour_event = _extract_tour_event(market_name)
+    #
+    # UX-P126/F4: `_TOUR_EVENT_RE`'s generic arm stops at a lookahead on the market
+    # type, so "DP World Tour: British Masters First Round Leader" came back as
+    # "DP World Tour: British Masters First" — a dangling ordinal AND an unstripped
+    # tour prefix, i.e. a key of its own per round. Priority 3 now gets the same
+    # chrome strip Priority 4 does, so all four surfaces of one event share a key.
+    tour_event = _extract_tour_event(_strip_market_chrome(market_name))
     if tour_event:
-        key = re.sub(r"[^a-z0-9]+", "_", tour_event.lower()).strip("_")
-        return key
+        key = _slug_tournament(_strip_market_chrome(tour_event))
+        if key:
+            return key
 
     # Priority 4: Generic tournament name extraction — strip market type
     # suffixes (" - Winner", " - Top 5 Finish", etc.) and slugify.
     # Handles DataGolf markets ("LECOM Suncoast Classic - Winner") and other
     # well-structured names that don't match hardcoded patterns.
-    clean = re.sub(
-        r"\s*[-–]\s*(?:Tournament\s+Winner|Winner|Top\s+\d+(?:\s+Finish)?|Make\s+(?:the\s+)?Cut|Round\s+\d+\s+Leader)\s*$",
-        "", market_name, flags=re.I,
-    )
-    # Also strip "Winner" / "Champion" without dash separator
-    clean = re.sub(r"\s+(?:Winner|Champion)\s*\??\s*$", "", clean, flags=re.I)
-    # Strip common prefixes
-    clean = re.sub(r"^(?:PGA\s+Tour|DP\s+World\s+Tour|European\s+Tour):\s*", "", clean, flags=re.I)
-    # Strip trailing "?"
-    clean = re.sub(r"\s*\?\s*$", "", clean)
-    key = re.sub(r"[^a-z0-9]+", "_", clean.lower()).strip("_")
+    #
+    # UX-P126/F4: the suffix list used to REQUIRE a dash for everything except a
+    # bare trailing "Winner"/"Champion", so one tournament fragmented into one key
+    # per market type — measured live 2026-08-24, the TOUR Championship held 13 open
+    # markets across 7 keys (`tour_championship`, `..._top_5`, `..._top_10`,
+    # `..._top_20`, `..._first_round_leader`, `..._second_round_leader`,
+    # `..._third_round_leader`, `..._hole_in_one`) and `/api/golf` served a card
+    # carrying only the 6 that happened to use dashes. The LPGA FM Championship,
+    # live that same week, fragmented across all 7 of its markets and surfaced no
+    # card at all. Separator-optional, and the tails Polymarket and Kalshi actually
+    # write ("First Round Leader", "End of Round 1 Leader", "Top 5 Finishers",
+    # "To Make the Cut", "Hole-in-One") are all named.
+    key = _slug_tournament(_strip_market_chrome(market_name))
     if key and len(key) >= 3:
         return key
 
@@ -1480,7 +1695,7 @@ def _route_h2h_to_tournament(
     b_tourns = golfer_to_tournaments.get(b_key, set())
     shared = a_tourns & b_tourns
 
-    name_key = _normalize_tournament(market.name, schedule)
+    name_key = _normalize_tournament(market.name, schedule, market.external_id)
     if name_key != "other" and _WOMENS_RE.search(market.name):
         name_key = name_key + "_womens"
 
@@ -1677,7 +1892,7 @@ async def get_golf(
     # Group markets by tournament
     tournament_markets: dict[str, list] = defaultdict(list)
     for market in markets:
-        tournament_key = _normalize_tournament(market.name, schedule)
+        tournament_key = _normalize_tournament(market.name, schedule, market.external_id)
         if tournament_key == "other":
             tournament_markets[f"other_{market.id}"].append(market)
         else:
@@ -2377,7 +2592,7 @@ async def _build_completed_tournament(
         if not _is_golf_market(m):
             continue
         market_name = m.name or ""
-        key = _normalize_tournament(market_name)
+        key = _normalize_tournament(market_name, None, getattr(m, "external_id", None))
         # Check slug against both the display name and the raw key
         display = TOURNAMENT_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
         display_slug = _clean_slug(display)
@@ -2454,8 +2669,10 @@ async def _build_completed_tournament(
         "name": display_name,
         "slug": slug,
         "key": key,
-        "is_major": any(k in key.lower() for k in ("masters", "pga_championship", "us_open", "the_open")),
-        "is_womens": bool(re.search(r"women|lpga|chevron|amundi", display_name, re.I)),
+        # A key is a major only when it IS one — `"masters" in key` also said yes to
+        # `husqvarna_british_masters_...`, the same substring bug as the fold key.
+        "is_major": key.removesuffix("_womens") in MAJOR_TOURNAMENTS,
+        "is_womens": bool(_WOMENS_RE.search(display_name)),
         "start_date": start_date,
         "end_date": end_date,
         "venue": venue,
