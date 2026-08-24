@@ -60,8 +60,13 @@ What this silently disables:
   The most elaborate machinery in the ranking stack has had no new signal for six days.
 - **The eval/labeling loop**, which is already blocked on labels (24-row corpus).
 
-Nothing alarmed. A six-day total write failure on a core product signal went unnoticed because
-the watchdogs watch reads.
+Nothing alarmed, and the reason is structural rather than bad luck. **No watchdog or sentinel
+references `discover_interactions` at all** — grepping `app/tasks/` for the table yields exactly
+one consumer, `export_engagement.py`, and that task is *not* enrolled in `task_verdict` /
+`ENFORCED_TASKS`. It aggregates an empty table, computes zeros, and returns successfully on every
+beat. This is gotcha #53 in task form: a run that exported nothing is indistinguishable from a run
+with nothing to export, and it has been recording success throughout the outage. Whatever fixes
+the column should also give this table a write-rate floor that can go red.
 
 **No issue was filed and no fix was written — this cycle was scoped `measurement only`.** The fix
 is one line (make the model column match the deployed enum, or drop `provenance` from the INSERT
@@ -78,24 +83,37 @@ exist`, culprit `/api/admin/db-query`) is a hand-typed admin query with a wrong 
 
 ### 1a. Repeat rate — measured, with an explicit limit on what it proves
 
-Six pulls at ~80 s cadence (deliberately crossing the 60 s anon response-cache TTL), three
-surfaces each:
+11 pulls over 32 minutes (17:54:48Z → 18:26:51Z), cadences of ~80 s and ~10 min deliberately
+crossing the 60 s anon response-cache TTL, three surfaces each, all on one deployed commit
+(`b5c2a750` — stamped per pull, so this is one population and not a straddled release):
 
 ```
-anon      pull→pull:  20/20 held over, 0 new   (×5 transitions)
-session   pull→pull:  20/20 held over, 0 new   (×5)
-debug     pull→pull:  20/20 held over, 0 new   (×5)   ← cache-disabled, cold build every time
-distinct cards across the whole 7-minute window: 20   (a perfectly static feed would show 20)
+anon      11 pulls  ->  1 distinct ordering,  1 distinct card set
+session   11 pulls  ->  1 distinct ordering,  1 distinct card set
+debug     11 pulls  ->  1 distinct ordering,  1 distinct card set   <- cache-disabled, cold build
 ```
 
-The `debug` surface matters: it is `cache: disabled_debug`, a cold rebuild each pull. It returned
-the same twenty cards in the same order. **So the zero churn is not the response cache — the
-ranker is deterministic and the slate genuinely does not move on this timescale.**
+Not "20/20 held over" — **byte-for-byte the same twenty cards in the same order, 33 times.** Zero
+churn is the weak way to say it; the strong way is that the ranker emitted one answer.
 
-**What this does NOT prove:** seven minutes is not "twice a day". A feed *should* be stable over
-seven minutes. The hourly series (`/tmp/ux-p124-captures`, 13 pulls at 1 h) is the one that
-answers the directive's question, and it is still accumulating at the time of writing —
-see §5.
+The `debug` surface is what rules out the cache: it is `cache: disabled_debug`, a cold rebuild
+every pull, ~5 s each. **So the stability is the ranker, not the response cache.**
+
+**And the window is not as short as its clock suggests.** `precompute_interestingness` ran at
+**18:22:38Z — inside the window** — and rescored every market (`scored: 41941, total_markets:
+41941, errors: 0`). Pulls sit on both sides of it, at 18:16:35Z and 18:26:51Z, four minutes after.
+The one input designed to make this page move fired against all 41,941 markets mid-capture and
+**the page did not move by a single position.**
+
+That interlocks with §2a rather than duplicating it: a signal with a 43-point spread and 8.9
+stdev, at weight 0.2, cannot re-order a base score spanning 109 points. A full rescore of every
+market in the database is therefore *invisible by arithmetic*, not by coincidence. Waiting longer
+does not test a different mechanism; it tests the same one at a larger `n`.
+
+**What this still does NOT prove:** 32 minutes is not "twice a day". Base score moves on inputs
+this window cannot exercise — the slate turning over as events settle, new markets being created,
+prices moving materially. The hourly series (§5) samples those. But the precompute crossing means
+cycle one is no longer *waiting* for its answer on the ranking question; it has one.
 
 **What this DOES prove, and it is the harder finding:** the anon and session surfaces returned
 **identical** slates, card for card. Carrying a stable session id changed nothing. Given §0 that
@@ -112,11 +130,21 @@ distinct identities touching Discover, last 14 days:  200
   active on 7 days:                                     1
 ```
 
-Two identities in fourteen days have opened Discover on more than one day. The core loop this
-cycle was asked to measure is, in production, executed by roughly two people — very likely Alex
-and one dogfood/agent session. **Any "does the second open feel worth it" metric built from
-production behaviour will be measuring Alex.** Cycle one's honest recommendation is to keep
-judging this by taste and specimen review, not by an engagement metric, until there is traffic.
+Two identities in fourteen days have opened Discover on more than one day. Both are worth naming:
+
+```
+8BBCB6B5-…  7 days active, 125 rows, surface = native, 2026-08-10 → 08-18
+D4190449-…  5 days active,  70 rows, surface = native, 2026-08-11 → 08-18
+```
+
+**Both are `native`** — uppercase-UUID iOS vendor identifiers, so real devices, not warmers (a
+warmer would show up as `web`). Meanwhile web carried 4,316 rows over 30 days and produced
+**zero** multi-day identities. Two readings, and they point the same way: the core loop this cycle
+was asked to measure is executed by about two people, and the only surface where it happens at all
+is the iPhone/iPad app. **Any "was the second open worth it" metric built from production
+behaviour today is measuring Alex's phone.** Cycle one's honest recommendation is to keep judging
+this by taste and specimen review, not by an engagement metric, until there is traffic — and to
+weight the native surface when doing so.
 
 All-time action mix, for what the signal has ever contained:
 
@@ -468,9 +496,27 @@ Analyse with:
 python3 tools/discover-interest/analyze-captures.py /tmp/ux-p124-captures
 ```
 
-Results appended to the program report as they land. The 7-minute result (§1a) is complete and
-shows zero churn; the multi-hour result is what tests the directive's actual question and is the
-one number this memo does not yet have.
+The 32-minute result (§1a) is complete: **one ordering across 33 slates, spanning a full
+`precompute_interestingness` run.** The multi-hour series keeps running past the end of this
+cycle; it samples the inputs the short window cannot exercise (events settling out of the slate,
+new market creation, material price movement), and it is the honest way to distinguish "the
+ranker is deterministic" — which §1a proves — from "the *page* is static across a day", which
+it does not.
+
+Whoever picks this up: re-run the analyser against the merged set, not one directory. The three
+capture dirs (`-captures`, `-10min`, `-churn`) are the same population at different cadences and
+must be deduped on `captured_at` before counting, or overlapping pulls inflate the denominator:
+
+```
+python3 tools/discover-interest/analyze-captures.py /tmp/ux-p124-captures
+```
+
+**One thing to check when reading a longer series:** `precompute_interestingness` shows
+`starts_24h: 12, successes_24h: 8, hard_kills_24h: 3` and `last_verdict: unverified
+(not_enforced)`. Runs complete in 30–70 s, far inside any limit, so the kills are not timeouts —
+but the task is not enrolled in `task_verdict`, so a killed run is silent and the Redis scores it
+would have refreshed simply stay stale. That is not this cycle's finding to chase; it is a reason
+not to read a flat hour as proof of a flat ranker without checking whether the rescore ran.
 
 ---
 
