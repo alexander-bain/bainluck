@@ -738,32 +738,36 @@ def test_ruling_numbers_are_unique() -> None:
 #: was surrendered in a claim race (calibration-86 renumbered 122/123 -> 124/125).
 #: Do not "tidy" 125 down to 123.
 #:
-#: INT-113 (wave 3, 2026-08-24): **127**, COUNTED on this merged tree, not derived.
-#: This wave merged latency-75's held tail (rulings **126**, **127**) AND, on Alex's
-#: mid-cycle addendum, `program/latency-76` WHOLE (rulings **128**, **129**), so the
-#: count rises 123 -> 127 in one stage.
+#: INT-113 (wave 3, 2026-08-24): **129**, COUNTED on this merged tree, not derived.
+#: Batch 1 merged latency-75's held tail (rulings **126**, **127**) and, on Alex's
+#: mid-cycle addendum, `program/latency-76` WHOLE (**128**, **129**). Increment 2 then
+#: merged PR #2106 (**120**) and PR #2115 (**122**). Count over the wave: 123 -> 129.
 #:
-#: A THIRD specimen of the stale-declared floor in a single wave, and the cleanest yet:
-#: HEAD declared **125** and the branch declared **119**. Both were honestly counted --
-#: HEAD on the stage before latency-76 was merged, the branch against its own base at
-#: `40de2d86` -- and both were stale the moment the other landed. Neither side's number
-#: was right. That is ruling 088 exactly: a declaration is a measurement of a tree that
-#: no longer exists by the time the merge resolves it.
+#: FOUR specimens of the stale-declared floor in a single wave, and the fourth is the
+#: one worth keeping, because it is the integrator's own. Batch 1 resolved HEAD's **125**
+#: against the branch's **119** by counting **127**, and this comment SAID 127 -- and then
+#: went stale ninety minutes later, inside the same cycle, when #2106 and #2115 landed.
+#: The number written by the person holding the merge lock, who had just finished
+#: explaining why declared numbers go stale, went stale the same way. That is ruling 088
+#: at its most literal: a declaration is a measurement of a tree that no longer exists by
+#: the time the merge resolves it, and nobody is standing outside that.
 #:
-#: The branch's own provenance is preserved because it is the part that does not go
-#: stale: **128** and **129** were claimed in `RULING-CLAIMS.md` after a `git fetch` in
-#: the same turn, swept across all local and remote refs (128 -> 587 refs, 129 -> 595
-#: refs), holders_found = 0 for both. Next free number is **130**.
+#: THE HELD GAP IS NOW CLOSED, and the closing is the point. Batch 1 recorded that **120**
+#: and **122** were "absent and HELD, not lost -- 120 claimed by `lane1` in
+#: `RULING-CLAIMS.md`, 122 surrendered in a claim race (calibration-86 renumbered
+#: 122/123 -> 124/125)", and that the count therefore correctly trailed the highest file
+#: by two. Both holders then banked. The claim ledger was right about both, which is the
+#: evidence that a HELD number is a real reservation and not a bookkeeping error: the
+#: correct response to a gap is to find its holder, never to renumber down into it.
 #:
-#: STILL A COUNT, NOT A CEILING. Highest file is now **129**; **120** and **122** remain
-#: absent and HELD, not lost -- 120 is claimed by `lane1` in `RULING-CLAIMS.md` and 122
-#: was surrendered in a claim race (calibration-86 renumbered 122/123 -> 124/125). The
-#: count therefore trails the highest number by two, and that gap is CORRECT. Do not
-#: "tidy" 129 down to 127.
+#: So the count now EQUALS the highest number for the first time in many waves -- 129
+#: files, numbered 1..129 with nothing missing in the range. Do not read that as an
+#: invariant. It is a coincidence of this tree, and the next claim race breaks it again.
+#: STILL A COUNT, NOT A CEILING. Next free number is **130**.
 #:
-#: Verified index <-> files in BOTH directions on the merged tree: 127 files, 127 index
-#: lines, zero orphans either way, ascending, no duplicates.
-MINIMUM_BANKED_RULINGS = 128
+#: Verified index <-> files in BOTH directions on the merged tree: 129 files, 129 index
+#: lines, zero orphans either way, ascending, no duplicates, contiguous 1..129.
+MINIMUM_BANKED_RULINGS = 129
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
