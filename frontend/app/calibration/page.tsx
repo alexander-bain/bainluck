@@ -9,6 +9,9 @@ import { fetchCalibration, fetchCalibrationExamples, ApiError, CalibrationBucket
 import ErrorState from "@/components/ErrorState";
 import LoadingState from "@/components/LoadingState";
 import CalibrationChart from "@/components/CalibrationChart";
+// UX-P128: the Source Comparison row prints numbers, so it is mountable rather
+// than inline — a render defect is not provable by grepping the page source.
+import SourceComparisonRow from "@/components/SourceComparisonRow";
 import {
   buildSourcePanels,
   compareMatchedBuckets,
@@ -43,6 +46,12 @@ import {
   providerKpiDetail,
   shapeBreakdownNote,
 } from "@/lib/calibrationProviderPanels";
+// UX-P128: which Source Comparison rows are measurements, in what order, and
+// the sentence By Source owes for the ones the cohort emptied.
+import {
+  orderSourceRows,
+  withheldSourcesNote,
+} from "@/lib/calibrationSourceRows";
 // CAL-P043 (#1643): the page's bucket math and its parity record live in one
 // module so a gate can call the code the page actually renders from. They used
 // to be private functions in this file, which is why the cross-surface gate had
@@ -433,6 +442,13 @@ export default function CalibrationPage() {
     });
   }, [normalized, sources, cohortFilter]);
 
+  // UX-P128: which of those rows are measurements, and in what order. The
+  // Combined row below is n-weighted off pooled buckets, so a 0-outcome
+  // provider already contributes nothing to it; what it DID contaminate was the
+  // ordering, where a fabricated 0.0pp sorted above every real source. See
+  // `lib/calibrationSourceRows.ts`.
+  const sourceRows = useMemo(() => orderSourceRows(providerMetrics), [providerMetrics]);
+
   // Whether the shape breakdown may appear INLINE (Fable's symmetry addendum).
   // Measured from the live payload rather than asserted: on today's data Kalshi
   // and Polymarket publish one shape each, so it is false and the breakdown
@@ -635,6 +651,12 @@ export default function CalibrationPage() {
       : [],
   }));
   const providerShapeNote = shapeBreakdownNote(providerPanels);
+  // UX-P128. `buildProviderPanels` drops a 0-outcome provider, and it is right
+  // to: there is no curve to draw. But a panel that simply vanishes reads as
+  // "this source does not exist", which is the same deception as the 0.0pp row
+  // was, pointing the other way. Derived from `sourceRows` — the rows the table
+  // renders — so the section cannot omit a provider the table names.
+  const withheldNote = withheldSourcesNote(sourceRows, cohort.toggleLabel);
 
   const catChartData = (activeCat ? [activeCat] : categories.slice(0, 5)).map((cat, i) => ({
     data: aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b))),
@@ -953,34 +975,22 @@ export default function CalibrationPage() {
               </tr>
             </thead>
             <tbody>
-              {[...providerMetrics].sort((a, b) => a.ece - b.ece).map(pm => (
-                <tr
+              {/* UX-P128. Ordering and the n=0 state are decided in
+                  `lib/calibrationSourceRows.ts`, not here. This table used to
+                  sort on `a.ece - b.ece` over raw metrics, and `datagolf` —
+                  171 published outcomes, every one of them `price_moved:
+                  false`, so all of them outside the default cohort — arrived
+                  with `ece([]) === 0` and took FIRST PLACE in green under a
+                  subhead that says "lower is better". An empty reduction's
+                  identity element is not a measurement, and position in this
+                  table is a published claim. */}
+              {sourceRows.map(pm => (
+                <SourceComparisonRow
                   key={pm.provider}
-                  className="border-t border-surface-border"
-                  data-testid="calibration-provider-row"
-                  data-provider={pm.provider}
-                  data-provider-n={pm.n}
-                  data-provider-sources={pm.sources.join(",")}
-                >
-                  <td className="py-2.5 pr-4 font-medium text-text-primary">
-                    {pm.label}
-                    {pm.sources.length > 1 && (
-                      <span className="block text-xs font-normal text-text-muted">
-                        {pm.sources.map(sourceLabel).join(" · ")}
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums">{pm.n.toLocaleString()}</td>
-                  <td className={`py-2.5 pr-4 text-right tabular-nums font-semibold ${
-                    pm.ece < 3 ? "text-green-600" : pm.ece < 5 ? "text-blue-600" : "text-orange-600"
-                  }`}>
-                    {pm.ece.toFixed(1)}pp
-                  </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums text-text-muted">
-                    {pm.mce.toFixed(1)}pp
-                  </td>
-                  <td className="py-2.5 text-right tabular-nums">{pm.brier.toFixed(4)}</td>
-                </tr>
+                  row={pm}
+                  sourceLabel={sourceLabel}
+                  toggleLabel={cohort.toggleLabel}
+                />
               ))}
               <tr className="border-t-2 border-surface-border font-semibold">
                 <td className="py-2.5 pr-4 text-text-primary">Combined</td>
@@ -1321,6 +1331,11 @@ export default function CalibrationPage() {
         {providerShapeNote && (
           <p className="text-xs text-text-muted mb-4" data-testid="calibration-shape-annex-note">
             {providerShapeNote}
+          </p>
+        )}
+        {withheldNote && (
+          <p className="text-xs text-text-muted mb-4" data-testid="calibration-withheld-sources-note">
+            {withheldNote}
           </p>
         )}
         <div className="flex flex-wrap gap-2 mb-4">
