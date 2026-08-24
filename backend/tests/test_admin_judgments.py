@@ -602,6 +602,22 @@ def test_unattributed_row_still_needs_the_operator_gate(monkeypatch):
     assert db.rows == [judgment]
 
 
+def test_a_surface_name_nobody_listed_is_still_unattributed():
+    # The guard is "is this an address", not "is this on the list". Production
+    # carries `web` (61 rows) and `native` (4) today, and the next surface will
+    # arrive without anyone editing _UNATTRIBUTED_REVIEWERS. Forgetting must fail
+    # CLOSED — an unlisted literal treated as an owner would be deletable by
+    # anyone who resolved to that same string.
+    for literal in ("web", "native", "alex", "kid", "", "  ", "ios", "cron", "backfill"):
+        assert admin_judgments._judgment_owner(_judgment(reviewer=literal)) == ""
+
+    # ...and an address is owned, whoever it belongs to.
+    assert (
+        admin_judgments._judgment_owner(_judgment(reviewer="someone@example.com"))
+        == "someone@example.com"
+    )
+
+
 def test_attended_operator_can_still_delete_any_row(monkeypatch):
     # The capability that existed before this change did not go away; it stopped
     # being the ONLY one.

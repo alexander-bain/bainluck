@@ -1247,8 +1247,11 @@ async def create_judgment(
     }
 
 
-#: Reviewer values that name a surface or a default, not a person.
-_UNATTRIBUTED_REVIEWERS = {"native", "alex", "kid", ""}
+#: Reviewer values that name a surface or a default, not a person. Production
+#: carries all of these today; the list is documentation, not the test —
+#: ``_judgment_owner`` requires an address, so a surface name added tomorrow is
+#: unattributed by construction rather than by remembering to list it here.
+_UNATTRIBUTED_REVIEWERS = {"native", "alex", "kid", "web", ""}
 
 
 async def _resolve_reviewer_identity(request, db) -> str | None:
@@ -1271,9 +1274,17 @@ def _judgment_owner(judgment) -> str:
     ``"native"``/``"alex"`` stays on the row — that is a LABEL, and nobody owns
     it. Returning ``""`` for the second case is what keeps "signed in as Alex"
     from silently meaning "may delete every row a script ever wrote".
+
+    The test is "is this an address", not "is this on a list of surface names".
+    The list would have to grow every time a surface is added, and the failure
+    mode of forgetting is the dangerous direction: a new literal that nobody
+    listed would be treated as an owner, and would then be deletable by whoever
+    managed to resolve to that same string.
     """
     value = (getattr(judgment, "reviewer", None) or "").strip().lower()
     if value in _UNATTRIBUTED_REVIEWERS:
+        return ""
+    if "@" not in value:
         return ""
     return value
 
