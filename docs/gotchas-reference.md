@@ -4,6 +4,175 @@ CLAUDE.md carries a curated **hot list** (the ~47 rules that most often prevent 
 
 > **Doctrine (Alex, Queue #207): read-side exclusion protects metrics; it never closes an issue.** A curve exclusion, display suppression, or `WATCH`-not-`RED` reclassification stops a bad class from lying to a metric — but the defect is still live. Every excluded class carries a fix-or-documented-loss follow-up (root cause fixed, OR loss quantified: count + ledger). "Stopped counting it" ≠ "fixed it." Corollary for regrades: **verify-before-regrade, ledger-first** — quote the before/after ledger and confirm the class is what you think (e.g. #1112's Class-A vs the 15 stale-stat_model false positives that a blind pass would have corrupted) BEFORE the bulk write.
 
+## Index — every entry in one line
+
+*Generated 2026-08-24. **Regenerate whenever an entry is added.** This index is a claim about the file
+below it, so it goes stale the moment the catalog grows — the rulings index has a CI check in both
+directions for exactly this reason, and this one does not have one yet (tracked separately). Verified
+against the catalog on 2026-08-24: the numbered entries below are exactly the 138 in this file.*
+
+Coverage: entries #16–#153, contiguous (138 entries). Entries #1–#15 are not in this file (they live as the CLAUDE.md hot list);
+nothing ≥ #154 appears here. The doctrine block at the top (read-side exclusion never closes an issue; verify-before-regrade,
+ledger-first) is unnumbered and precedes the catalog.
+
+## Items 16–105 (file section: "Items 16-75 (overflow and deep-dive notes)" — actually runs through #105)
+
+#16 — Delete from the 8+ FK tables before removing an event row; use raw SQL, not ORM db.delete(), to avoid autoflush FK violations.
+#17 — Kalshi auto-creates pm_ events when none match; guard blocks new duplicates — clean historical orphans via admin endpoints.
+#18 — Keep the quota guard `remaining`-driven; never add a QUOTA_GUARD_EXPIRY/date constant — a hardcoded expiry silently disabled it.
+#19 — Route ALL team-name matching through utils/name_normalization.py; expand city abbreviations before token overlap scoring.
+#20 — Championship grid: apply the Kalshi 0.45-0.65 noise filter and enforce P(round N) >= P(round N+1); watch esports "Masters" leaking into golf.
+#21 — Frontend-only changes need no Heroku step but still need the master-write lock; CI's Heroku deploy transport is live — do not delete it.
+#22 — Never show 100%/0% probabilities for finished events — filter post-game completion probs; use opening odds or aggregate instead.
+#23 — Derive chart domain from commenceTime + last ESPN/score timestamp; never constrain it solely from (possibly sparse) odds data.
+#24 — In classifyPlayoffStage(), check conference patterns BEFORE championship patterns or "Eastern Conference Champion" misclassifies.
+#25 — compute_aggregate_probability() is the single source of truth; never display raw odds_snapshots without the aggregate fallback.
+#26 — Pipe Python through bash with quoted heredocs (python3 << 'PYEOF') to prevent shell expansion and != escaping issues.
+#27 — Filter non-winner golf markets via _NON_WINNER_MARKET_RE; only outright winner/champion markets go in card hero probabilities.
+#28 — Use EvolutionView's positionOptions prop to switch markets; pass entityLabel="Teams" for team sports.
+#29 — Don't trust "PGA Tour" labels for golf events — classify tours from DataGolf's `tour` field.
+#30 — isTournamentLive() must date-validate: never "live" past end_date + 1 day; check schedule_status === "completed" first.
+#31 — Append the `_womens` suffix when _WOMENS_RE matches so men's and women's golf majors group (and display) separately.
+#32 — Championship grid uses sqrt-scaled inline bars (sqrt(prob)/sqrt(0.4) width) with probability-banded font weights, not heat maps.
+#33 — 7d/24h/today share one SWR cache key (filtered client-side); only "Season" fetches separately; keep keepPreviousData: true.
+#34 — playoffs.py must return market_id on each grid column — the frontend builds evolution-chart stage pills from them.
+#35 — When a cup event has exactly 2 golfers (teams), render CupCard (left/right + probability bar); detect via _isCupEvent().
+#36 — Never re-import a name inside a function body (Py 3.12+): a late `from datetime import timedelta` makes earlier uses UnboundLocalError.
+#37 — Kalshi futures tickers don't start with Odds API sport keys — use _SPORT_TO_KALSHI_ROOTS in the Related Futures sport filter.
+#38 — FuturesMarket.market_tier is NULL for most markets — populate tier during Kalshi/Polymarket upserts before relying on tier queries.
+#39 — The Team columns are logo_url_small / logo_url, not logo_small — Team.logo_small raises AttributeError.
+#40 — Polymarket neg-risk markets return null outcomePrices in bulk — fall back to bestBid/bestAsk midpoint or lastTradePrice.
+#41 — Play-in markets are NOT conference championships — exclude them from the grid entirely (return None), never route to make_playoffs.
+#42 — Skip Odds API /scores for ESPN-mapped sports (ESPN covers them every 60s); use it only for non-ESPN sports.
+#43 — Daily burn chart: scale per-task increments to the official x-requests-used total so the chart never retroactively shrinks.
+#44 — EOM quota forecasts must use the two most recent COMPLETE days — always exclude today's partial day.
+#45 — Polymarket game events: create one FuturesMarket per sub-market (own condition_id); don't flatten. NegRisk sub-markets ARE outcomes.
+#46 — Never mix ORM attribute writes with Core SQL updates in one session — use Core/raw SQL for ALL task writes, then sync the ORM object.
+#47 — The admin auth env var is ADMIN_TOKEN (ADMIN_SECRET is only a fallback) — reference ADMIN_TOKEN in code, docs, and curl.
+#48 — GET /api/events/{id} must expose box_score_data or PlayerPropsDashboard falls back to "pre" (probability) mode.
+#49 — Never delete a migration file that has run on Heroku — a missing revision blocks ALL migrations, and the Procfile masks the failure.
+#50 — Always run `npm run build` locally — Vercel runs next build (ESLint + rules-of-hooks); tsc --noEmit passing proves nothing.
+#51 — Keep _KALSHI_TEAM_ABBREVS complete — missing ticker abbreviations force name-based extraction that fails ILIKE matching.
+#52 — Strip diacritics (unicodedata NFD) before StatPal fixture team-name matching — exact string match fails on Montréal vs Montreal.
+#53 — Every rate/coverage metric needs a denominator where 100% is structurally achievable — exclude resolved/closed/impossible rows.
+#54 — Never read NWPathMonitor.currentPath before start(queue:) — it is always .unsatisfied; use pathUpdateHandler or a continuation.
+#55 — Parse BOTH tournament.match and tournament.week in StatPal season-schedule — playoff games live in tournament.week.
+#56 — StatPal _normalize_status() collapses periods to "live" — use raw_status on StatPalFixture to preserve Q3/1H/HT.
+#57 — Event merges must UPDATE the six non-CASCADE FK tables to the survivor before deleting the orphan event.
+#58 — Normalize independent binary-market probabilities before display: if the sum exceeds 1.05, divide each by the sum.
+#59 — Treat sports futures with a 90%+ leader as effectively resolved unless the leader had a real underdog/surprise journey.
+#60 — Pin hooks must sync to the server API on every pin/unpin when authenticated — localStorage-only pins are invisible cross-platform.
+#61 — Update EXPECTED_ENTRIES in tests/test_tasks_wiring.py whenever adding a beat_schedule entry — CI fails otherwise.
+#62 — Gmail send uses an OAuth2 refresh token (not a service account); the OAuth Playground redirect URI must NOT have a trailing slash.
+#63 — Polymarket commence_time is the market CREATION date — closing-line lookups before it find nothing; use the Part C rescue.
+#64 — Never use Polymarket volume as an activity proxy — sub-market rows have volume NULL; use snapshot count or price_moved.
+#65 — Wire every new Celery task into beat_schedule — an unwired task cost 23K outcomes their snapshots; the wiring test now catches it.
+#66 — status='closed' events are FINISHED games — calibration/closing-line queries must use status IN ('completed','closed').
+#67 — Kalshi golf commence_time is the resolution date — fix to the DataGolf start_date via _fix_golf_commence_times() before calibration.
+#68 — Keep background-queue scheduling under the drain rate (~23 tasks/hr at concurrency=2); monitor celery-debug, purge in emergencies.
+#69 — DB-only fallback: set golf commence_time = close_time - 4.5 days when DataGolf is unreachable — imprecise but prevents stale cards.
+#70 — is_winner backfill needs 3 passes (clean resolution / mutually exclusive / independent thresholds) — one heuristic crowns wrong winners.
+#71 — Short-circuit the Polymarket group_id API scan when zero null-group_id rows remain — the ~200K-event scan takes 10+ minutes.
+#72 — Never use `if: secrets.X != ''` at step level in GitHub Actions (it rejects the workflow) — use a shell [ -n "$X" ] check in run:.
+#73 — Add a ±12h commence_time filter to grouped sub-market queries — group_id alone leaks Game 1 sub-markets onto Game 2's page.
+#74 — Use the get_optional_user dependency on the bug-report endpoint so user_id is set for authed users without requiring auth.
+#75 — Extracted Swift files need their own imports and module-visible helpers; verify the old class definition was removed from the source file.
+#76 — Store user_email on the bug report at creation; enqueue "fixed" email only on the status transition, with summary, valid email, unsent.
+#77 — Search FTS weighting is query-time only — if indexing is needed later, make it an explicit migration and measure real traces first.
+#78 — Exclude impossible pairs from link-rate denominators — 100% must be structurally achievable or the metric is permanent noise.
+#79 — Gate headline-keyword demotion bypasses on Tier 1/2 league context; only elimination/buzzer/walk-off (and EI>=85) bypass unconditionally.
+#80 — _MAJOR_ELECTION_RE is an ALLOWLIST — add new countries' elections to it; non-matching election markets get the -30 penalty.
+#81 — Dismissals propagate via story keys — a broad new key makes one dismissal suppress the whole class for 14 days; keep keys narrow.
+#82 — Semantic-dismiss similarity must exclude generic category/type/archetype/format tokens; keep the soft -0.30 penalty and 50-item cap.
+#83 — If the harness blocks literal `git push`, use `git -c push.default=simple push origin master` — don't misread the block as auth failure.
+#84 — Sentry alert intake needs SENTRY_AUTH_TOKEN with project:read/event:read/org:read plus SENTRY_ORG and SENTRY_PROJECT secrets.
+#85 — rollback() expires ORM objects even with expire_on_commit=False — copy scalars before commit/rollback loops; use Core update() after.
+#86 — Creating Sentry alert rules needs alerts:read+write — use the idempotent scripts/setup_sentry_alerts.py, not the read-only intake token.
+#87 — Event Registry structured match must include completed AND closed in its status filter, or completed events spawn orphan duplicates.
+#88 — Give every emergency quota-conservation measure a specific revert date (TODO + usage alert) — March 2026's went 2+ months unreverted.
+#89 — Use a ±28h (not ±4h) Event Registry match window; pick the closest candidate by time to avoid doubleheader false matches.
+#90 — Never close a bug on deploy — close only on measured production evidence; otherwise label "blocked: awaiting verification".
+#91 — Board hygiene is mandatory: move cards as you go, comment at transitions, and move to Done only with linked measured proof.
+#92 — Commit migration files immediately; check git status for untracked alembic/versions/*.py before pushing — a missing revision 503s everything.
+#93 — Never call run_async() inside async FastAPI endpoints — await directly; run_async() is only for sync Celery wrappers.
+#94 — Derive Kalshi market status from KalshiMarket.status on upsert (resolved when all nested closed/settled); never hard-code "open".
+#95 — Cache any endpoint loading >1000 ORM objects with relationships (Redis + Celery precompute) — heavy selectinload OOMs the 512MB dyno.
+#96 — Size calibration SQL LIMITs to the population (600K, not 200K); the dedicated admin endpoint runs the phase standalone.
+#97 — Settled Kalshi markets stay status='open' in our DB — run the two-phase settled-events backfill (status first, then snapshots).
+#98 — Decouple status resolution (no limit) from snapshot creation (limit-aware) — a shared counter starves later-listed series.
+#99 — Use Kalshi's BATCH candlestick endpoint for settled markets — it works; the per-market endpoint is deprecated (404).
+#100 — Track winner coverage at MARKET level (BOOL_OR(is_winner) per market), never outcome level — outcome rate is bounded by market mix.
+#101 — Kalshi settled events return 200 forever but drop markets[] past the ~74-86d retention cliff — give recovery rails a retention floor.
+#102 — API clients returning Optional[T] must catch only 404 as None — retry or re-raise 429s, timeouts, and 500s.
+#103 — box_score_data is a wrapper dict — iterate box_score_data["players"], never the top level, or no player name ever matches.
+#104 — The sandbox blocks literal api.bainluck.com curls — source ~/.claude/.env and use $BAINLUCK_API / $ADMIN_TOKEN env vars instead.
+#105 — Kalshi has THREE ticker formats — verify which one an endpoint expects before declaring it broken; old data only via settled pagination.
+
+## Items 106–153 (file section: "The June 2026 creation-freeze war + July data-integrity classes" and later ops/testing entries)
+
+#106 — asyncio.to_thread does NOT free the loop for json.loads (C parser holds the GIL) — use orjson, smaller pages, and a resumable cursor.
+#107 — Never build a raw sync redis client inside tasks/ — route through get_redis_client() (bounded 5s timeouts) or a hung Redis freezes the loop.
+#108 — Parse admin db-query JSONB with an ast.literal_eval fallback (it emits Python repr), and never client-count its 1000-row-capped output.
+#109 — Bounded backfills must iterate oldest-first (or explicitly target the stale tail) — newest-first can structurally never reach it.
+#110 — Wrap every feed/scoring per-item loop body in its own try/except so a poison item is skipped, not fatal; test that siblings survive.
+#111 — Scope diversity caps by card type — exempt game events explicitly, and guard-test BOTH the flood cap and the adjacent surface.
+#112 — Test time anchors: offset FIRST then truncate, or freeze the clock; an anchor with an `if` on the clock is the defect. Use clock_sweep.py.
+#113 — Escape literal colons in LIKE patterns inside SQLAlchemy text() (parsed as bind params); never wrap scheduled work in a silent catch-all.
+#114 — completed_at >= commence_time is a hard invariant — a violation means a wrong-event data merge; treat any recurrence as a matching-layer P1.
+#115 — Inspect `git log origin/master..HEAD` before committing in a shared working tree; use explicit-path git add, never -A or `.`.
+#116 — Headless xcodebuild dies on #Preview macro sandboxing — pass OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -disable-sandbox'.
+#117 — Worktree xcodebuild must borrow master's SPM checkout: -clonedSourcePackagesDirPath plus -disableAutomaticPackageResolution.
+#118 — Never divide a *_24h counter by 24h — read its TTL-derived window fields, or difference two reads over a known wall-clock gap.
+#119 — Never judge task speed from last_duration_ms (one sample = the cheap path) — compute p95 from the rolling durations list.
+#120 — Never date/annotate a key with a SECOND key of its own lifetime — derive the window from the counter's own TTL; siblings drift.
+#121 — A test comparing production to the constant production reads detects nothing — mutate the constant and require a red test.
+#122 — Test doubles must MODEL the operation a bug would abuse, not just record calls — and run mutation oracles on UNMUTATED source first.
+#123 — Compare Shared Hit Blocks only between same plan-node types; read Heap Fetches beside index-only scans; arbitrate via endpoint A/B.
+#124 — Never pipe or wrap a gate — redirect to a file, print the gate's OWN exit code, and read its VALUE: only exit 1 is a test result.
+#125 — Use `heroku run:detached` for hand-applied DDL (pg:psql/logs are egress-blocked); persist output to Redis and checkpoint as you go.
+#126 — Kill switches must fail SAFE: absent/corrupt/unreachable all resolve to the conservative value, initialised BEFORE the read.
+#127 — Never f-string a set/dict/callable into a digest — repr order is per-process; sort rendered text and test via subprocess + negative control.
+#128 — Before asserting X is ABSENT, prove the resource EXISTS — a 404 body satisfies every absence assertion you can write.
+#129 — When fixing a rule, grep for its other copies and make them assert against each other; guard enumerations with a loop over the enumeration.
+#130 — A test asserting defective behaviour locks the defect in — read assertions as product claims; amend unsignable ones in the same commit.
+#131 — Plan mutations from the CONTRACT before trusting tests; build missing instruments first; an equivalent survivor is a SOURCE defect.
+#132 — Use `!= null` (or Number.isFinite), never `!== null`, for optional payload keys — test with the keys genuinely missing.
+#133 — Grep for live importers before reusing a component — shared means imported, not well-named; retire dead components on discovery.
+#134 — A census about a page/payload must read origin/master and production, not your branch base; ask which artifact the requester was looking at.
+#135 — Require the POSITIVE terminator (** TEST SUCCEEDED **) plus a test-count floor — a truncated log with zero failures is not a pass.
+#136 — Resolve simulator destinations to a UDID before xcodebuild — exit 70 with no verdict is a stale destination, not truncation.
+#137 — Never put fix/close/resolve before an issue reference unless you mean it — GitHub ignores negation, colons, case, blank lines; use "re #N".
+#138 — Never edit source while pytest is in flight — inspect.getsource slices the NEW file at OLD offsets; re-run clean first.
+#139 — Truncate or uniquify gate-log paths per run and invoke gates by absolute path — a fixed-path log outlives the run and fakes the verdict.
+#140 — A budget computed from completions can never be raised by the runs it cancels — ask what would RAISE any derived limit.
+#141 — `gh run rerun` replays the ORIGINAL merge ref — after fixing the base, close/reopen the PR to mint a fresh merge ref.
+#142 — Every worker/task/script ships with one IMPURE test that STARTS its entry point (ruling 102) — pure tests never prove wiring.
+#143 — Grade calibration cells on ECE and use signed gap only as a direction hint — two opposite errors cancel in gap but never in ECE.
+#144 — Check opening_captured_at against resolution_date before trusting opening_probability; probe null, cp=opening, and age together.
+#145 — Re-derive header status claims from source at each publication, or date them as quotations — "met" and "closed" differ.
+#146 — A percentile pinned at a limit measures only the CLIP RATE — read the histogram and success count; check whose clock it hits.
+#147 — A defect's population is the set of places that RENDER it — read the components, don't grep for the shared constant.
+#148 — Widen signatures with an OPTIONS OBJECT, never a bare scalar — .map(fn) hands the new param the index; grep the name without "(".
+#149 — db-query: timeout_ms is explain-only (row path fixed at 10s); "multi-statement" refusals count semicolons in COMMENTS — strip, then EXPLAIN.
+#150 — Give each feed tier a quota and dedupe before it — one ORDER BY + LIMIT across tiers is winner-takes-all; test flood AND slate directions.
+#151 — SQLAlchemy JSON stores Python None as JSON 'null', so IS NOT NULL is true for nothing — also compare the text form ('null', '{}').
+#152 — Patch one level BELOW the layer under audit; prove writes through the reader its consumer uses — a stub proves only the stub.
+#153 — Advance resume cursors only past COMPLETED rows, never selected ones; report all four counts; never wrap while deferred.
+
+## Referenced but not defined here
+
+- **#1–#15** — not present in this file; coverage begins at #16. The intro says CLAUDE.md carries the curated hot list; the pre-16 entries apparently live there.
+  Explicitly cited: **#8** (ORM/Core mixed-write JSONB loss on `win_probability_sources`, cited inside #46).
+- **Hot-list-numbered cross-references** — many in-entry citations use CLAUDE.md HOT-LIST numbering, not this catalog's: e.g. "#53 (an empty 200 is a response
+  shape, not a fact)", "#54 (`cmd | tail` reports tail's exit code)" — the full-catalog form of that #54 is #124 here. Stated mappings: hot-list 38–47 ↔ catalog
+  #106–#115; hot-list #50 ↔ #116; CLAUDE.md #35 = the Kalshi retention window (full form in #101). Other hot-list citations with no full-catalog entry in this
+  file (definitions in CLAUDE.md): #31 (hand-applied indexes), #32 (matching layer), #36, #40, #41, #43, #48 (non-detached `heroku run` no-exec), #49 (Sentry
+  count is lifetime), #51 (cwd is session state), #53.
+- **Rulings and doctrine** cited by number (rulings 017, 030, 047, 050, 055, 089, 102, 110; doctrine clauses 2 and 9) are defined in the rulings files /
+  `docs/doctrine.md`, not in this catalog.
+
+**Gap note:** no numbering gaps inside this file — entries run contiguously #16–#153; #1–#15 and anything ≥ #154 are defined elsewhere (CLAUDE.md hot list / later additions), not here. **#154 (the orphan-strip gotcha) is banked in PR #2140 and lands when that merges** — the first regeneration this index will owe.
+
 ---
 
 ## Items 16-75 (overflow and deep-dive notes)
