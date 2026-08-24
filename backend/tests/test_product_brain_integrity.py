@@ -767,7 +767,31 @@ def test_ruling_numbers_are_unique() -> None:
 #:
 #: Verified index <-> files in BOTH directions on the merged tree: 129 files, 129 index
 #: lines, zero orphans either way, ascending, no duplicates, contiguous 1..129.
-MINIMUM_BANKED_RULINGS = 129
+#: INT-116 (2026-08-24): **131**, COUNTED on this merged tree, not derived.
+#: `program/latency-77` (LAT-P086) banks **130** ("a window that straddles a release is
+#: inconclusive") and **131** ("index DDL with no code half-runs, attended, outside Alembic").
+#: `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = **131** on the merged tree.
+#: The lane claimed both in `RULING-CLAIMS.md` after a `git fetch` in the same turn and swept
+#: 575 local and remote refs for `docs/rulings/13[01]-` — holders_found = 0.
+#:
+#: A FIFTH specimen of the stale-declared floor, and the cleanest one yet, because BOTH sides
+#: of this conflict were wrong in the SAME direction and for the same reason. HEAD said **129**
+#: and the branch said **121**; the branch's own comment is scrupulous — it counted its tree
+#: rather than adding a delta, exactly as ruling 088 demands — and it was still 10 low, because
+#: it counted against `origin/master` = `b5c2a750` and master has moved twice since (`56b71ac6`,
+#: then `ea07f81e`). Method was not the failing. Correct method applied to a tree that expired
+#: before the merge resolved is still a stale declaration, which is the whole of ruling 088:
+#: the tree you count must be the tree you are landing, and only the merge knows what that is.
+#:
+#: STILL A COUNT, NOT A CEILING. The count equals the highest file again — 131 files numbered
+#: 1..131, nothing missing in the range — for the second wave running. That is still a
+#: coincidence of this tree and not an invariant; the next claim race reopens a gap, and the
+#: correct response to a gap is to find its holder in `RULING-CLAIMS.md`, never to renumber
+#: down into it. Next free number is **132**.
+#:
+#: Verified index <-> files in BOTH directions on the merged tree: 131 files, 131 index lines,
+#: zero orphans either way, ascending, no duplicates, contiguous 1..131.
+MINIMUM_BANKED_RULINGS = 131
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

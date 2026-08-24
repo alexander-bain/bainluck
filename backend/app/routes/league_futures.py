@@ -18,7 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Event, FuturesMarket, FuturesOutcome, Sport
-from app.routes.events import _build_team_lookup, _format_team_data
+from app.routes.events import (
+    _build_team_lookup,
+    _format_team_data,
+    _normalize_futures_dedup_key,
+)
 from app.services import get_db
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.game_state import normalize_live_game_state
@@ -694,7 +698,11 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         "more_markets": [],
     }
 
-    seen_canonical: dict[str, dict] = {}
+    # LAT-P086 (F1, Fable directive 2026-08-24 item 1). Keyed on the market's
+    # NAME, via the one shared implementation in `app.routes.events` — never on
+    # `canonical_market_key`. See the block at the bottom of this loop for what
+    # the old key cost; the short version is that a category is not an identity.
+    seen_dedup: dict[str, dict] = {}
 
     # UX-P062 (#1743), register E8 / ruling 025 clause 3. The two price-based skips
     # below used to be bare `continue`s, so a section that lost every row to them
@@ -816,20 +824,56 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             "section": section,
         }
 
-        # Deduplicate by canonical key (keep highest-tier / most outcomes)
-        ck = market.canonical_market_key
-        if ck:
-            if ck in seen_canonical:
-                existing = seen_canonical[ck]
-                if len(outcomes_data) > len(existing["top_outcomes"]):
-                    # Remove old from its section
-                    old_section = existing["section"]
-                    sections[old_section] = [m for m in sections[old_section] if m.get("canonical_market_key") != ck]
-                    seen_canonical[ck] = market_data
-                else:
-                    continue
-            else:
-                seen_canonical[ck] = market_data
+        # ── Deduplicate by NAME (keep the row with the most outcomes) ──
+        #
+        # LAT-P086 (F1). This used to key on `canonical_market_key`, which is
+        # the second site of the defect ruled at `events.py:101-157` under
+        # LAT-P038/#1769 — and the worse of the two, because search only
+        # *ranked* by that key while this loop DELETES siblings by it.
+        #
+        # `compute_canonical_market_key` builds `{sport}:{league}:{category}:
+        # {season}`. Nothing in that string names a market, so every market a
+        # league runs in a season collides. Measured on production 2026-08-24
+        # against this route's own 200-row pool query for `soccer_epl`,
+        # counting only rows that reach this line (tier not in 1/2/4):
+        #
+        #     rows reaching the dedup ............. 168
+        #     of those, carrying a canonical key ... 80
+        #     distinct canonical keys among them .... 8
+        #     rows DELETED ......................... 72
+        #
+        # `soccer:EPL:championship:2026-27` alone held 23 of them: the EPL
+        # Playmaker Award, "EPL: Next Chelsea Manager?", the Egypt Premier
+        # League runner-up, the Ukrainian Premier League 3rd-place finish, the
+        # English Premier League top goalscorer. Twenty-two deleted so the
+        # twenty-third could render — not duplicates, not even the same league.
+        #
+        # Two further consequences, both fixed here:
+        #
+        # 1. The removal filtered a whole section by the shared key, so it took
+        #    every row carrying it rather than the one being replaced. That was
+        #    invisible only because the dedup had already stopped the others
+        #    from being appended. It now keys on the row's `id`.
+        # 2. The key spans tiers, so the removal reached ACROSS sections — the
+        #    tier-3 award above was appended to `awards` and then deleted by a
+        #    tier-5 manager market. The name key carries `market_tier`, so
+        #    cross-tier collisions cannot happen at all now.
+        #
+        # The deletions were also invisible to the envelope: `section_counts`
+        # is derived from `sections` after this loop and `total` is
+        # `shown + resolved_skipped`, so canonically-deleted rows were
+        # subtracted before anything counted them (ruling 025 clause 3).
+        dedup_key = _normalize_futures_dedup_key(market)
+        existing = seen_dedup.get(dedup_key)
+        if existing is not None:
+            if len(outcomes_data) <= len(existing["top_outcomes"]):
+                continue
+            # Replace the thinner row — and remove THAT ROW, by id.
+            old_section = existing["section"]
+            sections[old_section] = [
+                m for m in sections[old_section] if m["id"] != existing["id"]
+            ]
+        seen_dedup[dedup_key] = market_data
 
         sections[section].append(market_data)
 

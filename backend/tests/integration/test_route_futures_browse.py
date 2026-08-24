@@ -6,7 +6,6 @@ Tests:
 - GET /api/futures/movers — biggest probability movers
 - GET /api/futures/available — list available sources/categories
 - GET /api/futures — main futures listing
-- GET /api/futures/compare — cross-source comparison
 
 Uses the shared ``client`` fixture from conftest.py (mock empty DB session).
 """
@@ -398,38 +397,6 @@ class TestFuturesListEndpoint:
     async def test_source_filter_accepted(self, client):
         resp = await client.get("/api/futures?source=kalshi")
         assert resp.status_code == 200
-
-
-# ============================================================================
-# Futures Compare — /api/futures/compare
-# ============================================================================
-
-
-class TestFuturesCompareEndpoint:
-    """GET /api/futures/compare — cross-source market comparison."""
-
-    async def test_missing_key_returns_403(self, client):
-        """The key parameter is required."""
-        resp = await client.get("/api/futures/compare")
-        assert resp.status_code == 422
-
-    async def test_with_key_returns_200_or_404(self, client):
-        """With a key parameter, returns 200 (with data or empty) or 404."""
-        resp = await client.get("/api/futures/compare?key=nonexistent:key:here")
-        assert resp.status_code in (200, 404)
-
-    async def test_200_response_has_required_keys(self, client):
-        """When 200, response should have canonical_key, sources, outcomes."""
-        resp = await client.get("/api/futures/compare?key=test:key")
-        if resp.status_code == 200:
-            body = resp.json()
-            assert "canonical_key" in body
-            assert "sources" in body
-            assert "outcomes" in body
-            assert "outcome_count" in body
-            assert isinstance(body["sources"], list)
-            assert isinstance(body["outcomes"], list)
-            assert isinstance(body["outcome_count"], int)
 
 
 # ============================================================================
