@@ -88,8 +88,40 @@ No index. The column is only ever read by primary key or by ``firebase_uid``
 lookup, both of which are already indexed; an index on a boolean whose
 selectivity is "one row out of all of them" would never be chosen anyway.
 
+## RE-POINTED 2026-08-24 (queue 395) — ``down_revision`` moved from
+## ``add_prov_play_value`` to ``anchors_and_captures``
+
+This revision and ``anchors_and_captures`` (PR #2119, the folded #1946 slot) both
+declared ``down_revision = "add_prov_play_value"``. Each is a valid single-head
+extension **in isolation**, which is exactly why both CIs were green and neither
+could see the other: CI runs one branch's tree, and one branch's tree contains
+one of these files. Merging both leaves two heads, and Alembic refuses to
+upgrade from an ambiguous head — so the second PR to merge would have failed the
+**Heroku release phase**. That is an outage, not a red build, and it would have
+arrived at merge time with nothing on either PR predicting it. Measured, not
+reasoned about: with both files in one tree at ``origin/master``,
+``pytest tests/test_alembic.py`` exits **1** with
+``Multiple alembic heads detected: ['add_users_is_admin', 'anchors_and_captures']``
+(queue 394, REPORT 394 item 5).
+
+**Why this file moved and not the other one.** The re-point decides merge ORDER,
+and the order is not a preference here — ``anchors_and_captures`` is under a hard
+external date. Kalshi retention (``app/utils/kalshi_retention.py``) makes 1,202
+markets permanently unverifiable on **2026-08-28**, and the settlement-capture
+sweep cannot write a row until its table exists. This column is under no clock at
+all. So #2119 goes first and this revision chains behind it.
+
+**The consequence, stated plainly so a future reader is not surprised:** this
+revision now has a parent that only exists on PR #2119. It is **unrunnable until
+#2119 merges** — that is the intended coupling, not an accident, and it is the
+cheaper failure of the two (a migration that cannot start is visible before it
+runs; two heads are discovered by the release phase in production). If #2119 is
+ever abandoned rather than merged, this ``down_revision`` must be moved back to
+whatever master's head is at that time — do **not** merge this PR first and fix
+it afterwards.
+
 Revision ID: add_users_is_admin
-Revises: add_prov_play_value
+Revises: anchors_and_captures
 Create Date: 2026-08-20
 """
 
@@ -98,7 +130,10 @@ from alembic import op
 
 # revision identifiers, used by Alembic. (<=32 chars — gotcha #1.)
 revision = "add_users_is_admin"
-down_revision = "add_prov_play_value"
+# RE-POINTED 2026-08-24 (queue 395): was "add_prov_play_value", which collided with
+# `anchors_and_captures` (#2119) on the same parent. See the RE-POINTED section above.
+# This revision cannot run until #2119 merges — deliberate.
+down_revision = "anchors_and_captures"
 branch_labels = None
 depends_on = None
 
