@@ -149,7 +149,30 @@ def _files(base: str, all_tracked: bool) -> list[Path]:
         cmd = ["git", "-C", str(REPO), "diff", "--name-only", f"{base}...HEAD", "--", "*.py"]
     out = subprocess.run(cmd, capture_output=True, text=True)
     if out.returncode != 0:
-        raise SystemExit(f"scan: git failed ({out.returncode}): {out.stderr.strip()}")
+        # EXIT 2, NOT 1 — this is the harness failing, not a finding.
+        #
+        # `raise SystemExit("message")` prints the message and exits **1**, the
+        # same code this scanner reserves for RESIDUE FOUND. So an unresolvable
+        # base — the ordinary state of a shallow PR checkout, where
+        # `origin/master` was never fetched — reported as though a mutant had
+        # been found sitting in the tree. The docstring above already promised
+        # `2` for "the scan could not be performed"; only the code disagreed.
+        #
+        # This is gotcha #54's amendment applied to our own tooling: `1` is a
+        # result and every other code is a story about the harness. A scanner
+        # that spends the result code on its own inability to run destroys the
+        # distinction it exists to enforce.
+        print(
+            f"🔴 scan: CANNOT MEASURE — git failed ({out.returncode}) resolving "
+            f"the diff base: {out.stderr.strip()}",
+            file=sys.stderr,
+        )
+        print(
+            "   Pass B needs a merge base. In CI that means the checkout must "
+            "fetch it (fetch-depth: 0); locally, `git fetch origin master`.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     paths = [REPO / line for line in out.stdout.split("\n") if line.strip()]
     return [p for p in paths if p.is_file()]
 
