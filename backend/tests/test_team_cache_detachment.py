@@ -32,6 +32,7 @@ runs in the sandbox (see the no-local-Postgres constraint) while still using
 the genuine SQLAlchemy machinery rather than a hand-made stand-in.
 """
 
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -263,7 +264,23 @@ async def test_the_next_requests_recover_through_the_real_feed_reader():
 
     # The TTL lapses and a SECOND session rebuilds the cache — the step that
     # used to hand the next rollback a fresh set of victims.
-    events_module._team_cache_time = 0.0
+    #
+    # Age the anchor, do NOT zero it. `_build_team_lookup` measures freshness
+    # with `time.monotonic()`, which on Linux is SECONDS SINCE BOOT, and its
+    # guard is `(now - _team_cache_time) < _TEAM_CACHE_TTL`. Writing 0.0 here
+    # says "cached at boot", which only reads as EXPIRED on a machine whose
+    # uptime already exceeds the 300s TTL. It does on a laptop that has been up
+    # for days; it does not on a freshly-booted CI runner, where the cache
+    # stays FRESH, no rebuild happens, and requests 6-9 see the pre-rebuild
+    # colour. That is exactly how this passed locally and failed on CI at
+    # `fe28d2c3` (INT-112). Offset first, then use — gotcha #44.
+    #
+    # The two other resets in this file, and the one in
+    # `test_route_league_futures.py`, are safe as 0.0 because they also empty
+    # `_team_cache`, and the guard short-circuits on a falsy cache.
+    events_module._team_cache_time = (
+        time.monotonic() - events_module._TEAM_CACHE_TTL - 1
+    )
     rebuilt_rows = [
         _team(primary_color="#111111"),
         _team(id=2, name="Atlanta Falcons", abbreviation="ATL", alternate_names=["Falcons"]),
