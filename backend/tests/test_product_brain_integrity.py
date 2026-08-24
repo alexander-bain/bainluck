@@ -737,7 +737,15 @@ def test_ruling_numbers_are_unique() -> None:
 #: absent and HELD, not lost — 120 is claimed by `lane1` in `RULING-CLAIMS.md` and 122
 #: was surrendered in a claim race (calibration-86 renumbered 122/123 -> 124/125).
 #: Do not "tidy" 125 down to 123.
-MINIMUM_BANKED_RULINGS = 123
+#:
+#: INT-113 (wave 3, 2026-08-24): **125**, COUNTED on this merged tree, not derived.
+#: `program/latency-75`'s held tail banks 126 and 127, so the count rises 123 -> 125
+#: while the branch side of this merge still declared **117**. Neither side's number
+#: was right, which is ruling 088's whole point. Highest file is now **127**; **120**
+#: and **122** remain absent and HELD, so the count still trails the highest number by
+#: two and that gap is correct. Verified index <-> files in BOTH directions: 125 files,
+#: 125 index lines, zero orphans either way.
+MINIMUM_BANKED_RULINGS = 125
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

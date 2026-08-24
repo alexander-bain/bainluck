@@ -1,0 +1,49 @@
+# HEADLINE TYPEAHEAD PROBE SET — FROZEN 2026-08-23 (LAT-P083, ruling 127 item 1)
+#
+# Consumed by:
+#   python3 backend/scripts/probe_typeahead_userfelt.py \
+#       --terms-from file --terms-file docs/audits/latency/headline-probe-terms.txt
+#
+# WHY THIS FILE IS COMMITTED AND FROZEN. The charter amendment requires the
+# headline numbers to be "measured the same way each time". A probe set chosen
+# per cycle is not one measurement taken repeatedly, it is a new measurement
+# each time wearing the same name — and this program has already lost a headline
+# to exactly that: LAT-P076's "80% cold -> 0% cold" was a HEAD-COMPOSITION
+# measurement wearing a warmer-health label, because the probed terms were
+# `_STATIC_FLOOR` rather than the warmed set. It was withdrawn.
+#
+# CHANGING THIS FILE RESETS THE SERIES. A cycle that edits it must say so in its
+# report's headline line and must publish both the old-set and new-set numbers
+# for one overlapping cycle. Otherwise the delta being reported is a delta of
+# instruments, not of latency.
+#
+# 🔴 EVERY TERM MUST ALREADY BE IN THE REAL SEARCH HEAD, and that is a DESIGN
+# CONSTRAINT, not a convenience. `/typeahead` writes to the trending counter the
+# warmer heads from, so probing a term is a VOTE for it. LAT-P082 measured the
+# head with two synthetic terms (`zzq obscure probe lat82`, `qqx another probe`)
+# and thereby put them into an otherwise-empty zset, where they became 2 of the
+# warmer's 40 slots until their bucket expires. A probe set drawn from terms
+# users already search is a rounding error on the distribution; a probe set of
+# invented strings IS the distribution. The measurement must not move what it
+# measures.
+#
+# PROVENANCE of the eight below: the top real-search terms recorded in
+# `search_query_logs` as reported by LAT-P082 (`masters winner`, `stanley cup`,
+# `world series`, `nba champion` — ranks 1, 2, 3, 4), plus four team names that
+# led the pre-#2072 all-time counter and are ordinary user searches
+# (`world cup`, `red sox`, `celtics`, `yankees`). Eight is enough for a median
+# and small enough that one pass costs under ten seconds.
+#
+# The set deliberately spans BOTH shapes the endpoint serves — multi-word
+# futures phrases and single-entity team names — because they take different
+# code paths through the scorer and a set of only one shape would report a
+# headline about half the endpoint.
+
+masters winner
+stanley cup
+world series
+nba champion
+world cup
+red sox
+celtics
+yankees

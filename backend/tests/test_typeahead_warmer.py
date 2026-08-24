@@ -801,7 +801,13 @@ class TestRefreshAheadActuallyRefreshes:
         read_at = src.index("_cached = _rc.get(_cache_key)")
         write_at = src.index("setex(_cache_key, 65")
         assert read_at < write_at
-        assert "return _json.loads(_cached)" in src[read_at:write_at], (
+        # RE-POINTED by LAT-P083/#2117. The early return used to be
+        # `return _json.loads(_cached)` on one line; the parse now happens in
+        # the try (so a corrupt entry still falls through to a rebuild) and the
+        # return is `return _hit`, with the trending write between them. The
+        # PROPERTY under test is unchanged and is the only thing asserted: a
+        # cache hit leaves the function before it can reach the `setex`.
+        assert "return _hit" in src[read_at:write_at], (
             "the cache READ no longer returns early, so a hit may now reach the "
             "setex; re-derive the duty cycle before trusting REFRESH_AHEAD"
         )
@@ -1339,20 +1345,41 @@ class TestTheWarmerDoesNotVoteForItsOwnHead:
 
         from app.routes import events as events_route
 
-        src = inspect.getsource(events_route.typeahead_search)
-        # RE-POINTED by LAT-P080B/#2072: the bare `zincrby` on the all-time key
-        # is gone and the write goes through `search_trending.record_query`.
-        # The CALL is matched, not the bare name, because the name also appears
-        # in the comment above the guard.
+        # RE-POINTED TWICE. LAT-P080B/#2072 moved the write from a bare
+        # `zincrby` to `search_trending.record_query`; LAT-P083/#2117 moved it
+        # again, out of the route body and into `_record_trending`, because the
+        # route has TWO exits and the write only sat at one of them.
+        #
+        # 🔴 THE GUARD IS STRICTLY STRONGER AT ITS NEW HOME, not merely moved.
+        # It now has to hold three things at once, and the third is new:
+        #   1. the write still goes through `record_query`;
+        #   2. `_suppress_trending_write` still gates it, and precedes it;
+        #   3. the guard exists EXACTLY ONCE. A second copy at a call site is
+        #      how one exit keeps the check and the other quietly loses it —
+        #      which is the shape of #2117 itself.
+        route_src = inspect.getsource(events_route.typeahead_search)
+        helper_src = inspect.getsource(events_route._record_trending)
+        module_src = inspect.getsource(events_route)
+
         call = "record_query(get_redis_client()"
-        assert call in src, (
+        assert call in helper_src, (
             "the trending write moved; re-point this guard at its new home"
         )
 
-        guard = "if not _suppress_trending_write.get():"
-        assert guard in src, "the trending write is no longer guarded (#1866)"
-        assert src.index(guard) < src.index(call), (
+        guard = "if _suppress_trending_write.get():"
+        assert guard in helper_src, "the trending write is no longer guarded (#1866)"
+        assert helper_src.index(guard) < helper_src.index(call), (
             "the guard must precede the write it guards"
+        )
+        assert module_src.count("_suppress_trending_write.get()") == 1, (
+            "the suppression guard has been copied out of `_record_trending` — "
+            "two copies is two verdicts (gotcha #128), and the repaired one "
+            "hides the broken one"
+        )
+        # ...and BOTH of the route's exits must reach it. #2117: the cache-hit
+        # exit did not, so warming a term made it uncountable.
+        assert route_src.count("_record_trending(q)") == 2, (
+            "one of `/typeahead`'s two exits stopped recording (#2117)"
         )
 
     @pytest.mark.asyncio

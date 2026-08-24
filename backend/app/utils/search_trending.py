@@ -156,8 +156,23 @@ def record_query(rc: Any, query: str, *, now: float | None = None) -> bool:
         return False
     try:
         key = bucket_key(_now() if now is None else now)
-        rc.zincrby(key, 1, normalized)
-        rc.expire(key, BUCKET_TTL_SECONDS)
+        # ONE round trip, not two (#2117). This used to be a bare `zincrby`
+        # followed by a bare `expire`, which was free while the only caller was
+        # the uncached build. #2117 moves the call onto the CACHE-HIT path —
+        # the fastest request the API serves, ~13 ms p50 — where two extra
+        # synchronous Redis round trips are a measurable fraction of the whole
+        # response. Pipelined, the hit path pays one and the miss path gets
+        # FASTER than it was.
+        #
+        # `transaction=False`: these two commands touch one key and neither
+        # reads, so MULTI/EXEC would buy nothing and cost a round trip. No
+        # fallback branch for clients without `pipeline` — a path exercised
+        # only somewhere nobody tests is the second shape this module's header
+        # already refuses once, for `EXPIRE ... NX`.
+        pipe = rc.pipeline(transaction=False)
+        pipe.zincrby(key, 1, normalized)
+        pipe.expire(key, BUCKET_TTL_SECONDS)
+        pipe.execute()
         return True
     except Exception:  # noqa: BLE001 — a trending counter never takes a request down
         logger.warning("search_trending: write failed", exc_info=True)

@@ -154,6 +154,72 @@ METRICS_NAME: Mapping[str, str] = {
 DEGRADE_P50_RATIO = 1.25
 CENSOR_FRACTION_OF_SOFT_LIMIT = 0.98
 
+# ---------------------------------------------------------------------------
+# THE MATERIALITY FLOOR (#2116, Fable directive 2026-08-23, LAT-P083)
+# ---------------------------------------------------------------------------
+# 🔴 A RATIO WITH NO ABSOLUTE TERM IS MOST SENSITIVE WHERE IT MATTERS LEAST.
+#
+# `DEGRADE_P50_RATIO` alone made the absolute move required to revoke ruling
+# 110's grant proportional to a beat's own p50:
+#
+#     precompute_source_intelligence   pinned  17.5s  ->  +4.4s  fires REVERT
+#     compute_fair_fight_comparison    pinned 147.8s  ->  +37s   fires REVERT
+#     precompute_calibration_main      pinned 1187.8s ->  +297s  fires REVERT
+#
+# — 67x more sensitive to a 4x/day admin precompute than to the one beat a
+# user-facing page waits on. On 2026-08-23 that graded +9.3s of median, with a
+# FALLING p95 at n=8, identically to a five-minute regression on `/calibration`.
+#
+# So a beat now degrades only when BOTH gates trip: the ratio AND an absolute
+# delta in seconds. Fable's words were "absolute seconds, scaled by what
+# consumes the beat", and the scaling is a MEASURED consumer classification
+# rather than a taste dial — every baseline declares its `consumer` and cites
+# where the consumer was found in `consumer_note`.
+#
+# THE THREE CLASSES, and the argument for each number:
+#
+#   `user_page` (30s) — a public page renders this beat's artefact, so a delay
+#       reaches a visitor by pushing back the moment fresh data lands. The
+#       artefact is served from a cache the page reads (`/api/calibration` is
+#       documented at a 1h cache), so 30s is under 1% of the visitor's own
+#       staleness window and is the smallest delta worth revoking a grant over.
+#
+#   `operator_panel` (60s) — an admin page or admin API is the only renderer.
+#       The reader is an operator on a human clock, and a sub-minute shift in
+#       when a multi-hour precompute lands is not observable to them. 60s is
+#       also the coarsest unit an operator's own tooling reports in.
+#
+#   `no_reader` (120s) — nothing renders it. Only schedule pressure and clamp
+#       pressure can hurt, and BOTH are gated elsewhere: P4 grades schedule and
+#       the observation-side censor grades the clamp. The ratio's remaining job
+#       here is to catch a step change, and a step change on a beat nobody
+#       reads is worth two minutes before it revokes a standing grant.
+#
+# WHAT THIS IS NOT. A floor is a way to make a gate quieter, and a gate that
+# cannot go red is a defect this program has already minted twice. Three
+# structural guards, all executable in
+# `tests/test_falsifier_materiality_floor_2116.py`:
+#
+#   1. a ratio trip under the floor grades **`immaterial`** — a named state that
+#      is printed, counted, and carried into `grade_move`'s top-level reason. It
+#      is NEVER folded into `hold`.
+#   2. the floor gates the RATIO only. The observation-side censor (#2071) is
+#      untouched: a newly-saturated beat is `censored` whatever its delta.
+#   3. the floor is CAPPED at the point the censor takes over, so it can never
+#      make a beat ungradeable by itself (`floor_capped_by_censor`).
+#
+# RESIDUAL, STATED: the floor is a MINIMUM, so the ratio still governs slow
+# beats and the sensitivity spread narrows from 67x to ~5x — it does not
+# INVERT. Making the user-facing beat the most sensitive needs a per-consumer
+# CEILING as well, which tightens REVERT and is therefore a decision about
+# ruling 110's grant that this lane does not get to make. Named in #2116 and in
+# the LAT-P083 report as the un-taken second half.
+CONSUMER_FLOOR_S: Mapping[str, float] = {
+    "user_page": 30.0,
+    "operator_panel": 60.0,
+    "no_reader": 120.0,
+}
+
 
 @dataclass(frozen=True)
 class Reading:
@@ -225,6 +291,15 @@ class BeatBaseline:
     samples: int
     successes_24h: int
     failures_24h: int
+    #: WHO READS THIS BEAT'S OUTPUT — #2116's requirement, and required rather
+    #: than defaulted for the same reason `regime` is a field: a beat with no
+    #: declared consumer has no defensible materiality floor, and a default
+    #: would let one be added silently. One of `CONSUMER_FLOOR_S`'s keys.
+    consumer: str
+    #: WHERE the consumer was found. The floor is argued FROM this, so a
+    #: classification with no evidence is a taste dial wearing a measurement's
+    #: name. A test requires it to be non-empty.
+    consumer_note: str
     note: str = ""
     #: WHICH REGIME this baseline describes — ruling 120's requirement, made a
     #: field rather than a sentence in prose so the endpoint can print it and a
@@ -261,6 +336,49 @@ class BeatBaseline:
         if self.self_imposed_budget_s is None:
             return float(self.soft_time_limit_s)
         return min(float(self.soft_time_limit_s), float(self.self_imposed_budget_s))
+
+    @property
+    def censor_threshold_s(self) -> float:
+        """The p50 at which this beat stops being a measurement and becomes a bound."""
+        return CENSOR_FRACTION_OF_SOFT_LIMIT * self.effective_clamp_s
+
+    @property
+    def declared_materiality_floor_s(self) -> float:
+        """The floor its consumer class asks for, BEFORE the censor cap (#2116)."""
+        return CONSUMER_FLOOR_S[self.consumer]
+
+    @property
+    def materiality_floor_s(self) -> float:
+        """The floor actually applied: the declared one, capped by the censor.
+
+        🔴 The cap is not tidiness. A declared floor larger than a beat's
+        remaining headroom would put the ratio's trip point ABOVE the point at
+        which the observation-side censor takes over — i.e. the beat could never
+        grade `degraded` at all, because it would saturate first. That is a gate
+        that cannot go red, minted by its own fix, which is the exact shape
+        LAT-P079's `samples == 0 => INCONCLUSIVE` would have been.
+
+        It binds on exactly one beat today (`snapshot_coverage_metrics`:
+        120s declared, 107.9s applied) and `floor_capped_by_censor` says so on
+        the panel rather than leaving the reader to subtract.
+        """
+        headroom = self.censor_threshold_s - self.p50_s
+        return max(0.0, min(self.declared_materiality_floor_s, headroom))
+
+    @property
+    def floor_capped_by_censor(self) -> bool:
+        return self.materiality_floor_s < self.declared_materiality_floor_s
+
+    @property
+    def degrade_trips_at_s(self) -> float:
+        """The observed p50 at which BOTH gates trip. Printed, never inferred.
+
+        A reader asking "what would it actually take to revert this?" should get
+        a number, not a threshold and a baseline to multiply.
+        """
+        return max(
+            self.p50_s * DEGRADE_P50_RATIO, self.p50_s + self.materiality_floor_s
+        )
 
     @property
     def p95(self) -> Reading:
@@ -466,6 +584,13 @@ def _newest_sample_at(observation: Mapping[str, Any]) -> float | None:
 PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
     BeatBaseline(
         task="app.tasks.precompute_calibration_main",
+        consumer="user_page",
+        consumer_note="`/api/calibration` "
+        "(app/routes/admin_data_quality.py:3756-3787 documents the cache this beat "
+        "fills) is called by `frontend/lib/api.ts:2118` from the PUBLIC "
+        "`/calibration` page. The only user_page beat in the set — measured "
+        "2026-08-23 by enumerating every frontend caller of each beat's serving "
+        "route.",
         soft_time_limit_s=1500,
         # 🔴 RE-PINNED 2026-08-23 by ruling 120. WAS p50 214.7 / p95 1302.1 /
         # max 1357.2 — a MIXTURE STATISTIC taken across a regime boundary.
@@ -511,6 +636,10 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
     ),
     BeatBaseline(
         task="app.tasks.compute_calibration_prices",
+        consumer="no_reader",
+        consumer_note="writes calibration prices to ROWS; no route serves a cache "
+        "it fills. Excluded from grading anyway (censored at its own 540s budget), "
+        "so the floor never runs.",
         soft_time_limit_s=600,
         p50_s=538.2,
         p95_s=599.9,
@@ -536,6 +665,12 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
     ),
     BeatBaseline(
         task="app.tasks.compute_time_horizon_calibration",
+        consumer="no_reader",
+        consumer_note="fills `bainluck:calibration:time_horizon`, served by "
+        "app/routes/calibration.py:1919. PUBLIC endpoint, but `grep -rn "
+        "'time_horizon|time-horizon' frontend/` returns ZERO hits — no rendered "
+        "consumer exists today. Classified on what reads it, not on what could: if "
+        "a page starts rendering it, this line moves to user_page.",
         soft_time_limit_s=600,
         p50_s=302.0,
         p95_s=302.7,
@@ -549,6 +684,11 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
     ),
     BeatBaseline(
         task="app.tasks.compute_fair_fight_comparison",
+        consumer="operator_panel",
+        consumer_note="fills `bainluck:calibration:fair_fight`, served by "
+        "app/routes/source_intelligence.py:1339 `/source-intelligence/fair-fight`. "
+        "Public route, but its only rendered consumer is "
+        "`frontend/app/admin/source-intelligence/page.tsx` — an operator surface.",
         soft_time_limit_s=600,
         p50_s=147.8,
         p95_s=268.4,
@@ -561,6 +701,13 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
     ),
     BeatBaseline(
         task="app.tasks.precompute_source_intelligence",
+        consumer="operator_panel",
+        consumer_note="fills `bainluck:source_intelligence`, served by "
+        "app/routes/source_intelligence.py:1383 and rendered ONLY by "
+        "`frontend/app/admin/source-intelligence/page.tsx` "
+        "(frontend/lib/api.ts:2214, linked from AdminSidebar.tsx:48). 🔴 THIS IS "
+        "#2116's BEAT: its reader is an operator, so +9.3s of median is invisible "
+        "to anyone.",
         soft_time_limit_s=600,
         p50_s=17.5,
         p95_s=27.3,
@@ -574,6 +721,11 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
     ),
     BeatBaseline(
         task="app.tasks.snapshot_coverage_metrics",
+        consumer="no_reader",
+        consumer_note="referenced only by an admin TRIGGER "
+        "(app/routes/admin_data_quality.py:5042); no route serves a cache it fills "
+        "and no frontend file references it. 🔴 Its declared 120s floor is CAPPED "
+        "to 107.9s by the censor — the one beat where the cap binds.",
         soft_time_limit_s=600,
         p50_s=480.1,
         p95_s=482.1,
@@ -586,6 +738,12 @@ PRE_MOVE_BASELINE: tuple[BeatBaseline, ...] = (
     ),
     BeatBaseline(
         task="app.tasks.precompute_backfill_winners_status",
+        consumer="operator_panel",
+        consumer_note="fills `bainluck:backfill_winners_status`, served by `GET "
+        "/api/admin/backfill-winners/status` "
+        "(app/routes/admin_data_quality.py:3488). Admin-only by route prefix. The "
+        "ratio is the binding gate here (+129.6s) — the 60s floor changes nothing "
+        "about it.",
         soft_time_limit_s=600,
         p50_s=518.4,
         p95_s=601.0,
@@ -668,6 +826,14 @@ class BeatVerdict:
     #: percentile. The observation carries every sample, so reporting a bound
     #: here would throw away data we hold.
     observed_clip_rate: float | None = None
+    #: #2116. The three fields that make the two-gate decision auditable from
+    #: the payload alone. `ratio_exceeded` is carried even when the verdict is
+    #: `hold`, because "the ratio never moved" and "the ratio moved but not
+    #: materially" are different facts and a reader must not have to infer
+    #: which one they are looking at (gotcha #53, one level in).
+    absolute_delta_s: float | None = None
+    materiality_floor_s: float | None = None
+    ratio_exceeded: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -892,17 +1058,58 @@ def grade_beat(
     # refusing ones: "how much of this grade is actually about the move" is
     # exactly the question a reader has when the answer is HOLD.
     ratio = observed / baseline.p50_s if baseline.p50_s else None
-    if ratio is not None and ratio > DEGRADE_P50_RATIO:
+    delta = observed - baseline.p50_s
+    floor = baseline.materiality_floor_s
+    ratio_exceeded = ratio is not None and ratio > DEGRADE_P50_RATIO
+
+    # --- THE MATERIALITY FLOOR (#2116) --------------------------------------
+    # 🔴 BOTH gates, always AND. A pure ratio is most sensitive where a beat
+    # matters least — 67x more sensitive to a 4x/day admin precompute than to
+    # the one beat a user-facing page waits on — so it converted +4.4s of noise
+    # into a mechanical revocation of ruling 110's grant.
+    #
+    # `immaterial` is a NAMED state, not a fold into `hold`. A floor that
+    # silently swallowed a ratio trip would be indistinguishable from a beat
+    # that never moved, and the whole complaint in #2116 is that the panel
+    # could not tell a noise-scale effect from a page-scale one. It still has
+    # to tell you — it just no longer reverts on the first kind.
+    if ratio_exceeded and delta < floor:
         return BeatVerdict(
             baseline.task,
-            "degraded",
+            "immaterial",
             f"p50 {observed:.1f}s is {ratio:.2f}x its pre-move {baseline.p50_s:.1f}s "
-            f"(threshold {DEGRADE_P50_RATIO}x), on a ring {share:.0%} post-move",
+            f"— OVER the {DEGRADE_P50_RATIO}x ratio — but only +{delta:.1f}s in "
+            f"absolute terms, UNDER the {floor:.0f}s materiality floor for a "
+            f"'{baseline.consumer}' beat. Reported, not reverted: the ratio moved "
+            f"and the reader is entitled to know, but ruling 110's 'degrades "
+            f"measurably' is not +{delta:.1f}s on this consumer. Trips at "
+            f"{baseline.degrade_trips_at_s:.1f}s. Ring {share:.0%} post-move",
             baseline.p50_s,
             observed,
             ratio,
             share,
             observed_clip_rate=clip_rate,
+            absolute_delta_s=round(delta, 3),
+            materiality_floor_s=floor,
+            ratio_exceeded=True,
+        )
+
+    if ratio_exceeded:
+        return BeatVerdict(
+            baseline.task,
+            "degraded",
+            f"p50 {observed:.1f}s is {ratio:.2f}x its pre-move {baseline.p50_s:.1f}s "
+            f"(threshold {DEGRADE_P50_RATIO}x) AND +{delta:.1f}s absolute, over the "
+            f"{floor:.0f}s materiality floor for a '{baseline.consumer}' beat, "
+            f"on a ring {share:.0%} post-move",
+            baseline.p50_s,
+            observed,
+            ratio,
+            share,
+            observed_clip_rate=clip_rate,
+            absolute_delta_s=round(delta, 3),
+            materiality_floor_s=floor,
+            ratio_exceeded=True,
         )
     # The clip rate rides on HOLD too, and that is the point of #2071: a beat
     # can hold on its p50 while a rising share of its runs clip at the clamp,
@@ -918,6 +1125,9 @@ def grade_beat(
         ratio,
         share,
         observed_clip_rate=clip_rate,
+        absolute_delta_s=round(delta, 3),
+        materiality_floor_s=floor,
+        ratio_exceeded=False,
     )
 
 
@@ -1019,6 +1229,59 @@ def summarize_movers(
     return out
 
 
+def beat_payload(b: "BeatVerdict") -> dict[str, Any]:
+    """The per-beat JSON block — ONE definition, two consumers.
+
+    🔴 This function exists because the drift it prevents ALREADY HAPPENED.
+    `admin_celery.heavy_move_falsifier` and
+    `scripts/falsifier_offline_mirror.py` each built this dict by hand, and the
+    mirror's own docstring promised it mirrored the route "field for field ...
+    If the route's shape changes, this drifts". #2116 added six fields to the
+    route and the mirror emitted `null` for every one of them on its first run
+    — while still being read as the authoritative re-grade, because the verdict
+    field was right and the missing fields render exactly like fields whose
+    values are absent (gotcha #53, in a payload rather than an API).
+
+    A shape a reader compares across two producers must have one producer.
+    """
+    baseline = BASELINE_BY_TASK.get(b.task)
+    return {
+        "task": b.task,
+        "verdict": b.verdict,
+        "reason": b.reason,
+        "baseline_p50_s": b.baseline_p50_s,
+        "observed_p50_s": b.observed_p50_s,
+        "ratio": round(b.ratio, 3) if b.ratio is not None else None,
+        "post_move_ring_share": b.post_move_ring_share,
+        # #2071. `censored_side` distinguishes "never was readable" (tells a
+        # reader nothing) from "was readable, has newly pinned" (the loudest
+        # fact on the panel). `observed_clip_rate` rides on HOLD too: a beat can
+        # hold on its median while a rising share of its runs clip at the clamp,
+        # and a panel printing only the median would show that as no change.
+        "censored_side": b.censored_side,
+        "observed_clip_rate": b.observed_clip_rate,
+        # #2116, the materiality floor. All of it printed together so a reader
+        # can audit the two-gate decision without re-deriving anything: whether
+        # the RATIO tripped, by how many ABSOLUTE seconds, against which FLOOR,
+        # and what observed p50 would actually fire a REVERT.
+        "ratio_exceeded": b.ratio_exceeded,
+        "absolute_delta_s": b.absolute_delta_s,
+        "materiality_floor_s": b.materiality_floor_s,
+        "consumer": baseline.consumer if baseline else None,
+        "degrade_trips_at_s": (
+            round(baseline.degrade_trips_at_s, 1) if baseline else None
+        ),
+        "floor_capped_by_censor": (
+            baseline.floor_capped_by_censor if baseline else None
+        ),
+        # Ruling 120. A baseline is a claim about the system we run in, and a
+        # pin taken across a dated step reads as a constant forever — #2102
+        # found one here reading ~6x against a healthy beat.
+        "baseline_regime": baseline.regime if baseline else None,
+        "consumer_note": baseline.consumer_note if baseline else None,
+    }
+
+
 def grade_move(
     observations: Mapping[str, Mapping[str, Any] | None],
     *,
@@ -1072,7 +1335,27 @@ def grade_move(
         else ""
     )
 
-    gradeable = [b for b in beats if b.verdict == "hold"]
+    # #2116: a ratio trip under the materiality floor. It did NOT revert, and it
+    # is NOT a quiet night — it rides on the top-level reason exactly as the
+    # newly-saturated note does, and for the same reason. The one thing a floor
+    # must never buy is silence.
+    immaterial = [b for b in beats if b.verdict == "immaterial"]
+    immaterial_note = (
+        " ⚠️ RATIO TRIPPED BUT IMMATERIAL (#2116 — over the "
+        f"{DEGRADE_P50_RATIO}x ratio, under the absolute floor its consumer "
+        "class asks for, so reported rather than reverted): "
+        + ", ".join(
+            f"{b.task.rsplit('.', 1)[-1]} +{b.absolute_delta_s:.1f}s vs a "
+            f"{b.materiality_floor_s:.0f}s floor"
+            for b in immaterial
+        )
+        + "."
+        if immaterial
+        else ""
+    )
+    saturated_note += immaterial_note
+
+    gradeable = [b for b in beats if b.verdict in ("hold", "immaterial")]
     if not gradeable:
         pre_horizon = [b for b in beats if b.verdict == "pre_horizon"]
         if pre_horizon:
