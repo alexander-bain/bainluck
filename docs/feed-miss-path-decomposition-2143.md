@@ -29,7 +29,7 @@ issued a single request to `/api/feed`.
 | condition | verified |
 |---|---|
 | post wave-2 deploy | v3885 (`81380151`) deployed 2026-08-23 14:48 PDT — **~18.7 h** before the window opened |
-| window does not straddle a release | INT-112 is running under **ZERO PUSHES**; `origin/master` unmoved at `81380151` for the whole window |
+| window does not straddle a release | **holds for the headline read, NOT for the whole session.** v3885 (`81380151`) was current from 16:30Z until **17:23:50Z**, when the wave-2 deploy landed as **v3886** (`b5c2a750`). The headline population in §2b is bounded at 17:06:13Z and is entirely v3885. Reads after 17:23:50Z straddle the release and are partitioned rather than pooled — see the correction at the head of §2b |
 | probe samples excluded | window opened with **zero** samples from this lane; contamination is separable by subtraction (§2) |
 
 `/api/feed` is on `always_sampled_endpoints`, i.e. it is a **census, not a 1/10
@@ -75,6 +75,102 @@ miss — a 50% miss share.**
 
 p95 (6,089.1 ms) became answerable only at n=20 and is consistent with the
 5.5 s baseline.
+
+### 2b. The PROBE-FREE read — the ring evicted this lane's probes on its own
+
+The n=16 organic figure above rests on a **subtraction**, and a subtraction is an
+argument. The ring settled the question without one.
+
+`oldest_sample_age_s` grew 1:1 with the wall clock from the first read onward —
+the ring had **not yet rolled** and was accumulating from a fixed floor at
+16:30:54Z. It began evicting at 17:31, and at **17:36:32Z the eviction boundary
+crossed this lane's probe burst**: `oldest_sample_age_s` jumped 3,566 s → 2,859 s
+in one 60 s tick (all four probes fired inside four seconds, so they leave
+together), and the accumulator moved
+
+    n 59 → 55    hit 16 → 15    stale_hit 13 → 12    miss 30 → 28
+
+— i.e. it dropped **exactly 1 hit, 1 stale_hit and 2 miss**, which is probe
+C / A / B+D one for one. The subtraction in §2 is therefore not merely
+defensible; it was independently reproduced by the instrument's own retention.
+
+🔴 **CORRECTION, same day, before this document left the lane.** The 17:38:33Z
+read was first written up here as "no release inside it." **That was wrong.**
+Heroku **v3886** (`b5c2a750`) deployed at **17:23:50Z**, seventeen minutes before
+that read and squarely inside its 49.7-minute window — the wave-2 deploy this
+lane had been waiting on for item 3, which landed while the sampler was running.
+Decontamination condition 3 was therefore violated for the *probe-free* read, in
+the one direction the §1 table asserts it is not. It is corrected rather than
+quietly restated, and the correction turns out to make the finding **stronger**,
+which is exactly why it must not be the lane that decides whether to mention it.
+
+The two contaminants are separable, and — usefully — they contaminate **different
+reads**, because the ring evicts by age while the release arrives by clock:
+
+- reads **before 17:23:50Z** are release-free but still hold this lane's 4 probes;
+- reads **after 17:36:32Z** are probe-free but straddle the release.
+
+The release-side contamination is exactly attributable. The ring was silent from
+17:06:13Z to 17:25:27Z (`newest_sample_age_s` climbed 782 → 1,089 s across six
+consecutive reads with `n` frozen at 56), and then took **6 samples**: +2 at
+17:25:29 (1 hit, 1 miss) and +4 at 17:26:29 (4 hits). Those six, and only those
+six, are post-v3886.
+
+🟢 **THE DECONTAMINATED HEADLINE — probe-free AND release-free, from the
+17:24:22Z read (`n`=56) with this lane's four probes removed. Window 16:30:48Z →
+17:06:13Z, slug v3885 / `81380151` throughout:**
+
+| bucket | n | p50 | p95 | min | max |
+|---|---|---|---|---|---|
+| hit | 11 | — | — | 9.4 ms | 77.6 ms |
+| stale_hit | 13 | — | — | 7.1 ms | 37.9 ms |
+| **miss** | **28** | **2,433.6 ms** | **6,089.1 ms** | **958.6 ms** | **7,531.6 ms** |
+| **all** | **52** | — | — | 7.1 ms | 7,531.6 ms |
+
+**MISS SHARE = 28/52 = 53.8%** (95% CI 40.3–67.4%). `unbucketed_samples = 0`, so
+the three buckets are the whole census.
+
+**It survives every partition of the contamination, and the point estimate rises
+as the contamination is removed:**
+
+| population | n | miss | share |
+|---|---:|---:|---:|
+| raw ring @ 17:38:33Z (probes evicted, release straddled) | 55 | 28 | 50.9% |
+| **pre-release organic @ 17:24:22Z — the headline** | **52** | **28** | **53.8%** |
+| pre-release organic surviving in the 17:38:33Z ring | 49 | 27 | 55.1% |
+| post-v3886 only | 6 | 1 | *(16.7% — n=6, nothing concludable)* |
+
+The post-release cell is reported because it is the only cut that could be read
+as an improvement, and at n=6 it is not one: it is five hits and one miss taken
+within three minutes of a dyno restart, which is the window in which post-deploy
+readings are least trustworthy in *either* direction. No claim is made from it.
+
+**The directive's question is answered: the miss share does not merely hold near
+37.5% — 37.5% is at the very bottom of the interval, and the point estimate is
+better than half.** Across all 65 reads spanning 16:34→17:38 it never once fell
+below 42.9% after the first three samples, and it sat between 50.0% and 53.6%
+for the last 38 minutes. Series artifact:
+`docs/audits/latency/lat-p084-feed-cache-series-2026-08-24.jsonl` (65 reads,
+60 s cadence, passive — the sampler touches `/api/admin/latency-stats` only and
+never `/api/feed`, which is how ruling 127's observer problem was avoided rather
+than corrected for).
+
+⚠️ **Report the overall p50 with its split or not at all.** It reads **958.6 ms**
+here against **16.2 ms** in the previous cycle's baseline. Almost none of that is
+a latency change: the hit-side p50s are 13.8 ms and 14.1 ms, indistinguishable
+from the 12.8 / 15.3 ms ruling 127 recorded. What moved is the **hit rate**, and
+the bimodality means the overall p50 is a step function of it — it crosses three
+orders of magnitude the moment the miss share passes 50%, which is precisely what
+happened between the two cycles. This is ruling 127's warning arriving in the
+first cycle after it was written, and it is the reason the headline number is
+useless unbucketed.
+
+⚠️ **Traffic is sparse and that bounds everything here.** `newest_sample_age_s`
+was **776 s** at the final read — 13 minutes since the last organic request to
+`/api/feed`. n=55 over 50 minutes is ~66 requests/hour, and a single burst
+(17:05–17:06 added 23 samples, 13 of them misses) is a large fraction of the
+window. The miss share is robust across the series; the *absolute* volume of
+users affected is not established by this measurement and is not claimed.
 
 ---
 
@@ -258,8 +354,117 @@ recommended next measurement.
 
 ## 8. Provenance
 
+- Tracking issue: **#2143**. (This file was first written as
+  `feed-miss-path-decomposition-2084.md` before the issue existed; #2084 is an
+  unrelated Discover rounding bug and was never cited in the body. Renamed with
+  `git mv` in the commit that filed #2143.)
 - Baseline under challenge: `PROGRAM-LATENCY-REPORT.md` §LAT-P083, line 17307.
-- Decontaminated read: `/api/admin/latency-stats` 16:33:34Z and 17:01:17Z, 2026-08-24.
+- Decontaminated reads: `/api/admin/latency-stats` 16:33:34Z, 17:01:17Z and the
+  probe-free **17:38:33Z** (§2b), 2026-08-24.
+- Full series, 65 passive reads at 60 s cadence 16:34:09Z–17:38:32Z:
+  `docs/audits/latency/lat-p084-feed-cache-series-2026-08-24.jsonl`.
 - Decomposition probes: 16:36:05–16:36:09Z, 2026-08-24, four requests, recorded
-  in the LAT-P084 report section.
-- Production release at read time: v3885 / `81380151`, deployed 2026-08-23 14:48 PDT.
+  in the LAT-P084 report section; independently confirmed by their eviction from
+  the ring at 17:36:32Z (§2b).
+- Production release for the whole measurement: v3885 / `81380151`, deployed
+  2026-08-23 14:48 PDT and still current at 17:38Z.
+
+---
+
+## 9. POST-T0 CORRECTION — the miss bucket was UNDERCOUNTING, and `other` is why
+
+Everything above §8 was measured on v3885. The wave-2 deploy landed at
+**T0 = 2026-08-24T17:23:50Z (v3886 / `b5c2a750`)**, so this section re-reads the
+census on the new slug. It changes the headline number and, more importantly,
+changes what the number means.
+
+### 9.1 A bucket appeared that was not there before
+
+The v3885 series had four cache-status buckets: `hit`, `stale_hit`, `miss`,
+`error`. The post-T0 read has a fifth, `other`, and it is not small:
+
+| bucket | n | p50 ms | min ms | max ms |
+|---|---:|---:|---:|---:|
+| hit | 10 | 13.6 | 9.9 | 36.9 |
+| stale_hit | 15 | 19.3 | 12.6 | 41.1 |
+| **miss** | **11** | **5,046.8** | 3,172.2 | 7,979.0 |
+| **other** | **12** | **2,897.6** | **2,093.3** | 6,313.4 |
+
+Read at 18:17:53Z; window 17:25:24Z→18:17:53Z, entirely post-T0, no release
+straddle, `completeness: complete`, `unbucketed_samples: 1`.
+
+`other` is not a residual. `app/middleware/latency.py:106–119` buckets to
+`other` **exactly when** `X-Feed-Cache` carries a value outside
+`{miss, hit, stale_hit, error}`, and `app/routes/feed.py` sets exactly seven
+such values: `disabled`, `disabled_debug`, `disabled_reviewed_filter`,
+`last_good`, `coalesced`, `unavailable`, `n/a`. The distribution identifies
+which one without guessing:
+
+- `last_good` and `unavailable` are reached **only after the wait budget is
+  exhausted** (feed.py:2066 / :2093), so they cannot produce a 2,093 ms minimum.
+- `disabled_debug` needs `?debug=true`; `disabled_reviewed_filter` needs a
+  reviewed-filter param; `disabled` needs the response cache off — but `hit` and
+  `stale_hit` are being served, so it is on.
+- `coalesced` (feed.py:2054) returns **the instant the leader's build finishes**.
+  Its support is bounded above by the leader's build and floored by how late the
+  waiter arrived. p50 2,897.6 against a leader p50 of 5,046.8, floor 2,093.3:
+  the only shape that fits.
+
+**Confirmed directly, not inferred.** Three concurrent anonymous
+`GET /api/feed?limit=5` at 18:17:37Z:
+
+| probe | time | `X-Feed-Cache` | `X-Feed-Singleflight` |
+|---|---:|---|---|
+| 1 | 6.560 s | `miss` | `leader` |
+| 2 | 6.618 s | `miss` | `leader` |
+| 3 | 6.632 s | **`coalesced`** | `coalesced` |
+
+Two leaders for one anon cache key is itself a finding: `begin_build` is a
+**process-local** single-flight, so N web dynos give N leaders per key. Only the
+third request landed on a process that already had one.
+
+### 9.2 The corrected headline
+
+Subtracting this lane's six probes from the census (ruling 127 — 17:44:0x
+liveness ×1 `miss`; ~17:53 decomposition ×2 `miss`; 18:17:37 ×3 = 2 `miss` +
+1 `coalesced`):
+
+| | n | share |
+|---|---:|---:|
+| hit | 10 | 23.8% |
+| stale_hit | 15 | 35.7% |
+| miss | 6 | 14.3% |
+| **other (`coalesced`)** | **11** | **26.2%** |
+| **build-paying (miss + coalesced)** | **17 / 42** | **40.5%** |
+
+95% CI (Wilson) on the build-paying share: **27.0% – 55.5%**.
+
+**Fable's 37.5% headline is vindicated — for the wrong reason.** Miss share
+alone is 14.3%, well under it. The build-paying share is 40.5%, just over it.
+The gap between those two numbers is the entire content of this section.
+
+### 9.3 Why this matters more than the number
+
+**A coalesced waiter is not a cache hit. It pays the leader's build wall-clock
+and it is not in the miss bucket.** Single-flight moves cost between buckets
+without removing it: N concurrent cold requests become 1 build + (N−1) waits,
+which genuinely saves the *backend* N−1 builds, and changes the *user's* wait
+by nothing at all. Any dashboard reading miss-share therefore records an
+improvement the user cannot feel, and the improvement gets larger the more
+concurrent the traffic is — worst exactly when it matters most.
+
+Banked as **ruling 129**.
+
+### 9.4 What it does to the #2143 proposal — nothing but strengthen it
+
+The lever in §6 shortens the **leader's** build. A waiter's wait is bounded by
+that same build, so the projected saving applies to `other` as well as to `miss`
+— i.e. to **40.5% of requests, not 14.3%**. No change to the design, a 2.8×
+larger population.
+
+### 9.5 Provenance for this section
+
+- Read: `/api/admin/latency-stats` at 2026-08-24T18:17:53Z, slug v3886.
+- Header confirmation: 3 concurrent probes at 18:17:37Z, recorded above and
+  owed as a subtraction to any later read whose window contains them.
+- T0 record: `docs/audits/latency/2107-watch-T0.md`.

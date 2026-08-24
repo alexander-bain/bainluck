@@ -696,7 +696,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: holders_found = 0. `origin/master` = `fe28d2c3`, whose highest ruling FILE is **125** —
 #: 126 and 127 are this lane's own, claimed-and-unmerged on `program/latency-75`, so the count
 #: on THIS branch is ahead of master's and will be re-counted at merge, never re-derived.
-MINIMUM_BANKED_RULINGS = 118
+MINIMUM_BANKED_RULINGS = 119
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
