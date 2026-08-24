@@ -62,7 +62,25 @@ jobs:
         working-directory: backend
 
     steps:
+      # THE MUTATION-RESIDUE SCAN NEEDS A MERGE BASE, AND THE DEFAULT CHECKOUT
+      # DOES NOT HAVE ONE.
+      #
+      # `tests/test_mutation_guard.py` runs `scan_mutation_residue.py`, whose
+      # Pass B diffs `origin/master...HEAD`. On a PUSH to master that resolves
+      # and the job is green; on a PULL REQUEST, checkout lands a detached merge
+      # ref at depth 1, `origin/master` does not exist, and git returns 128 —
+      # which the scanner reported as exit 1, the SAME code it uses for "residue
+      # found". Every PR in the repo failed shard 3 identically, with a message
+      # that read like a real finding (2026-08-24: #2145, #2146, #2151).
+      #
+      # `filter: blob:none` is what makes the full graph affordable: the pack is
+      # ~850 MiB, but `git diff --name-only` needs commits and TREES only, so
+      # blobs stay on the server and are fetched lazily if something else asks.
+      # `fetch-depth: 0` alone would pull the whole 850 MiB on all four shards.
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
 
       - uses: actions/setup-python@v6
         with:

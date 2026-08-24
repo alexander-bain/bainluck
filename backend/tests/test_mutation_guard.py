@@ -236,6 +236,41 @@ def test_no_mutant_is_sitting_in_a_harness_target_right_now():
     )
 
 
+def test_an_unresolvable_base_exits_2_not_1():
+    """A scan that CANNOT RUN must not borrow the code that means "residue found".
+
+    The scanner's Pass B diffs against a base ref. When that ref does not
+    resolve — the ordinary state of a shallow PR checkout, where `origin/master`
+    was never fetched — `_files` used `raise SystemExit(str)`, which exits **1**:
+    byte-identical to a real finding. Every PR in the repo failed this shard on
+    2026-08-24 with a message that read like a mutant sitting in the tree, while
+    Pass A had in fact printed its clean line one row above.
+
+    The docstring always promised `2` for "the scan could not be performed"; only
+    the code disagreed. This test is the half that CI could not have caught, since
+    CI is the environment that produces the bad base in the first place.
+
+    Gotcha #54's amendment, applied to our own tooling: `1` is a result, and every
+    other code is a story about the harness.
+    """
+    scanner = EVALS / "scan_mutation_residue.py"
+    result = subprocess.run(
+        [sys.executable, str(scanner), "--base", "no-such-ref-deadbeef"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=str(EVALS.parents[1]),
+    )
+    assert result.returncode == 2, (
+        "an unresolvable base must exit 2 (CANNOT MEASURE), not 1 (RESIDUE FOUND)\n"
+        f"got {result.returncode}\n{result.stdout}\n{result.stderr}"
+    )
+    assert "CANNOT MEASURE" in result.stderr, (
+        "the reason must name itself as an inability to measure, so a reader is "
+        f"not left inferring a finding:\n{result.stderr}"
+    )
+
+
 def test_every_on_disk_harness_is_guarded():
     """The class-closing assertion — a NEW harness cannot quietly opt out.
 
