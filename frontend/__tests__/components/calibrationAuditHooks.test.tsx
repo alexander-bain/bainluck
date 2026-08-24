@@ -30,10 +30,26 @@ import { MATCHED_BUCKET_MIN_SIDE_N } from "@/lib/calibrationMath";
 import * as fs from "fs";
 import * as path from "path";
 
-const SOURCE: string = fs.readFileSync(
+/**
+ * The files the calibration surface's hooks are declared in.
+ *
+ * UX-P128: this was `page.tsx` alone, and the day a row moved into its own
+ * component the tripwire fired with "calibration-provider-row … Expected 1,
+ * Received 0" — a hook that was still in the DOM, still selected by the rail,
+ * reported as DROPPED. That is a false RED, which is the safe direction, but a
+ * source-level check that cannot follow an extraction taxes exactly the
+ * refactor that made the row testable.
+ *
+ * So the set is the surface, not the page. Concatenation (rather than a count
+ * per file) is deliberate: the duplicate-detection this suite exists for has to
+ * see a hook declared once in EACH file as two declarations, not as one apiece.
+ */
+const SOURCE_FILES = [
   path.join(__dirname, "..", "..", "app", "calibration", "page.tsx"),
-  "utf8"
-);
+  path.join(__dirname, "..", "..", "components", "SourceComparisonRow.tsx"),
+];
+
+const SOURCE: string = SOURCE_FILES.map(f => fs.readFileSync(f, "utf8")).join("\n");
 
 /** Count non-overlapping occurrences of a literal in a string. */
 function occurrences(haystack: string, needle: string): number {
