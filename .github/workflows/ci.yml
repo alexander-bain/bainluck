@@ -333,6 +333,35 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration mode-price source scope, peer sites (real Postgres)
+        # #2098 / ruling 125, sites TWO and THREE — CAL-P091. The step above
+        # guards the PRODUCER. The same three-line defect also sat in
+        # `app/routes/admin_data_quality.py` (GET /api/admin/calibration-data)
+        # and `scripts/audit_golf_hockey_calibration.py`, both of which exist to
+        # AUDIT the population the producer publishes. Until CAL-P091 the admin
+        # endpoint disagreed with the producer by roughly 23-35 rows on the
+        # charter specimen e:14887630 — an instrument silently measuring a
+        # different population than the thing it audits, whose agreement would
+        # then be read as corroboration.
+        #
+        # Same shape as the step above and for the same reasons: relational
+        # claim, so a real fixture rather than a string assertion; two-armed, so
+        # a green run means the reverted SQL was EXECUTED and the suppression
+        # came back, not merely that nothing objected; single-source control, so
+        # the fix is known to have scoped dedup rather than disabled it. Both
+        # chains are executed as production strings — the admin one via the
+        # module constant CAL-P091 hoisted it into, so a guard cannot pass
+        # against a copy while the original regresses.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_calibration_mode_price_source_scope_peers_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/modescope_peers.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/modescope_peers.txt; then
+            echo "::error::calibration mode-price peer-site scope SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

@@ -164,18 +164,40 @@ ranked_outcomes AS (
                                             'no_pregame_trading'))
       AND COALESCE(fo.volume, -1) != 0
 ),
+-- #2098 / RULING 125 — the mode is a fact about ONE SOURCE's legs, so it may
+-- only delete THAT source's legs. `vm_id` is source-blind on its `e:` arm
+-- (`'e:' || mi.event_id`) while `event_sizes` counts per `(event_id, source)`,
+-- so two sources with >=3 resolved markets on one event share a vm_id — and
+-- every neighbouring aggregate here is source-scoped on purpose (`group_sizes`
+-- and `event_sizes` GROUP BY `(x, source)`; `virtual_market` joins
+-- `AND gs.source = mi.source`; `clean_vms` is joined at :156 on
+-- `cv.vm_id = vm.vm_id AND cv.source = vm.source`). These two were the
+-- exception, and the exception was the defect.
+--
+-- Fixed in the producer by CAL-P090; this is the same three-line fix at the
+-- third of its three sites. This script's whole contract is the docstring's
+-- claim to replicate "the EXACT inclusion logic" of the public curve — a claim
+-- that stops being true the moment the producer is fixed and this copy is not,
+-- and an attribution audit that silently measures a different population is a
+-- worse instrument than no audit (gotcha #53 at the level of a copy).
+--
+-- Three lines, not two: `mode_prices` must also PROJECT `source`.
+-- Guarded against a real Postgres by
+-- `tests/integration/test_calibration_mode_price_source_scope_peers_pg.py`.
 mode_prices AS (
-    SELECT vm_id, adj_opening_probability AS mode_price
+    SELECT vm_id, source, adj_opening_probability AS mode_price
     FROM ranked_outcomes
     WHERE is_multi AND eligible >= 3
-    GROUP BY vm_id, adj_opening_probability, eligible
+    GROUP BY vm_id, source, adj_opening_probability, eligible
     HAVING COUNT(*) > GREATEST(eligible * 0.5, 2)
 )
 SELECT ro.*,
     LEAST(FLOOR(ro.adj_opening_probability * 10)::int, 9) AS bucket_idx
 FROM ranked_outcomes ro
 LEFT JOIN mode_prices mp
-  ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
+  ON mp.vm_id = ro.vm_id
+  AND mp.source = ro.source
+  AND mp.mode_price = ro.adj_opening_probability
 WHERE
     CASE
         WHEN ro.is_multi

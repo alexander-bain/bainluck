@@ -40,16 +40,40 @@ The three stages, and the one fact that makes them safe:
   chunk is in (``PARTIAL_GENERATION_PUBLISHED``).
 
 The subtlest fact in this module, stated once here and again on
-:func:`plan_units`: **the unit is ``vm_id``, WITHOUT source.** The population's
-``mode_prices`` CTE groups by ``vm_id`` alone, and the representative window is
-``ROW_NUMBER() OVER (PARTITION BY cv.vm_id ORDER BY ...)`` — also ``vm_id``
-alone. So two sources that share one virtual question (``e:123`` present on both
-Kalshi and Polymarket) are PEERS: they vote in the same mode-price election and
-compete for the same representative row. Splitting them across chunks changes
-which row wins and which prices count as a mode — a silent semantic change, and
-exactly the ``CROSS_CHUNK_PEER_SPLIT`` / ``FIELD_ROSTER_SPLIT`` refusals the
-corpus grades. Chunking by ``(vm_id, source)`` would look more balanced and
-would be wrong.
+:func:`plan_units`: **the unit is ``vm_id``, WITHOUT source.** ``vm_id`` is
+``'g:'||group_id | 'e:'||event_id | 'm:'||market_id`` and carries no source, so
+two sources can share one virtual question (``e:123`` present on both Kalshi and
+Polymarket; measured: 1,271 event_ids reach ``event_size >= 3`` under more than
+one source, 0 group_ids do). Splitting a ``vm_id`` across chunks is
+``CROSS_CHUNK_PEER_SPLIT`` / ``FIELD_ROSTER_SPLIT``, and chunking by
+``(vm_id, source)`` would look more balanced and is not something this module
+may decide.
+
+**AMENDED 2026-08-24 by ruling 125 (#2098) — the older version of this
+paragraph gave TWO reasons and one of them is now gone.** It said such sources
+"vote in the same mode-price election and compete for the same representative
+row". The mode-price half was a DEFECT, not a semantic: ``mode_prices`` grouped
+by bare ``vm_id`` and ``deduped`` joined on bare ``vm_id``, so one source's modal
+price deleted the other source's legs at that price (measured on ``e:14887630``:
+4 Polymarket legs deleting 23 Kalshi legs). Ruling 125 — *a join that can DELETE
+a row must carry every dimension that identifies the row* — scoped both to
+``(vm_id, source)``. There is no cross-source mode-price election any more.
+
+What survives is the representative window, ``ROW_NUMBER() OVER (PARTITION BY
+cv.vm_id ORDER BY ...)``, which is still source-blind. Be precise about how much
+that buys: ``rn`` is consulted only on the non-multi branch (``ELSE ro.rn = 1``),
+and any ``vm_id`` shared across sources got there through the ``e:`` arm, which
+requires ``event_size >= 3`` per source and therefore makes both sides
+``is_multi``. So on exactly the rows where the collision occurs, ``rn`` is
+computed and never read.
+
+**The rule nevertheless stands, on different grounds, and this module does not
+get to relax it.** Whole-``vm_id`` units are what make the partition
+content-addressed and the cursor stable (CAL-P016, below); and "computed and
+never read" is an argument, not the measured row-identity proof that changing a
+chunk key would need. Whether the unit could become ``(vm_id, source)`` is a
+RULING — see :func:`app.tasks.calibration_published_twin_worker` §4, where the
+same question is live for #2076 — not a comment, and not a refactor.
 
 What this module deliberately does NOT do: change any population semantics. The
 filters, the normalization, the bucket assignment and the thresholds are the
@@ -728,18 +752,29 @@ class UnitChunk:
 def plan_units(rows: Iterable[Any], *, buckets: int) -> tuple[UnitChunk, ...]:
     """Cut the Stage A roster into chunks of WHOLE virtual questions.
 
-    **A ``vm_id`` is never split.** The population keys two things on ``vm_id``
-    without source — the ``mode_prices`` CTE (``GROUP BY vm_id,
-    adj_opening_probability, eligible``) and the representative window
-    (``ROW_NUMBER() OVER (PARTITION BY cv.vm_id ...)``) — so every market
-    sharing a ``vm_id`` is a peer of every other, ACROSS sources. ``e:123`` on
-    Kalshi and ``e:123`` on Polymarket vote in the same mode-price election and
-    compete for the same ``rn = 1`` representative. Put them in different chunks
-    and each chunk elects its own representative and detects its own modes:
-    ``CROSS_CHUNK_PEER_SPLIT`` and ``FIELD_ROSTER_SPLIT``, and the merged output
-    is quietly not the monolith's. The same argument covers a normalized field:
+    **A ``vm_id`` is never split.** ``e:123`` on Kalshi and ``e:123`` on
+    Polymarket land in the same unit; put them in different chunks and each
+    chunk computes its own view of the shared question, so the merged output is
+    quietly not the monolith's — ``CROSS_CHUNK_PEER_SPLIT`` and
+    ``FIELD_ROSTER_SPLIT``. The same argument covers a normalized field:
     completeness is a per-market property, and a market lives in exactly one
     ``vm_id``, so keeping ``vm_id``s whole keeps fields whole.
+
+    **AMENDED 2026-08-24 by ruling 125 (#2098): this used to cite TWO
+    source-blind keys and now cites one.** The ``mode_prices`` CTE was
+    ``GROUP BY vm_id, adj_opening_probability, eligible`` and ``deduped`` joined
+    on bare ``vm_id`` — which meant one source's modal price DELETED the other
+    source's legs at that price (measured on ``e:14887630``: 4 Polymarket legs
+    deleting 23 Kalshi legs). That was a defect, and ruling 125 scoped both to
+    ``(vm_id, source)``. Do not restate the cross-source "mode-price election";
+    it does not exist. The surviving source-blind key is the representative
+    window ``ROW_NUMBER() OVER (PARTITION BY cv.vm_id ...)`` — and even that is
+    read only on the non-multi branch, which a cross-source ``e:`` ``vm_id``
+    never takes.
+
+    The rule is retained on the determinism grounds immediately below, and
+    because "computed and never read" is not the measured row-identity proof a
+    change of chunk key would require. Changing it is a ruling, not a refactor.
 
     Deterministic by construction: a ``vm_id``'s unit is :func:`bucket_of` that
     ``vm_id``, so the same roster always yields the same chunks, in the same

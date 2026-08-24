@@ -103,19 +103,34 @@ async def _seed_leg(session, market_id, *, source, price):
 
     await session.execute(
         text(
-            "INSERT INTO futures_markets (id, source, status, event_id, "
-            "mutually_exclusive, market_type, llm_sport_category, volume) VALUES "
-            "(:id, :src, 'resolved', :ev, false, 'binary', 'politics', 100)"
+            "INSERT INTO futures_markets (id, external_id, name, source, status, "
+            "category, event_id, mutually_exclusive, market_type, "
+            "llm_sport_category, volume) "
+            "VALUES (:id, :xid, :nm, :src, 'resolved', 'championship', :ev, "
+            "false, 'binary', 'politics', 100)"
         ),
-        {"id": market_id, "src": source, "ev": EVENT_ID},
+        {
+            "id": market_id,
+            "xid": f"test-2098-{market_id}",
+            "nm": f"market-{market_id}",
+            "src": source,
+            "ev": EVENT_ID,
+        },
     )
     await session.execute(
         text(
-            "INSERT INTO futures_outcomes (id, market_id, name, opening_probability, "
-            "calibration_probability, is_winner, resolution_source, volume) VALUES "
-            "(:id, :mid, :nm, :p, :p, true, 'api_settlement', 10)"
+            "INSERT INTO futures_outcomes (id, market_id, external_id, name, "
+            "opening_probability, calibration_probability, is_winner, "
+            "resolution_source, volume) VALUES "
+            "(:id, :mid, :xid, :nm, :p, :p, true, 'api_settlement', 10)"
         ),
-        {"id": market_id, "mid": market_id, "nm": f"leg-{market_id}", "p": price},
+        {
+            "id": market_id,
+            "mid": market_id,
+            "xid": f"test-2098-out-{market_id}",
+            "nm": f"leg-{market_id}",
+            "p": price,
+        },
     )
     # A real trade, so the Kalshi legs clear the bid/trade liquidity predicate
     # (#940) AND the Polymarket legs are NOT never-traded placeholders. Both
@@ -124,8 +139,9 @@ async def _seed_leg(session, market_id, *, source, price):
     # join under test.
     await session.execute(
         text(
-            "INSERT INTO futures_odds_snapshots (outcome_id, last_price, yes_bid) "
-            "VALUES (:oid, :p, :p)"
+            "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, probability, "
+            "reading_count, last_price, yes_bid) VALUES "
+            "(:oid, 'test-2098', :p, 1, :p, :p)"
         ),
         {"oid": market_id, "p": price},
     )
@@ -144,7 +160,8 @@ async def _seed_shared_event(session):
     await session.execute(
         text(
             "INSERT INTO events (id, sport_id, home_team_name, away_team_name, "
-            "commence_time) VALUES (:id, :sid, 'Home 2098', 'Away 2098', :ct)"
+            "commence_time, status) VALUES "
+            "(:id, :sid, 'Home 2098', 'Away 2098', :ct, 'completed')"
         ),
         {
             "id": EVENT_ID,
@@ -418,8 +435,8 @@ async def test_a_single_source_event_is_unaffected_by_the_source_scoping():
             await session.execute(
                 _t(
                     "INSERT INTO events (id, sport_id, home_team_name, "
-                    "away_team_name, commence_time) VALUES "
-                    "(:id, :sid, 'Home 2098', 'Away 2098', :ct)"
+                    "away_team_name, commence_time, status) VALUES "
+                    "(:id, :sid, 'Home 2098', 'Away 2098', :ct, 'completed')"
                 ),
                 {
                     "id": EVENT_ID,

@@ -151,7 +151,24 @@ believes the population change warrants one, that is an escalation, not a lane f
 
 ---
 
-## 4. Two more sites with the identical defect — REPORTED, NOT FIXED
+## 4. Two more sites with the identical defect — REPORTED, NOT FIXED *(both FIXED 2026-08-24 by CAL-P091)*
+
+> **CLOSED by CAL-P091** (`program/calibration-89`, stacked on this branch). Both sites below
+> carry the three-line ruling-125 fix, guarded red-first against real Postgres by
+> `backend/tests/integration/test_calibration_mode_price_source_scope_peers_pg.py`, wired into
+> the deploy-gating `search-recall` CI job. Evidence:
+> `docs/audits/calibration/cal-p091-2098-peer-sites-and-stale-prose.md`.
+> **The disagreement predicted in the table below is therefore real and time-boxed:** from this
+> commit until `-89` merges, `GET /api/admin/calibration-data` reports ≈23–35 rows differently
+> from the producer on `e:14887630`. That is EXPECTED, not a new defect.
+>
+> CAL-P091 also found and repaired a defect in THIS window's guard
+> (`test_calibration_mode_price_source_scope_pg.py`): six NOT NULL columns missing from its raw
+> `INSERT`s — three of them backed only by a Python-side SQLAlchemy `default=`, which
+> `text("INSERT …")` never runs. Recorded here as well as there, because this file called that
+> guard "COLLECTED but never EXECUTED" and that is precisely why the defect survived. See §3 of
+> the CAL-P091 doc and the new static check `backend/tests/test_pg_gate_seed_completeness.py`.
+
 
 Ruling 125's clause is general, and `mode_prices` is copied twice more in the tree. Both
 are **outside this cert's scope** and both are left alone deliberately: widening a cert
