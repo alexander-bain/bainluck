@@ -489,6 +489,52 @@ def _major_claim_allowed(key: str, market_name: str, external_id: str | None) ->
     return True
 
 
+# Tokens every LIV market shares, so none of them can distinguish one LIV event
+# from another. "liv golf" is the tour's name; it is the question, not the answer.
+_LIV_GENERIC_TOKENS = {"liv", "golf", "tour", "tournament"}
+
+
+def _names_a_scheduled_liv_event(market_name: str, schedule: list[dict] | None) -> bool:
+    """True if this market names a SPECIFIC LIV event that the schedule knows about.
+
+    UX-P127 residual 2. Priority-1's `liv\\s+golf` pattern is a tour claim, and it was
+    swallowing the events: nine open markets sat under key `liv` on 2026-08-24 —
+    LIV Golf Indianapolis (5), LIV Golf New York (2), a corporate-shutdown question
+    and a Q1-2027 eligibility question — one bucket holding four different subjects.
+
+    The discriminator is anchored on the SCHEDULE rather than a city regex, for the
+    same reason F4's was anchored on the tour: a regex would have to enumerate every
+    venue LIV ever visits, and the day it misses one the market silently rejoins the
+    bucket. With no schedule (DataGolf down) this returns False and the tour key is
+    kept — no authority, no split.
+
+    A match requires the event's DISTINGUISHING tokens, not merely a shared one.
+    "LIV Golf New York" needs both `new` and `york`, so "announce a new team" cannot
+    forge the claim — one shared token is exactly how F4's original defect worked.
+    """
+    if not schedule:
+        return False
+
+    market_tokens = {w.lower() for w in re.findall(r"[a-z]{3,}", market_name, re.I)}
+
+    for entry in schedule:
+        name = entry.get("name", "")
+        if not re.search(r"\bliv\s+golf\b", name, re.I):
+            continue
+        distinguishing = {
+            w.lower() for w in re.findall(r"[a-z]{3,}", name, re.I)
+        } - _LIV_GENERIC_TOKENS
+        if not distinguishing:
+            continue
+        # One-word venues ("Indianapolis") need that word; multi-word venues
+        # ("New York") need at least two, so no single generic word suffices.
+        needed = min(2, len(distinguishing))
+        if len(market_tokens & distinguishing) >= needed:
+            return True
+
+    return False
+
+
 # PGA Tour Signature Events — elevated purse/field, top-tier regular season events
 _SIGNATURE_EVENTS = {
     "arnold_palmer_invitational",
@@ -837,11 +883,21 @@ _golf_schedule_cache: dict = {"data": None, "ts": 0}
 _GOLF_SCHEDULE_TTL = 3600  # 1 hour
 
 
-async def _get_golf_schedule() -> list[dict]:
-    """Fetch PGA tour schedule from DataGolf with 1-hour in-process cache.
+# UX-P127: the schedule is the only authority `_normalize_tournament` has for folding
+# two spellings of one event together (Priority 2), so an event on a tour we never
+# load cannot be folded at all. Loading `pga` alone is what split the British Masters
+# across two cards and what let key `liv` swallow LIV Golf Indianapolis and New York.
+# Order matters: on a key collision the earlier tour wins, so PGA stays canonical.
+_SCHEDULE_TOURS = ("pga", "euro", "liv")
 
-    Returns a list of tournament dicts with name, start/end dates, venue, status.
-    Returns empty list if DataGolf is unavailable.
+
+async def _get_golf_schedule() -> list[dict]:
+    """Fetch the PGA, DP World and LIV schedules from DataGolf (1-hour cache).
+
+    Returns a list of tournament dicts with name, start/end dates, venue, status and
+    the tour that supplied them. Tours are fetched independently: one tour failing
+    degrades that tour's events only, and returns whatever the others gave. An empty
+    list means every tour failed.
     """
     now_ts = time.time()
     if _golf_schedule_cache["data"] is not None and (now_ts - _golf_schedule_cache["ts"]) < _GOLF_SCHEDULE_TTL:
@@ -850,34 +906,54 @@ async def _get_golf_schedule() -> list[dict]:
     from app.services.datagolf_api import DataGolfAPIService
 
     service = DataGolfAPIService()
+    result: list[dict] = []
+    seen_keys: set[str] = set()
+    per_tour: list[str] = []
     try:
-        tournaments = await service.get_schedule(tour="pga")
-
-        result = []
-        for t in tournaments:
-            if not t.event_name:
+        for tour in _SCHEDULE_TOURS:
+            try:
+                tournaments = await service.get_schedule(tour=tour)
+            except Exception as e:
+                # Isolated per tour on purpose. Before UX-P127 a single failure
+                # returned [] for the whole route, so every tournament lost its dates.
+                logger.warning("DataGolf %s schedule unavailable: %s", tour, e)
                 continue
 
-            # Generate a stable key from the event name, stripping sponsor suffixes
-            # so "Arnold Palmer Invitational Presented By Mastercard" -> "arnold_palmer_invitational"
-            # This ensures keys match _SIGNATURE_EVENTS entries.
-            clean_name = _SPONSOR_SUFFIX_RE.sub("", t.event_name)
-            key = re.sub(r"[^a-z0-9]+", "_", clean_name.lower()).strip("_")
+            added = 0
+            for t in tournaments:
+                if not t.event_name:
+                    continue
 
-            result.append({
-                "name": t.event_name,
-                "key": key,
-                "start_date": f"{t.start_date}T00:00:00+00:00" if t.start_date else None,
-                "end_date": f"{t.end_date}T00:00:00+00:00" if t.end_date else None,
-                "venue": t.course or "",
-                "location": t.location or "",
-                "status": t.status or "",
-                "round": str(t.current_round) if t.current_round else "",
-            })
+                # Generate a stable key from the event name, stripping sponsor suffixes
+                # so "Arnold Palmer Invitational Presented By Mastercard" -> "arnold_palmer_invitational"
+                # This ensures keys match _SIGNATURE_EVENTS entries.
+                clean_name = _SPONSOR_SUFFIX_RE.sub("", t.event_name)
+                key = re.sub(r"[^a-z0-9]+", "_", clean_name.lower()).strip("_")
+                if not key or key in seen_keys:
+                    continue
+                seen_keys.add(key)
+
+                result.append({
+                    "name": t.event_name,
+                    "key": key,
+                    "start_date": f"{t.start_date}T00:00:00+00:00" if t.start_date else None,
+                    "end_date": f"{t.end_date}T00:00:00+00:00" if t.end_date else None,
+                    "venue": t.course or "",
+                    "location": t.location or "",
+                    "status": t.status or "",
+                    "round": str(t.current_round) if t.current_round else "",
+                    "tour": tour,
+                })
+                added += 1
+            per_tour.append(f"{tour}={added}")
 
         _golf_schedule_cache["data"] = result
         _golf_schedule_cache["ts"] = now_ts
-        logger.info("DataGolf PGA schedule: loaded %d tournaments", len(result))
+        logger.info(
+            "DataGolf schedule: loaded %d tournaments (%s)",
+            len(result),
+            ", ".join(per_tour) or "no tours available",
+        )
         return result
 
     except Exception as e:
@@ -1264,6 +1340,11 @@ def _normalize_tournament(
             # DP World Tour is not a men's major. Falling through here sends the
             # market to Priority 2/3/4, where it earns its own key.
             if not _major_claim_allowed(key, market_name, external_id):
+                continue
+            # UX-P127: `liv` is a TOUR key. A market naming a scheduled LIV event
+            # falls through to Priority 2, which folds every spelling of that event
+            # onto one card; only tour-level questions keep the bucket.
+            if key == "liv" and _names_a_scheduled_liv_event(market_name, schedule):
                 continue
             return key
 
