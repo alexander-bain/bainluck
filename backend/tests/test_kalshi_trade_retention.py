@@ -33,6 +33,7 @@ from app.utils.kalshi_retention import (
     AT_RISK_AGE_DAYS,
     OBSERVED_PRESENT_MAX_AGE_DAYS,
     OBSERVED_PURGED_MIN_AGE_DAYS,
+    OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES,
     PROVABLY_PURGED_AGE_DAYS,
     days_until_purge,
     is_at_risk,
@@ -58,11 +59,23 @@ class TestRetentionBounds:
         # 2026-05-25 (74d) was still present; 2026-05-13 (86d) was already 404.
         assert OBSERVED_PRESENT_MAX_AGE_DAYS < OBSERVED_PURGED_MIN_AGE_DAYS
 
-    def test_skip_work_uses_the_upper_bound_and_warning_the_lower(self):
-        # Skipping must be conservative (only refuse what is provably gone);
-        # warning must be eager (fire while there is still time to act).
+    def test_skip_work_stays_conservative_and_warning_stays_eager(self):
+        """The two jobs, asserted as jobs rather than as a pair of numbers.
+
+        2026-08-24: the warning bound used to be ``OBSERVED_PRESENT_MAX_AGE_DAYS``
+        (74). C-KALSHI-RETENTION-1 confirmed purges from 47 days, so that alarm
+        rang 27 days after the data was already gone — an eager bound in name only.
+        The warning is now anchored to the youngest CONFIRMED purge; the skip-work
+        bound is untouched, because every definitive read at 85-86d was purged and
+        refusing to spend a call there is still fail-open.
+        """
+        # Skipping must be conservative: only refuse what is provably gone.
         assert PROVABLY_PURGED_AGE_DAYS == OBSERVED_PURGED_MIN_AGE_DAYS
-        assert AT_RISK_AGE_DAYS == OBSERVED_PRESENT_MAX_AGE_DAYS
+        # Warning must be eager: fire at the first CONFIRMED loss, not after it.
+        assert AT_RISK_AGE_DAYS == OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES
+        assert AT_RISK_AGE_DAYS < PROVABLY_PURGED_AGE_DAYS
+        # And the survivor observation no longer drives either job.
+        assert AT_RISK_AGE_DAYS != OBSERVED_PRESENT_MAX_AGE_DAYS
 
     @pytest.mark.parametrize(
         "age_days,expected",

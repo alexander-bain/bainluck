@@ -12,17 +12,24 @@ THE WINDOW IS THE 86-DAY BOUND, NOT THE 66-DAY ONE, AND THAT IS DELIBERATE
 Two constants govern two different questions, and using either for the other's job
 is a real defect (``kalshi_retention`` says so in its own docstring):
 
-* ``CAPTURE_PLANNING_AGE_DAYS`` (66) — *"by when must we ALREADY have captured
-  this"*. It is the PLANNING horizon and it is what the buckets are cut against.
+* ``CAPTURE_PLANNING_AGE_DAYS`` (45 since 2026-08-24) — *"which rows do we spend the
+  next call on first"*. It is the PRIORITIZATION anchor and what the buckets are cut
+  against. It is **not** a claim that anything is still available.
 * ``PROVABLY_PURGED_AGE_DAYS`` (86) — *"is one more call provably wasted"*. It is
-  the SKIP-WORK horizon.
+  the SKIP-WORK horizon, and the only one of the two allowed to stop work.
 
-The SQL window uses **86**. A market between 66 and 86 days old is past its planning
-deadline but is *not* provably gone, and the planner already has a name for it
-(``expired``) that sorts it last rather than dropping it. If the SQL filtered at 66
-instead, those rows would never reach the planner to be named, and the sweep would
-report a clean run over a population it had silently narrowed — which is the
-gotcha #53 shape, arrived at from the query side. Fail open; let the planner name it.
+The SQL window uses **86**. A market past its planning horizon but under 86 days is
+*not* provably gone — C-KALSHI-RETENTION-1 measured 68-day markets still present with
+100 trades alongside purged 54-day siblings in the same series — and the planner has
+a name for it (``overdue``) that sorts it FIRST rather than dropping it. If the SQL
+filtered at the planning horizon instead, those rows would never reach the planner to
+be named, and the sweep would report a clean run over a population it had silently
+narrowed — the gotcha #53 shape, arrived at from the query side. Fail open; let the
+planner name it.
+
+That division is what makes the planning constant safe to lower. Tightening it moves
+rows into ``overdue``, which is a change in URGENCY; it can never remove a row from
+the sweep, because removal is the other constant's job and that one has not moved.
 
 WHY THE SQL ORDERS BY DATE WHEN THE PLANNER OWNS ORDERING
 ----------------------------------------------------------

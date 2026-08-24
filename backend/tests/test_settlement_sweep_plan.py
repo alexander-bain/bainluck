@@ -15,7 +15,9 @@ from app.utils.kalshi_retention import CAPTURE_PLANNING_AGE_DAYS
 from app.utils.settlement_sweep_plan import (
     BUCKETS,
     NON_TERMINAL_RESERVE,
+    OVERDUE_BUCKET,
     TERMINAL_BUCKET,
+    TERMINAL_BUCKETS,
     TIER_NEVER_PROBED,
     TIER_STABLE_NONANSWER,
     TIER_TRANSIENT_ONLY,
@@ -121,9 +123,9 @@ class TestBucketing:
         ordered = order_candidates([long_lived, nearly_terminal], NOW)
         assert [c.market_id for c in ordered] == [1, 2]
 
-    def test_negative_is_expired_not_bucket_zero(self):
-        assert bucket_for(-0.5) == "expired"
-        assert bucket_for(-40) == "expired"
+    def test_negative_is_overdue_not_bucket_zero(self):
+        assert bucket_for(-0.5) == OVERDUE_BUCKET
+        assert bucket_for(-40) == OVERDUE_BUCKET
 
     def test_unknown_and_future_are_NAMED_not_dropped(self):
         """Silently filtering them reports a clean run over an undefined population."""
@@ -141,9 +143,17 @@ class TestOrdering:
         cands = [candidate(1, 7), candidate(2, 1), candidate(3, 4)]
         assert [c.market_id for c in order_candidates(cands, NOW)] == [2, 3, 1]
 
-    def test_expired_and_unknown_never_displace_a_saveable_row(self):
-        """gotcha #41's inverse: grinding the already-dead before the dying."""
-        cands = [candidate(1, -10), candidate(2, None), candidate(3, 70)]
+    def test_unknown_never_displaces_a_saveable_row(self):
+        """gotcha #41's inverse: grinding the unschedulable before the dying.
+
+        2026-08-24: this test used to assert the same of an OVERDUE row, on the
+        reading that a past-horizon row was already dead. C-KALSHI-RETENTION-1
+        disproved it — purges begin at 47d and are non-monotonic, so past-horizon
+        means late, not gone. ``unknown`` keeps the property because it has no date
+        to schedule against at all; the overdue half now asserts the opposite and
+        lives in :class:`TestOverdueIsUrgentNotWrittenOff`.
+        """
+        cands = [candidate(2, None), candidate(3, 70)]
         ordered = order_candidates(cands, NOW)
         assert ordered[0].market_id == 3
 
@@ -204,12 +214,12 @@ class TestPlanSweep:
 
 
 class TestBurnDown:
-    def test_counts_every_bucket_including_the_unsaveable(self):
+    def test_counts_every_bucket_including_the_overdue(self):
         cands = [candidate(1, 3), candidate(2, 3), candidate(3, 70), candidate(4, -1), candidate(5, None)]
         counts = burn_down(cands, NOW)
         assert counts[TERMINAL_BUCKET] == 2
         assert counts["61-74"] == 1
-        assert counts["expired"] == 1
+        assert counts[OVERDUE_BUCKET] == 1
         assert counts["unknown"] == 1
 
     def test_the_total_is_conserved(self):
@@ -232,7 +242,7 @@ class TestClockDiscipline:
         )
         assert near == pytest.approx(70, abs=0.01)
         assert far == pytest.approx(-330, abs=0.01)
-        assert bucket_for(far) == "expired"
+        assert bucket_for(far) == OVERDUE_BUCKET
 
 
 class TestProbeHistoryTiering:
@@ -447,3 +457,101 @@ class TestDispositionPartition:
         """#2174's population must stay in the tier that gets retried first."""
         assert Disposition.RATE_LIMITED.value in TRANSIENT_DISPOSITION_VALUES
         assert Disposition.TRANSPORT_ERROR.value in TRANSIENT_DISPOSITION_VALUES
+
+
+class TestOverdueIsUrgentNotWrittenOff:
+    """C-KALSHI-RETENTION-1 fold-in: purges start at 47d and are NON-MONOTONIC.
+
+    The retention verdict forced the planning horizon down from 66 days to 45. That
+    change is only safe because of the ordering half: while ``overdue`` sorted last,
+    every day the horizon dropped DEMOTED more rows, so making the constants more
+    accurate made the sweep worse. These guards hold the two halves together, and
+    they are written against the invariant rather than against the number so that
+    the next re-measurement cannot quietly reintroduce the defect.
+    """
+
+    def test_an_overdue_row_outranks_every_dated_bucket(self):
+        """The whole fold-in in one assertion.
+
+        Past the horizon is "we are late", never "it is gone" — the only constant
+        that may say gone is the 86-day skip-work bound, and rows past it are
+        excluded before they reach the planner.
+        """
+        overdue = candidate(1, -20)
+        dying = candidate(2, 0.5)
+        healthy = candidate(3, 70)
+        ordered = order_candidates([healthy, dying, overdue], NOW)
+        assert [c.market_id for c in ordered] == [1, 2, 3]
+
+    def test_a_binding_budget_spends_on_the_overdue_row_first(self):
+        """Ordering that a budget cap does not honour is decoration."""
+        selected, skipped = plan_sweep([candidate(1, 5), candidate(2, -30)], budget=1, now=NOW)
+        assert [c.market_id for c in selected] == [2]
+        assert skipped.get(OVERDUE_BUCKET, 0) == 0
+
+    def test_the_most_overdue_row_leads_within_overdue(self):
+        """Inside the bucket the oldest still leads, so the tier fix is not undone."""
+        ordered = order_candidates([candidate(1, -5), candidate(2, -50)], NOW)
+        assert [c.market_id for c in ordered] == [2, 1]
+
+    def test_overdue_holds_the_exhaustion_privilege(self):
+        assert OVERDUE_BUCKET in TERMINAL_BUCKETS
+        assert TERMINAL_BUCKET in TERMINAL_BUCKETS
+
+    def test_lowering_the_horizon_can_never_shrink_the_swept_population(self):
+        """The property that makes the constant safe to move at all.
+
+        Tightening the PLANNING horizon must only ever change a row's urgency. The
+        population is bounded by the SKIP-WORK constant, which this fold-in did not
+        touch -- so no value of the planning horizon can drop a row from the plan.
+        """
+        from app.utils.kalshi_retention import (
+            CAPTURE_PLANNING_AGE_DAYS,
+            PROVABLY_PURGED_AGE_DAYS,
+        )
+
+        assert CAPTURE_PLANNING_AGE_DAYS < PROVABLY_PURGED_AGE_DAYS
+        cands = [candidate(i, -60 + i * 10) for i in range(12)]
+
+        # Conservation is the claim: a row the horizon newly caught is either worked
+        # or REPORTED as deferred. It is never silently absent. (At a budget of
+        # exactly len(cands) one terminal row is held back by NON_TERMINAL_RESERVE —
+        # that is the reserve doing its documented job, and it shows up in
+        # `skipped`, which is precisely the difference that matters.)
+        selected, skipped = plan_sweep(cands, budget=len(cands), now=NOW)
+        assert len(selected) + sum(skipped.values()) == len(cands)
+
+        # And with a budget that does not bind, nothing is left behind at all.
+        selected, skipped = plan_sweep(cands, budget=2 * len(cands), now=NOW)
+        assert len(selected) == len(cands), (
+            "every candidate must remain plannable; exclusion is the 86-day "
+            "constant's job and it did not move"
+        )
+        assert sum(skipped.values()) == 0
+
+    def test_the_horizon_is_derived_from_the_youngest_confirmed_purge(self):
+        """Not a hand-typed number. gotcha #35: predicates consume constants."""
+        from app.utils.kalshi_retention import (
+            AT_RISK_AGE_DAYS,
+            CAPTURE_PLANNING_AGE_DAYS,
+            OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES,
+            RETENTION_IS_MONOTONIC,
+        )
+
+        assert OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES == 47
+        assert CAPTURE_PLANNING_AGE_DAYS == OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES - 2
+        assert AT_RISK_AGE_DAYS == OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES, (
+            "the warning must fire at the first confirmed loss, not after it"
+        )
+        assert RETENTION_IS_MONOTONIC is False
+
+    def test_the_stale_survivor_observation_no_longer_drives_policy(self):
+        """74 was a survivor observation. It must not be a warning or planning input."""
+        from app.utils.kalshi_retention import (
+            AT_RISK_AGE_DAYS,
+            CAPTURE_PLANNING_AGE_DAYS,
+            OBSERVED_PRESENT_MAX_AGE_DAYS,
+        )
+
+        assert AT_RISK_AGE_DAYS != OBSERVED_PRESENT_MAX_AGE_DAYS
+        assert CAPTURE_PLANNING_AGE_DAYS != OBSERVED_PRESENT_MAX_AGE_DAYS

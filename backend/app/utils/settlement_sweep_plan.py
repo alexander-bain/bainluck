@@ -121,9 +121,21 @@ BUCKETS: tuple[tuple[str, int, int], ...] = (
     ("61-74", 61, 74),
 )
 
+#: Rows already PAST the capture-planning horizon. Not "gone" — see
+#: :func:`bucket_for` — and deliberately ranked ahead of every dated bucket.
+OVERDUE_BUCKET = "overdue"
+
 #: The bucket whose contents expire before the next weekly sweep. It is taken to
 #: exhaustion before anything else, and it is the only bucket with that privilege.
 TERMINAL_BUCKET = "0-7"
+
+#: Buckets that get the exhaustion privilege. ``overdue`` joined ``0-7`` on
+#: 2026-08-24: "the bucket that stops existing" describes a row 20 days past the
+#: horizon at least as well as one with 5 days left, and under non-monotonic
+#: retention the overdue row is the likelier of the two to vanish next. Giving 0-7
+#: priority over it would spend the budget in deadline order on a population whose
+#: deadlines have been shown not to be ordered.
+TERMINAL_BUCKETS: frozenset[str] = frozenset({OVERDUE_BUCKET, TERMINAL_BUCKET})
 
 #: Minimum share of a sweep's budget reserved for NON-terminal buckets, so a large
 #: terminal bucket (or a stuck one) cannot consume a whole week's capacity and leave
@@ -191,10 +203,21 @@ def attempt_tier_from_dispositions(dispositions) -> int:
 def bucket_for(days_remaining: float | None) -> str:
     """Name the bucket a candidate falls in.
 
-    ``expired`` and ``future`` are named rather than dropped: a sweep that silently
+    ``overdue`` and ``future`` are named rather than dropped: a sweep that silently
     filters them reports a clean run over a population it never defined, and the
     difference between "nothing to do" and "we excluded it" is exactly the
     distinction gotcha #53 is about.
+
+    ``overdue`` WAS CALLED ``expired``, AND THE RENAME IS THE POINT (2026-08-24).
+    "Expired" asserts the row is gone. C-KALSHI-RETENTION-1 falsified exactly that
+    claim: retention is non-monotonic, so being past the planning horizon is not
+    evidence of loss — 68-day markets are still present with 100 trades while
+    54-day siblings in the same series are purged. The only constant permitted to
+    say a row is unreachable is ``PROVABLY_PURGED_AGE_DAYS`` (86d), and rows past
+    it never reach this function: they are excluded upstream by
+    ``recovery_window_start``. So EVERY candidate this names is still possibly
+    recoverable, and a past-horizon row is the most urgent thing in the queue
+    rather than the least. See :func:`order_candidates` for the ordering half.
 
     THE EDGES ARE FLOORED, AND THAT IS NOT A ROUNDING PREFERENCE. ``days_remaining``
     is a float over a continuous clock, but :data:`BUCKETS` is written in whole days
@@ -215,7 +238,7 @@ def bucket_for(days_remaining: float | None) -> str:
     if days_remaining is None:
         return "unknown"
     if days_remaining < 0:
-        return "expired"
+        return OVERDUE_BUCKET
     whole = math.floor(days_remaining)
     for label, low, high in BUCKETS:
         if low <= whole <= high:
@@ -247,7 +270,10 @@ def order_candidates(
       61-74 row no matter how many times it has been asked — the terminal bucket
       is the one that stops existing, and ``NON_TERMINAL_RESERVE`` is what
       protects the big bucket from it. Demoting a bucket for its history would
-      trade a permanent loss for a temporary one.
+      trade a permanent loss for a temporary one. Since 2026-08-24 ``overdue``
+      is rank 0, ahead of every dated bucket, for the reason given inline in the
+      body: past-the-horizon is not evidence of loss, so it is the most urgent
+      rank rather than the last one.
     * ``attempt_tier`` then prefers never-probed over channel-failed over
       already-answered-nothing.
     * ``attempts`` spreads the re-asks within a tier, so a row asked five times
@@ -266,14 +292,28 @@ def order_candidates(
     returned BLOCK on the delete rail.
     """
     now = now or datetime.now(timezone.utc)
-    bucket_rank = {label: i for i, (label, _, _) in enumerate(BUCKETS)}
+    # `overdue` is rank 0 and the dated buckets follow it. Until 2026-08-24 it was
+    # LAST, on the reasoning that an expired row "cannot be saved" — which
+    # C-KALSHI-RETENTION-1 disproved: purges begin at 47d and are non-monotonic, so
+    # past-the-horizon means "we are late", never "it is gone". Everything that
+    # provably cannot be saved is already excluded by the 86-day skip-work bound
+    # before it becomes a candidate, so nothing reaching here is unsalvageable and
+    # the most overdue row is the most urgent one. Sorting it last meant the fix for
+    # the 47-day finding — lowering the horizon — would have DEMOTED every row it
+    # newly caught, making the sweep worse the more accurate its constants got.
+    bucket_rank = {OVERDUE_BUCKET: 0}
+    bucket_rank.update({label: i + 1 for i, (label, _, _) in enumerate(BUCKETS)})
+    # `future` then `unknown` still sort last: one genuinely has time, the other
+    # cannot be scheduled at all. Neither may displace a row that is running out.
+    _FUTURE_RANK = len(BUCKETS) + 1
+    _UNKNOWN_RANK = len(BUCKETS) + 2
 
     def key(c: Candidate) -> tuple[int, int, int, float, int]:
         remaining = c.days_remaining(now)
         label = bucket_for(remaining)
-        # `expired` and `unknown` sort last: they cannot be saved (expired) or
-        # cannot be scheduled (unknown), so they must never displace a row that can.
-        rank = bucket_rank.get(label, len(BUCKETS) + (0 if label == "future" else 1))
+        rank = bucket_rank.get(
+            label, _FUTURE_RANK if label == "future" else _UNKNOWN_RANK
+        )
         return (
             rank,
             c.attempt_tier(),
@@ -298,8 +338,8 @@ def plan_sweep(
     now = now or datetime.now(timezone.utc)
     ordered = order_candidates(candidates, now)
 
-    terminal = [c for c in ordered if bucket_for(c.days_remaining(now)) == TERMINAL_BUCKET]
-    rest = [c for c in ordered if bucket_for(c.days_remaining(now)) != TERMINAL_BUCKET]
+    terminal = [c for c in ordered if bucket_for(c.days_remaining(now)) in TERMINAL_BUCKETS]
+    rest = [c for c in ordered if bucket_for(c.days_remaining(now)) not in TERMINAL_BUCKETS]
 
     # The terminal bucket is taken to exhaustion, but never past the point where
     # the reserve for everything else would be consumed.
