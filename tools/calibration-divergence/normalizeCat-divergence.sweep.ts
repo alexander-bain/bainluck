@@ -66,7 +66,7 @@ interface PublishedCategory {
   n: number;
 }
 
-const PAYLOAD = process.env.CAL_PAYLOAD || "/tmp/cal.json";
+const PAYLOAD = process.env.CAL_PAYLOAD || "/tmp/calibration-divergence/cal.json";
 const OUT = process.env.SWEEP_OUT || "/tmp/normalizeCat-divergence.md";
 
 /** The rendered precision — `page.tsx:1587` prints `.toFixed(1)`. */

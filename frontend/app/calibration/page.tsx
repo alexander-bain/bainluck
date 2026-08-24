@@ -22,6 +22,7 @@ import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
 import {
   describeCategoryPopulation,
   describeCategoryTablePopulation,
+  nameAll,
 } from "@/lib/calibrationPopulation";
 import {
   anyNotProvable,
@@ -385,6 +386,20 @@ export default function CalibrationPage() {
       };
     });
   }, [normalized, categories, cohortFilter, provabilityByCategory]);
+
+  // Option C amendment 6: the section note's numerator. Counted over the rows
+  // the table actually renders, intersected with the pooled key map — NOT over
+  // `pooledByCategory` alone, which includes normalized keys below the
+  // `minCategoryOutcomes` floor or outside the top-15 slice and therefore
+  // invisible. Same population as the denominator, or the fraction is a claim a
+  // reader cannot check.
+  const pooledRenderedRowCount = useMemo(
+    () =>
+      categoryMetrics.filter(
+        cm => (pooledByCategory.get(cm.category) ?? []).length > 1
+      ).length,
+    [categoryMetrics, pooledByCategory]
+  );
 
   // Queue 316 item 2: one row per PROVIDER, not per source key. Three of the
   // five live keys are the Odds API answering three question shapes, and the
@@ -1487,22 +1502,30 @@ export default function CalibrationPage() {
         <p className="text-xs text-text-muted mb-4">
           Calibration metrics by market category. Categories with fewer than {minCategoryOutcomes.toLocaleString()} resolved outcomes are excluded &mdash; a sub-category chart below that sample size is statistical noise, not a calibration signal.
         </p>
-        {/* UX-P118 item 5: WHICH POPULATION. The API publishes a per-category
-            ECE over the whole population; this table renders one over the active
-            cohort, and two of its rows additionally pool several published
-            categories. Both numbers are correct about their own population —
-            unlabelled, the pair reads as a contradiction to anyone who curls the
-            API (hockey: 0.95pp published, 2.25pp here on 2026-08-21). The
-            sentence is DERIVED from the same inputs the numbers are, so it
-            cannot drift from the predicate it describes. */}
+        {/* UX-P118 item 5 / #2108 / Option C amendment 6: WHICH POPULATION.
+            The API publishes a per-category ECE over the whole population; this
+            table renders one over the active cohort, and several of its rows
+            additionally pool multiple payload categories. Both numbers are
+            correct about their own population — unlabelled, the pair reads as a
+            contradiction to anyone who curls the API (hockey: 0.95pp published,
+            2.25pp here on 2026-08-21).
+
+            The numerator counts RENDERED pooled rows, not every normalized key
+            that pools. Those are two different populations and the shipped
+            version mixed them: keys that never reach the screen (`mma` on the
+            2026-08-24 payload) were counted in the numerator of a fraction whose
+            denominator was the visible rows, so a reader who expanded all of
+            them found fewer than promised. A disclosure whose own count does not
+            survive being checked is worse than no disclosure. */}
         <p
           className="text-xs text-text-muted mb-4"
           data-testid="calibration-category-population-note"
-          data-pooled-rows={[...pooledByCategory.values()].filter(v => v.length > 1).length}
+          data-pooled-rows={pooledRenderedRowCount}
+          data-total-rows={categoryMetrics.length}
         >
           {describeCategoryTablePopulation(
             cohort.key,
-            [...pooledByCategory.values()].filter(v => v.length > 1).length,
+            pooledRenderedRowCount,
             categoryMetrics.length
           )}
         </p>
@@ -1587,15 +1610,54 @@ export default function CalibrationPage() {
                     {/* A pooled row's label is not the payload key it looks
                         like. Marked visibly rather than only in a tooltip,
                         because the reader who needs it is the one comparing
-                        against the API and he is not hovering. */}
+                        against the API and he is not hovering.
+
+                        Option C amendment 4: the badge is an EXPANDER, and the
+                        expansion carries every member of both sets, uncapped.
+                        That is the whole licence for the collapsed sentence's
+                        "and N more" — soccer folds 55 identifiers and inlining
+                        them is the wall of text the ruling warned about, but a
+                        capped list with nowhere to finish reading it is #2108
+                        again. Cap the sentence, never the expansion. */}
                     {pop.pools && (
-                      <span
-                        data-testid="calibration-pooled-categories-badge"
-                        title={pop.title}
-                        className="ml-2 align-middle inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border border-surface-border text-text-muted"
+                      <details
+                        data-testid="calibration-pooled-expander"
+                        data-cap-applied={pop.capApplied ? "true" : "false"}
+                        data-member-count={pop.pooledFrom.length}
+                        className="inline-block align-middle ml-2"
                       >
-                        {pop.pooledFrom.length} categories
-                      </span>
+                        <summary
+                          data-testid="calibration-pooled-categories-badge"
+                          title={pop.title}
+                          className="cursor-pointer list-none inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border border-surface-border text-text-muted hover:text-text-secondary"
+                        >
+                          {pop.pooledFrom.length} categories
+                        </summary>
+                        <div
+                          data-testid="calibration-pooled-members"
+                          className="mt-2 max-w-md whitespace-normal rounded-lg border border-surface-border bg-surface-card p-3 text-xs font-normal normal-case tracking-normal text-text-secondary"
+                        >
+                          <p className="mb-2">{pop.sentence}</p>
+                          <p className="mb-1">
+                            <span className="font-semibold text-text-primary">
+                              Published in <code>by_category</code> ({pop.publishedMembers.length})
+                            </span>
+                            :{" "}
+                            {pop.publishedMembers.length
+                              ? nameAll(pop.publishedMembers)
+                              : "none"}
+                          </p>
+                          <p>
+                            <span className="font-semibold text-text-primary">
+                              Not published ({pop.unpublishedMembers.length})
+                            </span>
+                            :{" "}
+                            {pop.unpublishedMembers.length
+                              ? nameAll(pop.unpublishedMembers)
+                              : "none"}
+                          </p>
+                        </div>
+                      </details>
                     )}
                   </td>
                   <td className="py-2 pr-4 text-right tabular-nums">{cm.n.toLocaleString()}</td>

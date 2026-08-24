@@ -310,3 +310,48 @@ async def _resolve_admin_email(request: Request, db=None) -> str | None:
     except Exception:
         pass
     return None
+
+
+async def resolve_bearer_user_email(request: Request, db=None) -> str | None:
+    """The signed-in caller's email — WITHOUT asking whether they are an admin.
+
+    ``_resolve_admin_email`` answers "who is this, if they are allowlisted"; this
+    answers "who is this". The distinction is what lets a route authorize by
+    OWNERSHIP rather than by privilege: a reviewer retracting their own row is
+    not exercising an admin capability, and requiring one to do it is how the
+    judgment-undo path ended up unusable from the surface that writes judgments
+    (UX-P125 item 3a).
+
+    Accepts either a Firebase ID token or a backend-issued session token — the
+    iOS app carries the latter, and a helper that quietly handled only the
+    former would return ``None`` for every real device and look exactly like
+    "not signed in".
+
+    Returns a lowercased email, or ``None`` when the caller is anonymous, the
+    token does not verify, or no ``User`` row matches it. A ``None`` here is
+    never an authorization decision on its own — it means the caller has no
+    identity to compare against, so the route must fall back to its own gate.
+    """
+    token = bearer_credentials(request)
+    if not token:
+        return None
+    try:
+        from app.services.firebase_auth import verify_id_token
+
+        claims = verify_id_token(token)
+        if not claims:
+            return None
+        firebase_uid = claims.get("uid") or claims.get("sub")
+        if not firebase_uid or db is None:
+            return None
+        from app.models.models import User
+
+        result = await db.execute(
+            select(User).where(User.firebase_uid == firebase_uid)
+        )
+        user = result.scalar_one_or_none()
+        if user is None:
+            return None
+        return (user.email or "").strip().lower() or None
+    except Exception:
+        return None

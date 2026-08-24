@@ -23,6 +23,7 @@ from app.routes.admin_utils import (
     _check_admin_destructive,
     _check_admin_secret,
     _resolve_admin_email,
+    resolve_bearer_user_email,
 )
 from app.services import get_db, get_db_rw
 from app.utils.card_integrity import display_scale, field_coherence, is_unlabelable
@@ -1246,6 +1247,48 @@ async def create_judgment(
     }
 
 
+#: Reviewer values that name a surface or a default, not a person. Production
+#: carries all of these today; the list is documentation, not the test —
+#: ``_judgment_owner`` requires an address, so a surface name added tomorrow is
+#: unattributed by construction rather than by remembering to list it here.
+_UNATTRIBUTED_REVIEWERS = {"native", "alex", "kid", "web", ""}
+
+
+async def _resolve_reviewer_identity(request, db) -> str | None:
+    """Who is asking, as a reviewer rather than as an administrator.
+
+    Thin on purpose: the resolution lives in ``admin_utils`` next to its admin
+    twin so the two cannot drift on which token forms they accept, and this
+    wrapper exists so the delete route has one seam to authorize against.
+    """
+    return await resolve_bearer_user_email(request, db)
+
+
+def _judgment_owner(judgment) -> str:
+    """The identity a judgment is attributable to, or ``""`` for none.
+
+    ``reviewer`` holds one of two very different things. When a judgment is
+    POSTed with an identity, ``create_judgment`` resolves ``"native"`` to that
+    reviewer's own email and stamps it — that is an OWNER. When it is POSTed
+    with ADMIN_TOKEN there is no identity to resolve, so the literal
+    ``"native"``/``"alex"`` stays on the row — that is a LABEL, and nobody owns
+    it. Returning ``""`` for the second case is what keeps "signed in as Alex"
+    from silently meaning "may delete every row a script ever wrote".
+
+    The test is "is this an address", not "is this on a list of surface names".
+    The list would have to grow every time a surface is added, and the failure
+    mode of forgetting is the dangerous direction: a new literal that nobody
+    listed would be treated as an owner, and would then be deletable by whoever
+    managed to resolve to that same string.
+    """
+    value = (getattr(judgment, "reviewer", None) or "").strip().lower()
+    if value in _UNATTRIBUTED_REVIEWERS:
+        return ""
+    if "@" not in value:
+        return ""
+    return value
+
+
 @router.delete("/{judgment_id}")
 async def delete_judgment(
     judgment_id: int,
@@ -1255,25 +1298,85 @@ async def delete_judgment(
 ):
     """Delete a single ranking judgment — the Rapid-mode "undo last" safety net.
 
-    Additive, admin-authenticated, read-your-writes: the row is removed and the
-    transaction committed before returning, so an immediate re-list/summary no
-    longer counts it. This backs the ReviewTab "undo last" (``u``) shortcut so
-    fast one-tap grading is fearless — a mis-tap is one keypress to reverse
-    instead of a permanent bad row polluting Alex's gold-set batches.
+    Read-your-writes: the row is removed and the transaction committed before
+    returning, so an immediate re-list/summary no longer counts it. This backs
+    the ReviewTab "undo last" (``u``) shortcut and the native labeling view's
+    undo, so fast one-tap grading is fearless — a mis-tap is one action to
+    reverse instead of a permanent bad row polluting Alex's gold-set batches.
+
+    ## Two doors, and the reason there are two (UX-P125 item 3a)
+
+    This route used to have exactly one: ``_check_admin_destructive``, the
+    ADMIN_TOKEN + ADMIN_TOKEN_DESTRUCTIVE header pair. Meanwhile ``POST`` on the
+    same resource authorizes through ``_authorize_admin``, which ALSO accepts a
+    Firebase/session identity, and stamps that reviewer's own email onto the
+    row. So the write and the un-write disagreed about who the caller was: Alex
+    could grade all evening from his phone and every undo came back 403, which
+    the client renders as "Admin access required to undo." The surface whose
+    whole promise is that a mis-tap costs one tap could not take one back.
+
+    Undo is not an attended destructive operation on someone else's data. It is
+    a reviewer retracting a sentence they just wrote, and it is authorized by
+    OWNERSHIP:
+
+    * **owner** — the caller's resolved identity equals the row's ``reviewer``.
+      No admin credential is involved, requested, or checked.
+    * **operator** — anyone else, including a reviewer reaching for a row that
+      is not theirs, and any row with no owner at all. That is still the strong
+      attended gate, unchanged.
+
+    The refusal for a non-owner says *why*. "Invalid admin secret" is what sent
+    the report off looking for a missing token when the real answer was that the
+    row belonged to someone else — a true statement about the credential, and a
+    misleading one about the situation.
     """
-    _check_admin_destructive(secret, request=request)
+    identity = await _resolve_reviewer_identity(request, db)
 
     judgment = (
         await db.execute(
             select(RankingJudgment).where(RankingJudgment.id == judgment_id)
         )
     ).scalar_one_or_none()
+
+    owner = _judgment_owner(judgment) if judgment is not None else ""
+    authorized_as = "owner" if (identity and owner and owner == identity) else None
+
+    if authorized_as is None:
+        try:
+            _check_admin_destructive(secret, request=request)
+            authorized_as = "operator"
+        except HTTPException:
+            # An identified caller who simply does not own this row gets a
+            # sentence they can act on; an anonymous one gets the credential
+            # error, which for them is the accurate description.
+            #
+            # The refusal is the same 403 whether or not the row exists. A
+            # caller who may not delete it may not learn it is there either,
+            # and answering 404 here would turn this route into an id oracle.
+            if identity:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "This judgment was recorded by another reviewer, or is "
+                        "not yours to remove. You can undo your own judgments; "
+                        "removing another reviewer's is an attended operator "
+                        "action."
+                    ),
+                ) from None
+            raise
+
     if judgment is None:
         raise HTTPException(status_code=404, detail="Judgment not found")
 
     deleted_label = judgment.label
     await db.delete(judgment)
     await db.commit()
+    logger.info(
+        "Deleted ranking judgment id=%s label=%s via=%s",
+        judgment_id,
+        deleted_label,
+        authorized_as,
+    )
     return {"status": "deleted", "id": judgment_id, "label": deleted_label}
 
 

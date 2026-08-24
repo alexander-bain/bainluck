@@ -6,16 +6,18 @@
 #
 # ## Every path here is PRIVATE, and that is the whole of #2120's first defect
 #
-# Three tools in this repo default to `/tmp/cal.json`: one treats it as a frozen
-# baseline, two `curl -o` into it. UX-P121 watched that produce
+# Three tools in this repo USED TO default to `/tmp/cal.json`: one treated it as a
+# frozen baseline, two `curl -o`d into it. UX-P121 watched that produce
 # `calibration: FAIL — keys DISAPPEARED` against a payload that had not changed —
 # the baseline's mtime was five seconds NEWER than the fresh fetch it was being
 # compared against. The tell was a timestamp, not a value, which is why it took a
 # cycle to see.
 #
-# So this tool never touches `/tmp/cal.json`. It owns `/tmp/option-c-staging/`
-# and every path under it is overridable. A new tool that defaults into a shared
-# file is a new instance of that bug, and there is no reason to write one.
+# So this tool never touched it. It owns `/tmp/option-c-staging/` and every path
+# under it is overridable. #2120 (UX-P125) gave the other three the same
+# treatment: `/tmp/cal-baseline/`, `/tmp/calibration-divergence/`,
+# `/tmp/pooled-label-options/`. A new tool that defaults into a shared file is a
+# new instance of that bug, and there is no reason to write one.
 #
 # Gotcha #54: never pipe a gate. The exit code is read from `$?` on its own line.
 set -u
@@ -57,12 +59,20 @@ except Exception as exc:
     print(f"[option-c] payload is not JSON: {exc!r}")
     raise SystemExit(2)
 buckets, cats = d.get("buckets") or [], d.get("by_category") or []
+av = d.get("availability")
+cache = (d.get("cache") or {}).get("status")
 print(f"[option-c] payload generated_at={d.get('generated_at')} "
-      f"buckets={len(buckets)} by_category={len(cats)}")
+      f"buckets={len(buckets)} by_category={len(cats)} "
+      f"availability={av} cache={cache or '-'}")
 if not buckets or not cats:
     print("[option-c] REFUSING to generate: an empty payload would stage a wording")
     print("           that says nothing pools, which is a false claim, not an empty one.")
     raise SystemExit(2)
+if av not in (None, "fresh"):
+    # #2120: a DATED tier answers 200 with a whole payload. It sweeps clean while
+    # describing a copy nobody is looking at, so say which tier answered.
+    print(f"[option-c] NOTE: served from a DEGRADED tier (availability={av}). The")
+    print("           wording below describes that dated copy, not the live population.")
 PY
 rc=$?
 if [ $rc -ne 0 ]; then exit $rc; fi

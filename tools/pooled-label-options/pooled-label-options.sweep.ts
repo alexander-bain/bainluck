@@ -72,7 +72,7 @@ interface PublishedCategory {
   n: number;
 }
 
-const PAYLOAD = process.env.CAL_PAYLOAD || "/tmp/cal.json";
+const PAYLOAD = process.env.CAL_PAYLOAD || "/tmp/pooled-label-options/cal.json";
 const OUT = process.env.OPTIONS_OUT || "/tmp/pooled-label-options.md";
 
 /** The rendered precision — `page.tsx:1587` prints `.toFixed(1)`. */
