@@ -74,12 +74,34 @@ Then confirmed rather than inferred — three concurrent anonymous
 **A coalesced waiter took 6.632 s.** It is in the fast-sounding bucket and it is
 the slowest of the three.
 
-## The second finding, free with the first
+## The second finding, free with the first — and it is NOT the dyno count
 
-Two leaders for one anon cache key. `begin_build` is a **process-local**
-single-flight, so N web dynos produce up to N leaders per key and coalescing
-only ever recovers the within-process duplicates. Any capacity argument that
-assumes one build per key per window is wrong by the dyno count.
+Two leaders for one anon cache key. That should be impossible:
+`request_cache.begin_build` has no `await` between its `_inflight.get` and its
+`_inflight[key] = fut`, so within one event loop two same-key callers cannot
+both lead; and all three probes were anonymous with identical params, so
+`feed_response_cache_key` returns one key for all three
+(`_session_id_from_request` reads only a cookie or `X-Session-Id`, and curl sent
+neither).
+
+**The first explanation reached for was the dyno count, and it was wrong.**
+`heroku ps` shows exactly one `web (Standard-2X)` dyno, matching what
+`scripts/watch_2107_feed_500s.py` already records. The actual cause is one
+config var:
+
+    WEB_CONCURRENCY: 2
+
+Uvicorn honours `WEB_CONCURRENCY` as its worker count, so the single web dyno
+runs **two worker processes**, each with its own event loop and its own
+process-global `_inflight`. Probes 1 and 2 landed on different workers; probe 3
+landed on one that already had a leader.
+
+So the correct statement is: **single-flight is per WORKER PROCESS, and the
+process count is `dynos × WEB_CONCURRENCY`, not `dynos`.** Any capacity argument
+that reasons from `heroku ps` alone is wrong by the concurrency factor — and
+`heroku ps` is the instrument everyone reaches for, which is why this is written
+down. The same correction applies to any reasoning about process-global state:
+there are two of every process-global on that dyno today.
 
 ## Relation to the rulings around it
 
@@ -97,6 +119,12 @@ share.
 2. **The #2143 lever's addressable population grows 2.8×.** Sharing the
    principal-independent build shortens the *leader's* build; a waiter's wait is
    bounded by that same build, so the saving reaches `coalesced` too.
+   **With a discount the projection did not previously carry:** #2143's shared
+   store is process-global, so at `WEB_CONCURRENCY=2` each artifact is built
+   **twice per TTL window**, once per worker. The projected saving is unchanged
+   for any single request that finds a warm entry, but the *rate* of cold
+   builds is 2× what a one-process model predicts, and the first request to
+   each worker still pays full price.
 3. **Future latency reports must not quote a miss share as a wait share.**
    Quote `miss + coalesced`, and if a new non-standard `X-Feed-Cache` value
    appears, identify it before reporting a number over it — `other` is an

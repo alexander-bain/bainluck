@@ -419,9 +419,19 @@ which one without guessing:
 | 2 | 6.618 s | `miss` | `leader` |
 | 3 | 6.632 s | **`coalesced`** | `coalesced` |
 
-Two leaders for one anon cache key is itself a finding: `begin_build` is a
-**process-local** single-flight, so N web dynos give N leaders per key. Only the
-third request landed on a process that already had one.
+Two leaders for one anon cache key is itself a finding — and the obvious
+explanation is the wrong one. `heroku ps` shows exactly ONE `web (Standard-2X)`
+dyno. The cause is `WEB_CONCURRENCY: 2`, which uvicorn honours as its worker
+count: the single dyno runs **two worker processes**, each with its own event
+loop and its own process-global `_inflight`. `begin_build` has no `await`
+between its get and its set, so two same-key leaders in one loop are impossible;
+probes 1 and 2 simply landed on different workers, and probe 3 landed on one
+that already had a leader.
+
+**The process count is `dynos x WEB_CONCURRENCY`, not `dynos`.** This discounts
+the proposal in Sec 6: the shared store is process-global, so every artifact is
+built twice per TTL window, once per worker. A warm request saves what Sec 6
+projects; the COLD-BUILD RATE is 2x what a one-process model predicts.
 
 ### 9.2 The corrected headline
 
