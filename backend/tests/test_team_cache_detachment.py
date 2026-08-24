@@ -331,3 +331,81 @@ async def test_the_cached_snapshot_is_frozen_and_privately_owned():
     data = _format_team_data(snapshot)
     data["standings"]["wins"] = -1
     assert events_module._team_cache["Carolina Panthers"].standings_data["wins"] == 9
+
+
+@pytest.mark.parametrize(
+    ("column", "response_key"),
+    [
+        ("standings_data", "standings"),
+        ("season_stats", "season_stats"),
+    ],
+)
+async def test_every_jsonb_payload_is_copied_out_not_handed_out(column, response_key):
+    """C-2107-R1 P3, closed — and PARAMETRIZED, which is the actual fix.
+
+    🔴 `_format_team_data` deep-copied `standings_data` and handed
+    `season_stats` out by reference, while its own docstring said "the JSONB
+    payloads are copied on the way out" — plural. That is the most durable way
+    for a defect to survive review: the prose a reader checks the code against
+    already claims the fix, so the reader confirms the claim and moves on. The
+    test above did the same thing, asserting the copy on exactly the one field
+    that had it.
+
+    The escape was narrow. `TeamSnapshot` deep-copies at BUILD time, so there
+    was one private dict per cache entry rather than an alias of the ORM row —
+    but that single dict was then handed to every request for the entry's whole
+    lifetime, and a per-request response dict is the one object a caller feels
+    entitled to edit in place. Narrow is not absent.
+
+    Parametrized over the columns rather than written twice, so a THIRD JSONB
+    column added to `TeamSnapshot` fails the sibling test below until it is
+    listed here. A guard that has to be remembered is not a guard.
+    """
+    source = {"canary": 1}
+    rows = [_team(**{column: source})]
+    lookup = await _build_team_lookup(_db_returning(rows), ["Carolina Panthers"])
+    snapshot = lookup["Carolina Panthers"]
+
+    # BUILD time: the snapshot does not alias the ORM row's dict.
+    assert getattr(snapshot, column) is not source
+    source["canary"] = 999
+    assert getattr(snapshot, column)["canary"] == 1
+
+    # HAND-OUT time: two requests must not share one dict, and mutating what
+    # either was handed must not reach the cache.
+    first = _format_team_data(snapshot)
+    second = _format_team_data(snapshot)
+    assert first[response_key] is not second[response_key], (
+        f"{response_key} is handed out by reference — every request that "
+        "formats this team shares one dict with the process-global cache"
+    )
+
+    first[response_key]["canary"] = -1
+    assert getattr(events_module._team_cache["Carolina Panthers"], column)["canary"] == 1
+    assert second[response_key]["canary"] == 1
+
+
+async def test_the_jsonb_copy_guard_covers_every_jsonb_column_on_the_snapshot():
+    """The guard above is only as complete as its parameter list.
+
+    `season_stats` was missed for exactly this reason — it existed, it was
+    JSONB, and nothing forced anyone to notice it was uncovered. This asserts
+    the parameter list against the dataclass itself, so a new JSONB column turns
+    the suite red instead of quietly shipping uncopied.
+    """
+    import dataclasses
+
+    from app.routes.events import TeamSnapshot
+
+    jsonb_fields = {
+        f.name
+        for f in dataclasses.fields(TeamSnapshot)
+        if "dict" in str(f.type)
+    }
+    covered = {"standings_data", "season_stats"}
+    assert jsonb_fields == covered, (
+        f"TeamSnapshot's JSONB columns are {sorted(jsonb_fields)} but the copy "
+        f"guard covers {sorted(covered)} — add the new column to "
+        "`test_every_jsonb_payload_is_copied_out_not_handed_out` and make sure "
+        "`_format_team_data` copies it"
+    )
