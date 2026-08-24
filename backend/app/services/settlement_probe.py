@@ -100,31 +100,64 @@ async def _get(
 
 
 async def probe_kalshi(ticker: str, client: httpx.AsyncClient) -> ProbeOutcome:
-    """Two-call Kalshi protocol: market, then the event iff the market 404s.
+    """Kalshi protocol: market, then the event iff the market 404s.
 
-    The second call is not a retry — it is the *second signal* gotcha #53 requires.
+    The event call is not a retry — it is the *second signal* gotcha #53 requires.
     A bare market 404 cannot distinguish Kalshi's retention purge (their fact) from
     a wrong ``external_id`` (our bug), and those route to completely different
     owners. The event call is skipped when the market answered, so the cost is one
     request for the common case.
+
+    The event is asked for under the ticker we hold before its stripped parent —
+    see the comment below; getting that order wrong turned every purge into a
+    fabricated ingestion defect.
     """
     market_status, market_body = await _get(client, f"{KALSHI_BASE}/markets/{ticker}")
     if market_status != 404:
         return classify_kalshi(market_status, _clip(market_body))
 
-    event_ticker = _kalshi_event_ticker(ticker)
-    event_status, event_body = await _get(client, f"{KALSHI_BASE}/events/{event_ticker}")
+    # ASK FOR THE TICKER WE HOLD BEFORE ASKING FOR ITS PARENT.
+    #
+    # ``external_id`` is not uniformly a market ticker. Measured against production
+    # 2026-08-24: of the 24,739-row at-risk Kalshi cohort, ~96% carry exactly one
+    # hyphen — the EVENT shape (``KXMLBEXTRAS-26JUN171400SFATL``), not the market
+    # shape (``EVENT-SUFFIX``). Stripping the last segment off an event ticker
+    # yields the bare SERIES (``KXMLBEXTRAS``), which 404s for every event that ever
+    # existed, so the ladder in ``classify_kalshi`` reached ``NOT_FOUND`` — "suspect
+    # our external_id" — for rows whose event Kalshi still serves at 200.
+    #
+    # That is not a cosmetic mislabel. ``NOT_FOUND`` is TERMINAL: one sweep would
+    # have permanently excluded ~1,074 of the 1,096 terminal-bucket rows from every
+    # future probe, recording a retention loss (their clock) as an ingestion defect
+    # (our bug) — the exact conflation this module exists to prevent, written to the
+    # one population that cannot be re-asked later.
+    #
+    # Verified against the live public API on 2026-08-24:
+    #   GET /events/KXMLBEXTRAS-26JUN171400SFATL -> 200, markets: []  (PURGED)
+    #   GET /events/KXMLBEXTRAS                  -> 404               (NOT_FOUND)
+    #
+    # So try the id as given first. The parent lookup stays as the fallback for the
+    # genuine market-ticker shape, and only a 404 from BOTH is allowed to mean
+    # "no such thing". Cost is unchanged for the ~96% and one extra call otherwise.
+    event_status, event_body = await _get(client, f"{KALSHI_BASE}/events/{ticker}")
+    if event_status == 404:
+        parent = _kalshi_event_ticker(ticker)
+        if parent != ticker:
+            event_status, event_body = await _get(client, f"{KALSHI_BASE}/events/{parent}")
+
     return classify_kalshi(
         market_status, _clip(market_body), event_status, _clip(event_body)
     )
 
 
 def _kalshi_event_ticker(market_ticker: str) -> str:
-    """The event ticker a market ticker belongs to.
+    """The parent event ticker of a MARKET ticker — a fallback, never the first ask.
 
-    Kalshi market tickers are ``EVENT-SUFFIX``; the event is everything before the
-    LAST hyphen-delimited segment. Returned unchanged when there is nothing to
-    strip, so a caller passing an event ticker already gets the right thing.
+    Kalshi market tickers are ``EVENT-SUFFIX``, so the event is everything before
+    the last hyphen-delimited segment. **This is only correct when the input really
+    is a market ticker.** Applied to an event ticker it returns the series, which
+    always 404s; ``probe_kalshi`` therefore asks for the unmodified ticker first and
+    only falls back here. Callers must not treat the result as "the event ticker".
     """
     if "-" not in market_ticker:
         return market_ticker

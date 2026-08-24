@@ -60,6 +60,40 @@ class TestBucketing:
         for (_, prev_high), (next_low, _) in zip(edges, edges[1:]):
             assert next_low == prev_high + 1
 
+    def test_the_tiling_holds_for_FRACTIONAL_days_too(self):
+        """The test above checks the CONSTANT TABLE; this one checks the FUNCTION.
+
+        They are not the same claim, and the difference shipped a defect. ``BUCKETS``
+        tiled perfectly in whole days while ``bucket_for`` — comparing a float against
+        inclusive integer ends — left ``(7, 8)``, ``(14, 15)``, ``(30, 31)`` and
+        ``(60, 61)`` in no bucket at all. ``days_remaining`` is derived from two
+        timestamps, so it is fractional essentially always: production carried 1,201
+        such rows on 2026-08-24, named ``future`` and sorted last while up to eight
+        days from expiry.
+        """
+        named = {label for label, _, _ in BUCKETS}
+        step = 0.1
+        value = 0.0
+        while value <= max(high for _, _, high in BUCKETS):
+            assert bucket_for(value) in named, f"{value} fell through every bucket"
+            value = round(value + step, 6)
+
+    def test_fractional_days_round_toward_urgency(self):
+        """Ties go to the bucket that dies sooner: over-including costs a probe,
+        under-including costs the row."""
+        assert bucket_for(7.9) == "0-7"
+        assert bucket_for(14.5) == "8-14"
+        assert bucket_for(30.99) == "15-30"
+        assert bucket_for(60.5) == "31-60"
+
+    def test_a_row_in_the_old_gap_outranks_the_big_bucket(self):
+        """The consequence, not just the label. A row eight days from expiry must not
+        sort behind rows with two months of life left."""
+        nearly_terminal = candidate(1, 7.6)  # in the old (7, 8) gap -> was `future`
+        long_lived = candidate(2, 61)
+        ordered = order_candidates([long_lived, nearly_terminal], NOW)
+        assert [c.market_id for c in ordered] == [1, 2]
+
     def test_negative_is_expired_not_bucket_zero(self):
         assert bucket_for(-0.5) == "expired"
         assert bucket_for(-40) == "expired"
