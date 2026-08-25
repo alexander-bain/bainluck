@@ -14,6 +14,199 @@ fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to
 
 ---
 
+## STATUS 2026-08-25 (CAL-P095) — RANK 2 WORKED. ITS SPIKE IS NOT ITS MECHANISM, AND THE WRITER WAS HIDING HALF OF EVERY PAIR.
+
+*Rank 1 `baseball/quantity` has a named mechanism and a staged apply, both untouchable this
+session. This is rank 2, `soccer/quantity` — 8.51 pp over n=5,749, 8.4σ, impact 31,677 — taken
+down the 6-check ladder. Four candidate mechanisms were refuted with executed numbers, the fifth
+produced a **negative result that constrains a staged apply**, and the ladder surfaced a writer
+defect that has been silently deleting half of every Polymarket pair's evidence since ingestion
+began.*
+
+### 🔴 THE HEADLINE, AND IT IS A NEGATIVE RESULT: EXCLUDING THE 0.5000 SPIKE MAKES RANK 2 **WORSE**
+
+`soccer/quantity` carries the same exact-0.5000 placeholder mass rank 1 does, at almost exactly
+the same share — and removing it moves the cell the wrong way.
+
+| measurement | `ece_eligible` | `n` | gap | shards | irreducible | artifact |
+|---|---:|---:|---:|---:|---:|---|
+| baseline | **8.51** | 5,749 | −0.79 | 26 | **0** | `soccer_q_baseline.json` |
+| exclude `ROUND(op,4) = 0.5000` | **8.92** | 3,761 | −0.68 | 26 | **0** | `soccer_q_excl_half_spike.json` |
+| **Δ** | **+0.41 — WORSE** | −1,988 | | | | |
+
+The baseline **reproduces the re-ranked board's 8.51 / n=5,749 exactly**, through a script
+generalised from `fold_arbitrate_bbq.py` whose SQL is proven byte-identical to CAL-P094's at its
+defaults — so this is a confirmation of the board, not a restatement of it.
+
+**Consequence for `QUEUE-STAGED-CAL-EXCLUDE-HALF-SPIKE.md`, which this window did not touch and
+must not:** that apply is worth **−3.72 pp** on `baseball/quantity` and **+0.41 pp on
+`soccer/quantity`**. CAL-P094 recorded "a population-wide census of the 0.5000 spike outside
+`baseball/quantity`" as OWED and not collected. Here is the first cell of it, and the answer is
+that **the benefit does not generalise**. The exclusion must stay cell-scoped, or be re-argued
+per cell; a population-wide sweep on the value predicate would import error, not remove it.
+This is the same trap as `soccer/container_member`'s +6.54 in CAL-P094 item 1 and the same trap
+as its own check 6 — *exclusion is not automatically an improvement*, now demonstrated on a
+second, independent cell.
+
+### THE LADDER — four mechanisms refuted, each EXECUTED, 0 irreducible shards throughout
+
+| # | check | result for `soccer/quantity` | verdict |
+|---:|---|---|---|
+| 1 | price-source fallback (#1978) | fallback share **0.003** (2 of 759 sampled) | **refuted** |
+| 2 | leg swap | opening corr **over +0.868 / under +0.815**; published **+0.913 / +0.828** | **refuted** — a swap needs a NEGATIVE slope (rank 1 shows −0.58) |
+| 3 | shape / pair coherence | opening gaps +3.70 / −3.71, exactly equal and opposite; published legs sum to **0.9928** | **refuted as the driver** — and note this is NOT rank 1's 0.875 |
+| 4 | hindsight (capture-age) | cell-wide gap **−0.79**; a post-settlement rewrite drags the gap POSITIVE | **refuted by the sign** |
+| 5 | the 0.5000 spike | **1,979 legs = 38.2%** of the coherent class (rank 1: 37.45%) — but see the table above | **present, and NOT the mechanism** |
+| 6 | binning noise floor | 8.4σ on `SE = 50/√n` | **real, not noise** |
+
+Two independent folds agree on the spike's size: `fold_coinflip_default.py` counts 1,979 legs
+inside coherent two-leg pairs, and the cell-wide exclusion predicate drops 1,988 eligible legs.
+The nine-leg difference is the spike outside coherent pairs, and the agreement is a cross-check
+between two query shapes, not one number quoted twice.
+
+**Where the spike differs from rank 1 is its COST, and that is the whole finding.** Same value,
+same share, same provenance shape — and a completely different realised outcome:
+
+| cell | spike legs | share of coherent class | under wins | over wins | internal error | exclusion Δ |
+|---|---:|---:|---:|---:|---:|---:|
+| `baseball/quantity` (rank 1) | 1,826 | 37.45% | **0.9762** | 0.0244 | **47.59 pp** | **−3.72** |
+| `soccer/quantity` (rank 2) | 1,979 | 38.2% | **0.5998** | 0.4012 | ~9.9 pp | **+0.41** |
+
+A 0.50 placeholder costs the curve only what the outcome it stands in for was knowable. In
+baseball the answer was near-certain and the placeholder was catastrophic; in soccer these really
+are close-to-even markets and the placeholder is nearly right. **The mechanism generalises; its
+price does not.**
+
+### 🔴 THE WRITER FINDING — 493,415 Under/No legs, ZERO books, and it refutes a banked inference
+
+Running check 5's provenance fold on rank 2 returned a verdict table structurally identical to
+rank 1's: `no_book` **992 legs, every one an UNDER leg, zero bid and zero ask**. Two cells
+producing the identical "all Under, no book" shape is not a coincidence about markets, so the
+next step was to read the writer instead of the data.
+
+`app/tasks/polymarket.py`'s decomposed-pair path passes `current_yes_bid=market.best_bid` /
+`current_yes_ask=market.best_ask` on the **Over** upsert, and mentions neither column in the
+**Under** upsert's values or in its `on_conflict_do_update` set clause. Measured population-wide
+(`leg_book_coverage.json`, 15 shards, **0 irreducible**, 637.1 s):
+
+| leg | n | n_bid | bid % | n_ask | ask % | n_open |
+|---|---:|---:|---:|---:|---:|---:|
+| over | 248,702 | 191,444 | 76.98% | 246,564 | **99.14%** | 214,752 |
+| under | 248,702 | **0** | **0.0000%** | **0** | **0.0000%** | 201,268 |
+| yes | 258,746 | 171,624 | 66.33% | 253,653 | **98.03%** | 235,774 |
+| no | 244,713 | **0** | **0.0000%** | **0** | **0.0000%** | 185,033 |
+
+**493,415 Under/No legs and not one book, against 99% ask coverage on their Over partners.**
+386,301 of those book-less legs nevertheless carry an `opening_probability` — they are published
+forecasts with no recorded evidence, ever.
+
+🔴 **This retires CAL-P094's item-2 reading.** That section concluded, of rank 1's spike:
+
+> every one of the 924 `no_book` legs is an UNDER leg with no book at all, and that is not a
+> stale-book artifact: **a leg that never had a book never had one.** So the mechanism is two-part
+> — the Over leg takes 0.5 from an untraded market's precomputed price, and the **Under** leg is
+> written as its arithmetic complement `1 − 0.5 = 0.5` with no quote of its own.
+
+`no_book` is a property of the **writer**, uniform across the whole population at every price and
+every outcome, so it carries no information about whether a market traded. **Gotcha #53 exactly**:
+the emptier reading of one response shape taken for a fact about the world. The two-part mechanism
+above is *unsupported by this evidence* — the Under leg is written from Gamma's own
+`outcome_prices[1]`, not computed as `1 − p`, and its NULL book says nothing either way. Rank 1's
+spike is still real, still 37.45%, still worth −3.72 pp; only the provenance sentence falls.
+
+It also explains the 6.6% (rank 1) / 7.8% (rank 2) that `is_fabricated_midpoint` claims of a spike
+whose Under half is half the mass: **the predicate reads book columns, and on Under legs there are
+none to read.** It was never 93% wrong; it was 50% blind by construction.
+
+**SHIPPED (this window):** `complementary_book()` in `app/tasks/polymarket.py`, wired into the
+Under upsert's insert values *and* its conflict-update. In a binary CLOB the No token's book IS
+the Yes token's book from the other side — a resting bid for No at `q` is the same order as an ask
+for Yes at `1 − q` — so this records what exists rather than inventing it, and it is NULL-preserving
+in both directions (a missing counterpart yields `None`, never a manufactured `0`, because `bid > 0`
+and `last_price > 0` are liquidity tests downstream). The spread is invariant under the flip, so
+neither leg can launder the other past a spread test. Red-first: 3 writer pins failed at **exit
+code 1** before the change, 18 pass after; `tests/test_polymarket_under_leg_book.py`, 18 tests.
+
+This stays clear of the fail-closed rule in `pair_opening_coherence` — that rule governs
+**openings**, which become published forecasts through `calibration_probability`'s fallback and
+must be refused rather than synthesised. These are evidence columns.
+
+### 🔴 THE TWIN, MEASURED AND DELIBERATELY NOT SHIPPED — a one-sided exclusion on a two-sided instrument
+
+The Under **snapshot** omits `yes_bid` / `yes_ask` / `last_price` the same way, and
+`POLY_PLACEHOLDER_EXCLUDE` in `precompute_calibration.py` gates the published curve on exactly
+those columns:
+
+```
+vm.source = 'polymarket' AND COALESCE(cp, op) BETWEEN 0.45 AND 0.55
+  AND NOT EXISTS (SELECT 1 FROM futures_odds_snapshots
+                  WHERE outcome_id = fo.id AND (yes_bid > 0 OR last_price > 0))
+```
+
+⚠️ **A bounded probe said that `NOT EXISTS` is true for 100% of Under legs. The population fold
+says 95.1%, and the corrected number is the one that stands.** A 1M-id probe returned 0 of 1,445
+Under/No legs with evidence; the whole-population fold
+(`leg_trade_evidence.json`, 47 shards, **0 irreducible**, 823.1 s) found that some other writer —
+not this one — does reach a minority of them:
+
+| leg | n | with trade evidence | traded % | in band | **excluded by the filter** | **excluded %** |
+|---|---:|---:|---:|---:|---:|---:|
+| over | 248,702 | 224,255 | **90.17%** | 138,024 | 562 | **0.41%** |
+| under | 248,702 | 12,408 | **4.99%** | 141,228 | 134,296 | **95.09%** |
+| yes | 258,746 | 232,398 | **89.82%** | 122,860 | 3,586 | **2.92%** |
+| no | 244,713 | 25,570 | **10.45%** | 115,613 | 102,153 | **88.36%** |
+
+So it is not "none can" — it is **95.09% of Under band legs excluded against 0.41% of Over band
+legs, a 232× asymmetry**, and it is not a liquidity fact about those markets. Recording the
+difference because the tidier claim was the one I reached first: the outcome-column count above IS
+exactly zero, and the temptation to carry that exactness across to the snapshot column was the
+error the population fold caught.
+
+On the recent window where the asymmetry is total, the cost is directly measurable. Truth-eligible
+resolved legs in the band, `fm.id` 40M–59.6M (fp `136aef5a181cf214`):
+
+| leg | n | survives the exclusion | mean p | win rate | gap |
+|---|---:|---|---:|---:|---:|
+| over | 661 | **100% — all have evidence** | 0.5001 | 0.4251 | **+7.50 pp** |
+| under | 657 | **0% — none do** | 0.4999 | 0.5753 | **−7.54 pp** |
+| yes | 241 | **100%** | 0.5092 | 0.8714 | **−36.22 pp** |
+
+**The filter is one-sided, and not because of liquidity.** It keeps every Over leg and drops every
+Under leg of the same binaries, and the two sides carry equal-and-opposite errors over near-identical
+n (661 / 657). The published curve keeps the **+7.50** half of a two-sided instrument and discards
+the **−7.54** half — a systematic bias imported by a filter that believes it is measuring trading
+activity. `is_poly_never_traded`, which feeds the Queue #220/221 exclusion-symmetry census, inherits
+the same skew.
+
+**Not fixed here, on purpose.** Filling the snapshot columns moves the published curve, and the
+window that measured the benefit may not certify it (the standing rule that keeps CAL-P094's three
+applies on the bus). Staged as `QUEUE-STAGED-CAL-UNDER-LEG-SNAPSHOT-BOOK.md` with this census
+attached. Note it is **forward-only**: no historical row is un-excluded without a backfill, so the
+staged apply is what ends this, not the deploy.
+
+### WHAT MOVED, AND WHAT DID NOT — the cell row
+
+| | before | after | note |
+|---|---|---|---|
+| `soccer/quantity` `ece_eligible` | 8.51 / n=5,749 | **8.51 / n=5,749 — UNCHANGED** | no fix shipped moves this cell today, and the one candidate that looked like it would makes it worse |
+| rank | 2 | **2** | unchanged |
+| mechanism | *pending — never measured* | **4 refuted, spike present but disproven as the driver; 8.51 over 3,761 non-spike legs remains unexplained** | the cell is **NOT closed** |
+| ladder coverage | 0 of 6 checks | **6 of 6 executed** | 0 irreducible shards in every fold |
+| `no_book` provenance (rank 1 AND 2) | read as "never traded" | **retired — a writer property** | CAL-P094 item 2's provenance sentence falls |
+| Under-leg book capture | 0 of 493,415 | **fixed forward**, red-first | outcome columns only |
+| `POLY_PLACEHOLDER_EXCLUDE` symmetry | unexamined | **measured one-sided, ±7.5 pp** | staged |
+
+**Stated plainly: rank 2's ECE did not move, and this window did not close it.** What it produced
+is a mechanism ruled out with numbers instead of assumed, a shipped capture fix, a retired
+inference, a measured curve bias, and a negative result that stops a staged apply from being
+generalised into a regression. The residual — **8.92 pp over 3,761 legs with the spike removed** —
+is the next window's target, and the unexamined bins are where to start: on the published column
+the Under leg's bin 0 (n=95, mean 0.0583) wins **0.3789** for an error of **−32.06 pp**, and bins
+3/4 (+13.07 / +10.98) sit against bin 5 (−15.95) — a price compressed toward 0.50 with the truth
+more extreme on both sides, which is a *dispersion* story, not a placeholder story.
+
+---
+
 ## STATUS 2026-08-24 (CAL-P094) — THE FILE IS RE-RANKED ON `ece_eligible`. NINE CELLS MOVED FOUR PLACES OR MORE.
 
 *CAL-P093 (below) proved the ranking metric was wrong and fixed the census to emit
@@ -85,7 +278,7 @@ table below, recomputed on the eligible n.
 | # | cell | `ece_e` | `n_e` | excess | SE | σ | impact | old | Δ |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
 | 1 | baseball/quantity | 15.86 | 6,778 | 12.86 | 0.61 | **21.2σ** | 87,165 | 5 | +4 |
-| 2 | soccer/quantity | 8.51 | 5,749 | 5.51 | 0.66 | **8.4σ** | 31,677 | 8 | +6 |
+| 2 | soccer/quantity ‡ | 8.51 | 5,749 | 5.51 | 0.66 | **8.4σ** | 31,677 | 8 | +6 |
 | 3 | soccer/container_member | 6.27 | 7,682 | 3.27 | 0.57 | **5.7σ** | 25,120 | 7 | +4 |
 | 4 | economics/quantity | 5.13 | 4,705 | 2.13 | 0.73 | 2.9σ | 10,022 | 9 | +5 |
 | 5 | hockey/quantity | 10.94 | 1,137 | 7.94 | 1.48 | **5.4σ** | 9,028 | 15 | +10 |
@@ -101,6 +294,12 @@ table below, recomputed on the eligible n.
 | 15 | politics/container_member | 7.90 | 116 | 4.90 | 4.64 | 1.1σ | 568 | — | new |
 | — | economics/container_member | **2.78** | 511 | −0.22 | 2.21 | −0.1σ | below bar | — | — |
 | — | tennis/container_member | **2.07** | 2,583 | −0.93 | 0.98 | −0.9σ | below bar | 14 | out |
+
+‡ **`soccer/quantity` was worked by CAL-P095 (2026-08-25) — see the top section.** Baseline
+**re-confirmed at 8.51 / n=5,749** through an independent script; all six ladder checks executed;
+four mechanisms refuted; the 0.5000 spike is present at 38.2% but **excluding it makes the cell
+WORSE (8.51 → 8.92)**, so it is not this cell's mechanism and the staged half-spike exclusion must
+not be generalised. The cell stays rank 2 and is **not closed**.
 
 **Scope note, and it is a limit not a clearance:** the fold covers the 11 leagues × 2 market types
 this file already scoped, restricted by the endpoint's 1,000-row cap and NOT by judgment. Cells

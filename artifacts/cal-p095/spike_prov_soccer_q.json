@@ -1,0 +1,159 @@
+{
+  "label": "spike_prov_soccer_q",
+  "league": "soccer",
+  "market_type": "quantity",
+  "complete": true,
+  "measured": true,
+  "predicate": {
+    "min_spread": 0.2,
+    "midpoint_tolerance": 0.0005,
+    "book_columns": "current_yes_bid / current_yes_ask (CURRENT, not as-of-capture \u2014 see docstring)"
+  },
+  "population": "polymarket/resolved, soccer/quantity, coherent 2-leg over+under, one winner, truth-eligible, opening_probability = 0.5000 exactly",
+  "total_spike_legs": 1979,
+  "by_verdict": {
+    "tight_book": {
+      "n": 439,
+      "wins": 175,
+      "legs": {
+        "over": {
+          "n": 439,
+          "wins": 175,
+          "n_bid": 392,
+          "n_ask": 439
+        }
+      }
+    },
+    "no_book": {
+      "n": 992,
+      "wins": 595,
+      "legs": {
+        "under": {
+          "n": 992,
+          "wins": 595,
+          "n_bid": 0,
+          "n_ask": 0
+        }
+      }
+    },
+    "wide_book_not_midpoint": {
+      "n": 394,
+      "wins": 180,
+      "legs": {
+        "over": {
+          "n": 394,
+          "wins": 180,
+          "n_bid": 379,
+          "n_ask": 394
+        }
+      }
+    },
+    "fabricated_midpoint": {
+      "n": 154,
+      "wins": 41,
+      "legs": {
+        "over": {
+          "n": 154,
+          "wins": 41,
+          "n_bid": 153,
+          "n_ask": 154
+        }
+      }
+    }
+  },
+  "shard_count": 15,
+  "shards": [
+    {
+      "lo": 1,
+      "hi": 4000001,
+      "duration_ms": 692.4,
+      "sql_fingerprint": "664f9ff859657ed2"
+    },
+    {
+      "lo": 4000001,
+      "hi": 8000001,
+      "duration_ms": 330.3,
+      "sql_fingerprint": "b1eb8a26b72d34df"
+    },
+    {
+      "lo": 8000001,
+      "hi": 12000001,
+      "duration_ms": 332.9,
+      "sql_fingerprint": "b0549a8e62e50b76"
+    },
+    {
+      "lo": 12000001,
+      "hi": 16000001,
+      "duration_ms": 709.7,
+      "sql_fingerprint": "b085a558f75a3409"
+    },
+    {
+      "lo": 16000001,
+      "hi": 20000001,
+      "duration_ms": 554.5,
+      "sql_fingerprint": "ccfb175866cb5b30"
+    },
+    {
+      "lo": 20000001,
+      "hi": 24000001,
+      "duration_ms": 634.2,
+      "sql_fingerprint": "0e1305467af4a68b"
+    },
+    {
+      "lo": 24000001,
+      "hi": 28000001,
+      "duration_ms": 639.1,
+      "sql_fingerprint": "cdc82a533b26f8db"
+    },
+    {
+      "lo": 28000001,
+      "hi": 32000001,
+      "duration_ms": 589.5,
+      "sql_fingerprint": "770cc0acd289384a"
+    },
+    {
+      "lo": 32000001,
+      "hi": 36000001,
+      "duration_ms": 3889.7,
+      "sql_fingerprint": "5518909193abbecf"
+    },
+    {
+      "lo": 36000001,
+      "hi": 40000001,
+      "duration_ms": 487.2,
+      "sql_fingerprint": "76e4ea3cba840dfc"
+    },
+    {
+      "lo": 40000001,
+      "hi": 44000001,
+      "duration_ms": 93.6,
+      "sql_fingerprint": "33f42dfb7c681413"
+    },
+    {
+      "lo": 44000001,
+      "hi": 48000001,
+      "duration_ms": 107.9,
+      "sql_fingerprint": "40ec19798ca6acc9"
+    },
+    {
+      "lo": 48000001,
+      "hi": 52000001,
+      "duration_ms": 148.3,
+      "sql_fingerprint": "eaf0cea9e8b200b2"
+    },
+    {
+      "lo": 52000001,
+      "hi": 56000001,
+      "duration_ms": 262.6,
+      "sql_fingerprint": "58bc7c429b614299"
+    },
+    {
+      "lo": 56000001,
+      "hi": 59600000,
+      "duration_ms": 6534.3,
+      "sql_fingerprint": "c5e4435cd42ce49e"
+    }
+  ],
+  "irreducible": [],
+  "elapsed_s": 19.5
+}

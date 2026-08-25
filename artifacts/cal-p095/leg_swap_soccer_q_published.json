@@ -1,0 +1,271 @@
+{
+  "label": "leg_swap_soccer_q_published",
+  "league": "soccer",
+  "market_type": "quantity",
+  "complete": true,
+  "measured": true,
+  "tolerance": 0.02,
+  "probability_column": "COALESCE(calibration_probability, opening_probability)",
+  "population": "polymarket/resolved, soccer/quantity, 2-leg over+under, both openings present, pair sum INSIDE tolerance (the coherent 'ok' class), exactly one winner, truth-eligible legs only",
+  "shard_count": 19,
+  "shards": [
+    {
+      "lo": 1,
+      "hi": 4000001,
+      "duration_ms": 525.0,
+      "sql_fingerprint": "642facff9d128999"
+    },
+    {
+      "lo": 4000001,
+      "hi": 8000001,
+      "duration_ms": 188.8,
+      "sql_fingerprint": "677d409892dd0418"
+    },
+    {
+      "lo": 8000001,
+      "hi": 12000001,
+      "duration_ms": 264.2,
+      "sql_fingerprint": "0e6cf033d73f10f3"
+    },
+    {
+      "lo": 12000001,
+      "hi": 16000001,
+      "duration_ms": 645.2,
+      "sql_fingerprint": "c6a7d691236fde03"
+    },
+    {
+      "lo": 16000001,
+      "hi": 20000001,
+      "duration_ms": 494.9,
+      "sql_fingerprint": "d4b5eafe1392f1a3"
+    },
+    {
+      "lo": 20000001,
+      "hi": 24000001,
+      "duration_ms": 1129.1,
+      "sql_fingerprint": "31bd96475dd73159"
+    },
+    {
+      "lo": 24000001,
+      "hi": 28000001,
+      "duration_ms": 737.3,
+      "sql_fingerprint": "e36007893dd701a1"
+    },
+    {
+      "lo": 28000001,
+      "hi": 32000001,
+      "duration_ms": 770.8,
+      "sql_fingerprint": "ba8b4443cf61cab7"
+    },
+    {
+      "lo": 32000001,
+      "hi": 34000001,
+      "duration_ms": 667.1,
+      "sql_fingerprint": "c580cc0e8cb76500"
+    },
+    {
+      "lo": 34000001,
+      "hi": 36000001,
+      "duration_ms": 1494.8,
+      "sql_fingerprint": "78254647324596dd"
+    },
+    {
+      "lo": 36000001,
+      "hi": 40000001,
+      "duration_ms": 818.9,
+      "sql_fingerprint": "8a67882650a34f29"
+    },
+    {
+      "lo": 40000001,
+      "hi": 44000001,
+      "duration_ms": 194.6,
+      "sql_fingerprint": "5606fd12aff29910"
+    },
+    {
+      "lo": 44000001,
+      "hi": 48000001,
+      "duration_ms": 162.9,
+      "sql_fingerprint": "0ae059d736c9d062"
+    },
+    {
+      "lo": 48000001,
+      "hi": 52000001,
+      "duration_ms": 211.4,
+      "sql_fingerprint": "23e8a9d944a00a93"
+    },
+    {
+      "lo": 52000001,
+      "hi": 56000001,
+      "duration_ms": 856.0,
+      "sql_fingerprint": "ffc3cbaf331dd49f"
+    },
+    {
+      "lo": 56000001,
+      "hi": 57800000,
+      "duration_ms": 8828.4,
+      "sql_fingerprint": "e6056590915430c4"
+    },
+    {
+      "lo": 57800000,
+      "hi": 58250000,
+      "duration_ms": 2329.9,
+      "sql_fingerprint": "6a192bfa78ec702e"
+    },
+    {
+      "lo": 58250000,
+      "hi": 58700000,
+      "duration_ms": 2066.3,
+      "sql_fingerprint": "4436bfc10c622926"
+    },
+    {
+      "lo": 58700000,
+      "hi": 59600000,
+      "duration_ms": 6900.2,
+      "sql_fingerprint": "1c6d8f2891fca91a"
+    }
+  ],
+  "irreducible": [],
+  "elapsed_s": 76.2,
+  "summary": {
+    "over": {
+      "n": 2590,
+      "wins": 1152,
+      "mean_p": 0.4761,
+      "win_rate": 0.4448,
+      "gap_pp": 3.13,
+      "weighted_corr_p_vs_winrate": 0.9128,
+      "bins": [
+        {
+          "bin": 0,
+          "n": 98,
+          "sum_p": 7.382999999999999,
+          "wins": 7
+        },
+        {
+          "bin": 1,
+          "n": 220,
+          "sum_p": 32.467,
+          "wins": 31
+        },
+        {
+          "bin": 2,
+          "n": 192,
+          "sum_p": 47.88,
+          "wins": 48
+        },
+        {
+          "bin": 3,
+          "n": 165,
+          "sum_p": 56.82000000000001,
+          "wins": 48
+        },
+        {
+          "bin": 4,
+          "n": 478,
+          "sum_p": 223.47,
+          "wins": 117
+        },
+        {
+          "bin": 5,
+          "n": 956,
+          "sum_p": 492.8505,
+          "wins": 511
+        },
+        {
+          "bin": 6,
+          "n": 140,
+          "sum_p": 90.095,
+          "wins": 103
+        },
+        {
+          "bin": 7,
+          "n": 130,
+          "sum_p": 97.56,
+          "wins": 102
+        },
+        {
+          "bin": 8,
+          "n": 128,
+          "sum_p": 107.97699999999999,
+          "wins": 111
+        },
+        {
+          "bin": 9,
+          "n": 83,
+          "sum_p": 76.578,
+          "wins": 74
+        }
+      ]
+    },
+    "under": {
+      "n": 2590,
+      "wins": 1438,
+      "mean_p": 0.5167,
+      "win_rate": 0.5552,
+      "gap_pp": -3.86,
+      "weighted_corr_p_vs_winrate": 0.8284,
+      "bins": [
+        {
+          "bin": 0,
+          "n": 95,
+          "sum_p": 5.539999999999999,
+          "wins": 36
+        },
+        {
+          "bin": 1,
+          "n": 120,
+          "sum_p": 18.058,
+          "wins": 13
+        },
+        {
+          "bin": 2,
+          "n": 117,
+          "sum_p": 28.799999999999997,
+          "wins": 27
+        },
+        {
+          "bin": 3,
+          "n": 144,
+          "sum_p": 50.82,
+          "wins": 32
+        },
+        {
+          "bin": 4,
+          "n": 512,
+          "sum_p": 241.23,
+          "wins": 185
+        },
+        {
+          "bin": 5,
+          "n": 959,
+          "sum_p": 493.0355,
+          "wins": 646
+        },
+        {
+          "bin": 6,
+          "n": 164,
+          "sum_p": 106.415,
+          "wins": 110
+        },
+        {
+          "bin": 7,
+          "n": 183,
+          "sum_p": 136.75,
+          "wins": 133
+        },
+        {
+          "bin": 8,
+          "n": 206,
+          "sum_p": 174.65,
+          "wins": 176
+        },
+        {
+          "bin": 9,
+          "n": 90,
+          "sum_p": 82.8285,
+          "wins": 80
+        }
+      ]
+    }
+  }
+}

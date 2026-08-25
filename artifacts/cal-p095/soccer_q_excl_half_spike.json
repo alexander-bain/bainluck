@@ -1,0 +1,278 @@
+{
+  "label": "soccer_q_excl_half_spike",
+  "measured": true,
+  "complete": true,
+  "shard_count": 19,
+  "shards": [
+    {
+      "lo": 1,
+      "hi": 4000001,
+      "duration_ms": 1058.2,
+      "sql_fingerprint": "cb651d462014d9df"
+    },
+    {
+      "lo": 4000001,
+      "hi": 8000001,
+      "duration_ms": 741.2,
+      "sql_fingerprint": "520aaaf678e32173"
+    },
+    {
+      "lo": 8000001,
+      "hi": 12000001,
+      "duration_ms": 1133.4,
+      "sql_fingerprint": "7a476fb05736188a"
+    },
+    {
+      "lo": 12000001,
+      "hi": 16000001,
+      "duration_ms": 1869.9,
+      "sql_fingerprint": "13402bc55f2f075e"
+    },
+    {
+      "lo": 16000001,
+      "hi": 20000001,
+      "duration_ms": 1333.1,
+      "sql_fingerprint": "3b6f4c4785adf802"
+    },
+    {
+      "lo": 20000001,
+      "hi": 24000001,
+      "duration_ms": 1467.7,
+      "sql_fingerprint": "eb9bffbe895914ef"
+    },
+    {
+      "lo": 24000001,
+      "hi": 28000001,
+      "duration_ms": 949.4,
+      "sql_fingerprint": "6204345c81af9e8a"
+    },
+    {
+      "lo": 28000001,
+      "hi": 32000001,
+      "duration_ms": 1477.0,
+      "sql_fingerprint": "05b4cb9f3b872a75"
+    },
+    {
+      "lo": 32000001,
+      "hi": 34000001,
+      "duration_ms": 742.8,
+      "sql_fingerprint": "0cebce8a99deff02"
+    },
+    {
+      "lo": 34000001,
+      "hi": 36000001,
+      "duration_ms": 1769.8,
+      "sql_fingerprint": "5b988d08b471c92b"
+    },
+    {
+      "lo": 36000001,
+      "hi": 40000001,
+      "duration_ms": 1198.9,
+      "sql_fingerprint": "e0ca341bf453b9e3"
+    },
+    {
+      "lo": 40000001,
+      "hi": 44000001,
+      "duration_ms": 291.7,
+      "sql_fingerprint": "74d1c1fb29c9610b"
+    },
+    {
+      "lo": 44000001,
+      "hi": 48000001,
+      "duration_ms": 232.0,
+      "sql_fingerprint": "5d70db637c5a8d0f"
+    },
+    {
+      "lo": 48000001,
+      "hi": 52000001,
+      "duration_ms": 319.3,
+      "sql_fingerprint": "4d9aa9c684c5604b"
+    },
+    {
+      "lo": 52000001,
+      "hi": 56000001,
+      "duration_ms": 703.8,
+      "sql_fingerprint": "41ef2cc399a9e525"
+    },
+    {
+      "lo": 56000001,
+      "hi": 56900000,
+      "duration_ms": 1811.0,
+      "sql_fingerprint": "d2aa7fb0047a3fc0"
+    },
+    {
+      "lo": 56900000,
+      "hi": 57350000,
+      "duration_ms": 1708.3,
+      "sql_fingerprint": "ae0dd663550cf73f"
+    },
+    {
+      "lo": 57350000,
+      "hi": 57800000,
+      "duration_ms": 2640.9,
+      "sql_fingerprint": "80a079fc5516ca4c"
+    },
+    {
+      "lo": 57800000,
+      "hi": 59600000,
+      "duration_ms": 7562.3,
+      "sql_fingerprint": "dc01e0b85562a518"
+    }
+  ],
+  "irreducible": [],
+  "elapsed_s": 75.6,
+  "summary": {
+    "eligible": {
+      "ece": 8.92,
+      "n": 3761,
+      "gap": -0.68,
+      "n_with_calibration_probability": 3760,
+      "newest_leg_last_updated": "2026-08-23 03:52:04.018382+00:00",
+      "bins": [
+        {
+          "bin": 0,
+          "n": 167,
+          "sum_prob": 11.345500000000001,
+          "winners": 39
+        },
+        {
+          "bin": 1,
+          "n": 330,
+          "sum_prob": 49.125,
+          "winners": 74
+        },
+        {
+          "bin": 2,
+          "n": 291,
+          "sum_prob": 72.019,
+          "winners": 77
+        },
+        {
+          "bin": 3,
+          "n": 311,
+          "sum_prob": 108.685,
+          "winners": 95
+        },
+        {
+          "bin": 4,
+          "n": 766,
+          "sum_prob": 358.0,
+          "winners": 253
+        },
+        {
+          "bin": 5,
+          "n": 852,
+          "sum_prob": 448.42150000000004,
+          "winners": 555
+        },
+        {
+          "bin": 6,
+          "n": 287,
+          "sum_prob": 185.565,
+          "winners": 202
+        },
+        {
+          "bin": 7,
+          "n": 303,
+          "sum_prob": 226.34999999999997,
+          "winners": 219
+        },
+        {
+          "bin": 8,
+          "n": 291,
+          "sum_prob": 246.1565,
+          "winners": 235
+        },
+        {
+          "bin": 9,
+          "n": 163,
+          "sum_prob": 150.6715,
+          "winners": 133
+        }
+      ]
+    },
+    "ineligible": {
+      "ece": 41.14,
+      "n": 73326,
+      "gap": 41.14,
+      "n_with_calibration_probability": 73090,
+      "newest_leg_last_updated": "2026-08-25 11:45:41.685686+00:00",
+      "bins": [
+        {
+          "bin": 0,
+          "n": 5060,
+          "sum_prob": 128.9445,
+          "winners": 130
+        },
+        {
+          "bin": 1,
+          "n": 3352,
+          "sum_prob": 484.6155,
+          "winners": 98
+        },
+        {
+          "bin": 2,
+          "n": 3639,
+          "sum_prob": 912.046,
+          "winners": 154
+        },
+        {
+          "bin": 3,
+          "n": 4476,
+          "sum_prob": 1560.538,
+          "winners": 184
+        },
+        {
+          "bin": 4,
+          "n": 19467,
+          "sum_prob": 9306.987000000001,
+          "winners": 559
+        },
+        {
+          "bin": 5,
+          "n": 22037,
+          "sum_prob": 11434.0945,
+          "winners": 791
+        },
+        {
+          "bin": 6,
+          "n": 4201,
+          "sum_prob": 2722.4265,
+          "winners": 364
+        },
+        {
+          "bin": 7,
+          "n": 3783,
+          "sum_prob": 2813.2945,
+          "winners": 543
+        },
+        {
+          "bin": 8,
+          "n": 3061,
+          "sum_prob": 2600.6099999999997,
+          "winners": 263
+        },
+        {
+          "bin": 9,
+          "n": 4250,
+          "sum_prob": 4117.1065,
+          "winners": 2827
+        }
+      ]
+    }
+  },
+  "prior_measurements": {
+    "cal_p093_single_shot": {
+      "ece_eligible": 16.64,
+      "n_eligible": 6778,
+      "ece_all": 25.96,
+      "n_all": 47170
+    },
+    "cal_p094_sharded": {
+      "ece_eligible": 15.86,
+      "n_eligible": 6778,
+      "ece_all": 23.05,
+      "n_all": 47170
+    }
+  }
+}

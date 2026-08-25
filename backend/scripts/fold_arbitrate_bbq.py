@@ -79,7 +79,20 @@ from fold_cohort_cell_eligible import (  # noqa: E402
 
 from fold_cohort_cell_eligible import BISECT_FLOOR_IDS  # noqa: E402
 
-SHARD_SQL = f"""
+
+def shard_sql(league: str = "baseball", market_type: str = "quantity") -> str:
+    """The cell fold, parameterised.
+
+    CAL-P095 generalised this from the two hard-coded literals it shipped with.
+    The spike this script measures is not a ``baseball/quantity`` property —
+    ``soccer/quantity`` carries the same exact-0.5000 mass at the same ~38% share
+    — and the exclusion delta has to be MEASURED per cell rather than scaled from
+    another cell's, for the reason this script's own header records: ECE is
+    computed within bins, so a decomposition share is not an exclusion delta.
+
+    Defaults preserve the CAL-P094 invocation byte-for-byte.
+    """
+    return f"""
 SELECT CASE WHEN fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
             THEN 'eligible' ELSE 'ineligible' END AS truth,
        LEAST(FLOOR(COALESCE(fo.calibration_probability, fo.opening_probability) * 10), 9)::int AS bin,
@@ -93,8 +106,8 @@ JOIN futures_outcomes fo ON fo.market_id = fm.id
 WHERE fm.id >= {{lo}} AND fm.id < {{hi}}
   AND fm.source = '{POPULATION_SOURCE}'
   AND fm.status = '{POPULATION_STATUS}'
-  AND fm.market_type = 'quantity'
-  AND fm.llm_sport_category = 'baseball'
+  AND fm.market_type = '{market_type}'
+  AND fm.llm_sport_category = '{league}'
   AND COALESCE(fo.calibration_probability, fo.opening_probability) > 0
   AND COALESCE(fo.calibration_probability, fo.opening_probability) < 1
   AND fo.opening_probability IS NOT NULL
@@ -112,6 +125,8 @@ def main() -> int:
     parser.add_argument("--min-id", type=int, default=1)
     parser.add_argument("--max-id", type=int, default=59_600_000)
     parser.add_argument("--chunk", type=int, default=4_000_000)
+    parser.add_argument("--league", default="baseball")
+    parser.add_argument("--market-type", default="quantity")
     parser.add_argument("--exclude-half-spike", action="store_true",
                         help="drop legs whose opening_probability is exactly "
                              "0.5000 — the #1578-family placeholder spike")
@@ -123,6 +138,7 @@ def main() -> int:
 
     extra = ("AND ROUND(fo.opening_probability, 4) <> 0.5000"
              if args.exclude_half_spike else "")
+    template = shard_sql(args.league, args.market_type)
 
     stack: list[tuple[int, int]] = []
     lo = args.min_id
@@ -141,7 +157,7 @@ def main() -> int:
 
     while stack:
         lo, hi = stack.pop()
-        result = dbq_run(SHARD_SQL.format(lo=lo, hi=hi, extra=extra),
+        result = dbq_run(template.format(lo=lo, hi=hi, extra=extra),
                          timeout_ms=args.timeout_ms)
         if result.get("status") == "ok":
             if result.get("truncated"):
@@ -191,8 +207,12 @@ def main() -> int:
           f"of {e['n']} eligible legs")
     print(f"       newest last_updated (row-touch, bounds the claim, does not prove it): "
           f"{e['newest_leg_last_updated']}")
-    print(f"CAL-P093 single-shot : 16.64 / n=6778   (ece_all 25.96 / n_all 47170)")
-    print(f"CAL-P094 sharded x2  : 15.86 / n=6778   (ece_all 23.05 / n_all 47170)")
+    # The two priors are BASEBALL/QUANTITY readings. Printing them beside another
+    # cell's number would invite exactly the cross-cell comparison this script
+    # exists to forbid, so they are gated on the cell they describe.
+    if (args.league, args.market_type) == ("baseball", "quantity"):
+        print("CAL-P093 single-shot : 16.64 / n=6778   (ece_all 25.96 / n_all 47170)")
+        print("CAL-P094 sharded x2  : 15.86 / n=6778   (ece_all 23.05 / n_all 47170)")
     print(f"       ece over ALL truth classes today: "
           f"n={(e['n'] or 0) + (a['n'] or 0)}")
 
