@@ -1,5 +1,41 @@
 # CLAUDE.md
 
+## PROGRESS, NOT MEASUREMENT
+
+**Every future queue in this repo serves a named user-visible ship.** Not a measurement, not an
+audit, not a census, not a cert — those are the *means*. The queue names the thing a user will be
+able to see or do that they could not before, and that name is the queue's reason to exist. A queue
+that cannot name one does not get run.
+
+A measurement is not progress. It is what you buy progress with, and it is only worth buying when
+something is waiting to spend it. The failure this rule exists to stop is the one where a program
+measures, files, re-measures, re-files, and certifies its own instruments for weeks while the
+product does not change — every step defensible, every artifact real, and nothing shipped. Rigour
+is not the problem; rigour aimed at the instrument instead of the ship is.
+
+So:
+
+- **A queue declares its ship in its header**, in user-visible terms — what a person sees, not what
+  a table contains. "The 0-7d Kalshi bucket becomes permanently verifiable" is a means; "settled
+  markets stop showing a blank result" is a ship.
+- **A measurement earns its place by naming the ship it unblocks.** If it unblocks nothing right
+  now, it is *parked*, not dropped: append it to `.claude/handoff/PARKED-MEASUREMENTS.md` and move
+  on. Parked is a real state — the finding is true, it was paid for, and it comes back when a ship
+  needs it.
+- **Certs, audits, sentinels and probes are never the ship.** They are how a ship is trusted. They
+  inherit the ship of the work they verify and are not queued on their own account.
+- **This does not license shipping broken things.** The reliability bar and cert tiering
+  (ruling 133) are unchanged. The rule is about what a queue is *for*, not about lowering the gate
+  it passes through.
+
+**LANE ROLES (Alex ruling 2026-08-25):** build lanes BUILD — their only permitted measurement is their own gates (tests, deploy checks, rollback verification). All other measurement — censuses, probes, audits, diagnosis, and every cert — belongs to the measurement lane (the non-Claude windows on the mission bus), fed by PARKED-MEASUREMENTS.md and staged only when a named ship needs the answer. Heavy measurement queries never run while an attended fold or apply is in flight. An idle build lane is a signal, not a failure — never fill it with measurement.
+
+The LANE ROLES paragraph is Alex's wording and is the operative text; `docs/rulings/134-build-lanes-build-measurement-is-its-own-lane.md` carries the reasoning and the binds.
+
+Everything below is how to do the work. This section is what the work is for.
+
+---
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 **Size rule (enforced by the 40k-char tool limit):** this file must stay under 40,000 characters or every lane reads it silently truncated. Episodic detail, war stories, and full gotcha prose live in the linked reference docs; this file carries only the operating rules. Trimmed 2026-08-24 (was 72.6k); everything removed was preserved verbatim in `docs/claude-md-overflow-2026-08-24.md`.
