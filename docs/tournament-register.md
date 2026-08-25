@@ -246,3 +246,45 @@ is a close time, not a start).
 
 `tournament_slate.build_slate` re-applies the same 6h bound at serve time. The register is a
 committed file; the clock is not.
+
+---
+
+## Alex's mock verdict — the re-skin (2026-08-25, UX-P132)
+
+Taste rulings, applied as a re-skin and never a restructure. Reference screenshot:
+`.claude/handoff/_KALSHI-REFERENCE-baseball-champion.png`.
+
+| # | ruling | where it lives |
+|---|---|---|
+| 1 | C is the base, but take A's **men's/women's pill everywhere** — never two stacked gender lists — and B's ordering: **today's matches lead the page** | `app/tournaments/[slug]/page.tsx` |
+| 2 | **Legend of the top 3 → three-line chart → collapsed list**, endpoint dots, timeframe selector bottom-right | `components/tournament/ContenderChart.tsx`, `lib/contenderChart.ts` |
+| 3 | **Collapse to 3 rows + "Show all N"** — Alex's P1, and his own reference settled 3-vs-5 | `components/tournament/TournamentBoard.tsx` |
+| 4 | **Where to watch** — a static per-tournament mapping is an acceptable v1 | register `broadcasts`, `lib/slate.ts` `broadcastFor` |
+| 5 | **Curated props & futures** — interestingness bar, not a dump | register `props`, `scripts/populate_tournament_props.py` |
+| 6 | **Bracket mocked with dummy data now**, ahead of the ceremony | `docs/mocks/us-open/us-open-reskin.html` |
+
+### Adaptation, not imitation
+
+The reference's contender rows carry **two-sided green/red price pills** (`34.5%` / `65.5%`).
+That is a trading format, and copying it would breach the standing no-price-format ruling. Our
+rows print **one blended probability** per contender. What was taken is the *structure* —
+legend → three-line chart → collapsed list — and the colour tie-in, where a charted contender's
+name is underlined in its own line colour.
+
+`__tests__/components/tournamentReskin.test.tsx` asserts the refusal directly: every row emits
+exactly one `row-probability`, and a board showing `34.5%` must not also render `65.5%`.
+
+### Standing doctrine the chart does not get to bend
+
+- **Fixed 0-100 axis.** `chartGeometry` never scales to the data range. Asserted: two points at
+  0.50 and 0.52 plot at y=50 and y=48 on a 100-high box, not at the top and bottom.
+- **No smoothing, no interpolation.** Straight segments between real observations; an unobserved
+  day is a gap, not a filled point.
+- **One shared x-domain** across the three lines, so a late starter begins part-way across
+  instead of being stretched to fill the width. Per-series x-scales would put Monday under
+  Thursday and make a crossing meaningless.
+- **A timeframe is measured back from the LAST OBSERVATION, not from `now`.** With the fields
+  price-dark 8–32 days, a window anchored on today would be empty for a market holding a full
+  month of history that ended three weeks ago — the chart would read "no data" when the truth is
+  "no *recent* data", which the banner already states properly in words. An undrawable window is
+  offered **disabled** rather than blank.

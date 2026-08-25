@@ -477,3 +477,79 @@ def test_the_committed_register_answers_where_to_watch():
     assert "US" in regions
     us = next(e for e in view.broadcasts if e["region"] == "US")
     assert "ESPN" in us["channels"]
+
+
+# ---------------------------------------------------------------------------
+# The curation bar (scripts/populate_tournament_props.py)
+# ---------------------------------------------------------------------------
+
+def _run_props_script(tmp_path, dump_rows):
+    import json as _json
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    dump = {
+        "columns": ["market_id", "market_ext", "source", "market_name", "status",
+                    "outcome_id", "outcome_name", "current_probability"],
+        "rows": dump_rows,
+        "truncated": False,
+    }
+    (tmp_path / "dump.json").write_text(_json.dumps(dump))
+    register = _json.loads((root / "data/tournament_registers/us-open-2026.json").read_text())
+    (tmp_path / "reg.json").write_text(_json.dumps(register))
+
+    result = subprocess.run(
+        [_sys.executable, str(root / "scripts/populate_tournament_props.py"),
+         "--register", str(tmp_path / "reg.json"), "--dump", str(tmp_path / "dump.json"),
+         "--observed-at", "2026-08-26T00:00:00+00:00",
+         "--version", "3", "--supersedes-version", "2",
+         "--out", str(tmp_path / "out.json")],
+        capture_output=True, text=True, cwd=str(root),
+    )
+    out = (
+        _json.loads((tmp_path / "out.json").read_text())
+        if (tmp_path / "out.json").exists() else None
+    )
+    return result, out
+
+
+def test_the_curation_bar_excludes_an_uncurated_market(tmp_path):
+    """"Curated, not a dump" — a market in the dump but not in CURATION is skipped.
+
+    This is the property that has to survive the tournament growing: the bar is
+    an allowlist written by an agent, not a filter over whatever the query
+    returned, so a new high-volume dull market cannot arrive on the page.
+    """
+    result, out = _run_props_script(tmp_path, [
+        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner slam", "open", 5001, "Yes", "0.18"],
+        [999, "KXSOMETHING-DULL", "kalshi", "Dull", "open", 5099, "Yes", "0.50"],
+    ])
+    assert result.returncode == 0, result.stderr
+    assert [p["key"] for p in out["props"]] == ["sinner-calendar-slam"]
+    assert "below the bar" in result.stdout
+
+
+def test_a_curated_prop_absent_from_the_dump_is_reported_not_invented(tmp_path):
+    """A market we curated and did not find must be loud, not silently missing."""
+    result, _ = _run_props_script(tmp_path, [
+        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner slam", "open", 5001, "Yes", "0.18"],
+    ])
+    assert result.returncode == 0
+    assert "curated but ABSENT from the dump" in result.stdout
+    assert "KXWTAGRANDSLAM-26" in result.stdout
+
+
+def test_the_props_pass_writes_a_register_that_still_validates(tmp_path):
+    from app.utils.tournament_register import us_open_2026_contract, validate_register
+
+    result, out = _run_props_script(tmp_path, [
+        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner slam", "open", 5001, "Yes", "0.18"],
+        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner slam", "open", 5002, "No", "0.82"],
+    ])
+    assert result.returncode == 0
+    assert validate_register(out, us_open_2026_contract()) == []
+    # And the second population pass's work is still intact underneath it.
+    assert len(out["matchups"]) > 0
+    assert out["version"] == 3 and out["supersedes_version"] == 2
