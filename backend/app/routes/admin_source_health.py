@@ -128,3 +128,133 @@ async def source_health(
         "alerts": alerts,
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# --- #2199: the high-value futures price-freshness invariant -----------------
+#
+# The invariant, stated once so the fix and the guard cannot drift apart: a
+# tier-1 `open` market above the volume floor, with a resolution date still in
+# the future, MUST NOT go 24h without a price capture — in ANY category.
+#
+# It is written as its own endpoint rather than folded into `source_health`
+# above because that dashboard's freshness queries all read
+# `futures_markets.updated_at`, and `updated_at` is exactly what made this class
+# invisible: the discovery polls kept stamping rows they re-read while capturing
+# no prices for the ones they could not reach. 900 of 907 high-value fields were
+# dark for up to 32 days behind a green source-health row. Only
+# `futures_odds_snapshots.captured_at` answers "was a price actually captured".
+#
+# `NOT EXISTS` with a time bound, not `MAX(captured_at)`: the aggregate form
+# times out against the 179M-row snapshot table; this rides
+# `idx_fos_outcome_captured` and stops at the first row inside the window.
+
+_PRICE_DARK_SQL = """
+    SELECT fm.source,
+           COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
+           COUNT(*) AS dark
+      FROM futures_markets fm
+     WHERE fm.status = 'open'
+       AND fm.source IN ('kalshi', 'polymarket')
+       AND fm.market_tier = 1
+       AND fm.volume >= :volume_floor
+       AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
+       AND NOT EXISTS (
+             SELECT 1 FROM futures_outcomes fo
+               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
+              WHERE fo.market_id = fm.id
+                AND s.captured_at > NOW() - make_interval(hours => :max_age_hours)
+           )
+     GROUP BY 1, 2
+     ORDER BY 3 DESC
+"""
+
+_PRICE_DARK_WORST_SQL = """
+    SELECT fm.source, fm.external_id, fm.name, fm.volume,
+           COALESCE(fm.llm_sport_category, 'uncategorized') AS category
+      FROM futures_markets fm
+     WHERE fm.status = 'open'
+       AND fm.source IN ('kalshi', 'polymarket')
+       AND fm.market_tier = 1
+       AND fm.volume >= :volume_floor
+       AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
+       AND NOT EXISTS (
+             SELECT 1 FROM futures_outcomes fo
+               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
+              WHERE fo.market_id = fm.id
+                AND s.captured_at > NOW() - make_interval(hours => :max_age_hours)
+           )
+     ORDER BY fm.volume DESC
+     LIMIT 25
+"""
+
+
+@router.get("/futures-price-freshness")
+async def futures_price_freshness(
+    request: Request,
+    secret: str = Query(None),
+    max_age_hours: int = Query(24, ge=1, le=720),
+    db: AsyncSession = Depends(get_db),
+):
+    """#2199: high-value tier-1 open futures markets with no recent price capture.
+
+    `status: "red"` means the invariant is breached — the boards are printing
+    stale numbers as if they were live. Zero is the only passing value; a floor
+    that tolerates "a few dark markets" is how this went unnoticed for a month.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.futures_price_refresh import HIGH_VALUE_VOLUME_FLOOR
+
+    params = {
+        "volume_floor": HIGH_VALUE_VOLUME_FLOOR,
+        "max_age_hours": max_age_hours,
+    }
+    rows = (await db.execute(text(_PRICE_DARK_SQL), params)).fetchall()
+    worst = (await db.execute(text(_PRICE_DARK_WORST_SQL), params)).fetchall()
+
+    total_eligible = (
+        await db.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM futures_markets fm
+                 WHERE fm.status = 'open'
+                   AND fm.source IN ('kalshi', 'polymarket')
+                   AND fm.market_tier = 1
+                   AND fm.volume >= :volume_floor
+                   AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
+                """
+            ),
+            {"volume_floor": HIGH_VALUE_VOLUME_FLOOR},
+        )
+    ).scalar() or 0
+
+    by_category: dict = {}
+    dark_total = 0
+    for source, category, dark in rows:
+        by_category.setdefault(category, {})[source] = int(dark)
+        dark_total += int(dark)
+
+    return {
+        "invariant": (
+            f"a tier-1 open market with volume >= {HIGH_VALUE_VOLUME_FLOOR} and a "
+            f"future resolution date must have a price capture within "
+            f"{max_age_hours}h, in every category"
+        ),
+        "status": "green" if dark_total == 0 else "red",
+        "max_age_hours": max_age_hours,
+        "volume_floor": HIGH_VALUE_VOLUME_FLOOR,
+        "eligible_markets": int(total_eligible),
+        "price_dark": dark_total,
+        "by_category": by_category,
+        "worst_offenders": [
+            {
+                "source": r[0],
+                "external_id": r[1],
+                "name": r[2],
+                "volume": int(r[3]) if r[3] is not None else None,
+                "category": r[4],
+            }
+            for r in worst
+        ],
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }

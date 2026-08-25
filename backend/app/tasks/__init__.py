@@ -717,6 +717,12 @@ HEAVY_TASKS = {
     # the move is watched. Full arithmetic in the falsifier's docstring.
     "app.tasks.backfill_market_shapes",
     "app.tasks.precompute_backfill_progress",
+    # #2199, hourly :50. Not part of the conditional calibration grant above —
+    # this one is here on the plain reading of the background note: its wall
+    # budget is 420s, and background has ~one effective slot for ~40 beats, so
+    # placing it there would close the queue rather than share it. It cannot
+    # collide with the :15 precompute, and it is the only heavy beat at :50.
+    "app.tasks.refresh_stale_futures_prices",
 }
 
 for _heavy_task in HEAVY_TASKS:
@@ -986,6 +992,33 @@ def check_kalshi_freshness():
         return {"kalshi_updated_24h": count, "alert": count == 0}
 
     return run_async(_check())
+
+
+# --- Cross-source futures price refresh ---
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.refresh_stale_futures_prices",
+    soft_time_limit=540,
+    time_limit=600,
+)
+def refresh_stale_futures_prices(self, budget: int = 0):
+    """#2199: price-refresh high-value open futures the discovery polls cannot reach.
+
+    Both discovery scans are bounded by an ordering that puts already-known
+    markets last — Polymarket's newest-startDate-first window spans about ten
+    hours, Kalshi defers existing events behind new ones past its deadline — so
+    long-lived championship fields went 8-32 days without a capture while the
+    polls reported success. Full mechanism: ``app/tasks/futures_price_refresh``.
+    """
+    from app.tasks.futures_price_refresh import (
+        DEFAULT_MARKET_BUDGET,
+        _refresh_stale_futures_prices,
+    )
+    return _tracked_run(
+        "futures_price_refresh",
+        _refresh_stale_futures_prices(budget=budget or DEFAULT_MARKET_BUDGET),
+    )
 
 
 # --- Polymarket ---
@@ -3121,6 +3154,22 @@ celery_app.conf.beat_schedule = {
     "poll-polymarket-hourly": {
         "task": "app.tasks.poll_polymarket_markets",
         "schedule": crontab(minute=15),
+    },
+    "refresh-stale-futures-prices-hourly": {
+        # #2199. Runs at :50 — after both discovery polls have had their turn, so
+        # this sweeps what they could not reach rather than racing them for the
+        # same rows. Hourly matches the 6h staleness window with margin: a market
+        # has six chances to be refreshed before it can breach.
+        #
+        # `heavy`, NOT `background`, and stated literally rather than left to the
+        # post-schedule loop. Its 420s wall budget makes it exactly the
+        # multi-minute beat the standing background note forbids: that queue has
+        # ~one effective slot for ~40 beats, so a task like this does not share
+        # it, it closes it. Heavy is the 600s-class isolation lane; the hourly
+        # precompute there fires at :15 and cannot collide with :50.
+        "task": "app.tasks.refresh_stale_futures_prices",
+        "schedule": crontab(minute=50),
+        "options": {"queue": "heavy"},
     },
     "enrich-events-hourly": {
         "task": "app.tasks.enrich_events_metadata",

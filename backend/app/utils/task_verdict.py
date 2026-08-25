@@ -287,6 +287,17 @@ ENFORCED_TASKS = frozenset({
     # the sampler working over a producer that has stopped is the one state that
     # would otherwise look identical to health.
     "calibration_beat_gauge_sampler",  # terminal + appended + summary + ledger_age_s
+    # #2199: the futures price refresher. Enrolled AT BIRTH with a terminal, and
+    # it exists BECAUSE of a false green — two discovery polls reported success
+    # for weeks while 900 of the 907 high-value tier-1 open futures markets went
+    # uncaptured, including every marquee championship field. A refresher that
+    # inherited that blindness would be worse than none: it would look like the
+    # fix. So a run that attempted markets and wrote zero snapshots is `failed`,
+    # not `complete`; a budget- or error-truncated run that did write is
+    # `partial`; and `no_work` covers both "nothing was stale" and "everything
+    # stale was already attempted this window", which are opposite states and are
+    # given different `reason`s rather than one shared silence.
+    "futures_price_refresh",           # terminal + snapshots_written + remaining_stale
 })
 
 

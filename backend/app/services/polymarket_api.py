@@ -200,6 +200,29 @@ class PolymarketAPIService:
         except httpx.TimeoutException:
             raise
 
+    async def get_events_by_ids(self, event_ids: list[str]) -> list[dict]:
+        """
+        Get several events in one Gamma call via repeated ``id`` params.
+
+        #2199: the discovery poll can only reach the newest ~2000 events by
+        startDate, so refreshing a known market's price cannot go through
+        pagination at all — it has to address the market directly. Fetching them
+        one at a time would be ~500 calls per sweep; repeated ``id`` params
+        return the full nested-markets payload for each event in one response
+        (verified against the live API 2026-08-25).
+
+        Returns the events Gamma knows about. Ids it does not recognise are
+        simply absent from the response — callers must key by id rather than
+        assuming the list lines up with the request.
+        """
+        if not event_ids:
+            return []
+        params = [("id", str(eid)) for eid in event_ids]
+        response = await self.gamma_client.get("/events", params=params)
+        response.raise_for_status()
+        payload = response.json()
+        return payload if isinstance(payload, list) else []
+
     async def get_sports(self) -> list[dict]:
         """
         Get supported sports/leagues from Gamma API.

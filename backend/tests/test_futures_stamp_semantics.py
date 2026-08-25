@@ -93,6 +93,10 @@ POLL_STAMP_COUNTS = {
     "app/tasks/kalshi.py": 5,
     "app/tasks/polymarket.py": 7,
     "app/tasks/futures.py": 2,
+    # #2199: the price refresher. A FOURTH writer, and the census is why it had
+    # to declare itself — it exists precisely because the three above cannot
+    # reach every market they are assumed to cover.
+    "app/tasks/futures_price_refresh.py": 1,
 }
 
 
@@ -291,6 +295,12 @@ PRICE_CHANGE_STAMPERS = {
     "app/tasks/kalshi.py": 2,
     "app/tasks/polymarket.py": 3,
     "app/tasks/futures.py": 1,
+    # #2199. Its one price write carries the conditional change-stamp beside the
+    # unconditional touch-stamp, so a refreshed-but-unmoved price does not read
+    # as a move — `routes/playoffs.py` drops an outcome from the grid on a stale
+    # stamp, and this writer's whole cohort is the tier-1 championship fields
+    # that grid renders.
+    "app/tasks/futures_price_refresh.py": 1,
 }
 
 
