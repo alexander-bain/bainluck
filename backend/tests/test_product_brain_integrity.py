@@ -791,7 +791,32 @@ def test_ruling_numbers_are_unique() -> None:
 #:
 #: Verified index <-> files in BOTH directions on the merged tree: 131 files, 131 index lines,
 #: zero orphans either way, ascending, no duplicates, contiguous 1..131.
-MINIMUM_BANKED_RULINGS = 131
+#:
+#: LAT-P088 (2026-08-24) raises it 131 -> **132** by banking ruling **135** ("a release
+#: narrows the window; it does not disqualify the day"). COUNTED on THIS REBASED TREE:
+#: `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = **132**, never a delta added to 131.
+#: Claimed after `git fetch` in the same turn: `origin/master` = `ff199795`, merged-tree
+#: ruling files **131**, merged-tree max **131**; all **586** local and remote refs
+#: (`git for-each-ref refs/heads refs/remotes`) swept for `docs/rulings/135-`,
+#: holders_found = 0.
+#:
+#: THE GAP IS BACK, AND THIS ENTRY IS ITS SIXTH SPECIMEN FROM A NEW ANGLE. The count is
+#: **132** while the highest file is **135**: 132, 133 and 134 are absent and HELD by
+#: `lane1/q405-rulings-132-133`, claimed-and-unmerged. Do not tidy 135 down into them —
+#: the note above already says the correct response to a gap is to find its holder in
+#: `RULING-CLAIMS.md`. Two waves of count-equals-highest were, as predicted verbatim
+#: there, a coincidence of those trees and not an invariant.
+#:
+#: The number is 135 and NOT 134 because this lane computed 134 as next-free, then
+#: re-swept before writing and found q405 had banked 134 in the interim — inside the same
+#: session. The parenthetical "next free 132" in this lane's OWN `READY-latency-LAT-P087.md`,
+#: written about an hour earlier, is likewise stale. And this floor itself is the specimen:
+#: it was set to **122** against a base of `3af21254`, correctly counted from that tree by
+#: ruling 088's method, and was 10 low by the time it was committed, because the Integrator
+#: merged LAT-P087 into master WHILE THIS SESSION RAN. Correct method, expired tree — the
+#: sixth time in seven waves, and the first where the tree expired under a live lane rather
+#: than between cycles. Re-count at merge; never derive from this line.
+MINIMUM_BANKED_RULINGS = 132
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

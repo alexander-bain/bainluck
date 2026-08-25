@@ -130,7 +130,14 @@ class TestArmALookback:
 
     def test_a_deploy_inside_the_lookback_straddles_even_when_the_window_is_single_slug(self):
         """The case arm B structurally cannot see: the probe ran entirely on
-        SHA_B, but the 24h count it is scored against also covers SHA_A."""
+        SHA_B, but the 24h count it is scored against also covers SHA_A.
+
+        AMENDED by ruling 135: this is still not CLEAR, but WHY has sharpened.
+        The live slug is only attributable back 4 h, under the 6 h exposure
+        floor, so it stays STRADDLED. Its sibling below shows the same shape
+        clearing the floor and grading NARROWED — which is the case that makes
+        arm A schedulable at all.
+        """
         mod = _load()
         rows = [
             _row(NOW - timedelta(hours=30), {SHA_A: 20}),
@@ -139,7 +146,8 @@ class TestArmALookback:
         ]
         out = mod.arm_a_release_window(rows, NOW, {SHA_B: 24})
         assert out["verdict"] == "STRADDLED"
-        assert "24h arm-A lookback" in out["reason"]
+        assert "minimum-exposure floor (ruling 135)" in out["reason"]
+        assert out["exposure_hours"] == 4.0
 
     def test_rows_inside_the_lookback_alone_cannot_certify_it(self):
         """A fresh state file agreeing with itself is not coverage.
@@ -211,13 +219,21 @@ class TestOperatorOverride:
         assert out["source"] == "operator"
 
     def test_the_boundary_is_the_lookback_not_a_fudge(self):
+        """AMENDED by ruling 135. The 24 h boundary still exists and is still
+        exact — but what it now separates is NARROWED (a deploy inside the
+        lookback, scored over the exposure since it) from CLEAR (no deploy in
+        the lookback at all, scored over the whole 24 h). Neither side banks
+        without also clearing the exposure floor; that is the OTHER boundary,
+        pinned in `TestRuling135MinimumExposureFloor`."""
         mod = _load()
         just_inside = mod.arm_a_release_window(
             [], NOW, {}, last_release_at=NOW - timedelta(hours=23, minutes=59))
         just_outside = mod.arm_a_release_window(
             [], NOW, {}, last_release_at=NOW - timedelta(hours=24, minutes=1))
-        assert just_inside["verdict"] == "STRADDLED"
+        assert just_inside["verdict"] == "NARROWED"
         assert just_outside["verdict"] == "CLEAR"
+        # CLEAR is scored over the full 24 h, so it must NOT carry a narrowing.
+        assert just_outside["narrow_since"] is None
 
 
 # ------------------------------------------------------------- the cascade

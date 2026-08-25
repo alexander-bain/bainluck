@@ -101,6 +101,49 @@ REQUIRED_CLEAN_DAYS = 7
 # Arm A reads a rolling 24 h count, so its straddle question is about 24 h —
 # not about the probe window's length. Keep the two intervals separate.
 RELEASE_LOOKBACK_HOURS = 24
+
+# ---- ruling 135: arm A narrows to the live slug, above a MINIMUM-EXPOSURE FLOOR
+#
+# Alex ruled Option B (2026-08-24): arm A may scope its lookback to
+# `max(deploy_time, window_start)` instead of a flat 24 h, so that a release does
+# not disqualify the day — BUT a day counts toward the seven only when the
+# narrowed window actually carried enough exposure for "no failures" to mean
+# something. Both halves are load-bearing; the narrowing without the floor is the
+# relaxation LAT-P087 declined to make on its own authority.
+#
+# 6.0 is DERIVED, not chosen. Measured across 96 production deploys /
+# 2026-08-12..08-24 (median gap 0.67 h, p90 11.0 h), the number of UTC dates that
+# could host a 60-minute window whose post-release exposure clears the floor:
+#
+#     floor    dates OK    longest CONSECUTIVE run
+#      24 h       2                 2      <- the flat-24h spec: unschedulable
+#      12 h       9                 4      <- still short of REQUIRED_CLEAN_DAYS
+#       6 h      12                12      <- clears 7 with 5 days of headroom
+#       4 h      12                12
+#
+# So 6 h is the most conservative floor that still admits a seven-day streak.
+# 12 h is not a stricter version of this criterion — it is an unrunnable one, and
+# an unrunnable falsifier grades INCONCLUSIVE forever, which reads as "not yet
+# proven" and so is never investigated (the `_detect_restart` failure, again).
+MIN_POST_RELEASE_EXPOSURE_HOURS = 6.0
+
+# The window must also have SERVED enough real requests. This is the floor's
+# other half and it answers a different question from the hours: six deploy-free
+# hours during which nobody asked for the feed is six hours of nothing observed.
+# A 60-minute probe at `--interval 60` makes 60 requests, so 50 tolerates a few
+# transport blips while refusing a window that was gutted.
+#
+# Counted from the probe's OWN successful samples, deliberately, because that is
+# the only request count this instrument can vouch for. Production exposes no
+# readable per-interval counter of real user feed requests: `user_seen_markets`
+# is EMPTY (0 rows, ever — measured 2026-08-24, so it is not a traffic signal at
+# all), `pg_stat_statements` holds only ingestion writes for `futures_markets`,
+# and `pg_stat_user_indexes.idx_scan` on the feed's partial indexes conflates the
+# hourly warmer rail with real users. Rather than infer a number from a counter
+# that measures something else, the floor is stated over what was actually
+# observed. If a real-traffic counter lands later, raise this to it.
+MIN_SERVED_REQUESTS = 50
+
 DEFAULT_STATE = Path(__file__).resolve().parents[2] / "docs/audits/latency/2107-watch.jsonl"
 
 RC_CLEAN = 0
@@ -301,12 +344,62 @@ def _parse_stamp(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _narrow_since(
+    rows: list[dict],
+    window_commits: dict,
+    window_started: datetime | None,
+) -> datetime | None:
+    """Earliest instant this run can ATTRIBUTE to the currently-deployed slug.
+
+    Ruling 135's narrowing needs a lower bound on when the live slug took over.
+    ``--last-release-at`` gives it exactly; without it, the recorded history can
+    still bound it — and a bound is enough, because the bound is used only to
+    move the count's start LATER, never earlier.
+
+    The current slug is whatever answered this window. If more than one SHA did,
+    there is no "current slug" to narrow to and this returns None (arm B already
+    disqualifies that window anyway). Otherwise walk the recorded windows newest
+    first and keep taking rows that answered with that same single SHA; the first
+    row that disagrees, or carries no commit at all, ends the run. The earliest
+    still-agreeing row's start is the bound.
+
+    Deliberately CONSERVATIVE in one direction: an observation gap inside the run
+    is not filled in — the bound can only be as old as the oldest row we actually
+    saw on this slug, so unobserved deploy-free hours are simply not credited.
+    Under-crediting exposure makes a day fail the floor and grade INCONCLUSIVE;
+    over-crediting would let a barely-exposed window bank. Only one of those two
+    errors is recoverable by running again tomorrow.
+    """
+    current = {sha for sha in (window_commits or {}) if sha}
+    if len(current) != 1:
+        return None
+    sha = next(iter(current))
+
+    dated = []
+    for row in rows:
+        started = _parse_stamp(row.get("started_at"))
+        if started is not None:
+            dated.append((started, (row.get("probe") or {}).get("commits") or {}))
+    dated.sort(key=lambda pair: pair[0], reverse=True)
+
+    bound = window_started
+    for started, commits in dated:
+        shas = {s for s in commits if s}
+        if shas != {sha}:
+            break
+        if bound is None or started < bound:
+            bound = started
+    return bound
+
+
 def arm_a_release_window(
     rows: list[dict],
     now: datetime,
     window_commits: dict,
     last_release_at: datetime | None = None,
     lookback_hours: int = RELEASE_LOOKBACK_HOURS,
+    window_started: datetime | None = None,
+    min_exposure_hours: float = MIN_POST_RELEASE_EXPOSURE_HOURS,
 ) -> dict:
     """Did a release land inside arm A's 24 h lookback? STRADDLED / CLEAR / UNKNOWN.
 
@@ -333,21 +426,55 @@ def arm_a_release_window(
     makes CLEAR mean covered. It costs one warm-up day, after which every run
     has an anchor — a bounded cost, unlike `_detect_restart`'s old predicate,
     which was unconditionally true and could never resolve at all.
+
+    RULING 135 adds a fourth verdict, **NARROWED**, and it is what makes arm A
+    runnable at all. LAT-P087 measured the flat-24h rule against production and
+    found it unschedulable: 96 deploys in 12 days, so only 2 of 12 UTC dates
+    could host a deploy-free 24 h and the longest consecutive run was 2 — against
+    a seven-day requirement. Alex ruled Option B: scope the count to the live
+    slug (`max(deploy_time, window_start)`) instead of disqualifying the day,
+    ABOVE a minimum-exposure floor. Below the floor the verdict stays STRADDLED,
+    because "no failures in the 40 minutes since the deploy" is not evidence
+    about the deploy — it is evidence about 40 minutes. See
+    MIN_POST_RELEASE_EXPOSURE_HOURS for how 6 h was derived from those deploys.
+
+    Narrowing also changes what a NON-ZERO count means, which is half the point:
+    an unnarrowed count spanning two slugs cannot refute anything (the events may
+    be the retired slug's), so it could only ever grade INCONCLUSIVE. A narrowed
+    count IS attributable to the running slug, so a non-zero one is a real
+    FAILED. The relaxation and the sharpening are the same edit.
     """
     if last_release_at is not None:
         age_h = (now - last_release_at).total_seconds() / 3600.0
         if age_h < lookback_hours:
+            if age_h >= min_exposure_hours:
+                return {
+                    "verdict": "NARROWED",
+                    "reason": f"--last-release-at is {age_h:.1f}h ago, inside the "
+                              f"{lookback_hours}h lookback — ruling 135: arm A is "
+                              f"scoped to the {age_h:.1f}h since it, which clears the "
+                              f"{min_exposure_hours}h exposure floor",
+                    "source": "operator",
+                    "narrow_since": last_release_at.isoformat(),
+                    "exposure_hours": round(age_h, 2),
+                }
             return {
                 "verdict": "STRADDLED",
-                "reason": f"--last-release-at is {age_h:.1f}h ago, inside the "
-                          f"{lookback_hours}h arm-A lookback",
+                "reason": f"--last-release-at is {age_h:.1f}h ago; ruling 135 would "
+                          f"narrow arm A to it, but {age_h:.1f}h is under the "
+                          f"{min_exposure_hours}h minimum-exposure floor — too little "
+                          f"exposure for silence to mean anything",
                 "source": "operator",
+                "narrow_since": last_release_at.isoformat(),
+                "exposure_hours": round(age_h, 2),
             }
         return {
             "verdict": "CLEAR",
             "reason": f"--last-release-at is {age_h:.1f}h ago, outside the "
                       f"{lookback_hours}h arm-A lookback",
             "source": "operator",
+            "narrow_since": None,
+            "exposure_hours": None,
         }
 
     floor = now - timedelta(hours=lookback_hours)
@@ -370,11 +497,41 @@ def arm_a_release_window(
 
     if len(seen) > 1:
         shown = ", ".join(sorted(sha[:12] for sha in seen))
+        since = _narrow_since(rows, window_commits, window_started)
+        if since is None:
+            return {
+                "verdict": "STRADDLED",
+                "reason": f"{len(seen)} distinct commits recorded within the "
+                          f"{lookback_hours}h arm-A lookback ({shown}), and this "
+                          "window itself saw more than one — there is no single live "
+                          "slug to narrow to (ruling 135)",
+                "source": "history",
+                "narrow_since": None,
+                "exposure_hours": None,
+            }
+        exposure_h = (now - since).total_seconds() / 3600.0
+        if exposure_h >= min_exposure_hours:
+            return {
+                "verdict": "NARROWED",
+                "reason": f"{len(seen)} distinct commits inside the {lookback_hours}h "
+                          f"lookback ({shown}); ruling 135 scopes arm A to the live "
+                          f"slug from {since.isoformat()} — {exposure_h:.1f}h of "
+                          f"observed exposure, clearing the {min_exposure_hours}h floor",
+                "source": "history",
+                "narrow_since": since.isoformat(),
+                "exposure_hours": round(exposure_h, 2),
+            }
         return {
             "verdict": "STRADDLED",
-            "reason": f"{len(seen)} distinct commits recorded within the "
-                      f"{lookback_hours}h arm-A lookback ({shown})",
+            "reason": f"{len(seen)} distinct commits inside the {lookback_hours}h "
+                      f"lookback ({shown}); the live slug is only attributable from "
+                      f"{since.isoformat()} = {exposure_h:.1f}h, under the "
+                      f"{min_exposure_hours}h minimum-exposure floor (ruling 135). "
+                      "Pass --last-release-at if the real deploy is older than the "
+                      "oldest window observed on this slug.",
             "source": "history",
+            "narrow_since": since.isoformat(),
+            "exposure_hours": round(exposure_h, 2),
         }
 
     if not anchor_shas:
@@ -385,6 +542,8 @@ def arm_a_release_window(
                       "arm A's 24h cannot be certified deploy-free. Pass "
                       "--last-release-at, or run again once a day of history exists.",
             "source": "history",
+            "narrow_since": None,
+            "exposure_hours": None,
         }
 
     return {
@@ -392,21 +551,66 @@ def arm_a_release_window(
         "reason": f"one commit ({next(iter(seen))[:12]}) across the "
                   f"{lookback_hours}h lookback, anchored at {anchor_at.isoformat()}",
         "source": "history",
+        "narrow_since": None,
+        "exposure_hours": None,
     }
 
 
 # --------------------------------------------------------------- arm A: sentry
 
 
-def sentry_24h_count(token: str | None) -> dict:
-    """BAINLUCK-ZK's events in the last 24 h.
+def sum_buckets_since(buckets: list, since: datetime | None) -> tuple[int, int, bool]:
+    """(total_24h, total_since, narrowed) over Sentry's hourly `stats.24h` points.
+
+    Ruling 135's narrowing is a SUM over a subrange, and Sentry already hands the
+    subrange over: `stats.24h` is a list of `[epoch_seconds, count]` buckets, so
+    scoping the count to the live slug is arithmetic on data already fetched —
+    no second API call, no different endpoint, and nothing inferred.
+
+    A bucket is kept when any part of it lies at or after `since`, i.e. when
+    `bucket_start + width > since`. That deliberately keeps the bucket the deploy
+    landed inside, whose events may belong to either slug. Rounding a partial
+    bucket INTO the narrowed count can only turn a would-be CLEAN into a FIRED —
+    never the reverse — and a false FAILED gets investigated while a false CLEAN
+    closes the issue. Width is read off consecutive timestamps rather than
+    assumed, falling back to one hour, so a granularity change upstream does not
+    silently shift the boundary.
+    """
+    points = [p for p in buckets if len(p) > 1]
+    total = sum(int(p[1]) for p in points)
+    if since is None or not points:
+        return total, total, False
+
+    width = 3600.0
+    if len(points) > 1:
+        deltas = [float(points[i + 1][0]) - float(points[i][0]) for i in range(len(points) - 1)]
+        positive = [d for d in deltas if d > 0]
+        if positive:
+            width = min(positive)
+
+    cutoff = since.timestamp()
+    kept = [p for p in points if float(p[0]) + width > cutoff]
+    return total, sum(int(p[1]) for p in kept), len(kept) != len(points)
+
+
+def sentry_24h_count(token: str | None, since: datetime | None = None) -> dict:
+    """BAINLUCK-ZK's events in the last 24 h, optionally narrowed to `since`.
 
     Reads the 24 h STATS buckets, never the issue's `count` — that field is
     LIFETIME (gotcha #49), and a dormant bug shows thousands there while firing
     zero today. Reading it would make this watch permanently, confidently red.
+
+    `since` is ruling 135's narrowing (see `arm_a_release_window`). Both numbers
+    are reported: `count_24h` unchanged for continuity with rows recorded before
+    this, and `count_scored` — the one the verdict is taken from. `narrowed` says
+    whether narrowing actually dropped a bucket, so a caller can tell "scoped"
+    from "asked for a scope that covered everything anyway"; a grader that
+    assumed the former would attribute a pre-release event to the live slug.
     """
     if not token:
-        return {"verdict": "UNKNOWN", "reason": "SENTRY_AUTH_TOKEN not set", "count_24h": None}
+        return {"verdict": "UNKNOWN", "reason": "SENTRY_AUTH_TOKEN not set",
+                "count_24h": None, "count_scored": None, "narrowed": False,
+                "since": since.isoformat() if since else None}
 
     query = urllib.parse.urlencode({"query": f"issue:{SENTRY_ISSUE_SHORT_ID}", "statsPeriod": "24h"})
     url = f"https://sentry.io/api/0/organizations/{SENTRY_ORG}/issues/?{query}"
@@ -415,21 +619,34 @@ def sentry_24h_count(token: str | None) -> dict:
         with urllib.request.urlopen(req, timeout=45) as resp:
             issues = json.loads(resp.read())
     except Exception as exc:
-        return {"verdict": "UNKNOWN", "reason": f"{type(exc).__name__}", "count_24h": None}
+        return {"verdict": "UNKNOWN", "reason": f"{type(exc).__name__}",
+                "count_24h": None, "count_scored": None, "narrowed": False,
+                "since": since.isoformat() if since else None}
 
     if not issues:
         # The issue not being returned for a 24h window is the CLEAN reading —
         # but say which reading it is, so nobody later mistakes it for "the
         # issue does not exist" (gotcha #53 again).
-        return {"verdict": "CLEAN", "reason": "no 24h events for this issue", "count_24h": 0}
+        return {"verdict": "CLEAN", "reason": "no 24h events for this issue",
+                "count_24h": 0, "count_scored": 0, "narrowed": False,
+                "since": since.isoformat() if since else None}
 
     buckets = (issues[0].get("stats") or {}).get("24h") or []
-    total = sum(int(point[1]) for point in buckets if len(point) > 1)
+    total, scored, narrowed = sum_buckets_since(buckets, since)
+    if scored == 0:
+        reason = None if total == 0 else (
+            f"{total} events in 24h, but 0 since {since.isoformat()} — "
+            "the events predate the live slug (ruling 135)")
+    else:
+        reason = f"{scored} events" + (f" since {since.isoformat()}" if since else " in 24h")
     return {
-        "verdict": "CLEAN" if total == 0 else "FIRED",
+        "verdict": "CLEAN" if scored == 0 else "FIRED",
         "count_24h": total,
+        "count_scored": scored,
+        "narrowed": narrowed,
+        "since": since.isoformat() if since else None,
         "issue_id": issues[0].get("id"),
-        "reason": None if total == 0 else f"{total} events in 24h",
+        "reason": reason,
     }
 
 
@@ -453,9 +670,27 @@ def grade_window(probe: dict, sentry: dict, counts_as_day: bool, release: dict) 
     `release` is a required argument with no default. A default would let a
     caller skip the check and still get a CLEAN, which is the exact shape of
     every silent-coverage bug this program has spent the month on.
+
+    RULING 135 adds two things, both fail-closed:
+
+    * **NARROWED** is no longer disqualifying. It falls through to the Sentry
+      check, where the count it is scored against is the narrowed one. But a
+      NARROWED release verdict whose count was NOT actually narrowed is refused
+      rather than trusted — otherwise the relaxation would score the live slug
+      against two slugs' events.
+    * a **served-requests floor**. The window must have completed
+      MIN_SERVED_REQUESTS real requests, sitting immediately after the 5xx check
+      and ahead of everything that can produce a CLEAN. Ordering matters both
+      ways: a real 5xx refutes the fix however few requests were made, so the
+      floor must not suppress it; and a window that served almost nothing must
+      not bank, because a bug that never had a chance to fire did not fail to
+      fire. The old cascade had no volume criterion at all — a window that made
+      one successful request and 59 transport errors would have been graded on
+      `transport_errors > 0`, which is luck rather than a floor.
     """
     reasons = []
     release = release or {"verdict": "UNKNOWN", "reason": "no release verdict supplied"}
+    served = probe["samples"] - probe.get("transport_errors", 0)
     if probe["samples"] == 0:
         verdict = "NO_SAMPLES"
         reasons.append("probe collected zero samples — this is not a pass")
@@ -468,11 +703,38 @@ def grade_window(probe: dict, sentry: dict, counts_as_day: bool, release: dict) 
     elif probe["server_errors"] > 0:
         verdict = "FAILED"
         reasons.append(f"{probe['server_errors']} 5xx on /api/feed")
+    elif served < MIN_SERVED_REQUESTS:
+        verdict = "INCONCLUSIVE"
+        reasons.append(
+            f"ruling 135 exposure floor: only {served} of {probe['samples']} requests "
+            f"were served (floor {MIN_SERVED_REQUESTS}) — the window did not exercise "
+            "/api/feed enough for silence to be evidence"
+        )
     elif release["verdict"] in ("STRADDLED", "UNKNOWN"):
         verdict = "INCONCLUSIVE"
         reasons.append(
             f"ruling 130: arm A's 24h lookback is {release['verdict']} — "
             f"{release['reason']}"
+        )
+    elif release["verdict"] == "NARROWED" and not release.get("exposure_hours"):
+        # A NARROWED verdict is a claim about how much exposure it narrowed TO.
+        # Without the number the claim is unfalsifiable, so it is refused.
+        verdict = "INCONCLUSIVE"
+        reasons.append(
+            "ruling 135: arm A reports NARROWED but carries no exposure_hours — "
+            "the narrowing cannot be checked against the floor"
+        )
+    elif (
+        release["verdict"] == "NARROWED"
+        and sentry.get("verdict") == "FIRED"
+        and not sentry.get("narrowed")
+    ):
+        # The count spans the retired slug too, so it cannot refute the live one.
+        verdict = "INCONCLUSIVE"
+        reasons.append(
+            f"ruling 135: arm A narrowed to {release.get('narrow_since')} but the "
+            f"Sentry count was not narrowed (narrowed={sentry.get('narrowed')!r}) — "
+            f"{sentry.get('count_scored')} events are not attributable to the live slug"
         )
     elif sentry["verdict"] == "FIRED":
         verdict = "FAILED"
@@ -504,6 +766,10 @@ def grade_window(probe: dict, sentry: dict, counts_as_day: bool, release: dict) 
     return {
         "verdict": verdict,
         "reasons": reasons,
+        "served_requests": served,
+        "served_floor": MIN_SERVED_REQUESTS,
+        "exposure_hours": release.get("exposure_hours"),
+        "exposure_floor_hours": MIN_POST_RELEASE_EXPOSURE_HOURS,
         "counts_toward_seven": bool(counts_as_day and verdict == "CLEAN"),
     }
 
@@ -568,7 +834,9 @@ def summarize(state_path: Path) -> int:
         print(
             f"   {row.get('started_at', '?')[:19]}  {row['grade']['verdict']:<13}"
             f" samples={row['probe']['samples']:<5} 5xx={row['probe']['server_errors']}"
-            f" sentry24h={row['sentry'].get('count_24h')}"
+            f" sentry={row['sentry'].get('count_scored', row['sentry'].get('count_24h'))}"
+            f"{'(scoped)' if row['sentry'].get('narrowed') else ''}"
+            f" exposure={row.get('release', {}).get('exposure_hours')}"
             f" processes={len(row['probe'].get('process_ids') or {})}"
         )
     non_day = len(rows) - len(days)
@@ -651,12 +919,19 @@ def main() -> int:
             return RC_CANNOT_MEASURE
 
     probe = run_probe(api, args.minutes, args.interval, args.limit)
-    sentry = sentry_24h_count(os.getenv("SENTRY_AUTH_TOKEN"))
+    # Order matters since ruling 135: the release verdict decides WHAT INTERVAL
+    # arm A is counted over, so it has to be resolved before the count is read.
     release = arm_a_release_window(
         _read_rows(args.state),
         datetime.now(timezone.utc),
         probe.get("commits") or {},
         last_release_at=last_release_at,
+        window_started=started,
+    )
+    sentry = sentry_24h_count(
+        os.getenv("SENTRY_AUTH_TOKEN"),
+        since=_parse_stamp(release.get("narrow_since"))
+        if release["verdict"] == "NARROWED" else None,
     )
     grade = grade_window(probe, sentry, counts_as_day=counts_as_day, release=release)
 
