@@ -1,0 +1,259 @@
+{
+  "label": "leg_swap_bbq_opening",
+  "league": "baseball",
+  "market_type": "quantity",
+  "complete": true,
+  "measured": true,
+  "tolerance": 0.02,
+  "probability_column": "opening_probability",
+  "population": "polymarket/resolved, baseball/quantity, 2-leg over+under, both openings present, pair sum INSIDE tolerance (the coherent 'ok' class), exactly one winner, truth-eligible legs only",
+  "shard_count": 17,
+  "shards": [
+    {
+      "lo": 1,
+      "hi": 4000001,
+      "duration_ms": 1413.0,
+      "sql_fingerprint": "0d8d2192a84a14ba"
+    },
+    {
+      "lo": 4000001,
+      "hi": 8000001,
+      "duration_ms": 541.2,
+      "sql_fingerprint": "c431b57e85fd8ccd"
+    },
+    {
+      "lo": 8000001,
+      "hi": 12000001,
+      "duration_ms": 565.0,
+      "sql_fingerprint": "d653f56e9cff07ab"
+    },
+    {
+      "lo": 12000001,
+      "hi": 16000001,
+      "duration_ms": 978.9,
+      "sql_fingerprint": "621943ed86fd50b9"
+    },
+    {
+      "lo": 16000001,
+      "hi": 20000001,
+      "duration_ms": 1238.7,
+      "sql_fingerprint": "a6ecf3571647732f"
+    },
+    {
+      "lo": 20000001,
+      "hi": 24000001,
+      "duration_ms": 960.0,
+      "sql_fingerprint": "bc06bec7eb35daaa"
+    },
+    {
+      "lo": 24000001,
+      "hi": 28000001,
+      "duration_ms": 950.5,
+      "sql_fingerprint": "50fc6da8ddabde65"
+    },
+    {
+      "lo": 28000001,
+      "hi": 32000001,
+      "duration_ms": 885.3,
+      "sql_fingerprint": "50151d1c5f91c802"
+    },
+    {
+      "lo": 32000001,
+      "hi": 36000001,
+      "duration_ms": 3253.1,
+      "sql_fingerprint": "9da2e0908e79bb2b"
+    },
+    {
+      "lo": 36000001,
+      "hi": 40000001,
+      "duration_ms": 1319.4,
+      "sql_fingerprint": "1404665234c549b1"
+    },
+    {
+      "lo": 40000001,
+      "hi": 44000001,
+      "duration_ms": 433.6,
+      "sql_fingerprint": "b8eb5b3737a2745d"
+    },
+    {
+      "lo": 44000001,
+      "hi": 48000001,
+      "duration_ms": 411.5,
+      "sql_fingerprint": "8b0df1139dba02a1"
+    },
+    {
+      "lo": 48000001,
+      "hi": 52000001,
+      "duration_ms": 615.6,
+      "sql_fingerprint": "c1b6dc964adbbb30"
+    },
+    {
+      "lo": 52000001,
+      "hi": 56000001,
+      "duration_ms": 770.4,
+      "sql_fingerprint": "99a6470e2a12cba0"
+    },
+    {
+      "lo": 56000001,
+      "hi": 56900000,
+      "duration_ms": 385.8,
+      "sql_fingerprint": "e1ad43086159d67b"
+    },
+    {
+      "lo": 56900000,
+      "hi": 57800000,
+      "duration_ms": 7057.0,
+      "sql_fingerprint": "4e949f6228a9c392"
+    },
+    {
+      "lo": 57800000,
+      "hi": 59600000,
+      "duration_ms": 9793.4,
+      "sql_fingerprint": "101efd15cab5c88a"
+    }
+  ],
+  "irreducible": [],
+  "elapsed_s": 56.5,
+  "summary": {
+    "over": {
+      "n": 2438,
+      "wins": 418,
+      "mean_p": 0.3858,
+      "win_rate": 0.1715,
+      "gap_pp": 21.44,
+      "weighted_corr_p_vs_winrate": -0.5826,
+      "bins": [
+        {
+          "bin": 0,
+          "n": 157,
+          "sum_p": 10.585,
+          "wins": 37
+        },
+        {
+          "bin": 1,
+          "n": 279,
+          "sum_p": 39.134,
+          "wins": 81
+        },
+        {
+          "bin": 2,
+          "n": 335,
+          "sum_p": 82.191,
+          "wins": 100
+        },
+        {
+          "bin": 3,
+          "n": 226,
+          "sum_p": 77.38,
+          "wins": 64
+        },
+        {
+          "bin": 4,
+          "n": 239,
+          "sum_p": 107.94349999999999,
+          "wins": 63
+        },
+        {
+          "bin": 5,
+          "n": 1119,
+          "sum_p": 564.464,
+          "wins": 43
+        },
+        {
+          "bin": 6,
+          "n": 47,
+          "sum_p": 30.189999999999998,
+          "wins": 17
+        },
+        {
+          "bin": 7,
+          "n": 22,
+          "sum_p": 16.235,
+          "wins": 6
+        },
+        {
+          "bin": 8,
+          "n": 8,
+          "sum_p": 6.8020000000000005,
+          "wins": 5
+        },
+        {
+          "bin": 9,
+          "n": 6,
+          "sum_p": 5.703500000000001,
+          "wins": 2
+        }
+      ]
+    },
+    "under": {
+      "n": 2438,
+      "wins": 2020,
+      "mean_p": 0.6143,
+      "win_rate": 0.8285,
+      "gap_pp": -21.43,
+      "weighted_corr_p_vs_winrate": -0.5836,
+      "bins": [
+        {
+          "bin": 0,
+          "n": 5,
+          "sum_p": 0.1965,
+          "wins": 4
+        },
+        {
+          "bin": 1,
+          "n": 7,
+          "sum_p": 0.898,
+          "wins": 2
+        },
+        {
+          "bin": 2,
+          "n": 21,
+          "sum_p": 5.265000000000001,
+          "wins": 14
+        },
+        {
+          "bin": 3,
+          "n": 47,
+          "sum_p": 16.509999999999998,
+          "wins": 31
+        },
+        {
+          "bin": 4,
+          "n": 146,
+          "sum_p": 67.89599999999999,
+          "wins": 119
+        },
+        {
+          "bin": 5,
+          "n": 1184,
+          "sum_p": 600.5435,
+          "wins": 1112
+        },
+        {
+          "bin": 6,
+          "n": 235,
+          "sum_p": 151.82,
+          "wins": 169
+        },
+        {
+          "bin": 7,
+          "n": 326,
+          "sum_p": 243.40900000000002,
+          "wins": 226
+        },
+        {
+          "bin": 8,
+          "n": 278,
+          "sum_p": 235.88099999999997,
+          "wins": 201
+        },
+        {
+          "bin": 9,
+          "n": 189,
+          "sum_p": 175.21499999999997,
+          "wins": 142
+        }
+      ]
+    }
+  }
+}
