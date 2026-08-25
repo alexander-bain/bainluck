@@ -1,0 +1,181 @@
+/**
+ * Tournament championship-board types and pure presentation logic (UX-P131).
+ *
+ * Everything here is a pure function so the jest gate can assert it directly —
+ * this suite runs in the node environment with no jsdom, so logic that only
+ * exists inside a component body is logic no guard can reach (ruling 005).
+ *
+ * The rules that are load-bearing rather than cosmetic:
+ *
+ * - `sparklinePoints` plots on a FIXED 0-100 axis and draws straight segments
+ *   between real observations. No smoothing, no auto-scaled y-axis. An
+ *   auto-scaled axis makes a 2pp wiggle look like a collapse, which is the
+ *   opposite of informative on a page whose subject is movement.
+ *
+ * - `boardNotice` and `rowIsPresentedAsLive` exist because of #2199. The US
+ *   Open outright fields have been price-dark for 8-32 days. The failure this
+ *   guards is not an empty board — it is a board that prints July's number in
+ *   the same confident type it would print a live one. The server decides
+ *   liveness (`probability_is_live`); this file only decides how loudly to say
+ *   so, and it is never permitted to upgrade a non-live row.
+ */
+
+export type PriceState = "live" | "stale" | "dark";
+
+export interface TournamentTrendPoint {
+  date: string;
+  probability: number;
+}
+
+export interface TournamentSourceView {
+  source: string;
+  probability: number;
+  observed_at: string | null;
+}
+
+export interface TournamentRow {
+  entity_key: string;
+  display_name: string;
+  seed: number | null;
+  country: string | null;
+  rank: number;
+  state: string;
+  probability: number | null;
+  probability_is_live: boolean;
+  observed_at: string | null;
+  age_hours: number | null;
+  price_state: PriceState;
+  source_count: number;
+  sources: TournamentSourceView[];
+  blend_rule: string | null;
+  divergent: boolean;
+  trend: TournamentTrendPoint[];
+  trend_delta: number | null;
+}
+
+export interface TournamentBoardData {
+  draw: string;
+  label: string;
+  rows: TournamentRow[];
+  contenders: number;
+  unpriced: number;
+  price_state: PriceState;
+  newest_observed_at: string | null;
+  age_hours: number | null;
+}
+
+export interface TournamentPayload {
+  slug: string;
+  title: string;
+  subtitle: string;
+  tournament: string;
+  season: string;
+  register_version: number;
+  register_generated_at: string;
+  draw_released: boolean;
+  boards: TournamentBoardData[];
+  render_findings: string[];
+  generated_at: string;
+}
+
+/**
+ * A row may be presented as a live number only when the SERVER says so.
+ *
+ * Written as a named predicate rather than inlined at each call site so there
+ * is exactly one place that can ever be wrong, and so the guard suite can
+ * assert it directly. It deliberately cannot look at `probability` or
+ * `price_state` to talk itself into a yes.
+ */
+export function rowIsPresentedAsLive(row: TournamentRow): boolean {
+  return row.probability_is_live === true;
+}
+
+/** Human age, rounded DOWN — "8 days ago" must never flatter to "7". */
+export function stalenessLabel(ageHours: number | null): string {
+  if (ageHours === null || !Number.isFinite(ageHours)) return "never";
+  if (ageHours < 1) {
+    const minutes = Math.max(1, Math.floor(ageHours * 60));
+    return `${minutes} min ago`;
+  }
+  if (ageHours < 48) {
+    const hours = Math.floor(ageHours);
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
+  const days = Math.floor(ageHours / 24);
+  return `${days} days ago`;
+}
+
+export interface BoardNotice {
+  tone: "stale" | "dark";
+  headline: string;
+  detail: string;
+}
+
+/**
+ * The visible admission. `null` only when the board is genuinely live.
+ *
+ * The wording says what we are showing and what we are not: "the last
+ * confirmed reading, not a live price". A banner that only says "some data may
+ * be delayed" lets the reader keep believing the number.
+ */
+export function boardNotice(board: TournamentBoardData): BoardNotice | null {
+  if (board.price_state === "live") return null;
+  const when = stalenessLabel(board.age_hours);
+  if (board.price_state === "dark" && board.newest_observed_at === null) {
+    return {
+      tone: "dark",
+      headline: "No prices yet",
+      detail:
+        "We have not recorded a price for this draw. Nothing below is a live number.",
+    };
+  }
+  return {
+    tone: board.price_state,
+    headline: "Prices paused",
+    detail: `Last confirmed reading ${when}. These are the last prices we saw, not live prices.`,
+  };
+}
+
+/**
+ * Straight segments between real observations on a FIXED 0-100 axis.
+ *
+ * Returns an empty string for fewer than two points: one observation is not a
+ * trend, and joining it to an assumed origin would draw a movement that never
+ * happened.
+ */
+export function sparklinePoints(
+  trend: TournamentTrendPoint[],
+  width: number,
+  height: number
+): string {
+  if (!Array.isArray(trend) || trend.length < 2) return "";
+  const n = trend.length;
+  return trend
+    .map((point, index) => {
+      const clamped = Math.max(0, Math.min(1, point.probability));
+      const x = (index * width) / (n - 1);
+      const y = height - clamped * height;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+/** Direction of travel, with a dead band so noise does not read as a move. */
+export function trendDirection(delta: number | null): "up" | "down" | "flat" {
+  if (delta === null || !Number.isFinite(delta)) return "flat";
+  if (delta > 0.003) return "up";
+  if (delta < -0.003) return "down";
+  return "flat";
+}
+
+export function formatBoardProbability(probability: number | null): string {
+  if (probability === null || !Number.isFinite(probability)) return "—";
+  return `${(probability * 100).toFixed(1)}%`;
+}
+
+export function formatTrendDelta(delta: number | null): string {
+  if (delta === null || !Number.isFinite(delta)) return "—";
+  const points = delta * 100;
+  const sign = points > 0 ? "+" : "";
+  return `${sign}${points.toFixed(1)}`;
+}

@@ -3,6 +3,7 @@
  */
 
 import type { EntityAvailability, EntityTier } from "@/lib/entityPageChrome";
+import type { TournamentPayload } from "@/lib/tournament";
 import type {
   EventsResponse,
   EventDetailResponse,
@@ -2212,4 +2213,16 @@ export interface SourceIntelligenceData {
 
 export async function fetchSourceIntelligence(): Promise<SourceIntelligenceData> {
   return apiFetch<SourceIntelligenceData>("/api/source-intelligence");
+}
+
+/**
+ * Tournament hub — the US Open championship boards (UX-P131).
+ *
+ * Types live in `lib/tournament.ts` beside the pure presentation logic they
+ * belong to; only the fetcher is here. An unregistered slug 404s by design —
+ * there is no nearest-tournament fallback, because that is exactly how the US
+ * Open lost its own page to Cincinnati once already (#1793).
+ */
+export async function fetchTournament(slug: string): Promise<TournamentPayload> {
+  return apiFetch<TournamentPayload>(`/api/tournaments/${encodeURIComponent(slug)}`);
 }

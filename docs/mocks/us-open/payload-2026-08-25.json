@@ -1,0 +1,2589 @@
+{
+ "tournament": "us-open",
+ "season": "2026",
+ "register_version": 1,
+ "register_generated_at": "2026-08-25T00:50:00+00:00",
+ "draw_released": false,
+ "boards": [
+  {
+   "draw": "mens-singles",
+   "label": "Men's Singles",
+   "rows": [
+    {
+     "entity_key": "jannik-sinner",
+     "display_name": "Jannik Sinner",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.525,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:12:10+00:00",
+     "age_hours": 362.5,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.525,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.525,
+       "observed_at": "2026-08-10T15:12:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [
+      {
+       "date": "2026-07-26",
+       "probability": 0.521667
+      },
+      {
+       "date": "2026-07-27",
+       "probability": 0.518333
+      },
+      {
+       "date": "2026-07-28",
+       "probability": 0.521522
+      },
+      {
+       "date": "2026-07-29",
+       "probability": 0.52375
+      },
+      {
+       "date": "2026-07-30",
+       "probability": 0.527917
+      },
+      {
+       "date": "2026-07-31",
+       "probability": 0.51875
+      },
+      {
+       "date": "2026-08-01",
+       "probability": 0.525
+      },
+      {
+       "date": "2026-08-02",
+       "probability": 0.526875
+      },
+      {
+       "date": "2026-08-03",
+       "probability": 0.52
+      },
+      {
+       "date": "2026-08-04",
+       "probability": 0.525417
+      },
+      {
+       "date": "2026-08-05",
+       "probability": 0.577292
+      },
+      {
+       "date": "2026-08-06",
+       "probability": 0.56125
+      },
+      {
+       "date": "2026-08-07",
+       "probability": 0.54375
+      },
+      {
+       "date": "2026-08-08",
+       "probability": 0.541667
+      },
+      {
+       "date": "2026-08-09",
+       "probability": 0.528542
+      },
+      {
+       "date": "2026-08-10",
+       "probability": 0.507353
+      }
+     ],
+     "trend_delta": -0.014314,
+     "rank": 1
+    },
+    {
+     "entity_key": "carlos-alcaraz",
+     "display_name": "Carlos Alcaraz",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.2425,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:11:12+00:00",
+     "age_hours": 362.51,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.235,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.25,
+       "observed_at": "2026-08-10T15:11:12+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [
+      {
+       "date": "2026-07-26",
+       "probability": 0.202
+      },
+      {
+       "date": "2026-07-27",
+       "probability": 0.210625
+      },
+      {
+       "date": "2026-07-28",
+       "probability": 0.216579
+      },
+      {
+       "date": "2026-07-29",
+       "probability": 0.218846
+      },
+      {
+       "date": "2026-07-30",
+       "probability": 0.221458
+      },
+      {
+       "date": "2026-07-31",
+       "probability": 0.217292
+      },
+      {
+       "date": "2026-08-01",
+       "probability": 0.218542
+      },
+      {
+       "date": "2026-08-02",
+       "probability": 0.22
+      },
+      {
+       "date": "2026-08-03",
+       "probability": 0.225
+      },
+      {
+       "date": "2026-08-04",
+       "probability": 0.223125
+      },
+      {
+       "date": "2026-08-05",
+       "probability": 0.104792
+      },
+      {
+       "date": "2026-08-06",
+       "probability": 0.110625
+      },
+      {
+       "date": "2026-08-07",
+       "probability": 0.130833
+      },
+      {
+       "date": "2026-08-08",
+       "probability": 0.135
+      },
+      {
+       "date": "2026-08-09",
+       "probability": 0.145625
+      },
+      {
+       "date": "2026-08-10",
+       "probability": 0.138824
+      }
+     ],
+     "trend_delta": -0.063176,
+     "rank": 2
+    },
+    {
+     "entity_key": "alexander-zverev",
+     "display_name": "Alexander Zverev",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.08,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:12:11+00:00",
+     "age_hours": 362.5,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.085,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.075,
+       "observed_at": "2026-08-10T15:12:11+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [
+      {
+       "date": "2026-07-26",
+       "probability": 0.0745
+      },
+      {
+       "date": "2026-07-27",
+       "probability": 0.0745
+      },
+      {
+       "date": "2026-07-28",
+       "probability": 0.0745
+      },
+      {
+       "date": "2026-07-29",
+       "probability": 0.0745
+      },
+      {
+       "date": "2026-07-30",
+       "probability": 0.0745
+      },
+      {
+       "date": "2026-07-31",
+       "probability": 0.0745
+      },
+      {
+       "date": "2026-08-01",
+       "probability": 0.0745
+      },
+      {
+       "date": "2026-08-02",
+       "probability": 0.0745
+      },
+      {
+       "date": "2026-08-03",
+       "probability": 0.0745
+      },
+      {
+       "date": "2026-08-04",
+       "probability": 0.074521
+      },
+      {
+       "date": "2026-08-05",
+       "probability": 0.100312
+      },
+      {
+       "date": "2026-08-06",
+       "probability": 0.106417
+      },
+      {
+       "date": "2026-08-07",
+       "probability": 0.106854
+      },
+      {
+       "date": "2026-08-08",
+       "probability": 0.100208
+      },
+      {
+       "date": "2026-08-09",
+       "probability": 0.105938
+      },
+      {
+       "date": "2026-08-10",
+       "probability": 0.133147
+      }
+     ],
+     "trend_delta": 0.058647,
+     "rank": 3
+    },
+    {
+     "entity_key": "novak-djokovic",
+     "display_name": "Novak Djokovic",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.04625,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:11:10+00:00",
+     "age_hours": 362.51,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.055,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0375,
+       "observed_at": "2026-08-10T15:11:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 4
+    },
+    {
+     "entity_key": "rafael-jodar",
+     "display_name": "Rafael Jodar",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.02,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.02,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 5
+    },
+    {
+     "entity_key": "ben-shelton",
+     "display_name": "Ben Shelton",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01975,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:12:11+00:00",
+     "age_hours": 362.5,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.025,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0145,
+       "observed_at": "2026-08-10T15:12:11+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 6
+    },
+    {
+     "entity_key": "taylor-fritz",
+     "display_name": "Taylor Fritz",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01725,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:12:10+00:00",
+     "age_hours": 362.5,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.02,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0145,
+       "observed_at": "2026-08-10T15:12:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 7
+    },
+    {
+     "entity_key": "daniil-medvedev",
+     "display_name": "Daniil Medvedev",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01425,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:12:11+00:00",
+     "age_hours": 362.5,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.015,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0135,
+       "observed_at": "2026-08-10T15:12:11+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 8
+    },
+    {
+     "entity_key": "jack-draper",
+     "display_name": "Jack Draper",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01225,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:12:10+00:00",
+     "age_hours": 362.5,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.015,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0095,
+       "observed_at": "2026-08-10T15:12:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 9
+    },
+    {
+     "entity_key": "joao-fonseca",
+     "display_name": "Joao Fonseca",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01225,
+     "probability_is_live": false,
+     "observed_at": "2026-08-17T09:00:00+00:00",
+     "age_hours": 200.7,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.015,
+       "observed_at": "2026-08-17T09:00:00+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0095,
+       "observed_at": "2026-08-10T15:12:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 10
+    },
+    {
+     "entity_key": "felix-auger-aliassime",
+     "display_name": "Felix Auger-Aliassime",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01175,
+     "probability_is_live": false,
+     "observed_at": "2026-08-17T09:00:00+00:00",
+     "age_hours": 200.7,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.015,
+       "observed_at": "2026-08-17T09:00:00+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0085,
+       "observed_at": "2026-08-10T15:15:13+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 11
+    },
+    {
+     "entity_key": "jakub-mensik",
+     "display_name": "Jakub Mensik",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0115,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:13:09+00:00",
+     "age_hours": 362.48,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.015,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.008,
+       "observed_at": "2026-08-10T15:13:09+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 12
+    },
+    {
+     "entity_key": "alex-de-minaur",
+     "display_name": "Alex de Minaur",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 13
+    },
+    {
+     "entity_key": "cameron-norrie",
+     "display_name": "Cameron Norrie",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-08-17T00:00:00+00:00",
+     "age_hours": 209.7,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-08-17T00:00:00+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 14
+    },
+    {
+     "entity_key": "casper-ruud",
+     "display_name": "Casper Ruud",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 15
+    },
+    {
+     "entity_key": "dino-prizmic",
+     "display_name": "Dino Prizmic",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-08-17T08:00:00+00:00",
+     "age_hours": 201.7,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-08-17T08:00:00+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 16
+    },
+    {
+     "entity_key": "francisco-cerundolo",
+     "display_name": "Francisco Cerundolo",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 17
+    },
+    {
+     "entity_key": "gabriel-diallo",
+     "display_name": "Gabriel Diallo",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 18
+    },
+    {
+     "entity_key": "jan-lennard-struff",
+     "display_name": "Jan-Lennard Struff",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 19
+    },
+    {
+     "entity_key": "karen-khachanov",
+     "display_name": "Karen Khachanov",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 20
+    },
+    {
+     "entity_key": "learner-tien",
+     "display_name": "Learner Tien",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 21
+    },
+    {
+     "entity_key": "sebastian-korda",
+     "display_name": "Sebastian Korda",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 22
+    },
+    {
+     "entity_key": "stefanos-tsitsipas",
+     "display_name": "Stefanos Tsitsipas",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 23
+    },
+    {
+     "entity_key": "tommy-paul",
+     "display_name": "Tommy Paul",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 24
+    },
+    {
+     "entity_key": "valentin-vacherot",
+     "display_name": "Valentin Vacherot",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 25
+    },
+    {
+     "entity_key": "andrey-rublev",
+     "display_name": "Andrey Rublev",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.00775,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:12:10+00:00",
+     "age_hours": 362.5,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0055,
+       "observed_at": "2026-08-10T15:12:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 26
+    },
+    {
+     "entity_key": "arthur-fils",
+     "display_name": "Arthur Fils",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.00775,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:12:12+00:00",
+     "age_hours": 362.5,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0055,
+       "observed_at": "2026-08-10T15:12:12+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 27
+    },
+    {
+     "entity_key": "frances-tiafoe",
+     "display_name": "Frances Tiafoe",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.00775,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:13:09+00:00",
+     "age_hours": 362.48,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0055,
+       "observed_at": "2026-08-10T15:13:09+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 28
+    },
+    {
+     "entity_key": "alexander-bublik",
+     "display_name": "Alexander Bublik",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.00725,
+     "probability_is_live": false,
+     "observed_at": "2026-08-17T00:00:00+00:00",
+     "age_hours": 209.7,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-08-17T00:00:00+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0045,
+       "observed_at": "2026-08-10T15:12:11+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 29
+    },
+    {
+     "entity_key": "flavio-cobolli",
+     "display_name": "Flavio Cobolli",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.00725,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:13:11+00:00",
+     "age_hours": 362.48,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0045,
+       "observed_at": "2026-08-10T15:13:11+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 30
+    },
+    {
+     "entity_key": "lorenzo-musetti",
+     "display_name": "Lorenzo Musetti",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.00725,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:11:11+00:00",
+     "age_hours": 362.51,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0045,
+       "observed_at": "2026-08-10T15:11:11+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 31
+    },
+    {
+     "entity_key": "holger-rune",
+     "display_name": "Holger Rune",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.00675,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:13:10+00:00",
+     "age_hours": 362.48,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0035,
+       "observed_at": "2026-08-10T15:13:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 32
+    },
+    {
+     "entity_key": "hubert-hurkacz",
+     "display_name": "Hubert Hurkacz",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.00675,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:11:10+00:00",
+     "age_hours": 362.51,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0035,
+       "observed_at": "2026-08-10T15:11:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 33
+    },
+    {
+     "entity_key": "jiri-lehecka",
+     "display_name": "Jiri Lehecka",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.005,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:10:10+00:00",
+     "age_hours": 362.53,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.005,
+       "observed_at": "2026-08-10T15:10:10+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 34
+    },
+    {
+     "entity_key": "matteo-berrettini",
+     "display_name": "Matteo Berrettini",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.005,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:10:12+00:00",
+     "age_hours": 362.53,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.005,
+       "observed_at": "2026-08-10T15:10:12+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 35
+    },
+    {
+     "entity_key": "grigor-dimitrov",
+     "display_name": "Grigor Dimitrov",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0025,
+     "probability_is_live": false,
+     "observed_at": "2026-08-10T15:15:11+00:00",
+     "age_hours": 362.45,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0025,
+       "observed_at": "2026-08-10T15:15:11+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 36
+    }
+   ],
+   "contenders": 36,
+   "unpriced": 0,
+   "price_state": "dark",
+   "newest_observed_at": "2026-08-17T09:00:00+00:00",
+   "age_hours": 200.7
+  },
+  {
+   "draw": "womens-singles",
+   "label": "Women's Singles",
+   "rows": [
+    {
+     "entity_key": "aryna-sabalenka",
+     "display_name": "Aryna Sabalenka",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.2575,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:10+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.275,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.24,
+       "observed_at": "2026-07-30T15:19:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [
+      {
+       "date": "2026-07-26",
+       "probability": 0.255
+      },
+      {
+       "date": "2026-07-27",
+       "probability": 0.263125
+      },
+      {
+       "date": "2026-07-28",
+       "probability": 0.270789
+      },
+      {
+       "date": "2026-07-29",
+       "probability": 0.3
+      },
+      {
+       "date": "2026-07-30",
+       "probability": 0.295588
+      }
+     ],
+     "trend_delta": 0.040588,
+     "rank": 1
+    },
+    {
+     "entity_key": "elena-rybakina",
+     "display_name": "Elena Rybakina",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.1015,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:17:09+00:00",
+     "age_hours": 626.41,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.11,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.093,
+       "observed_at": "2026-07-30T15:17:09+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [
+      {
+       "date": "2026-07-26",
+       "probability": 0.0925
+      },
+      {
+       "date": "2026-07-27",
+       "probability": 0.0925
+      },
+      {
+       "date": "2026-07-28",
+       "probability": 0.0925
+      },
+      {
+       "date": "2026-07-29",
+       "probability": 0.092375
+      },
+      {
+       "date": "2026-07-30",
+       "probability": 0.0915
+      }
+     ],
+     "trend_delta": -0.001,
+     "rank": 2
+    },
+    {
+     "entity_key": "coco-gauff",
+     "display_name": "Coco Gauff",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.093,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:17:09+00:00",
+     "age_hours": 626.41,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.1,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.086,
+       "observed_at": "2026-07-30T15:17:09+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [
+      {
+       "date": "2026-07-26",
+       "probability": 0.0835
+      },
+      {
+       "date": "2026-07-27",
+       "probability": 0.084625
+      },
+      {
+       "date": "2026-07-28",
+       "probability": 0.085
+      },
+      {
+       "date": "2026-07-29",
+       "probability": 0.084896
+      },
+      {
+       "date": "2026-07-30",
+       "probability": 0.083
+      }
+     ],
+     "trend_delta": -0.0005,
+     "rank": 3
+    },
+    {
+     "entity_key": "iga-swiatek",
+     "display_name": "Iga Swiatek",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.085,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:08+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.075,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.095,
+       "observed_at": "2026-07-30T15:19:08+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [
+      {
+       "date": "2026-07-26",
+       "probability": 0.095
+      },
+      {
+       "date": "2026-07-27",
+       "probability": 0.095
+      },
+      {
+       "date": "2026-07-28",
+       "probability": 0.091087
+      },
+      {
+       "date": "2026-07-29",
+       "probability": 0.085
+      },
+      {
+       "date": "2026-07-30",
+       "probability": 0.085
+      }
+     ],
+     "trend_delta": -0.01,
+     "rank": 4
+    },
+    {
+     "entity_key": "mirra-andreeva",
+     "display_name": "Mirra Andreeva",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0695,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:17:10+00:00",
+     "age_hours": 626.41,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.075,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.064,
+       "observed_at": "2026-07-30T15:17:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [
+      {
+       "date": "2026-07-26",
+       "probability": 0.063
+      },
+      {
+       "date": "2026-07-27",
+       "probability": 0.063
+      },
+      {
+       "date": "2026-07-28",
+       "probability": 0.062696
+      },
+      {
+       "date": "2026-07-29",
+       "probability": 0.0625
+      },
+      {
+       "date": "2026-07-30",
+       "probability": 0.0625
+      }
+     ],
+     "trend_delta": -0.0005,
+     "rank": 5
+    },
+    {
+     "entity_key": "naomi-osaka",
+     "display_name": "Naomi Osaka",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.057,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.055,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.059,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [
+      {
+       "date": "2026-07-26",
+       "probability": 0.06
+      },
+      {
+       "date": "2026-07-27",
+       "probability": 0.056417
+      },
+      {
+       "date": "2026-07-28",
+       "probability": 0.052239
+      },
+      {
+       "date": "2026-07-29",
+       "probability": 0.052021
+      },
+      {
+       "date": "2026-07-30",
+       "probability": 0.053824
+      }
+     ],
+     "trend_delta": -0.006176,
+     "rank": 6
+    },
+    {
+     "entity_key": "amanda-anisimova",
+     "display_name": "Amanda Anisimova",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.04525,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:10+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.05,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0405,
+       "observed_at": "2026-07-30T15:19:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [
+      {
+       "date": "2026-07-26",
+       "probability": 0.0355
+      },
+      {
+       "date": "2026-07-27",
+       "probability": 0.0355
+      },
+      {
+       "date": "2026-07-28",
+       "probability": 0.035184
+      },
+      {
+       "date": "2026-07-29",
+       "probability": 0.0345
+      },
+      {
+       "date": "2026-07-30",
+       "probability": 0.034618
+      }
+     ],
+     "trend_delta": -0.000882,
+     "rank": 7
+    },
+    {
+     "entity_key": "marta-kostyuk",
+     "display_name": "Marta Kostyuk",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.045,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.045,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 8
+    },
+    {
+     "entity_key": "jessica-pegula",
+     "display_name": "Jessica Pegula",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0425,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.045,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.04,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [
+      {
+       "date": "2026-07-26",
+       "probability": 0.04
+      },
+      {
+       "date": "2026-07-27",
+       "probability": 0.04
+      },
+      {
+       "date": "2026-07-28",
+       "probability": 0.039804
+      },
+      {
+       "date": "2026-07-29",
+       "probability": 0.039217
+      },
+      {
+       "date": "2026-07-30",
+       "probability": 0.039647
+      }
+     ],
+     "trend_delta": -0.000353,
+     "rank": 9
+    },
+    {
+     "entity_key": "linda-noskova",
+     "display_name": "Linda Noskova",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0365,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:10+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.035,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.038,
+       "observed_at": "2026-07-30T15:19:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 10
+    },
+    {
+     "entity_key": "karolina-muchova",
+     "display_name": "Karolina Muchova",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0335,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:08+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.035,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.032,
+       "observed_at": "2026-07-30T15:19:08+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 11
+    },
+    {
+     "entity_key": "iva-jovic",
+     "display_name": "Iva Jovic",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.025,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.025,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 12
+    },
+    {
+     "entity_key": "madison-keys",
+     "display_name": "Madison Keys",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.02275,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.025,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0205,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 13
+    },
+    {
+     "entity_key": "alexandra-eala",
+     "display_name": "Alexandra Eala",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0185,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0185,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 14
+    },
+    {
+     "entity_key": "elina-svitolina",
+     "display_name": "Elina Svitolina",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01825,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:10+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.015,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0215,
+       "observed_at": "2026-07-30T15:19:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 15
+    },
+    {
+     "entity_key": "victoria-mboko",
+     "display_name": "Victoria Mboko",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01625,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.02,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0125,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 16
+    },
+    {
+     "entity_key": "qinwen-zheng",
+     "display_name": "Qinwen Zheng",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01375,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:10+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.02,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0075,
+       "observed_at": "2026-07-30T15:19:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 17
+    },
+    {
+     "entity_key": "belinda-bencic",
+     "display_name": "Belinda Bencic",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0115,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0115,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 18
+    },
+    {
+     "entity_key": "barbora-krejcikova",
+     "display_name": "Barbora Krejcikova",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01125,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0125,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 19
+    },
+    {
+     "entity_key": "marie-bouzkova",
+     "display_name": "Marie Bouzkova",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0105,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0105,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 20
+    },
+    {
+     "entity_key": "jasmine-paolini",
+     "display_name": "Jasmine Paolini",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01025,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:08+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0105,
+       "observed_at": "2026-07-30T15:19:08+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 21
+    },
+    {
+     "entity_key": "maja-chwalinska",
+     "display_name": "Maja Chwalinska",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 22
+    },
+    {
+     "entity_key": "maria-sakkari",
+     "display_name": "Maria Sakkari",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.01,
+     "probability_is_live": false,
+     "observed_at": "2026-07-24T02:50:56.699511+00:00",
+     "age_hours": 782.85,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 23
+    },
+    {
+     "entity_key": "paula-badosa",
+     "display_name": "Paula Badosa",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.009,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.008,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 24
+    },
+    {
+     "entity_key": "diana-shnaider",
+     "display_name": "Diana Shnaider",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0085,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0085,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 25
+    },
+    {
+     "entity_key": "emma-navarro",
+     "display_name": "Emma Navarro",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.00825,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:10+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0065,
+       "observed_at": "2026-07-30T15:19:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 26
+    },
+    {
+     "entity_key": "jelena-ostapenko",
+     "display_name": "Jelena Ostapenko",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.00775,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:10+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "observed_at": "2026-07-24T02:50:56.699511+00:00"
+      },
+      {
+       "source": "polymarket",
+       "probability": 0.0055,
+       "observed_at": "2026-07-30T15:19:10+00:00"
+      }
+     ],
+     "blend_rule": "equal_weight_midpoint",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 27
+    },
+    {
+     "entity_key": "elise-mertens",
+     "display_name": "Elise Mertens",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0075,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0075,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 28
+    },
+    {
+     "entity_key": "clara-tauson",
+     "display_name": "Clara Tauson",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.005,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.005,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 29
+    },
+    {
+     "entity_key": "anastasia-potapova",
+     "display_name": "Anastasia Potapova",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0045,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0045,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 30
+    },
+    {
+     "entity_key": "donna-vekic",
+     "display_name": "Donna Vekic",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0045,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0045,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 31
+    },
+    {
+     "entity_key": "emma-raducanu",
+     "display_name": "Emma Raducanu",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0045,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:10+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0045,
+       "observed_at": "2026-07-30T15:19:10+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 32
+    },
+    {
+     "entity_key": "tereza-valentova",
+     "display_name": "Tereza Valentova",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0045,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0045,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 33
+    },
+    {
+     "entity_key": "ekaterina-alexandrova",
+     "display_name": "Ekaterina Alexandrova",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.004,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:08+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.004,
+       "observed_at": "2026-07-30T15:19:08+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 34
+    },
+    {
+     "entity_key": "liudmila-samsonova",
+     "display_name": "Liudmila Samsonova",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0035,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0035,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 35
+    },
+    {
+     "entity_key": "ashlyn-krueger",
+     "display_name": "Ashlyn Krueger",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0025,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0025,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 36
+    },
+    {
+     "entity_key": "dayana-yastremska",
+     "display_name": "Dayana Yastremska",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0025,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:08+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0025,
+       "observed_at": "2026-07-30T15:19:08+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 37
+    },
+    {
+     "entity_key": "katie-boulter",
+     "display_name": "Katie Boulter",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.002,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:10+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.002,
+       "observed_at": "2026-07-30T15:19:10+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 38
+    },
+    {
+     "entity_key": "sofia-kenin",
+     "display_name": "Sofia Kenin",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.002,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:10+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.002,
+       "observed_at": "2026-07-30T15:19:10+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 39
+    },
+    {
+     "entity_key": "beatriz-haddad-maia",
+     "display_name": "Beatriz Haddad Maia",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0015,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:10+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0015,
+       "observed_at": "2026-07-30T15:19:10+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 40
+    },
+    {
+     "entity_key": "daria-kasatkina",
+     "display_name": "Daria Kasatkina",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0015,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0015,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 41
+    },
+    {
+     "entity_key": "marketa-vondrousova",
+     "display_name": "Marketa Vondrousova",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0015,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0015,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 42
+    },
+    {
+     "entity_key": "maya-joint",
+     "display_name": "Maya Joint",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0015,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0015,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 43
+    },
+    {
+     "entity_key": "xiyu-wang",
+     "display_name": "Xiyu Wang",
+     "seed": null,
+     "country": null,
+     "state": "live",
+     "probability": 0.0015,
+     "probability_is_live": false,
+     "observed_at": "2026-07-30T15:19:09+00:00",
+     "age_hours": 626.38,
+     "price_state": "dark",
+     "source_count": 1,
+     "sources": [
+      {
+       "source": "polymarket",
+       "probability": 0.0015,
+       "observed_at": "2026-07-30T15:19:09+00:00"
+      }
+     ],
+     "blend_rule": "weighted_median",
+     "divergent": false,
+     "trend": [],
+     "trend_delta": null,
+     "rank": 44
+    }
+   ],
+   "contenders": 44,
+   "unpriced": 0,
+   "price_state": "dark",
+   "newest_observed_at": "2026-07-30T15:19:10+00:00",
+   "age_hours": 626.38
+  }
+ ],
+ "render_findings": [],
+ "generated_at": "2026-08-25T17:41:57.335640+00:00",
+ "slug": "us-open",
+ "title": "US Open 2026",
+ "subtitle": "Main draws begin Sunday \u00b7 Flushing Meadows"
+}
