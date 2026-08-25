@@ -800,7 +800,16 @@ def test_ruling_numbers_are_unique() -> None:
 #: refs swept for `docs/rulings/13[23]-` — holders_found = 0. Still a count and not a ceiling: the
 #: count equals the highest file for the third wave running, which remains a property of this tree
 #: rather than an invariant.
-MINIMUM_BANKED_RULINGS = 133
+#:
+#: Q406 (2026-08-25) — 133 -> **134 by COUNTING THIS TREE** (`ls docs/rulings/[0-9][0-9][0-9]-*.md`
+#: = 134 files, 134 index lines), never by adding a delta. The new number is 134 (build lanes BUILD;
+#: measurement is its own lane), Alex's SHIP-directive ruling. Claimed against `origin/master` =
+#: `1410960f` after a `git fetch` in the SAME turn: highest ruling FILE on master **131**, all 585
+#: local AND remote refs swept for `docs/rulings/134-` — holders_found = 0. Banked onto THIS branch
+#: rather than the CLAUDE.md branch on purpose: 132 and 133 live here, so this is the only tree
+#: where the count reads 134. On `lane1/q406-ship-doctrine` (CLAUDE.md only, off master) the same
+#: bump would read 132 and hand the Integrator a floor that disagrees with its own file count.
+MINIMUM_BANKED_RULINGS = 134
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
