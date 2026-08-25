@@ -28,6 +28,15 @@
   --accent-warning: #F59E0B;
   --accent-danger: #EF4444;
 
+  /* Contender chart series (UX-P132).
+     Identity colours, deliberately NOT the semantic accents: green and red
+     already mean "moved up" and "moved down" on this page, so reusing them to
+     mean "which player" would make a falling line read as a losing one.
+     Three is the whole palette because the chart draws exactly three lines. */
+  --series-1: #2563EB;
+  --series-2: #F59E0B;
+  --series-3: #94A3B8;
+
   /* Legacy color aliases (keep old code working) */
   --color-snow: #F5F5F7;
   --color-white: #FFFFFF;

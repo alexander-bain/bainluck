@@ -144,6 +144,20 @@ slate prints players.
 to 101; `Yes=72 / No=29` to 101. These are independent binary quotes (gotcha #23, and #2088's
 class). The slate must not present them as a 100% split without normalising or saying why.
 
+> **Amendment 2026-08-25 (UX-P132) — this does not describe the US Open markets.** The three
+> specimens above are **Cincinnati** rows. Re-measured against the 162 US Open qualification
+> Yes/No pairs specifically, **every one sums to exactly 1.000** — Polymarket's own metadata
+> calls them `outcome_relation: "complements", exhaustive: true`. The trap is real and the
+> normaliser shipped, but the US Open slate is not currently walking into it. Stated because a
+> carried-forward figure that was never true of *these* markets would have been cited as evidence
+> of a defect that is not there.
+>
+> Two corrections to §1 from the same pass. **The 320 match markets are 324, and they are 162
+> matches**: each match exists as *two* rows sharing one `group_id` — an event row whose outcomes
+> are the decomposed sub-markets (winner, Set 1 Winner, totals) and a condition row carrying the
+> `Yes`/`No` pair. And the match-winner sides mapping **is not in our database at all**; it has to
+> be read from Gamma. See `docs/tournament-register.md` for both.
+
 **`futures_outcomes.last_updated` is not a freshness signal.** It reads `2026-07-21` on all 23
 Polymarket men's outcomes while that market's snapshots ran to `2026-08-10`. Freshness must come
 from `futures_odds_snapshots.captured_at`, which is what `price_observed_at` stores.
@@ -162,6 +176,14 @@ Day 3 must therefore extend the register with a second population pass over the 
 before any matchup can be added. This is a design consequence worth stating plainly: *contenders
 and participants are different sets*, and a register that conflates them either rejects the slate
 or lets unvetted names onto the boards.
+
+> **Done 2026-08-25 (UX-P132).** Register v2: 80 contenders preserved, **131 participants** added,
+> **66 matchups** on the slate. The conflation was avoided with a `role` field rather than a
+> loosened matchup rule — `MATCHUP_PLAYER_NOT_REGISTERED` still bites exactly as hard.
+> One player, **Qinwen Zheng**, appears in both sets and merged onto a single identity via the
+> same space-dropping normalizer that fixed Auger-Aliassime. A top-10 player in a qualifying draw
+> is more likely a Polymarket labelling quirk than a fact; it is recorded here rather than
+> silently dropped, because the register handles it correctly either way.
 
 ---
 

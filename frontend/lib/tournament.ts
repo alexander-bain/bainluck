@@ -20,6 +20,9 @@
  *   so, and it is never permitted to upgrade a non-live row.
  */
 
+import type { Broadcast, SlateData } from "./slate";
+import type { PropMarket } from "./tournamentProps";
+
 export type PriceState = "live" | "stale" | "dark";
 
 export interface TournamentTrendPoint {
@@ -74,6 +77,16 @@ export interface TournamentPayload {
   register_generated_at: string;
   draw_released: boolean;
   boards: TournamentBoardData[];
+  /**
+   * The daily slate (UX-P132). Optional so a client built against this type
+   * still compiles against a server that predates it — and so the Today tab
+   * degrades to its empty state rather than throwing if the key is absent.
+   */
+  slate?: SlateData;
+  /** Curated props & futures (UX-P132). Optional for the same reason as `slate`. */
+  props?: PropMarket[];
+  /** Where to watch — static per-tournament mapping (UX-P132, Alex's item 4). */
+  broadcasts?: Broadcast[];
   render_findings: string[];
   generated_at: string;
 }

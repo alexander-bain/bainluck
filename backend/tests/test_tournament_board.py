@@ -572,3 +572,77 @@ def test_no_row_anywhere_claims_live_without_a_fresh_observation():
             assert row["price_state"] in ("stale", "dark")
     live = [r["entity_key"] for r in payload["boards"][0]["rows"] if r["probability_is_live"]]
     assert live == ["fresh"]
+
+
+# ---------------------------------------------------------------------------
+# Contenders only — the second population pass must not contaminate the boards
+# (UX-P132)
+# ---------------------------------------------------------------------------
+
+def _participant(entity_key: str, name: str, draw: str):
+    """A qualifying-draw player: registered identity, no outright price."""
+    return {
+        "entity_key": entity_key,
+        "display_name": name,
+        "draw": draw,
+        "role": "participant",
+        "seed": None,
+        "country": None,
+        "draw_slot": None,
+        "section": None,
+        "sources": [],
+    }
+
+
+def test_a_participant_never_reaches_a_board():
+    """The defect this prevents: a first-round qualifier ranked above Alcaraz.
+
+    A participant's only quote is P(wins this match). Ranked on a championship
+    board it is not a wrong number — it is an answer to a different question,
+    which is worse, because it looks entirely plausible.
+    """
+    register = _register([
+        _player("carlos-alcaraz", "Carlos Alcaraz", "mens-singles",
+                [_source("kalshi", 1, 11)]),
+        _participant("diego-dedura-palomero", "Diego Dedura-Palomero", "mens-singles"),
+    ])
+    payload = build_boards(
+        register,
+        prices={("kalshi", 1, 11): _priced(0.30)},
+        now=NOW,
+    )
+    board = payload["boards"][0]
+    assert [row["entity_key"] for row in board["rows"]] == ["carlos-alcaraz"]
+    # And they do not inflate the "more registered players have no price" line.
+    assert board["unpriced"] == 0
+    assert board["contenders"] == 1
+
+
+def test_a_draw_with_only_participants_produces_no_board():
+    """A qualifying-only draw has no championship board to build."""
+    register = _register([
+        _player("carlos-alcaraz", "Carlos Alcaraz", "mens-singles",
+                [_source("kalshi", 1, 11)]),
+        _participant("aliona-falei", "Aliona Falei", "womens-singles"),
+    ])
+    payload = build_boards(
+        register, prices={("kalshi", 1, 11): _priced(0.30)}, now=NOW
+    )
+    assert [b["draw"] for b in payload["boards"]] == ["mens-singles"]
+
+
+def test_a_v1_register_without_roles_still_renders_every_player():
+    """Backwards compatibility: absent `role` reads as contender, not as nothing."""
+    register = _register([
+        _player("carlos-alcaraz", "Carlos Alcaraz", "mens-singles",
+                [_source("kalshi", 1, 11)]),
+        _player("jannik-sinner", "Jannik Sinner", "mens-singles",
+                [_source("kalshi", 1, 12)]),
+    ])
+    assert all("role" not in p for p in register["players"])
+    payload = build_boards(
+        register,
+        prices={("kalshi", 1, 11): _priced(0.30), ("kalshi", 1, 12): _priced(0.52)},
+        now=NOW,
+    )
+    assert len(payload["boards"][0]["rows"]) == 2

@@ -156,9 +156,93 @@ cd backend && python3 scripts/generate_tournament_register.py \
 The generator **refuses to write a register that does not validate**, and its docstring carries
 the exact census SQL so the input is reproducible without archaeology.
 
-### Known gap — contenders are not participants
+### The second population pass — contenders are not participants (v2, UX-P132)
 
-v1 is seeded from the outright fields: 80 contenders, correct for the boards. The slate's players
-are the qualifying draw, and most are not contenders, so `MATCHUP_PLAYER_NOT_REGISTERED` would
-reject every qualifying matchup today — correctly and loudly. **Day 3 must add a second population
-pass over the match markets before any matchup is added.** See census §5.
+v1 was seeded from the outright fields: 80 **contenders**, correct for the boards. The slate's
+players are the qualifying draw, and most are not contenders, so `MATCHUP_PLAYER_NOT_REGISTERED`
+rejected every qualifying matchup — correctly and loudly. v2 closes that by registering the
+participants too, and the fix is a new field rather than a loosened rule.
+
+```bash
+# 1. dump the condition markets (the Yes/No rows) from production
+#    — the exact SQL is in fetch_usopen_match_census.py's docstring
+# 2. join them to the source's own side labels and real schedule
+cd backend && python3 scripts/fetch_usopen_match_census.py \
+  --db-dump /tmp/uso/cond_outcomes.json \
+  --observed-at 2026-08-25T21:30:00+00:00 \
+  --out /tmp/uso/match-census.json
+
+# 3. supersede the committed register with the second pass applied
+python3 scripts/generate_tournament_register.py \
+  --tournament us-open --season 2026 \
+  --base data/tournament_registers/us-open-2026.json \
+  --matchups /tmp/uso/match-census.json \
+  --exclude /tmp/uso/stale-open.json \
+  --observed-at 2026-08-25T21:30:00+00:00 \
+  --version 2 --supersedes-version 1 \
+  --out data/tournament_registers/us-open-2026.json
+```
+
+`--base` carries the previous version's players forward **verbatim**. A register version
+supersedes its predecessor; it does not re-decide it. Re-deriving identity from fresh dumps every
+run would mean a source renaming a player silently re-slugs their `entity_key` — precisely what a
+pinned identity exists to survive.
+
+| field | values | what it decides |
+|---|---|---|
+| `player.role` | `contender` \| `participant` (absent ⇒ `contender`) | whether the player is a **championship-board row**. Participants have no player-level source and are invisible to `build_boards` by construction |
+| `source.kind` | `outright` \| `match` (absent ⇒ `outright`) | which *question* the pinned identity answers. `INVALID_MATCH_SOURCE_ON_PLAYER` stops P(wins this match) from being blended into P(wins the tournament) |
+
+Without the role split, populating the slate would have put a first-round qualifier on the men's
+championship board above Alcaraz, priced from a qualifying quote. That is not a wrong number so
+much as an answer to a different question — which is worse, because it looks entirely plausible.
+
+`TournamentRegister.board_players()` is the contender-only view; `draw_players()` still returns
+everyone. Boards read the former.
+
+### Where the sides mapping comes from — read, not parsed
+
+`sides` maps `entity_key → outcome_id`, and it is the reason the slate prints player names instead
+of `Yes 54% / No 47%`.
+
+**Nothing in our own database says which player `Yes` means.** Measured 2026-08-25:
+`futures_outcomes` has no column carrying the source's outcome label, and
+`market_metadata->'shape'` records `side_kind: "yes_no"` — a *kind*, never a *which*. The repo's
+only Yes-to-competitor rule is a market-**name** parse (`prediction_market_matching.MatchupInfo`,
+always the first-named side) that ships with an inversion backstop precisely because it is
+unreliable. Doctrine clause 4: label equality is not identity.
+
+So the mapping is read from Polymarket Gamma's `moneyline` sub-market, which states it outright —
+`outcomes: ["Andrea Guerrieri", "August Holmgren"]`, ordered, and our write contract pins `_yes`
+to `outcomes[0]`. The fetcher **verifies that ordering against each match's own title and drops
+any match where they disagree** rather than guessing; at the measured moment 162/162 agreed and 0
+were rejected. The labels are then pinned into `evidence.source_labels`, so the mapping stays
+checkable later without re-fetching.
+
+This is the register doctrine paying out: an identity decision made once, offline, from the best
+available evidence, is better than a request-time parse that is known to invert.
+
+### The stale-open slot
+
+Three independent gates keep a finished match off the slate, and a match is dropped if any fires.
+The generator prints a named count for every drop — a short slate must always have an answer,
+because a silent exclusion reads as an absence.
+
+| gate | catches | measured 2026-08-25 |
+|---|---|---|
+| `SOURCE_CLOSED` | the source says the match is over | **95 of 162** |
+| `START_TIME_PAST` | started more than 6h ago and the source has not flagged it yet | **1** |
+| `MANUALLY_EXCLUDED` | `--exclude`, a JSON list of event ids — the slot for the measurement lane's stale-open inventory | 0 (none staged) |
+
+The third exists because the first two cannot see everything: gotcha #33's Kalshi Cincinnati set
+is graded-but-`open` with no source-side `closed` flag to read. It is a file so the list can be
+updated without a code change.
+
+**Our own columns cannot do this job.** At the measured moment all 324 US Open qualification rows
+read `status='open'` with `resolution_date` 08-31/09-02, while the source reported real dates of
+08-24/25/26. A date-window slate keyed on `resolution_date` would have shown 64 finished Monday
+matches as Sunday's card — gotcha #33 at 59% of the population, and gotcha #14 (a resolution date
+is a close time, not a start).
+
+`tournament_slate.build_slate` re-applies the same 6h bound at serve time. The register is a
+committed file; the clock is not.

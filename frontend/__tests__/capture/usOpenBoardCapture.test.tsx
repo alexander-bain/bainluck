@@ -31,7 +31,26 @@ import path from "node:path";
 
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
+import TournamentSlate from "@/components/tournament/TournamentSlate";
+import TournamentProps from "@/components/tournament/TournamentProps";
+import { buildBracket } from "@/lib/bracket";
+import {
+  SYNTHETIC_MENS_DRAW,
+  syntheticFirstRoundResults,
+} from "@/__tests__/fixtures/syntheticDraw";
+import type { SlateData } from "@/lib/slate";
 import type { TournamentPayload } from "@/lib/tournament";
+
+const SLATE_PATH = path.join(
+  __dirname,
+  "..",
+  "..",
+  "..",
+  "docs",
+  "mocks",
+  "us-open",
+  "slate-2026-08-25.json"
+);
 
 const PAYLOAD_PATH = path.join(
   __dirname,
@@ -46,6 +65,11 @@ const PAYLOAD_PATH = path.join(
 
 function loadPayload(): TournamentPayload {
   return JSON.parse(fs.readFileSync(PAYLOAD_PATH, "utf8")) as TournamentPayload;
+}
+
+/** The real slate, built by the BACKEND's `build_slate` over a production read. */
+function loadSlate(): SlateData {
+  return JSON.parse(fs.readFileSync(SLATE_PATH, "utf8")) as SlateData;
 }
 
 /** The app's real compiled Tailwind, so the capture is not a lookalike. */
@@ -100,6 +124,46 @@ describe("US Open board capture rig", () => {
     expect(html).not.toContain('data-live="true"');
   });
 
+  it("the slate payload is real production data, not a fixture", () => {
+    const slate = loadSlate();
+    expect(slate.matches.length).toBeGreaterThan(30);
+    expect(slate.incoherent).toBe(0);
+    // Real player names on both sides of every row — never Yes/No.
+    for (const match of slate.matches) {
+      expect(match.sides).toHaveLength(2);
+      for (const side of match.sides) {
+        expect(["Yes", "No", ""]).not.toContain(side.display_name);
+      }
+    }
+  });
+
+  it("the re-skinned board collapses to three rows with an expander", () => {
+    // Alex called the uncollapsed 44-row women's list a P1 on this page.
+    const women = payload.boards[1];
+    expect(women.rows.length).toBeGreaterThan(20);
+    const html = renderToStaticMarkup(<TournamentBoard board={women} />);
+    expect((html.match(/data-testid="board-row"/g) ?? []).length).toBe(3);
+    expect(html).toContain(`Show all ${women.rows.length}`);
+  });
+
+  it("the chart draws three lines and no more", () => {
+    const html = renderToStaticMarkup(<TournamentBoard board={payload.boards[0]} />);
+    expect((html.match(/data-testid="chart-legend-item"/g) ?? []).length).toBe(3);
+    const drawn = (html.match(/data-testid="chart-series"/g) ?? []).length;
+    expect(drawn).toBeLessThanOrEqual(3);
+  });
+
+  it("does NOT copy the reference's two-sided price pills", () => {
+    // Adaptation, not imitation: Kalshi's rows carry green/red YES/NO pills.
+    // That is a trading format. Our rows print ONE blended probability.
+    const html = renderToStaticMarkup(<TournamentBoard board={payload.boards[0]} />);
+    const perRow = html.split('data-testid="board-row"').slice(1);
+    expect(perRow.length).toBe(3);
+    for (const row of perRow) {
+      expect((row.match(/data-testid="row-probability"/g) ?? []).length).toBe(1);
+    }
+  });
+
   it("writes the capture when UX_CAPTURE_DIR is set", () => {
     const dir = process.env.UX_CAPTURE_DIR;
     if (!dir) {
@@ -108,52 +172,105 @@ describe("US Open board capture rig", () => {
     }
     fs.mkdirSync(dir, { recursive: true });
 
-    const boards = payload.boards
-      .map((board) => renderToStaticMarkup(<TournamentBoard board={board} />))
-      .join("");
-    const bracket = renderToStaticMarkup(
-      <TournamentBracket rounds={[]} drawReleased={payload.draw_released} />
+    const slate = loadSlate();
+    const men = payload.boards[0];
+    const women = payload.boards[1];
+
+    // Both pill states rendered side by side, because the whole point of the
+    // toggle is that you never see them stacked in the product — so the only
+    // place to review both at once is here.
+    const broadcasts = [
+      { region: "US", channels: ["ESPN", "ESPN2", "ESPN+"], note: null },
+    ];
+    const panel = (draw: string, board: typeof men) => `
+      <div class="pad">
+        ${renderToStaticMarkup(
+          <TournamentSlate slate={slate} draw={draw} broadcasts={broadcasts} />
+        )}
+        ${renderToStaticMarkup(<TournamentBoard board={board} />)}
+        ${renderToStaticMarkup(<TournamentProps markets={[]} draw={draw} />)}
+      </div>`;
+
+    // The bracket, with DUMMY data — Alex asked to see it before Thursday's
+    // ceremony. The fixture lives under __tests__/ and cannot reach a
+    // production bundle; on the real page this tab still reads "Draw not
+    // released" until the register latches `draw_released`.
+    const rounds = buildBracket(
+      SYNTHETIC_MENS_DRAW,
+      syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
     );
+    const bracket = renderToStaticMarkup(
+      <TournamentBracket rounds={rounds} drawReleased />
+    );
+
+    const live = slate.matches.filter((m) => m.probability_is_live).length;
 
     const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${payload.title} — shipped components</title>
+<title>${payload.title} — re-skin</title>
 <style>${appStylesheet()}</style>
 <style>
   body{background:#F5F5F7;margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Segoe UI,Roboto,sans-serif}
-  .phone{width:390px;margin:0 auto;background:#F5F5F7;min-height:100vh;
-    border-left:1px solid #E5E7EB;border-right:1px solid #E5E7EB}
-  .note{max-width:390px;margin:0 auto;padding:12px 16px;font-size:12px;color:#6B7280;
-    background:#F0F0F2;border-bottom:1px solid #E5E7EB}
+  .rail{display:flex;gap:24px;justify-content:center;align-items:flex-start;flex-wrap:wrap;padding:0 16px 60px}
+  .phone{width:390px;background:#F5F5F7;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden}
+  .note{max-width:1240px;margin:0 auto;padding:14px 16px;font-size:12.5px;line-height:1.55;color:#374151;background:#fff;border-bottom:1px solid #E5E7EB}
+  .note b{color:#111827}
+  .cap{max-width:1240px;margin:16px auto 8px;padding:0 16px;font:700 12px inherit;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF}
   .tabs{display:flex;border-bottom:1px solid #E5E7EB;background:#fff}
-  .tabs span{flex:1;text-align:center;padding:13px 0;font:600 13.5px inherit;color:#9CA3AF;
-    border-bottom:2px solid transparent}
+  .tabs span{flex:1;text-align:center;padding:13px 0;font:600 13.5px inherit;color:#9CA3AF;border-bottom:2px solid transparent}
   .tabs span.on{color:#111827;border-bottom-color:#111827}
+  .pills{display:flex;gap:6px;padding:0 16px 12px;background:#fff;border-bottom:1px solid #E5E7EB}
+  .pills span{border-radius:999px;padding:6px 14px;font:600 13px inherit;background:#F0F0F2;color:#6B7280}
+  .pills span.on{background:#111827;color:#F8FAFC}
   header.hero{padding:16px;background:#fff;border-bottom:1px solid #E5E7EB}
   header.hero h1{margin:0;font-size:24px;letter-spacing:-.02em;color:#111827}
   header.hero p{margin:2px 0 0;font-size:13px;color:#6B7280}
-  .pad{padding:0 16px 40px}
+  .pad{padding:0 16px 32px}
+  .wide{max-width:1240px;margin:0 auto;padding:0 16px 60px}
 </style></head>
 <body>
-<div class="note"><b>Direction C — Split Story.</b> The SHIPPED components
-(<code>TournamentBoard</code>, <code>TrendSparkline</code>, <code>TournamentBracket</code>)
-rendered over a production read of ${payload.boards.reduce((n, b) => n + b.rows.length, 0)}
-registered contenders, ${payload.generated_at}.</div>
-<div class="phone">
-  <header class="hero"><h1>${payload.title}</h1><p>${payload.subtitle}</p></header>
-  <div class="tabs"><span class="on">Title</span><span>Today</span><span>Bracket</span></div>
-  <div class="pad">${boards}
-    <h2 style="margin:22px 0 8px;font-size:12px;font-weight:700;letter-spacing:.07em;
-      text-transform:uppercase;color:#9CA3AF">Bracket (its own tab)</h2>
-    ${bracket}
-  </div>
-</div></body></html>`;
+<div class="note">
+<b>US Open hub — Alex's mock verdict applied.</b> These are the SHIPPED components rendered with the
+app's own compiled CSS at a 390px viewport. Two phones so both pill states are visible at once; in
+the product you only ever see one.<br>
+<b>Boards:</b> real production read, ${men.rows.length + women.rows.length} registered contenders,
+every row price-dark (#2199) — that is why they are muted and banner'd.
+<b>Slate:</b> real production read, ${slate.matches.length} matches, ${live} of them inside the
+6-hour live window. <b>Props:</b> mechanism only — population needs one production query that this
+lane's sandbox currently refuses (see report). <b>Bracket:</b> DUMMY 128-slot fixture, shown early
+at Alex's request; the real page says "Draw not released" until the ceremony.
+</div>
 
-    const out = path.join(dir, "us-open-shipped.html");
+<div class="cap">Tournament tab — pills flip everything below them</div>
+<div class="rail">
+  <div class="phone">
+    <header class="hero"><h1>${payload.title}</h1><p>${payload.subtitle}</p></header>
+    <div class="tabs"><span class="on">Tournament</span><span>Bracket</span></div>
+    <div class="pills"><span class="on">Men's</span><span>Women's</span></div>
+    ${panel("mens-singles", men)}
+  </div>
+  <div class="phone">
+    <header class="hero"><h1>${payload.title}</h1><p>${payload.subtitle}</p></header>
+    <div class="tabs"><span class="on">Tournament</span><span>Bracket</span></div>
+    <div class="pills"><span>Men's</span><span class="on">Women's</span></div>
+    ${panel("womens-singles", women)}
+  </div>
+</div>
+
+<div class="cap">Bracket tab — dummy draw, ahead of Thursday's ceremony</div>
+<div class="wide">${bracket}</div>
+</body></html>`;
+
+    const out = path.join(dir, "us-open-reskin.html");
     fs.writeFileSync(out, html);
     expect(fs.existsSync(out)).toBe(true);
-    // The rig must not silently write an empty page.
     expect(html.length).toBeGreaterThan(5000);
+    // The rig must not silently write a page whose panels failed to render.
+    expect(html).toContain("data-testid=\"tournament-slate\"");
+    expect(html).toContain("data-testid=\"contender-chart\"");
+    expect(html).toContain("data-testid=\"board-expander\"");
+    expect(html).toContain("data-testid=\"tournament-bracket\"");
+    expect(html).toContain("data-testid=\"slate-broadcast\"");
   });
 });

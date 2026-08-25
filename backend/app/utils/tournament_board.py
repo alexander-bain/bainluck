@@ -44,6 +44,7 @@ from app.utils.tournament_register import (
     STALE_PRICE_HOURS,
     TournamentRegister,
     check_rendered_rows,
+    player_role,
 )
 
 logger = logging.getLogger(__name__)
@@ -161,17 +162,29 @@ def build_boards(
 
     # Draw order is the register's own, deduplicated — so a register that only
     # carries one draw produces one board rather than an empty second one.
+    # CONTENDERS decide which boards exist: a draw present only as qualifying
+    # participants has no championship board to build.
     draws: list[str] = []
     for player in reg.players:
         draw = player.get("draw")
-        if isinstance(draw, str) and draw not in draws:
+        if (
+            isinstance(draw, str)
+            and draw not in draws
+            and player_role(player) == "contender"
+        ):
             draws.append(draw)
 
     for draw in draws:
         rows: list[dict[str, Any]] = []
         unpriced = 0
 
-        for player in reg.draw_players(draw):
+        # `board_players`, never `draw_players`. After UX-P132's second
+        # population pass the register carries qualifying participants whose
+        # only price is P(wins this match); ranking one of those against
+        # P(wins the tournament) would put a first-round qualifier above
+        # Alcaraz on the men's board with a number that is not wrong so much
+        # as an answer to a different question.
+        for player in reg.board_players(draw):
             blend_rows: list[dict[str, Any]] = []
             source_views: list[dict[str, Any]] = []
             contributors: list[tuple[str, int]] = []

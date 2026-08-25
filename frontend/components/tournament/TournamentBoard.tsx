@@ -1,5 +1,9 @@
-import React from "react";
+"use client";
+
+import React, { useState } from "react";
 import TrendSparkline from "./TrendSparkline";
+import ContenderChart from "./ContenderChart";
+import { COLLAPSED_ROW_COUNT, SERIES_COLORS } from "@/lib/contenderChart";
 import {
   boardNotice,
   formatBoardProbability,
@@ -26,7 +30,7 @@ import {
  * dark for 8-32 days, so this is the live path this weekend, not an edge case.
  */
 
-function BoardRow({ row }: { row: TournamentRow }) {
+function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: string }) {
   const isLive = rowIsPresentedAsLive(row);
   const settled = row.probability === null;
 
@@ -43,7 +47,16 @@ function BoardRow({ row }: { row: TournamentRow }) {
 
       <div className="min-w-0">
         <div className="truncate text-[15px] font-semibold text-text-primary">
-          {row.display_name}
+          {/* The reference's colour tie-in: a charted contender's name is
+              underlined in its own line colour, so the list and the chart are
+              legible as one thing rather than two coincident rankings. */}
+          <span
+            className={seriesColor ? "border-b-2 pb-px" : undefined}
+            style={seriesColor ? { borderColor: seriesColor } : undefined}
+            data-testid={seriesColor ? "board-row-series-tie" : undefined}
+          >
+            {row.display_name}
+          </span>
           {row.seed !== null && (
             <span className="ml-1.5 text-xs font-normal text-text-muted">[{row.seed}]</span>
           )}
@@ -102,6 +115,14 @@ function BoardRow({ row }: { row: TournamentRow }) {
 export default function TournamentBoard({ board }: { board: TournamentBoardData }) {
   const notice = boardNotice(board);
 
+  // COLLAPSED BY DEFAULT — Alex called the uncollapsed list a P1 on this page,
+  // not a polish item: the women's draw ran 44 rows and reading it meant
+  // scrolling past everything else on the page. Three rows matches the chart's
+  // three lines and the reference's own choice, which settled 3-vs-5.
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? board.rows : board.rows.slice(0, COLLAPSED_ROW_COUNT);
+  const hidden = board.rows.length - visible.length;
+
   return (
     <section data-testid="tournament-board" data-draw={board.draw}>
       <h2 className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
@@ -113,7 +134,9 @@ export default function TournamentBoard({ board }: { board: TournamentBoardData 
         )}
       </h2>
 
-      <div className="overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
+      <ContenderChart rows={board.rows} draw={board.draw} />
+
+      <div className="mt-3 overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
         {notice && (
           <div
             className="flex items-start gap-2 border-b border-surface-border bg-accent-warning/10 px-3.5 py-2.5 text-[11.5px] text-text-secondary"
@@ -138,11 +161,34 @@ export default function TournamentBoard({ board }: { board: TournamentBoardData 
             We know who is in this draw, but nobody has priced it yet.
           </div>
         ) : (
-          <ol>
-            {board.rows.map((row) => (
-              <BoardRow key={row.entity_key} row={row} />
-            ))}
-          </ol>
+          <>
+            <ol>
+              {visible.map((row, index) => (
+                <BoardRow
+                  key={row.entity_key}
+                  row={row}
+                  seriesColor={
+                    index < SERIES_COLORS.length && row.probability !== null
+                      ? SERIES_COLORS[index]
+                      : undefined
+                  }
+                />
+              ))}
+            </ol>
+
+            {(hidden > 0 || expanded) && (
+              <button
+                type="button"
+                onClick={() => setExpanded((value) => !value)}
+                aria-expanded={expanded}
+                className="w-full border-t border-surface-border py-3 text-[13.5px] font-semibold text-text-primary"
+                data-testid="board-expander"
+                data-expanded={expanded ? "true" : "false"}
+              >
+                {expanded ? "Show fewer" : `Show all ${board.rows.length}`}
+              </button>
+            )}
+          </>
         )}
 
         {board.unpriced > 0 && board.rows.length > 0 && (
