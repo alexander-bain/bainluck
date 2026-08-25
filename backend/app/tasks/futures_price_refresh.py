@@ -231,9 +231,19 @@ async def _write_prices(
       job; creating one here would let a price-only path mint identity with no
       categorisation, tier or grouping. Counted as ``unknown_outcomes`` so the
       refusal is visible rather than silent.
-    * **Never touches a settled outcome** (``is_winner`` set). Gotcha #21: a
+    * **Never touches a settled outcome** (``is_winner`` TRUE). Gotcha #21: a
       settled book stops quoting, and re-pricing it can only corrupt resolved
       state.
+
+      The predicate is ``IS NOT TRUE``, not ``IS NULL``, and the difference is
+      the whole of #2199's first live failure. ``FuturesOutcome.is_winner`` is
+      declared non-nullable with ``default=False`` (models.py), so **no
+      production row is ever NULL** — unsettled is stored as ``FALSE``. Measured
+      across every eligible tier-1 open market at the time: 0 NULL, 10,762
+      FALSE, 42 TRUE. ``IS NULL`` therefore matched nothing, every priced item
+      fell through to ``unknown_outcomes``, and the task wrote zero snapshots by
+      construction and permanently. ``IS NOT TRUE`` keeps the settled refusal
+      against the tri-state that actually exists.
     * **Never writes a NULL probability.** Gotcha #19 / the Kalshi spread guard:
       "no price" is refused upstream, and a refusal must not arrive here as a
       write.
@@ -252,7 +262,7 @@ async def _write_prices(
             await session.execute(
                 text(
                     "SELECT id, external_id FROM futures_outcomes "
-                    "WHERE market_id = :mid AND is_winner IS NULL"
+                    "WHERE market_id = :mid AND is_winner IS NOT TRUE"
                 ),
                 {"mid": market_id},
             )

@@ -256,6 +256,31 @@ jobs:
             exit 1
           fi
 
+      - name: Futures price writer contract (real Postgres)
+        # #2199. The refresher shipped with 19,906 tests green and its first live
+        # run wrote ZERO snapshots — permanently, by construction. Its writer
+        # resolved outcomes with `is_winner IS NULL` against a non-nullable
+        # column defaulting to FALSE, so the predicate matched 0 of 10,804
+        # production rows.
+        #
+        # The only test covering it asserted the module's SOURCE TEXT
+        # (`assert "is_winner IS NULL" in _MODULE_SRC`) — a grep that passes iff
+        # the bug is present and cannot fail when the predicate matches nothing.
+        # A source assertion pins an intent; it never observes a write. This gate
+        # seeds an outcome the way production seeds it and asserts a row lands.
+        #
+        # Real Postgres because `_write_prices` builds its INSERT with `pg_insert`
+        # (no other dialect compiles it) and because the defect is a writer/data
+        # contract split — every instrument not touching real rows said green.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_futures_price_refresh_writes_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/futures_writer.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/futures_writer.txt; then
+            echo "::error::futures price writer contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Odds-enrichment equivalence (real Postgres)
         # LAT-P030/#1494. The odds enrichment stage was 84-95% of every slow team
         # query (measured 6,724ms of 12,182ms) because DISTINCT ON cannot skip: it
