@@ -38,6 +38,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 #: Oldest age (days) at which a settled market was still fully retrievable.
+#:
+#: **A SURVIVOR OBSERVATION, NOT A FLOOR.** Re-measurement on 2026-08-24 proved a
+#: younger sibling can already be purged while this one is present, so this number
+#: describes the markets it was measured on and nothing else. It must not drive
+#: warning or capture policy; see the 2026-08-24 section below.
 OBSERVED_PRESENT_MAX_AGE_DAYS = 74
 
 #: Youngest age (days) at which a settled market was already purged.
@@ -47,13 +52,23 @@ OBSERVED_PURGED_MIN_AGE_DAYS = 86
 #: fetching it can only waste budget. Deliberately the UPPER observed bound.
 PROVABLY_PURGED_AGE_DAYS = OBSERVED_PURGED_MIN_AGE_DAYS
 
-#: Warning horizon. Past this age a price may vanish at any time. Deliberately the
-#: LOWER observed bound, so the warning precedes the loss.
-AT_RISK_AGE_DAYS = OBSERVED_PRESENT_MAX_AGE_DAYS
+#: Warning horizon. Past this age a price may vanish at any time, so the warning
+#: precedes the loss.
+#:
+#: 2026-08-24: was ``OBSERVED_PRESENT_MAX_AGE_DAYS`` (74), which the re-measurement
+#: showed fires 27 days AFTER the first confirmed loss — an alarm that rings once the
+#: data is already gone. Now the youngest CONFIRMED purge. Written as a literal
+#: because :data:`OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES` is defined below; the two
+#: are held equal by a guard test rather than by a reader's attention.
+AT_RISK_AGE_DAYS = 47
 
 #: Date the table above was measured. Re-run the probe and update both bounds
 #: together; never widen one alone.
-MEASURED_ON = "2026-08-07"
+#:
+#: 2026-08-07 measured the four-series table above. 2026-08-24 re-measured the
+#: POPULATION (3,242 distinct Kalshi capture records + public-API boundary
+#: confirmation) and is the date the constants below act on.
+MEASURED_ON = "2026-08-24"
 
 
 # ---------------------------------------------------------------------------
@@ -78,21 +93,70 @@ MEASURED_ON = "2026-08-07"
 
 #: Age (days) of the youngest market ever observed purged. Falsifies nothing about
 #: the four-series measurement above; it bounds the POPULATION rather than a series.
-OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES = 68
+#:
+#: 2026-08-24: was 68, **falsified at 47** by C-KALSHI-RETENTION-1 (see below).
+OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES = 47
 
 #: Series the counter-specimen came from, so the next measurement knows where to look.
-COUNTER_SPECIMEN = "KXITFMATCH-26JUN14FONSZA (ITF tennis, purged at 68d, 2026-08-21)"
+COUNTER_SPECIMEN = (
+    "KXNBAPLAYOFFWINS-26BOS (purged at 47d, 2026-08-24; market 404 + event 200 "
+    "markets:[] through the shipping two-channel classifier). Prior specimen: "
+    "KXITFMATCH-26JUN14FONSZA (ITF tennis, purged at 68d, 2026-08-21)."
+)
 
-#: **The horizon capture planning must use.** Deliberately BELOW the counter-specimen
-#: rather than equal to it: 68 is the youngest purge we happened to catch with a
-#: 30-market sample, not the youngest that exists, and a capture sweep that plans to
-#: the edge of its own evidence arrives on the day the data dies. Two days of margin
-#: is cheap; the loss is permanent and un-repurchasable.
+
+# ---------------------------------------------------------------------------
+# 2026-08-24 — RETENTION IS NON-MONOTONIC, AND AGE PROVES NOTHING
+# ---------------------------------------------------------------------------
+#
+# C-KALSHI-RETENTION-1 (BLOCK) re-measured the population and broke the shape this
+# module was built on. The finding is not "the number was wrong by 21 days"; it is
+# that **no single age threshold can describe the population at all**:
+#
+#   * A market-level purge is CONFIRMED at 47 days, through the shipping
+#     two-channel classifier, not a bare 404 (market 404 + event 200/markets:[]).
+#   * Retention is non-monotonic INSIDE one series. `KXATPGTOTAL` has a purged
+#     54-day market while a 68-day sibling is still present with trades.
+#     `KXMLBRFI` has a purged 66-day market and a present 64-day one.
+#   * Therefore "the oldest market still present" is NOT a lower bound on
+#     retention. It is a survivor observation. A younger sibling can already be
+#     permanently gone.
+#
+# WHAT THAT DOES TO THE CONSTANTS ABOVE. ``OBSERVED_PRESENT_MAX_AGE_DAYS`` (74)
+# survives only as a survivor observation and must never again drive warning or
+# capture policy. The 86-day skip-work pair is untouched: every definitive read at
+# 85-86d was purged, so refusing to spend a call there is still fail-open, and the
+# evidence does not refute it.
+#
+# THE CLAUSE THAT REPLACES THE HORIZON:
+#
+#     **Age prioritizes work. It never proves availability.**
+#
+# Both directions of that sentence are load-bearing, and the second one is why
+# lowering the number below is not sufficient on its own. The report says so
+# explicitly: "the safe operational conclusion is not 'change 66 to 45 and trust
+# the new number'." A planner that reads a past-horizon row as *unsalvageable*
+# gets WORSE as this constant drops, because every additional row it writes off is
+# a row the measurement just proved might still be there. So this constant moving
+# to 45 is paired with the ordering fix in ``settlement_sweep_plan`` that makes
+# "past the horizon" mean MAXIMUM URGENCY rather than "expired, sorts last".
+# Neither half is safe alone.
+
+#: Whether a single age can be used as a retention bound. It cannot. Kept as a
+#: named constant rather than prose so a predicate can consume it (gotcha #35).
+RETENTION_IS_MONOTONIC = False
+
+#: **A work-prioritization anchor, NOT an availability guarantee.** Derived from the
+#: 47-day confirmed purge with the same two-day margin the old 66 used, so the
+#: derivation is auditable — but the margin is now the least interesting thing about
+#: it. Because retention is non-monotonic, a row INSIDE this horizon may already be
+#: gone and a row well outside it may still be fully retrievable.
 #:
-#: Do NOT use this for skip-work — it would abandon recoverable markets between 66
-#: and 86 days. It answers a different question: "by when must we have ALREADY
-#: captured this", not "is it worth one more call".
-CAPTURE_PLANNING_AGE_DAYS = 66
+#: It answers exactly one question: "which rows should we spend the next call on
+#: first". It answers NEITHER "is this row still there" NOR "is this row worth a
+#: call" — the second belongs to :data:`PROVABLY_PURGED_AGE_DAYS` (86), which is the
+#: only constant here permitted to STOP work.
+CAPTURE_PLANNING_AGE_DAYS = OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES - 2
 
 
 def capture_deadline_days(settled_at: datetime | None, now: datetime | None = None) -> float | None:

@@ -57,9 +57,11 @@ from app.utils.kalshi_retention import (
 from app.utils.settlement_sweep_plan import (
     Candidate,
     TERMINAL_BUCKET,
+    TERMINAL_BUCKETS,
     bucket_for,
     burn_down,
     plan_sweep,
+    tier_counts,
 )
 from app.utils.settlement_sweep_query import (
     ALREADY_CAPTURED_SQL,
@@ -145,6 +147,11 @@ class SweepReport:
 
     selected: int = 0
     selected_by_bucket: dict[str, int] = field(default_factory=dict)
+    #: Selected rows by probe-history tier (#2175). This is the number that shows
+    #: whether the sweep is spending its budget on rows that can answer or
+    #: re-asking ones the source already declined. A pass whose selection is mostly
+    #: ``stable_nonanswer`` is the livelock, visible before the results come back.
+    selected_by_tier: dict[str, int] = field(default_factory=dict)
     #: Left behind by the BUDGET, per bucket. The number that says whether another
     #: run is needed before the next deadline.
     skipped_by_bucket: dict[str, int] = field(default_factory=dict)
@@ -172,8 +179,12 @@ class SweepReport:
             "uncaptured_by_bucket": self.uncaptured_by_bucket,
             "uncaptured_total": sum(self.uncaptured_by_bucket.values()),
             "terminal_bucket": TERMINAL_BUCKET,
-            "terminal_bucket_uncaptured": self.uncaptured_by_bucket.get(
-                TERMINAL_BUCKET, 0
+            "terminal_buckets": sorted(TERMINAL_BUCKETS),
+            # Summed over the whole urgency set for the reason given in
+            # `verify_sweep`: reading only "0-7" turns rows that moved into
+            # `overdue` into a false green.
+            "terminal_bucket_uncaptured": sum(
+                self.uncaptured_by_bucket.get(label, 0) for label in TERMINAL_BUCKETS
             ),
             "exclusions": {
                 "already_this_sweep": self.exclusions.already_this_sweep,
@@ -183,6 +194,7 @@ class SweepReport:
             "fetch_capped": self.fetch_capped,
             "selected": self.selected,
             "selected_by_bucket": self.selected_by_bucket,
+            "selected_by_tier": self.selected_by_tier,
             "skipped_by_bucket": self.skipped_by_bucket,
             "captured": self.captured,
             "by_disposition": self.by_disposition,
@@ -342,6 +354,7 @@ async def run_sweep(
     selected, skipped = plan_sweep(candidates, budget, now)
     report.selected = len(selected)
     report.selected_by_bucket = burn_down(selected, now)
+    report.selected_by_tier = tier_counts(selected)
     report.skipped_by_bucket = skipped
 
     if dry_run:
@@ -544,7 +557,15 @@ async def verify_sweep(
     ).all()
     by_disposition = {str(d): int(n) for d, n in disposition_rows}
 
-    terminal_uncaptured = uncaptured_by_bucket.get(TERMINAL_BUCKET, 0)
+    # Summed over TERMINAL_BUCKETS, not the single "0-7" label. When the planning
+    # horizon dropped to 45 on 2026-08-24, every row in the 59-66 day production
+    # cohort became `overdue` — so a drain flag reading only "0-7" would have
+    # reported `terminal_bucket_drained: True` over ~1,096 uncaptured rows. That is
+    # a false green on the one number the capture wall is judged by, and it is the
+    # gotcha #53 shape one level up: an empty bucket is not an absence of work.
+    terminal_uncaptured = sum(
+        uncaptured_by_bucket.get(label, 0) for label in TERMINAL_BUCKETS
+    )
     return {
         "sweep_id": sweep_id,
         "source": source,
@@ -564,7 +585,14 @@ async def verify_sweep(
         "uncaptured_by_bucket": uncaptured_by_bucket,
         "uncaptured_total": sum(uncaptured_by_bucket.values()),
         "terminal_bucket": TERMINAL_BUCKET,
+        "terminal_buckets": sorted(TERMINAL_BUCKETS),
         "terminal_bucket_uncaptured": terminal_uncaptured,
-        # The gate the 2026-08-28 deadline is actually about.
+        # Per-label breakdown beside the total, so a drain can never be read as
+        # progress when the work merely moved between urgency labels.
+        "terminal_uncaptured_by_bucket": {
+            label: uncaptured_by_bucket.get(label, 0)
+            for label in sorted(TERMINAL_BUCKETS)
+        },
+        # The gate the capture deadline is actually about.
         "terminal_bucket_drained": terminal_uncaptured == 0,
     }

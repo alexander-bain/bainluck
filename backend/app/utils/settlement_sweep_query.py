@@ -12,17 +12,24 @@ THE WINDOW IS THE 86-DAY BOUND, NOT THE 66-DAY ONE, AND THAT IS DELIBERATE
 Two constants govern two different questions, and using either for the other's job
 is a real defect (``kalshi_retention`` says so in its own docstring):
 
-* ``CAPTURE_PLANNING_AGE_DAYS`` (66) — *"by when must we ALREADY have captured
-  this"*. It is the PLANNING horizon and it is what the buckets are cut against.
+* ``CAPTURE_PLANNING_AGE_DAYS`` (45 since 2026-08-24) — *"which rows do we spend the
+  next call on first"*. It is the PRIORITIZATION anchor and what the buckets are cut
+  against. It is **not** a claim that anything is still available.
 * ``PROVABLY_PURGED_AGE_DAYS`` (86) — *"is one more call provably wasted"*. It is
-  the SKIP-WORK horizon.
+  the SKIP-WORK horizon, and the only one of the two allowed to stop work.
 
-The SQL window uses **86**. A market between 66 and 86 days old is past its planning
-deadline but is *not* provably gone, and the planner already has a name for it
-(``expired``) that sorts it last rather than dropping it. If the SQL filtered at 66
-instead, those rows would never reach the planner to be named, and the sweep would
-report a clean run over a population it had silently narrowed — which is the
-gotcha #53 shape, arrived at from the query side. Fail open; let the planner name it.
+The SQL window uses **86**. A market past its planning horizon but under 86 days is
+*not* provably gone — C-KALSHI-RETENTION-1 measured 68-day markets still present with
+100 trades alongside purged 54-day siblings in the same series — and the planner has
+a name for it (``overdue``) that sorts it FIRST rather than dropping it. If the SQL
+filtered at the planning horizon instead, those rows would never reach the planner to
+be named, and the sweep would report a clean run over a population it had silently
+narrowed — the gotcha #53 shape, arrived at from the query side. Fail open; let the
+planner name it.
+
+That division is what makes the planning constant safe to lower. Tightening it moves
+rows into ``overdue``, which is a change in URGENCY; it can never remove a row from
+the sweep, because removal is the other constant's job and that one has not moved.
 
 WHY THE SQL ORDERS BY DATE WHEN THE PLANNER OWNS ORDERING
 ----------------------------------------------------------
@@ -63,7 +70,10 @@ from datetime import datetime, timedelta, timezone
 
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 from app.utils.settlement_sweep_plan import Candidate
-from app.utils.settlement_truth import Disposition
+from app.utils.settlement_truth import (
+    STABLE_NONANSWER_DISPOSITION_VALUES,
+    Disposition,
+)
 
 #: The only source the weekly dated sweep covers. C-PM-RETENTION-1 measured no
 #: Polymarket cliff at all (0 of 70 records gone, 30 days to 3.66 years), so
@@ -170,10 +180,41 @@ _EXISTS_TERMINAL_PRIOR = """
     )
 """
 
+#: Per-market probe history, joined onto every candidate so the planner can tell a
+#: row nobody has asked from a row the source has already declined to answer (#2175).
+#:
+#: Counted over ALL sweeps, not the current one — the current sweep's rows are
+#: excluded from the work list entirely by ``_EXISTS_THIS_SWEEP``, so anything this
+#: sees is by definition history. Index-backed by
+#: ``ix_settlement_captures_market_time`` on ``(market_id, captured_at)``; the same
+#: correlated access pattern the two EXISTS predicates above already pay for.
+_HISTORY_LATERAL = """
+    LEFT JOIN LATERAL (
+        SELECT
+            COUNT(*) AS attempts,
+            COUNT(*) FILTER (
+                WHERE c.disposition = ANY(:stable_nonanswer_dispositions)
+            ) AS stable_nonanswers
+        FROM settlement_captures c
+        WHERE c.market_id = m.id
+    ) h ON TRUE
+"""
+
 #: The at-risk cohort minus both idempotency exclusions: this run's work list.
+#:
+#: THE ``ORDER BY`` HERE IS STILL PURE DEADLINE, AND DELIBERATELY SO. The planner
+#: tiers on probe history (#2175), but this ordering exists for a different job:
+#: surviving the ``LIMIT``. Its contract is "the rows closest to their deadline
+#: reach the planner at all". Sorting the FETCH by tier would let never-probed rows
+#: from a distant bucket displace dying ones off the page, and the planner cannot
+#: prefer a row it was never handed. Deadline decides who gets in the room; the
+#: planner decides who gets called on.
 CANDIDATE_SQL = f"""
-SELECT m.id, m.source, m.external_id, m.resolution_date
+SELECT m.id, m.source, m.external_id, m.resolution_date,
+    COALESCE(h.attempts, 0) AS attempts,
+    COALESCE(h.stable_nonanswers, 0) AS stable_nonanswers
 FROM futures_markets m
+{_HISTORY_LATERAL}
 WHERE {_COHORT_WHERE}
   AND NOT {_EXISTS_THIS_SWEEP}
   AND NOT {_EXISTS_TERMINAL_PRIOR}
@@ -278,6 +319,7 @@ def candidate_params(
         "now": now,
         "sweep_id": sweep_id,
         "terminal_dispositions": sorted(TERMINAL_DISPOSITIONS),
+        "stable_nonanswer_dispositions": sorted(STABLE_NONANSWER_DISPOSITION_VALUES),
         "fetch_limit": fetch_limit_for(budget),
     }
 
@@ -314,7 +356,15 @@ class ExclusionCounts:
 
 
 def rows_to_candidates(rows) -> list[Candidate]:
-    """Map ``(id, source, external_id, resolution_date)`` tuples to candidates."""
+    """Map candidate rows to :class:`Candidate`.
+
+    Accepts both the 4-column shape (``id, source, external_id, resolution_date``)
+    and the 6-column shape that adds ``attempts, stable_nonanswers``. The short form
+    is tolerated because a caller that has no probe history to offer should get a
+    planner that treats its rows as never-probed — which is the tier that gets
+    served FIRST. Defaulting the other way would let a caller silently demote its
+    own work to the back of the queue (#2175).
+    """
     return [
         Candidate(
             market_id=row[0],
@@ -322,6 +372,8 @@ def rows_to_candidates(rows) -> list[Candidate]:
             external_id=row[2],
             resolution_date=row[3],
             candidate_reason=CANDIDATE_REASON,
+            attempts=int(row[4]) if len(row) > 4 and row[4] is not None else 0,
+            stable_nonanswers=int(row[5]) if len(row) > 5 and row[5] is not None else 0,
         )
         for row in rows
     ]

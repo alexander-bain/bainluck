@@ -152,6 +152,81 @@ class Disposition(str, Enum):
         return self is Disposition.SETTLED
 
 
+# ---------------------------------------------------------------------------
+# The non-terminal set, split by WHY it is non-terminal (#2175)
+# ---------------------------------------------------------------------------
+#
+# ``settlement_sweep_query`` splits the vocabulary once, into TERMINAL (the source
+# has told us and will not change its mind) and everything else. That split is
+# correct and it is not enough, because "everything else" contains two populations
+# whose re-probe value differs by orders of magnitude:
+#
+#   * the CHANNEL failed — we never got an answer, so asking again is the whole
+#     point;
+#   * the ask COMPLETED and produced a non-answer — the source responded, and it
+#     will respond the same way until the world changes.
+#
+# Fusing them is what livelocked the terminal bucket (#2077). 341 rows carrying
+# ``ambiguous_empty`` were the oldest rows in the dying bucket, so a
+# terminal-first/oldest-first planner put them at the head of every pass, forever,
+# ahead of 227 rows whose only problem was a 429. Measured burn-down across three
+# paced passes: 614 -> 594 -> 577 -> 568. Freed 20, then 17, then 9. Decelerating.
+#
+# THIS IS A PLANNING PARTITION, NOT A TERMINALITY ONE. Nothing here becomes
+# terminal and nothing is dropped. Both sets are still re-probed; they are merely
+# ordered against each other, inside their deadline bucket, by how much a call is
+# worth. Promoting AMBIGUOUS_EMPTY to terminal would have been the easy fix and it
+# would be wrong -- it converts "we could not tell" into "we have our answer",
+# which is the one conversion this whole module exists to refuse.
+
+#: Non-terminal because the CHANNEL failed. No answer was obtained, so a retry is
+#: the entire remedy and these sort FIRST among probed rows.
+TRANSIENT_DISPOSITIONS: frozenset[Disposition] = frozenset(
+    {Disposition.RATE_LIMITED, Disposition.TRANSPORT_ERROR}
+)
+
+#: Non-terminal, but the ask completed and this IS what came back. An immediate
+#: re-ask reproduces it. Still retried -- with whatever budget survives the rows
+#: that can actually move.
+#:
+#: ``NOT_PROBED_BEYOND_HORIZON`` belongs here rather than with the transient set
+#: even though no request was made: age only increases, so the declination
+#: reproduces itself by construction.
+STABLE_NONANSWER_DISPOSITIONS: frozenset[Disposition] = frozenset(
+    {
+        Disposition.AMBIGUOUS_EMPTY,
+        Disposition.OPEN_NO_SETTLEMENT,
+        Disposition.PRICE_UNDETERMINABLE,
+        Disposition.NOT_PROBED_BEYOND_HORIZON,
+    }
+)
+
+#: String forms, for the SQL layer and for rows read back out of the table. The
+#: enum is the source of truth; these are derived so the two can never drift.
+TRANSIENT_DISPOSITION_VALUES: frozenset[str] = frozenset(
+    d.value for d in TRANSIENT_DISPOSITIONS
+)
+STABLE_NONANSWER_DISPOSITION_VALUES: frozenset[str] = frozenset(
+    d.value for d in STABLE_NONANSWER_DISPOSITIONS
+)
+
+
+def is_stable_nonanswer(disposition: str | Disposition | None) -> bool:
+    """True when the source already answered and would answer the same again.
+
+    **An unrecognised disposition is deliberately NOT stable.** A value added to
+    the enum later, or read back from a row written under an older protocol
+    version, defaults to the more urgent treatment. The asymmetry is the same one
+    :func:`settlement_sweep_plan.bucket_for` floors toward: over-including into the
+    urgent tier costs a probe, under-including costs the row. The exhaustiveness
+    test is what turns "defaulted" into "noticed".
+    """
+    if disposition is None:
+        return False
+    value = disposition.value if isinstance(disposition, Disposition) else disposition
+    return value in STABLE_NONANSWER_DISPOSITION_VALUES
+
+
 @dataclass(frozen=True)
 class SettlementClaim:
     """The parsed settlement, present ONLY on :attr:`Disposition.SETTLED`.

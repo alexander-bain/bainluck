@@ -44,10 +44,17 @@ from app.services.settlement_sweep_runner import (
     verify_sweep,
 )
 from app.utils.kalshi_retention import (
+    AT_RISK_AGE_DAYS,
     CAPTURE_PLANNING_AGE_DAYS,
+    OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES,
     PROVABLY_PURGED_AGE_DAYS,
 )
-from app.utils.settlement_sweep_plan import Candidate, TERMINAL_BUCKET
+from app.utils.settlement_sweep_plan import (
+    Candidate,
+    OVERDUE_BUCKET,
+    TERMINAL_BUCKET,
+    TERMINAL_BUCKETS,
+)
 from app.utils.settlement_sweep_query import (
     CANDIDATE_SQL,
     COHORT_BY_DAY_SQL,
@@ -129,7 +136,10 @@ class FakeSession:
             return _Result(self.cohort_rows)
         if "already_this_sweep" in sql:
             return _Result([self.exclusions])
-        if sql.strip().startswith("SELECT m.id"):
+        # Dispatch on the bind name, not on a literal prefix: CANDIDATE_SQL is the
+        # only paged query, and matching ":fetch_limit" survives reformatting of
+        # the SELECT list (a prefix match did not — #2175).
+        if ":fetch_limit" in sql:
             return _Result(self.candidate_rows)
         if "SELECT 1 FROM settlement_captures" in sql and "market_id" in sql:
             hit = params.get("market_id") in self.already_captured
@@ -156,6 +166,19 @@ def _candidate_row(market_id: int, age_days: float, ticker: str | None = None):
     return (market_id, "kalshi", ticker or f"KXTEST-{market_id}", _at_age(age_days))
 
 
+def _candidate_row_with_history(
+    market_id: int, age_days: float, *, attempts: int, stable_nonanswers: int,
+    ticker: str | None = None,
+):
+    """The six-column shape the real CANDIDATE_SQL returns (#2175).
+
+    The four-column ``_candidate_row`` stays valid on purpose: ``rows_to_candidates``
+    tolerates a row with no history and reads it as never-probed, which is the tier
+    served first.
+    """
+    return _candidate_row(market_id, age_days, ticker) + (attempts, stable_nonanswers)
+
+
 async def _always(outcome):
     async def _fn(source, external_id):
         return outcome
@@ -167,14 +190,22 @@ async def _always(outcome):
 # ---------------------------------------------------------------------------
 
 
-def test_planning_horizon_is_a_named_constant_and_is_66():
-    """66 is a CHOSEN horizon and must never be re-derived or inlined.
+def test_planning_horizon_is_a_named_constant_derived_from_the_measurement():
+    """The horizon must never be re-derived or inlined.
 
     It sits beside two MEASURED constants with different values and different jobs.
-    A literal 66 in the runner would be indistinguishable from a literal 68 or 74
-    typed by someone who read the wrong line of the retention table.
+    A literal in the runner would be indistinguishable from one typed by someone who
+    read the wrong line of the retention table.
+
+    2026-08-24: this used to assert ``== 66``. C-KALSHI-RETENTION-1 confirmed purges
+    beginning at 47 days, so the horizon moved to 45 — and the assertion moved with
+    it to the DERIVATION rather than the literal, because the next re-measurement
+    will move it again and a pinned number would only record that it used to be
+    right. What must stay true is the relationship: the planning horizon prioritizes
+    work and always sits strictly inside the skip-work bound, which alone may stop
+    work.
     """
-    assert CAPTURE_PLANNING_AGE_DAYS == 66
+    assert CAPTURE_PLANNING_AGE_DAYS == OBSERVED_PURGED_MIN_AGE_DAYS_ANY_SERIES - 2
     assert CAPTURE_PLANNING_AGE_DAYS < PROVABLY_PURGED_AGE_DAYS
 
 
@@ -453,7 +484,10 @@ def test_days_remaining_at_capture_is_the_purge_measure_not_the_planning_one():
     this column."""
     candidate = Candidate(1, "kalshi", "KXA-1", _at_age(60), "missing_winner")
     row = _capture_row(candidate, _purged(), sweep_id="s", now=NOW)
-    assert row["days_remaining_at_capture"] == 74 - 60
+    assert row["days_remaining_at_capture"] == AT_RISK_AGE_DAYS - 60
+    assert row["days_remaining_at_capture"] != CAPTURE_PLANNING_AGE_DAYS - 60, (
+        "the two horizons must stay distinguishable, or this assertion proves nothing"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +607,7 @@ async def test_verification_measures_uncaptured_not_missing_winner():
         dispositions=[("purged", 90), ("settled", 10)],
     )
     result = await verify_sweep(session, sweep_id="kalshi-2026-08-23", now=NOW)
-    assert result["cohort_by_bucket"][TERMINAL_BUCKET] == 100
+    assert result["cohort_by_bucket"][OVERDUE_BUCKET] == 100
     assert result["uncaptured_total"] == 0
     assert result["terminal_bucket_drained"] is True
     assert result["captured_total"] == 100
@@ -637,3 +671,98 @@ def test_fetch_limit_gives_the_planner_a_population_to_plan_over():
     over anything — there is nothing to prefer it over."""
     assert fetch_limit_for(100) > 100
     assert fetch_limit_for(10_000_000) <= 20_000
+
+
+# ---------------------------------------------------------------------------
+# Probe history reaches the runner (#2175)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_budget_spends_on_the_never_probed_row_not_the_stale_one():
+    """The livelock, end to end through the runner.
+
+    Both rows are in the terminal bucket. Market 1 is closer to its deadline but has
+    already answered ``ambiguous_empty`` three times; market 2 has never been probed.
+    Under the pure-deadline ordering the sweep spent its whole budget re-asking
+    market 1 and market 2 was never reached — 341 rows sat in exactly that state
+    across three paced passes. The row we have never asked goes first.
+    """
+    session = FakeSession(
+        cohort_rows=[(_at_age(60), 1, 1), (_at_age(55), 1, 1)],
+        candidate_rows=[
+            _candidate_row_with_history(1, 65, attempts=3, stable_nonanswers=3),
+            _candidate_row_with_history(2, 60, attempts=0, stable_nonanswers=0),
+        ],
+    )
+    report = await run_sweep(
+        session, budget=1, now=NOW, probe_fn=await _always(_settled())
+    )
+    assert report.selected == 1
+    assert {row["market_id"] for row in session.inserted} == {2}
+    assert report.selected_by_tier == {"never_probed": 1}
+
+
+async def test_a_row_with_no_history_columns_is_read_as_never_probed():
+    """The four-column row is not a legacy shape to be tolerated grudgingly — a
+    market with no capture rows genuinely has no history, and the tier that gets
+    served first is the right default for it."""
+    session = FakeSession(
+        cohort_rows=[(_at_age(60), 1, 1)],
+        candidate_rows=[_candidate_row(1, 60)],
+    )
+    report = await run_sweep(
+        session, budget=1, now=NOW, probe_fn=await _always(_settled())
+    )
+    assert report.selected_by_tier == {"never_probed": 1}
+    assert report.to_dict()["selected_by_tier"] == {"never_probed": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_drained_zero_bucket_is_not_a_drained_cohort():
+    """The false green the retention fold-in nearly shipped.
+
+    Lowering the planning horizon to 45 moved the entire 59-66 day production
+    cohort out of ``0-7`` and into ``overdue``. While ``terminal_bucket_drained``
+    read only the ``0-7`` label, that reclassification alone would have flipped the
+    capture wall's gate to True over ~1,096 rows nobody had asked a source about --
+    the sweep reporting success for having relabelled its own backlog.
+
+    So the drain is summed over TERMINAL_BUCKETS and this test pins it with a
+    cohort that has NOTHING in ``0-7``: under the old single-label read it returns
+    drained=True, which is the whole defect.
+    """
+    session = FakeSession(
+        cohort_rows=[(_at_age(60), 100, 40)],   # 40 uncaptured, all of them `overdue`
+        captured_day_rows=[(_at_age(60), 60)],
+        dispositions=[("settled", 60)],
+    )
+    result = await verify_sweep(session, sweep_id="s", now=NOW)
+
+    assert result["cohort_by_bucket"].get(TERMINAL_BUCKET, 0) == 0, (
+        "the specimen must have an EMPTY 0-7 bucket or it cannot catch the defect"
+    )
+    assert result["uncaptured_by_bucket"][OVERDUE_BUCKET] == 40
+    assert result["terminal_bucket_uncaptured"] == 40
+    assert result["terminal_bucket_drained"] is False, (
+        "an empty 0-7 bucket is not an absence of urgent work"
+    )
+    # And the breakdown is published beside the total, so work moving between
+    # urgency labels can never be read as progress.
+    assert result["terminal_uncaptured_by_bucket"] == {OVERDUE_BUCKET: 40, TERMINAL_BUCKET: 0}
+    assert OVERDUE_BUCKET in result["terminal_buckets"]
+
+
+@pytest.mark.asyncio
+async def test_the_drain_still_reaches_zero_when_the_work_is_actually_done():
+    """The other direction: the widened gate must remain satisfiable.
+
+    A gate that can never be met is as useless as one that is always met.
+    """
+    session = FakeSession(
+        cohort_rows=[(_at_age(60), 100, 0)],
+        captured_day_rows=[(_at_age(60), 100)],
+        dispositions=[("purged", 90), ("settled", 10)],
+    )
+    result = await verify_sweep(session, sweep_id="s", now=NOW)
+    assert result["terminal_bucket_uncaptured"] == 0
+    assert result["terminal_bucket_drained"] is True
