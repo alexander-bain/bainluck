@@ -332,6 +332,15 @@ class TestEnforcementScope:
             # Terminal comes from `decide_terminal` in
             # `app/tasks/calibration_beat_gauge_sampler.py`, in this same change.
             "calibration_beat_gauge_sampler",
+            # #2199: the futures price refresher, enrolled at BIRTH. It is the
+            # remedy for a measured false GREEN — two discovery polls reported
+            # success while 900 of 907 high-value tier-1 open futures markets
+            # went uncaptured for up to 32 days, including every marquee
+            # championship field. A remedy that inherited that blindness would
+            # be worse than none, so a run that attempted markets and wrote zero
+            # snapshots returns `failed`. Terminal comes from
+            # `futures_price_refresh._terminal`.
+            "futures_price_refresh",
         }
 
     def test_enforced_task_partial_blocks_success(self):
