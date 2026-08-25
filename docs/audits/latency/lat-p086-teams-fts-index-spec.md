@@ -222,3 +222,105 @@ pre-registered until this DDL has run and 3b passes — writing the command is n
 (`events.py:4188-4210`) matches teams with `_build_expanded_ilike`, an OR of substring `ILIKE`s,
 which these GINs cannot serve. Typeahead's own p50 (232.0 ms, 6.2% cold — LAT-P084 ruling 127) is a
 separate lever and must not be graded against this one.
+
+---
+
+## 🔴 7. LAT-P087 CORRECTION — the pre-registered BUDGET criterion passed on a no-op
+
+`backend/scripts/gate_teams_fts_index.py` is now the executable form of §3b, and it exists because
+the criterion this runbook was about to be graded against **was already satisfied before the DDL
+ran**.
+
+LAT-P085 pre-registered three criteria. The second was *"Budget — exec_ms < 50 on all four"*,
+banked against a measured red of **386-485 ms**. Re-measured 2026-08-24 with **no `ix_teams_fts_*`
+present anywhere in production** (verified against `pg_indexes`):
+
+```
+yankees 46.6ms   celtics 54.3ms   red sox ~50ms   world cup ~47ms
+```
+
+Three hand-run `CREATE INDEX CONCURRENTLY` statements were forty minutes from being declared a
+success by a threshold that a **completely unindexed database also clears**. That is the worst
+thing a gate can do: not report a wrong number, but report a correct number about the wrong thing.
+
+It is not a code change (`git diff b5c2a750..ea07f81e` on `events.py` touches only typeahead
+`_record_trending`, #2117) and not a data change. It is **load**. The predicate is a sequential scan
+whose cost is per-row `to_tsvector` CPU, and host CPU contention moves it ~6x inside one minute:
+
+```
+fts_ms:  61.7  60.4  57.9  63.3  340.9  323.6        (5.9x spread, ~90 seconds)
+```
+
+71 days of `pg_stat_statements` agrees with neither reading: two route variants at 3,161 calls /
+mean 106.2 ms (sd 84.6) and 838 calls / mean 230.5 ms (sd 166.6). **Both of LAT-P085's numbers were
+honest readings of a quantity that does not hold still**, and the same is true of the 159 ms teams
+arm in §5's table — read that row as a sample, not a constant.
+
+### The replacement: a CPU-matched control ratio
+
+The gate measures a control **in the same interleaved batch, seconds apart, on the same table**:
+
+```sql
+to_tsvector('english', coalesce(slug, '')) @@ websearch_to_tsquery('english', <term>)
+```
+
+`slug` is deliberately **not** one of the three indexed columns, so this DDL cannot serve it, while
+it is the same shape of work — one tsvector per row over all ~9,240 rows — so it absorbs the same
+contention. Across the 5.9x excursion above the ratio held **0.87 - 1.31**; the full red run below,
+which happened to catch a second excursion, held **1.05 - 1.57** while absolute times swung
+160 → 423 ms.
+
+A cheap control does **not** work and was tried and rejected: `count(*) FROM teams WHERE id > 0`
+stays flat at ~5.5 ms straight through the excursion, because fixed overhead dominates it. *A
+control only cancels the noise it shares.*
+
+Threshold **0.25** — a 4x+ collapse from today's ~1.1, against a post-index expectation near 0.05.
+
+### Criterion 1 is unchanged and is still the one that matters
+
+A ratio is a budget; only the plan proves the planner *uses* the index. `BitmapOr` over **three**
+`Bitmap Index Scan` nodes, two of three is a FAIL — §3b, unchanged. The gate's SQL is **compiled
+from the live ORM** via `_build_team_search_filter`, never hand-copied, so if the route's cast ever
+changes the gate's SQL changes with it and the shape check fails honestly. A pasted predicate would
+keep passing against an index the route no longer matches — which is precisely §0's defect.
+
+### Recorded red, 2026-08-24 22:18 UTC
+
+`docs/audits/latency/lat-p087-teams-fts-gate-before.json`, `EXIT CODE: 1`:
+
+```
+  yankees          fts=  389.4ms ctrl=  285.0ms ratio= 1.37  shape=MISSING all three  sem=ok  FAIL
+  celtics          fts=  423.0ms ctrl=  296.9ms ratio= 1.42  shape=MISSING all three  sem=ok  FAIL
+  red sox          fts=  389.4ms ctrl=  293.9ms ratio= 1.32  shape=MISSING all three  sem=ok  FAIL
+  world cup        fts=  194.5ms ctrl=  123.6ms ratio= 1.57  shape=MISSING all three  sem=ok  FAIL
+  stanley cup      fts=  196.2ms ctrl=  187.4ms ratio= 1.05  shape=MISSING all three  sem=ok  FAIL
+  nba champion     fts=  161.2ms ctrl=  143.4ms ratio= 1.12  shape=MISSING all three  sem=ok  FAIL
+  masters winner   fts=  160.7ms ctrl=  137.4ms ratio= 1.17  shape=MISSING all three  sem=ok  FAIL
+  world series     fts=  163.3ms ctrl=  124.1ms ratio= 1.32  shape=MISSING all three  sem=ok  FAIL
+
+  criterion 1 SHAPE      : FAIL on all 8
+  criterion 2 BUDGET     : FAIL on all 8
+  criterion 3 SEMANTICS  : PASS
+VERDICT: RED
+```
+
+Semantics PASS means `lat-p085-teams-red.json` is still a valid before — the id sets have not
+drifted, so a post-DDL change in them is the index changing behaviour, not the corpus moving.
+
+### After the attended batch
+
+```bash
+source ~/.claude/.env
+python3 backend/scripts/gate_teams_fts_index.py --label after \
+  --out docs/audits/latency/lat-p087-teams-fts-gate-after.json
+echo "EXIT CODE: $?"
+```
+
+Same command, unedited. `0` = GREEN. `1` = RED, a real verdict. **Anything else is the harness
+failing to run and is not a verdict at all** (gotcha #54's amendment) — `2` is what it exits when
+`ADMIN_TOKEN` is unset or `analyze` did not return an `Execution Time`.
+
+`backend/tests/test_gate_teams_fts_index.py` (14 tests) pins the corrected criterion: it fails if an
+absolute-millisecond budget is reintroduced, if the threshold rises above a third of the observed
+unindexed floor, if the control moves onto an indexed column, or if the altnames cast drifts off
+`CAST(... AS VARCHAR)`.
