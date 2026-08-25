@@ -161,8 +161,38 @@ class TestWriterRefusals:
         assert 'stats["unknown_outcomes"] += 1' in _MODULE_SRC
 
     def test_never_touches_a_settled_outcome(self):
-        """Gotcha #21: a settled book stops quoting; re-pricing it can only corrupt."""
-        assert "is_winner IS NULL" in _MODULE_SRC
+        """Gotcha #21: a settled book stops quoting; re-pricing it can only corrupt.
+
+        This assertion used to read ``assert "is_winner IS NULL" in _MODULE_SRC``
+        and it is the reason 19,906 tests passed over a task that could not write
+        a single row. A grep of the implementation passes **iff the bug is
+        present**: `is_winner` is non-nullable with `default=False`, so `IS NULL`
+        matched zero production rows and the writer was inert by construction.
+
+        Two changes. The negative assertion is now the load-bearing one — the
+        broken predicate must be ABSENT, so re-introducing it fails here. And the
+        real gate for this property is no longer a grep at all: it is
+        `tests/integration/test_futures_price_refresh_writes_pg.py`, which seeds
+        an outcome the way production seeds it and asserts a snapshot lands.
+        """
+        assert "is_winner IS NOT TRUE" in _MODULE_SRC
+        assert "is_winner IS NULL" not in _MODULE_SRC
+
+    def test_the_settled_refusal_has_a_data_level_gate(self):
+        """A source-text assertion may not be the only guard on this property.
+
+        Pinned so the data-level file cannot be deleted or renamed leaving the
+        grep above as the sole cover — which is precisely the state that shipped.
+        """
+        pg_gate = (
+            Path(__file__).parent
+            / "integration"
+            / "test_futures_price_refresh_writes_pg.py"
+        )
+        assert pg_gate.exists(), "the real-Postgres writer gate is missing"
+        src = pg_gate.read_text()
+        assert "is_winner=False" in src, "must seed the way production seeds"
+        assert "SEARCH_TEST_DATABASE_URL" in src, "must be armed in the CI PG job"
 
     def test_never_writes_a_null_or_out_of_range_probability(self):
         assert "if prob is None or not (0 < prob < 1):" in _MODULE_SRC
