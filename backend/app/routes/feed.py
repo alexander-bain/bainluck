@@ -56,6 +56,7 @@ from app.utils.aggregation import (
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
 from app.utils.feed_event_candidates import (
     EVENT_CANDIDATE_BUDGET,
+    deduplicated_event_ids,
     event_candidate_ids,
 )
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
@@ -5133,6 +5134,34 @@ async def _score_events(
         # collisions with Tier 3 sports (e.g., "Boston" matching Boston College
         # hockey, Boston Breach esports, Boston River soccer). BR42/BR43.
         query = query.where(Sport.key.in_(MY_STUFF_ALLOWED_SPORT_KEYS))
+
+        # #2213 — collapse duplicate rows for one fixture, exactly as the
+        # Discover/Sports pool has since #2065.
+        #
+        # This branch never had it. The `else:` arm below routes through
+        # `event_candidate_ids`, which collapses duplicates AND quotas the tiers;
+        # My Stuff took this arm and got neither. So the surface Alex actually
+        # opens was the one surface with no duplicate guard, and on 2026-08-25 it
+        # rendered "Live Now (2)" for a single Red Sox–Marlins game as two cards
+        # printing different probabilities (57/43 from the ESPN/odds row,
+        # 50/50 from the StatPal row).
+        #
+        # Only the collapse is reused, not the quotas — see
+        # `deduplicated_event_ids` for why a 200/150/150 split on a 40-row pool
+        # would be a cut that either never binds or drops one of Alex's games.
+        #
+        # The `where` clauses have to be re-derived rather than read back off
+        # `query`: they carry the team filter and the sport allowlist added just
+        # above, and a collapse computed over a wider pool would pick a survivor
+        # this request cannot see.
+        my_stuff_conditions = [
+            *candidate_conditions,
+            or_(*team_conditions),
+            Sport.key.in_(MY_STUFF_ALLOWED_SPORT_KEYS),
+        ]
+        query = query.where(
+            Event.id.in_(deduplicated_event_ids(my_stuff_conditions))
+        )
         query = query.limit(200)  # Safety cap (user's teams only)
     else:
         # #2065: one ORDER BY + one LIMIT 500 across all three status tiers let a
