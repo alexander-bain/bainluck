@@ -695,6 +695,65 @@ def test_the_ttl_is_declared_once_and_is_the_whole_invalidation_contract():
     )
 
 
+def test_the_head_warmer_ships_disabled_because_1916_blocks_its_head_source(monkeypatch):
+    """The one switch in this family that FAILS CLOSED, and the reason it does.
+
+    #1916 measured `search_query_logs` as 23.6% gold-sentinel traffic — 848 of
+    3,600 rows in a single 07:09-07:12 UTC minute across 26 of 30 days, which is
+    #1206's nightly sentinel — and says in bold not to source a warmer head from
+    it until a clean distribution exists. Electing a head from that table today
+    risks warming our own echo and calling it demand, which is #1916's whole
+    thesis.
+
+    So `SEARCH_HEAD_WARM_ENABLED` unset means OFF, inverting the convention its
+    two siblings follow. This test is what makes lifting that block a VISIBLE
+    act: a future window that flips the default has to delete this assertion,
+    and deleting it means reading why it is here.
+
+    The response cache is deliberately NOT gated on the same switch — it caches
+    what was actually asked and has no opinion about what is popular, so it
+    cannot be contaminated by a skewed distribution.
+    """
+    from app.tasks.search_head_warmer import SEARCH_HEAD_WARM_ENV, head_warm_enabled
+    from app.utils.search_cache import search_response_cache_enabled
+
+    monkeypatch.delenv(SEARCH_HEAD_WARM_ENV, raising=False)
+    assert head_warm_enabled() is False, (
+        "the head warmer defaults ON — #1916 blocks head selection from "
+        "search_query_logs until a clean distribution exists"
+    )
+    monkeypatch.setenv(SEARCH_HEAD_WARM_ENV, "1")
+    assert head_warm_enabled() is True, "the block cannot be lifted by config"
+
+    # A typo must not enable it either — fails closed in both directions.
+    monkeypatch.setenv(SEARCH_HEAD_WARM_ENV, "yse")
+    assert head_warm_enabled() is False
+
+    # And the cache is NOT gated on it.
+    monkeypatch.delenv("SEARCH_RESPONSE_CACHE", raising=False)
+    assert search_response_cache_enabled() is True, (
+        "the response cache defaults off — it is the ship, and it is "
+        "contamination-proof, so it must not inherit the warmer's block"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_pass_says_disabled_and_not_merely_zero():
+    """"Turned off on purpose" and "wedged" must never produce the same summary.
+
+    A pass that warmed nothing because an operator disabled it, and a pass that
+    warmed nothing because the lock was stuck, are opposite diagnoses reaching
+    the same `warmed: 0`. `skip_reason` is what separates them (gotcha #53).
+    """
+    from app.tasks.search_head_warmer import _warm_search_head
+
+    summary = await _warm_search_head()
+
+    assert summary["terminal"] == "skipped"
+    assert summary["skip_reason"] == "disabled"
+    assert summary["warmed"] == 0
+
+
 def test_an_empty_head_is_reported_as_partial_and_never_as_a_clean_pass():
     """"It returned" is not "it worked" (`app/utils/task_verdict.py`).
 

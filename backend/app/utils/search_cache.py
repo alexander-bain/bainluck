@@ -1,4 +1,4 @@
-"""Response-cache contract for ``GET /api/events/search`` (LAT-P090, #2205).
+"""Response-cache contract for ``GET /api/events/search`` (LAT-P090, #2211).
 
 WHY A CACHE, AND WHY NOT AN INDEX. This is the lever the LAT-P088 measurement
 pointed at after the string-index lever was dropped.

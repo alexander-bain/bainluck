@@ -1,4 +1,4 @@
-"""Keep the head of the real `/search` distribution resident (LAT-P090, #2205).
+"""Keep the head of the real `/search` distribution resident (LAT-P090, #2211).
 
 WHAT THIS IS FOR, and why it is not another index.
 
@@ -47,14 +47,24 @@ THREE LESSONS ARE INHERITED RATHER THAN RE-LEARNED. Each one cost a cycle on
 3. **A warmer must not be able to report success while the head is cold**
    (`app/utils/task_verdict.py`). An empty head is `partial`, never `complete`.
 
+🔴 **THIS TASK SHIPS DISABLED. `SEARCH_HEAD_WARM_ENABLED` is unset in production
+and unset means OFF.** #1916 measured `search_query_logs` as 23.6% gold-sentinel
+traffic and says, in bold, not to source a warmer head from it until a clean
+distribution exists. That block is respected rather than stepped over. The full
+argument — including why the closed-loop harm #1916 is about cannot occur here,
+and what a future window needs to flip it — is on `SEARCH_HEAD_WARM_ENV` below.
+**The response cache itself is unaffected and ships live**; it caches what was
+actually asked and has no opinion about what is popular, so it is
+contamination-proof by construction.
+
 THE COST, STATED, because this lane's own doctrine is that a warmer is not free.
 `/search` is a much heavier call than `/typeahead`, so every knob here is set
 below its sibling's: 8 terms rather than 40, concurrency 2 rather than 4, and a
-45 s floor rather than 30 s. A steady-state pass rebuilds 8 entries at concurrency
-2; at the ~1-2 s per query this endpoint measures that is ~4-8 s of database time
-per 45 s, against `background`'s roughly one effective slot (#1609). That is real
-and it is why `SEARCH_HEAD_WARM_ENABLED` exists as an operator lever rather than
-as a deploy.
+45 s floor rather than 30 s. ENABLED, a steady-state pass rebuilds 8 entries at
+concurrency 2; at the ~1-2 s per query this endpoint measures that is ~4-8 s of
+database time per 45 s, against `background`'s roughly one effective slot
+(#1609). DISABLED — the shipping state — a fire takes the `disabled` skip path
+at ~1 ms and the beat's draw is negligible.
 
 THE THREE CONSTANTS ARE ONE DECISION, not three. An entry lives
 `SEARCH_RESPONSE_TTL_SECONDS`; a pass arrives at worst every
@@ -116,14 +126,47 @@ REFRESH_AHEAD_SECONDS = 25
 #: but a pass may not start more often than this.
 MIN_PASS_PERIOD_SECONDS = 45
 
-#: Operator kill switch. Separate from `SEARCH_RESPONSE_CACHE` on purpose — the
-#: two failures are different and so are their remedies. If the CACHE is wrong,
-#: turn the cache off. If the cache is fine but the warmer is costing more
-#: database time than it is saving, turn the WARMER off and let the cache keep
-#: serving organic repeats. Collapsing them into one switch would force an
-#: operator to give up the fix to relieve the load.
+#: 🔴 THIS SHIPS **OFF**, AND UNSET MEANS OFF. That is the opposite of every
+#: other switch in this family and it is deliberate.
+#:
+#: **#1916 blocks head selection from this source, in bold, and that block is
+#: respected rather than stepped over.** It measured `search_query_logs` as
+#: **23.6 % gold-sentinel traffic** — 848 of 3,600 rows landing in a single
+#: 07:09-07:12 UTC minute across 26 of 30 days, which is #1206's nightly gold
+#: query sentinel, and whose family phrasings ARE the top of the "real"
+#: distribution. Its instruction is *do not tune, re-rank, resize or re-source a
+#: warmer head until a clean distribution exists*. Electing a head from that
+#: table today means possibly warming a sentinel's echo and calling it demand.
+#:
+#: TWO THINGS FOR WHOEVER UN-BLOCKS IT, because they are the argument and they
+#: should not have to be re-derived:
+#:
+#: * The specific harm #1916 exists to stop — a CLOSED SELF-ELECTING LOOP — is
+#:   structurally absent here. `_warm_one` sets `_suppress_search_log`, so unlike
+#:   the `/typeahead` warmer (89 % of whose head score was its own echo) this one
+#:   cannot vote for its own head at all. The contamination it would inherit is
+#:   fixed at 23.6 % and does not compound.
+#: * The cost of being wrong is therefore bounded at WASTED WARM SLOTS — some of
+#:   8 — not at a corrupted distribution.
+#:
+#: That is an argument for flipping it. It is not a decision to flip it, and a
+#: build lane is not the right place to overrule a standing block on its own
+#: judgment in the same cycle. **`SEARCH_HEAD_WARM_ENABLED=1` is one config var
+#: and needs no deploy**, so the cost of shipping off and flipping later is a
+#: config change; the cost of shipping on and being wrong is a warmer tuned
+#: against our own echo, which is precisely #1916's thesis.
+#:
+#: The response cache itself is UNAFFECTED and ships live. It is
+#: contamination-proof by construction: it caches whatever was actually asked,
+#: and has no opinion about what is popular.
+#:
+#: Separate from `SEARCH_RESPONSE_CACHE` on purpose — the two failures are
+#: different and so are their remedies. If the CACHE is wrong, turn the cache
+#: off. If the cache is fine but the WARMER is costing more database time than it
+#: saves, turn the warmer off and let the cache keep serving organic repeats. One
+#: switch would force an operator to give up the fix to relieve the load.
 SEARCH_HEAD_WARM_ENV = "SEARCH_HEAD_WARM_ENABLED"
-_WARM_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+_WARM_ON_VALUES = frozenset({"1", "true", "yes", "on"})
 
 _LOCK_KEY = "bainluck:search_head_warmer:running"
 _LOCK_TTL_SECONDS = 180
@@ -143,11 +186,18 @@ _MAX_QUERY_CHARS = 200
 
 
 def head_warm_enabled() -> bool:
-    """Whether a pass may run. Unset means ENABLED; an unrecognised value too."""
+    """Whether a pass may run. **Unset means OFF** — see `SEARCH_HEAD_WARM_ENV`.
+
+    FAILS CLOSED, and this is the one switch in this family that does. The
+    others default on because a typo must not silently disable a latency fix;
+    this one defaults off because a typo must not silently ENABLE head selection
+    from a distribution #1916 has measured as contaminated. The asymmetry is the
+    point: the expensive mistake runs in opposite directions for the two.
+    """
     raw = os.environ.get(SEARCH_HEAD_WARM_ENV)
     if raw is None:
-        return True
-    return str(raw).strip().lower() not in _WARM_OFF_VALUES
+        return False
+    return str(raw).strip().lower() in _WARM_ON_VALUES
 
 
 def _needs_rebuild(ttl: int | None) -> bool:

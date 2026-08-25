@@ -2447,7 +2447,7 @@ async def _log_search_query(
         logger.warning("search-log write failed: %s", exc)
 
 
-# LAT-P090/#2205: suppress the search-query log for the head warmer's OWN calls.
+# LAT-P090/#2211: suppress the search-query log for the head warmer's OWN calls.
 #
 # #1866 IN ITS ORIGINAL FORM, refused on this surface before it can start. The
 # warmer decides what to warm by reading the 30-day head of `search_query_logs`,
@@ -2542,7 +2542,7 @@ async def search_events(
     2. Upcoming scheduled games (soonest first)
     3. Completed games (most recent first)
     """
-    # ---- LAT-P090/#2205: the response cache. Read BEFORE any work. ----
+    # ---- LAT-P090/#2211: the response cache. Read BEFORE any work. ----
     #
     # THE SHIP. This endpoint carries a 20,000 ms deadline and had no response
     # cache at all, while `/typeahead` — the cheaper of the two — has had one
@@ -4006,7 +4006,7 @@ async def search_events(
                              "total_ms": sum(_stage_ms.values())}} if debug_timing else {}),
     }
 
-    # LAT-P090/#2205: publish the answer, then count it. In that order.
+    # LAT-P090/#2211: publish the answer, then count it. In that order.
     #
     # A DEGRADED ANSWER IS NEVER CACHED (LAT-P007's rule, on the endpoint with
     # the longest budget in the API). `/search` sheds stages when its 20,000 ms

@@ -2812,7 +2812,7 @@ def warm_typeahead(self, head_size: int = None):
 def warm_search_head(self, head_size: int = None):
     """Keep the head of the `/search` distribution inside its response cache.
 
-    LAT-P090/#2205, and it is the lever the LAT-P088 index gate pointed at after
+    LAT-P090/#2211, and it is the lever the LAT-P088 index gate pointed at after
     the index itself was dropped. The pre-registered budget arm came back RED
     (median per-term collapse 0.7194 vs a 0.5 ceiling), and the per-term table
     underneath it split by term FREQUENCY: rare phrases collapsed (`super bowl`
@@ -3517,7 +3517,7 @@ celery_app.conf.beat_schedule = {
     },
     "warm-search-head": {
         "task": "app.tasks.warm_search_head",
-        # Every 20s — LAT-P090/#2205. The BEAT is the fire rate; the PASS rate is
+        # Every 20s — LAT-P090/#2211. The BEAT is the fire rate; the PASS rate is
         # bounded separately at 45s inside the task
         # (`MIN_PASS_PERIOD_SECONDS`), so roughly two of every three fires take
         # the ~10ms floor-skip path. That split is deliberate and it is the
@@ -3534,13 +3534,22 @@ celery_app.conf.beat_schedule = {
         # alone is how `/typeahead` sat at a 47% duty cycle for two cycles while
         # reporting 40/40 every pass.
         #
+        # 🔴 IT SHIPS DISABLED. `SEARCH_HEAD_WARM_ENABLED` is unset and unset
+        # means OFF, because #1916 blocks sourcing a warmer head from
+        # `search_query_logs` (measured 23.6% gold-sentinel traffic) until a
+        # clean distribution exists. The beat is wired anyway, on purpose: a
+        # fire takes the `disabled` skip path at ~1ms and reports
+        # `terminal: skipped, skip_reason: disabled`, so "deliberately off" is
+        # READABLE in task-metrics. An unwired task is one nobody remembers to
+        # wire; a task reporting that it is off is a state you can see.
+        #
         # COST, STATED, because a warmer is not free and this lane's own doctrine
-        # says to say so: a steady-state pass rebuilds 8 `/search` answers at
-        # concurrency 2, ~4-8s of database time per 45s against `background`'s
-        # roughly one effective slot (#1609). Every knob is set below its
+        # says to say so. ENABLED: a steady-state pass rebuilds 8 `/search`
+        # answers at concurrency 2, ~4-8s of database time per 45s against
+        # `background`'s roughly one effective slot (#1609). DISABLED, the
+        # shipping state: negligible. Every knob is set below its
         # `warm-typeahead` sibling's (8 terms not 40, width 2 not 4, floor 45s
-        # not 30s) precisely because a `/search` call is the heavier one, and
-        # `SEARCH_HEAD_WARM_ENABLED` turns it off without a deploy.
+        # not 30s) precisely because a `/search` call is the heavier one.
         #
         # `background` rather than `heavy`: heavy is the calibration/precompute
         # family and a user-latency warmer does not belong behind a 25-minute
@@ -4281,7 +4290,7 @@ _EXPIRING_WARMER_BEATS = {
                                              # OpenAI caller, so dropping stale work saves spend
     "warm-event-concepts": 300,              # */5 min
 
-    # LAT-P090/#2205. 20 s == the beat period, so the flat #1609 rule applies
+    # LAT-P090/#2211. 20 s == the beat period, so the flat #1609 rule applies
     # unamended: this task's WALL (~4-8 s steady state, ~10 ms on a floor skip)
     # is shorter than its period, so a fire that could not start a pass IS a
     # superseded message and must not outlive its replacement. That is the
