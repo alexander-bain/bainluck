@@ -251,43 +251,129 @@ class TestTheSettledRefusalStillHolds:
 
 
 class TestTheFalseGreenIsReproducible:
-    async def test_a_null_seeded_fixture_is_the_false_green(self, db):
-        """Seeding `is_winner=None` is what would have let the bug ship again.
+    async def test_null_is_unreachable_even_when_you_ask_for_it(self, db):
+        """You cannot seed the row shape the old predicate looked for. At all.
 
-        Demonstrated rather than described, because the next author reaching for
-        a fixture will reach for `None` — it reads as "not settled yet" and the
-        column is `Optional` nowhere. Under the OLD `IS NULL` predicate this row
-        is the only kind that writes, and it is the only kind production never
-        creates. The assertion is on the seeded value, not on the write: the
-        point is that the fixture and production disagree.
+        This test was originally written the obvious way — seed `is_winner=None`,
+        assert the stored value is NULL, and show that `IS NULL` matches it — on
+        the assumption that a NULL fixture is the trap a future author would fall
+        into. **CI disproved that on the first run** (`assert False is None`), and
+        the real answer is stronger than the one being asserted:
+
+        SQLAlchemy's ``default=False`` fires whenever the value is None at INSERT
+        time, including when None was passed *explicitly*. So passing
+        ``is_winner=None`` does not produce a NULL row — it produces `False`,
+        exactly like every production writer. The trap is not that a NULL fixture
+        would mislead; it is that **NULL is not reachable through the ORM at
+        all**, so no amount of fixture-writing through the normal path could ever
+        have exercised the `IS NULL` branch.
+
+        That is why `assert "is_winner IS NULL" in _MODULE_SRC` was the only test
+        anyone wrote: it is the only assertion about this predicate that a
+        model-shaped test *can* make. The predicate described a population the
+        ORM cannot construct, so the only reachable statement about it was a
+        statement about the source text.
         """
         from sqlalchemy import text
 
-        market, outcome = await _seed_market(db, is_winner=None)
+        _, outcome = await _seed_market(db, is_winner=None)
         await db.commit()
 
-        seeded = (
+        stored = (
             await db.execute(
                 text("SELECT is_winner FROM futures_outcomes WHERE id = :oid"),
                 {"oid": outcome.id},
             )
         ).scalar()
-        assert seeded is None
+        assert stored is False, (
+            "explicit None must be coerced to False by the column default — if "
+            "this ever returns None the column has become genuinely nullable and "
+            "the writer's predicate needs re-deciding"
+        )
 
-        production_shape = (
+    async def test_the_old_predicate_matched_nothing_and_the_new_one_matches_the_work(
+        self, db
+    ):
+        """The production census (0 NULL / 10,762 FALSE / 42 TRUE), reproduced in CI.
+
+        This is the assertion that would have caught #2199 before deploy, and it
+        is worth stating as a comparison rather than two separate counts: on the
+        very same rows, the old predicate selects **nothing** and the new one
+        selects **exactly the unsettled work**. No mocking, no source text — two
+        queries against real rows written the way production writes them.
+        """
+        from sqlalchemy import text
+        from app.models.models import FuturesOutcome
+
+        market, _ = await _seed_market(db, is_winner=False, external_id="ALC")
+        db.add(
+            FuturesOutcome(
+                market_id=market.id, external_id="SIN", name="SIN", is_winner=True
+            )
+        )
+        await db.commit()
+
+        async def _count(predicate: str) -> int:
+            return (
+                await db.execute(
+                    text(
+                        "SELECT COUNT(*) FROM futures_outcomes "
+                        f"WHERE market_id = :mid AND {predicate}"
+                    ),
+                    {"mid": market.id},
+                )
+            ).scalar()
+
+        assert await _count("is_winner IS NULL") == 0, (
+            "the shipped predicate — it matches nothing, which is the defect"
+        )
+        assert await _count("is_winner IS NOT TRUE") == 1, (
+            "the fix — exactly the one unsettled outcome, settled sibling excluded"
+        )
+
+    async def test_is_not_true_loses_nothing_the_old_predicate_would_have_found(
+        self, db
+    ):
+        """`IS NOT TRUE` must be a strict superset of `IS NULL`, not a swap.
+
+        Production's `futures_outcomes.is_winner` is `is_nullable = YES` with a
+        column default of `false` (checked against the live schema), so a genuine
+        NULL is *physically* storable even though no writer produces one. If one
+        ever appears — a raw backfill, a migration, a future writer — it means
+        "not settled", and the refresher must still price it. A fix that merely
+        moved the blind spot from FALSE to NULL would not be a fix.
+
+        Asserted as a truth table rather than by inserting a NULL row, because
+        the two schemas disagree about whether that row can exist: production is
+        built by Alembic and permits NULL, while this test database is built by
+        `Base.metadata.create_all`, where the non-Optional `Mapped[bool]`
+        annotation renders the column NOT NULL. A test that inserted NULL would
+        pass or error depending on which schema it met, which is not a property
+        worth asserting. The three-valued semantics are the same either way and
+        are what the predicate actually rests on.
+        """
+        from sqlalchemy import text
+
+        row = (
             await db.execute(
                 text(
-                    "SELECT COUNT(*) FROM futures_outcomes "
-                    "WHERE market_id = :mid AND is_winner IS NULL"
-                ),
-                {"mid": market.id},
+                    "SELECT (NULL::boolean IS NOT TRUE),  (NULL::boolean IS NULL), "
+                    "       (false IS NOT TRUE),          (false IS NULL), "
+                    "       (true IS NOT TRUE),           (true IS NULL)"
+                )
             )
-        ).scalar()
-        assert production_shape == 1, (
-            "this fixture produces the ONE row shape production never has — "
-            "which is exactly how `is_winner IS NULL` read green for a writer "
-            "that could not write"
-        )
+        ).first()
+        null_not_true, null_is_null, false_not_true, false_is_null, true_not_true, _ = row
+
+        # The superset: everything `IS NULL` admits, `IS NOT TRUE` also admits.
+        assert null_is_null is True and null_not_true is True
+
+        # The rows production actually has — admitted by the fix, invisible to the
+        # shipped predicate. This single line is the whole of #2199.
+        assert false_is_null is False and false_not_true is True
+
+        # And the refusal that must survive the widening (gotcha #21).
+        assert true_not_true is False
 
     async def test_the_model_default_is_false_not_null(self, db):
         """The fact the whole defect rests on, pinned where a schema change trips it.
