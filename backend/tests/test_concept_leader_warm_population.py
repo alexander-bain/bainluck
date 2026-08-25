@@ -620,9 +620,35 @@ async def test_the_same_page_with_a_cold_cache_is_the_incident_and_is_all_suppre
     ):
         cards = await feed_mod._score_event_concepts(None, now, None)
 
-    assert len(cards) == 1
-    assert "leader" not in cards[0]["data"]
-    assert not feed_item_is_renderable(cards[0]), (
+    # Q407 Item 3 (Alex directive, 2026-08-24): the leaderless card is now
+    # suppressed AT THE SERVER, so the cold-cache page is empty rather than full
+    # of cards only the clients throw away. Before the gate this asserted
+    # `len(cards) == 1` + `not feed_item_is_renderable(cards[0])`.
+    assert cards == [], (
+        "a concept whose leader cannot be resolved must not reach the page at "
+        f"all — the server gate is missing or regressed. Emitted: "
+        f"{[c['data']['key'] for c in cards]}"
+    )
+
+    # The non-vacuity control this test exists for is UNCHANGED in substance: the
+    # suppression predicate must still be able to SEE a leaderless card. It just
+    # can no longer be handed one by the route, so it is handed the shape the
+    # route used to emit. If this ever passes, the surfaces changed and the
+    # alarm's mirror is stale — which is exactly what the original assertion
+    # guarded, and the reason it is kept rather than deleted with the card.
+    leaderless_shape = {
+        "type": "concept",
+        "score": 40,
+        "data": {
+            "key": VUELTA_KEY,
+            "name": "Vuelta",
+            "domain": "cycling",
+            "status": "live",
+            "entry_count": VUELTA_FIELD_SIZE,
+            "marquee_whathit": False,
+        },
+    }
+    assert not feed_item_is_renderable(leaderless_shape), (
         "a leaderless concept card must be suppressed — if this renders, the "
         "surfaces changed and the alarm's mirror is stale"
     )

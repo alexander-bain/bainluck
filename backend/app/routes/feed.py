@@ -8494,6 +8494,35 @@ async def _score_event_concepts(
             if _is_whathit
             else await _resolve_concept_leader(db, c["key"])
         )
+        # Q407 Item 3 — a card that cannot show a probability does not ship.
+        #
+        # Both clients already refuse this card: `DiscoverViewModel.suppressionReason`
+        # and `feedItemSuppressionReason` (discover/utils.ts) each return
+        # `empty_concept` for a concept with no usable leader and no nameable
+        # result. The SERVER had no such gate, so it kept serving them — and a card
+        # both surfaces drop is not a harmless no-op, it is a page slot spent on
+        # nothing. Measured on production 2026-08-24 at `limit=50&offset=50`:
+        # `event:ufc:26aug25` ("Mario Piazzon vs Guilherme Uriel") shipped at score
+        # 54 with no `leader`, `marquee_whathit: false` and `entry_count: 0` — a
+        # bare tile carrying a name and "5 fights on the card", ranked third on its
+        # page. Dropping it here lets the slot refill with a card that can answer
+        # something, which is the whole point of the gate.
+        #
+        # The arms mirror the client predicate exactly, in the same order and for
+        # the same reason: the settled arm is FIRST so "settled means settled"
+        # holds (a card with a result leads with the result, never with a
+        # probability that is now history), and the WHAT-HIT arm admits the card
+        # only when it can NAME the result — `_resolve_concept_champion` returns
+        # None for an absent or ambiguous crown by design, and a settled concept
+        # that cannot say what happened is the same empty envelope as an unsettled
+        # one that cannot say what is likely.
+        _concept_can_render = bool(_leader) or bool(
+            _is_whathit
+            and _champion
+            and (_champion.get("winner") or _champion.get("result_summary"))
+        )
+        if not _concept_can_render:
+            continue
         feed_items.append(
             {
                 "type": "concept",

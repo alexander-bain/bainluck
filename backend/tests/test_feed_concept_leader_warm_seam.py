@@ -355,12 +355,27 @@ class TestFeedToResolverToWarmedKey:
     async def test_the_card_falls_back_honestly_when_nothing_is_warm(
         self, warm_cache, one_concept
     ):
-        # Nothing written at all: the card still ships, without a fabricated
-        # probability (the L2-159 contract).
+        # Nothing written at all.
+        #
+        # Q407 Item 3 (Alex directive, 2026-08-24) CHANGED this contract. It used
+        # to read "the card still ships, without a fabricated probability (the
+        # L2-159 contract)" — ship it honestly rather than invent a number. That
+        # half still holds and always will: nothing here fabricates anything.
+        #
+        # What changed is the other half. L2-159 predates the fail-closed
+        # suppression rules (#1486 / #1935), under which BOTH surfaces return
+        # `empty_concept` for exactly this card and drop it. So "ships honestly"
+        # had quietly stopped meaning "reaches a reader" and started meaning
+        # "occupies a page slot on the way to being discarded". The directive
+        # settles it: *a card that cannot show a probability does not ship to the
+        # feed*. Honest is still honest — it is now honest one layer earlier,
+        # where the freed slot can be refilled by a card that can answer
+        # something.
         cards = await self._cards(one_concept)
-        assert len(cards) == 1
-        assert cards[0]["data"].get("leader") is None
-        assert cards[0]["data"]["entry_count"] == 30
+        assert cards == [], (
+            "with nothing warm the concept cannot show a probability, so it must "
+            f"not ship. Emitted: {[c['data']['key'] for c in cards]}"
+        )
 
     async def test_the_card_recovers_across_a_full_warm_cadence(
         self, warm_cache, one_concept
