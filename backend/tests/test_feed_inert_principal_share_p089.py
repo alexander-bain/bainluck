@@ -346,6 +346,48 @@ async def test_an_anonymous_request_does_not_read_a_second_key(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_kill_switch_turns_the_share_off(monkeypatch):
+    """`FEED_INERT_PRINCIPAL_SHARE=0` must restore the pre-LAT-P089 behaviour.
+
+    The correctness argument is an EQUALITY argument. If it is ever wrong, the
+    symptom is identified users receiving anonymous content, and an operator
+    lever has to be faster than a deploy cycle.
+    """
+    monkeypatch.setenv("FEED_INERT_PRINCIPAL_SHARE", "0")
+    redis = _SeededRedis({f"{SHARED_KEY}:stale": json.dumps(WARMED_PAYLOAD)})
+
+    resp, built = await _drive_feed(
+        redis=redis, monkeypatch=monkeypatch, headers={"x-session-id": _SESSION_ID}
+    )
+
+    assert resp.status_code == 200
+    assert built, "with the switch off, an inert principal must build as before"
+    assert resp.headers["x-feed-cache"] == "miss"
+    assert f"{SHARED_KEY}:stale" not in redis.gets[1:]
+
+
+def test_an_unrecognised_kill_switch_value_leaves_the_share_ON(monkeypatch):
+    """A typo'd config value must not silently switch off a latency fix.
+
+    Unset and unrecognised both mean ENABLED; only the explicit off-values turn
+    it off. Otherwise `FEED_INERT_PRINCIPAL_SHARE=disabled` reads as working
+    config, does nothing, and the cold builds come back with no signal.
+    """
+    from app.utils.feed_cache import inert_principal_share_enabled
+
+    monkeypatch.delenv("FEED_INERT_PRINCIPAL_SHARE", raising=False)
+    assert inert_principal_share_enabled() is True
+
+    for off in ("0", "false", "FALSE", " off ", "No"):
+        monkeypatch.setenv("FEED_INERT_PRINCIPAL_SHARE", off)
+        assert inert_principal_share_enabled() is False, off
+
+    for on in ("1", "true", "yes", "disabled", ""):
+        monkeypatch.setenv("FEED_INERT_PRINCIPAL_SHARE", on)
+        assert inert_principal_share_enabled() is True, on
+
+
+@pytest.mark.asyncio
 async def test_a_personalized_session_never_reads_the_shared_entry(monkeypatch):
     """The other direction, and the one that would be a product bug.
 

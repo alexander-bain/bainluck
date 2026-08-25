@@ -129,6 +129,7 @@ from app.utils.feed_cache import (
     build_feed_cache_metadata,
     feed_response_cache_key,
     feed_response_cache_ttl,
+    inert_principal_share_enabled,
 )
 from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
@@ -2199,11 +2200,17 @@ async def get_feed(
         # cannot be compared makes the check fail CLOSED (build as before).
         # `tests/test_feed_inert_principal_share_p089.py` pins that premise
         # directly so the shortcut cannot outlive its own justification.
+        #
+        # `FEED_INERT_PRINCIPAL_SHARE=0` disables the whole block process-wide.
+        # The correctness argument above is sound but it is an EQUALITY
+        # argument, and the operator lever for "identified users are getting
+        # anonymous content" has to be faster than a deploy cycle.
         if (
             _cache_key
             and _cache_shape is not None
             and _shared_redis is not None
             and (feed_user or feed_session_id)
+            and inert_principal_share_enabled()
             and ctx == PersonalizationContext()
         ):
             _shared_cache_key = feed_response_cache_key(
