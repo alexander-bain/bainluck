@@ -43,13 +43,22 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from time import monotonic as _monotonic
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Sequence
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.settlement_probe import make_client, probe as default_probe
+from app.services.settlement_probe import (
+    RatePacer,
+    install_deadline,
+    install_pacer,
+    make_client,
+    probe as default_probe,
+    reset_deadline,
+    reset_pacer,
+)
 from app.utils.kalshi_retention import (
     CAPTURE_PLANNING_AGE_DAYS,
     days_until_purge,
@@ -303,11 +312,21 @@ async def run_sweep(
     source: str = SWEEP_SOURCE,
     concurrency: int = DEFAULT_CONCURRENCY,
     probe_fn: ProbeFn | None = None,
+    deadline_s: float | None = None,
 ) -> SweepReport:
     """Run one sweep. Safe to re-run: same ``sweep_id`` resumes, never duplicates.
 
     ``probe_fn`` is injectable so the orchestration — planning, idempotency, the
     verdict — is testable without a network. The default issues real requests.
+
+    ``deadline_s`` bounds the WHOLE probe phase in wall-clock seconds (#2174).
+    Nothing else bounds it: this runner has no Celery task wrapping it, so there
+    is no ``soft_time_limit`` to fall back on, and a sustained 429 stretch can
+    otherwise spend 25 s of capped backoff per request. Past the deadline the
+    probe stops retrying and answers ``RATE_LIMITED``/``TRANSPORT_ERROR`` — both
+    ``is_retryable()``, so the rows stay in the cohort and the resumable
+    ``sweep_id`` picks them up next pass. Left ``None``, behaviour is unbounded
+    in time but still capped per request.
     """
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
@@ -400,6 +419,23 @@ async def run_sweep(
     # drained the terminal bucket first rather than a random sample of it.
     semaphore = asyncio.Semaphore(max(1, concurrency))
 
+    # #2174: THE SEMAPHORE ABOVE IS NOT A RATE LIMIT.
+    #
+    # It bounds how many probes are in flight. Under sustained 429 — which Kalshi
+    # answers in ~20 ms — that is not a bound on requests per second, so the sweep
+    # keeps storming a source that has already said stop. C-KALSHI-RETENTION-1
+    # measured the bill: 1,317 of 3,095 probes (42.6%) came back rate-limited.
+    #
+    # This runner does NOT go through ``probe_many`` — it has its own loop, right
+    # here — so installing the pacer in ``probe_many`` alone would have left the
+    # one path production actually takes completely unbraked. The pacer is shared
+    # across the whole sweep so one 429 slows every worker, and it costs nothing
+    # while Kalshi is answering.
+    pacer_token = install_pacer(RatePacer())
+    deadline_token = install_deadline(
+        None if deadline_s is None else _monotonic() + deadline_s
+    )
+
     async def _probe_one(candidate: Candidate) -> tuple[Candidate, ProbeOutcome | None]:
         async with semaphore:
             try:
@@ -472,6 +508,8 @@ async def run_sweep(
                     report.by_disposition[key] = report.by_disposition.get(key, 0) + 1
             report.write_collisions += collisions
     finally:
+        reset_pacer(pacer_token)
+        reset_deadline(deadline_token)
         if probe_client is not None:
             await probe_client.aclose()
 
