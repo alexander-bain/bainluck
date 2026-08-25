@@ -581,8 +581,17 @@ async def _poll_kalshi_markets():
             # confirmed against the live Kalshi API + prod DB). Reorder so any
             # event whose event_ticker is NOT already in the DB is upserted
             # FIRST; a deadline-truncated run then still creates every new market
-            # it fetched. Existing rows are only updates (kalshi_ws + live poll
-            # keep them fresh anyway), so deferring them is safe.
+            # it fetched.
+            #
+            # This comment used to end "Existing rows are only updates (kalshi_ws
+            # + live poll keep them fresh anyway), so deferring them is safe."
+            # That justification is FALSE and #2199 measured it: 900 of 907
+            # tier-1 high-value futures were price-dark, some for 32 days,
+            # because price capture rode on a bounded discovery scan rather than
+            # on a channel that covers every existing row. The reordering is
+            # still right — a truncated run must not lose CREATES — but it is
+            # right on its own terms, and deferred updates are a real cost paid,
+            # not a free lunch some other channel picks up.
             fetched_tickers = [e.event_ticker for e in events if e.event_ticker]
             existing_tickers: set = set()
             if fetched_tickers:
