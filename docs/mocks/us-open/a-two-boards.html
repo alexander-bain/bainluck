@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A — Two Boards — /tournaments/us-open mock</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --surface-page:#f7f8fa; --surface-card:#ffffff; --surface-border:#e6e8ec;
+  --text-primary:#0f1115; --text-secondary:#5b6472; --text-muted:#98a1af;
+  --accent-brand:#1a56db; --accent-live:#0f9d58; --accent-danger:#d93025;
+  --stale:#b26a00; --stale-bg:#fff6e5;
+}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--surface-page);color:var(--text-primary);
+  font:400 15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",Segoe UI,Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.phone{width:390px;margin:0 auto;background:var(--surface-page);min-height:100vh;
+  border-left:1px solid var(--surface-border);border-right:1px solid var(--surface-border)}
+.pad{padding:0 16px}
+header.hero{padding:18px 16px 14px;background:var(--surface-card);
+  border-bottom:1px solid var(--surface-border)}
+h1{font-size:24px;line-height:1.15;letter-spacing:-.02em;font-weight:700}
+.sub{color:var(--text-secondary);font-size:13px;margin-top:3px}
+.section-title{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--text-muted);margin:22px 0 8px}
+.card{background:var(--surface-card);border:1px solid var(--surface-border);border-radius:14px;
+  overflow:hidden}
+
+/* Draw toggle */
+.toggle{display:flex;gap:6px;background:#eef0f4;padding:4px;border-radius:11px;margin-top:14px}
+.toggle button{flex:1;border:0;background:transparent;padding:8px 0;border-radius:8px;
+  font:600 14px inherit;color:var(--text-secondary);cursor:pointer}
+.toggle button[aria-selected=true]{background:var(--surface-card);color:var(--text-primary);
+  box-shadow:0 1px 2px rgba(15,17,21,.10)}
+
+/* Board rows */
+.row{display:grid;grid-template-columns:22px 1fr 62px 52px;align-items:center;gap:10px;
+  padding:11px 14px;border-top:1px solid var(--surface-border)}
+.row:first-child{border-top:0}
+.rank{font-size:12px;color:var(--text-muted);font-variant-numeric:tabular-nums;text-align:right}
+.who{min-width:0}
+.nm{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta{font-size:11px;color:var(--text-muted);margin-top:1px}
+/* THE BLEND: the one number. Everything else is quieter by construction. */
+.blend{font-size:19px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em}
+.lead .blend{font-size:26px}
+.spark{width:52px;height:26px;display:block}
+.delta{font-size:11px;font-variant-numeric:tabular-nums;text-align:right}
+.up{color:var(--accent-live)} .dn{color:var(--accent-danger)} .flat{color:var(--text-muted)}
+/* Sources: present, deliberately faint, never a comparison surface. */
+.srcs{font-size:10.5px;color:var(--text-muted);margin-top:2px;letter-spacing:.01em}
+
+/* Honest states */
+.stale{background:var(--stale-bg);color:var(--stale);font-size:11.5px;padding:9px 14px;
+  display:flex;gap:7px;align-items:flex-start;border-top:1px solid #f2e2c2}
+.stale b{font-weight:700}
+.empty{padding:22px 16px;text-align:center;color:var(--text-secondary);font-size:13.5px}
+.empty .big{font-weight:650;color:var(--text-primary);font-size:15px;margin-bottom:4px}
+
+/* Slate */
+.match{padding:12px 14px;border-top:1px solid var(--surface-border)}
+.match:first-child{border-top:0}
+.mhead{display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);
+  margin-bottom:7px}
+.side{display:flex;align-items:center;gap:9px;padding:3px 0}
+.side .nm{flex:1;font-weight:600}
+.side .p{font-weight:700;font-variant-numeric:tabular-nums;width:46px;text-align:right}
+.side.fav .p{color:var(--accent-brand)}
+.bar{height:4px;border-radius:2px;background:#eceef2;overflow:hidden;margin-top:7px}
+.bar i{display:block;height:100%;background:var(--accent-brand)}
+
+/* Bracket slot */
+.bracket-slot{border:1.5px dashed #cdd3dc;border-radius:14px;padding:18px 16px;text-align:center;
+  background:#fbfcfd}
+.bracket-slot .big{font-weight:650;margin-bottom:3px}
+.bracket-slot .sm{font-size:12.5px;color:var(--text-secondary)}
+.railwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px}
+.rail{display:flex;gap:10px;min-width:min-content}
+.rail .card{width:150px;flex:0 0 auto;padding:12px}
+
+.footer{padding:26px 16px 40px;color:var(--text-muted);font-size:11.5px;line-height:1.5}
+.tabs{display:flex;border-bottom:1px solid var(--surface-border);background:var(--surface-card)}
+.tabs button{flex:1;border:0;background:transparent;padding:13px 0;font:600 13.5px inherit;
+  color:var(--text-muted);border-bottom:2px solid transparent;cursor:pointer}
+.tabs button[aria-selected=true]{color:var(--text-primary);border-bottom-color:var(--text-primary)}
+.note{max-width:390px;margin:0 auto;padding:14px 16px;font-size:12px;color:var(--text-secondary);
+  background:#eef1f6;border-bottom:1px solid var(--surface-border)}
+.note b{color:var(--text-primary)}
+</style></head>
+<body>
+<div class="note"><b>A — Two Boards</b> — the championship is the page; one draw at a time, full depth, slate second.</div>
+<div class="phone">
+<header class="hero">
+  <h1>US Open 2026</h1>
+  <div class="sub">Main draws begin Sunday &middot; Flushing Meadows</div>
+  <div class="toggle" role="tablist">
+    <button role="tab" aria-selected="true">Men</button>
+    <button role="tab" aria-selected="false">Women</button>
+  </div>
+</header>
+<div class="pad">
+  <div class="section-title">Who wins the title</div>
+  <div class="card"><div class="stale"><span>&#9888;</span><span><b>Prices paused.</b> The championship boards last updated 8 days ago — we&rsquo;re showing the last confirmed reading, not a live price. Match markets below are live.</span></div><div class="row lead"><div class="rank">1</div><div class="who"><div class="nm">Jannik Sinner</div><div class="srcs">kalshi 52.5% · polymarket 52.5%</div></div><div><div class="blend">52.5%</div><div class="delta dn">-4.5</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,11.6 2.0,12.4 4.0,12.3 6.0,12.3 8.0,12.3 10.0,12.3 12.0,12.3 14.0,12.3 16.0,12.5 18.0,12.4 20.0,12.5 22.0,12.7 24.0,12.5 26.0,12.4 28.0,12.4 30.0,12.3 32.0,12.5 34.0,12.3 36.0,12.3 38.0,12.5 40.0,12.3 42.0,11.0 44.0,11.4 46.0,11.9 48.0,11.9 50.0,12.3 52.0,12.8" fill="none" stroke="#d93025" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div><div class="row"><div class="rank">2</div><div class="who"><div class="nm">Carlos Alcaraz</div><div class="srcs">kalshi 23.5% · polymarket 25%</div></div><div><div class="blend">24.2%</div><div class="delta dn">-9.1</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,20.0 2.0,20.1 4.0,20.2 6.0,20.3 8.0,20.3 10.0,19.5 12.0,19.7 14.0,20.0 16.0,19.8 18.0,20.2 20.0,20.3 22.0,20.5 24.0,20.5 26.0,20.4 28.0,20.3 30.0,20.2 32.0,20.4 34.0,20.3 36.0,20.3 38.0,20.1 40.0,20.2 42.0,23.3 44.0,23.1 46.0,22.6 48.0,22.5 50.0,22.2 52.0,22.4" fill="none" stroke="#d93025" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div><div class="row"><div class="rank">3</div><div class="who"><div class="nm">Alexander Zverev</div><div class="srcs">kalshi 8.5% · polymarket 7.5%</div></div><div><div class="blend">8.0%</div><div class="delta up">+5.3</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,23.9 2.0,24.0 4.0,23.9 6.0,24.0 8.0,24.0 10.0,24.0 12.0,24.0 14.0,24.0 16.0,24.1 18.0,23.9 20.0,24.1 22.0,24.1 24.0,24.1 26.0,24.1 28.0,24.1 30.0,24.1 32.0,24.1 34.0,24.1 36.0,24.1 38.0,24.1 40.0,24.1 42.0,23.4 44.0,23.2 46.0,23.2 48.0,23.4 50.0,23.2 52.0,22.5" fill="none" stroke="#0f9d58" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div><div class="row"><div class="rank">4</div><div class="who"><div class="nm">Novak Djokovic</div><div class="srcs">kalshi 5.5% · polymarket 3.8%</div></div><div><div class="blend">4.6%</div><div class="delta up">+2.1</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,24.9 2.0,24.9 4.0,24.9 6.0,24.9 8.0,24.9 10.0,25.0 12.0,25.0 14.0,25.0 16.0,25.0 18.0,24.8 20.0,25.0 22.0,25.0 24.0,25.0 26.0,25.0 28.0,25.0 30.0,25.0 32.0,25.0 34.0,25.0 36.0,25.0 38.0,25.0 40.0,25.0 42.0,24.8 44.0,24.7 46.0,24.7 48.0,24.8 50.0,24.7 52.0,24.3" fill="none" stroke="#0f9d58" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div><div class="row"><div class="rank">5</div><div class="who"><div class="nm">Ben Shelton</div><div class="srcs">kalshi 2.5% · polymarket 1.5%</div></div><div><div class="blend">2.0%</div><div class="delta flat">-0.1</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,25.4 2.0,25.5 4.0,25.6 6.0,25.6 8.0,25.6 10.0,25.6 12.0,25.6 14.0,25.6 16.0,25.6 18.0,25.5 20.0,25.6 22.0,25.6 24.0,25.6 26.0,25.6 28.0,25.6 30.0,25.6 32.0,25.6 34.0,25.6 36.0,25.6 38.0,25.6 40.0,25.6 42.0,25.6 44.0,25.6 46.0,25.5 48.0,25.4 50.0,25.5 52.0,25.5" fill="none" stroke="#d93025" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div><div class="row"><div class="rank">6</div><div class="who"><div class="nm">Rafael Jodar</div><div class="srcs">kalshi 2% <span style="color:#b26a00">1 source</span></div></div><div><div class="blend">2.0%</div><div class="delta up">+0.5</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,25.6 52.0,25.5" fill="none" stroke="#0f9d58" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div><div class="row"><div class="rank">7</div><div class="who"><div class="nm">Taylor Fritz</div><div class="srcs">kalshi 2% · polymarket 1.5%</div></div><div><div class="blend">1.7%</div><div class="delta up">+1.8</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,25.6 2.0,25.5 4.0,25.6 6.0,25.6 8.0,25.6 10.0,25.6 12.0,25.6 14.0,25.6 16.0,25.7 18.0,25.6 20.0,25.6 22.0,25.6 24.0,25.6 26.0,25.6 28.0,25.3 30.0,25.4 32.0,25.4 34.0,25.3 36.0,25.3 38.0,25.4 40.0,25.4 42.0,25.4 44.0,25.3 46.0,25.3 48.0,25.2 50.0,25.2 52.0,25.1" fill="none" stroke="#0f9d58" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div><div class="row"><div class="rank">8</div><div class="who"><div class="nm">Daniil Medvedev</div><div class="srcs">kalshi 1.5% · polymarket 1.4%</div></div><div><div class="blend">1.4%</div><div class="delta up">+0.7</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,25.6 2.0,25.5 4.0,25.5 6.0,25.5 8.0,25.5 10.0,25.6 12.0,25.6 14.0,25.6 16.0,25.6 18.0,25.6 20.0,25.6 22.0,25.6 24.0,25.7 26.0,25.7 28.0,25.7 30.0,25.6 32.0,25.6 34.0,25.6 36.0,25.6 38.0,25.6 40.0,25.6 42.0,25.6 44.0,25.5 46.0,25.5 48.0,25.5 50.0,25.5 52.0,25.5" fill="none" stroke="#0f9d58" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div><div class="row"><div class="rank">9</div><div class="who"><div class="nm">Felix Auger-Aliassime</div><div class="srcs">kalshi 1.5% · polymarket 0.9%</div></div><div><div class="blend">1.2%</div><div class="delta flat">+0.3</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,25.7 1.6,25.7 3.2,25.7 4.7,25.7 6.3,25.7 7.9,25.7 9.5,25.7 11.0,25.7 12.6,25.7 14.2,25.7 15.8,25.7 17.3,25.7 18.9,25.7 20.5,25.6 22.1,25.7 23.6,25.7 25.2,25.7 26.8,25.7 28.4,25.7 29.9,25.7 31.5,25.7 33.1,25.7 34.7,25.6 36.2,25.7 37.8,25.7 39.4,25.7 41.0,25.7 42.5,25.6 44.1,25.6 45.7,25.6 47.3,25.6 48.8,25.6 50.4,25.6 52.0,25.6" fill="none" stroke="#0f9d58" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div><div class="row"><div class="rank">10</div><div class="who"><div class="nm">Jack Draper</div><div class="srcs">kalshi 1.5% · polymarket 0.9%</div></div><div><div class="blend">1.2%</div><div class="delta dn">-0.5</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,25.8 2.0,25.7 4.0,25.7 6.0,25.7 8.0,25.7 10.0,25.8 12.0,25.7 14.0,25.8 16.0,25.8 18.0,25.7 20.0,25.8 22.0,25.8 24.0,25.8 26.0,25.8 28.0,25.9 30.0,25.9 32.0,25.9 34.0,25.8 36.0,25.8 38.0,25.8 40.0,25.8 42.0,25.9 44.0,25.9 46.0,25.9 48.0,25.9 50.0,25.9 52.0,25.9" fill="none" stroke="#d93025" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div><div class="row"><div class="rank">11</div><div class="who"><div class="nm">Joao Fonseca</div><div class="srcs">kalshi 1.5% · polymarket 0.9%</div></div><div><div class="blend">1.2%</div><div class="delta flat">+0.3</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,25.7 1.6,25.7 3.2,25.7 4.7,25.7 6.3,25.7 7.9,25.7 9.5,25.7 11.0,25.7 12.6,25.7 14.2,25.7 15.8,25.7 17.3,25.7 18.9,25.7 20.5,25.7 22.1,25.7 23.6,25.7 25.2,25.7 26.8,25.7 28.4,25.7 29.9,25.7 31.5,25.7 33.1,25.7 34.7,25.6 36.2,25.6 37.8,25.6 39.4,25.6 41.0,25.7 42.5,25.6 44.1,25.6 45.7,25.6 47.3,25.6 48.8,25.6 50.4,25.6 52.0,25.6" fill="none" stroke="#0f9d58" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div><div class="row"><div class="rank">12</div><div class="who"><div class="nm">Jakub Mensik</div><div class="srcs">kalshi 1.5% · polymarket 0.8%</div></div><div><div class="blend">1.1%</div><div class="delta flat">+0.0</div></div><svg class="spark" viewBox="0 0 52 26" preserveAspectRatio="none" aria-hidden="true"><polyline points="0.0,25.7 2.0,25.8 4.0,25.8 6.0,25.8 8.0,25.7 10.0,25.8 12.0,25.8 14.0,25.8 16.0,25.8 18.0,25.7 20.0,25.8 22.0,25.7 24.0,25.7 26.0,25.7 28.0,25.7 30.0,25.7 32.0,25.8 34.0,25.8 36.0,25.8 38.0,25.8 40.0,25.8 42.0,25.8 44.0,25.8 46.0,25.7 48.0,25.7 50.0,25.7 52.0,25.7" fill="none" stroke="#0f9d58" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div></div>
+  <div class="section-title">Today&rsquo;s matches</div>
+  <div class="card"><div class="match"><div class="mhead"><span>Women &middot; Qualifying</span><span>3:30 PM</span></div><div class="side fav"><span class="nm">Dominika Salkova</span><span class="p">66.5%</span></div><div class="side"><span class="nm">Akasha Urhobo</span><span class="p">33.5%</span></div><div class="bar"><i style="width:66.5%"></i></div></div><div class="match"><div class="mhead"><span>Women &middot; Qualifying</span><span>11:00 AM</span></div><div class="side fav"><span class="nm">Elena Pridankina</span><span class="p">50.5%</span></div><div class="side"><span class="nm">Aliona Falei</span><span class="p">49.5%</span></div><div class="bar"><i style="width:50.5%"></i></div></div><div class="match"><div class="mhead"><span>Men &middot; Qualifying</span><span>3:30 PM</span></div><div class="side"><span class="nm">Lukas Neumayer</span><span class="p">47.5%</span></div><div class="side fav"><span class="nm">Oliver Crawford</span><span class="p">52.5%</span></div><div class="bar"><i style="width:47.5%"></i></div></div><div class="match"><div class="mhead"><span>Men &middot; Qualifying</span><span>2:00 PM</span></div><div class="side fav"><span class="nm">Joel Schwaerzler</span><span class="p">52.5%</span></div><div class="side"><span class="nm">Gustavo Heide</span><span class="p">47.5%</span></div><div class="bar"><i style="width:52.5%"></i></div></div></div>
+  <div class="section-title">Bracket</div>
+  <div class="bracket-slot">
+    <div class="big">Draw not released</div>
+    <div class="sm">The bracket appears here Thursday, when the draw is made.</div>
+  </div>
+</div>
+<div class="footer">Mock rendered from the committed US Open register
+(<code>backend/data/tournament_registers/us-open-2026.json</code>). Blends, trend lines and
+slate prices are real production readings from 2026-08-25. Probabilities only; trend lines are
+unsmoothed on a fixed 0&ndash;100 axis.</div>
+</div></body></html>
