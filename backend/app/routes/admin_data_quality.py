@@ -1682,7 +1682,7 @@ _CALIBRATION_AUDIT_POPULATION_SQL = """
         -- vm_id. Every neighbouring aggregate in this very chain is
         -- source-scoped on purpose — `group_sizes`/`event_sizes` GROUP BY
         -- `(x, source)`, `virtual_market` joins `AND gs.source = mi.source`,
-        -- `vm_stats` GROUPs BY `vm.source`, and `clean_vms` is joined at :1684
+        -- `vm_stats` GROUPs BY `vm.source`, and `clean_vms` is joined at line 1684
         -- on `cv.vm_id = vm.vm_id AND cv.source = vm.source`. These two were the
         -- exception, and the exception was the defect: a modal price detected
         -- among one source's legs DELETED the other source's legs sitting at the

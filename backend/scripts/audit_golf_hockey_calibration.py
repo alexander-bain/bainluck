@@ -170,7 +170,7 @@ ranked_outcomes AS (
 -- so two sources with >=3 resolved markets on one event share a vm_id — and
 -- every neighbouring aggregate here is source-scoped on purpose (`group_sizes`
 -- and `event_sizes` GROUP BY `(x, source)`; `virtual_market` joins
--- `AND gs.source = mi.source`; `clean_vms` is joined at :156 on
+-- `AND gs.source = mi.source`; `clean_vms` is joined at line 156 on
 -- `cv.vm_id = vm.vm_id AND cv.source = vm.source`). These two were the
 -- exception, and the exception was the defect.
 --
