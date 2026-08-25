@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.utils.kalshi_retention import AT_RISK_AGE_DAYS, PROVABLY_PURGED_AGE_DAYS
 from app.utils.kalshi_resolution_date_provenance import (
     REPAIRABLE_VERDICTS,
     VERDICT_CONSISTENT,
@@ -193,12 +194,35 @@ def test_winner_detection_uses_real_legs_not_a_status_result_cross_product():
 
 
 def test_retention_band_uses_the_measured_constants():
+    """The boundary is the CONSTANT, and the constant is the measurement.
+
+    2026-08-24 (C-KALSHI-RETENTION-1, BLOCK): this test used to pin the lower edge at
+    a literal 74 — ``OBSERVED_PRESENT_MAX_AGE_DAYS``, which the re-measurement proved
+    is a *survivor observation* and not a floor. Confirmed purges start at **47** days,
+    so a 73.9-day row is already ``at_risk`` and every assertion below the old edge was
+    asserting the opposite of the truth.
+
+    Two halves on purpose. Reading the boundary from the constant is what stops the
+    test rotting the next time the probe re-measures; pinning the constant to the
+    measured literal is what stops it going vacuous, which a constants-only test
+    would (it would pass for any value at all, including the 74 that was wrong).
+    """
+    # Half 1 — the constants ARE the measurement. Change these only with a probe run.
+    assert AT_RISK_AGE_DAYS == 47, "youngest CONFIRMED purge, C-KALSHI-RETENTION-1"
+    assert PROVABLY_PURGED_AGE_DAYS == 86, "upper skip-work bound; not refuted"
+
+    # Half 2 — the banding logic reads the constants and gets both edges right.
     assert retention_band(0) == "reachable"
-    assert retention_band(73.9) == "reachable"
-    assert retention_band(74) == "at_risk"
-    assert retention_band(85.9) == "at_risk"
-    assert retention_band(86) == "provably_purged"
+    assert retention_band(AT_RISK_AGE_DAYS - 0.1) == "reachable"
+    assert retention_band(AT_RISK_AGE_DAYS) == "at_risk"
+    assert retention_band(PROVABLY_PURGED_AGE_DAYS - 0.1) == "at_risk"
+    assert retention_band(PROVABLY_PURGED_AGE_DAYS) == "provably_purged"
     assert retention_band(1287) == "provably_purged"
+
+    # The specimen that broke the old shape: 68d got the purge response from
+    # KXITFMATCH-26JUN14FONSZA while a 74d sibling was still fully present.
+    # Non-monotonic retention means this row must NOT read as reachable.
+    assert retention_band(68) == "at_risk"
 
 
 def test_banding_shift_counts_the_operational_picture():
@@ -221,15 +245,36 @@ def test_banding_shift_counts_the_operational_picture():
 
 
 def test_days_until_at_risk_warns_before_the_loss():
-    """Max observed settlement age in the sample was 65.9d — ~8 days of headroom."""
-    v = classify_provenance(
+    """The warning line moved 74 -> 47, and this specimen moved with it.
+
+    2026-08-24: the old assertion read ``remaining == approx(8.1)`` and
+    ``0 < remaining < 74`` on the sample's oldest row (65.9d), i.e. it claimed eight
+    days of headroom. Against the measured 47-day confirmed-purge line that row is
+    **18.9 days PAST** the warning, and the old test would have kept certifying
+    headroom that does not exist — the exact failure mode the re-measurement was run
+    to find. Both directions are asserted now, because "warns before the loss" is a
+    claim about the pre-warning case and the old test only ever exercised one row.
+    """
+    # The sample's oldest row: already past the line, and the sign says so.
+    late = classify_provenance(
         evidence=_ev(legs=(VenueLeg("finalized", "no"),), settlement_ts=NOW - timedelta(days=65.9)),
         stored_resolution_date=NOW + timedelta(days=10),
         now=NOW,
     )
-    remaining = days_until_at_risk(v, NOW)
-    assert remaining == pytest.approx(8.1, abs=0.05)
-    assert 0 < remaining < 74
+    remaining_late = days_until_at_risk(late, NOW)
+    assert remaining_late == pytest.approx(AT_RISK_AGE_DAYS - 65.9, abs=0.05)
+    assert remaining_late < 0, "a row past the warning line must report negative headroom"
+
+    # A genuinely pre-warning row: the warning still precedes the loss, which is the
+    # property this test is named for and the old specimen no longer demonstrated.
+    early = classify_provenance(
+        evidence=_ev(legs=(VenueLeg("finalized", "no"),), settlement_ts=NOW - timedelta(days=40)),
+        stored_resolution_date=NOW + timedelta(days=10),
+        now=NOW,
+    )
+    remaining_early = days_until_at_risk(early, NOW)
+    assert remaining_early == pytest.approx(AT_RISK_AGE_DAYS - 40, abs=0.05)
+    assert 0 < remaining_early < PROVABLY_PURGED_AGE_DAYS
 
 
 def test_days_until_at_risk_is_none_without_a_correction():

@@ -568,8 +568,12 @@ async def run_cliff_drain(
 
     Two passes, in this order and deliberately:
 
-    1. **at-risk** (``at_risk_limit``, default ``limit // 4``) — the 74–86 day
-       band, on its own watermark. It goes FIRST because it is the only work
+    1. **at-risk** (``at_risk_limit``, default ``limit // 4``) — the
+       ``AT_RISK_AGE_DAYS``–``PROVABLY_PURGED_AGE_DAYS`` band (47–86 as measured
+       2026-08-24; this docstring said 74–86 until then, and the constants are
+       the authority — gotcha #35 forbids a prose day count precisely because a
+       predicate cannot consume one), on its own watermark. It goes FIRST
+       because it is the only work
        here that cannot be done tomorrow, and because a step promised "later,
        bounded" is a step that never runs (poll_kalshi's empty-event backfill
        is sitting on exactly that promise today).
@@ -1127,7 +1131,12 @@ async def cliff_drain_progress() -> dict[str, Any]:
             "`remaining` counts what is AHEAD of the watermark inside the "
             "retention window. Outcomes behind it were examined, whether or not "
             "they yielded history — that is what makes this a drain and not a "
-            "rescan. `at_risk` is the 74-86d band that expires next; anything "
+            "rescan. `at_risk` is the "
+            f"{AT_RISK_AGE_DAYS}-{PROVABLY_PURGED_AGE_DAYS}d band that expires "
+            "next — read it from `window` above and never from this sentence, "
+            "which is why it is interpolated: it said `74-86d` until the "
+            "2026-08-24 re-measurement moved the lower bound to 47 and left "
+            "this note contradicting the very fields it annotates. Anything "
             "past floor_days is unrecoverable by any rail."
         ),
     }
