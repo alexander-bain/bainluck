@@ -1,0 +1,389 @@
+{
+  "label": "before",
+  "rounds": 5,
+  "expected_index": "ix_futures_name_trgm_open",
+  "forbidden_index": "ix_futures_markets_status",
+  "median_collapse_factor": 0.5,
+  "per_term_regression_factor": 1.5,
+  "terms": {
+    "world series": {
+      "name_ms": [
+        24.606,
+        26.756,
+        22.694,
+        29.817,
+        18.736
+      ],
+      "ctrl_ms": [
+        61.008,
+        53.24,
+        51.304,
+        43.077,
+        52.227
+      ],
+      "name_median_ms": 24.6,
+      "ctrl_median_ms": 52.2,
+      "ratio": 0.471,
+      "name_arm_indexes": [
+        "ix_futures_name_trgm"
+      ],
+      "was_subject": false,
+      "before_ratio": null,
+      "shape_ok": false,
+      "regression_ok": true
+    },
+    "champion": {
+      "name_ms": [
+        2039.012,
+        1988.171,
+        660.507,
+        667.519,
+        1377.159
+      ],
+      "ctrl_ms": [
+        3241.681,
+        1767.571,
+        836.695,
+        922.904,
+        2360.856
+      ],
+      "name_median_ms": 1377.2,
+      "ctrl_median_ms": 1767.6,
+      "ratio": 0.779,
+      "name_arm_indexes": [
+        "ix_futures_markets_status",
+        "ix_futures_name_trgm"
+      ],
+      "was_subject": false,
+      "before_ratio": null,
+      "shape_ok": false,
+      "regression_ok": true
+    },
+    "winner": {
+      "name_ms": [
+        1549.594,
+        1665.076,
+        1586.348,
+        1646.095,
+        1797.716
+      ],
+      "ctrl_ms": [
+        1965.773,
+        2055.271,
+        2138.845,
+        2402.115,
+        2225.61
+      ],
+      "name_median_ms": 1646.1,
+      "ctrl_median_ms": 2138.8,
+      "ratio": 0.77,
+      "name_arm_indexes": [
+        "ix_futures_markets_status",
+        "ix_futures_name_trgm"
+      ],
+      "was_subject": false,
+      "before_ratio": null,
+      "shape_ok": false,
+      "regression_ok": true
+    },
+    "election": {
+      "name_ms": [
+        875.611,
+        876.508,
+        863.709,
+        838.071,
+        780.094
+      ],
+      "ctrl_ms": [
+        58.272,
+        47.928,
+        67.818,
+        93.341,
+        71.236
+      ],
+      "name_median_ms": 863.7,
+      "ctrl_median_ms": 67.8,
+      "ratio": 12.736,
+      "name_arm_indexes": [
+        "ix_futures_markets_status",
+        "ix_futures_name_trgm"
+      ],
+      "was_subject": false,
+      "before_ratio": null,
+      "shape_ok": false,
+      "regression_ok": true
+    },
+    "world cup": {
+      "name_ms": [
+        310.655,
+        275.579,
+        191.81,
+        126.301,
+        112.216
+      ],
+      "ctrl_ms": [
+        32.306,
+        47.656,
+        19.714,
+        15.341,
+        17.24
+      ],
+      "name_median_ms": 191.8,
+      "ctrl_median_ms": 19.7,
+      "ratio": 9.73,
+      "name_arm_indexes": [
+        "ix_futures_name_trgm"
+      ],
+      "was_subject": false,
+      "before_ratio": null,
+      "shape_ok": false,
+      "regression_ok": true
+    },
+    "presidential election": {
+      "name_ms": [
+        64.293,
+        58.367,
+        58.819,
+        60.998,
+        61.467
+      ],
+      "ctrl_ms": [
+        22.656,
+        22.189,
+        38.665,
+        23.264,
+        18.455
+      ],
+      "name_median_ms": 61.0,
+      "ctrl_median_ms": 22.7,
+      "ratio": 2.692,
+      "name_arm_indexes": [
+        "ix_futures_name_trgm"
+      ],
+      "was_subject": false,
+      "before_ratio": null,
+      "shape_ok": false,
+      "regression_ok": true
+    },
+    "super bowl": {
+      "name_ms": [
+        1.892,
+        1.875,
+        2.089,
+        1.913,
+        1.981
+      ],
+      "ctrl_ms": [
+        16.381,
+        12.603,
+        16.562,
+        16.821,
+        23.03
+      ],
+      "name_median_ms": 1.9,
+      "ctrl_median_ms": 16.6,
+      "ratio": 0.116,
+      "name_arm_indexes": [
+        "ix_futures_name_trgm"
+      ],
+      "was_subject": false,
+      "before_ratio": null,
+      "shape_ok": false,
+      "regression_ok": true
+    },
+    "best picture": {
+      "name_ms": [
+        10.189,
+        5.303,
+        40.502,
+        132.96,
+        83.274
+      ],
+      "ctrl_ms": [
+        157.718,
+        33.436,
+        110.898,
+        199.618,
+        44.306
+      ],
+      "name_median_ms": 40.5,
+      "ctrl_median_ms": 110.9,
+      "ratio": 0.365,
+      "name_arm_indexes": [
+        "ix_futures_name_trgm"
+      ],
+      "was_subject": false,
+      "before_ratio": null,
+      "shape_ok": false,
+      "regression_ok": true
+    }
+  },
+  "ids": {
+    "world series": [
+      1,
+      114584,
+      13886735,
+      13886744,
+      58508836,
+      59304735,
+      59304736,
+      59304737,
+      59304738,
+      59304739,
+      59304740,
+      59304741,
+      59304742,
+      59374602,
+      59374603,
+      59374604,
+      59374605,
+      59428372
+    ],
+    "champion": [
+      181,
+      275,
+      392,
+      399,
+      416,
+      40533,
+      108326,
+      110282,
+      112897,
+      113041,
+      113129,
+      113705,
+      113706,
+      114584,
+      128718,
+      129037,
+      31834253,
+      52755651,
+      59139544,
+      59164808
+    ],
+    "winner": [
+      181,
+      275,
+      392,
+      399,
+      416,
+      40533,
+      108326,
+      110282,
+      112897,
+      113041,
+      113129,
+      113705,
+      113706,
+      114584,
+      128718,
+      129037,
+      31834253,
+      52755651,
+      59139544,
+      59164808
+    ],
+    "election": [
+      108326,
+      108327,
+      108568,
+      109952,
+      112897,
+      113041,
+      113095,
+      113109,
+      113124,
+      113125,
+      113584,
+      113588,
+      113625,
+      114296,
+      129231,
+      129233,
+      2777300,
+      7188489,
+      16625289,
+      56918517
+    ],
+    "world cup": [
+      10,
+      113678,
+      12984942,
+      16624255,
+      31095155,
+      32600388,
+      35418779,
+      35418789,
+      35419093,
+      35419120,
+      35419174,
+      35419200,
+      35419227,
+      35419254,
+      56775477,
+      56775503,
+      57314280,
+      57416893,
+      58728692,
+      59419808
+    ],
+    "presidential election": [
+      108326,
+      108327,
+      108434,
+      108450,
+      108457,
+      108462,
+      108463,
+      108532,
+      108549,
+      108568,
+      109524,
+      109677,
+      109952,
+      112897,
+      2777300,
+      7187823,
+      7188489,
+      16625289,
+      31095631,
+      55674171
+    ],
+    "super bowl": [
+      86832,
+      8665870,
+      13886744,
+      13886748,
+      55674289,
+      59172864
+    ],
+    "best picture": [
+      109551,
+      110748,
+      5165726,
+      6173044,
+      27988771,
+      27988772,
+      27988773,
+      27988774,
+      27988775,
+      27988776,
+      27988777,
+      27988778,
+      27988779,
+      27988780,
+      27988781,
+      27988782,
+      27988783,
+      27988784,
+      27988785,
+      57313556
+    ]
+  },
+  "semantics_ok": true,
+  "semantics_note": "recorded (no baseline to compare on a before run)",
+  "per_term_collapse": {},
+  "budget_ok": false,
+  "budget_note": "per-term ratios RECORDED as the before; a before run has nothing to beat, so the budget is RED by construction",
+  "verdict": "RED"
+}
