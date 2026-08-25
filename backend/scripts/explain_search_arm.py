@@ -95,6 +95,26 @@ def build_futures_arm(query: str, arm: str = "all"):
 
     if arm == "name":
         arms = [futures_name_ilike]
+    elif arm == "outcome":
+        # LAT-P088: the outcome arm ALONE, as the CPU-matched control for
+        # `gate_futures_open_trgm_index.py`. It is trigram-GIN work on the same
+        # database at the same instant as the name arm, so it absorbs the same
+        # load excursion -- but the proposed partial index is on
+        # `futures_markets`, which this arm reaches only by primary key, so the
+        # DDL cannot serve it. That is what makes it a control rather than a
+        # second copy of the subject.
+        #
+        # Refuses rather than silently substituting: for a single sub-3-char term
+        # with no expansion the route drops this arm entirely, so there is no
+        # outcome arm to isolate. Returning the name arm here would make the
+        # gate compare the subject against itself and report a ratio of 1.0
+        # forever.
+        if futures_outcome_match is None:
+            raise ValueError(
+                f"query has no outcome arm (terms={terms!r}): the route drops it "
+                "for a single sub-3-char term with no expansion. Pick another term."
+            )
+        arms = [futures_outcome_match]
     else:
         arms = [
             a
@@ -126,15 +146,24 @@ def build_futures_arm(query: str, arm: str = "all"):
         ),
         E._expanded_tsquery(expanded),
     )
-    whens = [(futures_name_ilike, 0)]
-    if arm != "name" and league_ticker_match is not None:
+    # LAT-P088: the outcome control must not carry the SUBJECT's predicate into
+    # its own ORDER BY. `case(when name ILIKE ... then 0)` is evaluated on the
+    # rows the arm returns, so leaving it in would put a trigram name match --
+    # the exact work the proposed index changes -- inside the control. Small, but
+    # a control contaminated by its subject is not a control (ruling 050's shape).
+    whens = [] if arm == "outcome" else [(futures_name_ilike, 0)]
+    if arm not in ("name", "outcome") and league_ticker_match is not None:
         whens.append((league_ticker_match, 1))
+
+    # `case()` requires at least one WHEN, so an empty `whens` omits the tier
+    # ordering rather than emitting invalid SQL.
+    order_by = [case(*whens, else_=2).asc()] if whens else []
 
     stmt = (
         select(FuturesMarket.id)
         .where(candidate_filter, *open_now)
         .order_by(
-            case(*whens, else_=2).asc(),
+            *order_by,
             rank.desc(),
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.volume.desc().nulls_last(),
@@ -165,9 +194,12 @@ def main() -> None:
     ap.add_argument("query", help="the search query, e.g. fed")
     ap.add_argument(
         "--arm",
-        choices=("all", "name"),
+        choices=("all", "name", "outcome"),
         default="all",
-        help="'all' = the production UNION; 'name' = the name arm alone",
+        help=(
+            "'all' = the production UNION; 'name' = the name arm alone; "
+            "'outcome' = the outcome arm alone (the gate's CPU-matched control)"
+        ),
     )
     args = ap.parse_args()
 
