@@ -792,6 +792,24 @@ def test_ruling_numbers_are_unique() -> None:
 #: Verified index <-> files in BOTH directions on the merged tree: 131 files, 131 index lines,
 #: zero orphans either way, ascending, no duplicates, contiguous 1..131.
 #:
+#: Q405 (2026-08-24) — 131 -> **133 by COUNTING THIS TREE** (`ls docs/rulings/[0-9][0-9][0-9]-*.md`
+#: = 133 files, 133 index lines), never by adding a delta, per ruling 088's corollary. The two new
+#: numbers are 132 (capture plays fix-first) and 133 (cert depth tiers by blast radius), both Alex
+#: rulings banked from the Q405 addendum. Claimed against `origin/master` = `1410960f` after a
+#: `git fetch` in the SAME turn: highest ruling FILE on master **131**, all 582 local AND remote
+#: refs swept for `docs/rulings/13[23]-` — holders_found = 0. Still a count and not a ceiling: the
+#: count equals the highest file for the third wave running, which remains a property of this tree
+#: rather than an invariant.
+#:
+#: Q406 (2026-08-25) — 133 -> **134 by COUNTING THIS TREE** (`ls docs/rulings/[0-9][0-9][0-9]-*.md`
+#: = 134 files, 134 index lines), never by adding a delta. The new number is 134 (build lanes BUILD;
+#: measurement is its own lane), Alex's SHIP-directive ruling. Claimed against `origin/master` =
+#: `1410960f` after a `git fetch` in the SAME turn: highest ruling FILE on master **131**, all 585
+#: local AND remote refs swept for `docs/rulings/134-` — holders_found = 0. Banked onto THIS branch
+#: rather than the CLAUDE.md branch on purpose: 132 and 133 live here, so this is the only tree
+#: where the count reads 134. On `lane1/q406-ship-doctrine` (CLAUDE.md only, off master) the same
+#: bump would read 132 and hand the Integrator a floor that disagrees with its own file count.
+#:
 #: LAT-P088 (2026-08-24) raises it 131 -> **132** by banking ruling **135** ("a release
 #: narrows the window; it does not disqualify the day"). COUNTED on THIS REBASED TREE:
 #: `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = **132**, never a delta added to 131.
@@ -816,7 +834,16 @@ def test_ruling_numbers_are_unique() -> None:
 #: merged LAT-P087 into master WHILE THIS SESSION RAN. Correct method, expired tree — the
 #: sixth time in seven waves, and the first where the tree expired under a live lane rather
 #: than between cycles. Re-count at merge; never derive from this line.
-MINIMUM_BANKED_RULINGS = 132
+#:
+#: INT-121 (2026-08-25) — the two sides of this conflict were 132 (LAT-P088, banking 135
+#: onto a tree without 132-134) and 134 (Q405+Q406, banking 132-134 onto a tree without
+#: 135). Resolved per ruling 088 by COUNTING THE MERGED TREE and taking NEITHER side:
+#: `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = **135**, contiguous 1..135, max 135,
+#: 135 index lines. Both sides were correct about their own tree and both were wrong about
+#: this one, which is the exact failure mode ruling 088 was written for. THE GAP IS CLOSED:
+#: this merge is the one that fills 132, 133 and 134 underneath the already-banked 135, so
+#: count-equals-highest is true again here — still a property of this tree, not an invariant.
+MINIMUM_BANKED_RULINGS = 135
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
