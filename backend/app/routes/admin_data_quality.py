@@ -1580,31 +1580,14 @@ async def backfill_completed_at(
 # =============================================================================
 
 
-@router.get("/calibration-data")
-async def calibration_data(
-    request: Request, secret: str = Query(None),
-    db: AsyncSession = Depends(get_db),
-):
-    """Return pre-aggregated calibration buckets for resolved prediction markets."""
-    _check_admin_secret(secret, request=request)
-
-    # Calibration methodology (auditable, no ad-hoc exclusions):
-    #
-    # Step 1: Reconstruct "virtual markets" from the physical market structure.
-    #   - A Kalshi championship market with 20 outcomes = 1 virtual market (20 outcomes)
-    #   - A Polymarket "Who wins?" event with 10 binary sub-markets sharing a
-    #     group_id = 1 virtual market (10 outcomes). This is structurally identical
-    #     to a championship market but stored differently.
-    #   - A Kalshi binary game market (1 outcome) = 1 virtual market (1 outcome)
-    #   - A Kalshi threshold market (10 outcomes, non-ME) = 1 virtual market
-    #     but only the most informative outcome (closest to 50%) is used
-    #
-    # Step 2: Clean resolution filter — only include virtual markets where 80%+
-    #   of outcomes resolved to near-0 or near-1.
-    #
-    # Step 3: For large virtual markets (20+ outcomes), filter inverted Kalshi
-    #   field prices (opening_probability > 0.90 that should be 1 - opening).
-    sql = text("""
+#: The ``/calibration-data`` audit population, hoisted to a module constant so the
+#: #2098 source-scope guard can EXECUTE the production string rather than a copy of
+#: it (``tests/integration/test_calibration_mode_price_source_scope_peers_pg.py``).
+#: A guard that re-types the SQL it is guarding cannot see the original regress —
+#: which is the whole reason this chain drifted out of step with the producer.
+#: ``backend/scripts/audit_golf_hockey_calibration.py`` already carried its copy as a
+#: module constant for the same reason; this one now matches.
+_CALIBRATION_AUDIT_POPULATION_SQL = """
         WITH market_info AS (
             SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                 fm.commence_time,
@@ -1690,17 +1673,45 @@ async def calibration_data(
               -- set to NULL by the backfill task, so the IS NOT NULL filter
               -- above naturally excludes them.
         ),
+        -- #2098 / RULING 125 — the mode is a fact about ONE SOURCE's legs, so it
+        -- may only delete THAT source's legs.
+        --
+        -- `vm_id` above is source-blind on its `e:` arm (`'e:' || mi.event_id`),
+        -- while `event_sizes` counts per `(event_id, source)`. So two sources
+        -- each carrying >=3 resolved markets on one event are handed the SAME
+        -- vm_id. Every neighbouring aggregate in this very chain is
+        -- source-scoped on purpose — `group_sizes`/`event_sizes` GROUP BY
+        -- `(x, source)`, `virtual_market` joins `AND gs.source = mi.source`,
+        -- `vm_stats` GROUPs BY `vm.source`, and `clean_vms` is joined at :1684
+        -- on `cv.vm_id = vm.vm_id AND cv.source = vm.source`. These two were the
+        -- exception, and the exception was the defect: a modal price detected
+        -- among one source's legs DELETED the other source's legs sitting at the
+        -- same price.
+        --
+        -- Fixed in the producer by CAL-P090 (`precompute_calibration.py`
+        -- `_calibration_population_ctes`); this is the same three-line fix at
+        -- the second of its three sites, so this endpoint stops disagreeing
+        -- with the population it exists to audit. Three lines, not two —
+        -- `mode_prices` must also PROJECT `source`, or the join conjunct has
+        -- nothing to join on.
+        --
+        -- Guarded against a real Postgres by
+        -- `tests/integration/test_calibration_mode_price_source_scope_peers_pg.py`,
+        -- two-armed: it also EXECUTES the reverted SQL and asserts the
+        -- suppression comes back.
         mode_prices AS (
-            SELECT vm_id, adj_opening_probability AS mode_price
+            SELECT vm_id, source, adj_opening_probability AS mode_price
             FROM ranked_outcomes
             WHERE is_multi AND eligible >= 3
-            GROUP BY vm_id, adj_opening_probability, eligible
+            GROUP BY vm_id, source, adj_opening_probability, eligible
             HAVING COUNT(*) > GREATEST(eligible * 0.5, 2)
         ),
         deduped AS (
             SELECT ro.* FROM ranked_outcomes ro
             LEFT JOIN mode_prices mp
-              ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
+              ON mp.vm_id = ro.vm_id
+              AND mp.source = ro.source
+              AND mp.mode_price = ro.adj_opening_probability
             WHERE
                 CASE
                     WHEN ro.is_multi
@@ -1723,7 +1734,34 @@ async def calibration_data(
         FROM bucketed
         GROUP BY bucket_idx, source, category
         ORDER BY bucket_idx, source, category
-    """)
+"""
+
+
+@router.get("/calibration-data")
+async def calibration_data(
+    request: Request, secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return pre-aggregated calibration buckets for resolved prediction markets."""
+    _check_admin_secret(secret, request=request)
+
+    # Calibration methodology (auditable, no ad-hoc exclusions):
+    #
+    # Step 1: Reconstruct "virtual markets" from the physical market structure.
+    #   - A Kalshi championship market with 20 outcomes = 1 virtual market (20 outcomes)
+    #   - A Polymarket "Who wins?" event with 10 binary sub-markets sharing a
+    #     group_id = 1 virtual market (10 outcomes). This is structurally identical
+    #     to a championship market but stored differently.
+    #   - A Kalshi binary game market (1 outcome) = 1 virtual market (1 outcome)
+    #   - A Kalshi threshold market (10 outcomes, non-ME) = 1 virtual market
+    #     but only the most informative outcome (closest to 50%) is used
+    #
+    # Step 2: Clean resolution filter — only include virtual markets where 80%+
+    #   of outcomes resolved to near-0 or near-1.
+    #
+    # Step 3: For large virtual markets (20+ outcomes), filter inverted Kalshi
+    #   field prices (opening_probability > 0.90 that should be 1 - opening).
+    sql = text(_CALIBRATION_AUDIT_POPULATION_SQL)
 
     result = await db.execute(sql)
     rows = result.all()

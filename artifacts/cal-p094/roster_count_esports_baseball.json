@@ -1,0 +1,10 @@
+{
+  "status": "failed",
+  "reason": "statement_timeout",
+  "correlation_id": "e87f755d36db",
+  "http_status": 400,
+  "wall_ms": 10321.5,
+  "label": "roster_count_esports_baseball",
+  "note": "CAL-P094: cell sizes + id ranges for fold design",
+  "timeout_ms_requested": 10000
+}

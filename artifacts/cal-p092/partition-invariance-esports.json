@@ -1,0 +1,72 @@
+{
+ "cells": {},
+ "cells_measured": 0,
+ "cells_unmeasured": 0,
+ "elapsed_s": 20.58,
+ "partition_invariance": {
+  "esports/container_member": {
+   "aggregate_fingerprints": {},
+   "cell": "esports/container_member",
+   "k_values": [
+    16,
+    32
+   ],
+   "policy_tables": {},
+   "raw_fingerprints": {},
+   "reads": {},
+   "reason": "needs two measured k, have []",
+   "unmeasured": {
+    "16": "HTTP 400: {\"detail\":{\"error\":\"query_failed\",\"reason\":\"statement_timeout\",\"correlation_id\":\"576d83d0de71\",\"sql_fingerprint\":\"a028c493f1f8d55b\"}}",
+    "32": "HTTP 400: {\"detail\":{\"error\":\"query_failed\",\"reason\":\"statement_timeout\",\"correlation_id\":\"82c3eec4bb50\",\"sql_fingerprint\":\"f95f5faa4782aecb\"}}"
+   },
+   "verdict": null
+  }
+ },
+ "policies": [
+  "A_today",
+  "B_exclude_cp_absent",
+  "C_exclude_hindsight",
+  "D_moved_price_only",
+  "E_pregame_or_unknown_ts"
+ ],
+ "pooled": {
+  "A_today": {
+   "delta_ece": null,
+   "ece": null,
+   "gap": null,
+   "n": 0,
+   "reason": "empty"
+  },
+  "B_exclude_cp_absent": {
+   "delta_ece": null,
+   "ece": null,
+   "gap": null,
+   "n": 0,
+   "reason": "empty"
+  },
+  "C_exclude_hindsight": {
+   "delta_ece": null,
+   "ece": null,
+   "gap": null,
+   "n": 0,
+   "reason": "empty"
+  },
+  "D_moved_price_only": {
+   "delta_ece": null,
+   "ece": null,
+   "gap": null,
+   "n": 0,
+   "reason": "empty"
+  },
+  "E_pregame_or_unknown_ts": {
+   "delta_ece": null,
+   "ece": null,
+   "gap": null,
+   "n": 0,
+   "reason": "empty"
+  }
+ },
+ "proposed_policy": "C_exclude_hindsight",
+ "schema": "calibration-price-provenance/v1",
+ "unmeasured": {}
+}

@@ -1,0 +1,438 @@
+{
+  "label": "eligible_fold_all_cells",
+  "complete": true,
+  "measured": true,
+  "reason": null,
+  "population": {
+    "source": "polymarket",
+    "status": "resolved",
+    "market_type_in": [
+      "quantity",
+      "container_member"
+    ],
+    "leagues_in": [
+      "basketball",
+      "baseball",
+      "esports",
+      "hockey",
+      "soccer",
+      "economics",
+      "golf",
+      "table_tennis",
+      "politics",
+      "tennis",
+      "geopolitics"
+    ],
+    "league_scope_note": "Restricted to the diagnosis file's scope leagues by the 1,000-row cap, not by judgment. Cells outside this list are NOT measured here and must not be read as absent-because-clean."
+  },
+  "shards": [
+    {
+      "lo": 1,
+      "hi": 1000001,
+      "rows": 32,
+      "duration_ms": 1643.2,
+      "sql_fingerprint": "58029239041b3ea6"
+    },
+    {
+      "lo": 1000001,
+      "hi": 2000001,
+      "rows": 17,
+      "duration_ms": 1482.7,
+      "sql_fingerprint": "2cf61b120cf5098b"
+    },
+    {
+      "lo": 2000001,
+      "hi": 4000001,
+      "rows": 17,
+      "duration_ms": 1139.7,
+      "sql_fingerprint": "5a08b98a7ad38a75"
+    },
+    {
+      "lo": 4000001,
+      "hi": 6000001,
+      "rows": 30,
+      "duration_ms": 956.4,
+      "sql_fingerprint": "baba3b1ad7fcba9a"
+    },
+    {
+      "lo": 6000001,
+      "hi": 8000001,
+      "rows": 42,
+      "duration_ms": 915.9,
+      "sql_fingerprint": "f5210f83523ac6e9"
+    },
+    {
+      "lo": 8000001,
+      "hi": 10000001,
+      "rows": 32,
+      "duration_ms": 660.5,
+      "sql_fingerprint": "6a6fcf2490e43f8d"
+    },
+    {
+      "lo": 10000001,
+      "hi": 12000001,
+      "rows": 39,
+      "duration_ms": 432.1,
+      "sql_fingerprint": "2fcd2bb56434a2f2"
+    },
+    {
+      "lo": 12000001,
+      "hi": 16000001,
+      "rows": 225,
+      "duration_ms": 7453.5,
+      "sql_fingerprint": "7af42247a8689bd4"
+    },
+    {
+      "lo": 16000001,
+      "hi": 18000001,
+      "rows": 226,
+      "duration_ms": 9709.5,
+      "sql_fingerprint": "1816c0755f1a46c8"
+    },
+    {
+      "lo": 18000001,
+      "hi": 20000001,
+      "rows": 166,
+      "duration_ms": 988.9,
+      "sql_fingerprint": "a4220f9f11c13d30"
+    },
+    {
+      "lo": 20000001,
+      "hi": 24000001,
+      "rows": 215,
+      "duration_ms": 6549.6,
+      "sql_fingerprint": "45ac357b9dc59926"
+    },
+    {
+      "lo": 24000001,
+      "hi": 28000001,
+      "rows": 247,
+      "duration_ms": 3216.8,
+      "sql_fingerprint": "e8b5254414fc7768"
+    },
+    {
+      "lo": 28000001,
+      "hi": 32000001,
+      "rows": 300,
+      "duration_ms": 3133.2,
+      "sql_fingerprint": "6f73a347e0672d3d"
+    },
+    {
+      "lo": 32000001,
+      "hi": 34000001,
+      "rows": 255,
+      "duration_ms": 1488.2,
+      "sql_fingerprint": "5fae1b33f6c90b71"
+    },
+    {
+      "lo": 34000001,
+      "hi": 35000001,
+      "rows": 299,
+      "duration_ms": 9422.4,
+      "sql_fingerprint": "bb7a2653cf3226d3"
+    },
+    {
+      "lo": 35000001,
+      "hi": 36000001,
+      "rows": 230,
+      "duration_ms": 2082.3,
+      "sql_fingerprint": "33fda36dbe435a9f"
+    },
+    {
+      "lo": 36000001,
+      "hi": 40000001,
+      "rows": 239,
+      "duration_ms": 3414.1,
+      "sql_fingerprint": "f0a2aee06d033592"
+    },
+    {
+      "lo": 40000001,
+      "hi": 44000001,
+      "rows": 56,
+      "duration_ms": 216.2,
+      "sql_fingerprint": "f5d569bd877e7b51"
+    },
+    {
+      "lo": 44000001,
+      "hi": 48000001,
+      "rows": 47,
+      "duration_ms": 272.7,
+      "sql_fingerprint": "968ed6af2706728d"
+    },
+    {
+      "lo": 48000001,
+      "hi": 52000001,
+      "rows": 47,
+      "duration_ms": 338.3,
+      "sql_fingerprint": "143bae89bb3b5354"
+    },
+    {
+      "lo": 52000001,
+      "hi": 54000001,
+      "rows": 34,
+      "duration_ms": 9117.6,
+      "sql_fingerprint": "10fedcf53a6db3a5"
+    },
+    {
+      "lo": 54000001,
+      "hi": 56000001,
+      "rows": 71,
+      "duration_ms": 8061.4,
+      "sql_fingerprint": "18cc29af851a5d2d"
+    },
+    {
+      "lo": 56000001,
+      "hi": 56900000,
+      "rows": 130,
+      "duration_ms": 9766.2,
+      "sql_fingerprint": "21a34affcd1b89d0"
+    },
+    {
+      "lo": 56900000,
+      "hi": 57350000,
+      "rows": 145,
+      "duration_ms": 3821.7,
+      "sql_fingerprint": "5c4258755e45df28"
+    },
+    {
+      "lo": 57350000,
+      "hi": 57800000,
+      "rows": 139,
+      "duration_ms": 2519.5,
+      "sql_fingerprint": "adacf32f92f85610"
+    },
+    {
+      "lo": 57800000,
+      "hi": 59600000,
+      "rows": 170,
+      "duration_ms": 5023.9,
+      "sql_fingerprint": "f7cc9fcac1112fe7"
+    }
+  ],
+  "shard_count": 26,
+  "irreducible": [],
+  "elapsed_s": 215.5,
+  "cells": [
+    {
+      "cell": "baseball/quantity",
+      "ece_eligible": 15.86,
+      "n_eligible": 6778,
+      "gap_eligible": -7.55,
+      "ece_all": 23.05,
+      "n_all": 47170,
+      "eligible_share": 0.1437,
+      "impact_eligible": 87165.1
+    },
+    {
+      "cell": "soccer/quantity",
+      "ece_eligible": 8.51,
+      "n_eligible": 5749,
+      "gap_eligible": -0.79,
+      "ece_all": 45.08,
+      "n_all": 201968,
+      "eligible_share": 0.0285,
+      "impact_eligible": 31677.0
+    },
+    {
+      "cell": "soccer/container_member",
+      "ece_eligible": 6.27,
+      "n_eligible": 7682,
+      "gap_eligible": -5.21,
+      "ece_all": 29.06,
+      "n_all": 75895,
+      "eligible_share": 0.1012,
+      "impact_eligible": 25120.1
+    },
+    {
+      "cell": "economics/quantity",
+      "ece_eligible": 5.13,
+      "n_eligible": 4705,
+      "gap_eligible": 4.2,
+      "ece_all": 8.23,
+      "n_all": 10240,
+      "eligible_share": 0.4595,
+      "impact_eligible": 10021.6
+    },
+    {
+      "cell": "hockey/quantity",
+      "ece_eligible": 10.94,
+      "n_eligible": 1137,
+      "gap_eligible": 0.02,
+      "ece_all": 22.23,
+      "n_all": 2062,
+      "eligible_share": 0.5514,
+      "impact_eligible": 9027.8
+    },
+    {
+      "cell": "basketball/quantity",
+      "ece_eligible": 5.73,
+      "n_eligible": 2104,
+      "gap_eligible": -0.29,
+      "ece_all": 24.93,
+      "n_all": 13121,
+      "eligible_share": 0.1604,
+      "impact_eligible": 5743.9
+    },
+    {
+      "cell": "politics/quantity",
+      "ece_eligible": 6.12,
+      "n_eligible": 1152,
+      "gap_eligible": 6.12,
+      "ece_all": 8.65,
+      "n_all": 3448,
+      "eligible_share": 0.3341,
+      "impact_eligible": 3594.2
+    },
+    {
+      "cell": "tennis/quantity",
+      "ece_eligible": 5.01,
+      "n_eligible": 1512,
+      "gap_eligible": -0.16,
+      "ece_all": 24.72,
+      "n_all": 56960,
+      "eligible_share": 0.0265,
+      "impact_eligible": 3039.1
+    },
+    {
+      "cell": "baseball/container_member",
+      "ece_eligible": 12.44,
+      "n_eligible": 286,
+      "gap_eligible": -2.48,
+      "ece_all": 20.45,
+      "n_all": 18215,
+      "eligible_share": 0.0157,
+      "impact_eligible": 2699.8
+    },
+    {
+      "cell": "golf/container_member",
+      "ece_eligible": 25.11,
+      "n_eligible": 118,
+      "gap_eligible": -0.08,
+      "ece_all": 22.99,
+      "n_all": 5964,
+      "eligible_share": 0.0198,
+      "impact_eligible": 2609.0
+    },
+    {
+      "cell": "esports/container_member",
+      "ece_eligible": 3.15,
+      "n_eligible": 8217,
+      "gap_eligible": 0.64,
+      "ece_all": 20.14,
+      "n_all": 119993,
+      "eligible_share": 0.0685,
+      "impact_eligible": 1232.5
+    },
+    {
+      "cell": "geopolitics/quantity",
+      "ece_eligible": 19.36,
+      "n_eligible": 60,
+      "gap_eligible": 19.36,
+      "ece_all": 14.5,
+      "n_all": 228,
+      "eligible_share": 0.2632,
+      "impact_eligible": 981.6
+    },
+    {
+      "cell": "basketball/container_member",
+      "ece_eligible": 6.65,
+      "n_eligible": 262,
+      "gap_eligible": 0.02,
+      "ece_all": 26.21,
+      "n_all": 7161,
+      "eligible_share": 0.0366,
+      "impact_eligible": 956.3
+    },
+    {
+      "cell": "esports/quantity",
+      "ece_eligible": 4.84,
+      "n_eligible": 506,
+      "gap_eligible": 2.03,
+      "ece_all": 21.54,
+      "n_all": 8672,
+      "eligible_share": 0.0583,
+      "impact_eligible": 931.0
+    },
+    {
+      "cell": "politics/container_member",
+      "ece_eligible": 7.9,
+      "n_eligible": 116,
+      "gap_eligible": 0.14,
+      "ece_all": 13.32,
+      "n_all": 4892,
+      "eligible_share": 0.0237,
+      "impact_eligible": 568.4
+    },
+    {
+      "cell": "economics/container_member",
+      "ece_eligible": 2.78,
+      "n_eligible": 511,
+      "gap_eligible": -0.03,
+      "ece_all": 20.07,
+      "n_all": 16145,
+      "eligible_share": 0.0317,
+      "impact_eligible": null
+    },
+    {
+      "cell": "geopolitics/container_member",
+      "ece_eligible": null,
+      "n_eligible": 8,
+      "gap_eligible": null,
+      "ece_all": 11.27,
+      "n_all": 1165,
+      "eligible_share": 0.0069,
+      "impact_eligible": null
+    },
+    {
+      "cell": "golf/quantity",
+      "ece_eligible": null,
+      "n_eligible": 0,
+      "gap_eligible": null,
+      "ece_all": null,
+      "n_all": 2,
+      "eligible_share": 0.0,
+      "impact_eligible": null
+    },
+    {
+      "cell": "hockey/container_member",
+      "ece_eligible": null,
+      "n_eligible": 0,
+      "gap_eligible": null,
+      "ece_all": 41.07,
+      "n_all": 1528,
+      "eligible_share": 0.0,
+      "impact_eligible": null
+    },
+    {
+      "cell": "table_tennis/container_member",
+      "ece_eligible": null,
+      "n_eligible": 0,
+      "gap_eligible": null,
+      "ece_all": 46.51,
+      "n_all": 56230,
+      "eligible_share": 0.0,
+      "impact_eligible": null
+    },
+    {
+      "cell": "table_tennis/quantity",
+      "ece_eligible": null,
+      "n_eligible": 0,
+      "gap_eligible": null,
+      "ece_all": 44.55,
+      "n_all": 71467,
+      "eligible_share": 0.0,
+      "impact_eligible": null
+    },
+    {
+      "cell": "tennis/container_member",
+      "ece_eligible": 2.07,
+      "n_eligible": 2583,
+      "gap_eligible": 0.19,
+      "ece_all": 24.3,
+      "n_all": 50702,
+      "eligible_share": 0.0509,
+      "impact_eligible": null
+    }
+  ],
+  "rank_key": "n_eligible * (ece_eligible - 3)"
+}

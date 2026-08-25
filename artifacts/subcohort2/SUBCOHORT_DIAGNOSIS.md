@@ -4,6 +4,86 @@
 **Bar:** Alex verbatim "anything with a reasonable sample size that has ECE over 3 is miscalculated, unless you convince me otherwise."  
 **Method per cell — mechanism-ranked, each number EXECUTED with stored output, inline labels, statement-timeout-safe paged `market_id = ANY(ARRAY[...])` queries:** `price-source fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to-1)` → `capture-age/hindsight` → `grading truth` → `binning noise floor` (calculation, not shrug).
 
+---
+
+## STATUS 2026-08-24 (CAL-P093) — cells 1, 2, 4, 5 MOVED. The ranking metric itself was the largest defect.
+
+**Mechanism NAMED and it is SHARED across all four cells measured today**, so they were taken in one
+fix exactly as the directive asked. It is not a calibration mechanism at all — it is a **population**
+mechanism, which is why the six-check ladder kept finding real-but-secondary things above it:
+
+> **This file ranks cells by an ECE computed over rows the published curve ALREADY EXCLUDES.**
+> The cohort-cell census filters on `source/status/market_type` only. `precompute_calibration`
+> additionally requires `resolution_source IN CALIBRATION_TRUTH_ELIGIBLE_SOURCES` — the legs whose
+> winner was established INDEPENDENTLY of the market's own price. Nothing was wrong with the census
+> (it faithfully mirrors `GET /api/admin/cohort-provenance-split`); the queue was ranked on it.
+
+**The single largest block, executed:** in `basketball/quantity`, **1,690 markets** graded
+`resolution_source = 'pass2_loser'` are priced coherently (mean pair sum **0.9954**) and carry
+**ZERO winning legs** — a resolved two-leg mutually-exclusive market in which nothing won. They alone
+contribute **12.92 pp** of the cell's 24.27. `basketball/container_member` carries the same shape at
+966 markets / 14.64 pp. This is the known `#754`/gotcha-#21 poison class, already curve-excluded, and
+it was never excluded here. **Not re-graded** (gotcha #21) — reported out, left where it sits.
+
+### MEASURED DELTA — same predicate, eligibility filter the only difference (all executed 2026-08-24)
+
+| cell | census ECE (n) | truth-eligible ECE (n) | **delta** | eligible share | fp (eligible) |
+|---|---:|---:|---:|---:|---|
+| 1 basketball/quantity | 24.27 (13,067) | **5.73** (2,104) | **−18.54 pp** | 16.1% | `87457dc29c0c74d5` 1,290 ms |
+| 4 basketball/container_member | 28.73 (7,161) | **6.65** (262) | **−22.08 pp** | 3.7% | `dfc9f3c805a90083` 3,875 ms |
+| 5 baseball/quantity | 25.96 (47,170) | **16.64** (6,778) | **−9.32 pp** | 14.4% | `2d93a44ea9fb6022` 5,374 ms |
+| 2 baseball/container_member | 27.08 (18,215) | **12.44** (286) | **−14.64 pp** | 1.6% | `87eda0317190a3a7` 3,873 ms |
+
+Cell-1 census reproduction is EXACT before the filter: `ECE 24.27 / n 13,067 / gap +3.00`
+(fp `1c27a01bf22e3f77`, 4,424 ms) — the delta is the filter and nothing else. The n columns here are
+grade-unrestricted, so they sit slightly above this file's `n_complete`; the deltas are computed
+within one predicate and are unaffected.
+
+**Read the n column, not just the ECE column.** Eligible share is 1.6–16.1%. These cells did not get
+better; **most of what they were measuring was never on the curve.** A reader who takes −22.08 pp as
+an improvement has made the datagolf card's mistake (`0 outcomes · 0.0pp ECE` rendering as perfect).
+
+### Fix shipped — `8c2cefd6`, read-side, additive, no writer touched
+
+`ece_eligible` / `n_eligible` / `gap_eligible` / `eligible_share` added to the census as a SECOND
+twin axis beside the existing grade twins. Eligibility is a **projected column** in leg B, never a
+`WHERE`, so `ece_all` / `ece_venue` / `ece_complete` / `ece_incomplete` are byte-identical and parity
+with the provenance-split endpoint holds (asserted by test). Schema `v1 → v2` so a persisted v1
+checkpoint is refused rather than resumed into a 5-part fold. 14 new tests + 55 in the census
+suites, all green. **Rank future rounds by `ece_eligible × n_eligible`, never by `ece_all`.**
+
+### The other four ladder checks, since they were run and two are REAL residuals
+
+* **fallback (check 1) — REAL, secondary.** Unbiased `fallback_share` 14.3% in cell 1. Its damage is
+  10.36 pp, and it is a *symptom* of check 3.
+* **shape semantics (check 3) — REAL, and it is the cause of check 1.** 13,803 of 13,807 graded
+  cell-1 markets are 2-leg Over/Under pairs, yet `avg_sum_prob = 0.632`. Cross-tab: when **both**
+  legs carry `calibration_probability` the pair sums to **1.00** (n=3,730 markets); when one does,
+  **0.207**; when neither, **0.017** (fp `014a3e8dadd040ad`). Sampled pairs show both legs carrying an
+  **identical** `opening_probability` rather than complements — the Over leg's price copied onto the
+  Under leg (`Purdue/UCLA O/U 143.5`: Over 0.040 / Under 0.040, Under wins). The census's
+  `COALESCE(calibration_probability, opening_probability)` then prices a ~82%-winrate Under leg at
+  ~1%. **This survives the eligibility filter partially** (512 eligible outcomes in baseball/quantity
+  are still calib-partial, ECE 22.09) and is the next named item.
+* **grading truth (check 5) — REAL, and it is what the eligibility filter removes.** 100% of the
+  zero-winner and two-winner markets in cell 1 carry ineligible sources (`pass2_loser`, `(null)`,
+  `clean_resolution`, `pass3_threshold`). The eligibility predicate — designed for a *different*
+  reason, price-independence — captures the entire winner-count defect exactly. That coincidence is
+  itself evidence the predicate is the right one.
+* **de-vig (check 2), capture-age/hindsight (check 4), binning floor (check 6) — NOT the dominant
+  term for these cells.** The residual after eligibility is 5.73 / 6.65 / 12.44 / 16.64 pp, all still
+  over the 3 pp bar, so they remain open — but they are now the *whole* remaining question rather
+  than 20% of it. `baseball/*` residuals are 2× basketball's and are the next cells to work.
+
+### What this does NOT claim
+
+It does not claim the published curve is wrong, and it does not move the published curve at all —
+the excluded rows were already excluded there. It claims **this file's ranking** was wrong, and that
+every cell below must be re-ranked on `ece_eligible` before more mechanism work is spent on it. The
+remaining 11 cells have NOT been re-measured; their `ece_c` column is still the old metric.
+
+---
+
 ## Round 2 — bias fixed, contradiction resolved, hockey via flattened walk (EXECUTED at 4eb2a725)
 
 **Sample bias — NAMED AND FIXED:** Round 1's 500-market pages were the HEAD (`ORDER BY id ASC LIMIT 500`) = oldest markets. That is biased: oldest markets have calib backfilled, newest are sparse. Round 2 uses **random Bernoulli `random() < 0.04 LIMIT 500` (unbiased, heap scan, no sort)** and **unordered `LIMIT 500` (heap-order, no pkey walk)** for sparse cells, bias stated per number. Head vs random side-by-side below proves bias.
@@ -25,11 +105,11 @@
 
 | rank (n×excess) | cell | ece_c | n_c | excess | n×excess | census fp |
 |---|---|---:|---:|---:|---:|---|
-| 1 | basketball/quantity | 24.27 | 13067 | 21.27 | 277935 | 24.27/13067 [census.json] |
-| 2 | baseball/container_member | 15.62 | 13689 | 12.62 | 172755 | 15.62/13689 |
-| 3 | esports/container_member | 5.03 | 78906 | 2.03 | 160179 | 5.03/78906 |
-| 4 | basketball/container_member | 25.31 | 6911 | 22.31 | 154184 | 25.31/6911 |
-| 5 | baseball/quantity | 8.42 | 26138 | 5.42 | 141668 | 8.42/26138 |
+| 1 | basketball/quantity | 24.27 | 13067 | 21.27 | 277935 | **2026-08-24 MOVED → ece_eligible 5.73 / n 2,104 (−18.54pp), fix `8c2cefd6`. Residual OPEN (shape/de-vig).** |
+| 2 | baseball/container_member | 15.62 | 13689 | 12.62 | 172755 | **2026-08-24 MOVED → ece_eligible 12.44 / n 286 (−14.64pp vs 27.08 unfiltered). Residual 12.44 OPEN — worst residual on the board.** |
+| 3 | esports/container_member | 5.03 | 78906 | 2.03 | 160179 | 2026-08-24 NOT re-measured — 78,906 rows timed out the 10 s row path in the combined query; needs the `MOD(fm.id, k)` fold. **NEXT.** |
+| 4 | basketball/container_member | 25.31 | 6911 | 22.31 | 154184 | **2026-08-24 MOVED → ece_eligible 6.65 / n 262 (−22.08pp). SHARED mechanism with cell 1, taken in the same fix.** |
+| 5 | baseball/quantity | 8.42 | 26138 | 5.42 | 141668 | **2026-08-24 MOVED → ece_eligible 16.64 / n 6,778 (−9.32pp vs 25.96 unfiltered). Residual 16.64 OPEN at the largest eligible n on the board — highest-value remaining cell.** |
 | 6 | hockey/container_member | 41.00 | 1514 | 38.00 | 57532 | **WORST true cell, NO known mechanism, n<3k but 99% graded** |
 | 7 | soccer/container_member | 4.82 | 31478 | 1.82 | 57290 | — |
 | 8 | soccer/quantity | 4.67 | 20236 | 1.67 | 33794 | — |

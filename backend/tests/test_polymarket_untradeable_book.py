@@ -205,10 +205,26 @@ class TestForwardOnlyByConstruction:
         from app.tasks import polymarket
 
         src = inspect.getsource(polymarket)
+        # BOTH entry points count. CAL-P094 added
+        # `_resolve_market_probability_with_source`, which returns the same price
+        # plus the label of the source that produced it, and moved the sub-market
+        # loop onto it; the plain name is now a wrapper. Matching only the old
+        # spelling would have silently dropped this count from 3 to 2 and reported
+        # green — an audit that stops seeing a call site it still needs to audit is
+        # worse than no audit, so the matcher tracks the family, not one name.
+        #
+        # The wrapper's own one-line delegation is excluded by its exact text. It
+        # is not a write path — it has no upsert after it and nothing to skip — and
+        # counting it would make this guard's "3" mean "2 write paths plus a
+        # forwarding line", which is the sort of drift that makes a structural
+        # count stop being readable.
+        DELEGATION = "prob, _source = _resolve_market_probability_with_source(market)"
         call_sites = [
             i for i, line in enumerate(src.splitlines())
-            if "_resolve_market_probability(market)" in line
+            if ("_resolve_market_probability(market)" in line
+                or "_resolve_market_probability_with_source(market)" in line)
             and not line.lstrip().startswith("def ")
+            and line.strip() != DELEGATION
         ]
         assert len(call_sites) == 3, (
             f"expected 3 resolver call sites, found {len(call_sites)} — a new "

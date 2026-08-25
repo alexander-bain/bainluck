@@ -1,0 +1,133 @@
+{
+  "columns": [
+    "indexname",
+    "indexdef"
+  ],
+  "rows": [
+    [
+      "futures_markets_pkey",
+      "CREATE UNIQUE INDEX futures_markets_pkey ON public.futures_markets USING btree (id)"
+    ],
+    [
+      "ix_fm_canonical_source_count",
+      "CREATE INDEX ix_fm_canonical_source_count ON public.futures_markets USING btree (canonical_market_key, source) WHERE (canonical_market_key IS NOT NULL)"
+    ],
+    [
+      "ix_fm_feed_open_enriched",
+      "CREATE INDEX ix_fm_feed_open_enriched ON public.futures_markets USING btree (hook_generated_at DESC NULLS LAST, updated_at DESC NULLS LAST) WHERE (((status)::text = 'open'::text) AND (event_id IS NULL) AND ((hook_description IS NOT NULL) OR (image_url IS NOT NULL)))"
+    ],
+    [
+      "ix_fm_feed_open_sports",
+      "CREATE INDEX ix_fm_feed_open_sports ON public.futures_markets USING btree (llm_sport_category, market_tier, resolution_date) WHERE (((status)::text = 'open'::text) AND (event_id IS NULL))"
+    ],
+    [
+      "ix_fm_feed_open_timely",
+      "CREATE INDEX ix_fm_feed_open_timely ON public.futures_markets USING btree (resolution_date, volume_24h DESC NULLS LAST) WHERE (((status)::text = 'open'::text) AND (event_id IS NULL) AND (resolution_date IS NOT NULL))"
+    ],
+    [
+      "ix_fm_feed_open_volume",
+      "CREATE INDEX ix_fm_feed_open_volume ON public.futures_markets USING btree (volume_24h DESC NULLS LAST, market_tier) WHERE (((status)::text = 'open'::text) AND (event_id IS NULL))"
+    ],
+    [
+      "ix_fm_golf_identity_category",
+      "CREATE INDEX ix_fm_golf_identity_category ON public.futures_markets USING btree (id) INCLUDE (source, external_id, name) WHERE ((llm_sport_category)::text = 'golf'::text)"
+    ],
+    [
+      "ix_fm_golf_identity_extid",
+      "CREATE INDEX ix_fm_golf_identity_extid ON public.futures_markets USING btree (id) INCLUDE (source, external_id, name) WHERE ((external_id)::text ~~* 'golf_%'::text)"
+    ],
+    [
+      "ix_fm_source_created_at",
+      "CREATE INDEX ix_fm_source_created_at ON public.futures_markets USING btree (source, created_at DESC)"
+    ],
+    [
+      "ix_futures_markets_canonical_market_key",
+      "CREATE INDEX ix_futures_markets_canonical_market_key ON public.futures_markets USING btree (canonical_market_key)"
+    ],
+    [
+      "ix_futures_markets_category_tags",
+      "CREATE INDEX ix_futures_markets_category_tags ON public.futures_markets USING gin (category_tags)"
+    ],
+    [
+      "ix_futures_markets_event_id",
+      "CREATE INDEX ix_futures_markets_event_id ON public.futures_markets USING btree (event_id)"
+    ],
+    [
+      "ix_futures_markets_group_id",
+      "CREATE INDEX ix_futures_markets_group_id ON public.futures_markets USING btree (group_id)"
+    ],
+    [
+      "ix_futures_markets_market_tags",
+      "CREATE INDEX ix_futures_markets_market_tags ON public.futures_markets USING gin (market_tags jsonb_path_ops)"
+    ],
+    [
+      "ix_futures_markets_source",
+      "CREATE INDEX ix_futures_markets_source ON public.futures_markets USING btree (source)"
+    ],
+    [
+      "ix_futures_markets_sport_id",
+      "CREATE INDEX ix_futures_markets_sport_id ON public.futures_markets USING btree (sport_id)"
+    ],
+    [
+      "ix_futures_markets_status",
+      "CREATE INDEX ix_futures_markets_status ON public.futures_markets USING btree (status)"
+    ],
+    [
+      "ix_futures_markets_story_key",
+      "CREATE INDEX ix_futures_markets_story_key ON public.futures_markets USING btree (story_key)"
+    ],
+    [
+      "ix_futures_name_trgm",
+      "CREATE INDEX ix_futures_name_trgm ON public.futures_markets USING gin (name gin_trgm_ops)"
+    ],
+    [
+      "uq_futures_source_external",
+      "CREATE UNIQUE INDEX uq_futures_source_external ON public.futures_markets USING btree (source, external_id)"
+    ],
+    [
+      "futures_outcomes_pkey",
+      "CREATE UNIQUE INDEX futures_outcomes_pkey ON public.futures_outcomes USING btree (id)"
+    ],
+    [
+      "ix_fo_market_movement",
+      "CREATE INDEX ix_fo_market_movement ON public.futures_outcomes USING btree (market_id, probability_change_24h) WHERE (probability_change_24h IS NOT NULL)"
+    ],
+    [
+      "ix_futures_outcomes_external_id",
+      "CREATE INDEX ix_futures_outcomes_external_id ON public.futures_outcomes USING btree (external_id)"
+    ],
+    [
+      "ix_futures_outcomes_last_updated",
+      "CREATE INDEX ix_futures_outcomes_last_updated ON public.futures_outcomes USING btree (last_updated)"
+    ],
+    [
+      "ix_futures_outcomes_market_id",
+      "CREATE INDEX ix_futures_outcomes_market_id ON public.futures_outcomes USING btree (market_id)"
+    ],
+    [
+      "ix_futures_outcomes_name_trgm",
+      "CREATE INDEX ix_futures_outcomes_name_trgm ON public.futures_outcomes USING gin (name gin_trgm_ops)"
+    ],
+    [
+      "ix_futures_outcomes_rank",
+      "CREATE INDEX ix_futures_outcomes_rank ON public.futures_outcomes USING btree (rank)"
+    ],
+    [
+      "ix_futures_outcomes_team_id",
+      "CREATE INDEX ix_futures_outcomes_team_id ON public.futures_outcomes USING btree (team_id)"
+    ],
+    [
+      "uq_outcome_market_external",
+      "CREATE UNIQUE INDEX uq_outcome_market_external ON public.futures_outcomes USING btree (market_id, external_id)"
+    ]
+  ],
+  "row_count": 29,
+  "truncated": false,
+  "duration_ms": 297.9,
+  "sql_fingerprint": "02dabfe257695d2b",
+  "status": "ok",
+  "wall_ms": 534.4,
+  "label": "indexes_fm_fo",
+  "note": "CAL-P094: index inventory for fold design",
+  "timeout_ms_requested": 10000
+}

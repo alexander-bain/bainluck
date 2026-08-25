@@ -20,6 +20,8 @@ from app.utils.cohort_cell_census import (
     GRADE_INCOMPLETE,
     GRADE_NEVER,
     MIN_CELL_N,
+    TRUTH_ELIGIBLE,
+    TRUTH_INELIGIBLE,
     bin_key,
     bisect_range,
     build_report,
@@ -33,13 +35,14 @@ from app.utils.cohort_cell_census import (
 )
 
 
-def _row(league, market_type, grade, b, n, sum_prob, winners):
+def _row(league, market_type, grade, b, n, sum_prob, winners, truth=TRUTH_ELIGIBLE):
     from types import SimpleNamespace
 
     return SimpleNamespace(
         league=league,
         market_type=market_type,
         grade=grade,
+        truth=truth,
         bin=b,
         n=n,
         sum_prob=sum_prob,
@@ -80,15 +83,15 @@ class TestGradeClassification:
 
 class TestBinKeyJsonRoundTrip:
     def test_round_trip(self):
-        k = bin_key("tennis", "quantity", GRADE_COMPLETE, 7)
-        assert parse_bin_key(k) == ("tennis", "quantity", GRADE_COMPLETE, 7)
+        k = bin_key("tennis", "quantity", GRADE_COMPLETE, 7, TRUTH_ELIGIBLE)
+        assert parse_bin_key(k) == ("tennis", "quantity", GRADE_COMPLETE, 7, TRUTH_ELIGIBLE)
 
     def test_survives_json_which_a_tuple_key_would_not(self):
         """The checkpoint is JSONB. A tuple key comes back as a list, which is
         unhashable, so the resumed run would rebuild an EMPTY accumulator while
         reporting the banked page count — a failure that looks like a working
         resume."""
-        acc = {bin_key("soccer", "quantity", GRADE_NEVER, 0): {"n": 3.0}}
+        acc = {bin_key("soccer", "quantity", GRADE_NEVER, 0, TRUTH_INELIGIBLE): {"n": 3.0}}
         revived = json.loads(json.dumps(acc))
         assert revived == acc
         assert parse_bin_key(next(iter(revived)))[0] == "soccer"
@@ -103,7 +106,7 @@ class TestFold:
         acc: dict = {}
         fold_page(acc, [_row("tennis", "quantity", GRADE_COMPLETE, 3, 10, 3.5, 4)])
         fold_page(acc, [_row("tennis", "quantity", GRADE_COMPLETE, 3, 5, 1.75, 2)])
-        slot = acc[bin_key("tennis", "quantity", GRADE_COMPLETE, 3)]
+        slot = acc[bin_key("tennis", "quantity", GRADE_COMPLETE, 3, TRUTH_ELIGIBLE)]
         assert slot["n"] == 15
         assert slot["sum_prob"] == pytest.approx(5.25)
         assert slot["winners"] == 6

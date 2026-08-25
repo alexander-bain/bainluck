@@ -1,6 +1,24 @@
 #!/usr/bin/env python3
 """CAL-P087 (#2098) — does the source-blind ``mode_prices`` join actually collide?
 
+⚠️ **THE DEFECT THIS MEASURED IS FIXED as of CAL-P090 / ``program/calibration-88``**
+(ruling 125; ``mode_prices`` now projects and GROUPs BY ``source`` and ``deduped``'s
+join carries ``AND mp.source = ro.source``). This script is kept and kept RUNNING
+because the cert (C-2098-SOURCE-1 §6) wants the before re-derivable next to the
+after, not because the question is still open.
+
+What that means for each instrument:
+
+* **Instrument B (``--out``, the chunked upper bound) is unaffected.** Its SQL is a
+  hand-written literal that builds BOTH the source-blind (``cur``) and
+  source-scoped (``alt``) mode groups itself, so it still measures the same 35 rows
+  it measured on 2026-08-22 regardless of what the module's SQL now says.
+* **Instrument A (``--chain-plan``) is direction-aware** — see :func:`build_chains`.
+  Against post-fix source it derives the PRE-fix chain by reverting, so the 3-way
+  cost comparison below is still produced and still means what it says. It refuses
+  loudly if it can find neither state, rather than comparing a chain against itself
+  and reporting a flattering zero (gotcha #53).
+
 The question, stated exactly
 ----------------------------
 ``app/tasks/calibration_published_twin_worker.py`` records a correctness caveat
@@ -146,7 +164,12 @@ MODE_GROUPBY_FROM = """                GROUP BY vm_id, adj_opening_probability, 
 MODE_GROUPBY_TO = """                GROUP BY vm_id, source, adj_opening_probability, eligible"""
 
 JOIN_FROM = """                  ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability"""
-JOIN_TO = """                  ON mp.vm_id = ro.vm_id AND mp.source = ro.source AND mp.mode_price = ro.adj_opening_probability"""
+# CAL-P090 shipped this as three lines, not one — matched here VERBATIM, because
+# these anchors are also read in reverse to reconstruct the pre-fix chain, and an
+# anchor that is merely equivalent is an anchor that finds nothing.
+JOIN_TO = """                  ON mp.vm_id = ro.vm_id
+                  AND mp.source = ro.source
+                  AND mp.mode_price = ro.adj_opening_probability"""
 
 CELL_TAIL = """
 SELECT
@@ -173,21 +196,60 @@ def _substitute(chain: str, pairs: list[tuple[str, str]]) -> str:
     return out
 
 
+#: FROM -> TO, i.e. source-BLIND -> source-SCOPED. Read in reverse to go the
+#: other way. Which direction this script needs depends on which side of the
+#: CAL-P090 fix the checked-out source is on, and it works that out rather than
+#: assuming — see :func:`build_chains`.
+SOURCE_SCOPE_PAIRS = [
+    (MODE_PRICES_FROM, MODE_PRICES_TO),
+    (MODE_GROUPBY_FROM, MODE_GROUPBY_TO),
+    (JOIN_FROM, JOIN_TO),
+]
+
+
+def _all_present(chain: str, anchors) -> bool:
+    return all(chain.count(a) == 1 for a in anchors)
+
+
 def build_chains() -> tuple[str, str, str]:
-    """``(unscoped, scoped_production, scoped_source_scoped_mode)`` chains."""
+    """``(unscoped, blind_mode_scoped, source_scoped_mode)`` chains.
+
+    DIRECTION-AWARE, because the module's SQL changed under this script.
+
+    Before CAL-P090 the checked-out source WAS the source-blind chain and the
+    source-scoped variant had to be synthesised. After CAL-P090 it is the other
+    way round. Either way the three chains this returns mean the same three
+    things, so the printed cost comparison stays comparable across the fix.
+
+    The refusal in the ``else`` arm is the point of the whole function. If the
+    anchors match NEITHER state, the chain has moved for some third reason and
+    the honest answer is to stop: substituting nothing would hand
+    ``run_chain_plan`` two identical chains, which plans to two identical costs,
+    which reads exactly like "the source-blindness costs nothing" — the
+    flattering direction, arrived at by measuring nothing (gotcha #53).
+    """
     from app.tasks.precompute_calibration import _calibration_population_ctes
 
     unscoped = _calibration_population_ctes()
     prod = _calibration_population_ctes(market_info_extra=MARKET_INFO_SCOPE)
-    scoped = _substitute(
-        prod,
-        [
-            (MODE_PRICES_FROM, MODE_PRICES_TO),
-            (MODE_GROUPBY_FROM, MODE_GROUPBY_TO),
-            (JOIN_FROM, JOIN_TO),
-        ],
+
+    blind_anchors = [src for src, _ in SOURCE_SCOPE_PAIRS]
+    scoped_anchors = [dst for _, dst in SOURCE_SCOPE_PAIRS]
+
+    if _all_present(prod, blind_anchors):
+        # Pre-CAL-P090 source: production is blind; synthesise the scoped one.
+        return unscoped, prod, _substitute(prod, SOURCE_SCOPE_PAIRS)
+    if _all_present(prod, scoped_anchors):
+        # Post-CAL-P090 source: production is scoped; synthesise the blind one,
+        # so the pre-fix cost line is still produced next to the after.
+        reverse = [(dst, src) for src, dst in SOURCE_SCOPE_PAIRS]
+        return _substitute(unscoped, reverse), _substitute(prod, reverse), prod
+    raise SystemExit(
+        "ABORT: `_calibration_population_ctes()` matches NEITHER the source-blind "
+        "nor the source-scoped mode_prices shape. The chain has moved for a third "
+        "reason; re-aim the three anchors rather than letting this script compare a "
+        "fold against itself and report zero collisions."
     )
-    return unscoped, prod, scoped
 
 
 # ==========================================================================

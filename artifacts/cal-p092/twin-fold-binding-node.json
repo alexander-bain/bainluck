@@ -1,0 +1,481 @@
+{
+  "projection": {
+    "absolute_floor_cost_predicate_removed": 2519808.81,
+    "baseline_cost": 10341997.2,
+    "candidates": {
+      "A": {
+        "projected_cost": 3813783.28,
+        "ratio_vs_baseline": 0.3688,
+        "reduction_pct": 63.12,
+        "share_of_recoverable_captured": 0.8346
+      },
+      "B": {
+        "projected_cost": 6157538.41,
+        "ratio_vs_baseline": 0.5954,
+        "reduction_pct": 40.46,
+        "share_of_recoverable_captured": 0.5349
+      }
+    },
+    "caveat": "Planner cost, not runtime. CAL-P085 measured this fold's cost model understating real time by >= 2.35x. The RATIO is the signal; neither number is a second. The floor variant also removes the subplans entirely, so it bounds rather than projects.",
+    "recoverable_cost": 7822188.4
+  },
+  "sites": {
+    "full_predicate": 6,
+    "wide_spread_only": 1
+  },
+  "variants": {
+    "baseline": {
+      "correlated_subplans": [
+        {
+          "filter": "((yes_bid > '0'::numeric) OR (last_price > '0'::numeric))",
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_1.id)",
+          "name": "SubPlan 3",
+          "node_type": "Index Scan",
+          "plan_rows": 795,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 1087.7
+        },
+        {
+          "filter": "((yes_bid > '0'::numeric) OR (last_price > '0'::numeric))",
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_4.id)",
+          "name": "SubPlan 10",
+          "node_type": "Index Scan",
+          "plan_rows": 795,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 1087.7
+        },
+        {
+          "filter": "((yes_bid > '0'::numeric) OR (last_price > '0'::numeric))",
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_5.id)",
+          "name": "SubPlan 11",
+          "node_type": "Index Scan",
+          "plan_rows": 795,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 1087.7
+        },
+        {
+          "filter": "((yes_bid > '0'::numeric) OR (last_price > '0'::numeric))",
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 6",
+          "node_type": "Index Scan",
+          "plan_rows": 795,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 1087.7
+        },
+        {
+          "filter": "((yes_bid > '0'::numeric) OR (last_price > '0'::numeric))",
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 7",
+          "node_type": "Index Scan",
+          "plan_rows": 795,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 1087.7
+        },
+        {
+          "filter": "((yes_bid > '0'::numeric) OR (last_price > '0'::numeric))",
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 8",
+          "node_type": "Index Scan",
+          "plan_rows": 795,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 1087.7
+        },
+        {
+          "filter": "(last_price > '0'::numeric)",
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 9",
+          "node_type": "Index Scan",
+          "plan_rows": 491,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 1087.21
+        }
+      ],
+      "explain_duration_ms": 98.8,
+      "plan_rows": 277,
+      "sql_fingerprint": "dc71e657525cc780",
+      "top_self_cost": [
+        {
+          "depth": 1,
+          "node": "WindowAgg[CTE ranked_outcomes]",
+          "self_cost": 7693583.2
+        },
+        {
+          "depth": 18,
+          "node": "Sort",
+          "self_cost": 568198.1
+        },
+        {
+          "depth": 3,
+          "node": "Sort",
+          "self_cost": 494040.7
+        },
+        {
+          "depth": 15,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 164490.0
+        },
+        {
+          "depth": 6,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 157118.0
+        },
+        {
+          "depth": 20,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 157118.0
+        },
+        {
+          "depth": 5,
+          "node": "Sort",
+          "self_cost": 136243.1
+        },
+        {
+          "depth": 1,
+          "node": "Seq Scan[CTE market_info]",
+          "self_cost": 131644.8
+        },
+        {
+          "depth": 2,
+          "node": "Hash Join",
+          "self_cost": 88135.4
+        },
+        {
+          "depth": 10,
+          "node": "Nested Loop",
+          "self_cost": 86193.1
+        }
+      ],
+      "total_cost": 10341997.2,
+      "truncated": false
+    },
+    "floor": {
+      "correlated_subplans": [],
+      "explain_duration_ms": 92.4,
+      "plan_rows": 277,
+      "sql_fingerprint": "bcb90a30e7aeb15a",
+      "top_self_cost": [
+        {
+          "depth": 18,
+          "node": "Sort",
+          "self_cost": 568198.1
+        },
+        {
+          "depth": 3,
+          "node": "Sort",
+          "self_cost": 405445.7
+        },
+        {
+          "depth": 15,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 164490.0
+        },
+        {
+          "depth": 6,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 157118.0
+        },
+        {
+          "depth": 20,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 157118.0
+        },
+        {
+          "depth": 5,
+          "node": "Sort",
+          "self_cost": 136243.1
+        },
+        {
+          "depth": 1,
+          "node": "Seq Scan[CTE market_info]",
+          "self_cost": 131644.8
+        },
+        {
+          "depth": 2,
+          "node": "Hash Join",
+          "self_cost": 88135.4
+        },
+        {
+          "depth": 6,
+          "node": "Sort",
+          "self_cost": 76816.0
+        },
+        {
+          "depth": 19,
+          "node": "Hash Join",
+          "self_cost": 72559.8
+        }
+      ],
+      "total_cost": 2519808.81,
+      "truncated": false
+    },
+    "proxy_a": {
+      "correlated_subplans": [
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_1.id)",
+          "name": "SubPlan 3",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_4.id)",
+          "name": "SubPlan 10",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_5.id)",
+          "name": "SubPlan 11",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 6",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 7",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 8",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 9",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        }
+      ],
+      "explain_duration_ms": 115.9,
+      "plan_rows": 277,
+      "sql_fingerprint": "54c844cd9c66330e",
+      "top_self_cost": [
+        {
+          "depth": 1,
+          "node": "WindowAgg[CTE ranked_outcomes]",
+          "self_cost": 1200467.6
+        },
+        {
+          "depth": 18,
+          "node": "Sort",
+          "self_cost": 568198.1
+        },
+        {
+          "depth": 3,
+          "node": "Sort",
+          "self_cost": 494040.7
+        },
+        {
+          "depth": 15,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 164490.0
+        },
+        {
+          "depth": 6,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 157118.0
+        },
+        {
+          "depth": 20,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 157118.0
+        },
+        {
+          "depth": 5,
+          "node": "Sort",
+          "self_cost": 136243.1
+        },
+        {
+          "depth": 1,
+          "node": "Seq Scan[CTE market_info]",
+          "self_cost": 131644.8
+        },
+        {
+          "depth": 2,
+          "node": "Hash Join",
+          "self_cost": 88135.4
+        },
+        {
+          "depth": 6,
+          "node": "Sort",
+          "self_cost": 76816.0
+        }
+      ],
+      "total_cost": 3813783.28,
+      "truncated": false
+    },
+    "proxy_b": {
+      "correlated_subplans": [
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_1.id)",
+          "name": "SubPlan 3",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_4.id)",
+          "name": "SubPlan 10",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_5.id)",
+          "name": "SubPlan 11",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 6",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 7",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": null,
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 8",
+          "node_type": "Index Only Scan",
+          "plan_rows": 999,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 147.24
+        },
+        {
+          "filter": "(last_price > '0'::numeric)",
+          "index": "ix_futures_odds_snapshots_outcome_id",
+          "index_cond": "(outcome_id = fo_2.id)",
+          "name": "SubPlan 9",
+          "node_type": "Index Scan",
+          "plan_rows": 491,
+          "relation": "futures_odds_snapshots",
+          "total_cost": 1087.21
+        }
+      ],
+      "explain_duration_ms": 198.6,
+      "plan_rows": 277,
+      "sql_fingerprint": "f40f1d43a52db507",
+      "top_self_cost": [
+        {
+          "depth": 1,
+          "node": "WindowAgg[CTE ranked_outcomes]",
+          "self_cost": 3543282.8
+        },
+        {
+          "depth": 18,
+          "node": "Sort",
+          "self_cost": 568198.1
+        },
+        {
+          "depth": 3,
+          "node": "Sort",
+          "self_cost": 494040.7
+        },
+        {
+          "depth": 15,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 164490.0
+        },
+        {
+          "depth": 6,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 157118.0
+        },
+        {
+          "depth": 20,
+          "node": "Seq Scan[futures_outcomes]",
+          "self_cost": 157118.0
+        },
+        {
+          "depth": 5,
+          "node": "Sort",
+          "self_cost": 136243.1
+        },
+        {
+          "depth": 1,
+          "node": "Seq Scan[CTE market_info]",
+          "self_cost": 131644.8
+        },
+        {
+          "depth": 2,
+          "node": "Hash Join",
+          "self_cost": 88135.4
+        },
+        {
+          "depth": 6,
+          "node": "Sort",
+          "self_cost": 76816.0
+        }
+      ],
+      "total_cost": 6157538.41,
+      "truncated": false
+    }
+  }
+}

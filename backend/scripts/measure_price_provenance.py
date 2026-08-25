@@ -35,13 +35,15 @@ read-only guard.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any
+from decimal import Decimal
+from typing import Any, Iterable, Sequence
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -121,6 +123,64 @@ def db_query(sql: str, *, api: str, token: str, limit: int = ROW_CAP) -> dict[st
 MAX_PARTITION_K = 16
 
 
+def canonical_raw(rows: Iterable[Sequence[Any]]) -> list[list[str]]:
+    """The grouped rows as COMMITTED INPUTS — verbatim, stringified, sorted.
+
+    ``C-APPLY-PRE-WHICHPRICE-R3`` [P1] attack 1: the artifact preserved the
+    producer's answers and not the grouped inputs those answers were computed
+    from, so its pooled ``1.7422 pp`` could not be re-derived by anyone but the
+    producer. Per-cell ECEs cannot be averaged into a pooled ECE — bin-level
+    cancellation across cells is invisible from a cell summary (the cert
+    measured the gap: cell-average ``4.2831`` vs pooled ``1.7422``).
+
+    Every value is written as the STRING the read rail returned. ``sum_prob``
+    arrives as a numeric string and float-normalising it here would make the
+    receipt re-derive from the producer's rounding rather than from the
+    database's answer. Sorting is what makes two partitions of the same cell
+    byte-comparable (attack 7).
+    """
+    return sorted([str(v) for v in row] for row in rows)
+
+
+def raw_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
+    """SHA-256 over :func:`canonical_raw`, so two reads compare in one field."""
+    payload = json.dumps(canonical_raw(rows), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def aggregate_raw(rows: Iterable[Sequence[Any]]) -> list[list[str]]:
+    """Sum the grouped rows per key. The LAST THREE columns are ``n``/``sum_prob``/``winners``.
+
+    A ``k``-way partition emits the same ``(grade, bin, level…)`` key once per
+    partition, so two reads of the same cell at different ``k`` are only
+    comparable after re-aggregation. This is not a normalisation convenience —
+    comparing the verbatim rows would report "the partitions disagree" for every
+    cell that was ever partitioned, which is a false alarm of exactly the shape
+    this program keeps having to unlearn.
+
+    ``sum_prob`` is summed as :class:`~decimal.Decimal` from the numeric string
+    the rail returned, so the re-aggregation is EXACT and a mismatch is a real
+    mismatch rather than float drift. The output is canonicalised with
+    ``format(x.normalize(), "f")``, which never uses exponent notation.
+    """
+    acc: dict[tuple[str, ...], list[Any]] = {}
+    for row in rows:
+        key = tuple(str(v) for v in row[:-3])
+        slot = acc.setdefault(key, [0, Decimal(0), 0])
+        slot[0] += int(row[-3])
+        slot[1] += Decimal(str(row[-2]))
+        slot[2] += int(row[-1])
+    return sorted(
+        list(key) + [str(v[0]), format(v[1].normalize(), "f"), str(v[2])]
+        for key, v in acc.items()
+    )
+
+
+def aggregate_fingerprint(rows: Iterable[Sequence[Any]]) -> str:
+    payload = json.dumps(aggregate_raw(rows), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def _fold_at(
     cat: str,
     mt: str,
@@ -132,13 +192,20 @@ def _fold_at(
     row_class: Any = FoldRow,
 ) -> tuple[list[Any], dict[str, Any]]:
     rows: list[Any] = []
+    raw: list[Sequence[Any]] = []
     meta: dict[str, Any] = {"partition_k": k, "durations_ms": [], "fingerprints": []}
     for m in range(k):
         sql = render_sql(template, cat=cat, mt=mt, k=k, m=m)
         payload = db_query(sql, api=api, token=token)
         meta["durations_ms"].append(payload.get("duration_ms"))
         meta["fingerprints"].append(payload.get("sql_fingerprint"))
+        raw.extend(payload["rows"])
         rows.extend(row_class.from_row(r) for r in payload["rows"])
+    # Carried on ``meta`` so every caller — including the escalating
+    # :func:`fold_cell` — gets the inputs of the read that actually SUCCEEDED,
+    # not of the attempt before it. The writer pops it back out; it never
+    # reaches the artifact's ``read`` block by accident.
+    meta["_raw"] = raw
     return rows, meta
 
 
@@ -204,6 +271,86 @@ def scalar_query(
     return {"totals": totals, "meta": meta}
 
 
+def partition_invariance(
+    cat: str, mt: str, ks: Sequence[int], *, api: str, token: str
+) -> dict[str, Any]:
+    """Run ONE cell's whole-market fold at several ``k`` and compare the results.
+
+    ``C-APPLY-PRE-WHICHPRICE-R3`` [P1] attack 7: the R3 artifact recorded
+    ``partitions_attempted: [1, 4]`` for ``esports/container_member`` and a
+    committed test proving only that the SQL *text* partitions on ``fm.id``.
+    Two database results were never compared, so the safety argument for
+    ``MOD(fm.id, k)`` — "a partitioned run and a ``k=1`` run are the same fold"
+    (:data:`WHOLE_MARKET_FOLD_SQL`'s docstring) — was structural reasoning, not
+    execution.
+
+    This executes it. Each ``k`` is a genuinely separate set of statements
+    against the database; the comparison is on the **policy table** (the object
+    the apply is authorised against) and, independently, on the byte-canonical
+    grouped inputs. Failures are reported per ``k`` and never collapsed into the
+    reassuring reading: a ``k`` that times out is recorded as ``unmeasured``,
+    which is NOT "the tables agreed".
+    """
+    out: dict[str, Any] = {
+        "cell": f"{cat}/{mt}",
+        "k_values": list(ks),
+        "reads": {},
+        "policy_tables": {},
+        "raw_fingerprints": {},
+        "aggregate_fingerprints": {},
+        "unmeasured": {},
+    }
+    for k in ks:
+        try:
+            rows, meta = _fold_at(
+                cat,
+                mt,
+                api=api,
+                token=token,
+                k=k,
+                template=WHOLE_MARKET_FOLD_SQL,
+                row_class=MarketFoldRow,
+            )
+        except ReadError as exc:
+            out["unmeasured"][str(k)] = str(exc)
+            print(f"  invariance {cat}/{mt} k={k}: UNMEASURED — {exc}", file=sys.stderr)
+            continue
+        raw = meta.pop("_raw", [])
+        out["reads"][str(k)] = meta
+        out["policy_tables"][str(k)] = market_policy_table(rows)
+        out["raw_fingerprints"][str(k)] = raw_fingerprint(raw)
+        out["aggregate_fingerprints"][str(k)] = aggregate_fingerprint(raw)
+
+    measured = sorted(out["policy_tables"])
+    if len(measured) < 2:
+        out["verdict"] = None
+        out["reason"] = f"needs two measured k, have {measured}"
+        return out
+
+    def canon(table: Any) -> str:
+        return json.dumps(table, sort_keys=True, separators=(",", ":"))
+
+    reference = measured[0]
+    out["reference_k"] = reference
+    out["policy_tables_byte_equal"] = {
+        k: canon(out["policy_tables"][k]) == canon(out["policy_tables"][reference])
+        for k in measured
+    }
+    # The re-aggregated grouped inputs, NOT the verbatim ones: see
+    # :func:`aggregate_raw`. The verbatim fingerprints stay in the artifact as a
+    # record of what each read actually returned.
+    out["raw_rows_equal"] = {
+        k: out["aggregate_fingerprints"][k] == out["aggregate_fingerprints"][reference]
+        for k in measured
+    }
+    out["verdict"] = bool(
+        all(out["policy_tables_byte_equal"].values())
+        and all(out["raw_rows_equal"].values())
+        and not out["unmeasured"]
+    )
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--census", help="the #1978 all-cells census artifact, for reconciliation")
@@ -220,8 +367,37 @@ def main() -> int:
             "because A_today under both is the reconciliation key."
         ),
     )
+    parser.add_argument(
+        "--raw-rows",
+        action="store_true",
+        help=(
+            "CAL-P092 (WHICHPRICE-R3 attack 1): also commit each cell's grouped "
+            "SQL output verbatim, so the pooled table can be re-derived by "
+            "someone who is not the producer."
+        ),
+    )
+    parser.add_argument(
+        "--invariance",
+        action="append",
+        default=[],
+        metavar="CELL:K,K",
+        help=(
+            "CAL-P092 (WHICHPRICE-R3 attack 7): run one cell's whole-market fold "
+            "at each k and compare the resulting policy tables. Repeatable, e.g. "
+            "--invariance tennis/container_member:1,16"
+        ),
+    )
     parser.add_argument("--out", help="write the artifact here (default: stdout)")
     args = parser.parse_args()
+
+    invariance_specs: list[tuple[str, str, list[int]]] = []
+    for spec in args.invariance:
+        cell, _, ks = spec.partition(":")
+        cat, _, mt = cell.partition("/")
+        if not (cat and mt and ks):
+            print(f"--invariance wants CELL:K,K, got {spec!r}", file=sys.stderr)
+            return 2
+        invariance_specs.append((cat, mt, [int(k) for k in ks.split(",")]))
 
     api = os.environ.get("BAINLUCK_API")
     token = os.environ.get("ADMIN_TOKEN")
@@ -238,8 +414,10 @@ def main() -> int:
         cells = [tuple(c.split("/", 1)) for c in args.cell]
     elif census:
         cells = [(c["league"], c["market_type"]) for c in census.values()]
+    elif invariance_specs:
+        cells = []
     else:
-        print("give --cell or --census", file=sys.stderr)
+        print("give --cell, --census or --invariance", file=sys.stderr)
         return 2
 
     started = time.time()
@@ -267,11 +445,15 @@ def main() -> int:
             print(f"{key:34} UNMEASURED — {exc}", file=sys.stderr)
             continue
 
+        raw = meta.pop("_raw", [])
         entry: dict[str, Any] = {
             "read": meta,
             "policies": policy_table(rows),
             "shares": class_shares(rows),
         }
+        if args.raw_rows:
+            entry["raw_rows"] = canonical_raw(raw)
+            entry["raw_fingerprint"] = raw_fingerprint(raw)
 
         # CAL-P085 (#2087). The market-aware fold is a SECOND statement, run and
         # failed independently: a cell whose whole-market read times out must not
@@ -294,12 +476,16 @@ def main() -> int:
                 out["whole_market_unmeasured"][key] = str(exc)
                 print(f"{key:34} WHOLE-MARKET UNMEASURED — {exc}", file=sys.stderr)
             else:
+                market_raw = market_meta.pop("_raw", [])
                 entry["whole_market"] = {
                     "read": market_meta,
                     "policies": market_policy_table(market_rows),
                     "shares": market_level_shares(market_rows),
                     "row_fold_reconciliation": reconciles_with_row_fold(market_rows, rows),
                 }
+                if args.raw_rows:
+                    entry["whole_market"]["raw_rows"] = canonical_raw(market_raw)
+                    entry["whole_market"]["raw_fingerprint"] = raw_fingerprint(market_raw)
                 pooled_market_rows.extend(market_rows)
 
         if key in census:
@@ -348,6 +534,17 @@ def main() -> int:
             )
         print(line, file=sys.stderr)
 
+    if invariance_specs:
+        out["partition_invariance"] = {}
+        for cat, mt, ks in invariance_specs:
+            result = partition_invariance(cat, mt, ks, api=api, token=token)
+            out["partition_invariance"][result["cell"]] = result
+            print(
+                f"INVARIANCE {result['cell']:34} k={result['k_values']} "
+                f"verdict={result['verdict']} unmeasured={sorted(result['unmeasured'])}",
+                file=sys.stderr,
+            )
+
     # The pooled figure is the headline, so it is computed here rather than left
     # for a reader to assemble — and it is computed by re-folding every cell's
     # rows TOGETHER, not by averaging per-cell ECEs. An average over cells would
@@ -377,9 +574,75 @@ def main() -> int:
         )
         out["whole_market_cells_unmeasured"] = len(out["whole_market_unmeasured"])
 
+    # ``C-APPLY-PRE-WHICHPRICE-R3`` [P1] attack 3: the load-bearing
+    # ``101 mixed markets in 464,777`` was carried forward from the P077
+    # artifact, whose A population is 370,677 rows against this fold's 372,293 —
+    # a 1,616-row drift. A repeated count is not a current measurement, so the
+    # split is re-measured here on the SAME 49-cell snapshot as the fold and
+    # pooled by summation (every column is a market COUNT, and no market spans
+    # two cells because the cell predicates are all on ``fm``).
+    #
+    # The pool is only a total if every cell is in it. Cells whose probe timed
+    # out are named in ``cells_unmeasured`` and ``complete`` goes false, because
+    # a partial sum presented as a population count is the same defect this
+    # attack is about.
+    for label in ("leg_split", "reprice_feasibility"):
+        contributing = {
+            key: cell[label]
+            for key, cell in out["cells"].items()
+            if isinstance(cell.get(label), dict) and "totals" in cell[label]
+        }
+        missing = sorted(
+            key
+            for key, cell in out["cells"].items()
+            if label in cell and "totals" not in cell[label]
+        )
+        if not contributing and not missing:
+            continue
+        totals: dict[str, int] = {}
+        for cell in contributing.values():
+            for column, value in cell["totals"].items():
+                totals[column] = totals.get(column, 0) + int(value)
+        out[f"pooled_{label}"] = {
+            "totals": totals,
+            "cells_measured": len(contributing),
+            "cells_unmeasured": missing,
+            "complete": not missing,
+        }
+
     out["elapsed_s"] = round(time.time() - started, 2)
     out["cells_measured"] = len(out["cells"])
     out["cells_unmeasured"] = len(out["unmeasured"])
+    if args.raw_rows:
+        # Column order, written down, because an independent re-deriver that has
+        # to infer it from the data is re-deriving the producer's assumptions.
+        out["raw_rows_schema"] = {
+            "row_fold": [
+                "price_class",
+                "capture_class",
+                "grade",
+                "bin",
+                "n",
+                "sum_prob",
+                "winners",
+            ],
+            "whole_market": [
+                "grade",
+                "bin",
+                "mkt_price_level",
+                "mkt_capture_level",
+                "mkt_capture_level_pop",
+                "n",
+                "sum_prob",
+                "winners",
+            ],
+            "note": (
+                "Every value is the string the read rail returned, sorted "
+                "lexicographically. Pool = the concatenation of every measured "
+                "cell's rows; pooled ECE is a re-fold of that pool, never an "
+                "average of per-cell ECEs."
+            ),
+        }
 
     text = json.dumps(out, indent=1, sort_keys=True)
     if args.out:
@@ -402,7 +665,16 @@ def main() -> int:
             f"row-fold reconciliation {rec['reconciled']} (n_delta {rec['n_delta']})",
             file=sys.stderr,
         )
-    return 0 if not out["unmeasured"] and not out.get("whole_market_unmeasured") else 1
+    invariance_ok = all(
+        r.get("verdict") is True for r in out.get("partition_invariance", {}).values()
+    )
+    return (
+        0
+        if not out["unmeasured"]
+        and not out.get("whole_market_unmeasured")
+        and invariance_ok
+        else 1
+    )
 
 
 if __name__ == "__main__":

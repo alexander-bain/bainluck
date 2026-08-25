@@ -144,18 +144,40 @@ THIS fold by **>= 2.35x**. And the partition is far smaller than it looked:
 seven-way decomposition quoted in the old paragraph counted PUBLISHED PAYLOAD
 BUCKETS, not population rows. It is a 2-way split wearing a 7-way name.
 
-**4. Before it is a cost question it is a CORRECTNESS question, and that half
-is not settled either.** The population's aggregates are source-scoped and safe
-(``group_sizes``/``event_sizes`` group by ``(x, source)``; ``virtual_market``
-joins carry ``AND gs.source = mi.source``; ``vm_stats`` groups by ``vm.source``)
-— but ``vm_id`` is ``'g:'||group_id | 'e:'||event_id | 'm:'||market_id`` and
-carries **no source**, while ``mode_prices`` groups by bare ``vm_id`` and
-``deduped`` joins on bare ``vm_id``. Measured: **1,271 event_ids reach
-``event_size >= 3`` under more than one source** (0 group_ids do). On those, an
-unchunked fold can suppress one source's legs with a mode price computed from
-the other's, and a chunked fold cannot. Whether any of the 1,271 actually
-cross-suppresses today is **NOT measured**. So a source-chunked fold is not
-proven row-identical to the whole fold.
+**4. Before it is a cost question it is a CORRECTNESS question — and the half
+that was open here turned out to be a BUG, now fixed.** The population's
+aggregates are source-scoped and safe (``group_sizes``/``event_sizes`` group by
+``(x, source)``; ``virtual_market`` joins carry ``AND gs.source = mi.source``;
+``vm_stats`` groups by ``vm.source``) — but ``vm_id`` is ``'g:'||group_id |
+'e:'||event_id | 'm:'||market_id`` and carries **no source**. Measured: **1,271
+event_ids reach ``event_size >= 3`` under more than one source** (0 group_ids
+do).
+
+The paragraph this replaces observed that ``mode_prices`` grouped by bare
+``vm_id`` and ``deduped`` joined on bare ``vm_id``, so an unchunked fold could
+suppress one source's legs with a mode price computed from the other's — and
+closed with "whether any of the 1,271 actually cross-suppresses today is NOT
+measured". **It was measured, and it does** (#2098, CAL-P090): on
+``e:14887630``, 4 Polymarket legs deleted 23 Kalshi legs; 35 rows across 2
+``vm_id``s whole-domain. That is not a chunking hazard, it is a defect in the
+published curve, and **ruling 125 fixed it** — *a join that can DELETE a row
+must carry every dimension that identifies the row* — by projecting and grouping
+``source`` in ``mode_prices`` and adding ``AND mp.source = ro.source`` to
+``deduped``'s join, at all three sites (the producer, this fold's own
+``GET /api/admin/calibration-data`` auditor, and
+``scripts/audit_golf_hockey_calibration.py``). So the divergence this paragraph
+used to describe is gone: chunked and unchunked now agree about mode prices.
+
+What is left of the original worry is narrower and still real enough not to act
+on. The representative window ``ROW_NUMBER() OVER (PARTITION BY cv.vm_id ...)``
+is still source-blind. It is consulted only on the non-multi branch
+(``ELSE ro.rn = 1``), and a ``vm_id`` shared across sources reached that state
+through the ``e:`` arm, which makes both sides ``is_multi`` — so on precisely
+the colliding rows, ``rn`` is computed and never read. That is an argument for
+row-identity, not a measurement of it. **A source-chunked fold is therefore no
+longer known to differ, but is still not PROVEN row-identical**, and promoting
+it would be a ruling with a measured row-diff behind it, not an inference from
+this note.
 
 **The decision, per the directive: the plan decides, not the planner's cost.**
 The plan says tail-chunking is refuted structurally and root-chunking works

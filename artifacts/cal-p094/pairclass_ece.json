@@ -1,0 +1,1004 @@
+{
+  "label": "pairclass_ece",
+  "complete": true,
+  "measured": true,
+  "tolerance": 0.02,
+  "classes": [
+    "identical_noncomp",
+    "other_noncomp",
+    "partial_open",
+    "ok"
+  ],
+  "scope": {
+    "source": "polymarket",
+    "status": "resolved",
+    "market_types": [
+      "quantity",
+      "container_member"
+    ],
+    "leagues": [
+      "basketball",
+      "baseball",
+      "esports",
+      "hockey",
+      "soccer",
+      "economics",
+      "golf",
+      "table_tennis",
+      "politics",
+      "tennis",
+      "geopolitics"
+    ],
+    "truth": "eligible only"
+  },
+  "shard_count": 45,
+  "shards": [
+    {
+      "lo": 1,
+      "hi": 1000001,
+      "rows": 15,
+      "duration_ms": 1054.4,
+      "sql_fingerprint": "0735e410a4e938c0"
+    },
+    {
+      "lo": 1000001,
+      "hi": 2000001,
+      "rows": 0,
+      "duration_ms": 881.3,
+      "sql_fingerprint": "ca474ea20427077d"
+    },
+    {
+      "lo": 2000001,
+      "hi": 4000001,
+      "rows": 0,
+      "duration_ms": 2017.1,
+      "sql_fingerprint": "b69caf571dedc748"
+    },
+    {
+      "lo": 4000001,
+      "hi": 6000001,
+      "rows": 7,
+      "duration_ms": 1087.1,
+      "sql_fingerprint": "7ab399e84d4210c7"
+    },
+    {
+      "lo": 6000001,
+      "hi": 8000001,
+      "rows": 19,
+      "duration_ms": 868.8,
+      "sql_fingerprint": "e413129a0447ba3e"
+    },
+    {
+      "lo": 8000001,
+      "hi": 10000001,
+      "rows": 8,
+      "duration_ms": 917.1,
+      "sql_fingerprint": "e978cd6942f49e3a"
+    },
+    {
+      "lo": 10000001,
+      "hi": 12000001,
+      "rows": 18,
+      "duration_ms": 1111.6,
+      "sql_fingerprint": "284701a686b1038a"
+    },
+    {
+      "lo": 12000001,
+      "hi": 13000001,
+      "rows": 13,
+      "duration_ms": 449.1,
+      "sql_fingerprint": "ee0b7f8e2ab6ea3d"
+    },
+    {
+      "lo": 13000001,
+      "hi": 14000001,
+      "rows": 78,
+      "duration_ms": 5441.2,
+      "sql_fingerprint": "0a53c79125761ee7"
+    },
+    {
+      "lo": 14000001,
+      "hi": 16000001,
+      "rows": 12,
+      "duration_ms": 1179.5,
+      "sql_fingerprint": "224a302376627883"
+    },
+    {
+      "lo": 16000001,
+      "hi": 18000001,
+      "rows": 52,
+      "duration_ms": 5907.4,
+      "sql_fingerprint": "2b6b620c0bbfb2da"
+    },
+    {
+      "lo": 18000001,
+      "hi": 20000001,
+      "rows": 24,
+      "duration_ms": 1351.8,
+      "sql_fingerprint": "fe469406c27d0674"
+    },
+    {
+      "lo": 20000001,
+      "hi": 22000001,
+      "rows": 28,
+      "duration_ms": 6496.4,
+      "sql_fingerprint": "6a9b604022496c91"
+    },
+    {
+      "lo": 22000001,
+      "hi": 24000001,
+      "rows": 40,
+      "duration_ms": 1577.6,
+      "sql_fingerprint": "86efcd457b0b66e3"
+    },
+    {
+      "lo": 24000001,
+      "hi": 26000001,
+      "rows": 72,
+      "duration_ms": 1512.4,
+      "sql_fingerprint": "f54fe0efd4c0195f"
+    },
+    {
+      "lo": 26000001,
+      "hi": 28000001,
+      "rows": 85,
+      "duration_ms": 1576.4,
+      "sql_fingerprint": "89e8c0035cb68aac"
+    },
+    {
+      "lo": 28000001,
+      "hi": 30000001,
+      "rows": 102,
+      "duration_ms": 1434.4,
+      "sql_fingerprint": "d5c68ac99f392e5b"
+    },
+    {
+      "lo": 30000001,
+      "hi": 32000001,
+      "rows": 162,
+      "duration_ms": 1639.2,
+      "sql_fingerprint": "a8f1e780a361ccfc"
+    },
+    {
+      "lo": 32000001,
+      "hi": 34000001,
+      "rows": 158,
+      "duration_ms": 1504.6,
+      "sql_fingerprint": "d187acb9a04fbde3"
+    },
+    {
+      "lo": 34000001,
+      "hi": 36000001,
+      "rows": 237,
+      "duration_ms": 9116.4,
+      "sql_fingerprint": "97e1c5de0a08d358"
+    },
+    {
+      "lo": 36000001,
+      "hi": 38000001,
+      "rows": 138,
+      "duration_ms": 2470.6,
+      "sql_fingerprint": "45226abe20d3021a"
+    },
+    {
+      "lo": 38000001,
+      "hi": 40000001,
+      "rows": 37,
+      "duration_ms": 462.9,
+      "sql_fingerprint": "8e627f6c2eb56731"
+    },
+    {
+      "lo": 40000001,
+      "hi": 42000001,
+      "rows": 14,
+      "duration_ms": 123.3,
+      "sql_fingerprint": "3d9f0b1214fd3376"
+    },
+    {
+      "lo": 42000001,
+      "hi": 44000001,
+      "rows": 13,
+      "duration_ms": 84.1,
+      "sql_fingerprint": "e88e3f0cf9f97f9a"
+    },
+    {
+      "lo": 44000001,
+      "hi": 46000001,
+      "rows": 10,
+      "duration_ms": 89.4,
+      "sql_fingerprint": "c524e20d72082c02"
+    },
+    {
+      "lo": 46000001,
+      "hi": 48000001,
+      "rows": 11,
+      "duration_ms": 137.2,
+      "sql_fingerprint": "cee6d5298f8832ae"
+    },
+    {
+      "lo": 48000001,
+      "hi": 50000001,
+      "rows": 11,
+      "duration_ms": 154.8,
+      "sql_fingerprint": "4e8df2d159e82dbe"
+    },
+    {
+      "lo": 50000001,
+      "hi": 52000001,
+      "rows": 11,
+      "duration_ms": 243.6,
+      "sql_fingerprint": "737b0d491eb28dc0"
+    },
+    {
+      "lo": 52000001,
+      "hi": 53000001,
+      "rows": 7,
+      "duration_ms": 672.1,
+      "sql_fingerprint": "4252c7727f319c58"
+    },
+    {
+      "lo": 53000001,
+      "hi": 53500001,
+      "rows": 0,
+      "duration_ms": 5046.5,
+      "sql_fingerprint": "372da231afd28051"
+    },
+    {
+      "lo": 53500001,
+      "hi": 54000001,
+      "rows": 1,
+      "duration_ms": 1042.9,
+      "sql_fingerprint": "5ca77048ce65dc71"
+    },
+    {
+      "lo": 54000001,
+      "hi": 56000001,
+      "rows": 20,
+      "duration_ms": 829.8,
+      "sql_fingerprint": "e0d15067f80985ae"
+    },
+    {
+      "lo": 56000001,
+      "hi": 56500001,
+      "rows": 2,
+      "duration_ms": 194.0,
+      "sql_fingerprint": "ed712bc28bd11cf2"
+    },
+    {
+      "lo": 56500001,
+      "hi": 56750001,
+      "rows": 20,
+      "duration_ms": 569.2,
+      "sql_fingerprint": "c70b1149456f63c0"
+    },
+    {
+      "lo": 56750001,
+      "hi": 56875001,
+      "rows": 20,
+      "duration_ms": 5400.4,
+      "sql_fingerprint": "b2a4e7575861a9f5"
+    },
+    {
+      "lo": 56875001,
+      "hi": 57000001,
+      "rows": 12,
+      "duration_ms": 2283.3,
+      "sql_fingerprint": "cc21fdd1ed5375c0"
+    },
+    {
+      "lo": 57000001,
+      "hi": 57500001,
+      "rows": 29,
+      "duration_ms": 9485.7,
+      "sql_fingerprint": "dcc7f7d1d8eed222"
+    },
+    {
+      "lo": 57500001,
+      "hi": 58000001,
+      "rows": 26,
+      "duration_ms": 9893.9,
+      "sql_fingerprint": "df3f057e0afbc8ee"
+    },
+    {
+      "lo": 58000001,
+      "hi": 58200000,
+      "rows": 27,
+      "duration_ms": 5853.2,
+      "sql_fingerprint": "310e081c32b0a8ea"
+    },
+    {
+      "lo": 58200000,
+      "hi": 58400000,
+      "rows": 19,
+      "duration_ms": 6251.4,
+      "sql_fingerprint": "d60ac83dcbc001eb"
+    },
+    {
+      "lo": 58400000,
+      "hi": 58600000,
+      "rows": 20,
+      "duration_ms": 6174.1,
+      "sql_fingerprint": "7dc25062df1540c4"
+    },
+    {
+      "lo": 58600000,
+      "hi": 58800000,
+      "rows": 29,
+      "duration_ms": 6646.8,
+      "sql_fingerprint": "2fe8314da10b42d1"
+    },
+    {
+      "lo": 58800000,
+      "hi": 59000000,
+      "rows": 28,
+      "duration_ms": 6744.6,
+      "sql_fingerprint": "f585755f50c36912"
+    },
+    {
+      "lo": 59000000,
+      "hi": 59200000,
+      "rows": 13,
+      "duration_ms": 9953.9,
+      "sql_fingerprint": "f9a276d7f52fc6f0"
+    },
+    {
+      "lo": 59200000,
+      "hi": 59600000,
+      "rows": 13,
+      "duration_ms": 6312.9,
+      "sql_fingerprint": "9d0dbeecf068ee90"
+    }
+  ],
+  "irreducible": [],
+  "elapsed_s": 302.9,
+  "cells": [
+    {
+      "league": "soccer",
+      "market_type": "container_member",
+      "ece_eligible": 6.27,
+      "n_eligible": 7682,
+      "ece_ex_identical": 12.81,
+      "n_ex_identical": 5800,
+      "delta_pp": 6.54,
+      "n_identical": 1882,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": 19.29,
+          "n": 1882,
+          "gap": -15.14,
+          "winners": 941
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 21,
+          "gap": null,
+          "winners": 10
+        },
+        "partial_open": {
+          "ece": 40.78,
+          "n": 111,
+          "gap": 40.78,
+          "winners": 2
+        },
+        "ok": {
+          "ece": 13.51,
+          "n": 5668,
+          "gap": -2.78,
+          "winners": 2834
+        }
+      }
+    },
+    {
+      "league": "baseball",
+      "market_type": "quantity",
+      "ece_eligible": 15.86,
+      "n_eligible": 6778,
+      "ece_ex_identical": 14.68,
+      "n_ex_identical": 5778,
+      "delta_pp": -1.18,
+      "n_identical": 1000,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": 25.59,
+          "n": 1000,
+          "gap": -21.18,
+          "winners": 500
+        },
+        "other_noncomp": {
+          "ece": 34.51,
+          "n": 403,
+          "gap": -19.63,
+          "winners": 202
+        },
+        "partial_open": {
+          "ece": 21.31,
+          "n": 495,
+          "gap": 16.84,
+          "winners": 32
+        },
+        "ok": {
+          "ece": 13.51,
+          "n": 4880,
+          "gap": -6.23,
+          "winners": 2439
+        }
+      }
+    },
+    {
+      "league": "soccer",
+      "market_type": "quantity",
+      "ece_eligible": 8.51,
+      "n_eligible": 5749,
+      "ece_ex_identical": 8.26,
+      "n_ex_identical": 5249,
+      "delta_pp": -0.25,
+      "n_identical": 500,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": 21.39,
+          "n": 500,
+          "gap": -3.56,
+          "winners": 250
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 28,
+          "gap": null,
+          "winners": 14
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 7,
+          "gap": null,
+          "winners": 6
+        },
+        "ok": {
+          "ece": 8.14,
+          "n": 5214,
+          "gap": -0.43,
+          "winners": 2610
+        }
+      }
+    },
+    {
+      "league": "esports",
+      "market_type": "container_member",
+      "ece_eligible": 3.15,
+      "n_eligible": 8217,
+      "ece_ex_identical": 3.06,
+      "n_ex_identical": 8115,
+      "delta_pp": -0.09,
+      "n_identical": 102,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": 16.94,
+          "n": 102,
+          "gap": -11.94,
+          "winners": 51
+        },
+        "other_noncomp": {
+          "ece": 22.31,
+          "n": 583,
+          "gap": -5.21,
+          "winners": 223
+        },
+        "partial_open": {
+          "ece": 25.22,
+          "n": 370,
+          "gap": 25.22,
+          "winners": 46
+        },
+        "ok": {
+          "ece": 2.46,
+          "n": 7162,
+          "gap": 0.03,
+          "winners": 3581
+        }
+      }
+    },
+    {
+      "league": "basketball",
+      "market_type": "quantity",
+      "ece_eligible": 5.73,
+      "n_eligible": 2104,
+      "ece_ex_identical": 5.68,
+      "n_ex_identical": 2026,
+      "delta_pp": -0.05,
+      "n_identical": 78,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": 14.69,
+          "n": 78,
+          "gap": -6.5,
+          "winners": 39
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 5.68,
+          "n": 2026,
+          "gap": -0.05,
+          "winners": 1006
+        }
+      }
+    },
+    {
+      "league": "tennis",
+      "market_type": "quantity",
+      "ece_eligible": 5.01,
+      "n_eligible": 1512,
+      "ece_ex_identical": 4.19,
+      "n_ex_identical": 1462,
+      "delta_pp": -0.82,
+      "n_identical": 50,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": 38.02,
+          "n": 50,
+          "gap": -1.29,
+          "winners": 25
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 7,
+          "gap": null,
+          "winners": 1
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 5,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 4.2,
+          "n": 1450,
+          "gap": -0.19,
+          "winners": 725
+        }
+      }
+    },
+    {
+      "league": "tennis",
+      "market_type": "container_member",
+      "ece_eligible": 2.07,
+      "n_eligible": 2583,
+      "ece_ex_identical": 1.9,
+      "n_ex_identical": 2565,
+      "delta_pp": -0.17,
+      "n_identical": 18,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 18,
+          "gap": null,
+          "winners": 9
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 2,
+          "gap": null,
+          "winners": 1
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 9,
+          "gap": null,
+          "winners": 7
+        },
+        "ok": {
+          "ece": 1.77,
+          "n": 2554,
+          "gap": 0.32,
+          "winners": 1277
+        }
+      }
+    },
+    {
+      "league": "esports",
+      "market_type": "quantity",
+      "ece_eligible": 4.84,
+      "n_eligible": 506,
+      "ece_ex_identical": 4.53,
+      "n_ex_identical": 490,
+      "delta_pp": -0.31,
+      "n_identical": 16,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 16,
+          "gap": null,
+          "winners": 8
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 20,
+          "gap": null,
+          "winners": 0
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 1,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 3.84,
+          "n": 469,
+          "gap": 0.23,
+          "winners": 228
+        }
+      }
+    },
+    {
+      "league": "politics",
+      "market_type": "container_member",
+      "ece_eligible": 7.9,
+      "n_eligible": 116,
+      "ece_ex_identical": 7.22,
+      "n_ex_identical": 114,
+      "delta_pp": -0.68,
+      "n_identical": 2,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 2,
+          "gap": null,
+          "winners": 1
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 7.22,
+          "n": 114,
+          "gap": 0.14,
+          "winners": 57
+        }
+      }
+    },
+    {
+      "league": "baseball",
+      "market_type": "container_member",
+      "ece_eligible": 12.44,
+      "n_eligible": 286,
+      "ece_ex_identical": 12.13,
+      "n_ex_identical": 284,
+      "delta_pp": -0.31,
+      "n_identical": 2,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 2,
+          "gap": null,
+          "winners": 1
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 12.13,
+          "n": 284,
+          "gap": -2.19,
+          "winners": 142
+        }
+      }
+    },
+    {
+      "league": "hockey",
+      "market_type": "quantity",
+      "ece_eligible": 10.94,
+      "n_eligible": 1137,
+      "ece_ex_identical": 11.0,
+      "n_ex_identical": 1135,
+      "delta_pp": 0.06,
+      "n_identical": 2,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 2,
+          "gap": null,
+          "winners": 1
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 1,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 10.99,
+          "n": 1134,
+          "gap": -0.03,
+          "winners": 566
+        }
+      }
+    },
+    {
+      "league": "economics",
+      "market_type": "quantity",
+      "ece_eligible": 5.13,
+      "n_eligible": 4705,
+      "ece_ex_identical": 5.13,
+      "n_ex_identical": 4705,
+      "delta_pp": 0.0,
+      "n_identical": 0,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 5.13,
+          "n": 4705,
+          "gap": 4.2,
+          "winners": 1752
+        }
+      }
+    },
+    {
+      "league": "geopolitics",
+      "market_type": "quantity",
+      "ece_eligible": 19.36,
+      "n_eligible": 60,
+      "ece_ex_identical": 19.36,
+      "n_ex_identical": 60,
+      "delta_pp": 0.0,
+      "n_identical": 0,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 19.36,
+          "n": 60,
+          "gap": 19.36,
+          "winners": 5
+        }
+      }
+    },
+    {
+      "league": "politics",
+      "market_type": "quantity",
+      "ece_eligible": 6.12,
+      "n_eligible": 1152,
+      "ece_ex_identical": 6.12,
+      "n_ex_identical": 1152,
+      "delta_pp": 0.0,
+      "n_identical": 0,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 6.12,
+          "n": 1152,
+          "gap": 6.12,
+          "winners": 102
+        }
+      }
+    },
+    {
+      "league": "economics",
+      "market_type": "container_member",
+      "ece_eligible": 2.78,
+      "n_eligible": 511,
+      "ece_ex_identical": 2.78,
+      "n_ex_identical": 511,
+      "delta_pp": 0.0,
+      "n_identical": 0,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 4,
+          "gap": null,
+          "winners": 2
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 2.76,
+          "n": 507,
+          "gap": -0.07,
+          "winners": 253
+        }
+      }
+    },
+    {
+      "league": "geopolitics",
+      "market_type": "container_member",
+      "ece_eligible": null,
+      "n_eligible": 8,
+      "ece_ex_identical": null,
+      "n_ex_identical": 8,
+      "delta_pp": null,
+      "n_identical": 0,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": null,
+          "n": 8,
+          "gap": null,
+          "winners": 4
+        }
+      }
+    },
+    {
+      "league": "golf",
+      "market_type": "container_member",
+      "ece_eligible": 25.11,
+      "n_eligible": 118,
+      "ece_ex_identical": 25.11,
+      "n_ex_identical": 118,
+      "delta_pp": 0.0,
+      "n_identical": 0,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 25.11,
+          "n": 118,
+          "gap": -0.08,
+          "winners": 59
+        }
+      }
+    },
+    {
+      "league": "basketball",
+      "market_type": "container_member",
+      "ece_eligible": 6.65,
+      "n_eligible": 262,
+      "ece_ex_identical": 6.65,
+      "n_ex_identical": 262,
+      "delta_pp": 0.0,
+      "n_identical": 0,
+      "by_class": {
+        "identical_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "other_noncomp": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "partial_open": {
+          "ece": null,
+          "n": 0,
+          "gap": null,
+          "winners": 0
+        },
+        "ok": {
+          "ece": 6.65,
+          "n": 262,
+          "gap": 0.02,
+          "winners": 131
+        }
+      }
+    }
+  ]
+}
