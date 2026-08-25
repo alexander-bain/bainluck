@@ -1,0 +1,233 @@
+{
+ "label": "after",
+ "verdict": "GREEN",
+ "ratio_threshold": 0.25,
+ "expected_indexes": [
+  "ix_teams_fts_name",
+  "ix_teams_fts_abbrev",
+  "ix_teams_fts_altnames"
+ ],
+ "terms": {
+  "yankees": {
+   "fts_ms": [
+    3.921,
+    0.112,
+    0.251
+   ],
+   "ctrl_ms": [
+    44.01,
+    27.715,
+    27.663
+   ],
+   "fts_median_ms": 0.3,
+   "ctrl_median_ms": 27.7,
+   "ratio": 0.009,
+   "bitmap_or": true,
+   "indexes_used": [
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames",
+    "ix_teams_fts_name"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "ids": [
+    865,
+    6610
+   ]
+  },
+  "celtics": {
+   "fts_ms": [
+    2.072,
+    0.1,
+    0.097
+   ],
+   "ctrl_ms": [
+    30.549,
+    27.843,
+    32.293
+   ],
+   "fts_median_ms": 0.1,
+   "ctrl_median_ms": 30.5,
+   "ratio": 0.003,
+   "bitmap_or": true,
+   "indexes_used": [
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames",
+    "ix_teams_fts_name"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "ids": [
+    100,
+    1035,
+    2236,
+    16921,
+    17931
+   ]
+  },
+  "red sox": {
+   "fts_ms": [
+    2.477,
+    0.105,
+    0.148
+   ],
+   "ctrl_ms": [
+    27.689,
+    30.183,
+    27.621
+   ],
+   "fts_median_ms": 0.1,
+   "ctrl_median_ms": 27.7,
+   "ratio": 0.005,
+   "bitmap_or": true,
+   "indexes_used": [
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames",
+    "ix_teams_fts_name"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "ids": [
+    853,
+    10709,
+    12912
+   ]
+  },
+  "world cup": {
+   "fts_ms": [
+    1.959,
+    0.116,
+    0.102
+   ],
+   "ctrl_ms": [
+    27.967,
+    28.208,
+    27.825
+   ],
+   "fts_median_ms": 0.1,
+   "ctrl_median_ms": 28.0,
+   "ratio": 0.004,
+   "bitmap_or": true,
+   "indexes_used": [
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames",
+    "ix_teams_fts_name"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "ids": []
+  },
+  "stanley cup": {
+   "fts_ms": [
+    0.981,
+    0.138,
+    0.106
+   ],
+   "ctrl_ms": [
+    222.077,
+    207.091,
+    33.377
+   ],
+   "fts_median_ms": 0.1,
+   "ctrl_median_ms": 207.1,
+   "ratio": 0.001,
+   "bitmap_or": true,
+   "indexes_used": [
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames",
+    "ix_teams_fts_name"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "ids": []
+  },
+  "nba champion": {
+   "fts_ms": [
+    1.572,
+    0.127,
+    0.124
+   ],
+   "ctrl_ms": [
+    216.804,
+    27.769,
+    230.777
+   ],
+   "fts_median_ms": 0.1,
+   "ctrl_median_ms": 216.8,
+   "ratio": 0.001,
+   "bitmap_or": true,
+   "indexes_used": [
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames",
+    "ix_teams_fts_name"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "ids": []
+  },
+  "masters winner": {
+   "fts_ms": [
+    2.145,
+    0.158,
+    0.122
+   ],
+   "ctrl_ms": [
+    124.975,
+    223.059,
+    143.456
+   ],
+   "fts_median_ms": 0.2,
+   "ctrl_median_ms": 143.5,
+   "ratio": 0.001,
+   "bitmap_or": true,
+   "indexes_used": [
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames",
+    "ix_teams_fts_name"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "ids": []
+  },
+  "world series": {
+   "fts_ms": [
+    0.879,
+    0.141,
+    0.12
+   ],
+   "ctrl_ms": [
+    234.049,
+    141.01,
+    222.265
+   ],
+   "fts_median_ms": 0.1,
+   "ctrl_median_ms": 222.3,
+   "ratio": 0.001,
+   "bitmap_or": true,
+   "indexes_used": [
+    "ix_teams_fts_abbrev",
+    "ix_teams_fts_altnames",
+    "ix_teams_fts_name"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "ids": []
+  }
+ }
+}
