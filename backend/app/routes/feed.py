@@ -129,6 +129,7 @@ from app.utils.feed_cache import (
     build_feed_cache_metadata,
     feed_response_cache_key,
     feed_response_cache_ttl,
+    inert_principal_share_enabled,
 )
 from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
@@ -290,6 +291,35 @@ def _normalize_discover_value(
 
 def _session_id_from_request(request: Request) -> str | None:
     return request.cookies.get("session_id") or request.headers.get("x-session-id")
+
+
+async def _read_shared_feed_cache(shared_redis, shared_key: str):
+    """Fresh-then-stale read of the principal-INDEPENDENT feed cache entry.
+
+    LAT-P089 (Q407 Item 1). Callers must have already established that the
+    principal contributes NOTHING to the build (see the use site); this function
+    only performs the read.
+
+    Returns ``(raw_body, status)`` — status is ``"shared_hit"`` or
+    ``"shared_stale_hit"`` — or ``(None, None)``. It never raises: the caller
+    was about to pay a multi-second cold build anyway, so every failure mode
+    here degrades to that build rather than to an error. A cache that can 500
+    the endpoint it was added to speed up is a net loss at any hit rate.
+    """
+    from app.utils import request_cache as _rc
+
+    try:
+        fresh = await _rc.bounded_redis_call(lambda: shared_redis.get(shared_key))
+        if fresh.is_ok and fresh.value is not None:
+            return fresh.value, "shared_hit"
+        stale = await _rc.bounded_redis_call(
+            lambda: shared_redis.get(f"{shared_key}:stale")
+        )
+        if stale.is_ok and stale.value is not None:
+            return stale.value, "shared_stale_hit"
+    except Exception:
+        logger.debug("shared (inert-principal) feed cache read failed", exc_info=True)
+    return None, None
 
 
 def _record_feed_timing(
@@ -1818,6 +1848,7 @@ async def get_feed(
     from app.utils import request_cache as _rc
 
     _cache_key = None
+    _cache_shape = None
     # Session/user feeds change as impressions are recorded. Keep anonymous
     # no-session cache warmer, but make per-session Discover refreshes respond
     # quickly to "already seen" suppression.
@@ -1837,11 +1868,11 @@ async def get_feed(
 
     if not debug and not exclude_reviewed:
         _cache_status = "miss"
-        # LAT-P001: shared key builder — the pre-warm beat writes through the
-        # SAME function, so a warmed key can never drift from the read key.
-        _cache_key = feed_response_cache_key(
-            user_id=feed_user.id if feed_user else None,
-            session_id=feed_session_id,
+        # LAT-P089: the request SHAPE, held once. The private key and the
+        # principal-independent key differ only in the principal, so deriving
+        # both from one dict is what stops them drifting apart — the same class
+        # of silent defect LAT-P001 closed between the route and the warmer.
+        _cache_shape = dict(
             sport=sport,
             limit=limit,
             offset=offset,
@@ -1851,6 +1882,13 @@ async def get_feed(
             event_pct=event_pct,
             my_teams_only=my_teams_only,
             mode=mode,
+        )
+        # LAT-P001: shared key builder — the pre-warm beat writes through the
+        # SAME function, so a warmed key can never drift from the read key.
+        _cache_key = feed_response_cache_key(
+            user_id=feed_user.id if feed_user else None,
+            session_id=feed_session_id,
+            **_cache_shape,
         )
         if _prewarm_rebuild:
             # Hand the RESOLVED key back to the in-process warmer. The warmer
@@ -2135,6 +2173,111 @@ async def get_feed(
         _previous_at = _record_feed_timing(
             _timings, _started_at, _previous_at, "personalization"
         )
+
+        # --- LAT-P089 (Q407 Item 1): the inert principal must not pay a private
+        # cold build ---------------------------------------------------------
+        #
+        # The native Discover surface sends a persistent per-install
+        # ``x-session-id`` on every request, so `feed_response_cache_key` gives
+        # it `s:<uuid>` and it can NEVER hit the key the pre-warm beat keeps
+        # warm — the beat can only warm `anon`. Measured on production
+        # 2026-08-25 at the client's exact first-paint shape, one fresh session
+        # per request: `miss` 3.47s and 3.32s, against a hard, non-retryable 6s
+        # client budget (`DiscoverViewModel.retryBudget`). That is the
+        # DeadlineExceeded Alex sees, and the two-card feed is his client
+        # settling to disk last-good afterwards.
+        #
+        # Why reading the anonymous entry here is SOUND rather than merely
+        # cheap: the principal reaches this build through exactly one value —
+        # `ctx`. Nothing downstream reads `feed_user`/`feed_session_id` outside
+        # `my_teams_only`, which is already part of the key. So when `ctx`
+        # equals a default-constructed context, this build is byte-identical to
+        # the anonymous build of the same shape. Not similar — equal.
+        #
+        # The test is structural equality, deliberately, not a bespoke "has this
+        # session any interactions" query: a personalization field added later
+        # is covered without anyone remembering a predicate, and anything that
+        # cannot be compared makes the check fail CLOSED (build as before).
+        # `tests/test_feed_inert_principal_share_p089.py` pins that premise
+        # directly so the shortcut cannot outlive its own justification.
+        #
+        # `FEED_INERT_PRINCIPAL_SHARE=0` disables the whole block process-wide.
+        # The correctness argument above is sound but it is an EQUALITY
+        # argument, and the operator lever for "identified users are getting
+        # anonymous content" has to be faster than a deploy cycle.
+        if (
+            _cache_key
+            and _cache_shape is not None
+            and _shared_redis is not None
+            and (feed_user or feed_session_id)
+            and inert_principal_share_enabled()
+            and ctx == PersonalizationContext()
+        ):
+            _shared_cache_key = feed_response_cache_key(
+                user_id=None, session_id=None, **_cache_shape
+            )
+            if _shared_cache_key != _cache_key:
+                _shared_raw, _shared_status = await _read_shared_feed_cache(
+                    _shared_redis, _shared_cache_key
+                )
+                _shared_payload = (
+                    _safe_cache_payload(_shared_raw)
+                    if _shared_raw is not None
+                    else None
+                )
+                if _shared_payload is not None:
+                    _rc.remember_last_good(_cache_key, _shared_payload)
+                    _shared_payload["cache"] = build_feed_cache_metadata(
+                        _shared_status,
+                        ttl_seconds=_cache_ttl,
+                        reason="inert_principal",
+                    )
+                    if _is_build_leader and _sf_future is not None:
+                        _rc.finish_build(_cache_key, _sf_future, result=_shared_payload)
+                    # Backfill the PRIVATE key only. The next open from this
+                    # install then short-circuits at the top-of-route read and
+                    # never reaches the DB context load at all. The shared entry
+                    # is the warmer's to publish — a request republishing it
+                    # would extend its life indefinitely and turn a bounded
+                    # staleness window into an unbounded one.
+                    try:
+                        _shared_json = _json_module.dumps(_shared_payload, default=str)
+
+                        async def _publish_inert_private(
+                            _client=_shared_redis,
+                            _json=_shared_json,
+                            _key=_cache_key,
+                        ):
+                            await _rc.bounded_redis_call(
+                                lambda: _client.setex(_key, _cache_ttl, _json)
+                            )
+                            await _rc.bounded_redis_call(
+                                lambda: _client.setex(
+                                    f"{_key}:stale",
+                                    FEED_RESPONSE_STALE_TTL_SECONDS,
+                                    _json,
+                                )
+                            )
+
+                        _rc.schedule_background(_publish_inert_private())
+                    except Exception:
+                        pass
+                    _previous_at = _record_feed_timing(
+                        _timings, _started_at, _previous_at, "cache_shared_hit"
+                    )
+                    _finalize_feed_response(
+                        response,
+                        cache_status=_shared_status,
+                        singleflight="leader" if _is_build_leader else "none",
+                        timings=_timings,
+                        started_at=_started_at,
+                        counts=_feed_obs_counts(
+                            _shared_payload.get("items"),
+                            total=_shared_payload.get("total", 0),
+                            returned=len(_shared_payload.get("items") or []),
+                        ),
+                    )
+                    return _shared_payload
 
         # Build team name set once (used by both scoring functions + response).
         # Only uses Team.name (full ESPN display name like "Brown Bears"), NOT

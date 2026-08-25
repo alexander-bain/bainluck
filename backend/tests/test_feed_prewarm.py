@@ -142,10 +142,10 @@ def test_prewarm_passes_every_get_feed_parameter_explicitly():
     assert not (passed - expected), f"warmer passes unknown params {sorted(passed - expected)}"
 
 
-def test_warm_shapes_match_the_web_first_paint_requests():
+def test_warm_shapes_match_the_first_paint_requests():
     """Warming a shape the clients don't request warms a key nobody reads."""
     shapes = {s["label"]: s for s in pcp.FEED_PREWARM_SHAPES}
-    assert set(shapes) == {"discover", "sports"}
+    assert set(shapes) == {"discover", "sports", "discover_native"}
 
     assert shapes["discover"]["limit"] == 20
     assert shapes["discover"]["offset"] == 0
@@ -156,6 +156,13 @@ def test_warm_shapes_match_the_web_first_paint_requests():
     assert shapes["sports"]["offset"] == 0
     assert shapes["sports"]["mode"] == "sports"
     assert shapes["sports"]["event_pct"] is None
+
+    # LAT-P089: the native Discover first paint. A different limit is a
+    # different cache key, and this one had no warmer at all.
+    assert shapes["discover_native"]["limit"] == 50
+    assert shapes["discover_native"]["offset"] == 0
+    assert shapes["discover_native"]["event_pct"] == 0.15
+    assert shapes["discover_native"]["mode"] is None
 
 
 def test_warm_limit_tracks_the_frontend_page_limit():
@@ -172,12 +179,60 @@ def test_warm_limit_tracks_the_frontend_page_limit():
     match = re.search(r"FEED_PAGE_LIMIT\s*=\s*(\d+)", paging.read_text())
     assert match, "could not read FEED_PAGE_LIMIT from feedPaging.ts"
     frontend_limit = int(match.group(1))
-    for shape in pcp.FEED_PREWARM_SHAPES:
+    web = [
+        s for s in pcp.FEED_PREWARM_SHAPES if s["label"] in pcp.FEED_PREWARM_WEB_LABELS
+    ]
+    assert web, "the web first-paint shapes must not vanish from the warm set"
+    for shape in web:
         assert shape["limit"] == frontend_limit, (
             f"warm shape {shape['label']} warms limit={shape['limit']} but the web "
             f"first paint requests limit={frontend_limit} — different cache key"
         )
+    for shape in pcp.FEED_PREWARM_SHAPES:
         assert shape["offset"] == 0, "first paint is always offset 0"
+
+
+def test_native_warm_shape_tracks_the_ios_first_page_limit():
+    """Pin against the Swift constant, not a copy of the number.
+
+    LAT-P089. The native shape is enrolled precisely BECAUSE its limit differs
+    from the web's; a stale copy of that number here warms a key the app never
+    asks for, which fails exactly as silently as warming nothing.
+    """
+    view_model = (
+        Path(__file__).resolve().parents[2]
+        / "ios"
+        / "Bain Luck"
+        / "Bain Luck"
+        / "ViewModels"
+        / "DiscoverViewModel.swift"
+    )
+    if not view_model.exists():  # iOS sources not present in this checkout
+        pytest.skip("ios DiscoverViewModel.swift not available")
+    source = view_model.read_text()
+
+    limit_match = re.search(r"firstPageLimit\s*=\s*(\d+)", source)
+    assert limit_match, "could not read firstPageLimit from DiscoverViewModel.swift"
+    native_limit = int(limit_match.group(1))
+
+    # The first-paint call site passes eventPct explicitly; read it rather than
+    # trusting that it still matches the web's 0.15.
+    pct_match = re.search(
+        r"fetchDiscoverFeedResolvingPrincipal\(\s*\n?\s*limit:\s*Self\.firstPageLimit,"
+        r"\s*offset:\s*0,\s*eventPct:\s*([0-9.]+)",
+        source,
+    )
+    assert pct_match, "could not read the native first-paint eventPct"
+    native_event_pct = float(pct_match.group(1))
+
+    native = next(s for s in pcp.FEED_PREWARM_SHAPES if s["label"] == "discover_native")
+    assert native["limit"] == native_limit, (
+        f"warmer warms limit={native['limit']} but the native first paint requests "
+        f"limit={native_limit} — different cache key, so nothing is warmed"
+    )
+    assert native["event_pct"] == native_event_pct
+    assert native["offset"] == 0
+    assert native["mode"] is None
 
 
 # --- The warmer must publish only good payloads, under the resolved key -------

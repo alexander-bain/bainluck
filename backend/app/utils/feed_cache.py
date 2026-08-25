@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,33 @@ FEED_PREWARM_KEY_SCOPE_KEY = "bainluck_feed_prewarm_key"
 FEED_RESPONSE_TTL_ANON_SECONDS = 60
 FEED_RESPONSE_TTL_IDENTIFIED_SECONDS = 5
 FEED_RESPONSE_TTL_MY_TEAMS_SECONDS = 30
+
+# LAT-P089 operator kill switch for the inert-principal share.
+FEED_INERT_PRINCIPAL_SHARE_ENV = "FEED_INERT_PRINCIPAL_SHARE"
+_INERT_SHARE_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def inert_principal_share_enabled() -> bool:
+    """Whether an inert principal may read the anonymous cache entry.
+
+    ``FEED_INERT_PRINCIPAL_SHARE=0`` turns the LAT-P089 share off process-wide
+    without a code change, mirroring ``FEED_SHARED_BUILD_TTL_S=0`` for #2143's
+    module.
+
+    It exists because the correctness argument, though sound, is an EQUALITY
+    ARGUMENT — if some future field makes a personalized context compare equal
+    to the default one, identified users start receiving anonymous content, and
+    the only other remedy is a full deploy cycle. An operator lever must be
+    faster than a release when the failure mode is "the wrong person's feed".
+
+    Unset (the normal state) means ENABLED. Anything unrecognised also means
+    enabled, deliberately: a typo'd config value must not silently switch off a
+    latency fix and leave everyone wondering why the cold builds came back.
+    """
+    raw = os.environ.get(FEED_INERT_PRINCIPAL_SHARE_ENV)
+    if raw is None:
+        return True
+    return str(raw).strip().lower() not in _INERT_SHARE_OFF_VALUES
 
 
 def feed_response_cache_key(

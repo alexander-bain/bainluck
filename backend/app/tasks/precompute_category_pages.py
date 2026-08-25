@@ -333,16 +333,40 @@ FEED_PREWARM_DEADLINE_S = 25.0
 FEED_PREWARM_STATUS_KEY = "bainluck:precompute:feed_prewarm:last"
 FEED_PREWARM_STATUS_TTL = 6 * 3600
 
-# The exact anonymous first-paint requests the web clients issue:
+# The exact anonymous first-paint requests the clients issue:
 #   Discover  frontend/app/discover/page.tsx -> initialFeedRequest() + event_pct 0.15
 #   Sports    frontend/app/sports/page.tsx   -> initialFeedRequest() + mode "sports"
-# Both are anonymous by the L2-242 shared-anon contract (no x-session-id on the
-# cold first request), which is what makes ONE warmed key serve every first-time
-# visitor. `test_feed_prewarm.py` pins these against the frontend's own constants.
+#   Native    DiscoverViewModel.firstPageLimit = 50, eventPct 0.15
+# The two web shapes are anonymous by the L2-242 shared-anon contract (no
+# x-session-id on the cold first request), which is what makes ONE warmed key
+# serve every first-time visitor. `test_feed_prewarm.py` pins each shape against
+# its own client's constant.
+#
+# LAT-P089: the NATIVE shape is a different limit, so it is a different key, and
+# nothing warmed it — measured cold on production 2026-08-25 at 6.5s
+# server-side, alone over the client's whole 6s budget. Q407 rejected enrolling
+# it, correctly, as a fix ON ITS OWN: the native client always sends
+# x-session-id, so it is never the `anon` principal this warmer can reach. It is
+# the other half of one fix. The inert-principal share in `routes/feed.py`
+# routes such a request to the anonymous key; this entry is what makes that key
+# warm when it gets there. Neither half is worth much without the other.
 FEED_PREWARM_SHAPES: tuple[dict, ...] = (
     {"label": "discover", "limit": 20, "offset": 0, "event_pct": 0.15, "mode": None},
     {"label": "sports", "limit": 20, "offset": 0, "event_pct": None, "mode": "sports"},
+    {
+        "label": "discover_native",
+        "limit": 50,
+        "offset": 0,
+        "event_pct": 0.15,
+        "mode": None,
+    },
 )
+
+#: The WEB first-paint shapes, i.e. the ones whose `limit` must track
+#: `FEED_PAGE_LIMIT`. Named so the guard test asserts over a declared set rather
+#: than over "all shapes", which silently stopped being the same thing the
+#: moment the native shape was enrolled.
+FEED_PREWARM_WEB_LABELS: frozenset[str] = frozenset({"discover", "sports"})
 
 
 def _build_prewarm_request(scope_key: str):
