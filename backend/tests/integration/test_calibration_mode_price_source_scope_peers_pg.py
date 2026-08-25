@@ -285,7 +285,12 @@ def _revert(sql: str, reverts, what: str) -> str:
 # outcome id to name rows by.
 # ---------------------------------------------------------------------------
 
-ADMIN_EVENT_ID = 8815887630
+# NOTE (INT-121, 2026-08-25): all three event ids in this file must fit int32 —
+# `events.id` is `Mapped[int]`, i.e. INTEGER, ceiling 2147483647. They were
+# 8815887630 / 8816887630 / 8817887630, all ~4.1x over, so every INSERT and every
+# `_cleanup` DELETE raised asyncpg DataError and all five tests here failed against a
+# real Postgres. Guarded by `tests/test_pg_fixture_ids_fit_int32.py`.
+ADMIN_EVENT_ID = 881588763
 ADMIN_SPORT_ID = 88158
 ADMIN_CATEGORY = "cal2098peers"
 ADMIN_LEGS = _two_source_legs(8815000)
@@ -426,7 +431,7 @@ async def test_red_first_admin_reverted_join_reproduces_the_suppression():
 # be golf — rows are named by ``outcome_id``, which this chain does carry.
 # ---------------------------------------------------------------------------
 
-GOLF_EVENT_ID = 8816887630
+GOLF_EVENT_ID = 881688763
 GOLF_SPORT_ID = 88168
 GOLF_LEGS = _two_source_legs(8816000)
 GOLF_KALSHI_IDS = {mid for mid, (src, _, _) in GOLF_LEGS.items() if src == "kalshi"}
@@ -539,7 +544,7 @@ async def test_red_first_golf_reverted_join_reproduces_the_suppression():
 # claimed.
 # ---------------------------------------------------------------------------
 
-CTL_EVENT_ID = 8817887630
+CTL_EVENT_ID = 881788763
 CTL_SPORT_ID = 88178
 #: Four Kalshi legs, three at 0.5: count 3 > GREATEST(4 * 0.5, 2) = 2, so this
 #: IS a genuine within-source mode and those three must still be deleted.

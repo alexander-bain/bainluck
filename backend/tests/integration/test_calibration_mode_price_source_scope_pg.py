@@ -60,8 +60,14 @@ pytestmark = [
 ]
 
 # One shared event, two sources. The id is arbitrary but deliberately far from
-# anything another gate in this job seeds.
-EVENT_ID = 8814887630
+# anything another gate in this job seeds — and it must fit in int32, because
+# `events.id` is `Mapped[int]`, i.e. INTEGER and not BIGINT. The original value
+# here was 8814887630, which is 4.1x over the 2147483647 ceiling, so every INSERT
+# and the DELETE in `_cleanup` raised asyncpg DataError "value out of int32 range"
+# and all three tests in this file failed the moment they met a real Postgres.
+# Nothing local catches that: this module is skipped without
+# SEARCH_TEST_DATABASE_URL, so the CI `search-recall` job is its only reader.
+EVENT_ID = 881488763
 SPORT_ID = 88148
 
 # Kalshi: five legs, TWO of them at Polymarket's modal price. Five legs at
