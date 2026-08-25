@@ -791,7 +791,16 @@ def test_ruling_numbers_are_unique() -> None:
 #:
 #: Verified index <-> files in BOTH directions on the merged tree: 131 files, 131 index lines,
 #: zero orphans either way, ascending, no duplicates, contiguous 1..131.
-MINIMUM_BANKED_RULINGS = 131
+#:
+#: Q405 (2026-08-24) — 131 -> **133 by COUNTING THIS TREE** (`ls docs/rulings/[0-9][0-9][0-9]-*.md`
+#: = 133 files, 133 index lines), never by adding a delta, per ruling 088's corollary. The two new
+#: numbers are 132 (capture plays fix-first) and 133 (cert depth tiers by blast radius), both Alex
+#: rulings banked from the Q405 addendum. Claimed against `origin/master` = `1410960f` after a
+#: `git fetch` in the SAME turn: highest ruling FILE on master **131**, all 582 local AND remote
+#: refs swept for `docs/rulings/13[23]-` — holders_found = 0. Still a count and not a ceiling: the
+#: count equals the highest file for the third wave running, which remains a property of this tree
+#: rather than an invariant.
+MINIMUM_BANKED_RULINGS = 133
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
