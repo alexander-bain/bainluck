@@ -512,6 +512,48 @@ def test_the_warmer_derives_its_key_from_the_route_s_own_key_function():
     )
 
 
+def test_the_warmer_passes_every_route_parameter_explicitly():
+    """A `Query(...)` default is a marker object, and marker objects are TRUTHY.
+
+    The warmer calls `search_events` as a plain function, so any parameter it
+    omits arrives as its FastAPI marker rather than as its literal default. For
+    `debug_timing` that is catastrophically quiet: the route would read it as
+    true, skip the cache in BOTH directions, execute the entire query path, warm
+    nothing, and return successfully. The pass would report `warmed: 8/8`.
+
+    `typeahead_warmer` carries this trap as a comment because it hit it. This is
+    the same trap, asserted instead of remembered — the call site is compared
+    against the route signature, so a NEW route parameter also goes red here
+    rather than being silently defaulted to a marker object.
+    """
+    import ast
+
+    from app.routes.events import search_events
+    from app.tasks import search_head_warmer as w
+    from app.utils.search_cache import SEARCH_WARM_SHAPE
+
+    tree = ast.parse(inspect.getsource(w._warm_one).lstrip())
+    call = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "search_events"
+    )
+    passed = {kw.arg for kw in call.keywords if kw.arg is not None}
+    # `**SEARCH_WARM_SHAPE` arrives as a keyword with `arg is None`.
+    assert any(kw.arg is None for kw in call.keywords), "the warm shape is not splatted"
+    passed |= set(SEARCH_WARM_SHAPE)
+
+    required = set(inspect.signature(search_events).parameters)
+    missing = required - passed
+    assert not missing, (
+        f"the warmer omits route parameters {sorted(missing)} — each arrives as a "
+        f"truthy Query() marker, and omitting debug_timing alone turns every pass "
+        f"into a full query that warms nothing and reports success"
+    )
+
+
 def test_the_warmed_shape_is_the_shape_both_clients_actually_request():
     """The warmed shape must equal the route's DECLARED DEFAULTS.
 

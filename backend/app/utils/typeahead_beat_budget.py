@@ -1003,7 +1003,27 @@ def free_background_slots(
 #: test exists to watch, and the new beat named its queue rather than defaulting
 #: into it — the benign direction the guard's own docstring reserves. The hygiene
 #: lever (give the 45 an explicit home) remains open and untouched.
-BACKGROUND_BEAT_COUNT = 101
+#:
+#: 🔴 RE-DERIVED AGAIN at LAT-P090 (2026-08-25): 101 -> **102**, explicit 56 ->
+#: **57**. This lane added `warm-search-head` (`schedule: 20.0`) with an EXPLICIT
+#: `options={"queue": "background"}`. RE-DERIVED by running the census over the
+#: assembled `beat_schedule`, never by adding one to the previous number (#1910).
+#:
+#: 🔴 AND THIS ONE IS THIS LANE'S OWN, SO IT IS DECLARED RATHER THAN NOTED. The
+#: file directly below argues `background` is oversubscribed, and LAT-P090 has
+#: just put another warmer on it. The mitigation is in the beat entry and it is
+#: real but partial: the FIRE rate is 20 s while the PASS rate is floored at 45 s
+#: inside the task, the head is 8 wide at concurrency 2, and the whole thing has
+#: an env kill switch — so the added draw is ~4-8 slot-seconds per 45 s rather
+#: than per fire. That is roughly 350-640 s/h against the 4,538-7,546 s/h bracket
+#: below, i.e. an 8 % worst-case increase on the mean estimate. It is not zero,
+#: it was a deliberate trade for a user-visible latency fix, and the Integrator
+#: is told about it in the report rather than left to find it here.
+#:
+#: ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. The new beat named its
+#: queue rather than defaulting into it — the benign direction the guard's own
+#: docstring reserves.
+BACKGROUND_BEAT_COUNT = 102
 
 #: Demand on `background` in slot-seconds per hour, EXCLUDING `warm_typeahead`
 #: (which is self-gated by its run lock, so its 360 fires/h are not 360 passes).

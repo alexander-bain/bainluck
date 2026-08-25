@@ -276,6 +276,10 @@ class TestBeatScheduleCompleteness:
         # cannot land silently.
         "rebuild-typeahead-index",
         "typeahead-index-sentinel",
+        # LAT-P090 (#2205) — the `/search` response-cache head warmer. Gotcha
+        # #12: this allowlist is the reason a new beat entry cannot land
+        # silently.
+        "warm-search-head",
         "precompute-discover-candidate-base",
         "precompute-admin-audit-all",
         "precompute-admin-link-rate",

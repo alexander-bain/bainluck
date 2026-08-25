@@ -1,6 +1,7 @@
 """Events API endpoints."""
 
 import contextvars
+import json
 import logging
 import os
 import re
@@ -43,6 +44,12 @@ from app.utils.game_window import (
     game_state_window as _game_state_window,
 )
 from app.utils.name_normalization import expand_search_terms
+from app.utils.search_cache import (
+    SEARCH_CACHE_HEADER,
+    SEARCH_RESPONSE_TTL_SECONDS,
+    search_response_cache_enabled,
+    search_response_cache_key,
+)
 from app.utils.search_match_class import (
     PROMINENT_SPORT_KEYS as _SEARCH_PROMINENT_SPORT_KEYS,
     Evidence as _SearchEvidence,
@@ -2440,9 +2447,79 @@ async def _log_search_query(
         logger.warning("search-log write failed: %s", exc)
 
 
+# LAT-P090/#2205: suppress the search-query log for the head warmer's OWN calls.
+#
+# #1866 IN ITS ORIGINAL FORM, refused on this surface before it can start. The
+# warmer decides what to warm by reading the 30-day head of `search_query_logs`,
+# and it warms by calling `search_events`. Without this guard every pass would
+# write one row per head term — at a 45s floor that is ~1,900 rows a day per
+# term against ~3 for a real query — so the head would freeze closed within a
+# day and no organic query could ever break into it. `/typeahead` reached
+# exactly that state and it was invisible for weeks: its top five scored 5414,
+# 5411, 5403, 5400, 5399, a spread of 15 across five terms, which is a
+# round-robin machine wearing a distribution's clothes.
+#
+# A ContextVar rather than an ASGI-scope marker (the feed pre-warm's mechanism)
+# because this one has no HTTP-settable surface to protect: it is read only by
+# code inside this process, and the warmer calls the route function directly.
+# Same choice, same reason, as `_suppress_trending_write` two thousand lines
+# below.
+_suppress_search_log: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "bainluck_search_suppress_log", default=False
+)
+
+
+def _record_search_query(payload: dict, *, q: str, request: Request, current_user) -> None:
+    """Log one answered search. Called from BOTH of `search_events`' exits.
+
+    #239 Item 4 persists the query; `_head_from_query_log` then reads that table
+    to elect what the warmer warms. So this function sits on a feedback loop and
+    both of its failure directions have already happened once, on `/typeahead`:
+
+    * **#2117 — a cache hit that does not count.** The write used to be the last
+      statement of the route, and a cache hit returns hundreds of lines earlier.
+      The counter deciding what to warm was therefore conditioned on whether we
+      had already warmed it: a term, once warm, could never be re-elected, and
+      the head could only ever drain toward the queries we had FAILED to serve
+      fast. Here the recorder is called from the hit path too, and the counts it
+      writes are recovered from the cached body rather than nulled — otherwise
+      the log's own columns would depend on cache state and the 30-day head
+      would be reading a distribution we had polluted ourselves.
+    * **#1866 — the warmer voting for its own head.** Guarded above.
+    * **THE GUARD LIVES IN HERE, NOT AT THE CALL SITES.** That is #2117's own
+      conclusion applied structurally: two call sites each carrying their own
+      `if not suppressed` is two chances to forget, and the exit that forgets is
+      always the one added later.
+
+    Best-effort throughout. Instrumentation never breaks search.
+    """
+    if _suppress_search_log.get():
+        return
+    try:
+        results = payload.get("results") or []
+        _top_id = results[0].get("id") if results else None
+        _total = (payload.get("pagination") or {}).get("total_results")
+        # #243 Item 2: attribute signed-in searches via the optional-auth dep
+        # (request.state.user_id is never set for this route); fall back to the
+        # middleware state for any other path that does populate it.
+        _uid = current_user.id if current_user else getattr(request.state, "user_id", None)
+        _sid = request.headers.get("x-session-id") or request.cookies.get("session_id")
+        # LAT-P002/#1494 (1d): dispatched, NOT awaited — see _dispatch_search_log.
+        _dispatch_search_log(
+            query=q,
+            result_count=_total,
+            top_result_id=_top_id,
+            user_id=_uid,
+            session_id=_sid,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("search-log dispatch failed: %s", exc)
+
+
 @router.get("/search")
 async def search_events(
     request: Request,
+    response: Response,
     q: str = Query(..., min_length=2, description="Search query (team name, city, etc.)"),
     sport: Optional[str] = Query(None, description="Filter by sport key (e.g., basketball_nba)"),
     tags: Optional[str] = Query(None, description="Filter by taxonomy tags (JSON array, e.g., [\"sport:basketball\", \"importance:playoff\"])"),
@@ -2465,6 +2542,65 @@ async def search_events(
     2. Upcoming scheduled games (soonest first)
     3. Completed games (most recent first)
     """
+    # ---- LAT-P090/#2205: the response cache. Read BEFORE any work. ----
+    #
+    # THE SHIP. This endpoint carries a 20,000 ms deadline and had no response
+    # cache at all, while `/typeahead` — the cheaper of the two — has had one
+    # since #1866. The head of the real distribution is small and measured
+    # (`masters winner` 102, `stanley cup` 101, `world series` 95,
+    # `nba champion` 90 over 30 days), so most of the traffic on this endpoint
+    # is a handful of questions asked over and over, each one re-assembled from
+    # scratch every time.
+    #
+    # WHY A CACHE RATHER THAN AN INDEX, since the previous two cycles chased
+    # indexes: `app/utils/search_cache.py` carries the LAT-P088 per-term table
+    # in full. The short version is that a trigram index is a selectivity
+    # instrument and the head is not selective — `%winner%` matches 42,336 of
+    # 858,938 futures rows, so the bitmap is most of the table and the index
+    # saves 2% (collapse 0.979). The common-word head cannot be fixed by any
+    # string index; it can only be answered before it is asked.
+    #
+    # The read is guarded on `debug_timing` alone, and the write below adds
+    # `degraded` — see each site for why the two conditions are not the same.
+    _search_cache_key = search_response_cache_key(
+        q=q,
+        sport=sport,
+        tags=tags,
+        page=page,
+        per_page=per_page,
+        days_back=days_back,
+        include_upcoming=include_upcoming,
+    )
+    _search_cache_readable = (
+        not debug_timing and search_response_cache_enabled()
+    )
+    if _search_cache_readable:
+        _hit = None
+        try:
+            from app.tasks.redis_state import get_redis_client as _get_rc
+
+            _cached = _get_rc().get(_search_cache_key)
+            _hit = json.loads(_cached) if _cached else None
+        except Exception:  # noqa: BLE001
+            # Redis down, or a corrupt entry: fall through and rebuild. Both
+            # are the pre-LAT-P090 behaviour and both must stay — a cache is an
+            # accelerator, never a dependency.
+            _hit = None
+        if _hit is not None:
+            # OUTSIDE the try above, on purpose, and it is the #2117 lesson
+            # transplanted rather than re-derived. Inside it, an exception here
+            # would skip the `return` and silently convert a cache HIT into a
+            # full cold build — a counter defect traded for a latency one, on
+            # the endpoint that can spend twenty seconds. `_record_search_query`
+            # swallows its own errors; this ordering makes that structural
+            # instead of a promise about a callee.
+            _record_search_query(_hit, q=q, request=request, current_user=current_user)
+            response.headers[SEARCH_CACHE_HEADER] = "hit"
+            return _hit
+    response.headers[SEARCH_CACHE_HEADER] = (
+        "miss" if _search_cache_readable else "bypass"
+    )
+
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days_back)
 
@@ -3827,28 +3963,7 @@ async def search_events(
     for _t in matched_teams:
         _t.pop("_aliases", None)
 
-    # #239 Item 4: persist the query (best-effort, never blocks the response on
-    # failure). top_result_id = the leading game result; identity is best-effort
-    # (user_id from auth middleware state, session_id from the x-session-id header).
-    try:
-        _top_id = formatted_results[0].get("id") if formatted_results else None
-        # #243 Item 2: attribute signed-in searches via the optional-auth dep
-        # (request.state.user_id is never set for this route); fall back to the
-        # middleware state for any other path that does populate it.
-        _uid = current_user.id if current_user else getattr(request.state, "user_id", None)
-        _sid = request.headers.get("x-session-id") or request.cookies.get("session_id")
-        # LAT-P002/#1494 (1d): dispatched, NOT awaited — see _dispatch_search_log.
-        _dispatch_search_log(
-            query=q,
-            result_count=total_count,
-            top_result_id=_top_id,
-            user_id=_uid,
-            session_id=_sid,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("search-log dispatch failed: %s", exc)
-
-    return {
+    _payload = {
         "query": q,
         "teams": matched_teams,
         "event_concepts": event_concepts,
@@ -3891,6 +4006,41 @@ async def search_events(
                              "total_ms": sum(_stage_ms.values())}} if debug_timing else {}),
     }
 
+    # LAT-P090/#2205: publish the answer, then count it. In that order.
+    #
+    # A DEGRADED ANSWER IS NEVER CACHED (LAT-P007's rule, on the endpoint with
+    # the longest budget in the API). `/search` sheds stages when its 20,000 ms
+    # deadline runs out and says so in `degraded`; caching one of those pins a
+    # futures-less answer in front of every user asking that question for the
+    # full TTL, so one slow moment becomes a sticky wrong answer. Caching an
+    # answer you already know is incomplete is worse than not caching at all.
+    #
+    # NOR IS A DEBUG-TIMING ANSWER, and note this is the WRITE-side half of a
+    # condition the read side does not share. The read excludes `debug_timing`
+    # because a cached body carries no timing block and answering a timing
+    # request with silence reads identically to a stage that cost nothing
+    # (gotcha #53). The write additionally excludes `degraded`, which the read
+    # cannot know about in advance. Two different conditions, deliberately, and
+    # `test_a_degraded_answer_is_never_written_to_the_cache` pins the write one.
+    if not degraded and not debug_timing:
+        try:
+            from app.tasks.redis_state import get_redis_client as _get_rc
+
+            if search_response_cache_enabled():
+                _get_rc().setex(
+                    _search_cache_key,
+                    SEARCH_RESPONSE_TTL_SECONDS,
+                    json.dumps(_payload, default=str),
+                )
+        except Exception:  # noqa: BLE001 — a cache write never breaks a response
+            pass
+
+    # #239 Item 4 / LAT-P090: the SECOND of this function's two exits, and both
+    # of them count. See `_record_search_query` for why the guard and the count
+    # recovery live in there rather than at each call site (#2117 / #1866).
+    _record_search_query(_payload, q=q, request=request, current_user=current_user)
+
+    return _payload
 
 
 # L2-88: extra query synonyms per hub slug so "ufc"→mma, "pga"→golf, etc. resolve
