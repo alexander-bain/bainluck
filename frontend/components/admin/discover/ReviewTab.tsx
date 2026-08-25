@@ -4,7 +4,9 @@ import { useState, useCallback, useEffect } from "react";
 import useSWR from "swr";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetch } from "@/lib/adminFetch";
+import { clearDestructiveToken, requireDestructiveToken } from "@/lib/destructiveToken";
 import { getIdToken } from "@/lib/firebase";
+import { deleteRankingJudgment } from "@/lib/judgmentUndo";
 import { StatusPill } from "./ui";
 import { formatTargetName, rateText } from "./utils";
 import type { DebugItem, FeedDebugResponse } from "./types";
@@ -184,6 +186,11 @@ export default function ReviewTab() {
   // and the card index it was on, so a mis-tap in rapid mode can be reversed —
   // the server row is DELETEd and the card restored for re-grading.
   const [history, setHistory] = useState<Array<{ id: number; idx: number; label: string }>>([]);
+  // Why an undo error is SHOWN rather than swallowed (#2178): the old undo
+  // mutated local state whether or not the server agreed, so a refusal was
+  // indistinguishable from a success until a re-list brought the row back. A
+  // failed undo has to say so on the surface where the grading is happening.
+  const [undoError, setUndoError] = useState<string | null>(null);
   const [batchId] = useState(createBatchId);
   // Rapid mode: a single label keypress (1-4) submits immediately for a true
   // one-tap pass. Off by default so the safe flow (select -> optionally tag ->
@@ -428,15 +435,35 @@ export default function ReviewTab() {
   // Undo last: DELETE the most recent judgment server-side (read-your-writes)
   // and step back to that card so it can be re-graded. Parity with label-pass'
   // "u" shortcut, but a true delete since each judgment is a persisted row.
+  //
+  // #2178: the DELETE has TWO authorization doors and this call used to open
+  // neither — ADMIN_TOKEN in `Authorization` (so no identity resolved) and no
+  // destructive header. Both doors, why they cannot share one request, and why
+  // the owner one rarely opens from THIS surface: `lib/judgmentUndo.ts`.
+  //
+  // The other half of the bug was here: the old call never checked `.ok`, so a
+  // 403 still popped the history entry and decremented the count. The undo
+  // LOOKED like it worked while the row stayed in the database. Local state is
+  // now touched only after the server agrees.
   const undoLast = useCallback(async () => {
     if (submitting) return;
     const last = history[history.length - 1];
     if (!last) return;
     setSubmitting(true);
+    setUndoError(null);
     try {
-      await adminFetch(`/api/admin/ranking-judgments/${last.id}`, secret, {
-        method: "DELETE",
+      const outcome = await deleteRankingJudgment(last.id, {
+        apiUrl: API_URL,
+        secret,
+        getIdToken,
+        requireDestructiveToken,
+        clearDestructiveToken,
       });
+      if (!outcome.ok) {
+        setUndoError(outcome.detail);
+        return;
+      }
+
       setHistory((h) => h.slice(0, -1));
       setSessionCount((c) => Math.max(0, c - 1));
       setSessionLabels((prev) => {
@@ -569,6 +596,15 @@ export default function ReviewTab() {
           <span className="text-xs text-text-muted">
             {summary.total} total judgments
           </span>
+        )}
+        {undoError && (
+          <p
+            data-testid="review-undo-error"
+            role="alert"
+            className="w-full text-xs text-accent-danger"
+          >
+            {undoError}
+          </p>
         )}
       </div>
 
