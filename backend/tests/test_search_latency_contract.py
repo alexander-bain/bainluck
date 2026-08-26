@@ -217,12 +217,27 @@ def test_fuzzy_threshold_is_pinned_so_recall_is_unchanged():
 
 def test_search_query_log_is_not_awaited_on_the_request_path():
     """It opens a SECOND session and COMMITs. Awaiting it made every search pay for
-    an INSERT+COMMIT before responding, and held a third pooled connection."""
+    an INSERT+COMMIT before responding, and held a third pooled connection.
+
+    LAT-P090 moved the dispatch one level down, into `_record_search_query`, and
+    this assertion follows it rather than being relaxed. The route now has TWO
+    exits — a response-cache hit and a full build — and #2117 is the named case
+    for what happens when only one of them counts: on `/typeahead` a warmed term
+    became invisible to the counter that decides what to warm, so the head could
+    only ever drain toward the queries we had failed to serve fast. One recorder,
+    called from both exits, is the fix; the not-awaited contract is unchanged and
+    is asserted here on the recorder that now owns it.
+    """
     assert "await _log_search_query(" not in SEARCH_CODE, (
         "ANALYTICS_ON_CRITICAL_PATH reintroduced: the search-query log write is "
         "awaited on the request path again"
     )
-    assert "_dispatch_search_log(" in SEARCH_SRC
+    recorder = _source_of(events_route._record_search_query)
+    assert "_dispatch_search_log(" in recorder
+    assert "await _log_search_query(" not in recorder, (
+        "the recorder awaits the write, which puts the INSERT+COMMIT back on "
+        "the request path one indirection further away"
+    )
 
 
 def test_dispatched_log_task_is_strongly_referenced():

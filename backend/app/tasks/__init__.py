@@ -2841,6 +2841,37 @@ def warm_typeahead(self, head_size: int = None):
     return _tracked_run("warm_typeahead", _warm_typeahead(head_size=size))
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=140, name="app.tasks.warm_search_head")
+def warm_search_head(self, head_size: int = None):
+    """Keep the head of the `/search` distribution inside its response cache.
+
+    LAT-P090/#2211, and it is the lever the LAT-P088 index gate pointed at after
+    the index itself was dropped. The pre-registered budget arm came back RED
+    (median per-term collapse 0.7194 vs a 0.5 ceiling), and the per-term table
+    underneath it split by term FREQUENCY: rare phrases collapsed (`super bowl`
+    0.078, `world series` 0.083) while the common-word head did not (`winner`
+    0.979, `election` 0.998). A trigram index is a selectivity instrument and
+    `%winner%` matches 42,336 of 858,938 rows, so the head cannot be fixed by
+    any string index — only answered before it is asked.
+
+    Budget: 8 head queries at concurrency 2, one query bounded at
+    `PER_QUERY_TIMEOUT_SECONDS = 25` INSIDE the task so the longest uninterrupted
+    op is bounded and not merely the loop boundary, and a `MIN_PASS_PERIOD_SECONDS
+    = 45` floor bounding how often a pass may start at all. Both limits sit under
+    the 300 s global hard `task_time_limit`, which is a SIGKILL that would be
+    recorded as `no_data` rather than as a failure.
+    """
+    # NOTE the module is `search_head_warmer`, not `warm_search_head`: a
+    # submodule sharing a name with a registered task is shadowed by the task on
+    # `from app.tasks import <name>` — the trap `warm_typeahead` and
+    # `warm_event_concepts` both record above.
+    from app.tasks.search_head_warmer import DEFAULT_HEAD_SIZE as _SEARCH_HEAD_SIZE
+    from app.tasks.search_head_warmer import _warm_search_head
+
+    size = _SEARCH_HEAD_SIZE if head_size is None else int(head_size)
+    return _tracked_run("warm_search_head", _warm_search_head(head_size=size))
+
+
 @celery_app.task(
     bind=True, soft_time_limit=150, time_limit=180, name="app.tasks.rebuild_typeahead_index"
 )
@@ -3532,6 +3563,49 @@ celery_app.conf.beat_schedule = {
         # the assigned migration slot.
         "schedule": crontab(minute="23,53"),
         "options": {"queue": "heavy"},
+    },
+    "warm-search-head": {
+        "task": "app.tasks.warm_search_head",
+        # Every 20s — LAT-P090/#2211. The BEAT is the fire rate; the PASS rate is
+        # bounded separately at 45s inside the task
+        # (`MIN_PASS_PERIOD_SECONDS`), so roughly two of every three fires take
+        # the ~10ms floor-skip path. That split is deliberate and it is the
+        # lesson from `warm-typeahead` directly above: a beat that is also the
+        # only bound on how often a warmer may run cannot be shortened to close a
+        # duty-cycle hole without also multiplying the load.
+        #
+        # WHY 45/60/25 AND NOT SOME OTHER TRIPLE. An entry lives 60s
+        # (`SEARCH_RESPONSE_TTL_SECONDS`); a pass arrives at worst every 45s and
+        # rebuilds anything with under 25s left. The head never goes cold iff
+        # `45 < 60` and `60 - 45 <= 25`, both of which hold with margin.
+        # `test_the_refresh_ahead_window_actually_keeps_the_head_alive` asserts
+        # the relation rather than the numbers, because tuning one of the three
+        # alone is how `/typeahead` sat at a 47% duty cycle for two cycles while
+        # reporting 40/40 every pass.
+        #
+        # 🔴 IT SHIPS DISABLED. `SEARCH_HEAD_WARM_ENABLED` is unset and unset
+        # means OFF, because #1916 blocks sourcing a warmer head from
+        # `search_query_logs` (measured 23.6% gold-sentinel traffic) until a
+        # clean distribution exists. The beat is wired anyway, on purpose: a
+        # fire takes the `disabled` skip path at ~1ms and reports
+        # `terminal: skipped, skip_reason: disabled`, so "deliberately off" is
+        # READABLE in task-metrics. An unwired task is one nobody remembers to
+        # wire; a task reporting that it is off is a state you can see.
+        #
+        # COST, STATED, because a warmer is not free and this lane's own doctrine
+        # says to say so. ENABLED: a steady-state pass rebuilds 8 `/search`
+        # answers at concurrency 2, ~4-8s of database time per 45s against
+        # `background`'s roughly one effective slot (#1609). DISABLED, the
+        # shipping state: negligible. Every knob is set below its
+        # `warm-typeahead` sibling's (8 terms not 40, width 2 not 4, floor 45s
+        # not 30s) precisely because a `/search` call is the heavier one.
+        #
+        # `background` rather than `heavy`: heavy is the calibration/precompute
+        # family and a user-latency warmer does not belong behind a 25-minute
+        # calibration pass. Same queue as `warm-typeahead`, and the contention
+        # that creates is declared for Integrator review rather than discovered.
+        "schedule": 20.0,
+        "options": {"queue": "background"},
     },
     "typeahead-index-sentinel": {
         "task": "app.tasks.typeahead_index_sentinel",
@@ -4264,6 +4338,15 @@ _EXPIRING_WARMER_BEATS = {
     "refresh-open-commentary": 180,          # 180 s — #1609 saw 5 enqueued; also the only
                                              # OpenAI caller, so dropping stale work saves spend
     "warm-event-concepts": 300,              # */5 min
+
+    # LAT-P090/#2211. 20 s == the beat period, so the flat #1609 rule applies
+    # unamended: this task's WALL (~4-8 s steady state, ~10 ms on a floor skip)
+    # is shorter than its period, so a fire that could not start a pass IS a
+    # superseded message and must not outlive its replacement. That is the
+    # opposite of `warm-typeahead`, whose 39-61 s wall against a 10 s beat makes
+    # its held-off fires the only start opportunities that exist — which is why
+    # that one needs a derived bound and this one does not.
+    "warm-search-head": 20,
 }
 
 for _warmer_beat, _expires_s in _EXPIRING_WARMER_BEATS.items():

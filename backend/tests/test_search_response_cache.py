@@ -1,0 +1,770 @@
+"""LAT-P090 — `/api/events/search` gets a response cache, and the head rides on it.
+
+THE SHIP: search that feels instant on the words people actually type.
+
+WHY A CACHE AND NOT AN INDEX, decided by measurement rather than by preference.
+LAT-P088 specified a partial trigram GIN on `futures_markets.name WHERE
+status='open'`, Alex built it in an attended psql batch, and the pre-registered
+gate came back **RED** on its budget arm: median per-term collapse 0.7194 against
+a 0.5 ceiling. The per-term table is the interesting part, because it is not
+noise — it splits cleanly by term frequency:
+
+    term                    collapse (1.0 = no change)
+    super bowl                  0.078   <- rare phrase, index wins big
+    world series                0.083
+    best picture                0.368   (0.277 before)
+    world cup                   0.500
+    champion                    0.593
+    presidential election       0.658
+    super bowl                  0.781
+    winner                      0.979   <- common word, index does nothing
+    election                    0.998
+
+A trigram index is a selectivity instrument. `%winner%` matches 42,336 of
+858,938 futures rows; the bitmap it builds is most of the table, so the index
+scan costs what the sequential scan costs and saves nothing. **No string index
+will ever fix the common-word head** — that is a property of the distribution,
+not of the index. Per the pre-registered contract Alex DROPPED
+`ix_futures_name_trgm_open`, and the standing rule holds: a lane does not
+re-grade its own bar after seeing the result.
+
+So the lever moves from "make the scan cheaper" to "do not run the scan". The
+head of the real `/search` distribution is small and measured —
+`search_query_logs` 30-day top rows were `masters winner` (102), `stanley cup`
+(101), `world series` (95), `nba champion` (90) — and those queries are, by
+definition, the ones asked most often. Caching their answers and keeping the
+head warm removes the query for exactly the traffic the index could not help.
+
+WHAT THIS FILE PINS. Four failure classes, each of which has already happened
+once in this repo on the neighbouring surface:
+
+1. **The cache does not exist** (the ship). `/typeahead` has had a response cache
+   since #1866; `/search` — the slower endpoint, with a 20,000 ms deadline — has
+   never had one. Tests 1-3.
+2. **An incomplete cache key** (#2203 / LAT-P089, one cycle ago). A key that
+   omits a parameter which shapes the answer serves one caller another caller's
+   results. Here the key is derived from the route's own signature and a test
+   asserts the two cannot drift. Tests 4-7.
+3. **A warmed term becomes uncountable** (#2117), and its mirror, **the warmer
+   voting for its own head** (#1866). The query log elects the head; if a cache
+   hit stops logging, the head starves itself, and if the warmer's own calls DO
+   log, the head freezes closed. Both directions are pinned. Tests 8-11.
+4. **A warmer that warms a key nobody reads** (LAT-P001). The warmer and the
+   route derive their key from the same function, and the warmed shape is
+   asserted against the route's declared defaults — which is what iOS relies on,
+   since `APIClient.fetchSearch` sends only `q` and `page`. Tests 12-15.
+"""
+
+from __future__ import annotations
+
+import inspect
+import json
+
+import pytest
+
+
+# ---------------------------------------------------------------------------
+# Harness
+# ---------------------------------------------------------------------------
+
+
+class FakeRedis:
+    """Minimal sync Redis double: the four commands this feature uses."""
+
+    def __init__(self):
+        self.strings: dict[str, str] = {}
+        self.ttls: dict[str, int] = {}
+        self.commands: list[tuple] = []
+
+    def get(self, key):
+        self.commands.append(("get", key))
+        v = self.strings.get(key)
+        return v.encode() if isinstance(v, str) else v
+
+    def setex(self, key, ttl, value):
+        self.commands.append(("setex", key, ttl))
+        self.strings[key] = value
+        self.ttls[key] = int(ttl)
+        return True
+
+    def ttl(self, key):
+        self.commands.append(("ttl", key))
+        if key not in self.strings:
+            return -2
+        return self.ttls.get(key, -1)
+
+    def delete(self, *keys):
+        n = 0
+        for key in keys:
+            self.commands.append(("delete", key))
+            if key in self.strings:
+                del self.strings[key]
+                self.ttls.pop(key, None)
+                n += 1
+        return n
+
+    def set(self, key, value, nx=False, ex=None):
+        self.commands.append(("set", key, nx, ex))
+        if nx and key in self.strings:
+            return None
+        self.strings[key] = value
+        if ex is not None:
+            self.ttls[key] = int(ex)
+        return True
+
+
+@pytest.fixture
+def rc(monkeypatch):
+    client = FakeRedis()
+    monkeypatch.setattr(
+        "app.tasks.redis_state.get_redis_client", lambda *a, **k: client
+    )
+    return client
+
+
+def _request(headers: list[tuple[bytes, bytes]] | None = None):
+    from starlette.requests import Request
+
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/events/search",
+            "headers": headers or [],
+            "query_string": b"",
+        }
+    )
+
+
+#: A payload with the shape `search_events` really returns, small enough to read.
+CACHED_BODY = {
+    "query": "winner",
+    "teams": [],
+    "event_concepts": [],
+    "results": [{"id": 4242, "home_team": "A", "away_team": "B"}],
+    "futures": [],
+    "futures_families": [],
+    "pagination": {
+        "page": 1,
+        "per_page": 25,
+        "total_results": 7,
+        "total_pages": 1,
+        "has_next": False,
+        "has_prev": False,
+    },
+    "sports": [],
+    "filters": {"sport": None, "days_back": 30, "include_upcoming": True},
+}
+
+
+async def _search(rc: FakeRedis | None = None, *, q="winner", response=None, **over):
+    """Call the route directly with EVERY parameter passed explicitly.
+
+    Their declared defaults are `Query(...)` marker objects, which are TRUTHY
+    outside FastAPI — omitting `debug_timing` would silently disable the cache
+    in both directions and every assertion below would be made against the
+    uncached path. `/typeahead`'s suite paid one red run to learn this.
+    """
+    from fastapi import Response
+
+    from app.routes.events import search_events
+
+    kwargs = {
+        "request": _request(),
+        "response": response if response is not None else Response(),
+        "q": q,
+        "sport": None,
+        "tags": None,
+        "page": 1,
+        "per_page": 25,
+        "days_back": 30,
+        "include_upcoming": True,
+        "debug_timing": False,
+        "db": None,
+        "current_user": None,
+    }
+    kwargs.update(over)
+    return await search_events(**kwargs)
+
+
+def _warm(rc: FakeRedis, q="winner", payload=None, ttl=60, **key_over):
+    """Put `q` in the response cache exactly as the route's own writer would."""
+    from app.utils.search_cache import search_response_cache_key
+
+    key_kwargs = {
+        "q": q,
+        "sport": None,
+        "tags": None,
+        "page": 1,
+        "per_page": 25,
+        "days_back": 30,
+        "include_upcoming": True,
+    }
+    key_kwargs.update(key_over)
+    key = search_response_cache_key(**key_kwargs)
+    rc.strings[key] = json.dumps(payload if payload is not None else CACHED_BODY)
+    rc.ttls[key] = ttl
+    return key
+
+
+# ---------------------------------------------------------------------------
+# 1-3. THE SHIP: the answer is served from cache, and the database is not touched
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_warm_query_is_served_without_touching_the_database(rc):
+    """RED before LAT-P090. `db=None` is the assertion.
+
+    Every database stage in `search_events` runs through the session, starting
+    with `_apply_search_statement_timeout`. If the route reaches ANY of them it
+    raises on `None`. Returning the cached body therefore proves the whole query
+    path was skipped, not merely that it was fast.
+    """
+    _warm(rc, "winner")
+
+    result = await _search(rc, q="winner")
+
+    assert result == CACHED_BODY, (
+        "a repeated search did not come back from the response cache — the "
+        "common-word head pays the full 20s-budget scan on every request"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_cold_query_is_a_miss_and_does_not_serve_another_querys_answer(rc):
+    """The complement. A key that is not warm must not resolve to one that is."""
+    _warm(rc, "winner")
+
+    with pytest.raises(Exception):
+        # No cached entry for this query, so the route must fall through to the
+        # database — which is `None`, so it raises. That raise IS the miss.
+        await _search(rc, q="election")
+
+
+@pytest.mark.asyncio
+async def test_a_cache_hit_is_reported_on_the_response_header(rc):
+    """`x-search-cache` is how a production deploy check reads hit vs miss.
+
+    Header rather than a body key on purpose: the cached body must be BYTE
+    IDENTICAL to the built one, so the two can be compared directly and so no
+    frontend type changes. `middleware/latency.py` already reads the sibling
+    `x-feed-cache` this way.
+    """
+    from fastapi import Response
+
+    from app.utils.search_cache import SEARCH_CACHE_HEADER
+
+    _warm(rc, "winner")
+    response = Response()
+
+    await _search(rc, q="winner", response=response)
+
+    assert response.headers.get(SEARCH_CACHE_HEADER) == "hit"
+
+
+# ---------------------------------------------------------------------------
+# 4-7. THE KEY IS COMPLETE, and cannot silently stop being complete (#2203)
+# ---------------------------------------------------------------------------
+
+
+#: Route parameters that do NOT shape the cached answer, each with the reason it
+#: is excluded. Declared here so an addition to this set is a visible act in a
+#: diff, which is the half #2203 was missing.
+_DECLARED_NON_KEY_PARAMS = {
+    # Plumbing, not an answer input.
+    "request",
+    "response",
+    "db",
+    # The response body is IDENTICAL for every principal: `current_user` is read
+    # once, at the very end, and only to attribute the analytics row. Nothing
+    # about the results, ordering, futures or teams depends on it. That is what
+    # makes an unsegmented key safe here and what made the feed's key unsafe
+    # (#2203) — the feed genuinely personalizes.
+    "current_user",
+    # Never cached in either direction, so it can never key an entry.
+    "debug_timing",
+}
+
+
+def test_the_cache_key_covers_every_answer_shaping_route_parameter():
+    """The #2203 class, made structural instead of remembered.
+
+    A new query parameter on `search_events` that changes the answer and is not
+    in the key means two different questions share one cached answer. This test
+    goes red the moment such a parameter is added, and the only two ways to make
+    it green are the two correct ones: put it in the key, or declare in
+    `_DECLARED_NON_KEY_PARAMS` why it cannot change the answer.
+    """
+    from app.routes.events import search_events
+    from app.utils.search_cache import search_response_cache_key
+
+    route_params = set(inspect.signature(search_events).parameters)
+    key_params = set(inspect.signature(search_response_cache_key).parameters)
+
+    shaping = route_params - _DECLARED_NON_KEY_PARAMS
+    missing = shaping - key_params
+    assert not missing, (
+        f"route parameters shape the answer but are absent from the cache key: "
+        f"{sorted(missing)} — either add them to search_response_cache_key or "
+        f"declare in _DECLARED_NON_KEY_PARAMS why they cannot change the answer"
+    )
+
+    stale = key_params - route_params
+    assert not stale, (
+        f"the cache key segments on parameters the route no longer takes: "
+        f"{sorted(stale)} — a key wider than the question fragments the cache"
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("q", "election"),
+        ("sport", "basketball_nba"),
+        ("tags", '["importance:playoff"]'),
+        ("page", 2),
+        ("per_page", 50),
+        ("days_back", 90),
+        ("include_upcoming", False),
+    ],
+)
+def test_every_key_field_actually_changes_the_key(field, value):
+    """A field in the signature that does not reach the digest is not in the key.
+
+    The previous test reads the signature; this one reads the bytes. Both are
+    needed — a parameter accepted and then dropped on the floor passes the first
+    and fails this one, and that is precisely how an incomplete key survives
+    review.
+    """
+    from app.utils.search_cache import search_response_cache_key
+
+    base = dict(
+        q="winner",
+        sport=None,
+        tags=None,
+        page=1,
+        per_page=25,
+        days_back=30,
+        include_upcoming=True,
+    )
+    changed = {**base, field: value}
+    assert search_response_cache_key(**base) != search_response_cache_key(**changed)
+
+
+def test_the_query_is_normalized_so_typing_case_does_not_fragment_the_cache():
+    """`Winner`, `winner ` and `  WINNER` are one question, so they are one key.
+
+    This is not cosmetic: the head is elected from `lower(btrim(query))` in
+    `search_query_logs`, so a warmer warms the normalized form. Without the same
+    normalization on the read side the warmer would warm `winner` and a user
+    typing `Winner` would miss it — a warmer that reports success and delivers
+    nothing, which is the failure mode this whole subsystem is built around.
+    """
+    from app.utils.search_cache import search_response_cache_key
+
+    def key(q):
+        return search_response_cache_key(
+            q=q,
+            sport=None,
+            tags=None,
+            page=1,
+            per_page=25,
+            days_back=30,
+            include_upcoming=True,
+        )
+
+    assert key("winner") == key("Winner") == key("  WINNER  ")
+
+
+@pytest.mark.asyncio
+async def test_a_debug_timing_request_neither_reads_nor_writes_the_cache(rc):
+    """A cached body carries no `debug_timing` block.
+
+    Serving one to a timing request would answer it with SILENCE, which reads
+    identically to a stage that cost nothing (gotcha #53). Same rule `/typeahead`
+    applies to `debug_evidence` and `debug_timing`, and for the same reason: an
+    answer produced under different rules is never interchangeable in a cache.
+    """
+    _warm(rc, "winner")
+
+    with pytest.raises(Exception):
+        await _search(rc, q="winner", debug_timing=True)
+
+
+# ---------------------------------------------------------------------------
+# 8-11. THE COUNTER. The log elects the head; the head must not starve or freeze
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def logged(monkeypatch):
+    """Capture `_dispatch_search_log` calls instead of writing rows."""
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.routes.events._dispatch_search_log", lambda **kw: calls.append(kw)
+    )
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_a_cache_hit_still_logs_the_query(rc, logged):
+    """#2117 in its mirror, and the reason it must be written down twice.
+
+    `search_query_logs` is what `_head_from_query_log` reads to decide which
+    queries to warm. A cache hit that returns early without logging makes a
+    warmed query invisible to the thing that decides what to warm — so a term,
+    once warm, could never be re-elected, and the head would drain to exactly
+    the queries we had FAILED to serve fast. `/typeahead` shipped that bug and
+    ran with it for weeks; this surface gets the guard on day one.
+    """
+    _warm(rc, "winner")
+
+    await _search(rc, q="winner")
+
+    assert len(logged) == 1, "a query served from cache was not logged"
+    assert logged[0]["query"] == "winner"
+
+
+@pytest.mark.asyncio
+async def test_the_hit_path_logs_the_same_counts_the_miss_path_would(rc, logged):
+    """The row must not degrade just because the answer came from Redis.
+
+    `result_count` and `top_result_id` are both recoverable from the cached body
+    — they are fields of it. Writing NULLs on the hit path would make the log's
+    own columns depend on cache state, and the 30-day head query would then be
+    reading a distribution polluted by our own caching.
+    """
+    _warm(rc, "winner")
+
+    await _search(rc, q="winner")
+
+    assert logged[0]["result_count"] == 7
+    assert logged[0]["top_result_id"] == 4242
+
+
+@pytest.mark.asyncio
+async def test_the_warmers_own_calls_are_never_logged(rc, logged):
+    """#1866 on the new surface, refused before it can start.
+
+    The warmer warms by calling this route. If those calls landed in
+    `search_query_logs` the warmer would vote for its own head — at one pass per
+    45 s that is ~1,900 votes a day per term against ~3 for a real query, so the
+    head would freeze closed within a day and no organic query could ever break
+    in. `/typeahead` reached exactly that state: its top five scored 5414, 5411,
+    5403, 5400, 5399, a spread of 15, which is a round-robin machine and not a
+    human distribution.
+    """
+    from app.routes.events import _suppress_search_log
+
+    _warm(rc, "winner")
+    token = _suppress_search_log.set(True)
+    try:
+        await _search(rc, q="winner")
+    finally:
+        _suppress_search_log.reset(token)
+
+    assert logged == [], "the warmer voted for its own head (#1866)"
+
+
+def test_the_suppression_guard_lives_inside_the_shared_recorder():
+    """One helper, called from both exits, with the guard INSIDE it.
+
+    #2117's own conclusion, applied structurally. Two call sites each carrying
+    their own `if not suppressed` is two chances to forget, and the exit that
+    forgets is always the one added later.
+    """
+    from app.routes import events
+
+    src = inspect.getsource(events._record_search_query)
+    assert "_suppress_search_log" in src, (
+        "the suppression guard is not inside _record_search_query — a per-call-"
+        "site guard is one edit away from an unguarded exit"
+    )
+
+    route_src = inspect.getsource(events.search_events)
+    assert route_src.count("_record_search_query(") == 2, (
+        "search_events must call the recorder from BOTH exits (hit and miss) "
+        "and from nowhere else"
+    )
+    assert "_dispatch_search_log(" not in route_src, (
+        "the route dispatches the log directly, bypassing the suppression guard"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 12-15. THE WARMER WARMS THE KEY THE ROUTE READS (LAT-P001)
+# ---------------------------------------------------------------------------
+
+
+def test_the_warmer_derives_its_key_from_the_route_s_own_key_function():
+    """A second key implementation is a warmer that warms nothing, silently.
+
+    LAT-P001 is the named case: the feed pre-warm computed its key inline and
+    published under a key the request path never read. It reported success every
+    pass. There is one key function and both callers use it.
+    """
+    from app.tasks import search_head_warmer as w
+
+    src = inspect.getsource(w)
+    assert "search_response_cache_key" in src, (
+        "the warmer builds its own key instead of calling the shared builder"
+    )
+
+
+def test_the_warmer_passes_every_route_parameter_explicitly():
+    """A `Query(...)` default is a marker object, and marker objects are TRUTHY.
+
+    The warmer calls `search_events` as a plain function, so any parameter it
+    omits arrives as its FastAPI marker rather than as its literal default. For
+    `debug_timing` that is catastrophically quiet: the route would read it as
+    true, skip the cache in BOTH directions, execute the entire query path, warm
+    nothing, and return successfully. The pass would report `warmed: 8/8`.
+
+    `typeahead_warmer` carries this trap as a comment because it hit it. This is
+    the same trap, asserted instead of remembered — the call site is compared
+    against the route signature, so a NEW route parameter also goes red here
+    rather than being silently defaulted to a marker object.
+    """
+    import ast
+
+    from app.routes.events import search_events
+    from app.tasks import search_head_warmer as w
+    from app.utils.search_cache import SEARCH_WARM_SHAPE
+
+    tree = ast.parse(inspect.getsource(w._warm_one).lstrip())
+    call = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "search_events"
+    )
+    passed = {kw.arg for kw in call.keywords if kw.arg is not None}
+    # `**SEARCH_WARM_SHAPE` arrives as a keyword with `arg is None`.
+    assert any(kw.arg is None for kw in call.keywords), "the warm shape is not splatted"
+    passed |= set(SEARCH_WARM_SHAPE)
+
+    required = set(inspect.signature(search_events).parameters)
+    missing = required - passed
+    assert not missing, (
+        f"the warmer omits route parameters {sorted(missing)} — each arrives as a "
+        f"truthy Query() marker, and omitting debug_timing alone turns every pass "
+        f"into a full query that warms nothing and reports success"
+    )
+
+
+def test_the_warmed_shape_is_the_shape_both_clients_actually_request():
+    """The warmed shape must equal the route's DECLARED DEFAULTS.
+
+    This is load-bearing because of what the clients send. `frontend/lib/api.ts`
+    sets `page` and `per_page` and omits the rest; `APIClient.fetchSearch` sends
+    only `q` and `page`. Both therefore resolve to the server-side defaults for
+    `days_back` and `include_upcoming`. Change a default and the two surfaces
+    move to a shape the warmer is not warming — with no diff anywhere near the
+    warmer. This test is the thing that notices.
+    """
+    from app.routes.events import search_events
+    from app.utils.search_cache import SEARCH_WARM_SHAPE
+
+    params = inspect.signature(search_events).parameters
+
+    def declared_default(name):
+        # `Query(25, ...)` keeps the literal on `.default`.
+        return getattr(params[name].default, "default", params[name].default)
+
+    for field in ("per_page", "days_back", "include_upcoming", "page"):
+        assert SEARCH_WARM_SHAPE[field] == declared_default(field), (
+            f"the warmer warms {field}={SEARCH_WARM_SHAPE[field]!r} but the route "
+            f"defaults to {declared_default(field)!r} — every client that omits "
+            f"{field} would miss the warmed entry"
+        )
+    assert SEARCH_WARM_SHAPE["sport"] is None
+    assert SEARCH_WARM_SHAPE["tags"] is None
+
+
+def test_the_head_is_elected_by_the_search_log_not_by_the_typeahead_zset():
+    """Warm the surface you measure. `search:trending:24h` measures `/typeahead`.
+
+    `typeahead_warmer` blends the two sources because a typeahead head needs the
+    PREFIXES a user passes through, which `/search` never sees. `/search` has the
+    opposite need and one unpolluted source that measures it exactly, so this
+    warmer takes the query log whole. Stated as a test because "which
+    distribution" is the single decision that determines whether a warmer helps
+    anybody.
+    """
+    from app.tasks import search_head_warmer as w
+
+    src = inspect.getsource(w)
+    assert "_head_from_query_log" in src
+    assert "search_trending" not in src and "read_window" not in src, (
+        "the /search warmer is heading from the /typeahead zset — that measures "
+        "a different surface and is written to by the other warmer"
+    )
+
+
+def test_a_fresh_entry_is_left_alone_and_a_near_dead_one_is_rebuilt(rc):
+    """Hole 2 (LAT-P060), which cadence alone can never fix.
+
+    The route writes its cache only on the MISS path, so a warm read resets no
+    clock: a pass that hits the cache extends nothing and reports success. The
+    only way a warmer can extend an entry's life is to make the entry not be
+    there. Both arms are asserted because reporting `warmed: N/N` for a pass
+    that rebuilt nothing is the exact green-but-useless run this subsystem keeps
+    producing.
+    """
+    from app.tasks.search_head_warmer import REFRESH_AHEAD_SECONDS, _needs_rebuild
+    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+
+    assert _needs_rebuild(SEARCH_RESPONSE_TTL_SECONDS) is False
+    assert _needs_rebuild(REFRESH_AHEAD_SECONDS - 1) is True
+    # -2: no key at all. The pass must treat that as needing work, not as fresh.
+    assert _needs_rebuild(-2) is True
+    # -1: a key with no expiry. Impossible here, and a bug to correct rather
+    # than a state to rest on.
+    assert _needs_rebuild(-1) is True
+    # None: Redis did not answer. NOT a TTL. Fail toward doing the work.
+    assert _needs_rebuild(None) is True
+
+
+def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
+    """The arithmetic that makes the duty cycle flat instead of a sawtooth.
+
+    An entry lives `TTL`. A pass runs every `MIN_PASS_PERIOD_SECONDS` at worst
+    and rebuilds anything with less than `REFRESH_AHEAD_SECONDS` left. For the
+    entry never to expire, a pass must arrive while it still has life AND find
+    it eligible: `MIN_PASS_PERIOD < TTL` and `TTL - MIN_PASS_PERIOD <=
+    REFRESH_AHEAD`. Tuning one of these three without the other two is how
+    `/typeahead` spent two cycles at a 47% duty cycle while reporting 40/40.
+    """
+    from app.tasks.search_head_warmer import (
+        MIN_PASS_PERIOD_SECONDS,
+        REFRESH_AHEAD_SECONDS,
+    )
+    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+
+    assert MIN_PASS_PERIOD_SECONDS < SEARCH_RESPONSE_TTL_SECONDS
+    assert SEARCH_RESPONSE_TTL_SECONDS - MIN_PASS_PERIOD_SECONDS <= REFRESH_AHEAD_SECONDS
+
+
+# ---------------------------------------------------------------------------
+# 16-18. HONEST INVALIDATION: what is never cached, and what says so out loud
+# ---------------------------------------------------------------------------
+
+
+def test_a_degraded_answer_is_never_written_to_the_cache():
+    """LAT-P007's rule, on the endpoint with the longest budget in the API.
+
+    `/search` sheds stages when its 20,000 ms budget runs out and says so in
+    `degraded`. Caching one of those means a single slow moment pins a
+    futures-less answer in front of every user asking that question for the full
+    TTL — a transient becomes sticky. Caching an answer you already know is
+    incomplete is worse than not caching at all.
+    """
+    from app.routes import events
+
+    src = inspect.getsource(events.search_events)
+    assert "if not degraded and not debug_timing:" in src, (
+        "the cache write is not jointly guarded on `degraded` and `debug_timing`"
+    )
+
+
+def test_the_ttl_is_declared_once_and_is_the_whole_invalidation_contract():
+    """There is no event-driven invalidation here, and that is the honest design.
+
+    A search answer is assembled from live scores, odds, probabilities, futures
+    prices and team rows — there is no single write whose commit could invalidate
+    it. So the contract is stated as a bound rather than implied: an answer may
+    be up to `SEARCH_RESPONSE_TTL_SECONDS` old. It is deliberately the same order
+    as the two neighbouring bounds the product already accepts — `/typeahead` at
+    65 s and the anonymous Discover feed at 60 s — so nothing here is asking for
+    a new tolerance, and one constant is the only thing to change if that
+    judgement moves.
+    """
+    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+
+    assert SEARCH_RESPONSE_TTL_SECONDS == 60
+
+    from app.routes import events
+
+    src = inspect.getsource(events.search_events)
+    assert "SEARCH_RESPONSE_TTL_SECONDS" in src, (
+        "the route hardcodes a TTL instead of reading the declared constant — "
+        "the /typeahead 45->65s change had to be made in two places for exactly "
+        "this reason, and the drift between them is a red test there"
+    )
+
+
+def test_the_head_warmer_ships_disabled_because_1916_blocks_its_head_source(monkeypatch):
+    """The one switch in this family that FAILS CLOSED, and the reason it does.
+
+    #1916 measured `search_query_logs` as 23.6% gold-sentinel traffic — 848 of
+    3,600 rows in a single 07:09-07:12 UTC minute across 26 of 30 days, which is
+    #1206's nightly sentinel — and says in bold not to source a warmer head from
+    it until a clean distribution exists. Electing a head from that table today
+    risks warming our own echo and calling it demand, which is #1916's whole
+    thesis.
+
+    So `SEARCH_HEAD_WARM_ENABLED` unset means OFF, inverting the convention its
+    two siblings follow. This test is what makes lifting that block a VISIBLE
+    act: a future window that flips the default has to delete this assertion,
+    and deleting it means reading why it is here.
+
+    The response cache is deliberately NOT gated on the same switch — it caches
+    what was actually asked and has no opinion about what is popular, so it
+    cannot be contaminated by a skewed distribution.
+    """
+    from app.tasks.search_head_warmer import SEARCH_HEAD_WARM_ENV, head_warm_enabled
+    from app.utils.search_cache import search_response_cache_enabled
+
+    monkeypatch.delenv(SEARCH_HEAD_WARM_ENV, raising=False)
+    assert head_warm_enabled() is False, (
+        "the head warmer defaults ON — #1916 blocks head selection from "
+        "search_query_logs until a clean distribution exists"
+    )
+    monkeypatch.setenv(SEARCH_HEAD_WARM_ENV, "1")
+    assert head_warm_enabled() is True, "the block cannot be lifted by config"
+
+    # A typo must not enable it either — fails closed in both directions.
+    monkeypatch.setenv(SEARCH_HEAD_WARM_ENV, "yse")
+    assert head_warm_enabled() is False
+
+    # And the cache is NOT gated on it.
+    monkeypatch.delenv("SEARCH_RESPONSE_CACHE", raising=False)
+    assert search_response_cache_enabled() is True, (
+        "the response cache defaults off — it is the ship, and it is "
+        "contamination-proof, so it must not inherit the warmer's block"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_pass_says_disabled_and_not_merely_zero():
+    """"Turned off on purpose" and "wedged" must never produce the same summary.
+
+    A pass that warmed nothing because an operator disabled it, and a pass that
+    warmed nothing because the lock was stuck, are opposite diagnoses reaching
+    the same `warmed: 0`. `skip_reason` is what separates them (gotcha #53).
+    """
+    from app.tasks.search_head_warmer import _warm_search_head
+
+    summary = await _warm_search_head()
+
+    assert summary["terminal"] == "skipped"
+    assert summary["skip_reason"] == "disabled"
+    assert summary["warmed"] == 0
+
+
+def test_an_empty_head_is_reported_as_partial_and_never_as_a_clean_pass():
+    """"It returned" is not "it worked" (`app/utils/task_verdict.py`).
+
+    A warmer whose entire purpose is that the head is hot must not be able to
+    report `complete` while it is cold. An empty head means the query log had
+    nothing to say, which is a real finding and a broken guarantee — not a
+    successful pass over zero items.
+    """
+    from app.tasks.search_head_warmer import _summarize
+
+    empty = _summarize(head=[], results=[], source="db:search_query_logs:30d",
+                       seconds_wall=0.0, since_last=None, width=2)
+    assert empty["terminal"] == "partial"
+    assert empty["total"] == 0
