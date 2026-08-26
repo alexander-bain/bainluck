@@ -131,10 +131,33 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         ``{PUBLISHED_ROW_JOIN}``, not its value — so both are hashed BY VALUE
         and ``uncovered_sql_shaping`` is **still 21**. Second queue running that
         this pin fired and the answer was to cover the input, not loosen the pin.
+
+        CAL-P100 moved input_count 55 -> 65 and covered 9 -> 15, adding the
+        published-pair-coherence exclusion. THIRD queue running that this pin
+        fired, and third time the answer was to cover. Two of its inputs were
+        real holes and each needed a different repair:
+
+        * ``_SHAPE_CLAUSE_INDENT`` — module-level, reaches the emitted SQL,
+          simply not hashed. Covered by adding it. It is whitespace, and the
+          rule for that list is "does it shape the statement", not "does it look
+          important"; a value judged too small to hash is how a list of
+          everything stops being one.
+        * ``PAIR_SUM_TOLERANCE`` — hashed by value already, and reported
+          uncovered anyway, because ``derive_declared`` built its coverable set
+          from module-level defs ONLY. An IMPORTED constant was therefore
+          permanently uncoverable: guarded in fact, an unguarded hole in the
+          count, forever. That is a false positive in the one number this file
+          exists to make trustworthy, and the predictable response to a tripwire
+          that fires on correct code is to delete the tripwire. Fixed in the
+          analyzer (defs | imports), which removes false negatives and cannot
+          hide a real hole — a name still has to appear in the
+          ``input_fingerprint(...)`` call to count as covered.
+
+        ``uncovered_sql_shaping`` is therefore **still 21**.
         """
-        assert artifact["input_count"] == 55
-        assert len(artifact["covered_by_value"]) == 9
-        assert artifact["uncovered_count"] == 46
+        assert artifact["input_count"] == 65
+        assert len(artifact["covered_by_value"]) == 15
+        assert artifact["uncovered_count"] == 50
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -197,8 +220,18 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
 
         The cross-module FIVE is the assertion that carries the meaning and it
         is unchanged; only the in-module remainder moved (38 -> 39 at CAL-P038,
-        39 -> 41 at CAL-P097), which is the direction that costs nothing — an
-        in-module input is behind the freeze."""
+        39 -> 41 at CAL-P097, 41 -> 45 at CAL-P100), which is the direction that
+        costs nothing — an in-module input is behind the freeze.
+
+        CAL-P100 is worth a second sentence because it could have gone the other
+        way. It IMPORTED ``PAIR_SUM_TOLERANCE`` from ``pair_opening_coherence``
+        rather than restating it, which is a sixth cross-module input — and a
+        cross-module input is the tier this test says is genuinely unguarded. It
+        does not appear below because it is hashed BY VALUE in
+        ``_main_input_fingerprint``, so it is covered and never reaches this
+        list. That is the pattern the next cross-module import should copy: the
+        tier is dangerous because nothing guards it, not because it is
+        cross-module, and hashing the value is what moves it out."""
         cross = sorted(
             r["name"]
             for r in artifact["inputs"]
@@ -212,7 +245,7 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
         ]
-        assert len(cross) + 41 == artifact["uncovered_count"]
+        assert len(cross) + 45 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

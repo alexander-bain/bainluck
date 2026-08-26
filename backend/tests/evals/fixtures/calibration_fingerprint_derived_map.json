@@ -6,9 +6,15 @@
     "HALF_SPIKE_PAIR_CELL_CATEGORY",
     "HALF_SPIKE_PAIR_CELL_MARKET_TYPE",
     "HALF_SPIKE_PAIR_CELL_SOURCE",
+    "PAIR_SUM_TOLERANCE",
+    "PUBLISHED_PAIR_CELL_CATEGORY",
+    "PUBLISHED_PAIR_CELL_MARKET_TYPE",
+    "PUBLISHED_PAIR_CELL_SOURCE",
     "PUBLISHED_ROW_JOIN",
     "REPRESENTATIVE_TIE_AUTHORITY",
-    "_HALF_SPIKE_FLAG_SQL"
+    "_HALF_SPIKE_FLAG_SQL",
+    "_PUBLISHED_PAIR_FLAG_SQL",
+    "_SHAPE_CLAUSE_INDENT"
   ],
   "hashed_roots": [
     "_calibration_population_ctes",
@@ -17,7 +23,7 @@
     "compute_calibration_payload",
     "published_row_predicate"
   ],
-  "input_count": 55,
+  "input_count": 65,
   "inputs": [
     {
       "covered_by_value": false,
@@ -406,6 +412,18 @@
       ]
     },
     {
+      "covered_by_value": true,
+      "definition_sha16": "48005fca7b411b6d",
+      "impact": "sql_shaping",
+      "name": "PAIR_SUM_TOLERANCE",
+      "origin": "app.utils.pair_opening_coherence:PAIR_SUM_TOLERANCE",
+      "sql_interpolated": true,
+      "used_in": [
+        "compute_calibration_payload",
+        "published_pair_incoherent_market_predicate"
+      ]
+    },
+    {
       "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
@@ -447,6 +465,64 @@
       "sql_interpolated": true,
       "used_in": [
         "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "PUBLISHED_PAIR_CELL_CATEGORY",
+      "origin": "app.tasks.precompute_calibration:PUBLISHED_PAIR_CELL_CATEGORY",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "PUBLISHED_PAIR_CELL_MARKET_TYPE",
+      "origin": "app.tasks.precompute_calibration:PUBLISHED_PAIR_CELL_MARKET_TYPE",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "PUBLISHED_PAIR_CELL_SOURCE",
+      "origin": "app.tasks.precompute_calibration:PUBLISHED_PAIR_CELL_SOURCE",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "PUBLISHED_PAIR_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:PUBLISHED_PAIR_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "PUBLISHED_PAIR_SHAPE_COLUMNS",
+      "origin": "app.tasks.precompute_calibration:PUBLISHED_PAIR_SHAPE_COLUMNS",
+      "sql_interpolated": false,
+      "used_in": [
+        "published_pair_shape_columns"
       ]
     },
     {
@@ -502,6 +578,18 @@
       "sql_interpolated": false,
       "used_in": [
         "_unit_fits_in_window"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "TERMINAL_PUBLISHED_PRICE_SQL",
+      "origin": "app.tasks.precompute_calibration:TERMINAL_PUBLISHED_PRICE_SQL",
+      "sql_interpolated": false,
+      "used_in": [
+        "_calibration_population_ctes",
+        "published_pair_shape_columns"
       ]
     },
     {
@@ -634,6 +722,41 @@
       ]
     },
     {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "_PUBLISHED_PAIR_FLAG_SQL",
+      "origin": "app.tasks.precompute_calibration:_PUBLISHED_PAIR_FLAG_SQL",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "_SHAPE_CLAUSE_INDENT",
+      "origin": "app.tasks.precompute_calibration:_SHAPE_CLAUSE_INDENT",
+      "sql_interpolated": true,
+      "used_in": [
+        "half_spike_pair_market_predicate",
+        "published_pair_incoherent_market_predicate",
+        "two_leg_over_under_shape_clauses"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "_SHAPE_COLUMN_SEP",
+      "origin": "app.tasks.precompute_calibration:_SHAPE_COLUMN_SEP",
+      "sql_interpolated": false,
+      "used_in": [
+        "_render_shape_columns"
+      ]
+    },
+    {
       "covered_by_value": false,
       "definition_sha16": "4cc1d3aa840a061b",
       "impact": "behavior_or_evidence",
@@ -647,8 +770,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "5e0d6f45d5d91c6ccca4ab7661c5b65be85411c58f02ed9ba8d0811761c073af",
-  "uncovered_behavior_or_evidence": 25,
-  "uncovered_count": 46,
+  "source_sha256": "7c766ac1262c0f1324ad29e3181c29f7dbe0a961627a029a79197cb301959f97",
+  "uncovered_behavior_or_evidence": 29,
+  "uncovered_count": 50,
   "uncovered_sql_shaping": 21
 }

@@ -194,14 +194,22 @@ class TestTheBuilderAppliesIt:
         assert sql.count("AS is_half_spike_pair") == 1
 
     def test_the_flag_gates_every_published_set(self):
-        """Three sites: both field_completeness counters and ``deduped``.
+        """Four sites: both field_completeness counters, ``deduped``, and the
+        pair-coherence counter (CAL-P100), which holds this rule's arm in its
+        NOT form so it measures its own rule's marginal cost.
 
         A flag defined and not gated is a census column, not an exclusion — and
         it would report a count while changing nothing, which is worse than
         either.
+
+        Counted rather than asserted-present on purpose: this number goes UP
+        when a rendering is added and DOWN when a gate is dropped, so a silent
+        deletion cannot pass by matching a substring somewhere else. It moved
+        3 -> 4 at CAL-P100, and the fourth is named above so the next reader
+        does not have to derive which one it is.
         """
         sql = _population_sql()
-        assert sql.count("AND NOT ro.is_half_spike_pair") == 3
+        assert sql.count("AND NOT ro.is_half_spike_pair") == 4
 
     def test_the_exclusion_is_cell_scoped(self):
         """P1#2. soccer/quantity carries the same mass and gets WORSE (+0.41)."""
@@ -403,13 +411,39 @@ class TestCriterionFourIsMeasured:
         """
         from app.tasks.precompute_calibration import published_row_predicate
 
-        published = published_row_predicate(half_spike_arm="NOT ro.is_half_spike_pair")
-        removed = published_row_predicate(half_spike_arm="ro.is_half_spike_pair")
+        keep_pair = "NOT ro.is_published_pair_incoherent"
+        published = published_row_predicate(
+            half_spike_arm="NOT ro.is_half_spike_pair",
+            pair_incoherent_arm=keep_pair,
+        )
+        removed = published_row_predicate(
+            half_spike_arm="ro.is_half_spike_pair",
+            pair_incoherent_arm=keep_pair,
+        )
         assert published.replace(
             "AND NOT ro.is_half_spike_pair", "AND ro.is_half_spike_pair"
         ) == removed
         sql = _population_sql()
         assert published in sql and removed in sql
+
+    def test_the_half_spike_counter_holds_the_other_rule_fixed(self):
+        """CAL-P100: with two exclusions live, "removed" needs a basis.
+
+        The half-spike published counter must render the OTHER rule's arm in its
+        NOT form. If it did not — if it counted every flagged row regardless of
+        the pair-coherence rule — then a row both rules remove would be credited
+        to each, the two published figures would double-count, and criterion 4
+        ("published totals move by the excluded count and no more") would be
+        false by construction rather than by defect.
+        """
+        from app.tasks.precompute_calibration import published_row_predicate
+
+        removed = published_row_predicate(
+            half_spike_arm="ro.is_half_spike_pair",
+            pair_incoherent_arm="NOT ro.is_published_pair_incoherent",
+        )
+        assert "AND NOT ro.is_published_pair_incoherent" in removed
+        assert removed in _population_sql()
 
     def test_hoisting_the_predicate_did_not_drop_it_from_the_fingerprint(self):
         """The regression this rework very nearly shipped.

@@ -44,7 +44,18 @@ instead of the patch.
 def _functions(tree): return {n.name:n for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))}
 def _fingerprint_node(tree): return _functions(tree)["_main_input_fingerprint"]
 def derive_declared(source:str)->tuple[set[str],set[str]]:
- tree=ast.parse(source); node=_fingerprint_node(tree); roots=set(); values=set(); module_names=set(_module_defs(tree))
+ # CAL-P100: the coverable set is module-level defs AND imported names. It was
+ # defs only, which made an IMPORTED constant permanently uncoverable: it could
+ # be hashed by value in ``_main_input_fingerprint`` and still be reported as an
+ # unguarded SQL-shaping hole, forever. That is a false positive in the one
+ # number this file exists to make trustworthy, and the predictable response to
+ # a tripwire that fires on correct code is to loosen the tripwire.
+ # Found by ``PAIR_SUM_TOLERANCE``, imported from ``pair_opening_coherence`` so
+ # the writer gate and the read-side gate cannot drift apart, hashed by value,
+ # and counted as uncovered regardless. Widening this set REMOVES false
+ # negatives in coverage; it cannot hide a real hole, because a name still has
+ # to appear in the ``input_fingerprint(...)`` call to be counted covered.
+ tree=ast.parse(source); node=_fingerprint_node(tree); roots=set(); values=set(); module_names=set(_module_defs(tree))|set(_imports(tree))
  for call in ast.walk(node):
   if isinstance(call,ast.Call) and isinstance(call.func,ast.Attribute) and call.func.attr=="getsource" and call.args:
    if isinstance(call.args[0],ast.Name): roots.add(call.args[0].id)

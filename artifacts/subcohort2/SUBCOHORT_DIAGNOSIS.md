@@ -14,6 +14,125 @@ fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to
 
 ---
 
+## STATUS 2026-08-26 (CAL-P100) — RANK 1'S SECOND MECHANISM IS BUILT. THE FIX SHIPS UNMEASURED, AND SAYS SO.
+
+*Rank 1 `baseball/quantity`, 16.64 pp over n=6,778 on the published population. Its FIRST named
+mechanism — the exact-0.5000 placeholder pair — was built by CAL-P097, reworked by CAL-P099, and is
+sitting on `program/calibration-96` awaiting CERT-406B; this window did not touch it. This window
+built the SECOND, which the item-2 ladder named in its own closing sentence as the cell's next
+lead: **the published-column pair incoherence from check 2.***
+
+### THE MECHANISM, TAKEN STRAIGHT FROM CHECK 2 RATHER THAN RE-MEASURED
+
+Check 2's table, on the 2,438 pairs that are coherent AT OPENING — the class item 1's writer gate
+protects, i.e. the structurally-healthy remainder:
+
+| column | over mean | under mean | **pair sum** |
+|---|---:|---:|---:|
+| `opening_probability` | 0.3858 | 0.6143 | **1.0001** ✅ |
+| published (`COALESCE(cal, open)`) | 0.2992 | 0.5757 | **0.8749** 🔴 |
+
+**A pair captured coherently is PUBLISHED as two numbers that cannot both be forecasts of the same
+binary** — about 12.5 points of probability mass missing from the pair the reader is shown, and the
+platform is graded on it. `calibration_probability` is written per leg (Part A of
+`_backfill_calibration_prices` takes each outcome's own last snapshot before the event's
+commence_time) with **no pair constraint anywhere**. `app/utils/pair_opening_coherence.py` protects
+the opening. Nothing protected the number the curve publishes.
+
+Two details of check 2 that decided the implementation, both already in the file:
+
+* **The gap direction is not a hindsight signature.** Published under gap −25.28 (worse than its
+  opening −21.43) and corr **−0.646**; published over gap +12.77 and corr −0.036. Both legs fell
+  from their openings (over −8.66 pp, under −3.86 pp).
+* **Which means the arithmetic does not name a wrong leg**, and no measurement on record does
+  either. So this is the EXCLUDE fork of item 1's own disposition doctrine — repair only where the
+  direction is structurally certain (`identical_noncomp` had a measured 0.886 price/win-rate
+  correlation; this has nothing equivalent). Inventing a direction is the "invented price becomes a
+  published forecast" failure `pair_opening_coherence` exists to refuse.
+
+### WHAT WAS BUILT — one read-side rule, defined once, disjoint from the two beside it
+
+```
+exclude BOTH legs of a market when:
+    exactly two outcomes, named over and under
+AND both legs carry an opening price AND both carry a published price
+AND ABS(opening pair sum  − 1) <= PAIR_SUM_TOLERANCE     -- captured COHERENT
+AND ABS(published pair sum − 1) >  PAIR_SUM_TOLERANCE    -- published INCOHERENT
+```
+
+🔴 **The opening-coherence clause is the load-bearing one, and it is there to keep this rule from
+eating another rule's population.** Without it the predicate also swallows the `other_noncomp`
+class (5,566 markets), whose read-side exclusion is `QUEUE-STAGED-CAL-PAIR-OPENING-DISPOSITION.md`.
+That is CERT-403B's blocked defect exactly — a filter broader than the rule it claims to be — so
+the two rules are made **disjoint by construction** rather than by anyone remembering.
+
+| decision | what | why, in one line |
+|---|---|---|
+| tolerance | **imported** `PAIR_SUM_TOLERANCE`, not restated | one tolerance for the writer gate and the read-side gate, or one disagrees with the measurement that justified the other |
+| symmetry | **both legs leave**; the flag is market membership with no leg clause | half-stamping is how the 22.71% `partial_open` population was made |
+| scope | cell-scoped `polymarket`/`baseball`/`quantity` | CERT-403B's second P1, and CAL-P095's control: the same rule was −3.12 pp in one cell and **+0.41 pp** in another |
+| horizon | renders `false` off the terminal price path, structurally | the horizon surface's `hp.horizon_prob` join does not exist in `market_result_shape`; silently re-pointing a terminal rule at a snapshot price is worse than the SQL error |
+| accounting | **four** renderings of `published_row_predicate`, three marginal counts + the overlap | with two exclusions live, "rows this rule removed" stops being one number — crediting a doubly-flagged row to each double-counts, to neither understates both |
+
+### 🔴 WHAT MOVED, AND WHAT DID NOT — the cell row
+
+| | before | after | note |
+|---|---|---|---|
+| `baseball/quantity` `ece_eligible` | 15.86 / n=6,778 | **UNMEASURED — no claim** | ruling 134: a build lane measures its own gates and nothing else |
+| rank | 1 | **1** | nothing measured can have moved it |
+| mechanism 1 (0.5000 spike) | built, BLOCKed, reworked | **untouched this window** | on `-96`, awaiting CERT-406B; worth −3.12 pp when it lands |
+| mechanism 2 (published pair) | *named, never built* | **BUILT, red-first, cert-staged** | 38 tests; base 7/7 FAIL exit 1, head 7/7 PASS exit 0 |
+| ladder coverage | 6 of 6 executed | 6 of 6 | this window ran no fold |
+| cell closed? | no | **no** | see below |
+
+**Stated plainly: this window shipped a fix and did NOT ship a number.** The ECE delta of this rule
+is unknown. The instrument that will produce it is
+`backend/scripts/fold_published_pair_coherence.py`, which renders THIS predicate out of the shared
+builder — baseline vs proposed is one boolean, and masking that rule's two expressions out of the
+armed chain reproduces the disarmed chain **byte for byte**, so any delta it measures is
+attributable to this rule and nothing else. Running it is an attended-dyno grant belonging to the
+measurement lane.
+
+**Do not read a GREEN cert on this as "the cell improved."** The same sentence CAL-P099 had to write
+about 406B applies here unchanged: *the instrument is correct; the measurement is owed.*
+
+### WHAT REMAINS ON THIS CELL
+
+1. **The two deltas, both owed and neither derivable from the other** — mechanism 1's −3.12 pp is
+   measured but unshipped; mechanism 2's is unmeasured. **They must not be added.** The two rules
+   can flag the same market (a 0.5000/0.5000 pair whose calibration prices later diverged publishes
+   off-sum), which is exactly why the payload now reports `also_removed_by_half_spike_pair` as its
+   own count rather than folding it into either.
+2. **`ROUND(op,4) = 0.5005`** — same signature, 1/18th the size, still deliberately out of scope
+   (staged spec §5). A tolerance band turns a self-evidencing exact match into a judgement call.
+3. **Whether either rule generalises past this cell.** Both are cell-scoped on the same precedent
+   and for the same reason. The published-pair defect is a *writer* property and is therefore very
+   likely wider — but CAL-P095 is the standing proof that "likely wider" and "safe to widen" are
+   different claims.
+4. **The residual after both.** Even granting mechanism 1's −3.12, ~12.74 pp over ~4,982 legs was
+   unexplained before this rule and no measurement here reduces that. The cell is **not closed**.
+
+### ONE FINDING FROM AN EXISTING GUARD, NOT FROM THIS LANE
+
+The fingerprint-coverage tripwire fired for the **third queue running**, and for the third time the
+answer was to cover rather than loosen. Two real holes, needing different repairs:
+
+* `_SHAPE_CLAUSE_INDENT` — module-level, reaches the emitted SQL, simply not hashed. Hashed now.
+  It is whitespace; the rule for that list is *does it shape the statement*, not *does it look
+  important*.
+* 🔴 `PAIR_SUM_TOLERANCE` — **hashed by value already, and reported as an unguarded hole anyway.**
+  `derive_declared` built its coverable set from module-level defs ONLY, so an *imported* constant
+  was **permanently uncoverable**: guarded in fact, a hole in the count, forever. That is a false
+  positive in the one number the artifact exists to make trustworthy, and the predictable response
+  to a tripwire that fires on correct code is to delete the tripwire. Fixed in the analyzer
+  (`defs | imports`) — it removes false negatives and cannot hide a real hole, because a name still
+  has to appear in the `input_fingerprint(...)` call to count as covered.
+
+`uncovered_sql_shaping` is therefore **still 21** — the number with correctness consequences did not
+move, which is the whole reason it is pinned apart from the totals.
+
+---
+
 ## STATUS 2026-08-25 (CAL-P095) — RANK 2 WORKED. ITS SPIKE IS NOT ITS MECHANISM, AND THE WRITER WAS HIDING HALF OF EVERY PAIR.
 
 *Rank 1 `baseball/quantity` has a named mechanism and a staged apply, both untouchable this

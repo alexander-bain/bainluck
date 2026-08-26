@@ -344,6 +344,12 @@ class TestCalibrationPublicEndpoint:
             # that the excluded population is reported rather than silently
             # dropped, and this key is where a reader sees what was removed.
             "half_spike_pair_filter",
+            # CAL-P100: the published-pair-coherence exclusion, reported to the
+            # same standard for the same reason. A second DELIBERATE
+            # public-contract addition — a rule that removes rows from the curve
+            # without saying how many is a silent cap, which is the thing the
+            # standing rule forbids.
+            "published_pair_coherence_filter",
             "void_filter",
             "soccer_2way_filter",  # Queue #158 (#1011): soccer 2-way exclusion
             "heuristic_filter",  # #754 heuristic-exclusion transparency

@@ -21,6 +21,7 @@ from app.utils.calibration_coverage_bridge import RUNG_KEYS as _COVERAGE_RUNG_KE
 from app.utils.calibration_coverage_bridge import (
     build_coverage_census as _build_coverage_census,
 )
+from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE
 from app.utils.resolution_authority import (
     CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL,
     CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL,
@@ -516,10 +517,22 @@ POLY_PLACEHOLDER_RULE_TEXT = (
 #: are aggregates over ALL outcomes of the market — the same basis
 #: ``market_result_shape`` always used, so the shape reflects the market as
 #: captured rather than as published.
-HALF_SPIKE_PAIR_SHAPE_COLUMNS: dict[str, str] = {
+#: The "is this an exactly-two-leg market named Over and Under" aggregates, which
+#: are NOT specific to the half-spike rule — CAL-P100's published-pair-coherence
+#: rule tests the same shape and differs only in its value clause. Defined once
+#: and composed into the half-spike dict below (insertion order preserved, so the
+#: rendered column list is byte-identical to the pre-refactor text). Two rules
+#: that agree on what an O/U pair IS must not each carry their own copy of it —
+#: that is CERT-403B's finding restated at the shape level rather than the
+#: predicate level.
+TWO_LEG_OU_SHAPE_COLUMNS: dict[str, str] = {
     "hs_n_outcomes": "COUNT(*)",
     "hs_named_over": "COUNT(*) FILTER (WHERE lower(btrim({o}.name)) = 'over')",
     "hs_named_under": "COUNT(*) FILTER (WHERE lower(btrim({o}.name)) = 'under')",
+}
+
+HALF_SPIKE_PAIR_SHAPE_COLUMNS: dict[str, str] = {
+    **TWO_LEG_OU_SHAPE_COLUMNS,
     "hs_half_legs": (
         "COUNT(*) FILTER (WHERE ROUND({o}.opening_probability, 4) = 0.5000)"
     ),
@@ -532,12 +545,42 @@ HALF_SPIKE_PAIR_SHAPE_COLUMNS: dict[str, str] = {
 HALF_SPIKE_EXACT_VALUE = "0.5000"
 
 
+#: The indent every shape clause after the first carries inside
+#: ``market_result_shape``'s WHERE. Named because two predicates now render
+#: against it and a literal in each would drift the moment one is re-indented.
+_SHAPE_CLAUSE_INDENT = " " * 18
+
+#: How a shape dict becomes a SELECT column list. Shared by both rules so a
+#: column added to one is rendered the same way as a column added to the other.
+_SHAPE_COLUMN_SEP = ",\n                    "
+
+
+def _render_shape_columns(columns: dict[str, str], **fmt: str) -> str:
+    """A shape dict -> a SELECT column list. Pure."""
+    return _SHAPE_COLUMN_SEP.join(
+        f"{expr.format(**fmt)} AS {name}" for name, expr in columns.items()
+    )
+
+
+def two_leg_over_under_shape_clauses(shape_alias: str = "mrs") -> str:
+    """The shape half of BOTH pair predicates: exactly two legs, named O/U. Pure.
+
+    Rendered without its own parentheses so each rule can append its value
+    clauses inside one bracket, which is how the half-spike predicate has always
+    read. A test asserts both callers render this identical text — the point of
+    hoisting it is that "what is an Over/Under pair" has one answer.
+    """
+    a = shape_alias
+    return (
+        f"{a}.hs_n_outcomes = 2\n"
+        f"{_SHAPE_CLAUSE_INDENT}AND {a}.hs_named_over = 1\n"
+        f"{_SHAPE_CLAUSE_INDENT}AND {a}.hs_named_under = 1"
+    )
+
+
 def half_spike_pair_shape_columns(outcome_alias: str = "fo") -> str:
     """The four shape aggregates, as a SELECT column list. Pure."""
-    return ",\n                    ".join(
-        f"{expr.format(o=outcome_alias)} AS {name}"
-        for name, expr in HALF_SPIKE_PAIR_SHAPE_COLUMNS.items()
-    )
+    return _render_shape_columns(HALF_SPIKE_PAIR_SHAPE_COLUMNS, o=outcome_alias)
 
 
 def half_spike_pair_market_predicate(shape_alias: str = "mrs") -> str:
@@ -554,10 +597,8 @@ def half_spike_pair_market_predicate(shape_alias: str = "mrs") -> str:
     """
     a = shape_alias
     return (
-        f"({a}.hs_n_outcomes = 2\n"
-        f"                  AND {a}.hs_named_over = 1\n"
-        f"                  AND {a}.hs_named_under = 1\n"
-        f"                  AND {a}.hs_half_legs = 2)"
+        f"({two_leg_over_under_shape_clauses(a)}\n"
+        f"{_SHAPE_CLAUSE_INDENT}AND {a}.hs_half_legs = 2)"
     )
 
 
@@ -584,6 +625,137 @@ HALF_SPIKE_PAIR_RULE_TEXT = (
     "and is KEPT. Cell-scoped: soccer/quantity carries the same mass with the "
     "opposite calibration effect (+0.41 pp) and is deliberately untouched. "
     "Read-side only; never mutates resolutions."
+)
+
+# ---------------------------------------------------------------------------
+# CAL-P100 — the PUBLISHED pair is incoherent while its OPENING pair is not.
+#
+# THE EVIDENCE, and it is already on record: ``SUBCOHORT_DIAGNOSIS.md`` item 2,
+# check 2. On the 2,438 ``baseball/quantity`` Over/Under pairs that are coherent
+# at OPENING (the class item 1's writer gate protects), measured truth-eligible:
+#
+#     column                  leg     n      mean p   win rate   gap      corr
+#     opening_probability     over    2,438  0.3858   0.1715     +21.44   -0.583
+#     opening_probability     under   2,438  0.6143   0.8285     -21.43   -0.584
+#     published (COALESCE)    over    2,438  0.2992   0.1715     +12.77   -0.036
+#     published (COALESCE)    under   2,438  0.5757   0.8285     -25.28   -0.646
+#
+# The two OPENING gaps are exactly equal and opposite, as one-winner coherent
+# pairs require — the fold's own built-in check that it is measuring what it
+# claims. **The opening means sum to 1.0001. The published means sum to 0.8749.**
+#
+# So a pair that was captured coherently is PUBLISHED as two numbers that cannot
+# both be forecasts of the same binary: ~12.5 points of probability mass are
+# missing from the pair the reader is shown, and the platform is then graded on
+# it. ``calibration_probability`` is written per leg — Part A of
+# ``_backfill_calibration_prices`` takes each outcome's own last snapshot before
+# the event's commence_time — with no pair constraint anywhere. Item 1 shipped
+# ``app/utils/pair_opening_coherence.py`` to protect the OPENING. Nothing
+# protects the number the curve actually publishes. That is the "second,
+# unguarded writer" the diagnosis names as this cell's next lead, in those words.
+#
+# WHY THIS EXCLUDES RATHER THAN REPAIRS. Both legs fell from their openings
+# (over -8.66 pp, under -3.86 pp), so the arithmetic does not name a wrong leg to
+# correct, and no measurement in the file names one either. Item 1's disposition
+# doctrine is explicit about this fork: REPAIR only where the direction is
+# *structurally certain* (``identical_noncomp``, where a measured 0.886
+# price/win-rate correlation established which leg carried the real price);
+# otherwise EXCLUDE read-side. There is no such measurement here, so inventing a
+# repair direction would be exactly the "invented price becomes a published
+# forecast" failure ``pair_opening_coherence`` was written to refuse.
+#
+# WHY IT REQUIRES OPENING COHERENCE. Without that clause this predicate would
+# also swallow the ``other_noncomp`` class — pairs already incoherent at capture,
+# whose read-side exclusion is a DIFFERENT staged rule
+# (``QUEUE-STAGED-CAL-PAIR-OPENING-DISPOSITION.md``). Two rules quietly removing
+# one population is how CERT-403B's blocked artifact happened: a broader filter
+# than the rule it claimed to measure. The opening-coherence clause makes the two
+# rules disjoint BY CONSTRUCTION rather than by anyone remembering.
+
+#: The terminal published price. Named because this rule is defined on it
+#: specifically, NOT on ``_calibration_population_ctes``' ``curve_price``
+#: parameter: the horizon surface passes ``hp.horizon_prob``, whose join is
+#: injected into ``ranked_outcomes`` only and does not exist inside
+#: ``market_result_shape``. Rendering the parameter here would be a SQL error on
+#: the horizon path, and silently re-scoping this rule to a snapshot price would
+#: be worse than the error. The rule renders ``false`` off the terminal path.
+TERMINAL_PUBLISHED_PRICE_SQL = (
+    "COALESCE({o}.calibration_probability, {o}.opening_probability)"
+)
+
+#: The pair sums, over the same all-outcomes GROUP BY the shape aggregates use.
+#: ``*_legs`` counts exist so the sums are only ever read over a FULL pair — a
+#: ``SUM`` skips NULLs, so "0.98" from one priced leg and "0.98" from two are
+#: indistinguishable without them (gotcha #53's shape, in an aggregate).
+PUBLISHED_PAIR_SHAPE_COLUMNS: dict[str, str] = {
+    "pp_open_sum": "SUM({o}.opening_probability)",
+    "pp_open_legs": "COUNT(*) FILTER (WHERE {o}.opening_probability IS NOT NULL)",
+    "pp_pub_sum": "SUM({price})",
+    "pp_pub_legs": "COUNT(*) FILTER (WHERE {price} IS NOT NULL)",
+}
+
+
+def published_pair_shape_columns(outcome_alias: str = "fo") -> str:
+    """The four pair-sum aggregates, as a SELECT column list. Pure."""
+    price = TERMINAL_PUBLISHED_PRICE_SQL.format(o=outcome_alias)
+    return _render_shape_columns(
+        PUBLISHED_PAIR_SHAPE_COLUMNS, o=outcome_alias, price=price
+    )
+
+
+def published_pair_incoherent_market_predicate(shape_alias: str = "mrs") -> str:
+    """TRUE for a pair captured coherent and published incoherent. Pure.
+
+    Five clauses, and each one is load-bearing:
+
+    1-3. the shared O/U shape — exactly two legs, one named Over, one Under.
+    4.   ``pp_open_legs = 2`` / ``pp_pub_legs = 2`` — both sums are over a
+         complete pair, so neither can be a half-pair reading.
+    5.   coherent at opening, incoherent as published, against the SAME
+         tolerance the writer gate uses.
+
+    The tolerance is imported from ``app.utils.pair_opening_coherence`` rather
+    than restated. That module's own comment gives the reason and it applies
+    here verbatim: a tolerance that drifted between two gates would let one of
+    them disagree with the measurement that justified the other.
+    """
+    a = shape_alias
+    ind = _SHAPE_CLAUSE_INDENT
+    return (
+        f"({two_leg_over_under_shape_clauses(a)}\n"
+        f"{ind}AND {a}.pp_open_legs = 2\n"
+        f"{ind}AND {a}.pp_pub_legs = 2\n"
+        f"{ind}AND ABS({a}.pp_open_sum - 1) <= {PAIR_SUM_TOLERANCE}\n"
+        f"{ind}AND ABS({a}.pp_pub_sum - 1) > {PAIR_SUM_TOLERANCE})"
+    )
+
+
+#: The CELL this ships scoped to. Same reasoning as the half-spike rule's scope
+#: and the same precedent: CERT-403B's second P1 required a per-cell census
+#: before an unscoped exclusion, CAL-P095 then produced the out-of-cell control
+#: that proved the point (a rule worth -3.12 pp in one cell was +0.41 pp in
+#: another). The published-pair defect is a *writer* property and is therefore
+#: very likely wider than one cell — but "likely" is not measured, and this lane
+#: is not permitted to measure it (ruling 134). Widening needs the measurement
+#: lane's per-cell before/after, which ``scripts/fold_published_pair_coherence.py``
+#: exists to produce.
+PUBLISHED_PAIR_CELL_SOURCE = "polymarket"
+PUBLISHED_PAIR_CELL_CATEGORY = "baseball"
+PUBLISHED_PAIR_CELL_MARKET_TYPE = "quantity"
+
+PUBLISHED_PAIR_RULE_TEXT = (
+    "Excludes both legs of a resolved Polymarket baseball/quantity market with "
+    "exactly two outcomes named Over and Under whose OPENING pair sums to 1 "
+    "within PAIR_SUM_TOLERANCE but whose PUBLISHED pair "
+    "(COALESCE(calibration_probability, opening_probability)) does not. "
+    "calibration_probability is written per leg from that leg's own last "
+    "pre-commence snapshot with no pair constraint, so a pair captured coherent "
+    "is published as two numbers that cannot both describe the same binary "
+    "(CAL-P094 check 2: opening means sum to 1.0001, published means to 0.8749 "
+    "over the same 2,438 pairs). Symmetric — both legs leave, because neither "
+    "can be shown to be the sound one. Pairs already incoherent at OPENING are "
+    "NOT touched here; they are a different defect with its own staged "
+    "disposition. Read-side only; never mutates resolutions."
 )
 
 # Queue #220/221 Item 3 — the EXCLUSION-SYMMETRY census.
@@ -1800,6 +1972,15 @@ _HALF_SPIKE_FLAG_SQL = (
     f"                         = {HALF_SPIKE_EXACT_VALUE})"
 )
 
+#: CAL-P100's leg test, and it is deliberately membership ALONE — unlike the
+#: half-spike flag, which restates its leg value clause. The reason is that the
+#: defect is a property of the PAIR, not of either leg: the pair's published sum
+#: is off by 12.5 points and nothing in the arithmetic says which leg carries the
+#: error. So both legs of a flagged market leave, symmetrically, exactly as
+#: ``pair_opening_coherence`` stamps NEITHER leg rather than the one that looks
+#: wrong. Half-stamping is how the 22.71% ``partial_open`` population was made.
+_PUBLISHED_PAIR_FLAG_SQL = "(ppi.market_id IS NOT NULL)"
+
 #: The LEFT JOIN every published-row reading needs, because ``deduped``'s
 #: multi-row arm tests ``mp.vm_id IS NULL``. Shared so a second reading cannot
 #: quietly omit it and then report a different population for the same rule.
@@ -1809,13 +1990,33 @@ PUBLISHED_ROW_JOIN = """LEFT JOIN mode_prices mp
                   AND mp.mode_price = ro.adj_opening_probability"""
 
 
-def published_row_predicate(*, half_spike_arm: str) -> str:
+def published_row_predicate(
+    *, half_spike_arm: str, pair_incoherent_arm: str
+) -> str:
     """Everything that decides whether a ``normalized`` row reaches the curve.
 
-    ONE text, rendered twice, differing in exactly one conjunct — the half-spike
-    arm. ``deduped`` passes ``NOT ro.is_half_spike_pair`` and publishes;
-    ``half_spike_pair_removed`` passes ``ro.is_half_spike_pair`` and counts what
-    the exclusion cost the published population.
+    ONE text, rendered four times, differing in exactly two conjuncts — the
+    half-spike arm and (CAL-P100) the published-pair-coherence arm:
+
+    ======================== ==================== ========================
+    rendering                half_spike_arm       pair_incoherent_arm
+    ======================== ==================== ========================
+    ``deduped``              NOT flagged          NOT flagged
+    ``half_spike_..._removed``   flagged          NOT flagged
+    ``published_pair_..._removed``  NOT flagged       flagged
+    ``both_exclusions_removed``     flagged           flagged
+    ======================== ==================== ========================
+
+    WHY FOUR AND NOT THREE. With two exclusions live, "rows this rule removed
+    from the published population" stops being one number. A row flagged by BOTH
+    rules is removed by both, so crediting it to each would double-count the
+    published delta, and crediting it to neither would understate both — and the
+    second reading is what two marginal counters do on their own. The first three
+    rows above are therefore each a MARGINAL cost (this rule, with every other
+    rule applied), the fourth is the overlap, and the three sum to the total
+    published rows removed with no row counted twice and none dropped. The
+    payload publishes all four numbers rather than a total, because a reader who
+    can only see the total cannot tell the three apart.
 
     WHY IT IS A FUNCTION AND NOT TWO WHERE CLAUSES
     ----------------------------------------------
@@ -1838,6 +2039,7 @@ def published_row_predicate(*, half_spike_arm: str) -> str:
                     AND NOT ro.is_kalshi_prop_threshold
                     AND NOT ro.is_weather_wide_spread
                     AND {half_spike_arm}
+                    AND {pair_incoherent_arm}
                     -- Queue 299 rungs 1-3 (#1012): result authority before
                     -- shape. A market that graded nobody, a draw-capable duel
                     -- with no draw member, and a 'field' with <=1 captured
@@ -1877,6 +2079,7 @@ def _calibration_population_ctes(
     leading_ctes: str = "",
     frozen_vm_roster: bool = False,
     half_spike_pair_enabled: bool = True,
+    published_pair_coherence_enabled: bool = True,
 ) -> str:
     """The ONE canonical eligible -> final-published-row CTE chain (Queue #259 Item 1/2).
 
@@ -1983,6 +2186,18 @@ def _calibration_population_ctes(
         if frozen_vm_roster
         else ""
     )
+    # CAL-P100: the published-pair rule is defined on the TERMINAL published
+    # price and renders `false` anywhere else, structurally rather than by asking
+    # each caller to remember. The horizon surface passes
+    # `curve_price="hp.horizon_prob"` with a join that exists inside
+    # `ranked_outcomes` and NOT inside `market_result_shape`, where these
+    # aggregates live — so rendering the parameter there is a SQL error on that
+    # path, and quietly re-pointing a terminal-price rule at a snapshot price
+    # would be the worse of the two outcomes. The explicit kwarg stays (the fold
+    # needs an off switch for its before/after reading); this AND is what makes a
+    # future non-terminal caller safe without knowing the rule exists.
+    _pp_terminal_path = curve_price == TERMINAL_PUBLISHED_PRICE_SQL.format(o="fo")
+    pp_enabled = published_pair_coherence_enabled and _pp_terminal_path
     return f"""{leading_ctes}market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
@@ -2035,7 +2250,12 @@ def _calibration_population_ctes(
                     -- HALF_SPIKE_PAIR_SHAPE_COLUMNS so the fold that measures
                     -- this exclusion and the builder that applies it cannot
                     -- drift apart (the whole of CERT-403B's first P1).
-                    {half_spike_pair_shape_columns('fo')}
+                    {half_spike_pair_shape_columns('fo')},
+                    -- CAL-P100: the pair-sum aggregates, on the same GROUP BY.
+                    -- Four more FILTER/SUM columns over a scan that already
+                    -- touches every outcome — no new scan, no new join, and the
+                    -- same "shape as captured" basis every other rule here uses.
+                    {published_pair_shape_columns('fo')}
                 FROM futures_outcomes fo
                 JOIN market_info mi ON mi.market_id = fo.market_id
                 GROUP BY fo.market_id, mi.category, mi.market_type
@@ -2053,6 +2273,21 @@ def _calibration_population_ctes(
                   AND mi.source = '{HALF_SPIKE_PAIR_CELL_SOURCE}'
                   AND mi.category = '{HALF_SPIKE_PAIR_CELL_CATEGORY}'
                   AND mi.market_type = '{HALF_SPIKE_PAIR_CELL_MARKET_TYPE}'
+            ),
+            -- CAL-P100: markets captured as a coherent Over/Under pair and
+            -- PUBLISHED as an incoherent one, inside the one cell this ships
+            -- scoped to. Empty by construction when the rule is off, so the
+            -- before/after reading goes through this same builder rather than
+            -- through a fold that re-implements it (CERT-406B's requirement).
+            published_pair_incoherent_markets AS (
+                SELECT mrs.market_id
+                FROM market_result_shape mrs
+                JOIN market_info mi ON mi.market_id = mrs.market_id
+                WHERE {published_pair_incoherent_market_predicate('mrs')
+                       if pp_enabled else 'false'}
+                  AND mi.source = '{PUBLISHED_PAIR_CELL_SOURCE}'
+                  AND mi.category = '{PUBLISHED_PAIR_CELL_CATEGORY}'
+                  AND mi.market_type = '{PUBLISHED_PAIR_CELL_MARKET_TYPE}'
             ),
             -- L2-79 Item 1: malformed 2-outcome mex binaries (winner count != 1).
             malformed_binaries AS (
@@ -2385,6 +2620,12 @@ def _calibration_population_ctes(
                     -- the hashed function.
                     {_HALF_SPIKE_FLAG_SQL if half_spike_pair_enabled else 'false'}
                         AS is_half_spike_pair,
+                    -- CAL-P100. Membership only, and the market CTE is already
+                    -- empty when the rule is off — but the flag is switched here
+                    -- too, so the off state is a rendered `false` a reader can
+                    -- see rather than an emptiness they have to go and verify.
+                    {_PUBLISHED_PAIR_FLAG_SQL if pp_enabled else 'false'}
+                        AS is_published_pair_incoherent,
                     -- Queue 300D Item 1 (C126 P1). Distance from 50% ALONE is not
                     -- a total order: complementary binary sides are routinely
                     -- equidistant (0.40 / 0.60), and with no secondary key
@@ -2428,6 +2669,8 @@ def _calibration_population_ctes(
                 LEFT JOIN nonexclusive_bundle_markets nbm ON nbm.market_id = fo.market_id
                 LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = fo.market_id
                 LEFT JOIN half_spike_pair_markets hsp ON hsp.market_id = fo.market_id
+                LEFT JOIN published_pair_incoherent_markets ppi
+                    ON ppi.market_id = fo.market_id
                 LEFT JOIN mex_field_candidates mfc ON mfc.market_id = fo.market_id
                 LEFT JOIN mex_field_divisor mfd ON mfd.market_id = fo.market_id
                 WHERE fo.opening_probability IS NOT NULL
@@ -2468,6 +2711,7 @@ def _calibration_population_ctes(
                           AND NOT ro.is_kalshi_prop_threshold
                           AND NOT ro.is_weather_wide_spread
                           AND NOT ro.is_half_spike_pair
+                          AND NOT ro.is_published_pair_incoherent
                           -- Queue 299: the new rungs are published per-outcome
                           -- exclusions too, so a field that loses a member to
                           -- one of them is PARTIAL and must be dropped whole
@@ -2485,6 +2729,7 @@ def _calibration_population_ctes(
                           AND NOT ro.is_kalshi_prop_threshold
                           AND NOT ro.is_weather_wide_spread
                           AND NOT ro.is_half_spike_pair
+                          AND NOT ro.is_published_pair_incoherent
                           AND NOT ro.is_no_winner_market
                           AND NOT ro.is_draw_authority_missing
                           AND NOT ro.is_orphan_partition
@@ -2577,7 +2822,10 @@ def _calibration_population_ctes(
             deduped AS (
                 SELECT ro.* FROM normalized ro
                 {PUBLISHED_ROW_JOIN}
-                WHERE {published_row_predicate(half_spike_arm='NOT ro.is_half_spike_pair')}
+                WHERE {published_row_predicate(
+                    half_spike_arm='NOT ro.is_half_spike_pair',
+                    pair_incoherent_arm='NOT ro.is_published_pair_incoherent',
+                )}
             ),
             -- CAL-P099 / CERT-406B: the PUBLISHED-side half of the half-spike
             -- accounting, and the reason it is a CTE rather than a subtraction.
@@ -2606,7 +2854,33 @@ def _calibration_population_ctes(
                 SELECT COUNT(*) AS half_spike_pair_published_removed
                 FROM normalized ro
                 {PUBLISHED_ROW_JOIN}
-                WHERE {published_row_predicate(half_spike_arm='ro.is_half_spike_pair')}
+                WHERE {published_row_predicate(
+                    half_spike_arm='ro.is_half_spike_pair',
+                    pair_incoherent_arm='NOT ro.is_published_pair_incoherent',
+                )}
+            ),
+            -- CAL-P100: the same published-side accounting for the pair-coherence
+            -- rule, and the overlap between the two, so the three counts sum to
+            -- the published rows removed with nothing double-counted and nothing
+            -- dropped. See ``published_row_predicate``'s table for why a single
+            -- marginal counter per rule is not sufficient once there are two.
+            published_pair_incoherent_removed AS (
+                SELECT COUNT(*) AS published_pair_incoherent_published_removed
+                FROM normalized ro
+                {PUBLISHED_ROW_JOIN}
+                WHERE {published_row_predicate(
+                    half_spike_arm='NOT ro.is_half_spike_pair',
+                    pair_incoherent_arm='ro.is_published_pair_incoherent',
+                )}
+            ),
+            both_exclusions_removed AS (
+                SELECT COUNT(*) AS both_pair_rules_published_removed
+                FROM normalized ro
+                {PUBLISHED_ROW_JOIN}
+                WHERE {published_row_predicate(
+                    half_spike_arm='ro.is_half_spike_pair',
+                    pair_incoherent_arm='ro.is_published_pair_incoherent',
+                )}
             )"""
 
 
@@ -2757,7 +3031,14 @@ _COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
         # where every other individual rule reports. What must NOT happen is the
         # filter landing in ``representative_not_selected``, and this line is what
         # prevents that.
-        "OR COALESCE(n.is_half_spike_pair, false)",
+        "OR COALESCE(n.is_half_spike_pair, false) "
+        # CAL-P100 rides the same rung for the same reason: it is the poly
+        # placeholder family caught by a second arithmetic signature (a pair
+        # that publishes off-sum), and a new rung NAME would be a corpus-wide
+        # change to `calibration_coverage_bridge_contract.json` that says
+        # nothing new about the population. Its own count + reason are in the
+        # exclusions payload, which is where per-rule reporting lives.
+        "OR COALESCE(n.is_published_pair_incoherent, false)",
     ),
     (
         "structural_artifact",
@@ -3034,6 +3315,8 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     COUNT(*) FILTER (WHERE is_weather_wide_spread) AS weather_wide_spread_excluded,
                     -- CAL-P097 / CERT-403B gate 6: the 0.5000-pair exclusion count.
                     COUNT(*) FILTER (WHERE is_half_spike_pair) AS half_spike_pair_excluded,
+                    COUNT(*) FILTER (WHERE is_published_pair_incoherent)
+                        AS published_pair_incoherent_excluded,
                     -- Queue 300D Item 1: the one-time representative tie delta.
                     -- ``rn_distance_rank = 1`` is every row tied at the minimum
                     -- distance from 50%; a SECOND such row (``rn = 2``) proves the
@@ -3116,6 +3399,8 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 MAX(ls.kalshi_prop_threshold_excluded) AS kalshi_prop_threshold_excluded,
                 MAX(ls.weather_wide_spread_excluded) AS weather_wide_spread_excluded,
                 MAX(ls.half_spike_pair_excluded) AS half_spike_pair_excluded,
+                MAX(ls.published_pair_incoherent_excluded)
+                    AS published_pair_incoherent_excluded,
                 -- CAL-P099 / CERT-406B: the PUBLISHED-side companion, from
                 -- ``half_spike_pair_removed``. ``half_spike_pair_excluded``
                 -- above is candidate-side (over ``normalized``) and cannot
@@ -3124,6 +3409,13 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 -- other.
                 MAX(hsr.half_spike_pair_published_removed)
                     AS half_spike_pair_published_removed,
+                -- CAL-P100: the same pair of readings for the pair-coherence
+                -- rule, plus the overlap. Three marginal counts, never a
+                -- total, so a reader can see which rule cost what.
+                MAX(ppr.published_pair_incoherent_published_removed)
+                    AS published_pair_incoherent_published_removed,
+                MAX(ber.both_pair_rules_published_removed)
+                    AS both_pair_rules_published_removed,
                 MAX(ls.representative_tie_broken) AS representative_tie_broken,
                 -- Queue #259 Item 1 (C14 P2): published (post-dedup) counts.
                 MAX(ps.mex_published_markets) AS mex_published_markets,
@@ -3147,11 +3439,15 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
             FROM liq_summary ls
             CROSS JOIN published_summary ps
             CROSS JOIN half_spike_pair_removed hsr
+            CROSS JOIN published_pair_incoherent_removed ppr
+            CROSS JOIN both_exclusions_removed ber
             LEFT JOIN bucketed ON true""" if frozen else """
             FROM bucketed
             CROSS JOIN liq_summary ls
             CROSS JOIN published_summary ps
-            CROSS JOIN half_spike_pair_removed hsr""")
+            CROSS JOIN half_spike_pair_removed hsr
+            CROSS JOIN published_pair_incoherent_removed ppr
+            CROSS JOIN both_exclusions_removed ber""")
             + _coverage_bridge_join()
             + """
             GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
@@ -3965,6 +4261,33 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             else None
         )
         half_spike_pair_published_removed = int(_hspr) if _hspr is not None else None
+        # CAL-P100: the pair-coherence rule's own two readings, and the overlap.
+        # Same shapes as the two above and for the same reasons — candidate-side
+        # defaults to 0 (a count of matches, absent means the counter is new),
+        # published-side defaults to None (absent means nobody measured what the
+        # curve lost, which is not the same claim as "nothing").
+        _ppi = (
+            getattr(rows[0], "published_pair_incoherent_excluded", None)
+            if rows
+            else None
+        )
+        published_pair_incoherent_excluded = int(_ppi) if _ppi is not None else 0
+        _ppir = (
+            getattr(rows[0], "published_pair_incoherent_published_removed", None)
+            if rows
+            else None
+        )
+        published_pair_incoherent_published_removed = (
+            int(_ppir) if _ppir is not None else None
+        )
+        _bothr = (
+            getattr(rows[0], "both_pair_rules_published_removed", None)
+            if rows
+            else None
+        )
+        both_pair_rules_published_removed = (
+            int(_bothr) if _bothr is not None else None
+        )
         # Queue 300D Item 1: the representative tie delta. ``_int_or_none``, not
         # ``_int0`` — like the coverage rungs, this column is genuinely absent
         # from a checkpoint written by a beat that predates it, and reporting
@@ -4903,6 +5226,39 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             # losing ``rn`` side was never going to publish. `null` means the
             # census predates the counter, never "nothing was removed".
             "published_rows_removed": half_spike_pair_published_removed,
+            # CAL-P100: with a second pair rule live, this rule's published
+            # figure is MARGINAL — rows it removed that no other rule would have
+            # removed anyway. The overlap is reported once, under the pair-
+            # coherence filter below, and is not added into either rule's own
+            # number. See ``published_row_predicate`` for the four renderings.
+            "published_rows_removed_basis": "marginal_all_other_rules_applied",
+        },
+        # CAL-P100 — the published-pair-coherence exclusion. Reported to the same
+        # standard the half-spike rule is held to (the standing rule against
+        # silent caps): what it matched, what the curve actually lost, and the
+        # cell it is scoped to, because the scope IS a finding rather than an
+        # implementation detail.
+        "published_pair_coherence_filter": {  # CAL-P100
+            "applies_to": (
+                f"{PUBLISHED_PAIR_CELL_SOURCE} "
+                f"({PUBLISHED_PAIR_CELL_CATEGORY}/"
+                f"{PUBLISHED_PAIR_CELL_MARKET_TYPE} only)"
+            ),
+            "rule": PUBLISHED_PAIR_RULE_TEXT,
+            "pair_sum_tolerance": PAIR_SUM_TOLERANCE,
+            "excluded": published_pair_incoherent_excluded,
+            "published_rows_removed": (
+                published_pair_incoherent_published_removed
+            ),
+            "published_rows_removed_basis": "marginal_all_other_rules_applied",
+            # The rows BOTH pair rules would have removed. Reported once, here,
+            # so the two marginal figures plus this one sum to the published
+            # rows the pair rules cost together — with no row counted twice and
+            # none silently dropped between two counters that each said "not
+            # mine". `null` means the census predates the counter.
+            "also_removed_by_half_spike_pair": (
+                both_pair_rules_published_removed
+            ),
         },
         # Queue 300D Item 1: NOT a filter and deliberately not filed with them —
         # nothing here is excluded. This is the one-time representative IDENTITY
@@ -5284,6 +5640,32 @@ def _main_input_fingerprint() -> str:
         # expression whose value decides three downstream gates.
         PUBLISHED_ROW_JOIN,
         _HALF_SPIKE_FLAG_SQL,
+        # CAL-P100: the pair-coherence rule's SQL-shaping inputs, on exactly the
+        # instruction above and for exactly the same reason — none of these
+        # values appears in any hashed function's SOURCE, only its literal
+        # interpolation does, and each of them decides which rows publish.
+        #
+        # ``PAIR_SUM_TOLERANCE`` is here because it is imported from another
+        # module: widening it there would change which pairs count as incoherent
+        # in the curve while leaving every hashed source in THIS file untouched.
+        # A cross-module constant that shapes the statement is the easiest kind
+        # of input to lose, because nothing in this file changes when it moves.
+        f"published_pair_tolerance={PAIR_SUM_TOLERANCE}",
+        f"published_pair_cell={PUBLISHED_PAIR_CELL_SOURCE}/"
+        f"{PUBLISHED_PAIR_CELL_CATEGORY}/{PUBLISHED_PAIR_CELL_MARKET_TYPE}",
+        published_pair_shape_columns("fo"),
+        published_pair_incoherent_market_predicate("mrs"),
+        _PUBLISHED_PAIR_FLAG_SQL,
+        # The shared O/U shape clause both pair predicates render. Hashed once,
+        # on its own, because it is now a callee of BOTH and a change to it
+        # moves two rules at the same time.
+        two_leg_over_under_shape_clauses("mrs"),
+        # The indent both pair predicates render against. It is whitespace, and
+        # it is hashed anyway: it reaches the emitted statement, and the rule
+        # for this list is "does it shape the SQL", not "does it look
+        # important". A value judged too small to hash is how a list like this
+        # stops being a list of everything.
+        _SHAPE_CLAUSE_INDENT,
         source,
     )
 
@@ -5968,6 +6350,9 @@ def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_kalshi_prop_threshold) AS excl_kalshi_prop_threshold,
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_weather_wide_spread) AS excl_weather_wide_spread,
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_half_spike_pair) AS excl_half_spike_pair,
+                        (SELECT COUNT(*) FROM ranked_outcomes
+                          WHERE is_published_pair_incoherent)
+                            AS excl_published_pair_incoherent,
                         (SELECT COUNT(*) FROM normalized WHERE is_field_incomplete) AS excl_field_incomplete
                 ),
                 h_buckets AS (
@@ -5989,6 +6374,7 @@ def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
                     d.excl_esports_bundle, d.excl_golf_placeholder,
                     d.excl_kalshi_prop_threshold, d.excl_weather_wide_spread,
                     d.excl_half_spike_pair,
+                    d.excl_published_pair_incoherent,
                     d.excl_field_incomplete
                 FROM h_diag d
                 LEFT JOIN h_buckets b ON true
@@ -6115,6 +6501,9 @@ async def _compute_time_horizon_calibration():
                             "kalshi_prop_threshold": int(r.excl_kalshi_prop_threshold or 0),
                             "weather_wide_spread": int(r.excl_weather_wide_spread or 0),
                             "half_spike_pair": int(r.excl_half_spike_pair or 0),
+                            "published_pair_incoherent": int(
+                                r.excl_published_pair_incoherent or 0
+                            ),
                             "field_incomplete": int(r.excl_field_incomplete or 0),
                         },
                     }
