@@ -670,6 +670,75 @@ class TestTheNamedNodeIsFoundByName:
         # number that does not exist.
         assert gate.node_time_ms(metrics) == 850.0
 
+    #: CAL-P099. The plan the gate's FIRST CI execution actually produced (run
+    #: 33003742148), reduced to its spine. The planner chose an Incremental
+    #: Sort, the matcher required the literal string "Sort", and G3 came back
+    #: NOT_MEASURED on both chains — reported as "the named node moved", which
+    #: reads as a fault in the rewrite and was a fault in the ruler.
+    CI_PLAN = {
+        "Node Type": "Nested Loop",
+        "Plans": [
+            {
+                "Node Type": "WindowAgg",
+                "Subplan Name": "CTE ranked_outcomes",
+                "Plan Width": 1032,
+                "Total Cost": 5145793.0,
+                "Plans": [
+                    {
+                        "Node Type": "WindowAgg",
+                        "Plan Width": 1194,
+                        "Plans": [
+                            {
+                                "Node Type": "Incremental Sort",
+                                "Plan Width": 1186,
+                                "Plans": [],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    def test_an_incremental_sort_is_the_windows_sort(self) -> None:
+        """Both node types sort a window's input, so both are the named node.
+
+        The width clause is the part of G3 that CI can grade, and Plan Width is
+        present on either shape. Refusing one of them made the gate
+        unmeasurable on the only Postgres this repo can reach.
+        """
+        metrics = gate.named_node_metrics(self.CI_PLAN, "ranked_outcomes")
+        assert metrics["sort_plan_width"] == 1186
+        assert metrics["sort_node_type"] == "Incremental Sort"
+
+    def test_an_incremental_sorts_absent_spill_fields_are_null_not_zero(self) -> None:
+        """It reports per-group figures, not one Sort Method / Space Used.
+
+        Returning 0 would assert "this sort did not spill" on a node that does
+        not answer that question in this shape (gotcha #53).
+        """
+        metrics = gate.named_node_metrics(self.CI_PLAN, "ranked_outcomes")
+        assert metrics["sort_method"] is None
+        assert metrics["sort_space_used_kb"] is None
+
+    def test_a_node_that_is_not_a_sort_at_all_is_still_refused(self) -> None:
+        """Widening the accepted set must not widen it to everything.
+
+        The refusal also names what it DID see, because the first execution's
+        message ('the named node moved') sent the reader looking at the rewrite
+        instead of at the plan.
+        """
+        plan = {
+            "Node Type": "WindowAgg",
+            "Subplan Name": "CTE ranked_outcomes",
+            "Plans": [
+                {"Node Type": "WindowAgg", "Plans": [{"Node Type": "Seq Scan"}]}
+            ],
+        }
+        metrics = gate.named_node_metrics(plan, "ranked_outcomes")
+        assert metrics["measured"] is False
+        assert "Seq Scan" in metrics["reason"]
+
 
 class TestTheSeedAndTheOracleCannotDrift:
     """The per-fixture oracle must cover the seed exactly — checked without a DB."""

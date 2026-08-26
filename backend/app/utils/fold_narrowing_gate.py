@@ -125,6 +125,27 @@ G1_REQUIRED_COLUMNS: tuple[str, ...] = (
 OLD_WINDOW_CTE = "ranked_outcomes"
 NEW_WINDOW_CTE = "ranked_outcomes_core"
 
+#: The node types that ARE the window's sort. Both, and the second one is not a
+#: nicety — it is what the gate's first CI execution actually found.
+#:
+#: G3 is about the row the window sorts, and PostgreSQL has two nodes that sort
+#: a window's input. Requiring the literal string ``Sort`` made the gate
+#: unmeasurable wherever the planner picked the other one, and it reported that
+#: as "the named node moved" — i.e. as a fault in the rewrite — rather than as a
+#: fault in the ruler. On CI's seed the plan is:
+#:
+#:     WindowAgg [CTE ranked_outcomes] width=1032
+#:       WindowAgg width=1194
+#:         Incremental Sort width=1186
+#:
+#: An Incremental Sort IS the sort under the window; it carries ``Plan Width``,
+#: which is the whole of the clause CI can grade. What it does NOT carry is a
+#: single ``Sort Method`` / ``Sort Space Used`` — it reports per-group figures
+#: instead — so ``sort_node_type`` is returned alongside the metrics and the
+#: spill fields come back ``None`` rather than zero. A reader must be able to
+#: tell "no spill" from "this shape does not report spill that way".
+SORT_NODE_TYPES = frozenset({"Sort", "Incremental Sort"})
+
 
 def sample_predicate(mod: int | None, residue: int) -> str:
     """The G1 sample, injected **only** into ``market_info``, identically on both.
@@ -392,16 +413,24 @@ def named_node_metrics(plan_root: dict, cte_name: str) -> dict[str, Any]:
     inner = None
     for node in windows:
         children = node.get("Plans", []) or []
-        if len(children) == 1 and children[0].get("Node Type") == "Sort":
+        if len(children) == 1 and children[0].get("Node Type") in SORT_NODE_TYPES:
             inner = node
             break
     if inner is None:
+        seen = sorted(
+            {
+                (n.get("Plans") or [{}])[0].get("Node Type", "?")
+                for n in windows
+                if n.get("Plans")
+            }
+        )
         return {
             "measured": False,
             "reason": (
-                "no WindowAgg in "
-                f"CTE {cte_name} is fed directly by a Sort — the planner chose "
-                "a different input shape and the frozen node does not exist here"
+                f"no WindowAgg in CTE {cte_name} is fed directly by one of "
+                f"{sorted(SORT_NODE_TYPES)} — the planner chose a different "
+                f"input shape and the frozen node does not exist here. "
+                f"WindowAgg children seen: {seen}"
             ),
         }
     sort = inner["Plans"][0]
@@ -419,6 +448,11 @@ def named_node_metrics(plan_root: dict, cte_name: str) -> dict[str, Any]:
         "sort_actual_loops": loops,
         "sort_input_rows": (rows * loops) if rows is not None and loops else rows,
         "sort_plan_width": sort.get("Plan Width"),
+        # Which of SORT_NODE_TYPES was measured. An Incremental Sort reports
+        # per-group statistics instead of one Sort Method / Sort Space Used, so
+        # those come back None here and the reader needs to know that is a
+        # property of the node shape and not a measured absence of spill.
+        "sort_node_type": sort.get("Node Type"),
         "sort_method": sort.get("Sort Method"),
         "sort_space_used_kb": sort.get("Sort Space Used"),
         "sort_space_type": sort.get("Sort Space Type"),
