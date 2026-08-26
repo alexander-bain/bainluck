@@ -415,6 +415,17 @@ jobs:
           fi
 
       - name: Calibration fold narrowing MUTATION CONTROLS (real Postgres)
+        # CAL-P099: runs even when the step above is RED.
+        #
+        # On the gate's first-ever CI execution (run 33003742148) the row
+        # identity step failed on G3's width clause, so this step never ran at
+        # all and G4 stayed exactly as unexecuted as it had been before the
+        # branch was pushed — one red clause hid five independent controls, and
+        # the round trip bought one finding instead of six. These controls do
+        # not depend on the step above passing; they depend on it EXISTING.
+        #
+        # `!cancelled()` rather than `always()`: a cancelled job should stop.
+        if: ${{ !cancelled() }}
         # CAL-P098 / `C-FOLD-REWRITE-1` G4. The step above proves the gate is
         # GREEN. This one proves the green means something, by breaking the
         # rewrite five different ways and requiring the gate to notice each one:
@@ -439,30 +450,41 @@ jobs:
         run: |
           set +e
           failed=0
+          # THE BASELINE RUNS FIRST, and it decides whether any mutant result is
+          # evidence at all. A mutant "caught" by an assertion that was already
+          # failing before the mutation is a rubber stamp wearing the opposite
+          # face: five exit-1s that look like five working controls and are
+          # five copies of one unrelated red. So the unmutated run is measured
+          # up front, and if it is not 0 the mutants still RUN — their output is
+          # diagnostic — but nothing they do is credited.
+          python -m pytest \
+            tests/integration/test_calibration_fold_narrowing_row_identity_pg.py \
+            -q --no-header -rs > /tmp/mutant-restore.txt 2>&1
+          base=$?
+          echo "BASELINE (no mutant) EXIT CODE: $base"
+          if [ "$base" -ne 0 ]; then
+            echo "::error::the unmutated gate is RED (exit $base) — mutant exit codes below are NOT evidence that the controls work"
+            tail -60 /tmp/mutant-restore.txt
+            failed=1
+          fi
           for m in wide_shape global_rn1 row_swap flag_flip narrow_population; do
             FOLD_GATE_MUTANT="$m" python -m pytest \
               tests/integration/test_calibration_fold_narrowing_row_identity_pg.py \
               -q --no-header > "/tmp/mutant-$m.txt" 2>&1
             code=$?
             echo "MUTANT $m EXIT CODE: $code"
+            if [ "$base" -ne 0 ]; then
+              echo "  (uncredited — baseline red)"
+              continue
+            fi
             if [ "$code" -ne 1 ]; then
               echo "::error::mutant '$m' exited $code — only 1 means the control caught it"
               tail -40 "/tmp/mutant-$m.txt"
               failed=1
             fi
           done
-          python -m pytest \
-            tests/integration/test_calibration_fold_narrowing_row_identity_pg.py \
-            -q --no-header -rs > /tmp/mutant-restore.txt 2>&1
-          code=$?
-          echo "RESTORED (no mutant) EXIT CODE: $code"
-          if [ "$code" -ne 0 ]; then
-            echo "::error::the unmutated gate did not pass after the controls (exit $code)"
-            tail -60 /tmp/mutant-restore.txt
-            failed=1
-          fi
           if grep -qiE "[0-9]+ skipped" /tmp/mutant-restore.txt; then
-            echo "::error::the restored run SKIPPED — the mutation controls proved nothing"
+            echo "::error::the baseline run SKIPPED — the mutation controls proved nothing"
             failed=1
           fi
           exit $failed

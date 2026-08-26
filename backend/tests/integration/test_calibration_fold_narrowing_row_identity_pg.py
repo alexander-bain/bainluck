@@ -583,6 +583,39 @@ async def _cleanup(session) -> None:
     await session.commit()
 
 
+def _plan_spine(node: dict, depth: int = 0, limit: int = 60) -> str:
+    """The plan as an indented list of node types, for a failure message.
+
+    Not a substitute for `EXPLAIN` output — deliberately just the shape, because
+    the questions a missing named node raises are all shape questions: did the
+    CTE get inlined (no `Subplan Name`), is there something between the
+    WindowAgg and its Sort, did the planner pick a different input order. A full
+    `FORMAT JSON` dump in an assertion message is unreadable and gets truncated
+    exactly where the interesting part is.
+    """
+    lines: list[str] = []
+
+    def walk(n: dict, d: int) -> None:
+        if len(lines) >= limit:
+            return
+        label = n.get("Node Type", "?")
+        name = n.get("Subplan Name")
+        width = n.get("Plan Width")
+        bits = [label]
+        if name:
+            bits.append(f"[{name}]")
+        if width is not None:
+            bits.append(f"width={width}")
+        lines.append("  " * d + " ".join(bits))
+        for child in n.get("Plans", []) or []:
+            walk(child, d + 1)
+
+    walk(node, depth)
+    if len(lines) >= limit:
+        lines.append("  ... (truncated)")
+    return "\n".join(lines)
+
+
 def _chains() -> tuple[str, str]:
     """``(old, new)`` — with ``FOLD_GATE_MUTANT`` applied to NEW when set.
 
@@ -1042,7 +1075,9 @@ async def test_new_sort_is_narrower_than_the_old_sort():
             # window lives in ``ranked_outcomes`` and the ratio comes out at
             # 1.0 — which is the red this control exists to produce.
             new_cte = OLD_WINDOW_CTE if MUTANT == "wide_shape" else NEW_WINDOW_CTE
-            widths = {}
+            widths: dict[str, object] = {}
+            why: dict[str, object] = {}
+            spines: dict[str, str] = {}
             for label, chain, cte in (
                 ("old", fused, OLD_WINDOW_CTE),
                 ("new", narrowed, new_cte),
@@ -1061,12 +1096,27 @@ async def test_new_sort_is_narrower_than_the_old_sort():
                 plan = json.loads(raw) if isinstance(raw, str) else raw
                 metrics = named_node_metrics(plan[0]["Plan"], cte)
                 widths[label] = metrics.get("sort_plan_width")
+                # `named_node_metrics` states WHY it could not measure, and the
+                # first CI execution of this gate threw that sentence away:
+                # `{'old': None, 'new': None}` was the entire failure message,
+                # which says the width is missing and nothing about the plan
+                # that produced it. An instrument that reports a null instead of
+                # its own diagnosis costs a whole round trip per question, and
+                # this file's only Postgres is CI (no local PG in the sandbox).
+                # So the reason and the plan's node spine travel WITH the red.
+                why[label] = metrics.get("reason")
+                spines[label] = _plan_spine(plan[0]["Plan"])
 
             assert widths["old"], (
                 "no Sort under the OLD window CTE — the named node moved and "
-                f"G3 cannot be graded from this plan ({widths})"
+                f"G3 cannot be graded from this plan. widths={widths} "
+                f"reasons={why}\nOLD plan spine:\n{spines['old']}"
+                f"\nNEW plan spine:\n{spines['new']}"
             )
-            assert widths["new"], f"no Sort under the NEW window CTE ({widths})"
+            assert widths["new"], (
+                f"no Sort under the NEW window CTE. widths={widths} "
+                f"reasons={why}\nNEW plan spine:\n{spines['new']}"
+            )
             ratio = widths["new"] / widths["old"]
             assert ratio <= G3_MAX_WIDTH_RATIO, (
                 f"the narrowed Sort is {widths['new']} B, {ratio:.1%} of OLD's "
