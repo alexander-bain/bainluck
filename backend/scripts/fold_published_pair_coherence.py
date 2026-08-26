@@ -303,12 +303,24 @@ def _snapshot_proof(raw: dict) -> dict:
         }
 
     opened, closed = _probe("snapshot_open"), _probe("snapshot_close")
+    # Two conditions, and the ISOLATION one is not redundant with the snapshot
+    # one. ``now()`` is the transaction timestamp at EVERY isolation level, so it
+    # proves only "one transaction"; and two ``pg_current_snapshot()`` reads under
+    # READ COMMITTED match whenever nothing happened to commit in between — which
+    # is a fact about how busy the database was, not about what was requested.
+    # ``transaction_isolation`` is the definite check: it says the snapshot was
+    # GUARANTEED, not that it happened to hold.
+    isolation_ok = bool(
+        opened
+        and closed
+        and opened["isolation"] == closed["isolation"] == "repeatable read"
+    )
     return {
         "opened": opened,
         "closed": closed,
+        "isolation_held": isolation_ok,
         "one_snapshot": bool(
-            opened
-            and closed
+            isolation_ok
             and opened["snapshot"] == closed["snapshot"]
             and opened["tx_time"] == closed["tx_time"]
         ),
@@ -542,7 +554,11 @@ def main() -> int:
         "measured": proof["one_snapshot"],
         "reason": None
         if proof["one_snapshot"]
-        else "the bracketing probes disagree — the two readings are not one snapshot",
+        else (
+            "isolation is not REPEATABLE READ — the snapshot was not guaranteed"
+            if not proof["isolation_held"]
+            else "the bracketing probes disagree — the two readings are not one snapshot"
+        ),
     }
 
     out: dict = {

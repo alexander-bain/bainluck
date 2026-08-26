@@ -478,6 +478,48 @@ class TestTheFoldCannotDisagreeWithTheBuilder:
         assert "dbq_probe" not in src
         assert "dbq_run" not in src
 
+    def test_the_snapshot_claim_is_proved_not_asserted(self):
+        """The instrument checks its own premise, and fails closed on it.
+
+        ``now()`` is the transaction timestamp at EVERY isolation level, so it
+        proves one TRANSACTION and nothing about visibility; and two
+        ``pg_current_snapshot()`` reads match under READ COMMITTED whenever
+        nothing committed in between — a fact about how busy the database was.
+        So the definite check is ``transaction_isolation``, read back from the
+        server, and a run that cannot show it is not ``measured``.
+        """
+        from scripts.fold_published_pair_coherence import _snapshot_proof
+
+        def raw(iso_open, iso_close, snap_close="S1", t_close="T1"):
+            return {
+                "snapshot_open": {
+                    "measured": True,
+                    "rows": [("S1", "T1", iso_open, "5400000ms")],
+                },
+                "snapshot_close": {
+                    "measured": True,
+                    "rows": [(snap_close, t_close, iso_close, "5400000ms")],
+                },
+            }
+
+        good = _snapshot_proof(raw("repeatable read", "repeatable read"))
+        assert good["isolation_held"] and good["one_snapshot"]
+
+        # The server silently gave us READ COMMITTED: refused, even though both
+        # probes agree — agreement under READ COMMITTED is luck, not a snapshot.
+        weak = _snapshot_proof(raw("read committed", "read committed"))
+        assert not weak["isolation_held"] and not weak["one_snapshot"]
+
+        # Isolation is right but the snapshot moved: still refused.
+        moved = _snapshot_proof(
+            raw("repeatable read", "repeatable read", snap_close="S2")
+        )
+        assert moved["isolation_held"] and not moved["one_snapshot"]
+
+        # A probe that did not run is not a pass.
+        absent = _snapshot_proof({"snapshot_open": {"measured": False}})
+        assert not absent["one_snapshot"]
+
     def test_the_admin_row_path_still_refuses_the_timeout_this_fold_stopped_asking_for(
         self,
     ):
