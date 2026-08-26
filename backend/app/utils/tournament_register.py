@@ -217,6 +217,12 @@ STRUCTURAL_FINDINGS = frozenset({
     # prefix — which is the hole this whole set exists to close.
     "PROP_OUTCOME_MISSING_IDENTITY",
     "PROP_OUTCOME_REUSED",
+    # Two outcomes both claiming to answer the question. The card prints one
+    # number, so a second claimant means the register cannot say which — and
+    # whichever the renderer picked would be arbitrary. Structural for the same
+    # reason as the sides rules: it is an identity ambiguity, not a display
+    # preference, and a display rule would launder it into a plausible answer.
+    "PROP_MULTIPLE_ANSWERS",
     # "Where to watch:" with nothing after it. Small, and still a promise the
     # page cannot keep.
     "BROADCAST_NO_CHANNELS",
@@ -463,12 +469,15 @@ def validate_prop(prop: Any, *, sources: set[str]) -> list[str]:
         return findings
 
     seen: set[Any] = set()
+    answers: list[Any] = []
     for outcome in outcomes:
         if not isinstance(outcome, dict):
             findings.append("REGISTER_PROP_OUTCOME_WRONG_SHAPE")
             continue
         if not outcome.get("entity_key") or not outcome.get("display_name"):
             findings.append("PROP_OUTCOME_MISSING_IDENTITY")
+        if outcome.get("is_answer") is True:
+            answers.append(outcome.get("entity_key"))
         outcome_id = outcome.get("outcome_id")
         if outcome_id is None:
             findings.append("PROP_OUTCOME_MISSING_IDENTITY")
@@ -477,6 +486,24 @@ def validate_prop(prop: Any, *, sources: set[str]) -> list[str]:
             # One quote rendered as two outcomes of the same question.
             findings.append("PROP_OUTCOME_REUSED")
         seen.add(outcome_id)
+
+    # THE ANSWER RULE (UX-P134). A prop card prints one big number under a
+    # question, so something has to decide WHICH outcome that number is. The
+    # renderer used to take the highest-probability outcome, and the census
+    # that populated this section proved how badly that fails: under "Can
+    # Sinner complete the calendar slam?" the market's own outcomes are the
+    # threshold ladder 1+/2+/3+, and the max is "1+ Grand Slam wins" at 99% —
+    # so the card would have printed **99%** under a question whose true
+    # answer, "All 4", is 1%. Not a rounding error; the opposite answer.
+    #
+    # So the answering outcome is NAMED in the register, offline, by the agent
+    # who curated the question — the same doctrine as the matchup sides
+    # mapping, and for the same reason: an identity decision made once against
+    # the evidence beats a request-time heuristic that is admittedly wrong.
+    # A field market where no single outcome answers the question marks none,
+    # and the renderer shows a ranked list instead of a headline number.
+    if len(answers) > 1:
+        findings.append("PROP_MULTIPLE_ANSWERS")
 
     return findings
 

@@ -39,7 +39,8 @@ import {
   syntheticFirstRoundResults,
 } from "@/__tests__/fixtures/syntheticDraw";
 import type { SlateData } from "@/lib/slate";
-import type { TournamentPayload } from "@/lib/tournament";
+import type { PropMarket } from "@/lib/tournamentProps";
+import type { TournamentBoardData, TournamentPayload } from "@/lib/tournament";
 
 const SLATE_PATH = path.join(
   __dirname,
@@ -50,6 +51,17 @@ const SLATE_PATH = path.join(
   "mocks",
   "us-open",
   "slate-2026-08-25.json"
+);
+
+const PROPS_PATH = path.join(
+  __dirname,
+  "..",
+  "..",
+  "..",
+  "docs",
+  "mocks",
+  "us-open",
+  "props-2026-08-25.json"
 );
 
 const PAYLOAD_PATH = path.join(
@@ -72,6 +84,11 @@ function loadSlate(): SlateData {
   return JSON.parse(fs.readFileSync(SLATE_PATH, "utf8")) as SlateData;
 }
 
+/** The real curated props, built by the BACKEND's `build_props` (UX-P134). */
+function loadProps(): PropMarket[] {
+  return JSON.parse(fs.readFileSync(PROPS_PATH, "utf8")) as PropMarket[];
+}
+
 /** The app's real compiled Tailwind, so the capture is not a lookalike. */
 function appStylesheet(): string {
   const dir = path.join(__dirname, "..", "..", ".next", "static", "css");
@@ -84,6 +101,31 @@ function appStylesheet(): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * The same board, with the server-owned liveness fields set to live.
+ *
+ * SYNTHETIC, deliberately derived rather than hand-written: it starts from the
+ * real production board so the row shape, the field set and the trend arrays
+ * are whatever the backend actually emits today. Only the four fields the
+ * server owns for liveness are moved. A hand-authored "live board" literal
+ * would pass forever after the real payload changed shape underneath it.
+ */
+function makeLiveBoard(board: TournamentBoardData): TournamentBoardData {
+  return {
+    ...board,
+    price_state: "live",
+    age_hours: 0.2,
+    newest_observed_at: "2026-08-25T23:20:00+00:00",
+    rows: board.rows.map((row) => ({
+      ...row,
+      probability_is_live: true,
+      price_state: "live",
+      age_hours: 0.2,
+      observed_at: "2026-08-25T23:20:00+00:00",
+    })),
+  };
 }
 
 describe("US Open board capture rig", () => {
@@ -106,13 +148,59 @@ describe("US Open board capture rig", () => {
 
   it("PRODUCTION STATE 2026-08-25: every row is non-live (#2199)", () => {
     // This is the assertion that documents why the honesty treatment is the
-    // whole page this weekend rather than an edge case. When #2199 is fixed in
-    // its own lane this test SHOULD start failing — that is the signal to
-    // recapture, not to loosen it.
+    // whole page this weekend rather than an edge case.
+    //
+    // CORRECTED 2026-08-25 (UX-P134), because the sentence that used to sit
+    // here was disproven by measurement. It read: "when #2199 is fixed in its
+    // own lane this test SHOULD start failing — that is the signal to
+    // recapture." It cannot. This test reads a COMMITTED payload, so it is
+    // pinned to a file in this repo and can never observe production at all.
+    // It stayed green through the entire landing of #2199 — code merged
+    // (`b19708f0`), deployed (`a5688c0b`), oracle live — while the boards
+    // stayed dark, and a green here would have been read as "not fixed yet"
+    // when the truth was "fixed and not working". A fixture test that is
+    // described as a production signal is worse than no signal, because
+    // somebody will believe it.
+    //
+    // What this test actually proves, and all it proves: the renderer handles
+    // a dark board correctly. That stays worth asserting after #2199 bites,
+    // so this does NOT get flipped when production goes live — its live-side
+    // twin below is a SEPARATE test, not a replacement.
+    //
+    // The real signal is the task's own oracle, measured, never inferred:
+    //   GET /api/admin/source-health/futures-price-freshness?max_age_hours=24
+    // `status: "red"` with `price_dark: 898 / 909` as of 2026-08-25T23:3x UTC.
     const allRows = payload.boards.flatMap((b) => b.rows);
     expect(allRows.length).toBeGreaterThan(60);
     expect(allRows.every((r) => r.probability_is_live === false)).toBe(true);
     expect(payload.boards.every((b) => b.price_state === "dark")).toBe(true);
+  });
+
+  it("LIVE PATH: a live board renders confidently, with no age label and no banner", () => {
+    // The live direction has NEVER been exercised — production has been dark
+    // for the whole life of this component, so every existing assertion is
+    // about the muted treatment. The moment #2199 bites, the marquee weekend
+    // ships a rendering path no test has ever run.
+    //
+    // This payload is SYNTHETIC and says so. It is not a claim that production
+    // is live; it is the proof that when production goes live the board stops
+    // apologising. Built by lifting the real board and setting exactly the
+    // fields the server owns, so it cannot drift from the real shape.
+    const live = makeLiveBoard(payload.boards[0]);
+    const html = renderToStaticMarkup(<TournamentBoard board={live} />);
+
+    expect(html).toContain('data-live="true"');
+    expect(html).not.toContain('data-live="false"');
+    expect(html).not.toContain("Prices paused");
+    // The age label is the honesty treatment's tell — a live row must not wear it.
+    expect(html).not.toContain('data-testid="row-age"');
+    // And it must still print exactly one probability per row: going live is
+    // not permission to start printing the complement (adaptation, not imitation).
+    const perRow = html.split('data-testid="board-row"').slice(1);
+    expect(perRow.length).toBe(3);
+    for (const row of perRow) {
+      expect((row.match(/data-testid="row-probability"/g) ?? []).length).toBe(1);
+    }
   });
 
   it("renders both boards without throwing, and says prices are paused", () => {
@@ -173,6 +261,7 @@ describe("US Open board capture rig", () => {
     fs.mkdirSync(dir, { recursive: true });
 
     const slate = loadSlate();
+    const props = loadProps();
     const men = payload.boards[0];
     const women = payload.boards[1];
 
@@ -188,7 +277,7 @@ describe("US Open board capture rig", () => {
           <TournamentSlate slate={slate} draw={draw} broadcasts={broadcasts} />
         )}
         ${renderToStaticMarkup(<TournamentBoard board={board} />)}
-        ${renderToStaticMarkup(<TournamentProps markets={[]} draw={draw} />)}
+        ${renderToStaticMarkup(<TournamentProps markets={props} draw={draw} />)}
       </div>`;
 
     // The bracket, with DUMMY data — Alex asked to see it before Thursday's

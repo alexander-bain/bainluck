@@ -1,0 +1,110 @@
+[
+  {
+    "key": "alcaraz-competes",
+    "title": "Will Alcaraz actually play?",
+    "hook": "A withdrawal reshapes the entire men's board.",
+    "draw": "mens-singles",
+    "source": "kalshi",
+    "outcomes": [
+      {
+        "entity_key": "alcaraz-competes:yes",
+        "display_name": "Yes",
+        "probability": 0.905,
+        "probability_is_live": false,
+        "is_answer": true
+      }
+    ],
+    "answer_entity_key": "alcaraz-competes:yes",
+    "price_state": "dark",
+    "observed_at": "2026-07-24T02:47:00+00:00",
+    "age_hours": 788.8
+  },
+  {
+    "key": "sinner-competes",
+    "title": "Will Sinner actually play?",
+    "hook": "A withdrawal reshapes the entire men's board.",
+    "draw": "mens-singles",
+    "source": "kalshi",
+    "outcomes": [
+      {
+        "entity_key": "sinner-competes:yes",
+        "display_name": "Yes",
+        "probability": 0.63,
+        "probability_is_live": false,
+        "is_answer": true
+      }
+    ],
+    "answer_entity_key": "sinner-competes:yes",
+    "price_state": "dark",
+    "observed_at": "2026-08-19T00:41:00+00:00",
+    "age_hours": 166.9
+  },
+  {
+    "key": "alcaraz-second-major",
+    "title": "Can Alcaraz win a second major this year?",
+    "hook": "The other half of the men's duopoly, chasing the same thing.",
+    "draw": "mens-singles",
+    "source": "kalshi",
+    "outcomes": [
+      {
+        "entity_key": "alcaraz-second-major:2+-grand-slam-wins",
+        "display_name": "2+ Grand Slam wins",
+        "probability": 0.25,
+        "probability_is_live": false,
+        "is_answer": true
+      },
+      {
+        "entity_key": "alcaraz-second-major:3+-grand-slam-wins",
+        "display_name": "3+ Grand Slam wins",
+        "probability": 0.01,
+        "probability_is_live": false,
+        "is_answer": false
+      },
+      {
+        "entity_key": "alcaraz-second-major:all-4-grand-slam-wins",
+        "display_name": "All 4 Grand Slam wins",
+        "probability": 0.01,
+        "probability_is_live": false,
+        "is_answer": false
+      }
+    ],
+    "answer_entity_key": "alcaraz-second-major:2+-grand-slam-wins",
+    "price_state": "dark",
+    "observed_at": "2026-07-24T02:47:00+00:00",
+    "age_hours": 788.8
+  },
+  {
+    "key": "sinner-second-major",
+    "title": "Can Sinner win a second major this year?",
+    "hook": "He already has one in 2026. The next chance is this fortnight.",
+    "draw": "mens-singles",
+    "source": "kalshi",
+    "outcomes": [
+      {
+        "entity_key": "sinner-second-major:1+-grand-slam-wins",
+        "display_name": "1+ Grand Slam wins",
+        "probability": 0.99,
+        "probability_is_live": false,
+        "is_answer": false
+      },
+      {
+        "entity_key": "sinner-second-major:2+-grand-slam-wins",
+        "display_name": "2+ Grand Slam wins",
+        "probability": 0.555,
+        "probability_is_live": false,
+        "is_answer": true
+      },
+      {
+        "entity_key": "sinner-second-major:3+-grand-slam-wins",
+        "display_name": "3+ Grand Slam wins",
+        "probability": 0.01,
+        "probability_is_live": false,
+        "is_answer": false
+      }
+    ],
+    "answer_entity_key": "sinner-second-major:2+-grand-slam-wins",
+    "price_state": "dark",
+    "observed_at": "2026-07-24T02:47:00+00:00",
+    "age_hours": 788.8
+  }
+]

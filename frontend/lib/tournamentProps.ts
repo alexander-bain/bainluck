@@ -23,6 +23,8 @@ export interface PropOutcome {
   display_name: string;
   probability: number | null;
   probability_is_live: boolean;
+  /** Does this outcome answer the card's question? Curated, never inferred. */
+  is_answer: boolean;
 }
 
 export interface PropMarket {
@@ -34,6 +36,12 @@ export interface PropMarket {
   draw: string | null;
   source: string;
   outcomes: PropOutcome[];
+  /**
+   * The outcome whose probability answers `title`, or `null` for a field
+   * market where no single outcome does. `null` is a supported state, not a
+   * missing value: it selects the ranked-list rendering.
+   */
+  answer_entity_key: string | null;
   price_state: PriceState;
   observed_at: string | null;
   age_hours: number | null;
@@ -51,13 +59,40 @@ export function propsForDraw(markets: PropMarket[], draw: string): PropMarket[] 
   return markets.filter((market) => market.draw === null || market.draw === draw);
 }
 
-/** The leading outcome, for the collapsed one-line summary. */
-export function leadingOutcome(market: PropMarket): PropOutcome | null {
-  const priced = market.outcomes.filter((outcome) => outcome.probability !== null);
-  if (priced.length === 0) return null;
-  return priced.reduce((best, outcome) =>
-    (outcome.probability as number) > (best.probability as number) ? outcome : best
+/**
+ * The outcome whose number the card prints as its headline.
+ *
+ * REPLACES `leadingOutcome`, which took the highest-probability outcome and
+ * was wrong in the most dangerous possible way. The props census measured it:
+ * "Can Sinner complete the calendar slam?" is backed by a Kalshi threshold
+ * ladder whose outcomes are `1+ / 2+ / 3+ Grand Slam wins`. The max is `1+` at
+ * 99%, so the card printed **99%** under a question whose real answer is
+ * ~1%. The number was true of *something*; it just was not an answer to the
+ * question printed above it, which is the worst kind of wrong because it reads
+ * as authoritative.
+ *
+ * Now the register names the answer and this function only looks it up. A
+ * market with no named answer returns `null` — the caller must then rank
+ * rather than invent a headline.
+ */
+export function answerOutcome(market: PropMarket): PropOutcome | null {
+  if (market.answer_entity_key === null) return null;
+  return (
+    market.outcomes.find(
+      (outcome) => outcome.entity_key === market.answer_entity_key
+    ) ?? null
   );
+}
+
+/**
+ * A field market's outcomes, best first — the rendering for a question no
+ * single outcome answers. Unpriced outcomes are dropped from the ranking
+ * because there is nothing to rank them by, not hidden as a judgement.
+ */
+export function rankedOutcomes(market: PropMarket): PropOutcome[] {
+  return market.outcomes
+    .filter((outcome) => outcome.probability !== null)
+    .sort((a, b) => (b.probability as number) - (a.probability as number));
 }
 
 export function formatPropProbability(probability: number | null): string {

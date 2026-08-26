@@ -2,7 +2,7 @@
   "schema_version": "tournament-register/v1",
   "tournament": "us-open",
   "season": "2026",
-  "version": 2,
+  "version": 3,
   "generated_at": "2026-08-25T21:30:00+00:00",
   "draw_released": false,
   "players": [
@@ -7320,7 +7320,7 @@
       ]
     }
   ],
-  "supersedes_version": 1,
+  "supersedes_version": 2,
   "broadcasts": [
     {
       "region": "US",
@@ -7346,5 +7346,123 @@
       "note": null
     }
   ],
-  "props": []
+  "props": [
+    {
+      "key": "alcaraz-competes",
+      "title": "Will Alcaraz actually play?",
+      "hook": "A withdrawal reshapes the entire men's board.",
+      "draw": "mens-singles",
+      "source": "kalshi",
+      "market_id": 55686527,
+      "market_external_id": "KXATPCOMPETE-26USOALC",
+      "outcomes": [
+        {
+          "entity_key": "alcaraz-competes:yes",
+          "display_name": "Yes",
+          "outcome_id": 206815611,
+          "is_answer": true
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-25T23:35:00+00:00",
+        "market_name": "Carlos Alcaraz to play in the US Open",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "sinner-competes",
+      "title": "Will Sinner actually play?",
+      "hook": "A withdrawal reshapes the entire men's board.",
+      "draw": "mens-singles",
+      "source": "kalshi",
+      "market_id": 59172808,
+      "market_external_id": "KXATPCOMPETE-26USOSIN",
+      "outcomes": [
+        {
+          "entity_key": "sinner-competes:yes",
+          "display_name": "Yes",
+          "outcome_id": 219796782,
+          "is_answer": true
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-25T23:35:00+00:00",
+        "market_name": "Jannik Sinner to play in the US Open",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "alcaraz-second-major",
+      "title": "Can Alcaraz win a second major this year?",
+      "hook": "The other half of the men's duopoly, chasing the same thing.",
+      "draw": "mens-singles",
+      "source": "kalshi",
+      "market_id": 53796,
+      "market_external_id": "KXGRANDSLAM-CALC26",
+      "outcomes": [
+        {
+          "entity_key": "alcaraz-second-major:2+-grand-slam-wins",
+          "display_name": "2+ Grand Slam wins",
+          "outcome_id": 848773,
+          "is_answer": true
+        },
+        {
+          "entity_key": "alcaraz-second-major:3+-grand-slam-wins",
+          "display_name": "3+ Grand Slam wins",
+          "outcome_id": 848772,
+          "is_answer": false
+        },
+        {
+          "entity_key": "alcaraz-second-major:all-4-grand-slam-wins",
+          "display_name": "All 4 Grand Slam wins",
+          "outcome_id": 848771,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-25T23:35:00+00:00",
+        "market_name": "Carlos Alcaraz: Grand Slam wins in 2026",
+        "answer": "2+ Grand Slam wins"
+      }
+    },
+    {
+      "key": "sinner-second-major",
+      "title": "Can Sinner win a second major this year?",
+      "hook": "He already has one in 2026. The next chance is this fortnight.",
+      "draw": "mens-singles",
+      "source": "kalshi",
+      "market_id": 53795,
+      "market_external_id": "KXGRANDSLAM-JSIN26",
+      "outcomes": [
+        {
+          "entity_key": "sinner-second-major:1+-grand-slam-wins",
+          "display_name": "1+ Grand Slam wins",
+          "outcome_id": 848770,
+          "is_answer": false
+        },
+        {
+          "entity_key": "sinner-second-major:2+-grand-slam-wins",
+          "display_name": "2+ Grand Slam wins",
+          "outcome_id": 848769,
+          "is_answer": true
+        },
+        {
+          "entity_key": "sinner-second-major:3+-grand-slam-wins",
+          "display_name": "3+ Grand Slam wins",
+          "outcome_id": 848768,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-25T23:35:00+00:00",
+        "market_name": "Jannik Sinner: Grand Slam wins in 2026",
+        "answer": "2+ Grand Slam wins"
+      }
+    }
+  ],
+  "props_observed_at": "2026-08-25T23:35:00+00:00"
 }

@@ -276,6 +276,15 @@ ENFORCED_TASKS = frozenset({
     # that "succeeded" with zero rows against a population of hundreds of
     # thousands. A gate that cannot measure must not read GREEN.
     "calibration_published_twin",      # terminal + measured + verdict + db_rows
+    # UX-P134: the tournament register drift sentinel. Enrolled FROM BIRTH per
+    # #1884, because its false-green is already known and is the one this
+    # module exists for: a run that compared ZERO registered identities and a
+    # run that found no drift both return without error and mean opposite
+    # things. Its `terminal` separates them — `no_work` when nothing was
+    # watched, `failed` when every watched tournament errored, `complete` only
+    # when a comparison actually happened. Finding drift is `complete`: the
+    # sentinel's job is to notice, and noticing is success.
+    "tournament_register_sentinel",    # terminal + tournaments + errors
     # #2007 (CAL-P084): the beat gauge sampler. Enrolled AT BIRTH with terminals,
     # and it is the purest instance of this module's founding shape yet — a
     # SAMPLER's failure mode is not an error, it is running forever and capturing

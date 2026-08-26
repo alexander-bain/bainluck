@@ -27,6 +27,7 @@ from app.utils.tournament_register import SCHEMA_VERSION, load_register
 from app.utils.tournament_slate import (
     MATCH_STALE_AFTER_HOURS,
     MAX_PAIR_DEVIATION,
+    build_bracket,
     build_props,
     build_slate,
     normalize_pair,
@@ -523,33 +524,283 @@ def test_the_curation_bar_excludes_an_uncurated_market(tmp_path):
     returned, so a new high-volume dull market cannot arrive on the page.
     """
     result, out = _run_props_script(tmp_path, [
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner slam", "open", 5001, "Yes", "0.18"],
+        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "2+ Grand Slam wins", "0.18"],
         [999, "KXSOMETHING-DULL", "kalshi", "Dull", "open", 5099, "Yes", "0.50"],
     ])
     assert result.returncode == 0, result.stderr
-    assert [p["key"] for p in out["props"]] == ["sinner-calendar-slam"]
+    assert [p["key"] for p in out["props"]] == ["sinner-second-major"]
     assert "below the bar" in result.stdout
 
 
 def test_a_curated_prop_absent_from_the_dump_is_reported_not_invented(tmp_path):
     """A market we curated and did not find must be loud, not silently missing."""
     result, _ = _run_props_script(tmp_path, [
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner slam", "open", 5001, "Yes", "0.18"],
+        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "2+ Grand Slam wins", "0.18"],
     ])
     assert result.returncode == 0
     assert "curated but ABSENT from the dump" in result.stdout
-    assert "KXWTAGRANDSLAM-26" in result.stdout
+    assert "KXATPCOMPETE-26USOSIN" in result.stdout
 
 
 def test_the_props_pass_writes_a_register_that_still_validates(tmp_path):
     from app.utils.tournament_register import us_open_2026_contract, validate_register
 
     result, out = _run_props_script(tmp_path, [
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner slam", "open", 5001, "Yes", "0.18"],
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner slam", "open", 5002, "No", "0.82"],
+        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "2+ Grand Slam wins", "0.18"],
+        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5002, "3+ Grand Slam wins", "0.02"],
     ])
     assert result.returncode == 0
     assert validate_register(out, us_open_2026_contract()) == []
     # And the second population pass's work is still intact underneath it.
     assert len(out["matchups"]) > 0
     assert out["version"] == 3 and out["supersedes_version"] == 2
+
+
+# ── The answer rule (UX-P134) ────────────────────────────────────────────────
+#
+# A prop card prints one number under one question, so something decides WHICH
+# outcome that number is. It used to be "the biggest one", and the census that
+# populated this section proved how badly that fails on a threshold ladder.
+
+
+def _prop_register(outcomes):
+    return {
+        "props": [{
+            "key": "sinner-second-major",
+            "title": "Can Sinner win a second major this year?",
+            "hook": None,
+            "draw": "mens-singles",
+            "source": "kalshi",
+            "outcomes": outcomes,
+        }]
+    }
+
+
+def test_the_answer_is_the_curated_outcome_not_the_biggest_number():
+    """THE specimen. `1+` at 99% must never answer "can he win a second major".
+
+    The real Kalshi market `KXGRANDSLAM-JSIN26` carries the ladder 1+/2+/3+.
+    Picking the max prints 99% under a question whose true answer is 55.5% —
+    and on Alcaraz's equivalent ladder, 25%. The number is true of something;
+    it is not an answer to the question above it.
+    """
+    now = datetime(2026, 8, 25, 23, 0, tzinfo=timezone.utc)
+    register = _prop_register([
+        {"entity_key": "s:1", "display_name": "1+ Grand Slam wins", "outcome_id": 1},
+        {"entity_key": "s:2", "display_name": "2+ Grand Slam wins", "outcome_id": 2,
+         "is_answer": True},
+        {"entity_key": "s:3", "display_name": "3+ Grand Slam wins", "outcome_id": 3},
+    ])
+    prices = {
+        1: {"probability": 0.99, "observed_at": now},
+        2: {"probability": 0.555, "observed_at": now},
+        3: {"probability": 0.01, "observed_at": now},
+    }
+    built = build_props(register, prices=prices, now=now)[0]
+
+    assert built["answer_entity_key"] == "s:2"
+    answer = next(o for o in built["outcomes"] if o["entity_key"] == built["answer_entity_key"])
+    assert answer["probability"] == 0.555
+    # The 99% is still carried — it is real information about the market — it
+    # just is not the card's answer.
+    assert max(o["probability"] for o in built["outcomes"]) == 0.99
+
+
+def test_a_field_market_names_no_answer_and_gets_none():
+    """No single outcome answers "who will win a slam", so nothing leads."""
+    now = datetime(2026, 8, 25, 23, 0, tzinfo=timezone.utc)
+    register = _prop_register([
+        {"entity_key": "f:a", "display_name": "Alcaraz", "outcome_id": 1},
+        {"entity_key": "f:b", "display_name": "Sinner", "outcome_id": 2},
+    ])
+    prices = {
+        1: {"probability": 0.4, "observed_at": now},
+        2: {"probability": 0.6, "observed_at": now},
+    }
+    built = build_props(register, prices=prices, now=now)[0]
+    assert built["answer_entity_key"] is None
+    assert all(o["is_answer"] is False for o in built["outcomes"])
+
+
+def test_two_outcomes_claiming_the_answer_is_structurally_invalid():
+    """The card prints one number; two claimants means the register cannot say
+    which, and any renderer tie-break would be arbitrary dressed as authority."""
+    from app.utils.tournament_register import STRUCTURAL_FINDINGS, validate_prop
+
+    findings = validate_prop({
+        "key": "k", "title": "t", "source": "kalshi",
+        "outcomes": [
+            {"entity_key": "a", "display_name": "A", "outcome_id": 1, "is_answer": True},
+            {"entity_key": "b", "display_name": "B", "outcome_id": 2, "is_answer": True},
+        ],
+    }, sources={"kalshi"})
+
+    assert "PROP_MULTIPLE_ANSWERS" in findings
+    # And it must be classified, not merely emitted — the Day-2 meta-guard's point.
+    assert "PROP_MULTIPLE_ANSWERS" in STRUCTURAL_FINDINGS
+
+
+def test_the_committed_props_each_answer_their_own_question():
+    """On the shipped file: every curated prop names exactly one answer."""
+    register = load_register("us-open", "2026")
+    props = register.get("props") or []
+    assert len(props) >= 4, "the props population pass has not run"
+    for prop in props:
+        answers = [o for o in prop["outcomes"] if o.get("is_answer")]
+        assert len(answers) == 1, f"{prop['key']} has {len(answers)} answers"
+
+
+# ── The draw ingest + fixture swap (UX-P134, item 4) ─────────────────────────
+#
+# Thursday's ceremony rehearsed on Tuesday. The point is that 08-28 is an
+# ingest RUN, not a build day, so every leg of the path is proven here first.
+
+
+def _synthetic_draw_path():
+    from pathlib import Path as _Path
+    return _Path(__file__).resolve().parents[1] / "data/tournament_registers/_synthetic-usopen-draw.json"
+
+
+def _run_ingest(tmp_path, *, allow_unregistered: bool, register=None):
+    import json as _json
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    reg = register if register is not None else _json.loads(
+        (root / "data/tournament_registers/us-open-2026.json").read_text()
+    )
+    (tmp_path / "reg.json").write_text(_json.dumps(reg))
+
+    cmd = [
+        _sys.executable, str(root / "scripts/ingest_tournament_draw.py"),
+        "--register", str(tmp_path / "reg.json"),
+        "--draw", str(_synthetic_draw_path()),
+        "--version", str(reg["version"] + 1),
+        "--supersedes-version", str(reg["version"]),
+        "--out", str(tmp_path / "out.json"),
+    ]
+    if allow_unregistered:
+        cmd.append("--allow-unregistered")
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(root))
+    out = (
+        _json.loads((tmp_path / "out.json").read_text())
+        if (tmp_path / "out.json").exists() else None
+    )
+    return result, out
+
+
+def test_an_unregistered_drawn_player_refuses_the_whole_ingest(tmp_path):
+    """A drawn name with no registered identity would render a person the rest
+    of the page cannot price or link. It stops the run rather than being
+    dropped quietly — a silent omission is the failure a register prevents."""
+    result, out = _run_ingest(tmp_path, allow_unregistered=False)
+    assert result.returncode == 1
+    assert "NOT REGISTERED" in result.stderr
+    assert "REFUSING TO WRITE" in result.stderr
+    assert out is None, "a refused ingest must write nothing at all"
+
+
+def test_the_ingest_latches_draw_released_and_writes_slots(tmp_path):
+    """The end-to-end rehearsal: ingest -> latch -> clean transition."""
+    result, out = _run_ingest(tmp_path, allow_unregistered=True)
+    assert result.returncode == 0, result.stderr
+    assert out["draw_released"] is True
+    slotted = [p for p in out["players"] if p.get("draw_slot") is not None]
+    assert len(slotted) > 100
+    assert all(1 <= p["draw_slot"] <= 128 for p in slotted)
+
+
+def test_the_ingest_result_is_a_valid_transition_not_merely_a_valid_file(tmp_path):
+    from app.utils.tournament_register import (
+        us_open_2026_contract,
+        validate_register,
+        validate_transition,
+    )
+    import json as _json
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    before = _json.loads((root / "data/tournament_registers/us-open-2026.json").read_text())
+    _, after = _run_ingest(tmp_path, allow_unregistered=True)
+
+    contract = us_open_2026_contract()
+    assert validate_register(after, contract) == []
+    assert validate_transition(before, after, contract) == []
+    assert after["version"] == before["version"] + 1
+    assert after["supersedes_version"] == before["version"]
+
+
+def test_the_latch_cannot_be_un_latched_by_a_later_ingest(tmp_path):
+    """`draw_released` true -> false would make every committed slot
+    unvalidated again, silently."""
+    from app.utils.tournament_register import us_open_2026_contract, validate_transition
+
+    _, released = _run_ingest(tmp_path, allow_unregistered=True)
+    regressed = dict(released)
+    regressed["draw_released"] = False
+    regressed["version"] = released["version"] + 1
+    regressed["supersedes_version"] = released["version"]
+    findings = validate_transition(released, regressed, us_open_2026_contract())
+    assert "INVALID_DRAW_RELEASED_UNLATCH" in findings
+
+
+class TestTheFixtureSwap:
+    """The bracket must come from the register, so 08-28 is a data change."""
+
+    def test_the_bracket_is_empty_before_the_ceremony(self):
+        register = load_register("us-open", "2026")
+        assert register["draw_released"] is False
+        assert build_bracket(register, prices={}, draw="mens-singles") == []
+
+    def test_the_latch_alone_suppresses_the_bracket_even_with_slots_present(self):
+        """The guard above passes trivially — the committed register carries no
+        `draw_slot` at all, so it would return `[]` with the latch check
+        deleted. This one hands it slots and keeps the latch DOWN, which is the
+        only version that fails when the latch stops being consulted.
+
+        Such a register is itself invalid (`INVALID_DRAW_SLOT_BEFORE_RELEASE`),
+        and that is the point: if a bad file ever reaches the serving path, the
+        page shows no bracket rather than a draw nobody ceremonially made.
+        """
+        register = load_register("us-open", "2026")
+        register["draw_released"] = False
+        for index, player in enumerate(register["players"][:8]):
+            player["draw_slot"] = index + 1
+        assert build_bracket(register, prices={}, draw="mens-singles") == []
+
+    def test_the_bracket_fills_from_the_register_after_release(self, tmp_path):
+        _, released = _run_ingest(tmp_path, allow_unregistered=True)
+        slots = build_bracket(released, prices={}, draw="mens-singles")
+
+        # Power of two, or the frontend fold refuses it outright.
+        assert len(slots) == 128
+        assert len(slots) & (len(slots) - 1) == 0
+        filled = [s for s in slots if s is not None]
+        assert len(filled) > 50
+        assert all(s["display_name"] for s in filled)
+
+    def test_an_unfilled_slot_is_none_and_never_an_invented_name(self, tmp_path):
+        _, released = _run_ingest(tmp_path, allow_unregistered=True)
+        slots = build_bracket(released, prices={}, draw="mens-singles")
+        holes = [s for s in slots if s is None]
+        assert holes, "the synthetic draw has unregistered slots; they must be holes"
+
+    def test_a_slot_with_no_priced_source_carries_no_probability(self, tmp_path):
+        _, released = _run_ingest(tmp_path, allow_unregistered=True)
+        slots = build_bracket(released, prices={}, draw="mens-singles")
+        assert all(s["probability"] is None for s in slots if s is not None)
+
+
+def test_a_curated_answer_missing_from_the_market_refuses_the_write(tmp_path):
+    """A source renaming an outcome must stop the pass, not silently produce a
+    card with a question and no answer — which the renderer would then show as
+    a ranked field, quietly turning a curated question into a list."""
+    result, out = _run_props_script(tmp_path, [
+        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "Affirmative", "0.18"],
+    ])
+    assert result.returncode == 1
+    assert "REFUSED" in result.stderr
+    assert "is not an outcome of this market" in result.stderr
+    assert out is None, "a refused population pass must write nothing"

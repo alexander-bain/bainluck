@@ -44,6 +44,7 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
+import { buildBracket } from "@/lib/bracket";
 import TournamentSlate from "@/components/tournament/TournamentSlate";
 import TournamentProps from "@/components/tournament/TournamentProps";
 import { fetchTournament } from "@/lib/api";
@@ -221,7 +222,14 @@ export default function TournamentPage() {
 
           {tab === "bracket" && (
             <div className="mt-6">
-              <TournamentBracket rounds={[]} drawReleased={data.draw_released} />
+              {/* THE FIXTURE SWAP (UX-P134): built from the register's own
+                  draw slots, so the ceremony is a data change and not a
+                  deploy. Empty until `draw_released` latches, at which point
+                  this fills without anything here changing. */}
+              <TournamentBracket
+                rounds={buildBracket(data.bracket?.[draw] ?? [])}
+                drawReleased={data.draw_released}
+              />
             </div>
           )}
         </div>

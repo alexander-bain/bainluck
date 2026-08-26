@@ -289,6 +289,7 @@ class TestBeatScheduleCompleteness:
         "flow-sentinel-daily",
         "grid-sentinel-daily",
         "grid-register-sentinel-daily",
+        "tournament-register-sentinel-daily",
         "horizon-sentinel-daily",
         "settled-concept-sentinel-daily",
         "board-sentinel-daily",

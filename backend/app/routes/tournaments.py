@@ -34,7 +34,7 @@ from app.models import FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.tournament_board import TREND_DAYS, build_boards
 from app.utils.tournament_register import TournamentRegister, load_register
-from app.utils.tournament_slate import build_props, build_slate
+from app.utils.tournament_slate import build_bracket, build_props, build_slate
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +255,13 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
     )
     payload["slate"] = build_slate(register, prices=prices, now=now)
     payload["props"] = build_props(register, prices=prices, now=now)
+    # THE FIXTURE SWAP (UX-P134). Empty until the draw ceremony latches
+    # `draw_released`; populated by the same `ingest_tournament_draw.py` run, so
+    # Thursday is a data change and not a deploy.
+    payload["bracket"] = {
+        draw: build_bracket(register, prices=prices, draw=draw)
+        for draw in ("mens-singles", "womens-singles")
+    }
     # Where to watch — a static per-tournament mapping, register-owned so it can
     # be corrected without a deploy. Served verbatim; there is nothing to
     # compute and nothing to get wrong at request time.

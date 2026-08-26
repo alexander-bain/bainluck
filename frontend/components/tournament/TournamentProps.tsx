@@ -1,9 +1,10 @@
 import React from "react";
 
 import {
+  answerOutcome,
   formatPropProbability,
-  leadingOutcome,
   propsForDraw,
+  rankedOutcomes,
   type PropMarket,
 } from "@/lib/tournamentProps";
 
@@ -18,9 +19,18 @@ import {
  * and never presented in the confident type.
  */
 
+/** A field market: no single outcome answers the question, so nothing leads. */
+const FIELD_RANK_LIMIT = 3;
+
 function PropCard({ market }: { market: PropMarket }) {
-  const leader = leadingOutcome(market);
-  const isLive = leader?.probability_is_live === true;
+  // The headline number is the CURATED answer, never the biggest number in the
+  // market. See `answerOutcome` for the measured specimen this rule exists to
+  // stop: a 99% printed under a question whose true answer was 1%.
+  const answer = answerOutcome(market);
+  const ranked = answer === null ? rankedOutcomes(market) : [];
+  const isLive = answer
+    ? answer.probability_is_live === true
+    : ranked.length > 0 && ranked[0].probability_is_live === true;
 
   return (
     <li
@@ -29,27 +39,54 @@ function PropCard({ market }: { market: PropMarket }) {
       data-key={market.key}
       data-live={isLive ? "true" : "false"}
       data-price-state={market.price_state}
+      data-shape={answer ? "answer" : "field"}
     >
       <div className="flex items-baseline justify-between gap-3">
         <span className="min-w-0 text-[14px] font-semibold text-text-primary">
           {market.title}
         </span>
-        {leader && (
+        {answer && (
           <span
             className={`shrink-0 text-[17px] font-bold tabular-nums tracking-tight ${
               isLive ? "text-text-primary" : "text-text-secondary"
             }`}
             data-testid="prop-probability"
           >
-            {formatPropProbability(leader.probability)}
+            {formatPropProbability(answer.probability)}
           </span>
         )}
       </div>
 
-      {leader && (
-        <div className="mt-px text-[11.5px] text-text-muted" data-testid="prop-leader">
-          {leader.display_name}
+      {answer && (
+        <div className="mt-px text-[11.5px] text-text-muted" data-testid="prop-answer">
+          {answer.display_name}
         </div>
+      )}
+
+      {/* A field market ranks instead. There is deliberately no headline
+          number here: "who will win a slam" has no single answer, and picking
+          the leader to fill the slot is exactly the guess this card refuses. */}
+      {answer === null && ranked.length > 0 && (
+        <ol className="mt-1.5 space-y-0.5" data-testid="prop-field">
+          {ranked.slice(0, FIELD_RANK_LIMIT).map((outcome) => (
+            <li
+              key={outcome.entity_key}
+              className="flex items-baseline justify-between gap-3 text-[12px]"
+              data-testid="prop-field-row"
+            >
+              <span className="min-w-0 truncate text-text-secondary">
+                {outcome.display_name}
+              </span>
+              <span
+                className={`shrink-0 tabular-nums ${
+                  outcome.probability_is_live ? "text-text-primary" : "text-text-secondary"
+                }`}
+              >
+                {formatPropProbability(outcome.probability)}
+              </span>
+            </li>
+          ))}
+        </ol>
       )}
 
       {market.hook && (

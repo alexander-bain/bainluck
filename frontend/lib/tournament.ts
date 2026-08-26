@@ -20,6 +20,7 @@
  *   so, and it is never permitted to upgrade a non-live row.
  */
 
+import type { BracketSlot } from "./bracket";
 import type { Broadcast, SlateData } from "./slate";
 import type { PropMarket } from "./tournamentProps";
 
@@ -87,6 +88,12 @@ export interface TournamentPayload {
   props?: PropMarket[];
   /** Where to watch — static per-tournament mapping (UX-P132, Alex's item 4). */
   broadcasts?: Broadcast[];
+  /**
+   * Positional bracket slots per draw (UX-P134). Empty arrays until the draw
+   * ceremony latches `draw_released`; `null` entries are slots the register
+   * holds no player for and render as undetermined, never as an invented name.
+   */
+  bracket?: Record<string, (BracketSlot | null)[]>;
   render_findings: string[];
   generated_at: string;
 }

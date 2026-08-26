@@ -39,7 +39,12 @@ import {
   timeframeIsDrawable,
 } from "@/lib/contenderChart";
 import { broadcastFor } from "@/lib/slate";
-import { leadingOutcome, propsForDraw, type PropMarket } from "@/lib/tournamentProps";
+import {
+  answerOutcome,
+  propsForDraw,
+  rankedOutcomes,
+  type PropMarket,
+} from "@/lib/tournamentProps";
 import type { TournamentBoardData, TournamentRow } from "@/lib/tournament";
 
 function trend(n: number, start = 0.2) {
@@ -292,13 +297,14 @@ describe("where to watch", () => {
 describe("curated props", () => {
   const market = (overrides: Partial<PropMarket> = {}): PropMarket => ({
     key: "calendar-slam",
-    title: "Can Sinner complete the calendar slam?",
-    hook: "He has three of the four.",
+    title: "Can Sinner win a second major this year?",
+    hook: "He already has one in 2026.",
     draw: null,
     source: "kalshi",
     outcomes: [
-      { entity_key: "yes", display_name: "Jannik Sinner", probability: 0.22, probability_is_live: true },
+      { entity_key: "yes", display_name: "Jannik Sinner", probability: 0.22, probability_is_live: true, is_answer: true },
     ],
+    answer_entity_key: "yes",
     price_state: "live",
     observed_at: "2026-08-25T11:00:00+00:00",
     age_hours: 1,
@@ -315,21 +321,59 @@ describe("curated props", () => {
     expect(propsForDraw([mens], "womens-singles")).toHaveLength(0);
   });
 
-  it("summarises with the leading outcome", () => {
-    const two = market({
+  it("answers with the CURATED outcome, never the biggest number", () => {
+    // The specimen: a Kalshi threshold ladder where the max is the wrong
+    // answer. "1+" at 99% under "can he win a SECOND major" is a 99% for
+    // something whose real answer is 55.5%.
+    const ladder = market({
+      title: "Can Sinner win a second major this year?",
+      answer_entity_key: "two-plus",
       outcomes: [
-        { entity_key: "a", display_name: "A", probability: 0.2, probability_is_live: true },
-        { entity_key: "b", display_name: "B", probability: 0.5, probability_is_live: true },
+        { entity_key: "one-plus", display_name: "1+ Grand Slam wins", probability: 0.99, probability_is_live: true, is_answer: false },
+        { entity_key: "two-plus", display_name: "2+ Grand Slam wins", probability: 0.555, probability_is_live: true, is_answer: true },
+        { entity_key: "three-plus", display_name: "3+ Grand Slam wins", probability: 0.01, probability_is_live: true, is_answer: false },
       ],
     });
-    expect(leadingOutcome(two)?.display_name).toBe("B");
+    expect(answerOutcome(ladder)?.display_name).toBe("2+ Grand Slam wins");
+
+    const html = render(<TournamentProps markets={[ladder]} draw="mens-singles" />);
+    expect(html).toContain("56%");
+    // The headline must NOT be the ladder's max.
+    expect(html).not.toContain(">99%<");
   });
 
-  it("has no leading outcome when nothing is priced", () => {
-    const dark = market({
-      outcomes: [{ entity_key: "a", display_name: "A", probability: null, probability_is_live: false }],
+  it("has no answer when the register named none", () => {
+    const field = market({ answer_entity_key: null });
+    expect(answerOutcome(field)).toBeNull();
+  });
+
+  it("a field market ranks instead of inventing a headline", () => {
+    const field = market({
+      title: "Who will win a Grand Slam in 2026?",
+      answer_entity_key: null,
+      outcomes: [
+        { entity_key: "a", display_name: "A", probability: 0.2, probability_is_live: true, is_answer: false },
+        { entity_key: "b", display_name: "B", probability: 0.5, probability_is_live: true, is_answer: false },
+      ],
     });
-    expect(leadingOutcome(dark)).toBeNull();
+    expect(rankedOutcomes(field).map((o) => o.display_name)).toEqual(["B", "A"]);
+
+    const html = render(<TournamentProps markets={[field]} draw="mens-singles" />);
+    expect(html).toContain('data-shape="field"');
+    expect(html).toContain('data-testid="prop-field"');
+    // No headline probability at all — that slot is exactly the guess refused.
+    expect(html).not.toContain('data-testid="prop-probability"');
+  });
+
+  it("drops unpriced outcomes from a field ranking rather than ordering them", () => {
+    const field = market({
+      answer_entity_key: null,
+      outcomes: [
+        { entity_key: "a", display_name: "A", probability: null, probability_is_live: false, is_answer: false },
+        { entity_key: "b", display_name: "B", probability: 0.5, probability_is_live: true, is_answer: false },
+      ],
+    });
+    expect(rankedOutcomes(field).map((o) => o.display_name)).toEqual(["B"]);
   });
 
   it("renders an honest empty section rather than vanishing", () => {
@@ -341,8 +385,8 @@ describe("curated props", () => {
 
   it("renders a curated prop with its hook", () => {
     const html = render(<TournamentProps markets={[market()]} draw="mens-singles" />);
-    expect(html).toContain("Can Sinner complete the calendar slam?");
-    expect(html).toContain("He has three of the four.");
+    expect(html).toContain("Can Sinner win a second major this year?");
+    expect(html).toContain("He already has one in 2026.");
     expect(html).toContain("22%");
   });
 });

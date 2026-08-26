@@ -74,43 +74,74 @@ from app.utils.tournament_register import (  # noqa: E402
 #: in the words the page will print. A ticker absent from this map is not
 #: curated and will not be written, even if the dump contains it — which is the
 #: difference between a curated section and a filtered dump.
+#: ``answer`` names the ONE outcome whose probability answers ``title``, by the
+#: source's own outcome name. ``None`` means the question is a field with no
+#: single answering outcome, and the page ranks instead of printing a headline.
+#: The script REFUSES a curation whose named answer is absent from the dump —
+#: silently producing an unanswered card is how a wrong number gets shipped.
 CURATION: dict[str, dict] = {
+    # RETITLED 2026-08-25 (UX-P134) against the census. The old title was "Can
+    # Sinner complete the calendar slam?" and this market cannot answer it: its
+    # outcomes are the threshold ladder 1+/2+/3+, and "all four" is not among
+    # them. The card would have printed the ladder's max, `1+` at 99%, under a
+    # calendar-slam question — 99% for something whose real probability is
+    # about 1%. The market DOES answer a better US Open question anyway: Sinner
+    # already has one major this year, so `2+` is "does he win this one".
     "KXGRANDSLAM-JSIN26": {
-        "key": "sinner-calendar-slam",
-        "title": "Can Sinner complete the calendar slam?",
-        "hook": "Winning all four majors in one year. It has not happened in the men's game since 1969.",
+        "key": "sinner-second-major",
+        "title": "Can Sinner win a second major this year?",
+        "hook": "He already has one in 2026. The next chance is this fortnight.",
         "draw": "mens-singles",
+        "answer": "2+ Grand Slam wins",
     },
+    # Same retitle, same reason. Alcaraz's ladder does carry "All 4 Grand Slam
+    # wins" (1%), so a calendar-slam card would at least be answerable here —
+    # but a 1% card is not a question anybody is asking two days out, and the
+    # asymmetry with Sinner's market would read as a data bug.
     "KXGRANDSLAM-CALC26": {
-        "key": "alcaraz-calendar-slam",
-        "title": "Can Alcaraz complete the calendar slam?",
+        "key": "alcaraz-second-major",
+        "title": "Can Alcaraz win a second major this year?",
         "hook": "The other half of the men's duopoly, chasing the same thing.",
         "draw": "mens-singles",
-    },
-    "KXATPGRANDSLAM-26": {
-        "key": "mens-calendar-slam",
-        "title": "Will anyone win the men's calendar slam?",
-        "hook": "The field's answer to the two questions above.",
-        "draw": "mens-singles",
-    },
-    "KXWTAGRANDSLAM-26": {
-        "key": "womens-calendar-slam",
-        "title": "Will anyone win the women's calendar slam?",
-        "hook": "Last done by Steffi Graf in 1988.",
-        "draw": "womens-singles",
+        "answer": "2+ Grand Slam wins",
     },
     "KXATPCOMPETE-26USOALC": {
         "key": "alcaraz-competes",
         "title": "Will Alcaraz actually play?",
         "hook": "A withdrawal reshapes the entire men's board.",
         "draw": "mens-singles",
+        "answer": "Yes",
     },
     "KXATPCOMPETE-26USOSIN": {
         "key": "sinner-competes",
         "title": "Will Sinner actually play?",
         "hook": "A withdrawal reshapes the entire men's board.",
         "draw": "mens-singles",
+        "answer": "Yes",
     },
+}
+
+#: Curated OUT, with the reason, because a silent omission is indistinguishable
+#: from an oversight and this section's whole claim is that the bar was applied.
+#:
+#: `KXATPGRANDSLAM-26` / `KXWTAGRANDSLAM-26` — "Who will win *a* Grand Slam in
+#: 2026?", resolving 2027-01-07. Two defects, either one disqualifying. (1) It
+#: is a SEASON question, not a US Open question: it stays open through the
+#: Australian Open five months after this tournament ends. (2) Its leaders are
+#: already-settled 99s — Sinner .99, Zverev .99, Alcaraz .97 on the men's side,
+#: Rybakina .99 and Andreeva .99 on the women's — because those players have
+#: already won a major this year. A "prop" whose top rows are decided facts is
+#: a dull row wearing a probability. These were curated IN by UX-P132 under the
+#: titles "Will anyone win the men's/women's calendar slam?", which the markets
+#: do not ask; that misdescription is the third reason.
+#:
+#: `KXATPGRANDSLAMFIELD-26` — "any man other than Alcaraz and Sinner", Yes at
+#: .99. Already happened. Never curated in; recorded so the next pass does not
+#: rediscover it as a candidate.
+DECLINED: dict[str, str] = {
+    "KXATPGRANDSLAM-26": "season-long field resolving 2027-01-07; leaders already settled at .97-.99",
+    "KXWTAGRANDSLAM-26": "season-long field resolving 2027-01-07; leaders already settled at .99",
+    "KXATPGRANDSLAMFIELD-26": "already resolved in substance (Yes .99); not a US Open question",
 }
 
 
@@ -146,6 +177,22 @@ def main() -> int:
             # In the dump but not curated. Not an error — it is the bar working.
             skipped.append(market_ext)
             continue
+
+        answer_name = spec.get("answer")
+        names = [str(r["outcome_name"]) for r in market_rows]
+        if answer_name is not None and answer_name not in names:
+            # REFUSE, loudly. The alternative is a card with a question and no
+            # answer, which the renderer would fall back to ranking — quietly
+            # turning a curated question into a field list because a source
+            # renamed an outcome. A curation that no longer matches its market
+            # is a curation decision to re-make, not a shape to absorb.
+            print(
+                f"REFUSED {market_ext}: curated answer {answer_name!r} is not an "
+                f"outcome of this market. Present: {names}",
+                file=sys.stderr,
+            )
+            return 1
+
         props.append({
             "key": spec["key"],
             "title": spec["title"],
@@ -159,16 +206,36 @@ def main() -> int:
                     "entity_key": f"{spec['key']}:{str(r['outcome_name']).lower().replace(' ', '-')}",
                     "display_name": r["outcome_name"],
                     "outcome_id": r["outcome_id"],
+                    "is_answer": str(r["outcome_name"]) == answer_name,
                 }
                 for r in market_rows
             ],
-            "evidence": {"kind": "prop-census", "observed_at": args.observed_at},
+            "evidence": {
+                "kind": "prop-census",
+                "observed_at": args.observed_at,
+                "market_name": market_rows[0]["market_name"],
+                "answer": answer_name,
+            },
         })
 
     register["props"] = props
     register["version"] = args.version
     register["supersedes_version"] = args.supersedes_version
-    register["generated_at"] = args.observed_at
+
+    # `generated_at` is DELIBERATELY not advanced (UX-P134). It means "when the
+    # data in this register was observed", and a props-only pass observed only
+    # props — the draw, the players and the matchups were not re-read. Stamping
+    # the whole file with this run's clock claims otherwise.
+    #
+    # That is not a nicety. `test_committed_slate_carries_no_already_played_match`
+    # derives its floor from `generated_at`, so bumping it silently moves the
+    # staleness bar for 66 matchups that nobody re-observed, and a match that was
+    # legitimately in the window at generation time starts failing. The first run
+    # of this pass did exactly that and the guard caught it.
+    #
+    # Each prop carries its own `evidence.observed_at`, which is where a
+    # props-pass timestamp belongs.
+    register["props_observed_at"] = args.observed_at
 
     findings = validate_register(register, us_open_2026_contract())
     verdict = classify(findings)

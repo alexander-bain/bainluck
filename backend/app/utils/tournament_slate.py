@@ -335,12 +335,18 @@ def build_props(
                 # per-outcome flag that disagreed with the section's banner
                 # would be the page contradicting itself.
                 "probability_is_live": False,
+                # Does THIS outcome answer the card's question? Curated in the
+                # register, never inferred here — see the answer rule in
+                # `tournament_register.validate_prop`.
+                "is_answer": outcome.get("is_answer") is True,
             })
 
         age = (now - newest).total_seconds() / 3600.0 if newest else None
         state = price_state(age)
         for view in views:
             view["probability_is_live"] = state == "live" and view["probability"] is not None
+
+        answer = next((v for v in views if v["is_answer"]), None)
 
         out.append({
             "key": prop.get("key"),
@@ -349,8 +355,78 @@ def build_props(
             "draw": prop.get("draw"),
             "source": prop.get("source"),
             "outcomes": views,
+            # `None` is a real, supported state and NOT a defect: it means this
+            # question has no single answering outcome (a field market), so the
+            # card must show a ranked list rather than one headline number.
+            "answer_entity_key": answer["entity_key"] if answer else None,
             "price_state": state,
             "observed_at": newest.isoformat() if newest else None,
             "age_hours": round(age, 2) if age is not None else None,
         })
+    return out
+
+
+def build_bracket(
+    register: dict[str, Any],
+    *,
+    prices: dict[int, dict[str, Any]],
+    draw: str,
+) -> list[Optional[dict[str, Any]]]:
+    """Positional bracket slots for one draw, or `[]` before the ceremony.
+
+    THE FIXTURE SWAP (UX-P134). The bracket component has been rendering a
+    synthetic 128-slot fixture since Day 3, because there was no draw. This is
+    the path that replaces it, and it is deliberately built and proven BEFORE
+    the ceremony so that Thursday is an ingest run, not a build day: the moment
+    `ingest_tournament_draw.py` latches `draw_released` and writes the slots,
+    this function starts returning them and the page stops being empty. No code
+    change on the day.
+
+    Returns a list indexed by draw slot (0-based), `None` where the draw has a
+    slot we hold no registered player for. `None` is honest and load-bearing:
+    the frontend's `buildBracket` refuses a non-power-of-two rather than
+    truncating, so the list is always padded to the full draw size. A hole
+    renders as an undetermined slot, which is what it is — not a bye, and never
+    a name we invented to fill the shape.
+
+    Empty before release, always. `draw_slot` is invalid while `draw_released`
+    is false, so there is nothing to read and a bracket built here would be a
+    guess wearing the authority of a fact.
+    """
+    reg = TournamentRegister(register)
+    if not reg.draw_released:
+        return []
+
+    slotted = [
+        p for p in reg.draw_players(draw)
+        if isinstance(p.get("draw_slot"), int) and not isinstance(p.get("draw_slot"), bool)
+    ]
+    if not slotted:
+        return []
+
+    size = max(p["draw_slot"] for p in slotted)
+    # Round up to the next power of two so the fold is always well-formed.
+    full = 1
+    while full < size:
+        full *= 2
+
+    out: list[Optional[dict[str, Any]]] = [None] * full
+    for player in slotted:
+        probability = None
+        for block in player.get("sources") or []:
+            if not isinstance(block, dict):
+                continue
+            loaded = prices.get(block.get("outcome_id")) or {}
+            value = _as_float(loaded.get("probability"))
+            if value is not None:
+                probability = round(value, 6)
+                break
+        out[player["draw_slot"] - 1] = {
+            "entity_key": player.get("entity_key"),
+            "display_name": player.get("display_name"),
+            "seed": player.get("seed"),
+            # Never invented: a slot with no priced source carries `None` and
+            # the component prints no number rather than a plausible one.
+            "probability": probability,
+        }
     return out

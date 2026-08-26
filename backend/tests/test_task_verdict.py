@@ -329,6 +329,14 @@ class TestEnforcementScope:
             # over a stopped producer is the one state that would otherwise be
             # indistinguishable from health.
             #
+            # UX-P134: the tournament register drift sentinel, enrolled at
+            # BIRTH. Its two outcomes are outwardly identical and mean opposite
+            # things — a run that compared zero registered identities returns
+            # exactly as quietly as a run that compared 211 and found nothing
+            # wrong. On a page whose entire correctness rests on a pinned
+            # register during a live tournament, "the sentinel ran" must not be
+            # readable as "the register is fine".
+            "tournament_register_sentinel",
             # Terminal comes from `decide_terminal` in
             # `app/tasks/calibration_beat_gauge_sampler.py`, in this same change.
             "calibration_beat_gauge_sampler",
