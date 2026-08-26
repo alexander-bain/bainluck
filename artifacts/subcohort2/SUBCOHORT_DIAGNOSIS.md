@@ -14,6 +14,174 @@ fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to
 
 ---
 
+## STATUS 2026-08-26 (CAL-P101) — THE MEASUREMENT LANE'S REPLACEMENT RANK TABLE IS FOLDED IN, AND IT IS BEHIND THIS FILE BY 22 CELLS
+
+`handoff: SUBCOHORT-TRUTH-1 → SUBCOHORT_DIAGNOSIS.md STATUS`
+
+*Folded per the declared handoff (`.claude/handoff/SUBCOHORT-TRUTH-1-HANDOFF.md`, 107 lines,
+C-SUBCOHORT-TRUTH-1 + the C-SUBCOHORT-TRUTH-2 complete replacement rank table appended 21:10Z).
+**Folded WITH a correction, because the table and this file disagree about 22 cells and the
+disagreement is decidable from an artifact already in this repo.** The handoff's own instruction is
+to fold it in; folding it in silently would have replaced a measured board with an unmeasured one.*
+
+### 🔴 THE HEADLINE THE HANDOFF ASKS FOR IS "4 PROVEN OVER BAR". THE MEASURED NUMBER IS 15.
+
+The handoff's queue is **4 proven / 19 under-bar-by-bound / 26 NEEDS RE-CUT**, and it says the 26
+"cannot be byte-exactly re-cut from the bus without the worker's checkpoint". That checkpoint is not
+what those 26 were waiting on. **`artifacts/cal-p094/eligible_fold_all_cells.json` already cut 22 of
+them** — `complete: true`, `measured: true`, `irreducible: []`, 26 shards, 215.5 s, banked
+2026-08-24 — and this file's header has named it the authoritative ranking source since that day.
+The handoff was built from `census.json` plus CAL-P093's four cells and never opened it.
+
+Eleven cells the handoff lists as `NEEDS RE-CUT` are measured in that fold:
+
+| cell | handoff says | fold says | verdict |
+|---|---|---|---|
+| soccer/quantity | NEEDS RE-CUT | **8.51** (n 5,749) | over bar, rank 2 |
+| soccer/container_member | NEEDS RE-CUT | **6.27** (n 7,682) | over bar, rank 3 |
+| economics/quantity | NEEDS RE-CUT | **5.13** (n 4,705) | over bar, rank 4 |
+| hockey/quantity | NEEDS RE-CUT | **10.94** (n 1,137) | over bar, rank 5 |
+| politics/quantity | NEEDS RE-CUT | **6.12** (n 1,152) | over bar |
+| tennis/quantity | NEEDS RE-CUT | **5.01** (n 1,512) | over bar |
+| golf/container_member | NEEDS RE-CUT | **25.11** (n 118) | over bar |
+| esports/container_member | NEEDS RE-CUT | **3.15** (n 8,217) | over bar by 0.15 pp, **0.3σ** |
+| tennis/container_member | NEEDS RE-CUT | **2.07** (n 2,583) | **under bar** |
+| table_tennis/quantity | NEEDS RE-CUT (`MOD` fold needed) | `n_eligible` **0** | **UNMEASURABLE** |
+| hockey/container_member | PENDING #3, "density trap, not data absence", 29σ | `n_eligible` **0** | **UNMEASURABLE** |
+
+The last row is the one that costs real work. The handoff re-queues `hockey/container_member` as
+priority #3 with "NO known mechanism — needs bisection to 25 ids". The fold already answered it:
+**zero of its 1,528 graded legs carry a truth-eligible `resolution_source`, so the 41.00 pp was
+computed entirely over rows the published curve never contained.** There is nothing there to
+bisect. This file said so in bold on 2026-08-24 and the handoff reinstates it.
+
+### 🔴 "UNDER-BAR-BY-BOUND" IS NOT A SOUND BOUND — AND ONE OF THE FOUR CELLS IT EXCUSED IS OVER BAR
+
+The handoff spends no query on 19 cells on this premise: *"removing phantom rows can only leave
+`ece_eligible ≤ ece_complete` when `ece_complete` is already ≤3 (shape phantom is ≥0)."*
+
+That premise is false, and this file already carried the counterexample: `golf/container_member`
+went `ece_all` **22.99 → `ece_eligible` 25.11**. Eligibility selects on *truth provenance*, not on
+error, so it can move ECE in either direction. Seven of the seventeen measured cells went UP:
+
+| cell | census `ece_c` | eligible `ece_e` | direction |
+|---|---:|---:|---|
+| baseball/quantity | 8.42 | 15.86 | ↑ |
+| soccer/quantity | 4.67 | 8.51 | ↑ |
+| soccer/container_member | 4.82 | 6.27 | ↑ |
+| golf/container_member | 10.46 | 25.11 | ↑ |
+| geopolitics/quantity | 14.39 | 19.36 | ↑ |
+| politics/container_member | 3.08 | 7.90 | ↑ |
+| **esports/quantity** | **1.87** | **4.84** | ↑ **across the bar** |
+
+`esports/quantity` is one of the four cells the handoff records as *"≤3 — under-bar-by-bound (no
+query spent)"*. It is measured at **4.84 on n_eligible 506**. The bound did not merely fail to be
+tight; it returned the wrong side of Alex's bar. Anything still resting on it —
+`weather/quantity` (1.59, n 64,117), `economics/container_member` (1.67),
+`table_tennis/container_member` (1.92) — is **unmeasured, not under bar**, and
+`economics/container_member`'s own eligible cut (2.78) is under by 0.22 pp rather than by 1.33.
+
+### THE HONEST QUEUE — 50 cells, five states, no cell in two
+
+`ece_e` from `eligible_fold_all_cells.json`; census from `census.json` (49 cells; `golf/quantity`
+appears only in the fold). `σ` uses `SE = 50/√n_e` pp.
+
+**A. MEASURED OVER BAR — 15 cells. This is the queue.**
+
+| # | cell | `ece_e` | `n_e` | excess | σ | impact | census `ece_c (n_c)` |
+|---:|---|---:|---:|---:|---:|---:|---|
+| 1 | baseball/quantity | 15.86 | 6,778 | 12.86 | **21.2σ** | 87,165 | 8.42 (26,138) |
+| 2 | soccer/quantity | 8.51 | 5,749 | 5.51 | **8.4σ** | 31,677 | 4.67 (20,236) |
+| 3 | soccer/container_member | 6.27 | 7,682 | 3.27 | **5.7σ** | 25,120 | 4.82 (31,478) |
+| 4 | economics/quantity | 5.13 | 4,705 | 2.13 | 2.9σ | 10,022 | 7.19 (7,103) |
+| 5 | hockey/quantity | 10.94 | 1,137 | 7.94 | **5.4σ** | 9,028 | 21.71 (2,062) |
+| 6 | basketball/quantity | 5.73 | 2,104 | 2.73 | 2.5σ | 5,744 | 24.27 (13,067) |
+| 7 | politics/quantity | 6.12 | 1,152 | 3.12 | 2.1σ | 3,594 | 8.69 (3,289) |
+| 8 | tennis/quantity | 5.01 | 1,512 | 2.01 | 1.6σ | 3,039 | 3.47 (30,221) |
+| 9 | baseball/container_member | 12.44 | 286 | 9.44 | 3.2σ | 2,700 | 15.62 (13,689) |
+| 10 | golf/container_member | 25.11 | 118 | 22.11 | **4.8σ** | 2,609 | 10.46 (3,276) |
+| 11 | esports/container_member | 3.15 | 8,217 | 0.15 | 0.3σ | 1,233 | 5.03 (78,906) |
+| 12 | geopolitics/quantity | 19.36 | 60 | 16.36 | 2.5σ | 982 | 14.39 (217) |
+| 13 | basketball/container_member | 6.65 | 262 | 3.65 | 1.2σ | 956 | 25.31 (6,911) |
+| 14 | esports/quantity | 4.84 | 506 | 1.84 | 0.8σ | 931 | **1.87 (5,105)** — the bounded one |
+| 15 | politics/container_member | 7.90 | 116 | 4.90 | 1.1σ | 568 | 3.08 (3,634) |
+
+**Impact is not significance.** Rank 11 (`esports/container_member`) is 0.15 pp over the bar at
+0.3σ on the largest eligible n on the board — it ranks 11th by `n×excess` and is indistinguishable
+from the noise floor. Ranks 8, 13, 14 and 15 are all under 2σ. **The cells that are both large and
+significant are 1–5 plus 10.**
+
+**B. MEASURED UNDER BAR — 2 cells.** `tennis/container_member` 2.07 (n 2,583),
+`economics/container_member` 2.78 (n 511). Measured, not bounded.
+
+**C. UNMEASURABLE, `n_eligible` < 30 — 5 cells.** `table_tennis/quantity` (n_e 0, `ece_all` 44.43
+over `n_all` 67,985), `table_tennis/container_member` (0, 46.57 / 52,147), `hockey/container_member`
+(0, 41.07 / 1,528), `geopolitics/container_member` (8, 11.15 / 1,165), `golf/quantity` (0).
+**`MIN_CELL_N = 30`, so ECE is ABSENT, never 0.0** — the datagolf-card mistake (#2172). 120,132
+`table_tennis` legs are graded by something the published curve does not accept; that is its own
+queue item and it is invisible on any ECE sort.
+
+**D. NO ELIGIBLE CUT YET, census n ≥ 30 — 13 cells. THIS is the real `NEEDS RE-CUT` set,** and the
+reason is scope, not a missing checkpoint: the fold's `league_scope_note` restricts it to the
+diagnosis file's 11 leagues *"by the 1,000-row cap, not by judgment"*, and these are outside it.
+
+| cell | census `ece_c` | `n_c` | | cell | census `ece_c` | `n_c` |
+|---|---:|---:|---|---|---:|---:|
+| weather/quantity | 1.59 | 64,117 | | motorsports/container_member | 14.41 | 356 |
+| entertainment/quantity | 4.93 | 2,503 | | tech/quantity | 10.75 | 557 |
+| entertainment/container_member | 3.90 | 1,847 | | mma/container_member | 6.44 | 904 |
+| cricket/container_member | 3.44 | 1,387 | | mma/quantity | 3.25 | 378 |
+| tech/container_member | 3.07 | 1,139 | | rodeo/container_member | 36.98 | 164 |
+| football/container_member | 12.61 | 362 | | football/quantity | 13.37 | 37 |
+| weather/container_member | 21.43 | 33 | | | | |
+
+**E. NULL, census n < 30 — 15 cells.** `olympics/{cm,q}`, `cricket/quantity`,
+`weightlifting/quantity`, `motorsports/quantity`, `legal/cm`, `culture/cm`, `crypto/cm`,
+`rodeo/quantity`, `boxing/cm`, `rugby/{cm,q}`, `pickleball/cm`, `cycling/cm`, `chess/cm`. No
+reliable ECE; not over bar; no query owed.
+
+15 + 2 + 5 + 13 + 15 = **50**.
+
+### 🔶 ONE NUMBER THIS FILE NOW CARRIES TWICE, AND IT IS NOT AVERAGED
+
+`baseball/quantity` eligible ECE is **15.86** by the sargable id-range fold
+(`eligible_fold_all_cells.json`, n 6,778) and **16.64** by the ANY-paged rail the handoff quotes
+(`2d93a44ea9fb6022`, 5,374 ms, same n 6,778). Same cell, same population size, same eligibility
+predicate, 0.78 pp apart. Both are recorded; neither is corrected into the other. It does not move
+the rank — rank 1 either way, 21.2σ either way — but two rails that agree on `n` to the row and
+disagree on `ece` by 0.78 pp are not both right, and the discrepancy belongs to whoever next
+touches the binning (`_compute_horizon_mce` weighting vs the fold's shard-merge).
+
+### WHAT THE HANDOFF CONTRIBUTES THAT THIS FILE DID NOT HAVE — kept, not discarded
+
+* **`phantom_share` per measured cell**, and it is the stop-chasing signal: eligible share is
+  1.6–16.1% on the four CAL-P093 cells (`baseball/quantity` 85.6% phantom / 40,392 legs excluded
+  including 1,690 `pass2_loser` zero-winner markets at pair sum 0.9954; `baseball/container_member`
+  98.4%, only 286 of 18,215 markets survive; `basketball/quantity` 83.9%;
+  `basketball/container_member` 96.3%). **Nobody chases excluded rows again.**
+* **`KXMLBKS` is ruled out for `baseball/container_member`** — round-2 random 500 returned
+  `kcount 0/500` (95% CI < 0.6% prevalence), ECE 15.62 survives the exclusion. Not the mechanism.
+* **The ANY-rail infrastructure findings, which are why the bus could not finish the job:** a direct
+  `asyncpg` `run_cohort_cell_census` cannot connect without `DATABASE_URL`
+  (`OSError ::1:5432 / 127.0.0.1:5432`); `POST /api/admin/db-query` full-scan
+  `GROUP BY resolution_source` times out at `d894ba4f4b0a05c6`; a bounded `ANY(ARRAY[10])` probe hit
+  `undefined_column e9d18…` on an ad-hoc truth-CASE, because the proven shape is the worker's own
+  `_BINS_SQL` (`cohort_cell_census_worker.py:162`, fingerprint `1c27…`) and not a hand-rolled twin.
+* **Fingerprints and durations** for the four CAL-P093 cells: `2d93a44ea9fb6022` 5,374 ms /
+  `87eda0317190a3a7` 3,873 ms / `87457dc29c0c74d5` 1,290 ms / `dfc9f3c805a90083` 3,875 ms.
+
+### What is actually owed after this fold
+
+1. **13 cells in class D need an eligible cut** — the fold's scope, widened past the 11 leagues.
+   That is the true "NEEDS RE-CUT", and it is 13, not 26.
+2. **The three cells still resting on the refuted bound** (`weather/quantity` n 64,117 above all)
+   must be measured or recorded as unmeasured. `weather/quantity` alone is a larger census
+   population than any cell in class A.
+3. **Nothing is owed on class C.** Five cells with `n_eligible` < 30 are answered; re-queuing them
+   is the error this section exists to stop.
+
+---
+
 ## STATUS 2026-08-26 (CAL-P100) — RANK 1'S SECOND MECHANISM IS BUILT. THE FIX SHIPS UNMEASURED, AND SAYS SO.
 
 *Rank 1 `baseball/quantity`, 16.64 pp over n=6,778 on the published population. Its FIRST named
