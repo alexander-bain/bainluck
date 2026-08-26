@@ -7,7 +7,7 @@ Kalshi markets provide bid/ask spreads and last traded prices.
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 import httpx
@@ -81,6 +81,73 @@ class KalshiEvent(BaseModel):
 
     # Nested markets
     markets: list[KalshiMarket] = []
+
+
+def event_series_ticker(event_ticker: str) -> str:
+    """The series prefix of a Kalshi event ticker.
+
+    ``KXMLBGAME-26AUG26BOSMIA`` → ``KXMLBGAME``. Split on the first ``-`` rather
+    than testing ``startswith`` against the series list: ``KXMLBGAME-…`` also
+    starts with ``KXMLB`` (a DIFFERENT series, the AL/NL championship futures,
+    which keeps its nested markets), so a prefix test silently conflates the two.
+    """
+    return (event_ticker or "").split("-", 1)[0].upper()
+
+
+def order_market_backfill_candidates(
+    events,
+    stripped_series: set,
+    now: Optional[datetime] = None,
+) -> list:
+    """Order the empty-event market backfill so a bounded budget spends it well.
+
+    The backfill can only ever reach a few dozen events per beat, so its ORDER
+    is the whole of its behaviour — gotcha #41: ask what the ordering starts on.
+    Left in fetch order it starts on whatever the main scan paged first, and the
+    game-level series it exists to serve sit at the very end (the supplementary
+    loop appends them, and golf is deliberately fetched before them).
+
+    Two keys, in order:
+
+    1. **Events whose series was deliberately stripped of nested markets first.**
+       Those are the ones the ``_HEAVY_TOKENS`` decision emptied on an explicit
+       promise that this backfill would fill them; everything else in the list
+       is empty by accident of the upstream listing. Serving the accident before
+       the promise is how the promise stayed unkept.
+    2. **Within those, the soonest game that has not already happened.** These
+       tickers embed their own game date, and the supplementary fetch is
+       unfiltered by status, so the candidate list is mostly SETTLED games going
+       back months. A settled game's markets cannot light up a live card. Games
+       from yesterday onward sort ascending (tonight before next week); anything
+       older sorts last, newest-first, so the ordering has BOTH bounds rather
+       than starting on the dead tail.
+
+    Pure and total: unparseable tickers sort last within their group rather than
+    raising, because a fetch must never fail on a telemetry-shaped concern.
+    """
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+    _now = now or datetime.now(timezone.utc)
+    # A game that started yesterday can still be settling, so the floor is -1d
+    # rather than "now" — a hard `now` floor drops in-progress late games.
+    _floor = _now - timedelta(days=1)
+
+    def _key(event):
+        stripped = event_series_ticker(event.event_ticker) in stripped_series
+        try:
+            game_date = extract_game_date_from_ticker(event.event_ticker)
+        except Exception:
+            game_date = None
+        if game_date is None:
+            # Undated: after every dated sibling in the same group, but still
+            # ahead of the other group.
+            return (0 if stripped else 1, 2, 0.0)
+        delta = (game_date - _now).total_seconds()
+        if game_date >= _floor:
+            return (0 if stripped else 1, 0, delta)      # soonest first
+        return (0 if stripped else 1, 1, -delta)         # most recent past first
+
+    return sorted(events, key=_key)
 
 
 class KalshiAPIService(BaseAPIClient):
@@ -761,8 +828,39 @@ class KalshiAPIService(BaseAPIClient):
         # it gives up is not lost — the next beat continues the tail from where
         # this one stopped, so the backlog still drains, just one page slower.
         _RESCUE_RESERVE_S = 60.0
+        # #2214: the SAME failure as #999, one stage further down the function.
+        # The empty-event market backfill at the bottom of this method is the
+        # promise `_HEAVY_TOKENS` makes: the game-level series (KXMLBGAME and
+        # friends) are deliberately fetched WITHOUT nested markets, on the
+        # stated undertaking that the backfill picks their markets up per-event.
+        # That undertaking was never kept, for the identical structural reason
+        # #999 fixed here: the step is LAST and had no reserve of its own, so
+        # `_past_deadline()` is already true when control reaches it and the
+        # step does ZERO work, every beat, deterministically.
+        #
+        # Measured on production 2026-08-26 before this change: 1,940
+        # `KXMLBGAME` rows in `futures_markets`, ALL `resolved`, newest created
+        # 2026-08-19 — no game market created for a week. The scan report agrees
+        # and is not ambiguous: `events_fetched 16,340`, `events_processed 389`,
+        # `loop_deadline_hit false` on all 12 beats in the ring, `verdict frozen`
+        # on all 12. The upsert loop did not run out of time; it reached every
+        # event and dropped 15,951 of them on `if not event.markets: continue`
+        # (`tasks/kalshi.py:645`), because the backfill that was supposed to put
+        # markets IN them never ran.
+        #
+        # Carving this out of the main scan is the same trade #999 already made
+        # and justified: the main scan's cursor is RESUMABLE, so the seconds it
+        # gives up are deferred, not lost — the next beat continues the tail.
+        # The backfill's seconds are not deferrable in the same way, because a
+        # market-less event is dropped outright rather than resumed.
+        _BACKFILL_RESERVE_S = 45.0
         _main_scan_deadline = (
-            deadline - _RESCUE_RESERVE_S if deadline is not None else None
+            deadline - _RESCUE_RESERVE_S - _BACKFILL_RESERVE_S
+            if deadline is not None
+            else None
+        )
+        _supp_deadline = (
+            deadline - _BACKFILL_RESERVE_S if deadline is not None else None
         )
 
         def _past_deadline() -> bool:
@@ -773,6 +871,15 @@ class KalshiAPIService(BaseAPIClient):
             return (
                 _main_scan_deadline is not None
                 and _time.monotonic() >= _main_scan_deadline
+            )
+
+        def _past_supp_deadline() -> bool:
+            # The supplementary rescue stops early so the empty-event market
+            # backfill keeps ITS floor. Without this the rescue simply expands
+            # to fill the whole remaining budget and the backfill inherits none.
+            return (
+                _supp_deadline is not None
+                and _time.monotonic() >= _supp_deadline
             )
 
         def _progress(sub: str) -> None:
@@ -1020,7 +1127,7 @@ class KalshiAPIService(BaseAPIClient):
         for st in _ordered_series:
             _supp_nested = not any(tok in st.upper() for tok in _HEAVY_TOKENS)
             _progress(f"fetch:supp:{st}")
-            if _past_deadline():
+            if _past_supp_deadline():
                 logger.warning(
                     "Kalshi fetch deadline hit before supplementary series %s "
                     "(%d events so far) — returning partial", st, len(all_events),
@@ -1040,7 +1147,7 @@ class KalshiAPIService(BaseAPIClient):
                 # job, not the create/update poll's. Uniform 5-page open scan.
                 series_cursor = None
                 for _sp in range(5):
-                    if _past_deadline():
+                    if _past_supp_deadline():
                         break
                     await asyncio.sleep(0.3)
                     _progress(f"fetch:supp:{st}:p{_sp}")
@@ -1058,7 +1165,13 @@ class KalshiAPIService(BaseAPIClient):
                             with_nested_markets=_supp_nested,
                             limit=200,
                             cursor=series_cursor,
-                            deadline=deadline,
+                            # #2214: bound the PAGE by the supplementary
+                            # deadline, not the full one. `get_events` uses this
+                            # to cap its own 429 retry/backoff span, so a page
+                            # handed the full deadline can sleep straight
+                            # through the backfill's reserve. A floor that is
+                            # only checked BETWEEN pages is not a floor.
+                            deadline=_supp_deadline,
                             progress_cb=_progress,
                         ),
                         timeout=45.0,
@@ -1086,10 +1199,34 @@ class KalshiAPIService(BaseAPIClient):
         # them from the listing for large multivariate events), fetch markets
         # separately via the /markets endpoint.
         import asyncio
+
+        # #2214: the series this method deliberately fetched WITHOUT nested
+        # markets. Derived from the same two constants the fetch branched on, so
+        # the two decisions cannot drift — the population the backfill owes is
+        # by definition the population `_HEAVY_TOKENS` emptied.
+        _stripped_series = {
+            st.upper()
+            for st in _SPORTS_SERIES_TICKERS
+            if any(tok in st.upper() for tok in _HEAVY_TOKENS)
+        }
         empty_events = [
             e for e in all_events.values()
-            if not e.markets and e.category and "sport" in (e.category or "").lower()
+            if not e.markets
+            and (
+                (e.category and "sport" in (e.category or "").lower())
+                # #2214: a stripped game series qualifies on its ticker alone.
+                # The `sport` category test was the second way the promise could
+                # be broken: these events are fetched with `with_nested_markets=
+                # False`, and an event that arrives with a missing or unexpected
+                # `category` was silently not a candidate at all — for exactly
+                # the rows this step exists to serve. The ticker is ours to
+                # reason about; the category is Kalshi's to change.
+                or event_series_ticker(e.event_ticker) in _stripped_series
+            )
         ]
+        empty_events = order_market_backfill_candidates(
+            empty_events, _stripped_series
+        )
         # Queue 359 (#1586): how many of the events this method is about to
         # hand back cannot possibly be ingested. The upsert loop's very first
         # statement is `if not event.markets: continue`, so a market-less event
@@ -1106,15 +1243,29 @@ class KalshiAPIService(BaseAPIClient):
         #
         # `_HEAVY_TOKENS` above is the deliberate half of that: those series are
         # fetched WITHOUT nested markets on the stated promise that the backfill
-        # below picks their markets up per-event. The promise is not kept — the
-        # backfill is LAST in the fetch budget with no reserve of its own, and
-        # `_past_deadline()` is already true by the time control reaches it. It
-        # also only ever considered `sport`-categorised events, so a market-less
-        # non-sport event was never a candidate at all.
+        # below picks their markets up per-event.
+        #
+        # #2214 (2026-08-26): the promise is now KEPT, and the two ways it was
+        # broken are both closed above — `_BACKFILL_RESERVE_S` gives this step a
+        # floor of the fetch budget instead of leaving it structurally last with
+        # nothing left, and the candidate rule no longer lets a missing Kalshi
+        # `category` exclude a stripped game series. `market_backfill_*` below is
+        # the proof: it reaches the scan report now, so "the backfill ran" is a
+        # reading rather than an assumption, and a future regression shows up as
+        # `market_backfill_filled: 0` instead of as a silent week of no games.
         _tel["events_without_markets"] = sum(
             1 for e in all_events.values() if not e.markets
         )
         _tel["market_backfill_candidates"] = len(empty_events)
+        # #2214: the sub-count that says whether the reserve is being spent on
+        # the population it was reserved FOR. `candidates` alone cannot: a beat
+        # that fills 45 accidental non-game events reads identically to one that
+        # fills tonight's slate, and only the second one lights up a card.
+        _tel["market_backfill_stripped_candidates"] = sum(
+            1
+            for e in empty_events
+            if event_series_ticker(e.event_ticker) in _stripped_series
+        )
         _tel["market_backfill_skipped_past_deadline"] = bool(
             empty_events and _past_deadline()
         )
@@ -1125,8 +1276,10 @@ class KalshiAPIService(BaseAPIClient):
                 "entirely — %d of %d fetched events carry zero markets and the "
                 "fetch deadline was already spent before this step. Every one "
                 "of them will be dropped by `if not event.markets: continue`. "
-                "This step has no reserved budget and is structurally last.",
+                "Its %.0fs reserve was consumed by an earlier phase, which is a "
+                "budget bug, not the structural starvation #2214 fixed.",
                 _tel["events_without_markets"], len(all_events),
+                _BACKFILL_RESERVE_S,
             )
         if empty_events and not _past_deadline():
             logger.info(

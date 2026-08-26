@@ -1179,6 +1179,25 @@ async def _poll_kalshi_markets():
                 events_unreached=max(0, _total - _processed),
                 unreached_existing=max(0, _n_existing - _reached_existing),
                 loop_deadline_hit=bool(stats.get("deadline_hit")),
+                # #2214: the fetch has computed these all along and nobody
+                # carried them across. They are the counters that distinguish
+                # "the loop ran out of time" (loop_deadline_hit) from "the loop
+                # finished and had nothing to do" — the actual disease.
+                events_without_markets=int(
+                    _scan_tel.get("events_without_markets") or 0
+                ),
+                market_backfill_candidates=int(
+                    _scan_tel.get("market_backfill_candidates") or 0
+                ),
+                market_backfill_stripped_candidates=int(
+                    _scan_tel.get("market_backfill_stripped_candidates") or 0
+                ),
+                market_backfill_skipped_past_deadline=bool(
+                    _scan_tel.get("market_backfill_skipped_past_deadline")
+                ),
+                market_backfill_filled=int(
+                    _scan_tel.get("market_backfill_filled") or 0
+                ),
                 duration_s=round(time.monotonic() - _task_started, 1),
             )
             save_scan_report(_report)

@@ -509,9 +509,26 @@ class TestSupplementaryRescueBudgetReservation:
     deterministic 0-golf poll on the exact weeks a marquee tournament (e.g. The
     Open, KXPGATOUR-THOC26) opens. The fix caps the main scan at
     `deadline - _RESCUE_RESERVE_S` and fetches the priority (golf) tickers
-    first so the rescue always keeps its floor."""
+    first so the rescue always keeps its floor.
+
+    #2214 (2026-08-26) added a THIRD phase behind the rescue — the empty-event
+    market backfill — with a reserve of its own, because it had exactly this bug
+    one stage further down: structurally last, no reserve, `_past_deadline()`
+    already true on arrival, zero work every beat for a week. The budget is now
+    a three-way split:
+
+        main scan       : until deadline - _RESCUE_RESERVE_S - _BACKFILL_RESERVE_S
+        rescue          : until deadline - _BACKFILL_RESERVE_S
+        market backfill : until deadline
+
+    The arithmetic in these tests moved accordingly. The INVARIANT they exist to
+    protect did not, and is now asserted for both later phases rather than one:
+    a phase must never be starved by an earlier phase draining the whole budget.
+    """
 
     _PRIORITY = ("KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD")
+    _RESCUE_RESERVE_S = 60.0
+    _BACKFILL_RESERVE_S = 45.0
 
     async def test_rescue_runs_when_main_scan_exhausts_capped_budget(self, client, monkeypatch):
         import asyncio
@@ -524,16 +541,47 @@ class TestSupplementaryRescueBudgetReservation:
 
         monkeypatch.setattr(client, "get_events", fake_get_events)
         monkeypatch.setattr(asyncio, "sleep", _no_sleep)
-        # deadline inside the reserve window: main_scan_deadline (deadline-60s)
-        # is already in the past, so the main scan does 0 pages, but the FULL
-        # deadline is still in the future so the rescue MUST still run.
-        await client._fetch_all_events_unfiltered(deadline=time.monotonic() + 30)
+        # A deadline inside the main scan's reserve window but outside the
+        # rescue's: main_scan_deadline (deadline - 60 - 45) is already in the
+        # past so the main scan does 0 pages, while supp_deadline
+        # (deadline - 45) is still ahead, so the rescue MUST still run.
+        # 80 > _BACKFILL_RESERVE_S and 80 < the sum of both reserves.
+        await client._fetch_all_events_unfiltered(deadline=time.monotonic() + 80)
         main = [kw for kw in calls if kw.get("series_ticker") is None]
         supp = [kw.get("series_ticker") for kw in calls if kw.get("series_ticker")]
         assert main == [], "main scan must stop immediately once past its capped deadline"
         assert any(s.upper().startswith(self._PRIORITY) for s in supp), (
             "golf rescue must fetch even when the main scan exhausts its budget"
         )
+
+    def test_the_reserves_fit_inside_the_real_fetch_budget(self):
+        """The reserves are absolute seconds; the budget they carve is a constant.
+
+        Nothing structurally stops someone shrinking `_FETCH_DEADLINE_S` below
+        the sum of the two reserves, and if that happens BOTH later phases are
+        starved instantly and silently — the exact disease twice over. The
+        relationship is invisible because the three constants live in two files,
+        so it gets asserted here rather than hoped for.
+        """
+        import inspect
+
+        from app.services import kalshi_api
+        from app.tasks.kalshi import _poll_kalshi_markets
+
+        fetch_src = inspect.getsource(_poll_kalshi_markets)
+        assert "_FETCH_DEADLINE_S = 240.0" in fetch_src, (
+            "the fetch budget moved — re-check it still exceeds the reserves"
+        )
+        reserves = self._RESCUE_RESERVE_S + self._BACKFILL_RESERVE_S
+        assert reserves < 240.0, (
+            f"reserves ({reserves}s) must leave the main scan real budget out "
+            f"of the 240s fetch deadline"
+        )
+        src = inspect.getsource(
+            kalshi_api.KalshiAPIService._fetch_all_events_unfiltered
+        )
+        assert f"_RESCUE_RESERVE_S = {self._RESCUE_RESERVE_S}" in src
+        assert f"_BACKFILL_RESERVE_S = {self._BACKFILL_RESERVE_S}" in src
 
     async def test_priority_golf_tickers_fetched_before_other_series(self, client, monkeypatch):
         import asyncio
@@ -554,7 +602,15 @@ class TestSupplementaryRescueBudgetReservation:
         assert prio and other, "expected both golf and non-golf supplementary fetches"
         assert max(prio) < min(other), "golf rescue tickers must be fetched first"
 
-    async def test_main_scan_gets_capped_deadline_supplementary_gets_full(self, client, monkeypatch):
+    async def test_each_phase_pages_against_its_own_capped_deadline(self, client, monkeypatch):
+        """The deadline each phase HANDS DOWN is its own cap, not the full one.
+
+        `get_events` uses this value to bound its internal 429 retry/backoff
+        span. Handing a phase the full deadline lets a single backing-off page
+        sleep straight through the next phase's reserve — so a floor checked
+        only BETWEEN pages is not a floor at all. Pre-#2214 the supplementary
+        loop did exactly that (`deadline=deadline`).
+        """
         import asyncio
         import time
         calls = []
@@ -571,9 +627,13 @@ class TestSupplementaryRescueBudgetReservation:
         supp_dls = [kw.get("deadline") for kw in calls if kw.get("series_ticker") is not None]
         assert main_dls, "expected a main-scan page fetch"
         assert supp_dls, "expected supplementary series fetches"
-        # main scan runs against deadline - 60s; supplementary uses the full deadline
-        assert all(abs(d - (full - 60.0)) < 1e-6 for d in main_dls)
-        assert all(abs(d - full) < 1e-6 for d in supp_dls)
+        # Main scan pays for both reserves; the rescue pays only for the backfill.
+        main_cap = full - self._RESCUE_RESERVE_S - self._BACKFILL_RESERVE_S
+        supp_cap = full - self._BACKFILL_RESERVE_S
+        assert all(abs(d - main_cap) < 1e-6 for d in main_dls)
+        assert all(abs(d - supp_cap) < 1e-6 for d in supp_dls)
+        # And the ordering of the three caps is the split itself.
+        assert main_cap < supp_cap < full
 
     async def test_combat_fight_series_in_supplementary_rescue(self, client, monkeypatch):
         """#173/#1024: combat fight-winner series (KXUFCFIGHT / KXBOXING) had no
