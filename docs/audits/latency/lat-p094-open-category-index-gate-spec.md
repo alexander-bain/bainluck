@@ -1,5 +1,20 @@
 # LAT-P094 — PRE-REGISTERED GATE SPEC: a partial index on the open-market category
 
+> 🔴 **STATUS 2026-08-26 (LAT-P095): RETIRED — PENDING CONFIRM. Precondition P1 fails.**
+> Modelled post-`-83`, `concepts` is **791.2 ms** (P1 requires ≥ 800 ms) and **4th** by stage
+> p50, not top three (P1 requires top three) — behind `events` 1,208.6, `futures.market_load`
+> 1,039.3 and `futures.UNATTRIBUTED` 905.9. Both clauses fail, so **the DDL does not run**,
+> which §3 already calls a pass for this spec rather than a failure of it.
+>
+> **The retire rests on the RANK clause, not the p50 clause.** 791.2 vs 800 is an 8.8 ms margin
+> on a flat-subtraction model; the rank clause's margin is 114.7 ms. And it is a **projection**:
+> `-83` is not deployed, and the ring held **zero** post-deploy `/api/feed` misses when this was
+> written (9.5-hour gap; feed-miss inter-arrival p50 272.3 s, p90 10,344.5 s).
+>
+> **Not deleted, deliberately.** If the post-`-83` measurement lands ≥ 800 ms and back in the top
+> three, P1 passes and every bar below is live again, unchanged and still frozen before any DDL.
+> Working: `docs/audits/latency/lat-p095-done-bar-and-the-next-target.md` § 4.
+
 **Cycle:** LAT-P094 · **Written:** 2026-08-26, **before any DDL exists**
 **Companion:** `docs/audits/latency/lat-p094-concepts-stage-single-scan.md`
 **Ship it serves:** the feed loads fast even on a cache miss.
