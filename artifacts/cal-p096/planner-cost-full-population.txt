@@ -1,0 +1,654 @@
+⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-⛔ WITHDRAWN AS G3 EVIDENCE BY CAL-P098 — 2026-08-25. The cost numbers below
+   are real; the gate they were filed against is not graded from them.
+   `C-FOLD-REWRITE-1` G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT
+   JSON) on the G1 samples, alternating run order, and grades ACTUAL WindowAgg
+   input rows, Sort Plan Width, sort method, spill/temp blocks and node time.
+   A total planner cost is none of those, and the frozen text says so:
+   "Planner cost or endpoint wall-clock alone is not a performance verdict."
+   Replacement: scripts/verify_fold_narrowing_row_identity.py --gate g3.
+-
+== PLANNER COST, full population, EXPLAIN only (no execution) ==
+  fused     total_cost=5145793.16 duration_ms=277.2 err=None
+  narrowed  total_cost=3034645.84 duration_ms=174.6 err=None
+  delta = -41.0%
+
+{
+  "cost": {
+    "fused": 5145793.16,
+    "narrowed": 3034645.84
+  },
+  "cost_delta": -0.410266649738405,
+  "schema": "cal-p096-fold-narrowing-verify/v1"
+}

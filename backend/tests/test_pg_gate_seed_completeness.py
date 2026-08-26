@@ -38,6 +38,7 @@ from app.models.models import Base
 #: the discovery arm below fails if such a gate grows an INSERT and is not
 #: listed, so this list cannot silently fall behind.
 COVERED = (
+    "test_calibration_fold_narrowing_row_identity_pg.py",
     "test_calibration_mode_price_source_scope_pg.py",
     "test_calibration_mode_price_source_scope_peers_pg.py",
     "test_create_wave_insert_bind_contract.py",

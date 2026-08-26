@@ -1,0 +1,238 @@
+⛔ WITHDRAWN AS G1 EVIDENCE BY CAL-P098 — 2026-08-25. The measurements below are
+   real and are kept verbatim; the CLAIM they were filed under is withdrawn.
+
+   `C-FOLD-REWRITE-1` graded this artifact and returned BLOCK on three grounds,
+   all of them correct:
+
+   1. It says "same session". It was not. Each side is a separate HTTP POST to
+      `/api/admin/db-query`, each POST gets its own `get_db` session, and no
+      REPEATABLE READ transaction spans the pair. On a continuously-ingesting
+      population, two matching digests taken from two snapshots mean nobody
+      wrote in between — a fact about the clock, not about the SQL.
+   2. An ordered MD5 is not `EXCEPT ALL`. It cannot say WHICH rows differ, how
+      many, or whether duplicate cardinality by `outcome_id` moved.
+   3. MOD 997 / 9973 is not the frozen sample. G1 pins MOD 64 and MOD 257, at
+      least eight non-adjacent residues, residue 0 and both edges. The rail
+      could not reach that sample — its row path is fixed at 10 s — so an
+      instrument ceiling was reported as a sampling choice.
+
+   What these 11 samples DO establish: over 1,398 published rows, no divergence
+   was found. That is useful and it is not the gate.
+
+   The replacement is `scripts/verify_fold_narrowing_row_identity.py`, rewritten
+   DB-direct: one REPEATABLE READ READ ONLY transaction, bilateral `EXCEPT ALL`,
+   duplicate cardinality, buckets demoted to a secondary line, and the frozen
+   residue plan. Its evidence lands at
+   `GET /api/admin/fold-narrowing-gate/last`.
+
+--------------------------------------------------------------------------------
+
+== ROW IDENTITY, MOD-sampled, ordered md5 over every column ==
+  MOD  99991 fused     NO ROWS — err=400 {"detail":{"error":"query_failed","reason":"statement_timeout","correlation_id":"3a0a35d34a90","sql_fingerprint":"7ef45f5628da1d1b"}}
+  MOD   9973 fused     n=     57 digest=0f48ffd0bfdd1f625926d26b508d9564 (9970.3 ms)
+  MOD   9973 narrowed  n=     57 digest=0f48ffd0bfdd1f625926d26b508d9564 (7116.3 ms)
+  MOD   9973 ROW IDENTITY: MATCH
+
+{
+  "digests": {
+    "9973": {
+      "fused": [
+        57,
+        "0f48ffd0bfdd1f625926d26b508d9564"
+      ],
+      "identical": true,
+      "narrowed": [
+        57,
+        "0f48ffd0bfdd1f625926d26b508d9564"
+      ]
+    }
+  },
+  "schema": "cal-p096-fold-narrowing-verify/v1"
+}
+
+== ROW IDENTITY, MOD-sampled, ordered md5 over every column ==
+  MOD 9973=1 fused     NO ROWS — err=400 {"detail":{"error":"query_failed","reason":"statement_timeout","correlation_id":"e3be4d14ce98","sql_fingerprint":"8de0e9ae8bfb77a0"}}
+  MOD 9973=2 fused     n=     37 digest=b25f4e51df90dcf8d5c5fa5a0c34caae (3385.4 ms)
+  MOD 9973=2 narrowed  n=     37 digest=b25f4e51df90dcf8d5c5fa5a0c34caae (966.4 ms)
+  MOD 9973=2 ROW IDENTITY: MATCH
+  MOD 9973=3 fused     n=     24 digest=f453d4bf352994b6bcef21bc8e8bda6b (1076.1 ms)
+  MOD 9973=3 narrowed  n=     24 digest=f453d4bf352994b6bcef21bc8e8bda6b (987.4 ms)
+  MOD 9973=3 ROW IDENTITY: MATCH
+  MOD 9973=4 fused     n=     31 digest=16f6414c53a5426cf19e9ce6e2bfe2e0 (988.0 ms)
+  MOD 9973=4 narrowed  n=     31 digest=16f6414c53a5426cf19e9ce6e2bfe2e0 (985.1 ms)
+  MOD 9973=4 ROW IDENTITY: MATCH
+
+{
+  "digests": {
+    "9973=1": {
+      "identical": null,
+      "reason": "not_measured_timeout_or_refusal"
+    },
+    "9973=2": {
+      "fused": [
+        37,
+        "b25f4e51df90dcf8d5c5fa5a0c34caae"
+      ],
+      "identical": true,
+      "narrowed": [
+        37,
+        "b25f4e51df90dcf8d5c5fa5a0c34caae"
+      ]
+    },
+    "9973=3": {
+      "fused": [
+        24,
+        "f453d4bf352994b6bcef21bc8e8bda6b"
+      ],
+      "identical": true,
+      "narrowed": [
+        24,
+        "f453d4bf352994b6bcef21bc8e8bda6b"
+      ]
+    },
+    "9973=4": {
+      "fused": [
+        31,
+        "16f6414c53a5426cf19e9ce6e2bfe2e0"
+      ],
+      "identical": true,
+      "narrowed": [
+        31,
+        "16f6414c53a5426cf19e9ce6e2bfe2e0"
+      ]
+    }
+  },
+  "schema": "cal-p096-fold-narrowing-verify/v1"
+}
+
+== ROW IDENTITY, MOD-sampled, ordered md5 over every column ==
+  MOD 9973=1 fused     n=     68 digest=157e81a41229012dc00d3fe420edd42f (3985.1 ms)
+  MOD 9973=1 narrowed  n=     68 digest=157e81a41229012dc00d3fe420edd42f (1407.9 ms)
+  MOD 9973=1 ROW IDENTITY: MATCH
+  MOD 9973=5 fused     n=     72 digest=4d16809ab048cd75856a64d2f78efcfb (1395.0 ms)
+  MOD 9973=5 narrowed  n=     72 digest=4d16809ab048cd75856a64d2f78efcfb (1039.1 ms)
+  MOD 9973=5 ROW IDENTITY: MATCH
+  MOD 9973=6 fused     n=     32 digest=43f64897d054ad34c4f3fc84cccc36d5 (1061.8 ms)
+  MOD 9973=6 narrowed  n=     32 digest=43f64897d054ad34c4f3fc84cccc36d5 (1038.8 ms)
+  MOD 9973=6 ROW IDENTITY: MATCH
+  MOD 9973=7 fused     n=     48 digest=e1d9ef5cf83a041efc401bc524fc0a44 (1029.0 ms)
+  MOD 9973=7 narrowed  n=     48 digest=e1d9ef5cf83a041efc401bc524fc0a44 (1263.0 ms)
+  MOD 9973=7 ROW IDENTITY: MATCH
+  MOD 9973=8 fused     n=     24 digest=75b04c54e866a9790580b0731cb63254 (1046.2 ms)
+  MOD 9973=8 narrowed  n=     24 digest=75b04c54e866a9790580b0731cb63254 (1283.4 ms)
+  MOD 9973=8 ROW IDENTITY: MATCH
+
+{
+  "digests": {
+    "9973=1": {
+      "fused": [
+        68,
+        "157e81a41229012dc00d3fe420edd42f"
+      ],
+      "identical": true,
+      "narrowed": [
+        68,
+        "157e81a41229012dc00d3fe420edd42f"
+      ]
+    },
+    "9973=5": {
+      "fused": [
+        72,
+        "4d16809ab048cd75856a64d2f78efcfb"
+      ],
+      "identical": true,
+      "narrowed": [
+        72,
+        "4d16809ab048cd75856a64d2f78efcfb"
+      ]
+    },
+    "9973=6": {
+      "fused": [
+        32,
+        "43f64897d054ad34c4f3fc84cccc36d5"
+      ],
+      "identical": true,
+      "narrowed": [
+        32,
+        "43f64897d054ad34c4f3fc84cccc36d5"
+      ]
+    },
+    "9973=7": {
+      "fused": [
+        48,
+        "e1d9ef5cf83a041efc401bc524fc0a44"
+      ],
+      "identical": true,
+      "narrowed": [
+        48,
+        "e1d9ef5cf83a041efc401bc524fc0a44"
+      ]
+    },
+    "9973=8": {
+      "fused": [
+        24,
+        "75b04c54e866a9790580b0731cb63254"
+      ],
+      "identical": true,
+      "narrowed": [
+        24,
+        "75b04c54e866a9790580b0731cb63254"
+      ]
+    }
+  },
+  "schema": "cal-p096-fold-narrowing-verify/v1"
+}
+
+== ROW IDENTITY, MOD-sampled, ordered md5 over every column ==
+  MOD 997=0 fused     n=    477 digest=4b8cc8da10b4afdcc23086c5a6d8ed3b (5134.1 ms)
+  MOD 997=0 narrowed  n=    477 digest=4b8cc8da10b4afdcc23086c5a6d8ed3b (1985.7 ms)
+  MOD 997=0 ROW IDENTITY: MATCH
+  MOD 997=1 fused     n=    528 digest=19548f85c61c83103e134202ea1b5533 (2286.9 ms)
+  MOD 997=1 narrowed  n=    528 digest=19548f85c61c83103e134202ea1b5533 (1279.9 ms)
+  MOD 997=1 ROW IDENTITY: MATCH
+
+{
+  "digests": {
+    "997=0": {
+      "fused": [
+        477,
+        "4b8cc8da10b4afdcc23086c5a6d8ed3b"
+      ],
+      "identical": true,
+      "narrowed": [
+        477,
+        "4b8cc8da10b4afdcc23086c5a6d8ed3b"
+      ]
+    },
+    "997=1": {
+      "fused": [
+        528,
+        "19548f85c61c83103e134202ea1b5533"
+      ],
+      "identical": true,
+      "narrowed": [
+        528,
+        "19548f85c61c83103e134202ea1b5533"
+      ]
+    }
+  },
+  "schema": "cal-p096-fold-narrowing-verify/v1"
+}
+
+== ROW IDENTITY, MOD-sampled, ordered md5 over every column ==
+  MOD 199=0 fused     NO ROWS — err=400 {"detail":{"error":"query_failed","reason":"statement_timeout","correlation_id":"1eac12aaa820","sql_fingerprint":"580c5989a70eb10a"}}
+  MOD 199=1 fused     NO ROWS — err=400 {"detail":{"error":"query_failed","reason":"statement_timeout","correlation_id":"4e008757f16b","sql_fingerprint":"abea6670e6af3c35"}}
+
+{
+  "digests": {
+    "199=0": {
+      "identical": null,
+      "reason": "not_measured_timeout_or_refusal"
+    },
+    "199=1": {
+      "identical": null,
+      "reason": "not_measured_timeout_or_refusal"
+    }
+  },
+  "schema": "cal-p096-fold-narrowing-verify/v1"
+}

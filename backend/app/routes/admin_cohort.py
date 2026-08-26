@@ -600,6 +600,82 @@ async def calibration_twin_last(request: Request):
     return payload
 
 
+@router.get("/admin/fold-narrowing-gate/last")
+async def fold_narrowing_gate_last(request: Request):
+    """CAL-P098 (`C-FOLD-REWRITE-1`): the last G1/G3 run of the fold-narrowing gate.
+
+    ``scripts/verify_fold_narrowing_row_identity.py`` runs DB-direct on a
+    one-off dyno, because the frozen gate needs one ``REPEATABLE READ, READ
+    ONLY`` snapshot across ≥8 residues and an ``EXPLAIN (ANALYZE, ...)`` — and
+    neither fits ``POST /admin/db-query``, whose row path is pinned at 10 s and
+    whose ``explain`` never executes. A dyno's stdout is not evidence in this
+    environment (``heroku logs`` is EPERM-blocked from the agent sandbox and its
+    failure looks like a clean grep), so the run banks a durable row and this is
+    where it is read back.
+
+    ``measured: false`` is a first-class answer. A gate that timed out, sampled
+    an empty residue, or got a plan with no actuals banks ``complete=False`` on
+    purpose — the kill criteria make "renders could-not-check as agreement" an
+    automatic BLOCK, so an unreadable or incomplete artifact must never surface
+    as a clean PASS. The diagnosis is recovered from the incomplete row rather
+    than thrown away (the CAL-P083 lesson: the one endpoint whose job is to
+    explain a failed gate run must not answer with the least informative fact
+    available about it).
+    """
+    _check_admin_secret(request=request)
+
+    from app.services.durable_snapshots import read_snapshot_standalone
+
+    # Imported from the runner's module-level constants so the identity cannot
+    # drift between writer and reader.
+    identity = "calibration:fold_narrowing_gate"
+    schema = "calibration-fold-narrowing-gate/v1"
+
+    try:
+        read = await read_snapshot_standalone(
+            identity, expected_version=schema, max_age_s=90 * 86400
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"measured": False, "reason": f"artifact_read_raised: {type(exc).__name__}"}
+
+    if not read.ok or read.envelope is None:
+        out: dict = {
+            "measured": False,
+            "reason": f"artifact_unreadable: {read.status}",
+            "envelope_status": read.status,
+            "envelope_error_class": read.error_class,
+            "envelope_error": read.error,
+        }
+        if read.status == "malformed" and read.envelope is not None:
+            banked = read.envelope.payload
+            if isinstance(banked, dict):
+                out["failed_run"] = {
+                    k: banked.get(k)
+                    for k in (
+                        "verdict",
+                        "residue_plan",
+                        "residue_plan_frozen",
+                        "residues_non_adjacent",
+                        "statement_timeout_ms",
+                        "one_snapshot",
+                        "g1_required_columns_missing",
+                    )
+                    if k in banked
+                }
+                if isinstance(banked.get("g1"), dict):
+                    out["failed_run"]["g1_verdict"] = banked["g1"].get("verdict")
+                if isinstance(banked.get("g3"), dict):
+                    out["failed_run"]["g3_verdict"] = banked["g3"].get("verdict")
+                    out["failed_run"]["g3_reasons"] = banked["g3"].get("reasons")
+                out["artifact_generated_at"] = read.envelope.generated_at.isoformat()
+        return out
+
+    payload = dict(read.envelope.payload or {})
+    payload["measured"] = True
+    payload["artifact_generated_at"] = read.envelope.generated_at.isoformat()
+    return payload
+
+
 @router.post("/admin/calibration-beat-gauges/run")
 async def calibration_beat_gauges_run(request: Request, inline: bool = False):
     """CAL-P084 (#2007): take a beat-gauge sample now.

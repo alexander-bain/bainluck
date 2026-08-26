@@ -1,0 +1,155 @@
+{
+  "schema": "cal-p096-fold-narrowing/v1",
+  "queue": "CAL-P096",
+  "branch": "program/calibration-92",
+  "base": "8bd08265",
+  "subject": "C-FOLD-EXPLAIN-1 \u00a73 narrowing rewrite of _calibration_population_ctes",
+  "measured_utc": "2026-08-25",
+  "instrument": "backend/scripts/verify_fold_narrowing_row_identity.py (read-only, POST /api/admin/db-query)",
+  "oracle": "backend/tests/fixtures/cal_p096_fused_population_ctes.sql \u2014 verbatim pre-split emission frozen at 8bd08265",
+  "row_identity": {
+    "claim": "the narrowed chain selects the same deduped rows with the same values in every column",
+    "method": "ordered md5(string_agg(deduped.*::text)) + COUNT(*), both chains, same MOD-sampled market population, same session",
+    "populations_compared": 11,
+    "populations_identical": 11,
+    "populations_diverged": 0,
+    "published_rows_compared": 1398,
+    "samples": [
+      {
+        "mod": 9973,
+        "residue": 0,
+        "n": 57,
+        "digest": "0f48ffd0bfdd1f625926d26b508d9564",
+        "identical": true
+      },
+      {
+        "mod": 9973,
+        "residue": 1,
+        "n": 68,
+        "digest": "157e81a41229012dc00d3fe420edd42f",
+        "identical": true
+      },
+      {
+        "mod": 9973,
+        "residue": 2,
+        "n": 37,
+        "digest": "b25f4e51df90dcf8d5c5fa5a0c34caae",
+        "identical": true
+      },
+      {
+        "mod": 9973,
+        "residue": 3,
+        "n": 24,
+        "digest": "f453d4bf352994b6bcef21bc8e8bda6b",
+        "identical": true
+      },
+      {
+        "mod": 9973,
+        "residue": 4,
+        "n": 31,
+        "digest": "16f6414c53a5426cf19e9ce6e2bfe2e0",
+        "identical": true
+      },
+      {
+        "mod": 9973,
+        "residue": 5,
+        "n": 72,
+        "digest": "4d16809ab048cd75856a64d2f78efcfb",
+        "identical": true
+      },
+      {
+        "mod": 9973,
+        "residue": 6,
+        "n": 32,
+        "digest": "43f64897d054ad34c4f3fc84cccc36d5",
+        "identical": true
+      },
+      {
+        "mod": 9973,
+        "residue": 7,
+        "n": 48,
+        "digest": "e1d9ef5cf83a041efc401bc524fc0a44",
+        "identical": true
+      },
+      {
+        "mod": 9973,
+        "residue": 8,
+        "n": 24,
+        "digest": "75b04c54e866a9790580b0731cb63254",
+        "identical": true
+      },
+      {
+        "mod": 997,
+        "residue": 0,
+        "n": 477,
+        "digest": "4b8cc8da10b4afdcc23086c5a6d8ed3b",
+        "identical": true
+      },
+      {
+        "mod": 997,
+        "residue": 1,
+        "n": 528,
+        "digest": "19548f85c61c83103e134202ea1b5533",
+        "identical": true
+      }
+    ],
+    "instrument_ceiling": {
+      "largest_sample_that_fits": "MOD 997",
+      "not_measurable": "MOD 199 and MOD 99 \u2014 BOTH chains hit the rail's fixed 10 s plain-SELECT statement_timeout; this bounds the instrument, it is not a verdict on either chain",
+      "note": "MOD 9973 residue 1 timed out on its first attempt and succeeded on a retry \u2014 the rail sits close enough to 10 s at this shape that a single timeout is noise, not a signal"
+    }
+  },
+  "planner_cost": {
+    "method": "EXPLAIN (FORMAT JSON), NOT ANALYZE \u2014 does not execute, cannot contend with the producer",
+    "population": "full (no MOD sample)",
+    "fused_total_cost": 5145793.16,
+    "narrowed_total_cost": 3034645.84,
+    "delta": -0.4103,
+    "codex_projection": -0.607,
+    "why_the_projection_was_high": "C-FOLD-EXPLAIN-1 \u00a73 priced a row-count reduction (1,495,958 -> 369,796) that the semantics forbid: field_completeness aggregates the exclusion flags over EVERY row of a market, mode_prices over every multi row, and deduped's is_multi branch publishes many rows per virtual question. rn=1 is only the single/binary ELSE arm. Rows into the Sort are UNCHANGED; the WIDTH is what falls (~652 -> ~90 bytes).",
+    "caveat": "planner cost is not runtime. -41.0% of 5,400 s is ~3,190 s ONLY if the per-row rate is unchanged, which this measurement does not establish."
+  },
+  "executed_timings_ms": {
+    "note": "single samples against a live, contended production box; direction only, not a benchmark",
+    "mod_997_r0": {
+      "fused": 5134.1,
+      "narrowed": 1985.7
+    },
+    "mod_997_r1": {
+      "fused": 2286.9,
+      "narrowed": 1279.9
+    },
+    "mod_9973_r0": {
+      "fused": 9970.3,
+      "narrowed": 7116.3
+    },
+    "mod_9973_small_residues": "at MOD 9973 the two forms are within noise of each other (both ~1.0 s) \u2014 fixed cost dominates and the Sort is not the wall at 24-72 published rows"
+  },
+  "red_first": {
+    "file": "backend/tests/test_calibration_fold_narrowing_p096.py",
+    "at_pre_split_source": "13 failed, 15 passed, EXIT CODE 1",
+    "at_post_split_source": "28 passed, EXIT CODE 0",
+    "method": "git show origin/master:backend/app/tasks/precompute_calibration.py installed over the working copy, run, restored; both shas printed"
+  },
+  "not_done_this_queue": [
+    "the fold was NOT re-fired (directive)",
+    "the three CERT-403-BLOCKed applies were NOT touched (directive)",
+    "no DDL, no index, no Alembic, no beat-schedule change, no production write"
+  ],
+  "superseded_by": {
+    "queue": "CAL-P098",
+    "branch": "program/calibration-94",
+    "date": "2026-08-25",
+    "verdict_on_this_artifact": "C-FOLD-REWRITE-1 BLOCK",
+    "withdrawn_claims": [
+      "row_identity: filed as G1 evidence. It is not \u2014 two HTTP POSTs are two snapshots, an ordered MD5 is not bilateral EXCEPT ALL, and MOD 997/9973 is not the frozen MOD 64/257 sample. The 11 matching digests over 1,398 rows stand as measurements; the gate they were filed against does not.",
+      "planner_cost: filed as the performance evidence. G3 requires EXPLAIN (ANALYZE, BUFFERS, VERBOSE) actuals on the named node \u2014 rows, width, sort method, spill, temp blocks and node time. Planner cost alone is named insufficient by the frozen text.",
+      "executed_timings_ms: whole-request durations for digest queries, direction-only. Not a node measurement and never was."
+    ],
+    "replacement": {
+      "harness": "backend/scripts/verify_fold_narrowing_row_identity.py (DB-direct)",
+      "comparator": "backend/app/utils/fold_narrowing_gate.py",
+      "reader": "GET /api/admin/fold-narrowing-gate/last"
+    }
+  }
+}

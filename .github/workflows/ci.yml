@@ -380,6 +380,93 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration fold narrowing row identity (real Postgres)
+        # CAL-P096 / C-FOLD-EXPLAIN-1 §3. The narrowing rewrite moves
+        # `ranked_outcomes`' two window functions off a nine-way LEFT JOIN and
+        # onto the narrow `fo ⋈ virtual_market ⋈ clean_vms` row, then joins the
+        # nine per-market slices back afterwards. Its acceptance bar is ROW
+        # IDENTITY — the same final rows with the same values — not aggregate
+        # equality, because an aggregate can be right while `rn` picks a
+        # different representative and the published observation, its winner
+        # label and its bucket all move.
+        #
+        # `rn` is decided by a WINDOW, and a window's output is a fact about
+        # executed rows: no string assertion can certify it. The sibling
+        # `tests/test_calibration_fold_narrowing_p096.py` proves the structural
+        # premises without a database; this step proves the answer, by running
+        # the frozen pre-split SQL
+        # (`tests/fixtures/cal_p096_fused_population_ctes.sql`) and the current
+        # SQL side by side on one seed and diffing `ranked_outcomes`,
+        # `deduped` and `field_completeness` row for row, column for column.
+        #
+        # The seed deliberately contains an exact ABS(cp-0.5) tie inside one
+        # virtual question, because the fo.id tie-break is the part of `rn` a
+        # reordering of the join tree could plausibly disturb — and a rewrite
+        # that got it wrong would still return the right row COUNT. Same
+        # skip-detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_calibration_fold_narrowing_row_identity_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/foldnarrow.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/foldnarrow.txt; then
+            echo "::error::calibration fold-narrowing row identity SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: Calibration fold narrowing MUTATION CONTROLS (real Postgres)
+        # CAL-P098 / `C-FOLD-REWRITE-1` G4. The step above proves the gate is
+        # GREEN. This one proves the green means something, by breaking the
+        # rewrite five different ways and requiring the gate to notice each one:
+        #
+        #   wide_shape        the pre-rewrite wide row  -> the width clause fails
+        #   global_rn1        §3's rejected shortcut    -> members disappear
+        #   row_swap          same aggregates, new id   -> buckets green, rows red
+        #   flag_flip         one census-only flag      -> buckets green, values red
+        #   narrow_population an extra predicate        -> the population shrinks
+        #
+        # A green suite whose mutants also pass is a rubber stamp — that is the
+        # frozen acceptance's own wording, and it is why four of these did not
+        # exist when the cert returned BLOCK.
+        #
+        # THE EXIT CODE IS THE EVIDENCE, and it is read by VALUE (gotcha #54).
+        # `1` means pytest ran and an assertion failed — the control CAUGHT the
+        # mutant. Anything else is a story about the harness: 2/3 interrupted or
+        # internal, 4 usage, 5 collected nothing, 0 the mutant sailed through or
+        # the whole file skipped for want of a database. Nothing is piped: a
+        # `cmd | tail` would report tail's status and a gate that never ran would
+        # read as a pass.
+        run: |
+          set +e
+          failed=0
+          for m in wide_shape global_rn1 row_swap flag_flip narrow_population; do
+            FOLD_GATE_MUTANT="$m" python -m pytest \
+              tests/integration/test_calibration_fold_narrowing_row_identity_pg.py \
+              -q --no-header > "/tmp/mutant-$m.txt" 2>&1
+            code=$?
+            echo "MUTANT $m EXIT CODE: $code"
+            if [ "$code" -ne 1 ]; then
+              echo "::error::mutant '$m' exited $code — only 1 means the control caught it"
+              tail -40 "/tmp/mutant-$m.txt"
+              failed=1
+            fi
+          done
+          python -m pytest \
+            tests/integration/test_calibration_fold_narrowing_row_identity_pg.py \
+            -q --no-header -rs > /tmp/mutant-restore.txt 2>&1
+          code=$?
+          echo "RESTORED (no mutant) EXIT CODE: $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::the unmutated gate did not pass after the controls (exit $code)"
+            tail -60 /tmp/mutant-restore.txt
+            failed=1
+          fi
+          if grep -qiE "[0-9]+ skipped" /tmp/mutant-restore.txt; then
+            echo "::error::the restored run SKIPPED — the mutation controls proved nothing"
+            failed=1
+          fi
+          exit $failed
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

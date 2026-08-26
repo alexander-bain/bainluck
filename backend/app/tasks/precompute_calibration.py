@@ -2069,22 +2069,63 @@ def _calibration_population_ctes(
                 WHERE eligible >= 1
                   AND has_winner >= 1
             ),
-            ranked_outcomes AS MATERIALIZED (
+            -- CAL-P096 (C-FOLD-EXPLAIN-1 §3) — THE NARROWING SPLIT.
+            --
+            -- ``ranked_outcomes`` used to compute its two window functions over the
+            -- rows produced by NINE row-preserving LEFT JOINs. C-FOLD-EXPLAIN-1
+            -- measured the consequence against production: the outer ``WindowAgg``
+            -- is 4,330,606 of the plan's 5,143,141 total cost (84.2%), and its child
+            -- Sort on ``(vm_id, ABS(cp-0.5), fo.id)`` alone is 2,115,624 — more than
+            -- the entire rest of the plan combined. The joins are what makes it
+            -- expensive: they widen every one of the ~1.5M sorted rows from ~43 to
+            -- ~652 bytes before the Sort, so it spills. The twin fold hit its 5,400 s
+            -- ceiling twice, the second time WITH ``ix_fos_outcome_liquid_evidence``
+            -- valid — that index answers 1 of 6 liquidity EXISTS sites and 0.004% of
+            -- the plan, and no index on ``futures_odds_snapshots`` can accelerate a
+            -- Sort on ``(vm_id, ABS(cp-0.5))``.
+            --
+            -- So the window moves to the narrow row. ``ranked_outcomes_core`` is the
+            -- ``fo ⋈ virtual_market ⋈ clean_vms`` scan and NOTHING else — every
+            -- column it carries is derivable from those three, including the four
+            -- EXISTS-shaped flags and the prop-threshold band, none of which need a
+            -- join. The nine per-MARKET slices join AFTER the window, in
+            -- ``ranked_outcomes``, which projects the identical column list in the
+            -- identical order, so every downstream CTE sees exactly the relation it
+            -- saw before.
+            --
+            -- ⚠️ WHAT THIS DELIBERATELY DOES NOT DO, because the semantics forbid it.
+            -- C-FOLD-EXPLAIN-1 §3 proposed joining the flags after ``rn = 1`` is
+            -- selected, projecting 369,796 rows instead of 1,495,958 and −60.7% on
+            -- total plan cost. That is not available: ``field_completeness``
+            -- aggregates the flags over EVERY row of a market, ``mode_prices``
+            -- aggregates over every multi row, and ``deduped``'s ``is_multi`` branch
+            -- PUBLISHES many rows per virtual question — ``rn = 1`` is only the
+            -- single/binary ELSE arm. Filtering to ``rn = 1`` before the flags exist
+            -- would change which rows are published, which is the one thing this
+            -- rewrite may not do. The row count into the Sort is therefore UNCHANGED
+            -- at ~1.5M; the WIDTH is what falls. Do not quote −60.7% for this build —
+            -- it was priced on a row reduction that never happens.
+            --
+            -- SOUNDNESS is by construction, not by measurement. All nine joined
+            -- relations are at most one row per ``market_id`` (each is a GROUP BY
+            -- ``market_id``, or a filter over ``market_result_shape`` which is), so
+            -- the joins neither add nor remove rows; and none of the nine columns
+            -- appears in either window's PARTITION BY or ORDER BY. The window is
+            -- therefore a pure function of a row multiset the joins cannot change.
+            -- That premise is guarded by name — not by string-matching today's SQL —
+            -- in ``tests/test_calibration_fold_narrowing_p096.py``, and the emitted
+            -- row identity is guarded against the frozen pre-split SQL in
+            -- ``tests/fixtures/cal_p096_fused_population_ctes.sql``.
+            ranked_outcomes_core AS MATERIALIZED (
                 SELECT
-                    -- Queue #157 (#1012): raw curve price + the per-market
-                    -- normalization divisor. The actual normalization (cp /
-                    -- mnm.cp_sum) is DEFERRED to the ``normalized`` CTE below,
-                    -- because it is gated on FIELD COMPLETENESS (Queue #257 Item
-                    -- 1) which can only be aggregated once these per-outcome
-                    -- exclusion flags exist. Carry market_id so completeness can
-                    -- be computed per market.
+                    -- Queue #157 (#1012): raw curve price. The per-market
+                    -- normalization divisor joins in ``ranked_outcomes`` below; the
+                    -- actual normalization (cp / mnm.cp_sum) is DEFERRED further
+                    -- still, to the ``normalized`` CTE, because it is gated on FIELD
+                    -- COMPLETENESS (Queue #257 Item 1) which can only be aggregated
+                    -- once the per-outcome exclusion flags exist. Carry market_id so
+                    -- completeness can be computed per market.
                     {curve_price} AS raw_cp,
-                    -- Queue #262 Item 1: candidate membership (structural, terminal)
-                    -- vs divisor (price-expression). is_mex_normalized keys on the
-                    -- candidate so an incomplete horizon field is dropped WHOLE even
-                    -- when <3 members are present at the snapshot.
-                    mfc.market_id AS candidate_market_id,
-                    mfd.cp_sum AS mnm_cp_sum,
                     fo.market_id AS market_id,
                     -- Queue #259 Item 2: carry outcome identity + per-market shape
                     -- so the cohort sweep selects the SAME final rows (row identity)
@@ -2106,28 +2147,16 @@ def _calibration_population_ctes(
                     -- Queue #220/221 Item 3: all-bands poly never-traded flag (for
                     -- the exclusion-symmetry census; does NOT gate the curve).
                     {POLY_NEVER_TRADED} AS is_poly_never_traded,
-                    -- L2-79 Item 1: malformed 2-outcome mex binary (winner count
-                    -- 0 = void, or 2 = impossible). mb.win_count carries which.
-                    (mb.market_id IS NOT NULL) AS is_malformed_binary,
-                    mb.win_count AS malformed_win_count,
-                    -- Queue #159 (#1010): esports match-bundle exclusion flag.
-                    (emb.market_id IS NOT NULL) AS is_esports_bundle,
-                    -- Queue 299 rung 1: the market graded NOBODY — UNKNOWN truth,
-                    -- not a set of losses (is_winner's default is False).
-                    (nwm.market_id IS NOT NULL) AS is_no_winner_market,
-                    -- Queue 299 rung 2: draw-capable duel with no draw member.
-                    (dam.market_id IS NOT NULL) AS is_draw_authority_missing,
-                    -- Queue 299 rung 3: a 'field' that captured <=1 member.
-                    (opm.market_id IS NOT NULL) AS is_orphan_partition,
-                    -- Queue 299 rung 4b: category-independent non-exclusive
-                    -- bundle. CENSUS ONLY — this flag does NOT gate ``deduped``
-                    -- outside esports (which keeps its own measured exclusion).
-                    (nbm.market_id IS NOT NULL) AS is_nonexclusive_bundle,
-                    -- L2-79 Item 2: golf one-sided-ask placeholder — this outcome
-                    -- sits in the >=0.80 band of an over-subscribed golf mex market.
-                    (gpm.market_id IS NOT NULL
-                     AND COALESCE(fo.calibration_probability, fo.opening_probability)
-                         >= {GOLF_PLACEHOLDER_HIGH_BAND}) AS is_golf_placeholder,
+                    -- CAL-P096: the eight market-level exclusion flags that used to
+                    -- sit here (malformed binary + its win count, esports bundle,
+                    -- Queue 299 rungs 1/2/3/4b, golf placeholder) are projected by
+                    -- ``ranked_outcomes`` below, where their nine LEFT JOINs live.
+                    -- Only the golf band's PRICE half is computed here: it reads the
+                    -- terminal COALESCE, never the horizon snapshot, so carrying it
+                    -- keeps the horizon path honest without carrying two more raw
+                    -- columns through the Sort.
+                    COALESCE(fo.calibration_probability, fo.opening_probability)
+                        AS golf_band_cp,
                     -- Queue #186 (#941, corrects #167): Kalshi player-prop
                     -- threshold "<subject>: N+" OVER captures. EXCLUDED when
                     -- (A) category='hockey' (NHL goal-family is corrupt at every
@@ -2191,15 +2220,6 @@ def _calibration_population_ctes(
                 JOIN virtual_market vm ON vm.market_id = fo.market_id
                 JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
                 {curve_price_join}
-                LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
-                LEFT JOIN esports_multi_bundles emb ON emb.market_id = fo.market_id
-                LEFT JOIN no_winner_markets nwm ON nwm.market_id = fo.market_id
-                LEFT JOIN draw_authority_markets dam ON dam.market_id = fo.market_id
-                LEFT JOIN orphan_partition_markets opm ON opm.market_id = fo.market_id
-                LEFT JOIN nonexclusive_bundle_markets nbm ON nbm.market_id = fo.market_id
-                LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = fo.market_id
-                LEFT JOIN mex_field_candidates mfc ON mfc.market_id = fo.market_id
-                LEFT JOIN mex_field_divisor mfd ON mfd.market_id = fo.market_id
                 WHERE fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
                   -- Queue #261 Item 1: calibration-truth eligibility (allowlist).
@@ -2216,6 +2236,89 @@ def _calibration_population_ctes(
                   -- never-bid/never-traded phantom is COUNTED as excluded here, not
                   -- silently removed at eligibility; a bid-bearing volume=0 row now
                   -- survives is_liquid and reaches the curve (the C44 #1 fix).
+            ),
+            -- CAL-P096: the nine per-MARKET slices, joined AFTER the window.
+            --
+            -- Every join below is at most one row per ``market_id`` — seven are
+            -- filters over ``market_result_shape`` (itself ``GROUP BY
+            -- fo.market_id``, and ``market_info`` is keyed on the
+            -- ``futures_markets`` primary key so it cannot fan out), and
+            -- ``golf_placeholder_markets`` / ``mex_field_candidates`` /
+            -- ``mex_field_divisor`` are each their own ``GROUP BY fo.market_id``.
+            -- Row-preserving is therefore a property of the relations, not a hope
+            -- about the data, and it is what makes ``rn`` computable before them.
+            --
+            -- The projection is the pre-split column list, in the pre-split ORDER,
+            -- so ``field_completeness`` / ``normalized`` / ``mode_prices`` /
+            -- ``deduped`` and the ``liq_summary`` counters see a byte-identical
+            -- relation. ``golf_band_cp`` is deliberately NOT re-projected: it is a
+            -- carrier for the band test below and was never a column of
+            -- ``ranked_outcomes``.
+            --
+            -- MATERIALIZED is load-bearing on BOTH CTEs. ``ranked_outcomes`` has
+            -- four referents; inlining it would recompute nine joins per referent.
+            -- ``ranked_outcomes_core`` has one referent, so PG12+ would inline it
+            -- by default and put the joins straight back underneath the window —
+            -- silently undoing this entire rewrite while every row count stayed
+            -- self-consistent.
+            ranked_outcomes AS MATERIALIZED (
+                SELECT
+                    core.raw_cp,
+                    -- Queue #262 Item 1: candidate membership (structural, terminal)
+                    -- vs divisor (price-expression). is_mex_normalized keys on the
+                    -- candidate so an incomplete horizon field is dropped WHOLE even
+                    -- when <3 members are present at the snapshot.
+                    mfc.market_id AS candidate_market_id,
+                    mfd.cp_sum AS mnm_cp_sum,
+                    core.market_id,
+                    core.outcome_id,
+                    core.outcome_name,
+                    core.market_type,
+                    core.llm_league,
+                    core.is_winner,
+                    core.price_moved,
+                    core.vm_id, core.source, core.category,
+                    core.eligible, core.is_grouped,
+                    core.is_multi,
+                    core.is_liquid,
+                    core.is_poly_placeholder,
+                    core.is_poly_never_traded,
+                    -- L2-79 Item 1: malformed 2-outcome mex binary (winner count
+                    -- 0 = void, or 2 = impossible). mb.win_count carries which.
+                    (mb.market_id IS NOT NULL) AS is_malformed_binary,
+                    mb.win_count AS malformed_win_count,
+                    -- Queue #159 (#1010): esports match-bundle exclusion flag.
+                    (emb.market_id IS NOT NULL) AS is_esports_bundle,
+                    -- Queue 299 rung 1: the market graded NOBODY — UNKNOWN truth,
+                    -- not a set of losses (is_winner's default is False).
+                    (nwm.market_id IS NOT NULL) AS is_no_winner_market,
+                    -- Queue 299 rung 2: draw-capable duel with no draw member.
+                    (dam.market_id IS NOT NULL) AS is_draw_authority_missing,
+                    -- Queue 299 rung 3: a 'field' that captured <=1 member.
+                    (opm.market_id IS NOT NULL) AS is_orphan_partition,
+                    -- Queue 299 rung 4b: category-independent non-exclusive
+                    -- bundle. CENSUS ONLY — this flag does NOT gate ``deduped``
+                    -- outside esports (which keeps its own measured exclusion).
+                    (nbm.market_id IS NOT NULL) AS is_nonexclusive_bundle,
+                    -- L2-79 Item 2: golf one-sided-ask placeholder — this outcome
+                    -- sits in the >=0.80 band of an over-subscribed golf mex market.
+                    (gpm.market_id IS NOT NULL
+                     AND core.golf_band_cp
+                         >= {GOLF_PLACEHOLDER_HIGH_BAND}) AS is_golf_placeholder,
+                    core.is_kalshi_prop_threshold,
+                    core.is_weather_wide_spread,
+                    core.rn,
+                    core.rn_distance_rank
+                FROM ranked_outcomes_core core
+                LEFT JOIN malformed_binaries mb ON mb.market_id = core.market_id
+                LEFT JOIN esports_multi_bundles emb ON emb.market_id = core.market_id
+                LEFT JOIN no_winner_markets nwm ON nwm.market_id = core.market_id
+                LEFT JOIN draw_authority_markets dam ON dam.market_id = core.market_id
+                LEFT JOIN orphan_partition_markets opm ON opm.market_id = core.market_id
+                LEFT JOIN nonexclusive_bundle_markets nbm ON nbm.market_id = core.market_id
+                LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = core.market_id
+                LEFT JOIN mex_field_candidates mfc ON mfc.market_id = core.market_id
+                LEFT JOIN mex_field_divisor mfd ON mfd.market_id = core.market_id
             ),
             -- Queue #257 Item 1: FIELD-COMPLETENESS aggregation. For each
             -- normalization CANDIDATE market (mex/field, single winner over all
