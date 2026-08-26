@@ -57,6 +57,8 @@ function side(overrides: Partial<SlateSide> = {}): SlateSide {
     move: 0.07,
     raw_probability: 0.72,
     raw_opening_probability: 0.65,
+    age_hours: 0.2,
+    price_state: "live",
     ...overrides,
   };
 }
@@ -87,6 +89,10 @@ function match(overrides: Partial<SlateMatch> = {}): SlateMatch {
     price_state: "live",
     observed_at: "2026-08-26T14:50:00+00:00",
     age_hours: 0.2,
+    freshest_observed_at: "2026-08-26T14:50:00+00:00",
+    freshest_age_hours: 0.2,
+    stale_sides: [],
+    mixed_freshness: false,
     favourite: "clara-burel",
     has_moved: true,
     source_count: 1,
@@ -277,6 +283,92 @@ describe("honesty treatment", () => {
     expect(html).toContain('data-live="false"');
     expect(html).toContain("72%"); // kept — discarding real information is its own failure
     expect(html).toContain("text-text-secondary");
+  });
+
+  // -------------------------------------------------------------------------
+  // THE MIXED-AGE PAIR — `C-USOPEN-DAY3-TIER2` on the slate
+  //
+  // A slate row normalizes its two sides against each other, so a stale side is
+  // not beside the published number, it is inside it. The pair below sums to
+  // exactly 1.000 and sails through the coherence gate, which is the point:
+  // coherence is not freshness.
+  // -------------------------------------------------------------------------
+
+  const MIXED_MATCH = match({
+    probability_is_live: false,
+    price_state: "dark",
+    observed_at: "2026-08-06T15:00:00+00:00",
+    age_hours: 20 * 24,
+    freshest_observed_at: "2026-08-26T14:50:00+00:00",
+    freshest_age_hours: 0.2,
+    stale_sides: ["yexin-ma"],
+    mixed_freshness: true,
+    sides: [
+      side(),
+      side({
+        entity_key: "yexin-ma",
+        display_name: "Yexin Ma",
+        probability: 0.28,
+        opening_probability: 0.35,
+        move: -0.07,
+        raw_probability: 0.28,
+        raw_opening_probability: 0.35,
+        age_hours: 20 * 24,
+        price_state: "dark",
+      }),
+    ],
+  });
+
+  it("mutes a pair whose second side is twenty days old", () => {
+    const html = render(slate({ matches: [MIXED_MATCH] }));
+    expect(html).toContain('data-live="false"');
+    expect(html).toContain('data-coherent="true"'); // the pair still sums to 1
+    expect(html).toContain("72%"); // and the number is still shown
+  });
+
+  it("names the stale side on the row, since the slate banner still reads live", () => {
+    const html = render(slate({ matches: [MIXED_MATCH] }));
+    // No banner — slate-level freshness is deliberately the NEWEST reading, so
+    // the per-row admission is the only thing standing between the reader and
+    // a silently greyed row.
+    expect(html).not.toContain('data-testid="slate-notice"');
+    expect(html).toContain('data-testid="slate-row-age"');
+    expect(html).toContain("Yexin Ma 20 days ago");
+  });
+
+  it("does not label a live row at all", () => {
+    const html = render(slate());
+    expect(html).not.toContain('data-testid="slate-row-age"');
+  });
+
+  it("does not put an age on a row muted for DISAGREEMENT rather than age", () => {
+    // An incoherent-but-fresh pair is muted for a different reason, and the
+    // incoherent block already says so. An age here would name the wrong
+    // problem, which is how a true label becomes a misleading one.
+    const html = render(
+      slate({
+        matches: [
+          match({
+            coherent: false,
+            probability_is_live: false,
+            price_state: "live",
+            favourite: null,
+            sides: [
+              side({ probability: null, opening_probability: null, move: null }),
+              side({
+                entity_key: "yexin-ma",
+                display_name: "Yexin Ma",
+                probability: null,
+                opening_probability: null,
+                move: null,
+              }),
+            ],
+          }),
+        ],
+      })
+    );
+    expect(html).toContain('data-testid="slate-incoherent"');
+    expect(html).not.toContain('data-testid="slate-row-age"');
   });
 
   it("says so in words when the slate is not live", () => {

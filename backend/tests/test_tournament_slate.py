@@ -298,6 +298,62 @@ def test_a_fresh_price_is_presented_as_live():
     assert row["probability_is_live"] is True
 
 
+# ---------------------------------------------------------------------------
+# THE MIXED-AGE PAIR — `C-USOPEN-DAY3-TIER2` applied to the slate
+#
+# The board's specimen has a twin here and it is arguably worse: a slate row
+# NORMALIZES its two sides against each other, so a stale side does not sit
+# beside the published number, it is baked into it. `normalize_pair` refuses
+# the loud version (0.90 + 0.60 -> refused) but a mixed-age pair that still
+# sums to 1.00 sails through coherence, because coherence is not freshness.
+# ---------------------------------------------------------------------------
+
+def _mixed_pair(fresh_hours: float, stale_hours: float):
+    prices = _prices()
+    prices[900001]["observed_at"] = NOW - timedelta(hours=fresh_hours)
+    prices[900002]["observed_at"] = NOW - timedelta(hours=stale_hours)
+    return build_slate(_register(), prices=prices, now=NOW)["matches"][0]
+
+
+def test_a_pair_with_one_stale_side_is_not_live():
+    """Both sides are inside the published number, so both must be fresh."""
+    row = _mixed_pair(fresh_hours=1.0, stale_hours=20 * 24)
+    # The pair is perfectly coherent — 0.72 + 0.28 = 1.000 exactly — which is
+    # the point: the existing gate has no reason to fire.
+    assert row["coherent"] is True
+    assert row["raw_sum"] == pytest.approx(1.0)
+    assert row["probability_is_live"] is False
+    assert row["price_state"] == "dark"
+
+
+def test_a_mixed_pair_ages_from_its_older_side_and_still_shows_the_newer():
+    row = _mixed_pair(fresh_hours=1.0, stale_hours=20 * 24)
+    assert row["age_hours"] == pytest.approx(480.0)
+    assert row["freshest_age_hours"] == pytest.approx(1.0)
+    assert row["mixed_freshness"] is True
+    assert row["stale_sides"] == ["yexin-ma"]
+    by_key = {s["entity_key"]: s for s in row["sides"]}
+    assert by_key["clara-burel"]["price_state"] == "live"
+    assert by_key["yexin-ma"]["price_state"] == "dark"
+
+
+def test_a_pair_fresh_on_both_sides_is_still_live():
+    """The AND must be able to say yes to two different fresh timestamps."""
+    row = _mixed_pair(fresh_hours=0.1, stale_hours=1.0)
+    assert row["probability_is_live"] is True
+    assert row["mixed_freshness"] is False
+    assert row["age_hours"] == pytest.approx(1.0)
+
+
+def test_the_slate_banner_is_still_the_newest_reading():
+    """Row-level AND, slate-level newest — the rule did not leak upward."""
+    prices = _prices()
+    prices[900002]["observed_at"] = NOW - timedelta(hours=20 * 24)
+    slate = build_slate(_register(), prices=prices, now=NOW)
+    assert slate["price_state"] == "live"
+    assert slate["matches"][0]["probability_is_live"] is False
+
+
 def test_every_drop_is_named_and_counted():
     """A short slate must always have an answer; silent truncation reads as absence."""
     played = (NOW - timedelta(days=1)).isoformat()
@@ -418,6 +474,65 @@ def test_a_stale_prop_is_never_presented_as_live():
     assert props[0]["price_state"] == "stale"
     assert props[0]["outcomes"][0]["probability"] == pytest.approx(0.22)
     assert props[0]["outcomes"][0]["probability_is_live"] is False
+
+
+# ---------------------------------------------------------------------------
+# THE MIXED-AGE PROP CARD — the same defect, one surface further out
+#
+# `build_props` had the failure in its purest form: it computed ONE section
+# age from the newest outcome and then wrote that verdict onto every outcome,
+# with a comment explaining that a per-outcome flag disagreeing with the
+# section banner would be "the page contradicting itself". It would not have
+# been a contradiction, it was the truth — the flags now decide the banner
+# rather than the other way round.
+# ---------------------------------------------------------------------------
+
+def _mixed_prop(fresh_hours: float, stale_hours: float):
+    prices = {
+        700001: {"probability": 0.22, "observed_at": NOW - timedelta(hours=stale_hours)},
+        700002: {"probability": 0.78, "observed_at": NOW - timedelta(hours=fresh_hours)},
+    }
+    return build_props(_register(props=[_prop()]), prices=prices, now=NOW)[0]
+
+
+def test_a_fresh_outcome_cannot_make_a_stale_outcome_read_live():
+    """The specimen: outcome B refreshed 5 minutes ago, outcome A 20 days old."""
+    card = _mixed_prop(fresh_hours=0.08, stale_hours=20 * 24)
+    by_key = {o["entity_key"]: o for o in card["outcomes"]}
+    assert by_key["no"]["probability_is_live"] is True     # its own reading is fresh
+    assert by_key["yes"]["probability_is_live"] is False   # ...and it cannot lend that
+    assert by_key["yes"]["age_hours"] == pytest.approx(480.0)
+
+
+def test_a_mixed_prop_card_reads_from_its_oldest_priced_outcome():
+    """A ranked field is a published artifact: a stale member can outrank fresh ones."""
+    card = _mixed_prop(fresh_hours=0.08, stale_hours=20 * 24)
+    assert card["price_state"] == "dark"
+    assert card["age_hours"] == pytest.approx(480.0)
+    assert card["freshest_age_hours"] == pytest.approx(0.08)
+    assert card["mixed_freshness"] is True
+    assert card["stale_outcomes"] == ["yes"]
+
+
+def test_a_prop_card_fresh_throughout_is_live():
+    card = _mixed_prop(fresh_hours=0.08, stale_hours=1.0)
+    assert card["price_state"] == "live"
+    assert card["mixed_freshness"] is False
+    assert all(o["probability_is_live"] is True for o in card["outcomes"])
+
+
+def test_an_unpriced_outcome_does_not_darken_a_fresh_card():
+    """The other direction. An outcome with no reading has no reading to be
+    stale — counting its absence as dark would paint every partially quoted
+    card dark and retire the signal."""
+    prices = {700001: {"probability": 0.22, "observed_at": NOW - timedelta(minutes=5)}}
+    card = build_props(_register(props=[_prop()]), prices=prices, now=NOW)[0]
+    assert card["price_state"] == "live"
+    assert card["mixed_freshness"] is False
+    by_key = {o["entity_key"]: o for o in card["outcomes"]}
+    assert by_key["yes"]["probability_is_live"] is True
+    assert by_key["no"]["probability"] is None
+    assert by_key["no"]["probability_is_live"] is False
 
 
 def test_a_register_with_no_props_yields_an_empty_section():

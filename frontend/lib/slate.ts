@@ -33,6 +33,9 @@ export interface SlateSide {
   move: number | null;
   raw_probability: number | null;
   raw_opening_probability: number | null;
+  /** THIS side's own freshness (UX-P135). The row's verdict is the AND. */
+  age_hours: number | null;
+  price_state: PriceState;
 }
 
 export interface SlateMatch {
@@ -47,8 +50,18 @@ export interface SlateMatch {
   opening_raw_sum: number | null;
   probability_is_live: boolean;
   price_state: PriceState;
+  /**
+   * The GOVERNING (older) side's reading. A normalized pair bakes BOTH sides
+   * into the number shown, so it is only as fresh as its older half (UX-P135).
+   */
   observed_at: string | null;
   age_hours: number | null;
+  /** The newer side's reading — an extra fact beside the verdict. */
+  freshest_observed_at: string | null;
+  freshest_age_hours: number | null;
+  /** Entity keys of the sides that are not live. */
+  stale_sides: string[];
+  mixed_freshness: boolean;
   favourite: string | null;
   has_moved: boolean;
   source_count: number;
@@ -92,6 +105,45 @@ export interface SlateData {
   newest_observed_at: string | null;
   age_hours: number | null;
   dark_after_hours: number;
+}
+
+/**
+ * The line beside a muted slate row, explaining WHICH side is old.
+ *
+ * `null` for a live row. Mirrors `rowFreshnessLabel` on the boards so the two
+ * halves of the page word the same admission the same way — a reader should
+ * not have to learn two vocabularies for one idea (UX-P135).
+ */
+export function slateRowFreshnessLabel(match: SlateMatch): string | null {
+  if (slateRowIsPresentedAsLive(match)) return null;
+  if (!match.coherent && match.price_state === "live") {
+    // Muted for disagreement, not for age. The incoherent block already says
+    // so in words; repeating an age here would name the wrong problem.
+    return null;
+  }
+  const when = slateStalenessLabel(match.age_hours);
+  if (match.mixed_freshness && match.stale_sides.length > 0) {
+    const names = match.stale_sides.map((key) => {
+      const side = match.sides.find((s) => s.entity_key === key);
+      return side ? side.display_name : key;
+    });
+    return `${names.join(" + ")} ${when}`;
+  }
+  return when;
+}
+
+/** Human age, rounded DOWN — "8 days ago" must never flatter to "7". */
+export function slateStalenessLabel(ageHours: number | null): string {
+  if (ageHours === null || !Number.isFinite(ageHours)) return "never priced";
+  if (ageHours < 1) {
+    const minutes = Math.max(1, Math.floor(ageHours * 60));
+    return `${minutes} min ago`;
+  }
+  if (ageHours < 48) {
+    const hours = Math.floor(ageHours);
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
+  return `${Math.floor(ageHours / 24)} days ago`;
 }
 
 /** A row may be presented as a live number only when the SERVER says so. */

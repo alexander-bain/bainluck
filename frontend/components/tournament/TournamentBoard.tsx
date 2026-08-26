@@ -8,8 +8,8 @@ import {
   boardNotice,
   formatBoardProbability,
   formatTrendDelta,
+  rowFreshnessLabel,
   rowIsPresentedAsLive,
-  stalenessLabel,
   trendDirection,
   type TournamentBoardData,
   type TournamentRow,
@@ -33,6 +33,9 @@ import {
 function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: string }) {
   const isLive = rowIsPresentedAsLive(row);
   const settled = row.probability === null;
+  // Names the old leg when only one of them is old (UX-P135), so a row muted
+  // by a stale Polymarket price does not read as "nobody has looked at this".
+  const freshness = rowFreshnessLabel(row);
 
   return (
     <li
@@ -42,6 +45,7 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
       data-rank={row.rank}
       data-live={isLive ? "true" : "false"}
       data-price-state={row.price_state}
+      data-mixed-freshness={row.mixed_freshness ? "true" : "false"}
     >
       <span className="text-right text-xs tabular-nums text-text-muted">{row.rank}</span>
 
@@ -69,10 +73,10 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
               <span>
                 {row.source_count} source{row.source_count === 1 ? "" : "s"}
               </span>
-              {!isLive && (
+              {freshness !== null && (
                 <span className="text-accent-warning" data-testid="row-age">
                   {" · "}
-                  {stalenessLabel(row.age_hours)}
+                  {freshness}
                 </span>
               )}
             </>

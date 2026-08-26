@@ -24,6 +24,7 @@ import TrendSparkline from "@/components/tournament/TrendSparkline";
 import {
   boardNotice,
   formatBoardProbability,
+  rowFreshnessLabel,
   rowIsPresentedAsLive,
   sparklinePoints,
   stalenessLabel,
@@ -45,10 +46,26 @@ function row(overrides: Partial<TournamentRow> = {}): TournamentRow {
     observed_at: "2026-08-25T11:00:00+00:00",
     age_hours: 1,
     price_state: "live",
+    freshest_observed_at: "2026-08-25T11:00:00+00:00",
+    freshest_age_hours: 1,
+    stale_sources: [],
+    mixed_freshness: false,
     source_count: 2,
     sources: [
-      { source: "kalshi", probability: 0.5, observed_at: "2026-08-25T11:00:00+00:00" },
-      { source: "polymarket", probability: 0.54, observed_at: "2026-08-25T11:00:00+00:00" },
+      {
+        source: "kalshi",
+        probability: 0.5,
+        observed_at: "2026-08-25T11:00:00+00:00",
+        age_hours: 1,
+        price_state: "live",
+      },
+      {
+        source: "polymarket",
+        probability: 0.54,
+        observed_at: "2026-08-25T11:00:00+00:00",
+        age_hours: 1,
+        price_state: "live",
+      },
     ],
     blend_rule: "equal_weight_midpoint",
     divergent: false,
@@ -69,6 +86,8 @@ function board(overrides: Partial<TournamentBoardData> = {}): TournamentBoardDat
     rows: [row()],
     contenders: 1,
     unpriced: 0,
+    rows_not_live: 0,
+    mixed_freshness_rows: 0,
     price_state: "live",
     newest_observed_at: "2026-08-25T11:00:00+00:00",
     age_hours: 1,
@@ -178,6 +197,107 @@ describe("a stale row inside an otherwise live board", () => {
     // the per-row marking has to carry the weight here.
     expect(html).not.toContain('data-testid="price-state-notice"');
     expect(html).toContain('data-testid="row-age"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE MIXED-CONTRIBUTOR ROW — `C-USOPEN-DAY3-TIER2`, at the pixel
+//
+// The server-side fix is the verdict; this is the half a reader can see. The
+// specimen row blends a one-hour Kalshi price with a twenty-day Polymarket
+// price, so it must render exactly as a wholly stale row does — muted, aged,
+// never in the confident type — and it must say WHICH leg is old, because
+// "20 days ago" on its own describes a row nobody has looked at, which is not
+// what happened.
+// ---------------------------------------------------------------------------
+
+const MIXED_ROW = row({
+  entity_key: "mixed",
+  probability: 0.42,
+  probability_is_live: false,
+  price_state: "dark",
+  observed_at: "2026-08-05T11:00:00+00:00",
+  age_hours: 20 * 24,
+  freshest_observed_at: "2026-08-25T11:00:00+00:00",
+  freshest_age_hours: 1,
+  stale_sources: ["polymarket"],
+  mixed_freshness: true,
+  sources: [
+    {
+      source: "kalshi",
+      probability: 0.4,
+      observed_at: "2026-08-25T11:00:00+00:00",
+      age_hours: 1,
+      price_state: "live",
+    },
+    {
+      source: "polymarket",
+      probability: 0.44,
+      observed_at: "2026-08-05T11:00:00+00:00",
+      age_hours: 20 * 24,
+      price_state: "dark",
+    },
+  ],
+});
+
+describe("a row blended from a fresh source and a stale one", () => {
+  const html = renderToStaticMarkup(
+    <TournamentBoard
+      board={board({ rows: [MIXED_ROW], mixed_freshness_rows: 1, rows_not_live: 1 })}
+    />
+  );
+
+  it("is not rendered in the live treatment", () => {
+    expect(html).toContain('data-live="false"');
+    expect(html).not.toContain('data-live="true"');
+    expect(html).toContain('data-mixed-freshness="true"');
+  });
+
+  it("still prints the number — the fresh half is real information", () => {
+    expect(html).toContain(formatBoardProbability(0.42));
+  });
+
+  it("ages the row from its OLDEST leg, never its freshest", () => {
+    expect(html).toContain('data-testid="row-age"');
+    expect(html).toContain(stalenessLabel(20 * 24));
+    // The one-hour reading must not appear as the row's age. This is the
+    // rendered form of the whole defect.
+    expect(html).not.toContain("1 hour ago");
+  });
+
+  it("names the stale source rather than implying the whole row is abandoned", () => {
+    expect(html).toContain("Polymarket");
+  });
+});
+
+describe("rowFreshnessLabel", () => {
+  it("says nothing about a live row", () => {
+    expect(rowFreshnessLabel(row())).toBeNull();
+  });
+
+  it("names the stale contributor on a mixed row", () => {
+    expect(rowFreshnessLabel(MIXED_ROW)).toBe("Polymarket 20 days ago");
+  });
+
+  it("falls back to a bare age when EVERY contributor is stale", () => {
+    // Nothing to single out — naming both sources would be noise, and the
+    // plain reading ("20 days ago") is then true of the whole row.
+    expect(
+      rowFreshnessLabel(
+        row({
+          probability_is_live: false,
+          price_state: "dark",
+          age_hours: 20 * 24,
+          mixed_freshness: false,
+          stale_sources: ["kalshi", "polymarket"],
+        })
+      )
+    ).toBe("20 days ago");
+  });
+
+  it("reports the GOVERNING age, never the freshest", () => {
+    // The regression that would reintroduce the defect in the copy alone.
+    expect(rowFreshnessLabel(MIXED_ROW)).not.toContain("1 hour");
   });
 });
 

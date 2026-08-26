@@ -8,6 +8,7 @@ import {
   orderedSides,
   slateGroups,
   slateNotice,
+  slateRowFreshnessLabel,
   slateRowIsPresentedAsLive,
   broadcastFor,
   type Broadcast,
@@ -35,11 +36,18 @@ import {
  *    `coherent: false` and both probabilities `null`. The row still renders —
  *    the match is still on, and that is the useful part — but it says the
  *    prices disagree instead of showing a normalized number with no referent.
+ *
+ * 3. **A muted row says why it is muted.** Since UX-P135 a pair is only live
+ *    when BOTH its sides are, so a row can be greyed while the slate banner
+ *    above it still reads live. A muted number with no stated reason is worse
+ *    than either a live one or an absent one — the reader assumes a bug or,
+ *    worse, does not notice. So the age travels with the row.
  */
 
 function SlateRow({ match }: { match: SlateMatch }) {
   const isLive = slateRowIsPresentedAsLive(match);
   const ordered = orderedSides(match);
+  const freshness = slateRowFreshnessLabel(match);
 
   return (
     <li
@@ -57,6 +65,11 @@ function SlateRow({ match }: { match: SlateMatch }) {
         {match.has_moved && isLive && (
           <span className="text-accent-brand" data-testid="slate-moved">
             Moved
+          </span>
+        )}
+        {freshness !== null && (
+          <span className="normal-case tracking-normal text-accent-warning" data-testid="slate-row-age">
+            {freshness}
           </span>
         )}
       </div>

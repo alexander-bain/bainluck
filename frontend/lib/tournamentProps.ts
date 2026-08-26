@@ -22,7 +22,14 @@ export interface PropOutcome {
   entity_key: string;
   display_name: string;
   probability: number | null;
+  /**
+   * THIS outcome's own freshness, not the card's (UX-P135). The old rule let
+   * one outcome refreshed an hour ago mark a twenty-day-old answer live.
+   */
   probability_is_live: boolean;
+  observed_at: string | null;
+  age_hours: number | null;
+  price_state: PriceState;
   /** Does this outcome answer the card's question? Curated, never inferred. */
   is_answer: boolean;
 }
@@ -42,9 +49,15 @@ export interface PropMarket {
    * missing value: it selects the ranked-list rendering.
    */
   answer_entity_key: string | null;
+  /** The AND over the card's PRICED outcomes — a ranked field is published too. */
   price_state: PriceState;
   observed_at: string | null;
   age_hours: number | null;
+  freshest_observed_at: string | null;
+  freshest_age_hours: number | null;
+  /** Entity keys of priced outcomes that are not live. */
+  stale_outcomes: string[];
+  mixed_freshness: boolean;
 }
 
 /**

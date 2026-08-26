@@ -36,6 +36,17 @@ Three things this module refuses to do:
    this morning must not still be presenting this morning's matches at
    midnight.
 
+4. **Call a row live off its freshest side.**  A slate row publishes a
+   *normalized pair*, so both sides are inside the number the reader sees: an
+   0.72 that was normalized against a side quoted twenty days ago is a
+   twenty-day-old 0.72.  Freshness is therefore the AND over the sides, using
+   the same ``governing_age_hours`` the boards use, and for the same reason
+   (UX-P135, cert ``C-USOPEN-DAY3-TIER2``).  ``normalize_pair`` already refuses
+   the *loud* version of this failure — one side stale at 0.9 against 0.6 — but
+   a mixed-age pair that happens to still sum to 1.00 slips straight through
+   the coherence gate, which is exactly what a coherence gate is for and
+   exactly why it is not a freshness gate.
+
 Pure logic — every input is a plain dict, so the whole slate is testable
 without a database.
 """
@@ -46,7 +57,13 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from app.utils.tournament_board import DARK_PRICE_HOURS, draw_label, price_state
+from app.utils.tournament_board import (
+    DARK_PRICE_HOURS,
+    draw_label,
+    freshest_observation,
+    governing_age_hours,
+    price_state,
+)
 from app.utils.tournament_register import TournamentRegister
 
 logger = logging.getLogger(__name__)
@@ -116,7 +133,14 @@ def _side_view(
     entity_key: str,
     player: dict[str, Any],
     loaded: dict[str, Any],
+    now: datetime,
 ) -> dict[str, Any]:
+    observed = loaded.get("observed_at")
+    age = (
+        (now - observed).total_seconds() / 3600.0
+        if isinstance(observed, datetime)
+        else None
+    )
     return {
         "entity_key": entity_key,
         "display_name": player.get("display_name") or entity_key,
@@ -128,7 +152,12 @@ def _side_view(
         "move": None,
         "raw_probability": _as_float(loaded.get("probability")),
         "raw_opening_probability": _as_float(loaded.get("opening_probability")),
-        "observed_at": loaded.get("observed_at"),
+        "observed_at": observed,
+        # Each side answers for its own freshness (UX-P135). The row's verdict
+        # is the AND of these two, so the UI can name the old side instead of
+        # muting the pair with no reason given.
+        "age_hours": round(age, 2) if age is not None else None,
+        "price_state": price_state(age),
     }
 
 
@@ -194,7 +223,9 @@ def build_slate(
             continue
 
         views: list[dict[str, Any]] = []
-        newest: Optional[datetime] = None
+        # Both sides' own times, kept as a list. The verdict needs the oldest
+        # and the display needs the newest; a running max destroys one of them.
+        side_times: list[Optional[datetime]] = []
         for entity_key in players:
             player = reg.by_entity.get(entity_key)
             if player is None:
@@ -202,10 +233,9 @@ def build_slate(
             side = sides_map.get(entity_key) or {}
             outcome_id = side.get("outcome_id")
             loaded = prices.get(outcome_id) if isinstance(outcome_id, int) else None
-            view = _side_view(entity_key, player, loaded or {})
+            view = _side_view(entity_key, player, loaded or {}, now)
             observed = (loaded or {}).get("observed_at")
-            if isinstance(observed, datetime) and (newest is None or observed > newest):
-                newest = observed
+            side_times.append(observed if isinstance(observed, datetime) else None)
             views.append(view)
         if len(views) != 2:
             drop("PLAYER_NOT_REGISTERED")
@@ -234,8 +264,14 @@ def build_slate(
                     view["probability"] - view["opening_probability"], 6
                 )
 
-        age = (now - newest).total_seconds() / 3600.0 if newest else None
+        # THE AND (UX-P135): the pair is as old as its older side.
+        age = governing_age_hours(side_times, now)
         state = price_state(age)
+        newest = freshest_observation(side_times)
+        freshest_age = (now - newest).total_seconds() / 3600.0 if newest else None
+        stale_sides = [
+            v["entity_key"] for v in views if v["price_state"] != "live"
+        ]
 
         favourite = None
         if coherent:
@@ -261,8 +297,19 @@ def build_slate(
             "opening_raw_sum": open_sum,
             "probability_is_live": state == "live" and coherent,
             "price_state": state,
-            "observed_at": newest.isoformat() if newest else None,
+            # GOVERNING, not newest — see doctrine 4 in the module docstring.
+            "observed_at": (
+                min(t for t in side_times if t is not None).isoformat()
+                if age is not None
+                else None
+            ),
             "age_hours": round(age, 2) if age is not None else None,
+            "freshest_observed_at": newest.isoformat() if newest else None,
+            "freshest_age_hours": (
+                round(freshest_age, 2) if freshest_age is not None else None
+            ),
+            "stale_sides": stale_sides,
+            "mixed_freshness": 0 < len(stale_sides) < len(views),
             "favourite": favourite,
             "has_moved": any(abs(m) > MOVE_DEAD_BAND for m in moves),
             "source_count": 1,
@@ -270,8 +317,12 @@ def build_slate(
 
     rows.sort(key=lambda r: (r["scheduled_date"], r["matchup_key"] or ""))
 
+    # Slate-level, like the board's: the newest thing anyone has seen. Reads
+    # `freshest_observed_at` because `observed_at` is now the governing side's.
     observed_times = [
-        datetime.fromisoformat(r["observed_at"]) for r in rows if r.get("observed_at")
+        datetime.fromisoformat(r["freshest_observed_at"])
+        for r in rows
+        if r.get("freshest_observed_at")
     ]
     newest_overall = max(observed_times) if observed_times else None
     slate_age = (
@@ -317,7 +368,7 @@ def build_props(
     out: list[dict[str, Any]] = []
     for prop in TournamentRegister(register).props:
         views: list[dict[str, Any]] = []
-        newest: Optional[datetime] = None
+        priced_times: list[Optional[datetime]] = []
 
         for outcome in prop.get("outcomes") or []:
             if not isinstance(outcome, dict):
@@ -325,26 +376,48 @@ def build_props(
             loaded = prices.get(outcome.get("outcome_id")) or {}
             probability = _as_float(loaded.get("probability"))
             observed = loaded.get("observed_at")
-            if isinstance(observed, datetime) and (newest is None or observed > newest):
-                newest = observed
+            observed = observed if isinstance(observed, datetime) else None
+            outcome_age = (
+                (now - observed).total_seconds() / 3600.0 if observed else None
+            )
+            outcome_state = price_state(outcome_age)
+            if probability is not None:
+                # Only a PRICED outcome contributes to the card's freshness. An
+                # unpriced one has no reading to be stale, and counting it as
+                # dark would paint every partially-quoted card dark.
+                priced_times.append(observed)
             views.append({
                 "entity_key": outcome.get("entity_key"),
                 "display_name": outcome.get("display_name"),
                 "probability": round(probability, 6) if probability is not None else None,
-                # Filled below, once the section's freshness is known. A
-                # per-outcome flag that disagreed with the section's banner
-                # would be the page contradicting itself.
-                "probability_is_live": False,
+                # ITS OWN freshness, not the section's newest (UX-P135). The
+                # old rule let one outcome refreshed an hour ago mark a
+                # twenty-day-old answer live: the section max is exactly the
+                # `C-USOPEN-DAY3-TIER2` shape applied to a card instead of a
+                # blend. These flags cannot contradict the card's banner
+                # because the banner is now derived FROM them.
+                "probability_is_live": outcome_state == "live" and probability is not None,
+                "observed_at": observed.isoformat() if observed else None,
+                "age_hours": round(outcome_age, 2) if outcome_age is not None else None,
+                "price_state": outcome_state,
                 # Does THIS outcome answer the card's question? Curated in the
                 # register, never inferred here — see the answer rule in
                 # `tournament_register.validate_prop`.
                 "is_answer": outcome.get("is_answer") is True,
             })
 
-        age = (now - newest).total_seconds() / 3600.0 if newest else None
+        # The card's own state is the AND over its priced outcomes: a ranked
+        # field is a published artifact too, and a stale member can outrank
+        # fresh ones inside it.
+        age = governing_age_hours(priced_times, now)
         state = price_state(age)
-        for view in views:
-            view["probability_is_live"] = state == "live" and view["probability"] is not None
+        newest = freshest_observation(priced_times)
+        freshest_age = (now - newest).total_seconds() / 3600.0 if newest else None
+        stale_outcomes = [
+            v["entity_key"]
+            for v in views
+            if v["probability"] is not None and v["price_state"] != "live"
+        ]
 
         answer = next((v for v in views if v["is_answer"]), None)
 
@@ -360,8 +433,18 @@ def build_props(
             # card must show a ranked list rather than one headline number.
             "answer_entity_key": answer["entity_key"] if answer else None,
             "price_state": state,
-            "observed_at": newest.isoformat() if newest else None,
+            "observed_at": (
+                min(t for t in priced_times if t is not None).isoformat()
+                if age is not None
+                else None
+            ),
             "age_hours": round(age, 2) if age is not None else None,
+            "freshest_observed_at": newest.isoformat() if newest else None,
+            "freshest_age_hours": (
+                round(freshest_age, 2) if freshest_age is not None else None
+            ),
+            "stale_outcomes": stale_outcomes,
+            "mixed_freshness": 0 < len(stale_outcomes) < len(priced_times),
         })
     return out
 
