@@ -1,0 +1,518 @@
+{
+  "label": "leg_trade_evidence",
+  "complete": true,
+  "measured": true,
+  "population": "polymarket, all statuses, outcome name in ('over', 'under', 'yes', 'no')",
+  "predicate": "EXISTS(futures_odds_snapshots WHERE yes_bid > 0 OR last_price > 0) \u2014 the exact test POLY_PLACEHOLDER_EXCLUDE negates, band [0.45, 0.55]",
+  "shard_count": 80,
+  "shards": [
+    {
+      "lo": 1,
+      "hi": 500001,
+      "duration_ms": 9289.4,
+      "sql_fingerprint": "1b29d1c3cfce4b1e"
+    },
+    {
+      "lo": 500001,
+      "hi": 1000001,
+      "duration_ms": 269.7,
+      "sql_fingerprint": "429b71dcd4c87fa6"
+    },
+    {
+      "lo": 1000001,
+      "hi": 2000001,
+      "duration_ms": 359.3,
+      "sql_fingerprint": "649808b2599535b7"
+    },
+    {
+      "lo": 2000001,
+      "hi": 4000001,
+      "duration_ms": 7882.5,
+      "sql_fingerprint": "d554c6da12ceeb91"
+    },
+    {
+      "lo": 4000001,
+      "hi": 6000001,
+      "duration_ms": 5257.2,
+      "sql_fingerprint": "c3a4a6572815447b"
+    },
+    {
+      "lo": 6000001,
+      "hi": 8000001,
+      "duration_ms": 4598.6,
+      "sql_fingerprint": "0d636b866941c199"
+    },
+    {
+      "lo": 8000001,
+      "hi": 10000001,
+      "duration_ms": 4952.0,
+      "sql_fingerprint": "cfbcdf7de5794f5b"
+    },
+    {
+      "lo": 10000001,
+      "hi": 12000001,
+      "duration_ms": 5295.2,
+      "sql_fingerprint": "f4fb9e35bb9f3cb0"
+    },
+    {
+      "lo": 12000001,
+      "hi": 13000001,
+      "duration_ms": 7838.8,
+      "sql_fingerprint": "2a9167f87d904907"
+    },
+    {
+      "lo": 13000001,
+      "hi": 13500001,
+      "duration_ms": 726.0,
+      "sql_fingerprint": "c36f7f054c9c2685"
+    },
+    {
+      "lo": 13500001,
+      "hi": 13750001,
+      "duration_ms": 230.4,
+      "sql_fingerprint": "ec508349ab97a01d"
+    },
+    {
+      "lo": 13750001,
+      "hi": 13781251,
+      "duration_ms": 214.5,
+      "sql_fingerprint": "c4bb4c2f1bb718a2"
+    },
+    {
+      "lo": 13781251,
+      "hi": 13796876,
+      "duration_ms": 3144.3,
+      "sql_fingerprint": "4ae8e3e246c2d4f8"
+    },
+    {
+      "lo": 13796876,
+      "hi": 13804688,
+      "duration_ms": 2378.0,
+      "sql_fingerprint": "19ef2b951bc2b790"
+    },
+    {
+      "lo": 13804688,
+      "hi": 13812501,
+      "duration_ms": 3135.2,
+      "sql_fingerprint": "2a3b0c824d76d1d7"
+    },
+    {
+      "lo": 13812501,
+      "hi": 13875001,
+      "duration_ms": 3091.8,
+      "sql_fingerprint": "93a1a7fbc26aba70"
+    },
+    {
+      "lo": 13875001,
+      "hi": 14000001,
+      "duration_ms": 67.5,
+      "sql_fingerprint": "04a73de36f80ff18"
+    },
+    {
+      "lo": 14000001,
+      "hi": 16000001,
+      "duration_ms": 2139.6,
+      "sql_fingerprint": "a22f790b4d60429f"
+    },
+    {
+      "lo": 16000001,
+      "hi": 17000001,
+      "duration_ms": 8184.2,
+      "sql_fingerprint": "525a595fc4e348e4"
+    },
+    {
+      "lo": 17000001,
+      "hi": 18000001,
+      "duration_ms": 603.2,
+      "sql_fingerprint": "a18460cb3501f242"
+    },
+    {
+      "lo": 18000001,
+      "hi": 20000001,
+      "duration_ms": 9430.4,
+      "sql_fingerprint": "c66a305fe6cc9a90"
+    },
+    {
+      "lo": 20000001,
+      "hi": 22000001,
+      "duration_ms": 9612.1,
+      "sql_fingerprint": "ecf9352c598ac294"
+    },
+    {
+      "lo": 22000001,
+      "hi": 24000001,
+      "duration_ms": 8696.9,
+      "sql_fingerprint": "a14c9b9144025ed0"
+    },
+    {
+      "lo": 24000001,
+      "hi": 26000001,
+      "duration_ms": 8720.6,
+      "sql_fingerprint": "6dadaab3cd9c5177"
+    },
+    {
+      "lo": 26000001,
+      "hi": 27000001,
+      "duration_ms": 6384.7,
+      "sql_fingerprint": "a350c05d2132761f"
+    },
+    {
+      "lo": 27000001,
+      "hi": 28000001,
+      "duration_ms": 1064.5,
+      "sql_fingerprint": "8aef7358f8dcb534"
+    },
+    {
+      "lo": 28000001,
+      "hi": 30000001,
+      "duration_ms": 8777.3,
+      "sql_fingerprint": "2cd597472296fa1b"
+    },
+    {
+      "lo": 30000001,
+      "hi": 32000001,
+      "duration_ms": 8127.0,
+      "sql_fingerprint": "4d330265a83b3a33"
+    },
+    {
+      "lo": 32000001,
+      "hi": 34000001,
+      "duration_ms": 5399.1,
+      "sql_fingerprint": "aaf4090b3fd66ba8"
+    },
+    {
+      "lo": 34000001,
+      "hi": 35000001,
+      "duration_ms": 7894.3,
+      "sql_fingerprint": "10cca4c52be4d3fe"
+    },
+    {
+      "lo": 35000001,
+      "hi": 35250001,
+      "duration_ms": 927.0,
+      "sql_fingerprint": "f5e1bc9a2d8f8ca4"
+    },
+    {
+      "lo": 35250001,
+      "hi": 35375001,
+      "duration_ms": 93.1,
+      "sql_fingerprint": "00d5d7d245920e8f"
+    },
+    {
+      "lo": 35375001,
+      "hi": 35500001,
+      "duration_ms": 6271.5,
+      "sql_fingerprint": "1abb010f0a59834e"
+    },
+    {
+      "lo": 35500001,
+      "hi": 36000001,
+      "duration_ms": 463.8,
+      "sql_fingerprint": "2da7981b9c747eae"
+    },
+    {
+      "lo": 36000001,
+      "hi": 38000001,
+      "duration_ms": 8534.6,
+      "sql_fingerprint": "e390b6d21bd95529"
+    },
+    {
+      "lo": 38000001,
+      "hi": 40000001,
+      "duration_ms": 4394.4,
+      "sql_fingerprint": "b57089d5cb9c220e"
+    },
+    {
+      "lo": 40000001,
+      "hi": 42000001,
+      "duration_ms": 731.6,
+      "sql_fingerprint": "0e795eb107303bb7"
+    },
+    {
+      "lo": 42000001,
+      "hi": 44000001,
+      "duration_ms": 523.1,
+      "sql_fingerprint": "a5c612eebbd8b0b5"
+    },
+    {
+      "lo": 44000001,
+      "hi": 46000001,
+      "duration_ms": 546.6,
+      "sql_fingerprint": "a639fe11e4772c74"
+    },
+    {
+      "lo": 46000001,
+      "hi": 48000001,
+      "duration_ms": 733.0,
+      "sql_fingerprint": "a18d5be0bef8c1a0"
+    },
+    {
+      "lo": 48000001,
+      "hi": 50000001,
+      "duration_ms": 618.7,
+      "sql_fingerprint": "88f2ee90b834cb3e"
+    },
+    {
+      "lo": 50000001,
+      "hi": 52000001,
+      "duration_ms": 516.3,
+      "sql_fingerprint": "730baf4f25701b4b"
+    },
+    {
+      "lo": 52000001,
+      "hi": 54000001,
+      "duration_ms": 7692.0,
+      "sql_fingerprint": "c64c6f8772d3a5af"
+    },
+    {
+      "lo": 54000001,
+      "hi": 56000001,
+      "duration_ms": 9407.2,
+      "sql_fingerprint": "e19112f0ca95455a"
+    },
+    {
+      "lo": 56000001,
+      "hi": 56500001,
+      "duration_ms": 487.0,
+      "sql_fingerprint": "d5002071c0a9d68a"
+    },
+    {
+      "lo": 56500001,
+      "hi": 56625001,
+      "duration_ms": 416.6,
+      "sql_fingerprint": "4f264d5e2de6d98f"
+    },
+    {
+      "lo": 56625001,
+      "hi": 56750001,
+      "duration_ms": 1766.2,
+      "sql_fingerprint": "18156c94f4d62bca"
+    },
+    {
+      "lo": 56750001,
+      "hi": 56812501,
+      "duration_ms": 1997.9,
+      "sql_fingerprint": "3dc31a22b630f3fc"
+    },
+    {
+      "lo": 56812501,
+      "hi": 56875001,
+      "duration_ms": 7536.6,
+      "sql_fingerprint": "0a6bfd089d4e16e8"
+    },
+    {
+      "lo": 56875001,
+      "hi": 57000001,
+      "duration_ms": 9744.4,
+      "sql_fingerprint": "804c46e89fc11943"
+    },
+    {
+      "lo": 57000001,
+      "hi": 57062501,
+      "duration_ms": 2039.6,
+      "sql_fingerprint": "86c1480d2a8fe8d0"
+    },
+    {
+      "lo": 57062501,
+      "hi": 57125001,
+      "duration_ms": 1016.4,
+      "sql_fingerprint": "504550daa15154ba"
+    },
+    {
+      "lo": 57125001,
+      "hi": 57187501,
+      "duration_ms": 1068.1,
+      "sql_fingerprint": "65f724713fbe5a05"
+    },
+    {
+      "lo": 57187501,
+      "hi": 57250001,
+      "duration_ms": 1182.6,
+      "sql_fingerprint": "0d726b1cd6c075d2"
+    },
+    {
+      "lo": 57250001,
+      "hi": 57281251,
+      "duration_ms": 281.0,
+      "sql_fingerprint": "5e639617f5b5e3bc"
+    },
+    {
+      "lo": 57281251,
+      "hi": 57312501,
+      "duration_ms": 983.0,
+      "sql_fingerprint": "8423bc9eec21153e"
+    },
+    {
+      "lo": 57312501,
+      "hi": 57343751,
+      "duration_ms": 898.4,
+      "sql_fingerprint": "556799f4510b46da"
+    },
+    {
+      "lo": 57343751,
+      "hi": 57375001,
+      "duration_ms": 569.5,
+      "sql_fingerprint": "085bb6b294320042"
+    },
+    {
+      "lo": 57375001,
+      "hi": 57500001,
+      "duration_ms": 6874.5,
+      "sql_fingerprint": "acd0650eb3e07b14"
+    },
+    {
+      "lo": 57500001,
+      "hi": 57562501,
+      "duration_ms": 1260.6,
+      "sql_fingerprint": "3f151585771fc834"
+    },
+    {
+      "lo": 57562501,
+      "hi": 57625001,
+      "duration_ms": 644.3,
+      "sql_fingerprint": "a175adcfd308ebe3"
+    },
+    {
+      "lo": 57625001,
+      "hi": 57750001,
+      "duration_ms": 4685.8,
+      "sql_fingerprint": "0904806bcf0b9976"
+    },
+    {
+      "lo": 57750001,
+      "hi": 57812501,
+      "duration_ms": 1079.7,
+      "sql_fingerprint": "7eec1886cb6c1ca6"
+    },
+    {
+      "lo": 57812501,
+      "hi": 57875001,
+      "duration_ms": 915.0,
+      "sql_fingerprint": "e2c4853ef2ce78b5"
+    },
+    {
+      "lo": 57875001,
+      "hi": 57937501,
+      "duration_ms": 5656.1,
+      "sql_fingerprint": "036a03d564b592b2"
+    },
+    {
+      "lo": 57937501,
+      "hi": 58000001,
+      "duration_ms": 461.0,
+      "sql_fingerprint": "58837af18688570e"
+    },
+    {
+      "lo": 58000001,
+      "hi": 58100000,
+      "duration_ms": 8720.3,
+      "sql_fingerprint": "ac6611889f4dfd31"
+    },
+    {
+      "lo": 58100000,
+      "hi": 58150000,
+      "duration_ms": 961.2,
+      "sql_fingerprint": "d0f203e29a23c80a"
+    },
+    {
+      "lo": 58150000,
+      "hi": 58200000,
+      "duration_ms": 689.5,
+      "sql_fingerprint": "ff92c7c695748435"
+    },
+    {
+      "lo": 58200000,
+      "hi": 58400000,
+      "duration_ms": 5325.1,
+      "sql_fingerprint": "31fa5c97cfb33780"
+    },
+    {
+      "lo": 58400000,
+      "hi": 58600000,
+      "duration_ms": 8803.8,
+      "sql_fingerprint": "9c6d43d4289d0602"
+    },
+    {
+      "lo": 58600000,
+      "hi": 58800000,
+      "duration_ms": 6110.2,
+      "sql_fingerprint": "326f7f5f63a6a1aa"
+    },
+    {
+      "lo": 58800000,
+      "hi": 58850000,
+      "duration_ms": 331.5,
+      "sql_fingerprint": "da4bd5c716b43b72"
+    },
+    {
+      "lo": 58850000,
+      "hi": 58900000,
+      "duration_ms": 252.1,
+      "sql_fingerprint": "511fc7b61369e1b4"
+    },
+    {
+      "lo": 58900000,
+      "hi": 59000000,
+      "duration_ms": 3196.8,
+      "sql_fingerprint": "08e985d2635aa2d0"
+    },
+    {
+      "lo": 59000000,
+      "hi": 59050000,
+      "duration_ms": 694.4,
+      "sql_fingerprint": "01b1e66c628a209e"
+    },
+    {
+      "lo": 59050000,
+      "hi": 59100000,
+      "duration_ms": 608.0,
+      "sql_fingerprint": "42d166ac44b63993"
+    },
+    {
+      "lo": 59100000,
+      "hi": 59150000,
+      "duration_ms": 925.2,
+      "sql_fingerprint": "81b6c52759aef4cf"
+    },
+    {
+      "lo": 59150000,
+      "hi": 59200000,
+      "duration_ms": 3094.4,
+      "sql_fingerprint": "688b697f1f8abdeb"
+    },
+    {
+      "lo": 59200000,
+      "hi": 59600000,
+      "duration_ms": 6576.6,
+      "sql_fingerprint": "3fe9e0295ba4ed34"
+    }
+  ],
+  "irreducible": [],
+  "elapsed_s": 823.1,
+  "by_leg": {
+    "no": {
+      "n_legs": 244713,
+      "n_trade_evidence": 25570,
+      "n_band": 115613,
+      "n_placeholder_excluded": 102153
+    },
+    "yes": {
+      "n_legs": 258746,
+      "n_trade_evidence": 232398,
+      "n_band": 122860,
+      "n_placeholder_excluded": 3586
+    },
+    "over": {
+      "n_legs": 248702,
+      "n_trade_evidence": 224255,
+      "n_band": 138024,
+      "n_placeholder_excluded": 562
+    },
+    "under": {
+      "n_legs": 248702,
+      "n_trade_evidence": 12408,
+      "n_band": 141228,
+      "n_placeholder_excluded": 134296
+    }
+  }
+}

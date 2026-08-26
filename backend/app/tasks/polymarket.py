@@ -1184,9 +1184,48 @@ async def _process_event_batch(
                             )
                             sub_under_opening_at = now if sub_under_has_open else None
 
+                            # CAL-P095: the Under leg's book. Measured
+                            # population-wide before this line existed —
+                            # 493,415 Under/No legs, ZERO with a bid or an ask,
+                            # against 99.14% ask coverage on their Over
+                            # partners — because these two columns were on the
+                            # Over upsert and on nothing else. That made every
+                            # book-based phantom predicate blind on half of
+                            # each pair (#1578, #1574), and it made
+                            # `no_book` look like a fact about the market when
+                            # it was a fact about this writer (gotcha #53).
+                            # The No token's book is the Yes token's book from
+                            # the other side, so this records what exists
+                            # rather than inventing one; NULL in, NULL out.
+                            #
+                            # CAL-P097 (#2212, CERT-403C): the SNAPSHOT half now
+                            # ships too, and the third return value is no longer
+                            # discarded. CAL-P095 deliberately stopped at the
+                            # outcome columns and said so here, because
+                            # POLY_PLACEHOLDER_EXCLUDE in
+                            # precompute_calibration.py reads exactly the
+                            # snapshot columns and filling them moves a
+                            # published number. That deferral was correct and it
+                            # is now discharged the way it asked to be: the
+                            # staged spec is graded, Option A is recorded as a
+                            # named decision (see the module docstring's
+                            # UNDER-LEG SNAPSHOT BOOK note), and the release is
+                            # FORWARD-ONLY — new snapshots only, no historical
+                            # row is un-excluded and no re-grade happens
+                            # anywhere (gotcha #21).
+                            under_best_bid, under_best_ask, under_last = (
+                                complementary_book(
+                                    market.best_bid,
+                                    market.best_ask,
+                                    market.last_trade_price,
+                                )
+                            )
+
                             under_update: dict = {
                                 "current_probability": under_prob,
                                 "current_american_odds": under_american,
+                                "current_yes_bid": under_best_bid,
+                                "current_yes_ask": under_best_ask,
                                 "rank": 2,
                                 "volume": sub_vol,
                                 "last_updated": func.now(),
@@ -1207,6 +1246,8 @@ async def _process_event_batch(
                                 name=under_name,
                                 current_probability=under_prob,
                                 current_american_odds=under_american,
+                                current_yes_bid=under_best_bid,
+                                current_yes_ask=under_best_ask,
                                 opening_probability=sub_under_opening,
                                 opening_american_odds=sub_under_opening_am,
                                 opening_captured_at=sub_under_opening_at,
@@ -1223,11 +1264,32 @@ async def _process_event_batch(
                             # gets one above). Without this the Under outcome has no
                             # price history and calibration_probability falls back to
                             # opening_probability — the root of the sign-flip class.
+                            # CAL-P097 (#2212): the three book columns the Over
+                            # snapshot 100 lines up has always carried. Their
+                            # absence here was not a liquidity fact about Under
+                            # legs, it was this writer never mentioning the
+                            # columns — 493,415 Under/No legs with zero books
+                            # against 99.14% ask coverage on their Over
+                            # partners. POLY_PLACEHOLDER_EXCLUDE's `NOT EXISTS
+                            # (... yes_bid > 0 OR last_price > 0)` therefore
+                            # fired on almost every Under leg regardless of
+                            # whether the market traded: 95.09% of Under band
+                            # legs excluded against 0.41% of Over, a 232x
+                            # asymmetry that kept the +7.50 pp half of each
+                            # binary and discarded the -7.54 pp half.
+                            #
+                            # The values come from `complementary_book`, NOT
+                            # from a second call and NOT restated: same helper,
+                            # same call, same tuple as the outcome upsert above,
+                            # so the two can never disagree about one market.
                             under_snap_stmt = pg_insert(FuturesOddsSnapshot).values(
                                 outcome_id=under_outcome_id,
                                 bookmaker="polymarket",
                                 probability=under_prob,
                                 american_odds=under_american,
+                                yes_bid=under_best_bid,
+                                yes_ask=under_best_ask,
+                                last_price=under_last,
                                 captured_at=now,
                             )
                             await session.execute(under_snap_stmt)
@@ -1657,6 +1719,65 @@ def _is_placeholder_outcome(market) -> bool:
             return True
 
     return False
+
+
+def complementary_book(
+    yes_bid: float | None,
+    yes_ask: float | None,
+    yes_last_trade: float | None,
+) -> tuple[float | None, float | None, float | None]:
+    """The No token's book, read off the Yes token's book. An identity, not an estimate.
+
+    In a binary CLOB the two tokens share one order book: a resting bid for No at
+    ``q`` IS a resting ask for Yes at ``1 - q``. So the No side is not inferred
+    here, it is the same orders addressed from the other token.
+
+    CAL-P095 measured why this function has to exist. Population-wide, 0
+    irreducible shards (``artifacts/cal-p095/leg_book_coverage.json``):
+
+        over   248,702 legs — bid 76.98%, ask 99.14%
+        under  248,702 legs — bid  0.00%, ask  0.00%
+        yes    258,746 legs — bid 66.33%, ask 98.03%
+        no     244,713 legs — bid  0.00%, ask  0.00%
+
+    **493,415 Under/No legs and not one book**, because the decomposed-pair
+    writer below passes ``market.best_bid`` / ``market.best_ask`` on the Over
+    upsert and mentions neither column on the Under upsert. Every book-based
+    predicate in the codebase — ``is_fabricated_midpoint`` (#1578),
+    ``classify_fabricated_book`` (UX-P011 / #1574) — is therefore structurally
+    blind on exactly half of every Polymarket pair, which is how a manufactured
+    midpoint gets dropped on the Over leg while its Under partner survives to
+    lead the card.
+
+    It also cost the calibration program a wrong inference: CAL-P094 read the
+    ``no_book`` verdict on ``baseball/quantity``'s 0.5000 spike as evidence that
+    those legs never traded ("a leg that never had a book never had one"). They
+    are NULL because nothing ever wrote them, at any price, for any market —
+    gotcha #53, an absent column read as an absent book.
+
+    NULL-preserving in both directions: a missing Yes-side counterpart yields
+    ``None``, never a manufactured ``0``. That distinction is load-bearing
+    downstream, where ``bid > 0`` and ``last_price > 0`` are liquidity tests and
+    a fabricated zero would read as a real, empty book.
+
+    The spread is invariant under the flip — ``(1-bid) - (1-ask) == ask - bid`` —
+    so a book judged untradeable on one leg is judged untradeable on the other,
+    and neither leg can launder the other past a spread test.
+
+    This is a CAPTURE fix and stays clear of the fail-closed rule in
+    :mod:`app.utils.pair_opening_coherence`. That rule governs **openings**,
+    which become published forecasts through ``calibration_probability``'s
+    fallback and must be refused rather than synthesised. These are evidence
+    columns; recording the book that already exists is the opposite of inventing
+    a price.
+
+    Returns:
+        ``(no_bid, no_ask, no_last_trade)``.
+    """
+    no_bid = None if yes_ask is None else 1 - float(yes_ask)
+    no_ask = None if yes_bid is None else 1 - float(yes_bid)
+    no_last = None if yes_last_trade is None else 1 - float(yes_last_trade)
+    return no_bid, no_ask, no_last
 
 
 def _resolve_market_probability(market) -> float | None:

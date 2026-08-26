@@ -1,0 +1,189 @@
+{
+  "label": "spike_prov_bbq",
+  "league": "baseball",
+  "market_type": "quantity",
+  "complete": true,
+  "measured": true,
+  "predicate": {
+    "min_spread": 0.2,
+    "midpoint_tolerance": 0.0005,
+    "book_columns": "current_yes_bid / current_yes_ask (CURRENT, not as-of-capture \u2014 see docstring)"
+  },
+  "population": "polymarket/resolved, baseball/quantity, coherent 2-leg over+under, one winner, truth-eligible, opening_probability = 0.5000 exactly",
+  "total_spike_legs": 1826,
+  "by_verdict": {
+    "tight_book": {
+      "n": 138,
+      "wins": 17,
+      "legs": {
+        "over": {
+          "n": 138,
+          "wins": 17,
+          "n_bid": 49,
+          "n_ask": 138
+        }
+      }
+    },
+    "wide_book_not_midpoint": {
+      "n": 643,
+      "wins": 3,
+      "legs": {
+        "over": {
+          "n": 643,
+          "wins": 3,
+          "n_bid": 14,
+          "n_ask": 643
+        }
+      }
+    },
+    "no_book": {
+      "n": 924,
+      "wins": 902,
+      "legs": {
+        "under": {
+          "n": 924,
+          "wins": 902,
+          "n_bid": 0,
+          "n_ask": 0
+        }
+      }
+    },
+    "fabricated_midpoint": {
+      "n": 121,
+      "wins": 2,
+      "legs": {
+        "over": {
+          "n": 121,
+          "wins": 2,
+          "n_bid": 93,
+          "n_ask": 121
+        }
+      }
+    }
+  },
+  "shard_count": 20,
+  "shards": [
+    {
+      "lo": 1,
+      "hi": 4000001,
+      "duration_ms": 1167.4,
+      "sql_fingerprint": "605d83eee5d63c19"
+    },
+    {
+      "lo": 4000001,
+      "hi": 8000001,
+      "duration_ms": 939.2,
+      "sql_fingerprint": "bcab31ae2321258e"
+    },
+    {
+      "lo": 8000001,
+      "hi": 12000001,
+      "duration_ms": 1735.9,
+      "sql_fingerprint": "e338377fa122c8d4"
+    },
+    {
+      "lo": 12000001,
+      "hi": 16000001,
+      "duration_ms": 5272.3,
+      "sql_fingerprint": "f972e818b84f2929"
+    },
+    {
+      "lo": 16000001,
+      "hi": 20000001,
+      "duration_ms": 2631.5,
+      "sql_fingerprint": "c3dcf7dc1a22f7fc"
+    },
+    {
+      "lo": 20000001,
+      "hi": 24000001,
+      "duration_ms": 3214.7,
+      "sql_fingerprint": "f38603d031097e02"
+    },
+    {
+      "lo": 24000001,
+      "hi": 28000001,
+      "duration_ms": 3124.9,
+      "sql_fingerprint": "daaea2d77a3632e7"
+    },
+    {
+      "lo": 28000001,
+      "hi": 32000001,
+      "duration_ms": 1704.7,
+      "sql_fingerprint": "40b106be4f7df46b"
+    },
+    {
+      "lo": 32000001,
+      "hi": 36000001,
+      "duration_ms": 7983.4,
+      "sql_fingerprint": "6458a80ff8dee120"
+    },
+    {
+      "lo": 36000001,
+      "hi": 40000001,
+      "duration_ms": 2987.1,
+      "sql_fingerprint": "53f34b93b7f81ec8"
+    },
+    {
+      "lo": 40000001,
+      "hi": 44000001,
+      "duration_ms": 655.4,
+      "sql_fingerprint": "5f435b07ec4416b9"
+    },
+    {
+      "lo": 44000001,
+      "hi": 48000001,
+      "duration_ms": 698.4,
+      "sql_fingerprint": "df28170a582eb50e"
+    },
+    {
+      "lo": 48000001,
+      "hi": 52000001,
+      "duration_ms": 1340.8,
+      "sql_fingerprint": "a93d2b189d2d5d44"
+    },
+    {
+      "lo": 52000001,
+      "hi": 56000001,
+      "duration_ms": 2340.6,
+      "sql_fingerprint": "4e18d3ae40084337"
+    },
+    {
+      "lo": 56000001,
+      "hi": 56900000,
+      "duration_ms": 1164.2,
+      "sql_fingerprint": "a153b9afa229a4cc"
+    },
+    {
+      "lo": 56900000,
+      "hi": 57350000,
+      "duration_ms": 1217.4,
+      "sql_fingerprint": "34ac42dd26c3e8f9"
+    },
+    {
+      "lo": 57350000,
+      "hi": 57800000,
+      "duration_ms": 1131.8,
+      "sql_fingerprint": "6ffa713617fe8959"
+    },
+    {
+      "lo": 57800000,
+      "hi": 58700000,
+      "duration_ms": 3274.8,
+      "sql_fingerprint": "2bb1b99c9a176896"
+    },
+    {
+      "lo": 58700000,
+      "hi": 59150000,
+      "duration_ms": 774.1,
+      "sql_fingerprint": "1a9a5a3d5fcc3b40"
+    },
+    {
+      "lo": 59150000,
+      "hi": 59600000,
+      "duration_ms": 1953.3,
+      "sql_fingerprint": "aab833aee4c68992"
+    }
+  ],
+  "irreducible": [],
+  "elapsed_s": 101.9
+}
