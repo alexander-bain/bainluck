@@ -180,6 +180,49 @@ touches the binning (`_compute_horizon_mce` weighting vs the fold's shard-merge)
 3. **Nothing is owed on class C.** Five cells with `n_eligible` < 30 are answered; re-queuing them
    is the error this section exists to stop.
 
+### 🛑 `baseball/container_member` — CUT OFF, and the cutoff is the finding
+
+*The 2026-08-26 directive's item 3 names this cell "the next proven cell (12.44, n=286)" and asks
+for the same treatment rank 1 got: mechanism from the ladder, smallest durable change, red-first,
+cert-staged. **No fix is built. Two reasons, and the first is a consequence of the correction
+above.***
+
+**1. It is rank 9, not rank 2.** It ranked 2nd of the four cells the handoff had measured. On the
+15-cell board it is 9th by `n_e × excess` — impact **2,700 against rank 1's 87,165**, or 3.1%. Its
+selection was downstream of a table that was 22 cells behind. Four unworked cells sit above it:
+`soccer/container_member` (25,120, 5.7σ), `economics/quantity` (10,022, 2.9σ),
+`hockey/quantity` (9,028, 5.4σ) and `golf/container_member` (2,609, 4.8σ). Rank 2
+`soccer/quantity` is already worked and parked — CAL-P095 found no shipped fix moves it and the one
+candidate that looked like it would makes it worse.
+
+**2. There is no mechanism to build from, because every ladder check on this cell predates
+eligibility.** All three were executed on the census population of 18,215 markets, of which
+**98.4% is phantom** — rows the published curve never contained:
+
+| check | what was run | population | on the 286? |
+|---|---|---|---|
+| 1 · price-source fallback share | 1,000-market roster sample → `n=283, fallback 0` (`40e5bb`) | census | **no** |
+| — · KXMLBKS contamination (#1990) | random 500 → `kcount 0/500`, 95% UB < 0.6% (`round2/*`) | census | **no** |
+| 3 · shape semantics | the `n=283 / 37 winners / avg 0.283` row | census | **no** |
+| 2, 4, 5, 6 | never executed for this cell | — | no |
+
+The two checks that returned a verdict both returned *negative* ones — fallback is not the driver,
+KXMLBKS is not the contamination — so even taken at face value the ladder has **ruled things out
+and named nothing.** And they cannot be taken at face value for the published population: a sample
+of a set that is 98.4% phantom says almost nothing about the 1.6% that survives. Building on it is
+exactly the error the `phantom_share` column was added to prevent.
+
+**What would have to happen first**, and it is a measurement-lane grant under ruling 134, not a
+build lane's: re-run ladder checks 1–3 **on the 286 eligible legs only** — fallback share,
+de-vig vs venue, and the sum-to-1 shape — using the worker's own `_BINS_SQL` shape
+(`cohort_cell_census_worker.py:162`, fingerprint `1c27…`) rather than a hand-rolled twin, which is
+what returned `undefined_column e9d18…` on the bus. Until one of those names a mechanism, a fix
+here would be a guess with a test around it.
+
+**Worth saying plainly about the ceiling even if a mechanism arrives:** 286 legs at 3.2σ. A perfect
+fix moves this cell and nothing else, and the cell is 3.1% of the board's excess. It is a real
+defect and it should be fixed eventually; it is not the next thing.
+
 ---
 
 ## STATUS 2026-08-26 (CAL-P100) — RANK 1'S SECOND MECHANISM IS BUILT. THE FIX SHIPS UNMEASURED, AND SAYS SO.
