@@ -1141,16 +1141,23 @@ async def _process_event_batch(
                             # The No token's book is the Yes token's book from
                             # the other side, so this records what exists
                             # rather than inventing one; NULL in, NULL out.
-                            # DELIBERATELY OUTCOME-COLUMNS ONLY. The Under
-                            # SNAPSHOT below omits yes_bid/yes_ask/last_price
-                            # the same way, and POLY_PLACEHOLDER_EXCLUDE in
-                            # precompute_calibration.py reads exactly those, so
-                            # filling them would move the published curve —
-                            # un-excluding Under legs it currently drops
-                            # wholesale. That needs a measured before/after and
-                            # a staged apply, not a drive-by (gotcha #21's
-                            # spirit). CAL-P095 measured the gap and left it.
-                            under_best_bid, under_best_ask, _ = (
+                            #
+                            # CAL-P097 (#2212, CERT-403C): the SNAPSHOT half now
+                            # ships too, and the third return value is no longer
+                            # discarded. CAL-P095 deliberately stopped at the
+                            # outcome columns and said so here, because
+                            # POLY_PLACEHOLDER_EXCLUDE in
+                            # precompute_calibration.py reads exactly the
+                            # snapshot columns and filling them moves a
+                            # published number. That deferral was correct and it
+                            # is now discharged the way it asked to be: the
+                            # staged spec is graded, Option A is recorded as a
+                            # named decision (see the module docstring's
+                            # UNDER-LEG SNAPSHOT BOOK note), and the release is
+                            # FORWARD-ONLY — new snapshots only, no historical
+                            # row is un-excluded and no re-grade happens
+                            # anywhere (gotcha #21).
+                            under_best_bid, under_best_ask, under_last = (
                                 complementary_book(
                                     market.best_bid,
                                     market.best_ask,
@@ -1201,11 +1208,32 @@ async def _process_event_batch(
                             # gets one above). Without this the Under outcome has no
                             # price history and calibration_probability falls back to
                             # opening_probability — the root of the sign-flip class.
+                            # CAL-P097 (#2212): the three book columns the Over
+                            # snapshot 100 lines up has always carried. Their
+                            # absence here was not a liquidity fact about Under
+                            # legs, it was this writer never mentioning the
+                            # columns — 493,415 Under/No legs with zero books
+                            # against 99.14% ask coverage on their Over
+                            # partners. POLY_PLACEHOLDER_EXCLUDE's `NOT EXISTS
+                            # (... yes_bid > 0 OR last_price > 0)` therefore
+                            # fired on almost every Under leg regardless of
+                            # whether the market traded: 95.09% of Under band
+                            # legs excluded against 0.41% of Over, a 232x
+                            # asymmetry that kept the +7.50 pp half of each
+                            # binary and discarded the -7.54 pp half.
+                            #
+                            # The values come from `complementary_book`, NOT
+                            # from a second call and NOT restated: same helper,
+                            # same call, same tuple as the outcome upsert above,
+                            # so the two can never disagree about one market.
                             under_snap_stmt = pg_insert(FuturesOddsSnapshot).values(
                                 outcome_id=under_outcome_id,
                                 bookmaker="polymarket",
                                 probability=under_prob,
                                 american_odds=under_american,
+                                yes_bid=under_best_bid,
+                                yes_ask=under_best_ask,
+                                last_price=under_last,
                                 captured_at=now,
                             )
                             await session.execute(under_snap_stmt)
