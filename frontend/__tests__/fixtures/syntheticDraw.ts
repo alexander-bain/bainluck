@@ -17,7 +17,7 @@
  * truncation, seed-badge collision, and the two-line name.
  */
 
-import type { BracketSlot } from "@/lib/bracket";
+import type { BracketSlot, PrematchPair } from "@/lib/bracket";
 
 const FIRST_NAMES = [
   "Adrian", "Bastien", "Casper", "Dmitri", "Emil", "Fabio", "Gustav", "Hugo",
@@ -117,6 +117,40 @@ export function syntheticPartialResults(
     results[`R128-${i / 2 + 1}`] = draw[i].entity_key;
   }
   return results;
+}
+
+/**
+ * Pre-match prices for the matches a result set decided (UX-P137, ruling 3).
+ *
+ * A decided bracket row prints what the market said BEFORE the match beside
+ * what happened, so a fixture with results and no pre-match prices exercises
+ * exactly half of the rendering and hides the interesting half — the row where
+ * the loser was the favourite.
+ *
+ * Deterministic, and deliberately NOT always favouring the winner: roughly
+ * every fifth decided match here is an upset, because a fixture where the
+ * bolded name always carries the bigger number would let a component that
+ * simply printed the numbers in winner-first order pass.
+ */
+export function syntheticPrematch(
+  results: Record<string, string>,
+  draw: BracketSlot[]
+): Record<string, PrematchPair> {
+  const indexByKey = new Map(draw.map((slot, i) => [slot.entity_key, i]));
+  const out: Record<string, PrematchPair> = {};
+  let n = 0;
+  for (const [matchId, winnerKey] of Object.entries(results)) {
+    const seat = indexByKey.get(winnerKey) ?? 0;
+    // 0.52 .. 0.86, stepped by the slot so it does not repeat down the column.
+    const favourite = 0.52 + ((seat * 7) % 35) / 100;
+    const upset = n % 5 === 4;
+    const winnerSide = Number((upset ? 1 - favourite : favourite).toFixed(2));
+    // The winner sits in the TOP slot of every synthetic result set, so `top`
+    // is the winner's number and `bottom` is the complement.
+    out[matchId] = { top: winnerSide, bottom: Number((1 - winnerSide).toFixed(2)) };
+    n += 1;
+  }
+  return out;
 }
 
 /**

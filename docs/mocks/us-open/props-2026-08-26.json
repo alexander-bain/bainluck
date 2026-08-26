@@ -1,0 +1,453 @@
+[
+ {
+  "key": "alcaraz-semifinals",
+  "title": "Does Alcaraz reach the semifinals?",
+  "hook": "The men's favourite, and the market still calls it close to a coin flip.",
+  "draw": "mens-singles",
+  "source": "polymarket",
+  "outcomes": [
+   {
+    "entity_key": "alcaraz-semifinals:yes",
+    "display_name": "Yes",
+    "probability": 0.575,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T20:21:47.254147+00:00",
+    "age_hours": 24.64,
+    "price_state": "stale",
+    "is_answer": true
+   },
+   {
+    "entity_key": "alcaraz-semifinals:no",
+    "display_name": "No",
+    "probability": 0.425,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T20:21:47.254147+00:00",
+    "age_hours": 24.64,
+    "price_state": "stale",
+    "is_answer": false
+   }
+  ],
+  "answer_entity_key": "alcaraz-semifinals:yes",
+  "price_state": "stale",
+  "observed_at": "2026-08-25T20:21:47.254147+00:00",
+  "age_hours": 24.64,
+  "freshest_observed_at": "2026-08-25T20:21:47.254147+00:00",
+  "freshest_age_hours": 24.64,
+  "stale_outcomes": [
+   "alcaraz-semifinals:yes",
+   "alcaraz-semifinals:no"
+  ],
+  "mixed_freshness": false
+ },
+ {
+  "key": "osaka-round-of-16",
+  "title": "Does Osaka reach the second week?",
+  "hook": "Two US Open titles, and a first week the market rates a coin flip.",
+  "draw": "womens-singles",
+  "source": "polymarket",
+  "outcomes": [
+   {
+    "entity_key": "osaka-round-of-16:yes",
+    "display_name": "Yes",
+    "probability": 0.475,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T18:17:16.651771+00:00",
+    "age_hours": 26.71,
+    "price_state": "stale",
+    "is_answer": true
+   },
+   {
+    "entity_key": "osaka-round-of-16:no",
+    "display_name": "No",
+    "probability": 0.525,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T18:17:16.651771+00:00",
+    "age_hours": 26.71,
+    "price_state": "stale",
+    "is_answer": false
+   }
+  ],
+  "answer_entity_key": "osaka-round-of-16:yes",
+  "price_state": "stale",
+  "observed_at": "2026-08-25T18:17:16.651771+00:00",
+  "age_hours": 26.71,
+  "freshest_observed_at": "2026-08-25T18:17:16.651771+00:00",
+  "freshest_age_hours": 26.71,
+  "stale_outcomes": [
+   "osaka-round-of-16:yes",
+   "osaka-round-of-16:no"
+  ],
+  "mixed_freshness": false
+ },
+ {
+  "key": "djokovic-quarterfinals",
+  "title": "Does Djokovic reach the quarterfinals?",
+  "hook": "Twenty-four majors, and the second week is no longer a formality.",
+  "draw": "mens-singles",
+  "source": "polymarket",
+  "outcomes": [
+   {
+    "entity_key": "djokovic-quarterfinals:yes",
+    "display_name": "Yes",
+    "probability": 0.58,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T18:17:16.651771+00:00",
+    "age_hours": 26.71,
+    "price_state": "stale",
+    "is_answer": true
+   },
+   {
+    "entity_key": "djokovic-quarterfinals:no",
+    "display_name": "No",
+    "probability": 0.42,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T18:17:16.651771+00:00",
+    "age_hours": 26.71,
+    "price_state": "stale",
+    "is_answer": false
+   }
+  ],
+  "answer_entity_key": "djokovic-quarterfinals:yes",
+  "price_state": "stale",
+  "observed_at": "2026-08-25T18:17:16.651771+00:00",
+  "age_hours": 26.71,
+  "freshest_observed_at": "2026-08-25T18:17:16.651771+00:00",
+  "freshest_age_hours": 26.71,
+  "stale_outcomes": [
+   "djokovic-quarterfinals:yes",
+   "djokovic-quarterfinals:no"
+  ],
+  "mixed_freshness": false
+ },
+ {
+  "key": "sabalenka-semifinals",
+  "title": "Does Sabalenka reach the semifinals?",
+  "hook": "The women's favourite. Even the market cannot separate it.",
+  "draw": "womens-singles",
+  "source": "polymarket",
+  "outcomes": [
+   {
+    "entity_key": "sabalenka-semifinals:yes",
+    "display_name": "Yes",
+    "probability": 0.515,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T20:21:15.450051+00:00",
+    "age_hours": 24.65,
+    "price_state": "stale",
+    "is_answer": true
+   },
+   {
+    "entity_key": "sabalenka-semifinals:no",
+    "display_name": "No",
+    "probability": 0.485,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T20:21:15.450051+00:00",
+    "age_hours": 24.65,
+    "price_state": "stale",
+    "is_answer": false
+   }
+  ],
+  "answer_entity_key": "sabalenka-semifinals:yes",
+  "price_state": "stale",
+  "observed_at": "2026-08-25T20:21:15.450051+00:00",
+  "age_hours": 24.65,
+  "freshest_observed_at": "2026-08-25T20:21:15.450051+00:00",
+  "freshest_age_hours": 24.65,
+  "stale_outcomes": [
+   "sabalenka-semifinals:yes",
+   "sabalenka-semifinals:no"
+  ],
+  "mixed_freshness": false
+ },
+ {
+  "key": "zverev-semifinals",
+  "title": "Does Zverev reach the semifinals?",
+  "hook": "Perennially close to a first major. The market has him at even money.",
+  "draw": "mens-singles",
+  "source": "polymarket",
+  "outcomes": [
+   {
+    "entity_key": "zverev-semifinals:yes",
+    "display_name": "Yes",
+    "probability": 0.47,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T20:21:47.254147+00:00",
+    "age_hours": 24.64,
+    "price_state": "stale",
+    "is_answer": true
+   },
+   {
+    "entity_key": "zverev-semifinals:no",
+    "display_name": "No",
+    "probability": 0.53,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T20:21:47.254147+00:00",
+    "age_hours": 24.64,
+    "price_state": "stale",
+    "is_answer": false
+   }
+  ],
+  "answer_entity_key": "zverev-semifinals:yes",
+  "price_state": "stale",
+  "observed_at": "2026-08-25T20:21:47.254147+00:00",
+  "age_hours": 24.64,
+  "freshest_observed_at": "2026-08-25T20:21:47.254147+00:00",
+  "freshest_age_hours": 24.64,
+  "stale_outcomes": [
+   "zverev-semifinals:yes",
+   "zverev-semifinals:no"
+  ],
+  "mixed_freshness": false
+ },
+ {
+  "key": "gauff-semifinals",
+  "title": "Does Gauff reach the semifinals?",
+  "hook": "The home favourite, and the market is far less sure than the crowd.",
+  "draw": "womens-singles",
+  "source": "polymarket",
+  "outcomes": [
+   {
+    "entity_key": "gauff-semifinals:yes",
+    "display_name": "Yes",
+    "probability": 0.27,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T20:21:15.450051+00:00",
+    "age_hours": 24.65,
+    "price_state": "stale",
+    "is_answer": true
+   },
+   {
+    "entity_key": "gauff-semifinals:no",
+    "display_name": "No",
+    "probability": 0.73,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T20:21:15.450051+00:00",
+    "age_hours": 24.65,
+    "price_state": "stale",
+    "is_answer": false
+   }
+  ],
+  "answer_entity_key": "gauff-semifinals:yes",
+  "price_state": "stale",
+  "observed_at": "2026-08-25T20:21:15.450051+00:00",
+  "age_hours": 24.65,
+  "freshest_observed_at": "2026-08-25T20:21:15.450051+00:00",
+  "freshest_age_hours": 24.65,
+  "stale_outcomes": [
+   "gauff-semifinals:yes",
+   "gauff-semifinals:no"
+  ],
+  "mixed_freshness": false
+ },
+ {
+  "key": "shelton-quarterfinals",
+  "title": "Does Shelton reach the quarterfinals?",
+  "hook": "The loudest home crowd in tennis, and a market split down the middle.",
+  "draw": "mens-singles",
+  "source": "polymarket",
+  "outcomes": [
+   {
+    "entity_key": "shelton-quarterfinals:yes",
+    "display_name": "Yes",
+    "probability": 0.505,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T18:17:16.651771+00:00",
+    "age_hours": 26.71,
+    "price_state": "stale",
+    "is_answer": true
+   },
+   {
+    "entity_key": "shelton-quarterfinals:no",
+    "display_name": "No",
+    "probability": 0.495,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T18:17:16.651771+00:00",
+    "age_hours": 26.71,
+    "price_state": "stale",
+    "is_answer": false
+   }
+  ],
+  "answer_entity_key": "shelton-quarterfinals:yes",
+  "price_state": "stale",
+  "observed_at": "2026-08-25T18:17:16.651771+00:00",
+  "age_hours": 26.71,
+  "freshest_observed_at": "2026-08-25T18:17:16.651771+00:00",
+  "freshest_age_hours": 26.71,
+  "stale_outcomes": [
+   "shelton-quarterfinals:yes",
+   "shelton-quarterfinals:no"
+  ],
+  "mixed_freshness": false
+ },
+ {
+  "key": "swiatek-semifinals",
+  "title": "Does Swiatek reach the semifinals?",
+  "hook": "Dominant almost everywhere else; New York has been the exception.",
+  "draw": "womens-singles",
+  "source": "polymarket",
+  "outcomes": [
+   {
+    "entity_key": "swiatek-semifinals:yes",
+    "display_name": "Yes",
+    "probability": 0.375,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T20:21:15.450051+00:00",
+    "age_hours": 24.65,
+    "price_state": "stale",
+    "is_answer": true
+   },
+   {
+    "entity_key": "swiatek-semifinals:no",
+    "display_name": "No",
+    "probability": 0.625,
+    "probability_is_live": false,
+    "observed_at": "2026-08-25T20:21:15.450051+00:00",
+    "age_hours": 24.65,
+    "price_state": "stale",
+    "is_answer": false
+   }
+  ],
+  "answer_entity_key": "swiatek-semifinals:yes",
+  "price_state": "stale",
+  "observed_at": "2026-08-25T20:21:15.450051+00:00",
+  "age_hours": 24.65,
+  "freshest_observed_at": "2026-08-25T20:21:15.450051+00:00",
+  "freshest_age_hours": 24.65,
+  "stale_outcomes": [
+   "swiatek-semifinals:yes",
+   "swiatek-semifinals:no"
+  ],
+  "mixed_freshness": false
+ },
+ {
+  "key": "sinner-competes",
+  "title": "Will Sinner actually play?",
+  "hook": "A withdrawal reshapes the entire men's board.",
+  "draw": "mens-singles",
+  "source": "kalshi",
+  "outcomes": [
+   {
+    "entity_key": "sinner-competes:yes",
+    "display_name": "Yes",
+    "probability": 0.63,
+    "probability_is_live": false,
+    "observed_at": "2026-08-19T00:49:00.471383+00:00",
+    "age_hours": 188.18,
+    "price_state": "dark",
+    "is_answer": true
+   }
+  ],
+  "answer_entity_key": "sinner-competes:yes",
+  "price_state": "dark",
+  "observed_at": "2026-08-19T00:49:00.471383+00:00",
+  "age_hours": 188.18,
+  "freshest_observed_at": "2026-08-19T00:49:00.471383+00:00",
+  "freshest_age_hours": 188.18,
+  "stale_outcomes": [
+   "sinner-competes:yes"
+  ],
+  "mixed_freshness": false
+ },
+ {
+  "key": "alcaraz-second-major",
+  "title": "Can Alcaraz win a second major this year?",
+  "hook": "The other half of the men's duopoly, chasing the same thing.",
+  "draw": "mens-singles",
+  "source": "kalshi",
+  "outcomes": [
+   {
+    "entity_key": "alcaraz-second-major:2+-grand-slam-wins",
+    "display_name": "2+ Grand Slam wins",
+    "probability": 0.25,
+    "probability_is_live": false,
+    "observed_at": "2026-07-24T02:50:56.699511+00:00",
+    "age_hours": 810.15,
+    "price_state": "dark",
+    "is_answer": true
+   },
+   {
+    "entity_key": "alcaraz-second-major:3+-grand-slam-wins",
+    "display_name": "3+ Grand Slam wins",
+    "probability": 0.01,
+    "probability_is_live": false,
+    "observed_at": "2026-07-24T02:50:56.699511+00:00",
+    "age_hours": 810.15,
+    "price_state": "dark",
+    "is_answer": false
+   },
+   {
+    "entity_key": "alcaraz-second-major:all-4-grand-slam-wins",
+    "display_name": "All 4 Grand Slam wins",
+    "probability": 0.01,
+    "probability_is_live": false,
+    "observed_at": "2026-07-24T02:50:56.699511+00:00",
+    "age_hours": 810.15,
+    "price_state": "dark",
+    "is_answer": false
+   }
+  ],
+  "answer_entity_key": "alcaraz-second-major:2+-grand-slam-wins",
+  "price_state": "dark",
+  "observed_at": "2026-07-24T02:50:56.699511+00:00",
+  "age_hours": 810.15,
+  "freshest_observed_at": "2026-07-24T02:50:56.699511+00:00",
+  "freshest_age_hours": 810.15,
+  "stale_outcomes": [
+   "alcaraz-second-major:2+-grand-slam-wins",
+   "alcaraz-second-major:3+-grand-slam-wins",
+   "alcaraz-second-major:all-4-grand-slam-wins"
+  ],
+  "mixed_freshness": false
+ },
+ {
+  "key": "sinner-second-major",
+  "title": "Can Sinner win a second major this year?",
+  "hook": "He already has one in 2026. The next chance is this fortnight.",
+  "draw": "mens-singles",
+  "source": "kalshi",
+  "outcomes": [
+   {
+    "entity_key": "sinner-second-major:1+-grand-slam-wins",
+    "display_name": "1+ Grand Slam wins",
+    "probability": 0.99,
+    "probability_is_live": false,
+    "observed_at": "2026-07-24T02:50:56.699511+00:00",
+    "age_hours": 810.15,
+    "price_state": "dark",
+    "is_answer": false
+   },
+   {
+    "entity_key": "sinner-second-major:2+-grand-slam-wins",
+    "display_name": "2+ Grand Slam wins",
+    "probability": 0.555,
+    "probability_is_live": false,
+    "observed_at": "2026-07-24T02:50:56.699511+00:00",
+    "age_hours": 810.15,
+    "price_state": "dark",
+    "is_answer": true
+   },
+   {
+    "entity_key": "sinner-second-major:3+-grand-slam-wins",
+    "display_name": "3+ Grand Slam wins",
+    "probability": 0.01,
+    "probability_is_live": false,
+    "observed_at": "2026-07-24T02:50:56.699511+00:00",
+    "age_hours": 810.15,
+    "price_state": "dark",
+    "is_answer": false
+   }
+  ],
+  "answer_entity_key": "sinner-second-major:2+-grand-slam-wins",
+  "price_state": "dark",
+  "observed_at": "2026-07-24T02:50:56.699511+00:00",
+  "age_hours": 810.15,
+  "freshest_observed_at": "2026-07-24T02:50:56.699511+00:00",
+  "freshest_age_hours": 810.15,
+  "stale_outcomes": [
+   "sinner-second-major:1+-grand-slam-wins",
+   "sinner-second-major:2+-grand-slam-wins",
+   "sinner-second-major:3+-grand-slam-wins"
+  ],
+  "mixed_freshness": false
+ }
+]

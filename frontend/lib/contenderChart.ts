@@ -38,7 +38,20 @@ export const SERIES_COLORS = [
   "var(--series-1)",
   "var(--series-2)",
   "var(--series-3)",
+  "var(--series-4)",
+  "var(--series-5)",
+  "var(--series-6)",
 ] as const;
+
+/**
+ * The most lines the picker will draw at once (UX-P137, Alex's ruling 6).
+ *
+ * Six is where a 320px-wide chart stops being readable, measured by eye rather
+ * than asserted: at seven the endpoint dots of a tight field overlap and the
+ * legend needs a second column. The default is still three — "default stays
+ * top-3; the user chooses beyond that."
+ */
+export const MAX_SERIES_COUNT = SERIES_COLORS.length;
 
 export type Timeframe = "1D" | "1W" | "1M" | "ALL";
 
@@ -78,6 +91,80 @@ export function chartSeries(rows: TournamentRow[], limit = CHART_SERIES_COUNT): 
       isLive: row.probability_is_live === true,
       points: Array.isArray(row.trend) ? row.trend : [],
     }));
+}
+
+/** Rows the chart is allowed to draw at all: a settled row has no live line. */
+export function chartableRows(rows: TournamentRow[]): TournamentRow[] {
+  return rows.filter((row) => row.probability !== null);
+}
+
+/** The default selection — the board's top three, by entity key. */
+export function defaultSelection(rows: TournamentRow[]): string[] {
+  return chartableRows(rows)
+    .slice(0, CHART_SERIES_COUNT)
+    .map((row) => row.entity_key);
+}
+
+/**
+ * The chosen contenders as chart series (UX-P137, Alex's ruling 6).
+ *
+ * COLOUR FOLLOWS SELECTION ORDER, not board rank — so an ADDED line always
+ * gets a colour no line on the chart is already using, which is the property
+ * that makes the picker feel like adding rather than redrawing.
+ *
+ * It is NOT pinned per entity, and the honest consequence is that removing a
+ * line recolours the ones after it. Pinning would need the selection to carry
+ * its own colour slots, and the failure it would prevent is cosmetic: the
+ * legend dot and the line both read `entry.color` from this one function, so
+ * they can never disagree with each other — only with the reader's memory of
+ * a second ago. Worth knowing, not worth a second data structure.
+ *
+ * Unknown or unpriced keys are dropped rather than rendered empty, and the
+ * result is capped at `MAX_SERIES_COUNT`.
+ */
+export function chartSeriesFor(
+  rows: TournamentRow[],
+  selection: string[]
+): ChartSeries[] {
+  const byKey = new Map(chartableRows(rows).map((row) => [row.entity_key, row]));
+  const out: ChartSeries[] = [];
+  for (const key of selection) {
+    const row = byKey.get(key);
+    if (!row || out.some((entry) => entry.entityKey === key)) continue;
+    out.push({
+      entityKey: row.entity_key,
+      displayName: row.display_name,
+      color: SERIES_COLORS[out.length % SERIES_COLORS.length],
+      probability: row.probability,
+      isLive: row.probability_is_live === true,
+      points: Array.isArray(row.trend) ? row.trend : [],
+    });
+    if (out.length >= MAX_SERIES_COUNT) break;
+  }
+  return out;
+}
+
+/** Colour per selected entity — so the board's name underline follows the chart. */
+export function seriesColorByEntity(series: ChartSeries[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const entry of series) out[entry.entityKey] = entry.color;
+  return out;
+}
+
+/**
+ * Toggle one contender in or out of the selection.
+ *
+ * Refuses to empty the chart: removing the last line leaves a titled, bordered
+ * box containing nothing, which reads as a failure rather than as a choice.
+ * Refuses to exceed `MAX_SERIES_COUNT` for the reason written there.
+ */
+export function toggleSelection(selection: string[], entityKey: string): string[] {
+  if (selection.includes(entityKey)) {
+    if (selection.length <= 1) return selection;
+    return selection.filter((key) => key !== entityKey);
+  }
+  if (selection.length >= MAX_SERIES_COUNT) return selection;
+  return [...selection, entityKey];
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * CAPTURE RIG — the real /tournaments/us-open boards, over real production data.
+ * CAPTURE RIG — the real /tournaments/us-open hub, over real production data.
  *
  * Chromium is dead in this sandbox (Mach bootstrap denied), so a screenshot is
  * not available to this lane. This is the substitute the repo already uses:
@@ -12,16 +12,20 @@
  * Two jobs, and the second is why it lives under `__tests__`:
  *
  *   1. `UX_CAPTURE_DIR=<dir> npx jest --testPathPatterns=usOpenBoardCapture`
- *      writes `us-open-shipped.html` at a 390px mobile viewport.
+ *      writes `us-open-reskin.html` at a 390px mobile viewport.
  *
  *   2. With no env var set it is an ordinary test that renders every state and
  *      asserts the rig still works — a capture harness that has silently rotted
  *      is discovered at exactly the wrong moment.
  *
- * The payload is `docs/mocks/us-open/payload-2026-08-25.json`, produced by the
- * BACKEND's own `build_boards` over a bounded production read. So this file
- * exercises both halves end to end: if the Python changes shape, the render
- * breaks here.
+ * The payloads are produced by the BACKEND's own `build_boards`, `build_slate`
+ * and `build_props` over bounded production reads. So this file exercises both
+ * halves end to end: if the Python changes shape, the render breaks here.
+ *
+ * UX-P137 re-renders it with Alex's four hub rulings applied — chart first and
+ * pickable, where-to-watch on the row, the section renamed, everything
+ * collapsed — and refreshes the props payload from register v4, which carries
+ * eleven curated questions where the committed file still had UX-P134's four.
  */
 
 import React from "react";
@@ -29,51 +33,41 @@ import { renderToStaticMarkup } from "react-dom/server";
 import fs from "node:fs";
 import path from "node:path";
 
+import ContenderChart from "@/components/tournament/ContenderChart";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
 import TournamentSlate from "@/components/tournament/TournamentSlate";
 import TournamentProps from "@/components/tournament/TournamentProps";
 import { buildBracket } from "@/lib/bracket";
 import {
+  chartSeriesFor,
+  defaultSelection,
+  seriesColorByEntity,
+  toggleSelection,
+} from "@/lib/contenderChart";
+import {
   SYNTHETIC_MENS_DRAW,
   syntheticFirstRoundResults,
+  syntheticPrematch,
 } from "@/__tests__/fixtures/syntheticDraw";
 import type { SlateData } from "@/lib/slate";
 import type { PropMarket } from "@/lib/tournamentProps";
 import type { TournamentBoardData, TournamentPayload } from "@/lib/tournament";
 
-const SLATE_PATH = path.join(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "docs",
-  "mocks",
-  "us-open",
-  "slate-2026-08-25.json"
-);
+const MOCKS = path.join(__dirname, "..", "..", "..", "docs", "mocks", "us-open");
+const SLATE_PATH = path.join(MOCKS, "slate-2026-08-25.json");
+const PAYLOAD_PATH = path.join(MOCKS, "payload-2026-08-25.json");
 
-const PROPS_PATH = path.join(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "docs",
-  "mocks",
-  "us-open",
-  "props-2026-08-25.json"
-);
-
-const PAYLOAD_PATH = path.join(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "docs",
-  "mocks",
-  "us-open",
-  "payload-2026-08-25.json"
-);
+/**
+ * The curated props, REFRESHED at UX-P137.
+ *
+ * `props-2026-08-25.json` was UX-P134's four markets, all men's. Register v4
+ * (UX-P135) curated eleven, eight of them the advance-to-stage ladders that
+ * ruling 4 surfaces and four of them the women's tab's first cards. Rendering
+ * the stale file would have shown Alex a section that no longer exists and an
+ * empty ruling-4 panel.
+ */
+const PROPS_PATH = path.join(MOCKS, "props-2026-08-26.json");
 
 function loadPayload(): TournamentPayload {
   return JSON.parse(fs.readFileSync(PAYLOAD_PATH, "utf8")) as TournamentPayload;
@@ -84,7 +78,7 @@ function loadSlate(): SlateData {
   return JSON.parse(fs.readFileSync(SLATE_PATH, "utf8")) as SlateData;
 }
 
-/** The real curated props, built by the BACKEND's `build_props` (UX-P134). */
+/** The real curated props, built by the BACKEND's `build_props`. */
 function loadProps(): PropMarket[] {
   return JSON.parse(fs.readFileSync(PROPS_PATH, "utf8")) as PropMarket[];
 }
@@ -128,6 +122,17 @@ function makeLiveBoard(board: TournamentBoardData): TournamentBoardData {
   };
 }
 
+/** The chart at its default selection — the top three. */
+const chartFor = (board: TournamentBoardData, extra: Record<string, unknown> = {}) => (
+  <ContenderChart
+    rows={board.rows}
+    draw={board.draw}
+    selection={defaultSelection(board.rows)}
+    onToggle={() => {}}
+    {...extra}
+  />
+);
+
 describe("US Open board capture rig", () => {
   const payload = loadPayload();
 
@@ -166,10 +171,6 @@ describe("US Open board capture rig", () => {
     // a dark board correctly. That stays worth asserting after #2199 bites,
     // so this does NOT get flipped when production goes live — its live-side
     // twin below is a SEPARATE test, not a replacement.
-    //
-    // The real signal is the task's own oracle, measured, never inferred:
-    //   GET /api/admin/source-health/futures-price-freshness?max_age_hours=24
-    // `status: "red"` with `price_dark: 898 / 909` as of 2026-08-25T23:3x UTC.
     const allRows = payload.boards.flatMap((b) => b.rows);
     expect(allRows.length).toBeGreaterThan(60);
     expect(allRows.every((r) => r.probability_is_live === false)).toBe(true);
@@ -181,11 +182,6 @@ describe("US Open board capture rig", () => {
     // for the whole life of this component, so every existing assertion is
     // about the muted treatment. The moment #2199 bites, the marquee weekend
     // ships a rendering path no test has ever run.
-    //
-    // This payload is SYNTHETIC and says so. It is not a claim that production
-    // is live; it is the proof that when production goes live the board stops
-    // apologising. Built by lifting the real board and setting exactly the
-    // fields the server owns, so it cannot drift from the real shape.
     const live = makeLiveBoard(payload.boards[0]);
     const html = renderToStaticMarkup(<TournamentBoard board={live} />);
 
@@ -225,6 +221,16 @@ describe("US Open board capture rig", () => {
     }
   });
 
+  it("the props payload is register v4's ELEVEN, not UX-P134's four", () => {
+    // The stale file would have rendered a section that no longer exists and
+    // an empty ruling-4 panel next door.
+    const props = loadProps();
+    expect(props).toHaveLength(11);
+    expect(props.filter((p) => p.draw === "womens-singles")).toHaveLength(4);
+    expect(props.filter((p) => /(-semifinals|-quarterfinals|-round-of-16)$/.test(p.key)))
+      .toHaveLength(8);
+  });
+
   it("the re-skinned board collapses to three rows with an expander", () => {
     // Alex called the uncollapsed 44-row women's list a P1 on this page.
     const women = payload.boards[1];
@@ -234,11 +240,17 @@ describe("US Open board capture rig", () => {
     expect(html).toContain(`Show all ${women.rows.length}`);
   });
 
-  it("the chart draws three lines and no more", () => {
-    const html = renderToStaticMarkup(<TournamentBoard board={payload.boards[0]} />);
+  it("the chart draws three lines and no more, by default", () => {
+    const html = renderToStaticMarkup(chartFor(payload.boards[0]));
     expect((html.match(/data-testid="chart-legend-item"/g) ?? []).length).toBe(3);
     const drawn = (html.match(/data-testid="chart-series"/g) ?? []).length;
     expect(drawn).toBeLessThanOrEqual(3);
+  });
+
+  it("the chart is no longer inside the board — it moved up the page", () => {
+    // Ruling 6. If it drifts back in, the artifact would silently show it twice.
+    const html = renderToStaticMarkup(<TournamentBoard board={payload.boards[0]} />);
+    expect(html).not.toContain('data-testid="contender-chart"');
   });
 
   it("does NOT copy the reference's two-sided price pills", () => {
@@ -265,36 +277,67 @@ describe("US Open board capture rig", () => {
     const men = payload.boards[0];
     const women = payload.boards[1];
 
-    // Both pill states rendered side by side, because the whole point of the
-    // toggle is that you never see them stacked in the product — so the only
-    // place to review both at once is here.
     const broadcasts = [
       { region: "US", channels: ["ESPN", "ESPN2", "ESPN+"], note: null },
+      { region: "UK", channels: ["Sky Sports Tennis"], note: null },
+      { region: "AU", channels: ["Stan Sport"], note: null },
     ];
-    const panel = (draw: string, board: typeof men) => `
+
+    /**
+     * THE PAGE, in its UX-P137 order (ruling 6): chart, then today's matches,
+     * then the championship board, then the curated questions.
+     */
+    const panel = (
+      draw: string,
+      board: TournamentBoardData,
+      chartExtra: Record<string, unknown> = {},
+      selection = defaultSelection(board.rows)
+    ) => `
       <div class="pad">
+        ${renderToStaticMarkup(
+          <ContenderChart
+            rows={board.rows}
+            draw={board.draw}
+            selection={selection}
+            onToggle={() => {}}
+            {...chartExtra}
+          />
+        )}
         ${renderToStaticMarkup(
           <TournamentSlate slate={slate} draw={draw} broadcasts={broadcasts} />
         )}
-        ${renderToStaticMarkup(<TournamentBoard board={board} />)}
+        ${renderToStaticMarkup(
+          <TournamentBoard
+            board={board}
+            seriesColors={seriesColorByEntity(chartSeriesFor(board.rows, selection))}
+          />
+        )}
         ${renderToStaticMarkup(<TournamentProps markets={props} draw={draw} />)}
       </div>`;
 
-    // The bracket, with DUMMY data — Alex asked to see it before Thursday's
-    // ceremony. The fixture lives under __tests__/ and cannot reach a
-    // production bundle; on the real page this tab still reads "Draw not
-    // released" until the register latches `draw_released`.
-    //
-    // This is the THUMBNAIL only, so the hub capture shows all four surfaces
-    // in one place. The bracket's own verdict artifact is
-    // `usOpenBracketCapture` -> `us-open-bracket.html`, which renders both
-    // draws and every state at phone width (UX-P136).
-    const rounds = buildBracket(
-      SYNTHETIC_MENS_DRAW,
-      syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
+    // A fourth line added by the picker, to show the added-colour behaviour.
+    const withFourth = toggleSelection(
+      defaultSelection(men.rows),
+      men.rows[7]?.entity_key ?? men.rows[3].entity_key
     );
+
+    // The bracket, with DUMMY draw data — its own verdict artifact is
+    // `usOpenBracketCapture` -> `us-open-bracket.html`. This is the thumbnail
+    // only, so the hub capture shows every surface in one place.
+    const results = syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW);
+    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, results);
     const bracket = renderToStaticMarkup(
-      <TournamentBracket rounds={rounds} drawReleased />
+      <TournamentBracket
+        rounds={rounds}
+        drawReleased
+        initialRound="R128"
+        prematch={syntheticPrematch(results, SYNTHETIC_MENS_DRAW)}
+        propMarkets={props}
+        draw="mens-singles"
+      />
+    );
+    const preDraw = renderToStaticMarkup(
+      <TournamentBracket rounds={[]} drawReleased={false} preDrawBoards={payload.boards} />
     );
 
     const live = slate.matches.filter((m) => m.probability_is_live).length;
@@ -302,7 +345,7 @@ describe("US Open board capture rig", () => {
     const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${payload.title} — re-skin</title>
+<title>${payload.title} — re-skin, UX-P137 rulings applied</title>
 <style>${appStylesheet()}</style>
 <style>
   body{background:#F5F5F7;margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Segoe UI,Roboto,sans-serif}
@@ -310,7 +353,11 @@ describe("US Open board capture rig", () => {
   .phone{width:390px;background:#F5F5F7;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden}
   .note{max-width:1240px;margin:0 auto;padding:14px 16px;font-size:12.5px;line-height:1.55;color:#374151;background:#fff;border-bottom:1px solid #E5E7EB}
   .note b{color:#111827}
+  .note ol{margin:8px 0 0;padding-left:20px}
+  .note li{margin-bottom:5px}
   .cap{max-width:1240px;margin:16px auto 8px;padding:0 16px;font:700 12px inherit;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF}
+  .pick{max-width:1240px;margin:14px auto;padding:12px 16px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:10px;font-size:12.5px;line-height:1.6;color:#374151}
+  .pick b{color:#111827}
   .tabs{display:flex;border-bottom:1px solid #E5E7EB;background:#fff}
   .tabs span{flex:1;text-align:center;padding:13px 0;font:600 13.5px inherit;color:#9CA3AF;border-bottom:2px solid transparent}
   .tabs span.on{color:#111827;border-bottom-color:#111827}
@@ -321,22 +368,40 @@ describe("US Open board capture rig", () => {
   header.hero h1{margin:0;font-size:24px;letter-spacing:-.02em;color:#111827}
   header.hero p{margin:2px 0 0;font-size:13px;color:#6B7280}
   .pad{padding:0 16px 32px}
-  .wide{max-width:1240px;margin:0 auto;padding:0 16px 60px}
 </style></head>
 <body>
 <div class="note">
-<b>US Open hub — Alex's mock verdict applied.</b> These are the SHIPPED components rendered with the
-app's own compiled CSS at a 390px viewport. Two phones so both pill states are visible at once; in
-the product you only ever see one.<br>
+<b>US Open hub &mdash; your four hub rulings applied.</b> These are the SHIPPED components rendered with
+the app's own compiled CSS at a 390px viewport.
+<ol>
+<li><b>The chart is first</b>, above the day's matches, and its legend is a picker: tap a row to drop
+that line, tap <i>Add players</i> for the rest of the field. Default is still the top three; ceiling is
+six. Phone 3 shows the picker open, phone 4 shows a fourth line added.</li>
+<li><b>Where to watch is on the ROW.</b> Honest caveat, stated rather than hidden: the register holds
+rights per REGION only, so today every row resolves to the same string. The per-match field exists and
+is preferred whenever it is filled &mdash; nothing fabricates one in the meantime.</li>
+<li><b>The section is renamed.</b> Rendered here as <b>&ldquo;Questions worth asking&rdquo;</b>; two
+alternatives are in the report and this is a one-constant change.</li>
+<li><b>Everything collapses to five</b> &mdash; matches per day, questions, the picker list &mdash; and
+the board stays at three because the chart draws three.</li>
+</ol>
 <b>Boards:</b> real production read, ${men.rows.length + women.rows.length} registered contenders,
-every row price-dark (#2199) — that is why they are muted and banner'd.
+every row price-dark (#2199) &mdash; that is why they are muted and banner'd.
 <b>Slate:</b> real production read, ${slate.matches.length} matches, ${live} of them inside the
-6-hour live window. <b>Props:</b> mechanism only — population needs one production query that this
-lane's sandbox currently refuses (see report). <b>Bracket:</b> DUMMY 128-slot fixture, shown early
-at Alex's request; the real page says "Draw not released" until the ceremony.
+6-hour live window. <b>Questions:</b> register v4's eleven, re-priced today from production &mdash;
+four of them women's. <b>Bracket:</b> DUMMY 128-slot fixture; full states in
+<code>us-open-bracket.html</code>.
 </div>
 
-<div class="cap">Tournament tab — pills flip everything below them</div>
+<div class="pick">
+<b>RULING 7 &mdash; pick a name for the questions section.</b> Rendered below as
+<b>&ldquo;Questions worth asking&rdquo;</b> (the page's own words &mdash; its empty state already says
+it). Runners-up: <b>&ldquo;Beyond the title race&rdquo;</b> and <b>&ldquo;Also being predicted&rdquo;</b>.
+Note on your three: <i>Beyond the matches</i> is factually wrong &mdash; eight of these eleven ARE about
+matches (reaching a round).
+</div>
+
+<div class="cap">Tournament tab &mdash; pills flip everything below them</div>
 <div class="rail">
   <div class="phone">
     <header class="hero"><h1>${payload.title}</h1><p>${payload.subtitle}</p></header>
@@ -352,19 +417,59 @@ at Alex's request; the real page says "Draw not released" until the ceremony.
   </div>
 </div>
 
-<div class="cap">Bracket tab — dummy draw, ahead of Thursday's ceremony (full states: us-open-bracket.html)</div>
-<div class="rail"><div class="phone"><div class="pad">${bracket}</div></div></div>
+<div class="cap">Ruling 6 &mdash; the picker, open and used</div>
+<div class="rail">
+  <div class="phone">
+    <header class="hero"><h1>${payload.title}</h1><p>Picker open</p></header>
+    <div class="tabs"><span class="on">Tournament</span><span>Bracket</span></div>
+    <div class="pills"><span class="on">Men's</span><span>Women's</span></div>
+    ${panel("mens-singles", men, { initialPickerOpen: true })}
+  </div>
+  <div class="phone">
+    <header class="hero"><h1>${payload.title}</h1><p>A fourth line added</p></header>
+    <div class="tabs"><span class="on">Tournament</span><span>Bracket</span></div>
+    <div class="pills"><span class="on">Men's</span><span>Women's</span></div>
+    ${panel("mens-singles", men, {}, withFourth)}
+  </div>
+</div>
+
+<div class="cap">Bracket tab &mdash; before the draw (ruling 1) and after it (full states: us-open-bracket.html)</div>
+<div class="rail">
+  <div class="phone"><div class="pad">${preDraw}</div></div>
+  <div class="phone"><div class="pad">${bracket}</div></div>
+</div>
 </body></html>`;
 
     const out = path.join(dir, "us-open-reskin.html");
     fs.writeFileSync(out, html);
     expect(fs.existsSync(out)).toBe(true);
     expect(html.length).toBeGreaterThan(5000);
+
     // The rig must not silently write a page whose panels failed to render.
-    expect(html).toContain("data-testid=\"tournament-slate\"");
-    expect(html).toContain("data-testid=\"contender-chart\"");
-    expect(html).toContain("data-testid=\"board-expander\"");
-    expect(html).toContain("data-testid=\"tournament-bracket\"");
-    expect(html).toContain("data-testid=\"slate-broadcast\"");
+    expect(html).toContain('data-testid="tournament-slate"');
+    expect(html).toContain('data-testid="contender-chart"');
+    expect(html).toContain('data-testid="board-expander"');
+    expect(html).toContain('data-testid="tournament-bracket"');
+
+    // ---- one assertion per ruling ----
+    // 6. Chart above the slate, on every phone, and pickable.
+    expect(html.indexOf('data-testid="contender-chart"')).toBeLessThan(
+      html.indexOf('data-testid="tournament-slate"')
+    );
+    expect(html).toContain('data-testid="chart-picker-toggle"');
+    expect(html).toContain('data-testid="chart-picker-option"');
+    expect(html).toContain('data-selected="4"');
+    // 7. The gambling words are gone from every heading.
+    expect(html).toContain("Questions worth asking");
+    expect(html).not.toContain("Props &amp; futures");
+    // 8. Where-to-watch is on the rows, and the old single line is gone.
+    expect((html.match(/data-testid="slate-row-broadcast"/g) ?? []).length).toBeGreaterThan(4);
+    expect(html).not.toContain('data-testid="slate-broadcast"');
+    // 5/9. Collapsed everywhere.
+    expect((html.match(/data-testid="show-more"/g) ?? []).length).toBeGreaterThan(4);
+    // 1. And the pre-draw bracket panel carries both boards.
+    expect(html).toContain('data-testid="bracket-unreleased"');
+    // The stylesheet actually loaded — an unstyled capture is not a verdict.
+    expect(appStylesheet().length).toBeGreaterThan(1000);
   });
 });

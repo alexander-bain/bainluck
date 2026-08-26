@@ -33,18 +33,40 @@
  *      bracket can never displace the boards — and the verdict did not
  *      overrule it, so it stands.
  *
- * The page is therefore: pills -> today's matches -> championship chart+board
- * -> props, with the bracket one tab away.
+ * UX-P137 (Alex's rulings on the Day-5 artifacts) moved two things and left
+ * the structure alone:
+ *
+ *   6. **The chart is now the first thing under the pills**, above the day's
+ *      matches. It used to live inside `TournamentBoard`, below the slate, so
+ *      on a full match day the title race was thirty rows down the page. The
+ *      reader also picks which lines it draws now, so the SELECTION lives here
+ *      rather than in the chart: the board's colour tie-in has to follow the
+ *      same choice, and two components each holding their own idea of "the top
+ *      three" would drift the moment the reader touched either.
+ *
+ *   1. **The Bracket tab is not empty before the draw.** It gets both boards,
+ *      unfiltered by the gender pill, because the winner markets are the
+ *      tradeable truth about this tournament on the day before a ceremony.
+ *
+ * The page is therefore: pills -> chart -> today's matches -> championship
+ * board -> curated questions, with the bracket one tab away.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import ContenderChart from "@/components/tournament/ContenderChart";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
-import { buildBracket } from "@/lib/bracket";
+import { buildBracket, prematchFromSlate } from "@/lib/bracket";
+import {
+  chartSeriesFor,
+  defaultSelection,
+  seriesColorByEntity,
+  toggleSelection,
+} from "@/lib/contenderChart";
 import TournamentSlate from "@/components/tournament/TournamentSlate";
 import TournamentProps from "@/components/tournament/TournamentProps";
 import { fetchTournament } from "@/lib/api";
@@ -81,6 +103,15 @@ export default function TournamentPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("tournament");
   const [draw, setDraw] = useState<string>("mens-singles");
+  /**
+   * The chart's chosen contenders, or `null` for "whatever the default is".
+   *
+   * `null` rather than the computed top three so the default follows the data
+   * when the board re-ranks — pinning three entity keys at first render would
+   * quietly freeze the chart on yesterday's leaders. Resets on a draw change,
+   * because a men's selection means nothing in the women's field.
+   */
+  const [selection, setSelection] = useState<string[] | null>(null);
 
   useEffect(() => {
     if (!slug) return;
@@ -105,6 +136,38 @@ export default function TournamentPage() {
       cancelled = true;
     };
   }, [slug]);
+
+  // Everything derived, computed BEFORE the loading/error returns so the hook
+  // order never changes between renders. Each guards on `data` being null
+  // rather than being moved below the returns.
+  const board = useMemo(
+    () => data?.boards.find((entry) => entry.draw === draw) ?? null,
+    [data, draw]
+  );
+
+  const selectionKeys = useMemo(
+    () => selection ?? (board ? defaultSelection(board.rows) : []),
+    [selection, board]
+  );
+
+  /** Chart colour per contender, so the board's name underline follows the picker. */
+  const seriesColors = useMemo(
+    () => (board ? seriesColorByEntity(chartSeriesFor(board.rows, selectionKeys)) : {}),
+    [board, selectionKeys]
+  );
+
+  const rounds = useMemo(() => buildBracket(data?.bracket?.[draw] ?? []), [data, draw]);
+
+  /**
+   * Pre-match prices for decided bracket matches (ruling 3), joined off the
+   * slate the page already has. No extra request: the slate is in the same
+   * payload, and a decided match's two names are the only join key either side
+   * shares.
+   */
+  const prematch = useMemo(
+    () => prematchFromSlate(data?.slate?.matches ?? [], rounds),
+    [data, rounds]
+  );
 
   if (loading) {
     return (
@@ -170,7 +233,10 @@ export default function TournamentPage() {
                 key={entry.id}
                 type="button"
                 aria-pressed={draw === entry.id}
-                onClick={() => setDraw(entry.id)}
+                onClick={() => {
+                  setDraw(entry.id);
+                  setSelection(null);
+                }}
                 data-testid="draw-pill"
                 data-draw={entry.id}
                 data-active={draw === entry.id ? "true" : "false"}
@@ -189,10 +255,22 @@ export default function TournamentPage() {
         <div className="px-4 pb-16">
           {tab === "tournament" && (
             <>
-              {/* TODAY LEADS. Alex took direction B's ordering: the day's
-                  matches are the first thing on the page, because they are the
-                  half with live prices and the reason to open it on a match
-                  day. The championship board follows. */}
+              {/* THE CHART LEADS (ruling 6). The title race is what this page
+                  is about; it was previously below thirty match rows. */}
+              {board && (
+                <ContenderChart
+                  rows={board.rows}
+                  draw={board.draw}
+                  selection={selectionKeys}
+                  onToggle={(key) =>
+                    setSelection(toggleSelection(selectionKeys, key))
+                  }
+                />
+              )}
+
+              {/* Then today's matches. Alex took direction B's ordering: they
+                  are the half with live prices and the reason to open the page
+                  on a match day. The championship board follows. */}
               <TournamentSlate
                 slate={
                   data.slate ?? {
@@ -210,11 +288,7 @@ export default function TournamentPage() {
                 broadcasts={data.broadcasts}
               />
 
-              {data.boards
-                .filter((board) => board.draw === draw)
-                .map((board) => (
-                  <TournamentBoard key={board.draw} board={board} />
-                ))}
+              {board && <TournamentBoard board={board} seriesColors={seriesColors} />}
 
               <TournamentProps markets={data.props ?? []} draw={draw} />
             </>
@@ -225,10 +299,19 @@ export default function TournamentPage() {
               {/* THE FIXTURE SWAP (UX-P134): built from the register's own
                   draw slots, so the ceremony is a data change and not a
                   deploy. Empty until `draw_released` latches, at which point
-                  this fills without anything here changing. */}
+                  this fills without anything here changing.
+
+                  Before that latch it shows BOTH boards rather than nothing
+                  (ruling 1), the advance-to-stage markets under an unreached
+                  round (ruling 4), and the day's pre-match prices against
+                  decided matches (ruling 3). */}
               <TournamentBracket
-                rounds={buildBracket(data.bracket?.[draw] ?? [])}
+                rounds={rounds}
                 drawReleased={data.draw_released}
+                preDrawBoards={data.boards}
+                propMarkets={data.props ?? []}
+                draw={draw}
+                prematch={prematch}
               />
             </div>
           )}

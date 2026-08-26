@@ -1,4 +1,7 @@
+"use client";
+
 import React from "react";
+import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   formatMove,
   formatSlateProbability,
@@ -10,7 +13,7 @@ import {
   slateNotice,
   slateRowFreshnessLabel,
   slateRowIsPresentedAsLive,
-  broadcastFor,
+  matchBroadcast,
   type Broadcast,
   type SlateData,
   type SlateMatch,
@@ -42,12 +45,29 @@ import {
  *    above it still reads live. A muted number with no stated reason is worse
  *    than either a live one or an absent one — the reader assumes a bug or,
  *    worse, does not notice. So the age travels with the row.
+ *
+ * 4. **Where to watch rides the ROW** (UX-P137, Alex's ruling 8). It used to
+ *    be one line above the whole list, on the argument that the rights are
+ *    tournament-wide. Alex overruled that: the answer differs match to match,
+ *    and a single line at the top of a long list is wrong. Note that today
+ *    every row resolves to the same region-wide answer, because that is all
+ *    the register holds — `matchBroadcast` explains what refuses to invent the
+ *    rest.
+ *
+ * 5. **Five matches then an expander**, per day group (ruling 5/9).
  */
 
-function SlateRow({ match }: { match: SlateMatch }) {
+function SlateRow({
+  match,
+  broadcasts,
+}: {
+  match: SlateMatch;
+  broadcasts?: Broadcast[];
+}) {
   const isLive = slateRowIsPresentedAsLive(match);
   const ordered = orderedSides(match);
   const freshness = slateRowFreshnessLabel(match);
+  const watch = matchBroadcast(match, broadcasts);
 
   return (
     <li
@@ -62,6 +82,19 @@ function SlateRow({ match }: { match: SlateMatch }) {
         <span className="tabular-nums">{matchTime(match.scheduled_date)}</span>
         <span aria-hidden="true">·</span>
         <span>{match.draw_label}</span>
+        {watch && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span
+              data-testid="slate-row-broadcast"
+              data-region={watch.region}
+              data-broadcast-scope={watch.scope}
+            >
+              <span className="sr-only">Where to watch: </span>
+              {watch.channels.join(", ")}
+            </span>
+          </>
+        )}
         {match.has_moved && isLive && (
           <span className="text-accent-brand" data-testid="slate-moved">
             Moved
@@ -148,6 +181,54 @@ function SlateRow({ match }: { match: SlateMatch }) {
   );
 }
 
+/**
+ * One calendar day of matches, collapsed to five (ruling 5).
+ *
+ * Per group and not across the whole slate: the collapse exists so the reader
+ * can see WHAT SECTIONS THE PAGE HAS without scrolling past one of them, and a
+ * single cap over a multi-day slate would hide tomorrow entirely behind
+ * today's long list — which is the same failure with a different victim.
+ */
+function SlateGroup({
+  dayKey,
+  heading,
+  matches,
+  broadcasts,
+}: {
+  dayKey: string;
+  heading: string;
+  matches: SlateMatch[];
+  broadcasts?: Broadcast[];
+}) {
+  const [expanded, setExpanded] = React.useState(false);
+  const visible = expanded ? matches : matches.slice(0, COLLAPSED_LIST_COUNT);
+
+  return (
+    <div data-testid="slate-group" data-day={dayKey} data-count={matches.length}>
+      <h2 className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
+        {heading}
+        <span className="ml-1.5 font-normal normal-case tracking-normal">
+          · {matches.length} {matches.length === 1 ? "match" : "matches"}
+        </span>
+      </h2>
+      <div className="overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
+        <ol>
+          {visible.map((match) => (
+            <SlateRow key={match.matchup_key} match={match} broadcasts={broadcasts} />
+          ))}
+        </ol>
+        {matches.length > COLLAPSED_LIST_COUNT && (
+          <ShowMore
+            expanded={expanded}
+            total={matches.length}
+            onToggle={() => setExpanded((value) => !value)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function TournamentSlate({
   slate,
   draw,
@@ -157,13 +238,10 @@ export default function TournamentSlate({
   /** When set, show only this draw's matches — the gender pill drives it, and
    *  the page never stacks two gender lists (Alex's mock verdict). */
   draw?: string;
-  /** Where to watch (Alex's item 4). Tournament-wide, so it sits above the
-   *  matches rather than being stamped on each row — the rights are not
-   *  per-match and the page must not imply they are. */
+  /** Where to watch (Alex's item 4, moved to the row by ruling 8). */
   broadcasts?: Broadcast[];
 }) {
   const notice = slateNotice(slate);
-  const watch = broadcastFor(broadcasts);
   const matches = draw
     ? slate.matches.filter((match) => match.draw === draw)
     : slate.matches;
@@ -202,35 +280,14 @@ export default function TournamentSlate({
         </div>
       )}
 
-      {watch && (
-        <p
-          className="mt-3 text-[11.5px] text-text-secondary"
-          data-testid="slate-broadcast"
-          data-region={watch.region}
-        >
-          <span className="font-semibold text-text-primary">Where to watch</span>
-          {" · "}
-          {watch.channels.join(", ")}
-          <span className="text-text-muted"> ({watch.region})</span>
-        </p>
-      )}
-
       {groups.map((group) => (
-        <div key={group.dayKey} data-testid="slate-group" data-day={group.dayKey}>
-          <h2 className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
-            {group.heading}
-            <span className="ml-1.5 font-normal normal-case tracking-normal">
-              · {group.matches.length} {group.matches.length === 1 ? "match" : "matches"}
-            </span>
-          </h2>
-          <div className="overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
-            <ol>
-              {group.matches.map((match) => (
-                <SlateRow key={match.matchup_key} match={match} />
-              ))}
-            </ol>
-          </div>
-        </div>
+        <SlateGroup
+          key={group.dayKey}
+          dayKey={group.dayKey}
+          heading={group.heading}
+          matches={group.matches}
+          broadcasts={broadcasts}
+        />
       ))}
 
       {incoherent > 0 && (

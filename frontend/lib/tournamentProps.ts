@@ -112,3 +112,72 @@ export function formatPropProbability(probability: number | null): string {
   if (probability === null || !Number.isFinite(probability)) return "—";
   return `${Math.round(probability * 100)}%`;
 }
+
+/** How many outcomes a field card ranks. Only these contribute to liveness. */
+export const FIELD_RANK_LIMIT = 3;
+
+/**
+ * The outcomes a card actually PRINTS — the only ones that get a vote.
+ *
+ * An answer card prints one number. A field card prints its top few. An
+ * outcome the card does not print cannot make it stale and cannot make it
+ * live, which is the difference between "this card's numbers are old" and
+ * "something in this market is old".
+ */
+export function printedOutcomes(market: PropMarket): PropOutcome[] {
+  const answer = answerOutcome(market);
+  if (answer !== null) return [answer];
+  return rankedOutcomes(market).slice(0, FIELD_RANK_LIMIT);
+}
+
+/**
+ * Is this card allowed the live treatment? (CERT-411 round 2, 2026-08-26.)
+ *
+ * THE BUG THIS REPLACES, in one line: `ranked.length > 0 &&
+ * ranked[0].probability_is_live` — a field card took its liveness from the
+ * LEADER alone. So a card ranking three outcomes, its leader refreshed an hour
+ * ago and its runner-up twenty days old, rendered in the confident type with
+ * no age anywhere on it. The reader is shown three numbers and told all three
+ * are current when one of them is three weeks stale.
+ *
+ * That is the same defect UX-P135 fixed on the boards (a row is as fresh as
+ * its OLDEST leg) and on the slate (a pair is live only when BOTH sides are),
+ * and it survived here because this component reached past the pure layer and
+ * read an outcome flag directly. Hence this function: the rule now lives where
+ * a guard can reach it, in one place, for all three surfaces.
+ *
+ * ANY printed contributor that is not live demotes the card. An unpriced
+ * market — nothing printed — is not live either: there is no reading to be
+ * fresh.
+ */
+export function propIsPresentedAsLive(market: PropMarket): boolean {
+  const printed = printedOutcomes(market);
+  if (printed.length === 0) return false;
+  return printed.every(
+    (outcome) => outcome.probability !== null && outcome.probability_is_live === true
+  );
+}
+
+/** Longest age among the printed outcomes — the card is as fresh as its oldest. */
+export function propGoverningAgeHours(market: PropMarket): number | null {
+  const ages = printedOutcomes(market)
+    .map((outcome) => outcome.age_hours)
+    .filter((age): age is number => typeof age === "number" && Number.isFinite(age));
+  if (ages.length === 0) return null;
+  return Math.max(...ages);
+}
+
+/**
+ * The stale outcomes a muted card should name — mirrors `rowFreshnessLabel`.
+ *
+ * A muted number with no stated reason is worse than either a live one or an
+ * absent one: the reader assumes a bug, or does not notice. Empty for a live
+ * card, because a healthy card that keeps apologising teaches the reader the
+ * apology is decorative.
+ */
+export function propStaleOutcomes(market: PropMarket): PropOutcome[] {
+  if (propIsPresentedAsLive(market)) return [];
+  return printedOutcomes(market).filter(
+    (outcome) => outcome.probability !== null && outcome.probability_is_live !== true
+  );
+}

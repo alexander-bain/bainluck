@@ -65,6 +65,12 @@ export interface SlateMatch {
   favourite: string | null;
   has_moved: boolean;
   source_count: number;
+  /**
+   * This match's OWN broadcast, when the register names one (UX-P137, ruling
+   * 8). Absent today for every match — see `matchBroadcast` for why the field
+   * exists anyway and what refuses to fill it with a guess.
+   */
+  broadcast?: Broadcast | null;
 }
 
 export interface Broadcast {
@@ -76,13 +82,9 @@ export interface Broadcast {
 /**
  * Where to watch, for the reader's own region (Alex's item 4).
  *
- * A static per-tournament mapping is the sanctioned v1. It is looked up by
- * region rather than joined per match because these rights are tournament-wide
- * — pretending otherwise by stamping a channel on each row would imply we know
- * something per-match that we do not.
- *
- * Falls back to the US entry, which is where the rights holder for this
- * tournament is, rather than to nothing.
+ * A static per-tournament mapping is the sanctioned v1. Falls back to the US
+ * entry, which is where the rights holder for this tournament is, rather than
+ * to nothing.
  */
 export function broadcastFor(
   broadcasts: Broadcast[] | undefined,
@@ -94,6 +96,52 @@ export function broadcastFor(
     broadcasts.find((entry) => entry.region === "US") ??
     broadcasts[0]
   );
+}
+
+export interface ResolvedBroadcast {
+  channels: string[];
+  region: string;
+  /**
+   * `match` when the register named a channel for THIS match; `tournament`
+   * when it is the region-wide answer standing in. The distinction is not
+   * cosmetic — see the note on `matchBroadcast`.
+   */
+  scope: "match" | "tournament";
+}
+
+/**
+ * Where to watch THIS match (UX-P137, Alex's ruling 8).
+ *
+ * The ruling: "WHERE-TO-WATCH moves to match level — the answer differs match
+ * to match; a single line at the top of a long list is wrong." That is true of
+ * the world and this file used to argue the opposite, so the argument is gone
+ * and the line moved.
+ *
+ * IT IS ALSO, TODAY, TRUE OF NOTHING WE HOLD, and the code says so rather than
+ * hiding it. The register carries rights per REGION only — US: ESPN/ESPN2/
+ * ESPN+, UK: Sky Sports Tennis, AU: Stan Sport — and there is no court, no
+ * session and no per-match channel anywhere in the pipeline. So every row
+ * resolves to the same string until a session feed lands, and the row is
+ * tagged `scope: "tournament"` so a test can prove that is what happened
+ * rather than a per-match answer that coincidentally matched.
+ *
+ * `match.broadcast` is the seam that day arrives through: a data change, not
+ * another layout pass. Nothing fabricates one in the meantime — a plausible
+ * per-match channel is worse than an honest tournament-wide one, because the
+ * reader would act on it.
+ */
+export function matchBroadcast(
+  match: Pick<SlateMatch, "broadcast">,
+  broadcasts: Broadcast[] | undefined,
+  region = "US"
+): ResolvedBroadcast | null {
+  const own = match.broadcast;
+  if (own && Array.isArray(own.channels) && own.channels.length > 0) {
+    return { channels: own.channels, region: own.region, scope: "match" };
+  }
+  const wide = broadcastFor(broadcasts, region);
+  if (!wide || !Array.isArray(wide.channels) || wide.channels.length === 0) return null;
+  return { channels: wide.channels, region: wide.region, scope: "tournament" };
 }
 
 export interface SlateData {

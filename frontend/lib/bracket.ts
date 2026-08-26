@@ -45,6 +45,41 @@ export interface BracketMatch {
   bottom: BracketSlot | null;
   /** Set only when the match has actually been decided. */
   winnerKey: string | null;
+  /**
+   * The match ids this one's two slots come from, or `null` in round one
+   * (added UX-P137, Alex's ruling 3: "decided matches must not render blank").
+   *
+   * A `null` slot used to render as a bare em-dash, and a card reading
+   * "— v —" is the single most common thing on the page for most of a
+   * tournament day: on the morning of the draw 62 of 127 cards are empty, and
+   * at any hour after that the round in progress is half holes. An em-dash
+   * says "we have nothing"; "Winner of match 23" says the same thing while
+   * being true, checkable, and a pointer to where the answer will come from.
+   *
+   * In round one there is no feeder, so `null` here is honest too — an empty
+   * round-one slot is a register hole, not an unplayed match, and the two get
+   * different words.
+   */
+  topFrom: string | null;
+  bottomFrom: string | null;
+}
+
+/**
+ * Each side's PRE-MATCH probability for a decided match, keyed by match id.
+ *
+ * Ruling 3: a decided match must print the pre-match probability AND the
+ * outcome, the way decided event cards do everywhere else in the app. Bold
+ * versus muted is not an outcome — it is a font weight, and it is the only
+ * thing a settled bracket row used to say.
+ *
+ * These are MATCH probabilities and have nothing to do with the title
+ * probability a slot carries. Keeping them in a separate structure rather than
+ * on `BracketSlot` is deliberate: the two numbers answer different questions,
+ * and the whole of ruling 2 is about not letting one be mistaken for the other.
+ */
+export interface PrematchPair {
+  top: number | null;
+  bottom: number | null;
 }
 
 export interface BracketRound {
@@ -103,6 +138,7 @@ export function buildBracket(
 
   for (let r = 0; r < roundCount; r += 1) {
     const round = ROUND_NAMES[startIndex + r];
+    const previous = r === 0 ? null : ROUND_NAMES[startIndex + r - 1];
     const matches: BracketMatch[] = [];
     const next: (BracketSlot | null)[] = [];
 
@@ -111,6 +147,12 @@ export function buildBracket(
       const bottom = current[i + 1] ?? null;
       const id = `${round}-${i / 2 + 1}`;
       const declared = results[id] ?? null;
+      // Slot `i` of this round is fed by match `i + 1` of the previous one
+      // (1-indexed ids over a 0-indexed fold). Off by one here would print a
+      // confidently wrong sentence — "Winner of match 6" pointing at match 5 —
+      // which is worse than the em-dash it replaces, so it has its own test.
+      const topFrom = previous === null ? null : `${previous}-${i + 1}`;
+      const bottomFrom = previous === null ? null : `${previous}-${i + 2}`;
 
       // A declared winner must actually be in the match. A result naming
       // somebody who is not one of these two slots is a data fault, and
@@ -121,7 +163,15 @@ export function buildBracket(
           ? null
           : [top, bottom].find((s) => s?.entity_key === declared) ?? null;
 
-      matches.push({ id, round, top, bottom, winnerKey: advancing?.entity_key ?? null });
+      matches.push({
+        id,
+        round,
+        top,
+        bottom,
+        winnerKey: advancing?.entity_key ?? null,
+        topFrom,
+        bottomFrom,
+      });
       next.push(advancing);
     }
 
@@ -142,6 +192,89 @@ export function buildBracket(
  */
 export function roundIsUnreached(round: BracketRound): boolean {
   return round.matches.every((m) => m.top === null && m.bottom === null);
+}
+
+/**
+ * The column header a view owes its percentages (UX-P137, Alex's ruling 2).
+ *
+ * THE FINDING THIS EXISTS FOR, stated plainly because it is the reason the
+ * ruling was issued: the bracket's percentage is the chance of winning the
+ * WHOLE TOURNAMENT, and nothing on the page said so. `build_bracket` fills a
+ * slot's probability from the register player's `sources`, every one of which
+ * is `kind: "outright"` against the champion market — the same outcomes the
+ * championship board reads. Printed beside an opponent a player is about to
+ * play, "18.0%" reads irresistibly as "18% to win this match". Alex could not
+ * tell which it was, and he had the codebase.
+ *
+ * So a number on this page now travels with the question it answers, and views
+ * that mean different things say different things. There is no default: a
+ * caller adding a new percentage column has to name what it means.
+ */
+export const TITLE_COLUMN_LABEL = "To win the title";
+
+/** "To reach the quarter-finals" — the advance-to-stage column (ruling 4). */
+export function reachColumnLabel(round: RoundName): string {
+  return `To reach the ${ROUND_LABELS[round].toLowerCase()}`;
+}
+
+/** The minimum a slate match must expose to be joined onto the bracket. */
+interface JoinableMatch {
+  sides: {
+    entity_key: string;
+    probability: number | null;
+    opening_probability: number | null;
+  }[];
+}
+
+/**
+ * Pre-match probabilities per bracket match, joined from the day's slate.
+ *
+ * The join key is the unordered PAIR of entity keys, because that is the only
+ * thing the two datasets share — the slate is keyed by matchup and scheduled
+ * date, the bracket by fold position, and neither knows the other's id. A pair
+ * that appears in the slate but not the draw is simply absent from the result;
+ * this never guesses.
+ *
+ * It reads `opening_probability` and falls back to `probability`. Opening is
+ * "THE SCRIPT" in the slate's own words, and it is the only pre-match number
+ * that survives the match: once a match is decided the live probability has
+ * collapsed to 1 or 0, so printing it beside the result would be a tautology
+ * dressed as a forecast.
+ */
+export function prematchFromSlate(
+  matches: JoinableMatch[],
+  rounds: BracketRound[]
+): Record<string, PrematchPair> {
+  const byPair = new Map<string, Map<string, number>>();
+  for (const match of matches) {
+    if (!Array.isArray(match.sides) || match.sides.length !== 2) continue;
+    const keys = match.sides.map((side) => side.entity_key);
+    if (keys.some((key) => typeof key !== "string" || key === "")) continue;
+    const pairKey = [...keys].sort().join("|");
+    const perEntity = new Map<string, number>();
+    for (const side of match.sides) {
+      const value = side.opening_probability ?? side.probability;
+      if (typeof value === "number" && Number.isFinite(value)) {
+        perEntity.set(side.entity_key, value);
+      }
+    }
+    if (perEntity.size > 0) byPair.set(pairKey, perEntity);
+  }
+
+  const out: Record<string, PrematchPair> = {};
+  for (const round of rounds) {
+    for (const match of round.matches) {
+      if (match.top === null || match.bottom === null) continue;
+      const pairKey = [match.top.entity_key, match.bottom.entity_key].sort().join("|");
+      const found = byPair.get(pairKey);
+      if (!found) continue;
+      out[match.id] = {
+        top: found.get(match.top.entity_key) ?? null,
+        bottom: found.get(match.bottom.entity_key) ?? null,
+      };
+    }
+  }
+  return out;
 }
 
 /** How much of the draw is actually decided — for an honest progress line. */

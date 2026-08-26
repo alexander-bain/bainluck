@@ -32,10 +32,18 @@
      Identity colours, deliberately NOT the semantic accents: green and red
      already mean "moved up" and "moved down" on this page, so reusing them to
      mean "which player" would make a falling line read as a losing one.
-     Three is the whole palette because the chart draws exactly three lines. */
+     Three WAS the whole palette because the chart drew exactly three lines.
+     UX-P137 gave the reader a picker (Alex's ruling 6, DataGolf's interactive
+     legend as the reference), so the default is still three and the ceiling is
+     six. Six because that is where a 320px-wide chart stops being readable,
+     not because six colours were hard to find. 4-6 keep clear of the semantic
+     accents for the same reason 1-3 do. */
   --series-1: #2563EB;
   --series-2: #F59E0B;
   --series-3: #94A3B8;
+  --series-4: #7C3AED;
+  --series-5: #0891B2;
+  --series-6: #DB2777;
 
   /* Legacy color aliases (keep old code working) */
   --color-snow: #F5F5F7;
