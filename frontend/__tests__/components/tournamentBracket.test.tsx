@@ -1,39 +1,47 @@
 /**
- * The bracket, built against the SYNTHETIC 128-slot draw (UX-P131).
+ * THE BRACKET TAB and its fold logic (UX-P131, restructured by UX-P138).
  *
  * Charter amendment 2026-08-25: the bracket does not wait for Thursday's draw
- * ceremony. This suite is what makes that real — the component and its fold
- * logic are gated now, against a fixture, so 08-28 swaps the data source and
- * nothing else.
+ * ceremony. This suite is what makes that real — the fold logic is gated now,
+ * against a synthetic fixture, so 08-28 swaps the data source and nothing else.
  *
- * The assertion that matters most is the one about projection: an unplayed
- * match must render two names and no winner. A bracket that greys in a
- * projected winner looks identical to one showing a result, and the charter's
- * reliability doctrine is that every element does what it looks like it does.
+ * The assertion that matters most is still the one about projection: nothing
+ * advances without a declared result, and no cell is ever computed. A bracket
+ * that greys in a projected winner, or a grid that chains match odds into
+ * P(reach the semis), looks identical to one showing a measured fact — and the
+ * charter's reliability doctrine is that every element does what it looks like
+ * it does.
+ *
+ * UX-P138 (Alex's ruling 4) moved the MATCH RENDERING out of this component
+ * and onto the Tournament tab. Those assertions now live in
+ * `tournamentMatches.test.tsx`; what is left here is the fold, the pre-draw
+ * state, and the playoff grid that replaced the round strip.
  */
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import TournamentBracket from "@/components/tournament/TournamentBracket";
+import PlayoffGrid from "@/components/tournament/PlayoffGrid";
+import { bracketProgress, buildBracket, roundIsUnreached, ROUND_NAMES } from "@/lib/bracket";
+import { buildMatchList } from "@/lib/matchList";
 import {
-  TITLE_COLUMN_LABEL,
-  bracketProgress,
-  buildBracket,
-  prematchFromSlate,
-  reachColumnLabel,
-  roundIsUnreached,
-  ROUND_NAMES,
-} from "@/lib/bracket";
-import { advanceMarketsForRound, advanceRound } from "@/lib/advanceToStage";
-import type { TournamentBoardData } from "@/lib/tournament";
+  GRID_MAX_REACH_COLUMNS,
+  GRID_SECTION_LABEL,
+  buildPlayoffGrid,
+  formatGridCell,
+  nextRoundOdds,
+  roundAfter,
+} from "@/lib/playoffGrid";
+import type { PropMarket } from "@/lib/tournamentProps";
+import type { SlateMatch, SlateSide } from "@/lib/slate";
+import type { TournamentBoardData, TournamentRow } from "@/lib/tournament";
 import {
   SYNTHETIC_MENS_DRAW,
   SYNTHETIC_WOMENS_DRAW,
   syntheticDrawWithHoles,
   syntheticFirstRoundResults,
   syntheticPartialResults,
-  syntheticPrematch,
 } from "../fixtures/syntheticDraw";
 
 const count = (html: string, needle: string) =>
@@ -204,174 +212,161 @@ describe("roundIsUnreached", () => {
   });
 });
 
-describe("TournamentBracket rendering", () => {
-  it("renders the not-yet state before the draw is released", () => {
-    const html = renderToStaticMarkup(
-      <TournamentBracket rounds={[]} drawReleased={false} />
-    );
-    expect(html).toContain('data-testid="bracket-unreleased"');
-    expect(html).toContain("Draw not released");
-    // And it says the boards are safe — the charter's own guarantee, on screen.
-    expect(html).toContain("title boards do not move");
-  });
-
-  it("shows the not-yet state even if rounds arrive before the draw is official", () => {
-    const html = renderToStaticMarkup(
-      <TournamentBracket rounds={buildBracket(SYNTHETIC_MENS_DRAW)} drawReleased={false} />
-    );
-    expect(html).toContain('data-testid="bracket-unreleased"');
-  });
-
-  it("offers every round as a chip, and renders ONE of them", () => {
-    // The 128-draw layout gate (UX-P136). Seven side-by-side columns is
-    // ~1,360px wide and ~3,450px tall in its first column; at the 390px
-    // viewport this page targets that is unreadable in two dimensions at once.
-    const html = renderToStaticMarkup(
-      <TournamentBracket rounds={buildBracket(SYNTHETIC_MENS_DRAW)} drawReleased />
-    );
-    expect(html.match(/data-testid="bracket-round-chip"/g)).toHaveLength(7);
-    // ...but only one round's matches are in the document.
-    expect(html.match(/data-testid="bracket-round"[^-]/g) ?? []).toHaveLength(1);
-  });
-
-  it("never renders more than one round's worth of match cards", () => {
-    // The cost gate behind the layout change: the old render put all 127
-    // matches on the page at once.
-    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW));
-    const html = renderToStaticMarkup(<TournamentBracket rounds={rounds} drawReleased />);
-    const cards = (html.match(/data-testid="bracket-match"/g) ?? []).length;
-    expect(cards).toBeLessThanOrEqual(64);
-    expect(cards).toBeGreaterThan(0);
-  });
-
-  it("opens on the round the tournament is actually in", () => {
-    // R128 fully played, so the tab should open on R64 — not on a round that
-    // finished, and not on an empty Final.
-    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW));
-    const html = renderToStaticMarkup(<TournamentBracket rounds={rounds} drawReleased />);
-    expect(html).toContain('data-testid="bracket-round-title" data-round="R64"');
-  });
-
-  it("collapses an unreached round to a sentence, not to empty cards", () => {
-    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW));
-    const html = renderToStaticMarkup(
-      <TournamentBracket rounds={rounds} drawReleased initialRound="QF" />
-    );
-    expect(html).toContain('data-testid="bracket-round-unreached"');
-    expect(html).toContain("Nobody has reached the quarter-finals yet");
-    expect(html).not.toContain('data-testid="bracket-match"');
-  });
-
-  it("marks a decided match and its winner", () => {
-    const rounds = buildBracket(
-      SYNTHETIC_MENS_DRAW,
-      syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
-    );
-    const html = renderToStaticMarkup(
-      <TournamentBracket rounds={rounds} drawReleased initialRound="R128" />
-    );
-    expect(html).toContain('data-decided="true"');
-    expect(html).toContain('data-won="true"');
-  });
-
-  it("marks an undecided match as undecided, with neither side won", () => {
-    const html = renderToStaticMarkup(
-      <TournamentBracket rounds={buildBracket(SYNTHETIC_MENS_DRAW)} drawReleased />
-    );
-    expect(html).toContain('data-decided="false"');
-    expect(html).not.toContain('data-won="true"');
-  });
-
-  it("renders the women's draw as readily as the men's", () => {
-    const html = renderToStaticMarkup(
-      <TournamentBracket
-        rounds={buildBracket(SYNTHETIC_WOMENS_DRAW, syntheticFirstRoundResults(SYNTHETIC_WOMENS_DRAW))}
-        drawReleased
-        initialRound="R128"
-      />
-    );
-    expect(html).toContain('data-entity="syn-w-1"');
-    expect(html).toContain('data-won="true"');
-  });
-
-  it("prints no probability for a slot that has none, rather than a plausible one", () => {
-    const html = renderToStaticMarkup(
-      <TournamentBracket
-        rounds={buildBracket(SYNTHETIC_MENS_DRAW)}
-        drawReleased
-        initialRound="R128"
-        initialExpanded
-      />
-    );
-    // Slot 101 is unpriced in the fixture, as most of a 128 field really is.
-    const idx = html.indexOf('data-entity="syn-m-101"');
-    expect(idx).toBeGreaterThan(-1);
-    const cell = html.slice(idx, idx + 400);
-    expect(cell).not.toMatch(/\d+\.\d%/);
-  });
-
-  it("reports progress on screen", () => {
-    const html = renderToStaticMarkup(
-      <TournamentBracket rounds={buildBracket(SYNTHETIC_MENS_DRAW)} drawReleased />
-    );
-    expect(html).toContain('data-testid="bracket-progress"');
-    expect(html).toContain("0 of 127 matches decided");
-  });
-});
-
 // ---------------------------------------------------------------------------
-// UX-P137 — Alex's five bracket rulings, each with the failure it forbids
+// Shared fixtures for the grid — a board, a slate, curated advance markets
 // ---------------------------------------------------------------------------
 
-describe("ruling 1 — the pre-draw view is not empty", () => {
-  const boardFor = (draw: string, name: string): TournamentBoardData => ({
+function row(overrides: Partial<TournamentRow> = {}): TournamentRow {
+  return {
+    entity_key: "carlos-alcaraz",
+    display_name: "Carlos Alcaraz",
+    seed: 1,
+    country: null,
+    rank: 1,
+    state: "live",
+    probability: 0.31,
+    probability_is_live: true,
+    observed_at: "2026-08-26T20:00:00+00:00",
+    age_hours: 0.2,
+    price_state: "live",
+    freshest_observed_at: "2026-08-26T20:00:00+00:00",
+    freshest_age_hours: 0.2,
+    stale_sources: [],
+    mixed_freshness: false,
+    source_count: 2,
+    sources: [],
+    blend_rule: "equal_weight_midpoint",
+    divergent: false,
+    trend: [],
+    trend_delta: null,
+    ...overrides,
+  };
+}
+
+function boardOf(rows: TournamentRow[], draw = "mens-singles"): TournamentBoardData {
+  return {
     draw,
     label: draw === "mens-singles" ? "Men's Singles" : "Women's Singles",
-    contenders: 2,
+    rows,
+    contenders: rows.length,
     unpriced: 0,
+    rows_not_live: 0,
+    mixed_freshness_rows: 0,
     price_state: "live",
     newest_observed_at: "2026-08-26T20:00:00+00:00",
     age_hours: 0.2,
-    rows_not_live: 0,
-    mixed_freshness_rows: 0,
-    rows: [
+  };
+}
+
+function slateSide(overrides: Partial<SlateSide> = {}): SlateSide {
+  return {
+    entity_key: "carlos-alcaraz",
+    display_name: "Carlos Alcaraz",
+    seed: 1,
+    country: null,
+    role: "participant",
+    probability: 0.78,
+    opening_probability: 0.74,
+    move: 0.04,
+    raw_probability: 0.78,
+    raw_opening_probability: 0.74,
+    age_hours: 0.2,
+    price_state: "live",
+    ...overrides,
+  };
+}
+
+function slateMatch(overrides: Partial<SlateMatch> = {}): SlateMatch {
+  return {
+    matchup_key: "mens-singles:alcaraz-vs-rublev:2026-08-31",
+    draw: "mens-singles",
+    draw_label: "Men's Singles",
+    round: "R64",
+    scheduled_date: "2026-08-31T15:00:00+00:00",
+    sides: [
+      slateSide(),
+      slateSide({
+        entity_key: "andrey-rublev",
+        display_name: "Andrey Rublev",
+        seed: 9,
+        probability: 0.22,
+        opening_probability: 0.26,
+        move: -0.04,
+      }),
+    ],
+    coherent: true,
+    raw_sum: 1,
+    opening_raw_sum: 1,
+    probability_is_live: true,
+    price_state: "live",
+    observed_at: "2026-08-31T14:50:00+00:00",
+    age_hours: 0.2,
+    freshest_observed_at: "2026-08-31T14:50:00+00:00",
+    freshest_age_hours: 0.2,
+    stale_sides: [],
+    mixed_freshness: false,
+    favourite: "carlos-alcaraz",
+    has_moved: true,
+    source_count: 1,
+    ...overrides,
+  };
+}
+
+function advanceProp(
+  key: string,
+  title: string,
+  probability: number,
+  draw = "mens-singles",
+  live = false
+): PropMarket {
+  return {
+    key,
+    title,
+    hook: null,
+    draw,
+    source: "polymarket",
+    answer_entity_key: `${key}:yes`,
+    price_state: live ? "live" : "stale",
+    observed_at: "2026-08-25T20:00:00+00:00",
+    age_hours: live ? 0.5 : 24.6,
+    freshest_observed_at: "2026-08-25T20:00:00+00:00",
+    freshest_age_hours: live ? 0.5 : 24.6,
+    stale_outcomes: live ? [] : [`${key}:yes`],
+    mixed_freshness: false,
+    outcomes: [
       {
-        entity_key: `${draw}-1`,
-        display_name: name,
-        seed: 1,
-        country: null,
-        rank: 1,
-        state: "live",
-        probability: 0.31,
-        probability_is_live: true,
-        observed_at: "2026-08-26T20:00:00+00:00",
-        age_hours: 0.2,
-        price_state: "live",
-        source_count: 2,
-        sources: [],
-        stale_sources: [],
-        mixed_freshness: false,
-        freshest_observed_at: "2026-08-26T20:00:00+00:00",
-        freshest_age_hours: 0.2,
-        blend_rule: "equal_weight_midpoint",
-        divergent: false,
-        trend: [],
-        trend_delta: null,
+        entity_key: `${key}:yes`,
+        display_name: "Yes",
+        probability,
+        probability_is_live: live,
+        observed_at: "2026-08-25T20:00:00+00:00",
+        age_hours: live ? 0.5 : 24.6,
+        price_state: live ? "live" : "stale",
+        is_answer: true,
       },
     ],
-  });
+  };
+}
 
+// ---------------------------------------------------------------------------
+// Ruling 1 (UX-P137) — the pre-draw view is not empty. UNCHANGED BY UX-P138.
+// ---------------------------------------------------------------------------
+
+describe("ruling 1 — the pre-draw view is not empty", () => {
   const boards = [
-    boardFor("mens-singles", "Ivan Petrenko"),
-    boardFor("womens-singles", "Marta Kowalczyk"),
+    boardOf([row({ display_name: "Ivan Petrenko" })], "mens-singles"),
+    boardOf(
+      [row({ entity_key: "marta-k", display_name: "Marta Kowalczyk" })],
+      "womens-singles"
+    ),
   ];
 
   it("shows BOTH winner boards before the draw exists", () => {
-    // The ruling verbatim: "never an empty page when tradeable truth exists".
-    // Both, not the one behind the gender pill — on the day before a ceremony
-    // there is exactly one question and it has two answers.
+    // "Never an empty page when tradeable truth exists." Both, not the one
+    // behind the gender pill — on the day before a ceremony there is exactly
+    // one question and it has two answers.
     const html = renderToStaticMarkup(
-      <TournamentBracket rounds={[]} drawReleased={false} preDrawBoards={boards} />
+      <TournamentBracket grid={null} drawReleased={false} preDrawBoards={boards} />
     );
     expect(html).toContain('data-testid="bracket-unreleased"');
     expect(count(html, 'data-testid="tournament-board"')).toBe(2);
@@ -381,346 +376,374 @@ describe("ruling 1 — the pre-draw view is not empty", () => {
 
   it("still says the draw is not out — the boards are an addition, not a cover", () => {
     const html = renderToStaticMarkup(
-      <TournamentBracket rounds={[]} drawReleased={false} preDrawBoards={boards} />
+      <TournamentBracket grid={null} drawReleased={false} preDrawBoards={boards} />
     );
     expect(html).toContain("Draw not released");
   });
 
-  it("degrades to the old honest sentence when there are no boards either", () => {
-    // The other direction: a component that only worked with boards would
-    // render a titled empty box on a tournament we hold no prices for.
+  it("degrades to the honest sentence when there are no boards either", () => {
     const html = renderToStaticMarkup(
-      <TournamentBracket rounds={[]} drawReleased={false} />
+      <TournamentBracket grid={null} drawReleased={false} />
     );
     expect(html).toContain("Draw not released");
     expect(html).not.toContain('data-testid="tournament-board"');
   });
-});
 
-describe("ruling 2 — the percentage column says what it means", () => {
-  it("labels the column on every reachable round", () => {
-    const rounds = buildBracket(SYNTHETIC_MENS_DRAW);
+  it("falls back to the pre-draw state when the draw IS out but the grid is empty", () => {
+    // The other direction, and the one a release-day bug lands on: the flag
+    // latches, the prices have not arrived, and a released-but-empty tab would
+    // render a titled box containing a header row and nothing else.
     const html = renderToStaticMarkup(
-      <TournamentBracket rounds={rounds} drawReleased initialRound="R128" />
+      <TournamentBracket
+        grid={buildPlayoffGrid({ board: null, draw: "mens-singles" })}
+        drawReleased
+        preDrawBoards={boards}
+      />
     );
-    expect(html).toContain('data-testid="bracket-column-header"');
-    expect(html).toContain(TITLE_COLUMN_LABEL);
-  });
-
-  it("the number IS the title probability, so the label may not say match", () => {
-    // Traced end to end: `build_bracket` fills a slot from the register
-    // player's `kind: "outright"` sources — the champion market. Beside an
-    // opponent the player is about to play, it reads as a match number, which
-    // is precisely why Alex could not tell.
-    expect(TITLE_COLUMN_LABEL.toLowerCase()).toContain("title");
-    expect(TITLE_COLUMN_LABEL.toLowerCase()).not.toContain("match");
-  });
-
-  it("a fully decided round says PRE-MATCH instead, because that is its number", () => {
-    // A header describing a column that is not on screen is the same failure
-    // in the other direction.
-    const rounds = buildBracket(
-      SYNTHETIC_MENS_DRAW,
-      syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
-    );
-    const html = renderToStaticMarkup(
-      <TournamentBracket rounds={rounds} drawReleased initialRound="R128" />
-    );
-    expect(html).toContain("Pre-match");
-    expect(html).not.toContain(TITLE_COLUMN_LABEL);
-  });
-
-  it("the advance table carries its OWN sentence, not the title one", () => {
-    expect(reachColumnLabel("QF")).toBe("To reach the quarter-finals");
-    expect(reachColumnLabel("SF")).toBe("To reach the semi-finals");
+    expect(html).toContain('data-testid="bracket-unreleased"');
+    expect(html).not.toContain('data-testid="playoff-grid"');
   });
 });
 
-describe("ruling 3 — nothing renders blank", () => {
-  const partly = buildBracket(
-    SYNTHETIC_MENS_DRAW,
-    syntheticPartialResults(SYNTHETIC_MENS_DRAW, 33)
+// ---------------------------------------------------------------------------
+// Ruling 4 — the Bracket tab is the playoff grid
+// ---------------------------------------------------------------------------
+
+describe("roundAfter — the one piece of round arithmetic in the grid", () => {
+  it("walks the draw forward, and stops at the final", () => {
+    expect(roundAfter("qualifying")).toBe("R128");
+    expect(roundAfter("R128")).toBe("R64");
+    expect(roundAfter("QF")).toBe("SF");
+    expect(roundAfter("SF")).toBe("F");
+    expect(roundAfter("F")).toBeNull();
+  });
+
+  it("covers every round name, so a new round cannot fall off the end silently", () => {
+    for (const name of ROUND_NAMES.slice(0, -1)) {
+      expect(roundAfter(name)).not.toBeNull();
+    }
+  });
+});
+
+describe("nextRoundOdds — winning your match IS reaching the next round", () => {
+  it("reads the price straight off an undecided match, with no arithmetic", () => {
+    const entries = buildMatchList({ slate: [slateMatch()] });
+    const odds = nextRoundOdds(entries);
+    expect(odds["carlos-alcaraz"]).toEqual({
+      round: "R32",
+      probability: 0.78,
+      isLive: true,
+    });
+    expect(odds["andrey-rublev"].probability).toBe(0.22);
+  });
+
+  it("ignores a DECIDED match — 1 or 0 is a result, not a forecast", () => {
+    const entries = buildMatchList({
+      slate: [slateMatch({ winner_entity_key: "carlos-alcaraz" })],
+    });
+    expect(nextRoundOdds(entries)).toEqual({});
+  });
+
+  it("ignores an incoherent pair rather than laundering it into a cell", () => {
+    const entries = buildMatchList({
+      slate: [
+        slateMatch({
+          coherent: false,
+          sides: [
+            slateSide({ probability: null }),
+            slateSide({ entity_key: "andrey-rublev", display_name: "Andrey Rublev", probability: null }),
+          ],
+        }),
+      ],
+    });
+    expect(nextRoundOdds(entries)).toEqual({});
+  });
+
+  it("keeps the EARLIER hurdle when a feed offers a player two matches", () => {
+    const entries = buildMatchList({
+      slate: [
+        slateMatch({ matchup_key: "later", round: "QF" }),
+        slateMatch({ matchup_key: "earlier", round: "R64" }),
+      ],
+    });
+    // R64 -> reaches R32; QF -> reaches SF. The first hurdle wins.
+    expect(nextRoundOdds(entries)["carlos-alcaraz"].round).toBe("R32");
+  });
+});
+
+describe("buildPlayoffGrid — every cell is a price, and holes stay holes", () => {
+  const rows = [
+    row(),
+    row({ entity_key: "andrey-rublev", display_name: "Andrey Rublev", seed: 9, rank: 2, probability: 0.09 }),
+    row({ entity_key: "jannik-sinner", display_name: "Jannik Sinner", seed: 2, rank: 3, probability: 0.28 }),
+  ];
+  const board = boardOf(rows);
+  const props = [
+    advanceProp("alcaraz-semifinals", "Does Alcaraz reach the semifinals?", 0.575),
+  ];
+  const matches = buildMatchList({ slate: [slateMatch()] });
+
+  it("fills the next-round column from the match price", () => {
+    const grid = buildPlayoffGrid({ board, propMarkets: props, matches, draw: "mens-singles" });
+    const alcaraz = grid.rows.find((r) => r.entityKey === "carlos-alcaraz");
+    expect(alcaraz?.cells.R32).toMatchObject({
+      probability: 0.78,
+      state: "priced",
+      origin: "match",
+    });
+  });
+
+  it("fills a curated column from the register's own market", () => {
+    const grid = buildPlayoffGrid({ board, propMarkets: props, matches, draw: "mens-singles" });
+    const alcaraz = grid.rows.find((r) => r.entityKey === "carlos-alcaraz");
+    expect(alcaraz?.cells.SF).toMatchObject({
+      probability: 0.575,
+      state: "priced",
+      origin: "curated",
+    });
+  });
+
+  it("fills the title column from the BOARD, not from the draw slot", () => {
+    const grid = buildPlayoffGrid({ board, propMarkets: props, matches, draw: "mens-singles" });
+    const alcaraz = grid.rows.find((r) => r.entityKey === "carlos-alcaraz");
+    expect(alcaraz?.cells.title).toMatchObject({ probability: 0.31, origin: "board" });
+  });
+
+  it("NEVER computes a cell — an unpriced middle round stays unpriced", () => {
+    // The whole design constraint. Sinner has a title price and no match and
+    // no curated market, so his semi-final cell has to be a hole. A grid that
+    // chained his title probability into one would look better and be a model
+    // output in the type reserved for a price.
+    const grid = buildPlayoffGrid({ board, propMarkets: props, matches, draw: "mens-singles" });
+    const sinner = grid.rows.find((r) => r.entityKey === "jannik-sinner");
+    expect(sinner?.cells.SF).toMatchObject({ state: "unpriced", probability: null });
+    expect(sinner?.cells.R32).toMatchObject({ state: "unpriced", probability: null });
+    expect(formatGridCell(sinner!.cells.SF)).toBeNull();
+  });
+
+  it("counts its own coverage, so a sparse grid can say it is sparse", () => {
+    const grid = buildPlayoffGrid({ board, propMarkets: props, matches, draw: "mens-singles" });
+    // 2 match cells + 1 curated + 3 title = 6, out of 3 rows x 3 columns.
+    expect(grid.pricedCells).toBe(6);
+    expect(grid.totalCells).toBe(grid.rows.length * grid.columns.length);
+    expect(grid.pricedCells).toBeLessThan(grid.totalCells);
+  });
+
+  it("puts the title column LAST and labels it as a different question", () => {
+    const grid = buildPlayoffGrid({ board, propMarkets: props, matches, draw: "mens-singles" });
+    const last = grid.columns[grid.columns.length - 1];
+    expect(last.key).toBe("title");
+    expect(last.kind).toBe("title");
+    expect(last.longLabel).toBe("To win the title");
+    // "Reach the final" and "win the title" are two markets and one is
+    // strictly harder. A shared header would re-commit UX-P137's ruling 2.
+    expect(grid.columns.filter((c) => c.kind === "reach").map((c) => c.longLabel)).not.toContain(
+      "To win the title"
+    );
+  });
+
+  it("offers no column for a round nothing prices", () => {
+    const grid = buildPlayoffGrid({ board, propMarkets: [], matches: [], draw: "mens-singles" });
+    expect(grid.columns.map((c) => c.key)).toEqual(["title"]);
+  });
+
+  it("refuses a curated market whose subject matches two players", () => {
+    // "Does Williams reach the semifinals?" against a board holding both
+    // Williams sisters. A cell attached to the wrong player renders as a
+    // confident answer, which is worse than no cell at all.
+    const ambiguous = boardOf([
+      row({ entity_key: "v-williams", display_name: "Venus Williams" }),
+      row({ entity_key: "s-williams", display_name: "Serena Williams", rank: 2 }),
+    ]);
+    const grid = buildPlayoffGrid({
+      board: ambiguous,
+      propMarkets: [advanceProp("williams-semifinals", "Does Williams reach the semifinals?", 0.4)],
+      draw: "mens-singles",
+    });
+    expect(grid.columns.map((c) => c.key)).toEqual(["title"]);
+  });
+
+  it("caps the reach columns at the width that fits, and NEVER silently", () => {
+    const many = [
+      advanceProp("alcaraz-round-of-16", "Does Alcaraz reach the round of 16?", 0.8),
+      advanceProp("alcaraz-quarterfinals", "Does Alcaraz reach the quarterfinals?", 0.7),
+      advanceProp("alcaraz-semifinals", "Does Alcaraz reach the semifinals?", 0.575),
+      advanceProp("alcaraz-final", "Does Alcaraz reach the final?", 0.4),
+    ];
+    const grid = buildPlayoffGrid({ board, propMarkets: many, matches, draw: "mens-singles" });
+    expect(grid.columns.filter((c) => c.kind === "reach").length).toBe(GRID_MAX_REACH_COLUMNS);
+    expect(grid.droppedColumns.length).toBeGreaterThan(0);
+    // And the component SAYS so.
+    const html = renderToStaticMarkup(<PlayoffGrid grid={grid} />);
+    expect(html).toContain('data-testid="grid-dropped-columns"');
+  });
+
+  it("prefers the EARLIER rounds when it has to drop some", () => {
+    const many = [
+      advanceProp("alcaraz-round-of-16", "Does Alcaraz reach the round of 16?", 0.8),
+      advanceProp("alcaraz-quarterfinals", "Does Alcaraz reach the quarterfinals?", 0.7),
+      advanceProp("alcaraz-semifinals", "Does Alcaraz reach the semifinals?", 0.575),
+      advanceProp("alcaraz-final", "Does Alcaraz reach the final?", 0.4),
+    ];
+    const grid = buildPlayoffGrid({ board, propMarkets: many, matches: [], draw: "mens-singles" });
+    expect(grid.columns.map((c) => c.key)).toEqual(["R16", "QF", "SF", "title"]);
+    expect(grid.droppedColumns.map((c) => c.key)).toEqual(["F"]);
+  });
+});
+
+describe("PlayoffGrid rendering", () => {
+  const rows = Array.from({ length: 12 }, (_, i) =>
+    row({
+      entity_key: `p-${i}`,
+      display_name: `Player ${i}`,
+      rank: i + 1,
+      probability: 0.3 - i * 0.02,
+    })
   );
+  const grid = buildPlayoffGrid({
+    board: boardOf(rows),
+    propMarkets: [],
+    matches: [],
+    draw: "mens-singles",
+  });
 
-  it("names the feeder match instead of an em-dash", () => {
-    // The mid-day state: R64 is half holes because half of R128 is still on
-    // court. "— v —" is uninterpretable; "Winner of R128 #23" is checkable.
+  it("renders the section under probability language, not gambling language", () => {
+    // Ruling 3: "priced to get there" is a bet's payoff condition.
+    const html = renderToStaticMarkup(<PlayoffGrid grid={grid} />);
+    expect(html).toContain(GRID_SECTION_LABEL);
+    expect(GRID_SECTION_LABEL).toBe("Chance of reaching");
+    expect(html).not.toContain("Priced to get there");
+    expect(html.toLowerCase()).not.toContain("odds");
+  });
+
+  it("collapses to five players with an expander that says how many there are", () => {
+    const html = renderToStaticMarkup(<PlayoffGrid grid={grid} />);
+    expect(count(html, 'data-testid="grid-row"')).toBe(5);
+    expect(html).toContain("Show all 12");
+  });
+
+  it("expands to the whole field", () => {
+    const html = renderToStaticMarkup(<PlayoffGrid grid={grid} initialExpanded />);
+    expect(count(html, 'data-testid="grid-row"')).toBe(12);
+  });
+
+  it("prints a hole as a hole, with words a screen reader can hear", () => {
+    const sparse = buildPlayoffGrid({
+      board: boardOf([row(), row({ entity_key: "b", display_name: "B", rank: 2, probability: null })]),
+      propMarkets: [advanceProp("alcaraz-semifinals", "Does Alcaraz reach the semifinals?", 0.5)],
+      draw: "mens-singles",
+    });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={sparse} />);
+    expect(html).toContain('data-state="unpriced"');
+    expect(html).toContain("Not priced");
+    // Never a zero: a zero is a forecast that something is impossible.
+    expect(html).not.toContain(">0%<");
+  });
+
+  it("states its own coverage rather than letting the holes speak for it", () => {
+    const html = renderToStaticMarkup(<PlayoffGrid grid={grid} />);
+    expect(html).toContain('data-testid="grid-coverage"');
+    expect(html).toContain("Nothing here is calculated from anything else.");
+  });
+
+  it("says nothing to chart rather than rendering an empty frame", () => {
     const html = renderToStaticMarkup(
-      <TournamentBracket rounds={partly} drawReleased initialRound="R64" initialExpanded />
+      <PlayoffGrid grid={buildPlayoffGrid({ board: null, draw: "mens-singles" })} />
     );
-    expect(html).toContain("Winner of R128 #");
-    expect(html).not.toMatch(/>—<\/span>/);
+    expect(html).toContain('data-testid="grid-empty"');
+    expect(html).not.toContain('data-testid="grid-row"');
   });
 
-  it("points at the CORRECT feeder — an off-by-one is a confident lie", () => {
-    // R64 match 3 is fed by R128 matches 5 and 6. This is the assertion that
-    // makes the sentence worth printing at all.
-    const r64 = partly.find((r) => r.round === "R64")!;
-    expect(r64.matches[2].topFrom).toBe("R128-5");
-    expect(r64.matches[2].bottomFrom).toBe("R128-6");
-    expect(r64.matches[0].topFrom).toBe("R128-1");
-    const r128 = partly.find((r) => r.round === "R128")!;
-    expect(r128.matches[0].topFrom).toBeNull();
-    expect(r128.matches[0].bottomFrom).toBeNull();
+  it("carries the column's full sentence, not just its abbreviation", () => {
+    // Ruling 2's standing rule: a number names its own question. "SF" does not.
+    const withReach = buildPlayoffGrid({
+      board: boardOf(rows),
+      propMarkets: [advanceProp("player-0-semifinals", "Does Player reach the semifinals?", 0.5)],
+      matches: buildMatchList({ slate: [slateMatch()] }),
+      draw: "mens-singles",
+    });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={withReach} />);
+    expect(html).toContain("To win the title");
+    expect(html).toContain("To reach the");
+  });
+});
+
+describe("the grid renders a real draw's shape without exploding it", () => {
+  it("never puts more than four numeric columns on a phone", () => {
+    const rows = SYNTHETIC_MENS_DRAW.slice(0, 40).map((slot, i) =>
+      row({
+        entity_key: slot.entity_key,
+        display_name: slot.display_name,
+        seed: slot.seed,
+        rank: i + 1,
+        probability: slot.probability,
+      })
+    );
+    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, syntheticPartialResults(SYNTHETIC_MENS_DRAW, 20));
+    const grid = buildPlayoffGrid({
+      board: boardOf(rows),
+      matches: buildMatchList({ rounds }),
+      draw: "mens-singles",
+    });
+    expect(grid.columns.length).toBeLessThanOrEqual(GRID_MAX_REACH_COLUMNS + 1);
   });
 
-  it("a round-one hole is a REGISTER gap, and says so — not a feeder", () => {
-    const holed = buildBracket(syntheticDrawWithHoles(SYNTHETIC_MENS_DRAW, [1, 3]));
-    const html = renderToStaticMarkup(
-      <TournamentBracket rounds={holed} drawReleased initialRound="R128" />
-    );
-    expect(html).toContain("No registered player");
-    expect(html).not.toContain("Winner of");
-  });
-
-  it("a decided match prints an explicit outcome on BOTH sides", () => {
-    // Bold-versus-muted is a font weight, not a result.
-    const rounds = buildBracket(
-      SYNTHETIC_MENS_DRAW,
-      syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
-    );
-    const html = renderToStaticMarkup(
-      <TournamentBracket rounds={rounds} drawReleased initialRound="R128" />
-    );
-    expect(html).toContain('data-outcome="won"');
-    expect(html).toContain('data-outcome="out"');
-    // Five cards collapsed, two sides each.
-    expect(count(html, 'data-testid="bracket-outcome"')).toBe(10);
-  });
-
-  it("a decided match prints the PRE-MATCH probability beside the outcome", () => {
+  it("marks a round a player has already reached, and one they are out of", () => {
     const results = syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW);
     const rounds = buildBracket(SYNTHETIC_MENS_DRAW, results);
-    const html = renderToStaticMarkup(
-      <TournamentBracket
-        rounds={rounds}
-        drawReleased
-        initialRound="R128"
-        prematch={syntheticPrematch(results, SYNTHETIC_MENS_DRAW)}
-      />
+    const winner = SYNTHETIC_MENS_DRAW[0];
+    const loser = SYNTHETIC_MENS_DRAW[1];
+    const rows = [winner, loser].map((slot, i) =>
+      row({
+        entity_key: slot.entity_key,
+        display_name: slot.display_name,
+        seed: slot.seed,
+        rank: i + 1,
+        probability: slot.probability,
+      })
     );
-    expect(html).toContain('data-testid="bracket-prematch"');
-    // And NOT the title probability, which is a fact about nobody once the
-    // match is over.
-    expect(html).not.toContain('data-testid="bracket-title-probability"');
+    const grid = buildPlayoffGrid({
+      board: boardOf(rows),
+      matches: buildMatchList({ rounds }),
+      draw: "mens-singles",
+    });
+    const w = grid.rows.find((r) => r.entityKey === winner.entity_key);
+    const l = grid.rows.find((r) => r.entityKey === loser.entity_key);
+    expect(w?.cells.R64.state).toBe("reached");
+    expect(formatGridCell(w!.cells.R64)).toBe("✓");
+    expect(l?.cells.R64.state).toBe("out");
+    expect(l?.cells.title.state).toBe("out");
   });
 
-  it("a decided match with no slate coverage still shows its outcome", () => {
-    // The pre-match number is a bonus; the outcome is the ruling.
-    const rounds = buildBracket(
-      SYNTHETIC_MENS_DRAW,
-      syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
+  it("holds up on the women's draw too, which is a different field", () => {
+    const rows = SYNTHETIC_WOMENS_DRAW.slice(0, 8).map((slot, i) =>
+      row({
+        entity_key: slot.entity_key,
+        display_name: slot.display_name,
+        rank: i + 1,
+        probability: slot.probability,
+      })
     );
-    const html = renderToStaticMarkup(
-      <TournamentBracket rounds={rounds} drawReleased initialRound="R128" prematch={{}} />
-    );
-    expect(html).toContain('data-outcome="won"');
-    expect(html).not.toContain('data-testid="bracket-prematch"');
+    const grid = buildPlayoffGrid({ board: boardOf(rows, "womens-singles"), draw: "womens-singles" });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={grid} drawLabel="Women's Singles" />);
+    expect(html).toContain("Women&#x27;s Singles");
+    expect(html).toContain('data-entity="syn-w-1"');
   });
 
-  it("joins the slate onto the draw by the pair of names, and never guesses", () => {
-    const rounds = buildBracket(
-      SYNTHETIC_MENS_DRAW,
-      syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
+  it("a draw with register holes does not put a hole in the grid's rows", () => {
+    // The grid's rows come from the BOARD, so a draw-slot hole cannot produce
+    // a nameless row. Asserted because the old bracket rendered draw slots
+    // directly and a hole WAS a row there.
+    const holed = buildBracket(syntheticDrawWithHoles(SYNTHETIC_MENS_DRAW, [0, 3, 8]));
+    const rows = SYNTHETIC_MENS_DRAW.slice(0, 6).map((slot, i) =>
+      row({ entity_key: slot.entity_key, display_name: slot.display_name, rank: i + 1 })
     );
-    const joined = prematchFromSlate(
-      [
-        {
-          sides: [
-            { entity_key: "syn-m-1", probability: 1, opening_probability: 0.64 },
-            { entity_key: "syn-m-2", probability: 0, opening_probability: 0.36 },
-          ],
-        },
-        // A pair that is not in this draw at all.
-        {
-          sides: [
-            { entity_key: "nobody-a", probability: 0.5, opening_probability: 0.5 },
-            { entity_key: "nobody-b", probability: 0.5, opening_probability: 0.5 },
-          ],
-        },
-      ],
-      rounds
-    );
-    expect(joined["R128-1"]).toEqual({ top: 0.64, bottom: 0.36 });
-    expect(Object.keys(joined)).toHaveLength(1);
-  });
-
-  it("uses the OPENING price — the settled one is 1 or 0 and says nothing", () => {
-    const rounds = buildBracket(SYNTHETIC_MENS_DRAW);
-    const joined = prematchFromSlate(
-      [
-        {
-          sides: [
-            { entity_key: "syn-m-1", probability: 1, opening_probability: 0.58 },
-            { entity_key: "syn-m-2", probability: 0, opening_probability: 0.42 },
-          ],
-        },
-      ],
-      rounds
-    );
-    expect(joined["R128-1"].top).toBe(0.58);
-  });
-});
-
-describe("ruling 4 — an unreached round shows the markets on reaching it", () => {
-  const advanceProp = (key: string, title: string, probability: number, draw: string) => ({
-    key,
-    title,
-    hook: null,
-    draw,
-    source: "polymarket",
-    outcomes: [
-      {
-        entity_key: `${key}:yes`,
-        display_name: "Yes",
-        probability,
-        probability_is_live: false,
-        observed_at: "2026-08-25T20:21:47+00:00",
-        age_hours: 24.6,
-        price_state: "stale" as const,
-        is_answer: true,
-      },
-    ],
-    answer_entity_key: `${key}:yes`,
-    price_state: "stale" as const,
-    observed_at: "2026-08-25T20:21:47+00:00",
-    age_hours: 24.6,
-    freshest_observed_at: "2026-08-25T20:21:47+00:00",
-    freshest_age_hours: 24.6,
-    stale_outcomes: [`${key}:yes`],
-    mixed_freshness: false,
-  });
-
-  // The register's real eight, in the shape it really carries them.
-  const markets = [
-    advanceProp("alcaraz-semifinals", "Does Alcaraz reach the semifinals?", 0.575, "mens-singles"),
-    advanceProp("zverev-semifinals", "Does Zverev reach the semifinals?", 0.47, "mens-singles"),
-    advanceProp("djokovic-quarterfinals", "Does Djokovic reach the quarterfinals?", 0.58, "mens-singles"),
-    advanceProp("shelton-quarterfinals", "Does Shelton reach the quarterfinals?", 0.505, "mens-singles"),
-    advanceProp("osaka-round-of-16", "Does Osaka reach the second week?", 0.475, "womens-singles"),
-    advanceProp("sinner-competes", "Will Sinner actually play?", 0.63, "mens-singles"),
-  ];
-
-  it("reads the round off the curated key, never off free text", () => {
-    expect(advanceRound(markets[0])).toBe("SF");
-    expect(advanceRound(markets[2])).toBe("QF");
-    // Titled "the second week", keyed `round-of-16`. The key is the authority.
-    expect(advanceRound(markets[4])).toBe("R16");
-  });
-
-  it("returns null for a prop that is not about reaching a round", () => {
-    // A market filed under the wrong round is worse than one filed under none.
-    expect(advanceRound(markets[5])).toBeNull();
-  });
-
-  it("selects by round AND draw, best first", () => {
-    const sf = advanceMarketsForRound(markets, "SF", "mens-singles");
-    expect(sf.map((e) => e.displayName)).toEqual(["Alcaraz", "Zverev"]);
-    expect(sf[0].probability).toBe(0.575);
-    // The women's R16 market must not appear on the men's side.
-    expect(advanceMarketsForRound(markets, "R16", "mens-singles")).toEqual([]);
-    expect(advanceMarketsForRound(markets, "R16", "womens-singles")).toHaveLength(1);
-  });
-
-  it("renders the table under an unreached round, with its own column label", () => {
-    const rounds = buildBracket(
-      SYNTHETIC_MENS_DRAW,
-      syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
-    );
-    const html = renderToStaticMarkup(
-      <TournamentBracket
-        rounds={rounds}
-        drawReleased
-        initialRound="SF"
-        propMarkets={markets}
-        draw="mens-singles"
-      />
-    );
-    expect(html).toContain('data-testid="bracket-round-unreached"');
-    expect(html).toContain('data-testid="bracket-advance"');
-    expect(html).toContain("To reach the semi-finals");
-    expect(count(html, 'data-testid="bracket-advance-row"')).toBe(2);
-  });
-
-  it("keeps the honest sentence — the table is an addition, not a replacement", () => {
-    const rounds = buildBracket(
-      SYNTHETIC_MENS_DRAW,
-      syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
-    );
-    const html = renderToStaticMarkup(
-      <TournamentBracket
-        rounds={rounds}
-        drawReleased
-        initialRound="SF"
-        propMarkets={markets}
-        draw="mens-singles"
-      />
-    );
-    expect(html).toContain("Nobody has reached the semi-finals yet");
-  });
-
-  it("shows nothing extra when no market covers the round", () => {
-    // The other direction: an empty bordered table under a round with no
-    // markets is the emptiness this ruling exists to remove, re-added.
-    const rounds = buildBracket(
-      SYNTHETIC_MENS_DRAW,
-      syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
-    );
-    const html = renderToStaticMarkup(
-      <TournamentBracket
-        rounds={rounds}
-        drawReleased
-        initialRound="F"
-        propMarkets={markets}
-        draw="mens-singles"
-      />
-    );
-    expect(html).not.toContain('data-testid="bracket-advance"');
-  });
-});
-
-describe("rulings 5 and 9 — the round list collapses", () => {
-  it("shows five matches, not sixty-four", () => {
-    const html = renderToStaticMarkup(
-      <TournamentBracket
-        rounds={buildBracket(SYNTHETIC_MENS_DRAW)}
-        drawReleased
-        initialRound="R128"
-      />
-    );
-    expect(count(html, 'data-testid="bracket-match"')).toBe(5);
-    expect(html).toContain("Show all 64");
-  });
-
-  it("expands to the whole round", () => {
-    const html = renderToStaticMarkup(
-      <TournamentBracket
-        rounds={buildBracket(SYNTHETIC_MENS_DRAW)}
-        drawReleased
-        initialRound="R128"
-        initialExpanded
-      />
-    );
-    expect(count(html, 'data-testid="bracket-match"')).toBe(64);
-  });
-
-  it("a short round gets no expander", () => {
-    // The Final is one match. "Show all 1" would be absurd, and a rule that
-    // always rendered the control would print it.
-    const html = renderToStaticMarkup(
-      <TournamentBracket
-        rounds={buildBracket(SYNTHETIC_MENS_DRAW, syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW))}
-        drawReleased
-        initialRound="R64"
-      />
-    );
-    expect(html).toContain('data-testid="show-more"');
-    const final = renderToStaticMarkup(
-      <TournamentBracket
-        rounds={buildBracket([SYNTHETIC_MENS_DRAW[0], SYNTHETIC_MENS_DRAW[1]])}
-        drawReleased
-      />
-    );
-    expect(final).not.toContain('data-testid="show-more"');
+    const grid = buildPlayoffGrid({
+      board: boardOf(rows),
+      matches: buildMatchList({ rounds: holed }),
+      draw: "mens-singles",
+    });
+    expect(grid.rows.every((r) => r.displayName.trim() !== "")).toBe(true);
+    expect(grid.rows).toHaveLength(6);
   });
 });

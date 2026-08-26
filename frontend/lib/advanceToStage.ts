@@ -27,41 +27,18 @@
  */
 
 import { ROUND_LABELS, type RoundName } from "./bracket";
-import { answerOutcome, type PropMarket } from "./tournamentProps";
+import { advanceRound, answerOutcome, type PropMarket } from "./tournamentProps";
 
 /**
- * Curated key suffix -> the round the market is about.
+ * `advanceRound` and its suffix table LIVE IN `tournamentProps.ts` since
+ * UX-P138, and are re-exported here so every existing caller keeps working.
  *
- * Ordered longest-first so `round-of-16` is tested before any shorter token
- * could claim it. Keys come from the register and are written by hand, so this
- * is a closed set, not a heuristic over free text.
+ * The move is a cycle break, not a tidy-up: ruling 8 makes `curatedProps` ask
+ * "is this an advance-to-round question?" before deciding whether the section
+ * may render it, and answering that from here would have had the two modules
+ * importing each other.
  */
-const ROUND_SUFFIXES: { suffix: string; round: RoundName }[] = [
-  { suffix: "round-of-128", round: "R128" },
-  { suffix: "round-of-64", round: "R64" },
-  { suffix: "round-of-32", round: "R32" },
-  { suffix: "round-of-16", round: "R16" },
-  { suffix: "quarterfinals", round: "QF" },
-  { suffix: "quarter-finals", round: "QF" },
-  { suffix: "semifinals", round: "SF" },
-  { suffix: "semi-finals", round: "SF" },
-  { suffix: "final", round: "F" },
-];
-
-/**
- * Which round a curated prop is about reaching, or `null`.
- *
- * `null` for every prop that is not an advance-to-stage market at all — "Will
- * Sinner actually play?" and "Can Alcaraz win a second major this year?" are
- * both curated, both good, and neither belongs in a round view.
- */
-export function advanceRound(market: PropMarket): RoundName | null {
-  const key = (market.key ?? "").toLowerCase();
-  for (const entry of ROUND_SUFFIXES) {
-    if (key.endsWith(`-${entry.suffix}`)) return entry.round;
-  }
-  return null;
-}
+export { advanceRound };
 
 export interface AdvanceEntry {
   key: string;

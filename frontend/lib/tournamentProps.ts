@@ -16,7 +16,50 @@
  * volume.
  */
 
+import type { RoundName } from "./bracket";
+
 export type PriceState = "live" | "stale" | "dark";
+
+/**
+ * Curated key suffix -> the round the market is about reaching.
+ *
+ * MOVED HERE FROM `advanceToStage.ts` by UX-P138, to break a cycle rather than
+ * to reorganise for taste: `curatedProps` has to know whether a market is an
+ * advance-to-round question (ruling 8 routes those to the grid), and importing
+ * `advanceToStage` to ask would have made these two modules import each other.
+ * "Which round is this question about" is a property of a prop market, so it
+ * belongs on the prop market's own module and `advanceToStage` re-exports it.
+ *
+ * Ordered longest-first so `round-of-16` is tested before any shorter token
+ * could claim it. Keys come from the register and are written by hand, so this
+ * is a closed set, not a heuristic over free text.
+ */
+const ROUND_SUFFIXES: { suffix: string; round: RoundName }[] = [
+  { suffix: "round-of-128", round: "R128" },
+  { suffix: "round-of-64", round: "R64" },
+  { suffix: "round-of-32", round: "R32" },
+  { suffix: "round-of-16", round: "R16" },
+  { suffix: "quarterfinals", round: "QF" },
+  { suffix: "quarter-finals", round: "QF" },
+  { suffix: "semifinals", round: "SF" },
+  { suffix: "semi-finals", round: "SF" },
+  { suffix: "final", round: "F" },
+];
+
+/**
+ * Which round a curated prop is about reaching, or `null`.
+ *
+ * `null` for every prop that is not an advance-to-stage market at all — "Will
+ * Sinner actually play?" and "Can Alcaraz win a second major this year?" are
+ * both curated, both good, and neither is a cell in the playoff grid.
+ */
+export function advanceRound(market: { key?: string | null }): RoundName | null {
+  const key = (market.key ?? "").toLowerCase();
+  for (const entry of ROUND_SUFFIXES) {
+    if (key.endsWith(`-${entry.suffix}`)) return entry.round;
+  }
+  return null;
+}
 
 export interface PropOutcome {
   entity_key: string;
@@ -180,4 +223,203 @@ export function propStaleOutcomes(market: PropMarket): PropOutcome[] {
   return printedOutcomes(market).filter(
     (outcome) => outcome.probability !== null && outcome.probability_is_live !== true
   );
+}
+
+/* =========================================================================
+ * ROTATION — what this section is FOR, and what falls out of it
+ * =========================================================================
+ *
+ * UX-P138, ALEX'S RULING 8, verbatim: "The advance-to-round 'questions'
+ * ('Does Gauff reach the semifinals?') are NOT props — they become the playoff
+ * grid. The props section is for genuinely fun items — 'Will Sinner actually
+ * play?' is the archetype — and needs a freshness rule: when a prop resolves
+ * or goes stale, it rotates out, curated by interestingness, never a repeating
+ * template."
+ *
+ * Four rules, in the order they run. Each drops cards, and every drop is
+ * COUNTED and reported to the caller, because a section that silently shrinks
+ * reads as "nothing is happening here" rather than "the register has gone
+ * quiet" — and those need different fixes from different people.
+ *
+ *   1. STRUCTURAL — an advance-to-round market is not a prop. It is a cell in
+ *      the grid and it is rendered there. Eight of our eleven are these.
+ *   2. RESOLVED — a settled question is not a question. Nothing to predict.
+ *   3. DARK — a reading old enough that we no longer call it a price is not an
+ *      answer to anything. Stale is fine and wears the honesty treatment; dark
+ *      rotates out.
+ *   4. TEMPLATE — at most ONE card per template family. "Can Alcaraz win a
+ *      second major this year?" and "Can Sinner win a second major this year?"
+ *      differ by a name. Two of them is a template; the more interesting one
+ *      is a question.
+ *
+ * ⚠️ APPLIED TO TODAY'S REGISTER THIS RULE EMPTIES THE SECTION, and that is a
+ * true statement about our data rather than a bug in the rule. Of the three
+ * non-advance markets we curate, `sinner-competes` was last priced 188 hours
+ * ago and both `*-second-major` cards 810 hours — 34 days. Every one is dark.
+ * The report states it and the empty state says it in words; showing a
+ * month-old number in a section headed "questions worth asking" would be the
+ * page arguing with its own freshness doctrine.
+ */
+
+/**
+ * Beyond this age a reading is not a price (Alex's ruling 8, "goes stale ...
+ * rotates out").
+ *
+ * Deliberately the SAME 48-hour boundary the slate's `dark_after_hours`
+ * carries and the boards' `price_state` uses, rather than a fourth opinion
+ * about what old means. One vocabulary: `live` is confident, `stale` is muted
+ * and says its age, `dark` is gone. A section-specific threshold would be a
+ * second definition of staleness on a page whose whole freshness doctrine is
+ * that there is one.
+ */
+export const PROP_DARK_AFTER_HOURS = 48;
+
+/**
+ * A settled question. `probability` pinned at the rails is the observable — a
+ * market that has resolved trades at 0 or 1 — and it is deliberately a tight
+ * band rather than a loose one: a genuine 98% is still a question.
+ */
+export function propIsResolved(market: PropMarket): boolean {
+  const printed = printedOutcomes(market);
+  if (printed.length === 0) return false;
+  return printed.every(
+    (outcome) =>
+      outcome.probability !== null &&
+      (outcome.probability <= 0.001 || outcome.probability >= 0.999)
+  );
+}
+
+/** Older than we are willing to call a price at all. */
+export function propIsDark(market: PropMarket): boolean {
+  const age = propGoverningAgeHours(market);
+  if (age === null) return true;
+  return age >= PROP_DARK_AFTER_HOURS;
+}
+
+/**
+ * The template family a question belongs to — its shape with the player
+ * removed.
+ *
+ * Register keys are hand-written and follow `<subject>-<topic>`, so the family
+ * is the key with its leading subject token dropped: `alcaraz-second-major`
+ * and `sinner-second-major` both reduce to `second-major`. A single-token key
+ * is its own family. Nothing is inferred from the TITLE text: two questions
+ * that happen to share phrasing are not a template, and two that share a
+ * curated topic are, whatever they are worded like.
+ */
+export function propTemplateFamily(market: PropMarket): string {
+  const key = (market.key ?? "").toLowerCase();
+  const parts = key.split("-");
+  return parts.length <= 1 ? key : parts.slice(1).join("-");
+}
+
+/**
+ * How interesting a question is, lower is better — used to ORDER the section
+ * and to pick the survivor of a template family.
+ *
+ * Genuine uncertainty is the whole appeal. "Will Sinner actually play?" at 63%
+ * is a question; the same market at 99% is an announcement. So the score is
+ * distance from a coin flip, with live readings ahead of stale ones because a
+ * fresher coin flip beats an older one at the same distance.
+ *
+ * This is a RANKING, not a gate. Nothing is dropped for being uninteresting —
+ * the register's curation is what decides membership, and this only decides
+ * order. A heuristic that silently deleted curated content would move the
+ * curation bar out of the register and into a sort function.
+ */
+export function propInterestScore(market: PropMarket): number {
+  const printed = printedOutcomes(market);
+  const best = printed
+    .map((outcome) => outcome.probability)
+    .filter((p): p is number => p !== null && Number.isFinite(p))
+    .map((p) => Math.abs(p - 0.5))
+    .sort((a, b) => a - b)[0];
+  const distance = best ?? 0.5;
+  return propIsPresentedAsLive(market) ? distance : distance + 1;
+}
+
+export interface CuratedProps {
+  markets: PropMarket[];
+  /** Every drop, by reason. Reported, never silent. */
+  dropped: {
+    advance: number;
+    resolved: number;
+    dark: number;
+    template: number;
+  };
+  /** How many the register holds for this draw before any rotation. */
+  considered: number;
+}
+
+/**
+ * The section's contents after rotation (Alex's ruling 8).
+ *
+ * Order is by interestingness. Membership is the register's call minus the
+ * four rules above; this function never promotes anything the register did not
+ * curate, which is what keeps "curated, not a dump" a structural property
+ * rather than a promise.
+ */
+export function curatedProps(markets: PropMarket[], draw: string): CuratedProps {
+  const forDraw = propsForDraw(markets, draw);
+  const dropped = { advance: 0, resolved: 0, dark: 0, template: 0 };
+
+  const surviving: PropMarket[] = [];
+  for (const market of forDraw) {
+    if (advanceRound(market) !== null) {
+      dropped.advance += 1;
+      continue;
+    }
+    if (propIsResolved(market)) {
+      dropped.resolved += 1;
+      continue;
+    }
+    if (propIsDark(market)) {
+      dropped.dark += 1;
+      continue;
+    }
+    surviving.push(market);
+  }
+
+  surviving.sort((a, b) => propInterestScore(a) - propInterestScore(b));
+
+  const seen = new Set<string>();
+  const kept: PropMarket[] = [];
+  for (const market of surviving) {
+    const family = propTemplateFamily(market);
+    if (seen.has(family)) {
+      dropped.template += 1;
+      continue;
+    }
+    seen.add(family);
+    kept.push(market);
+  }
+
+  return { markets: kept, dropped, considered: forDraw.length };
+}
+
+/**
+ * The sentence an empty section owes the reader, or `null` when it has cards.
+ *
+ * A section that vanishes teaches the reader it does not exist; a section that
+ * says "nothing curated yet" when eleven markets are registered and three of
+ * them rotated out for age is simply wrong. So the empty state names the
+ * actual reason, which is also the only way the curation gap ever reaches
+ * anybody who can fix it.
+ */
+export function curatedPropsEmptyReason(result: CuratedProps): string | null {
+  if (result.markets.length > 0) return null;
+  const { dark, resolved, template, advance } = result.dropped;
+  if (dark > 0) {
+    return `${dark} curated question${dark === 1 ? " has" : "s have"} gone dark and rotated out. They come back when they are priced again.`;
+  }
+  if (resolved > 0) {
+    return `${resolved} curated question${resolved === 1 ? " has" : "s have"} been answered and rotated out.`;
+  }
+  if (template > 0) {
+    return "Only near-duplicate questions are registered for this draw.";
+  }
+  if (advance > 0) {
+    return "Every question registered for this draw is about reaching a round — those live on the Bracket tab now.";
+  }
+  return null;
 }

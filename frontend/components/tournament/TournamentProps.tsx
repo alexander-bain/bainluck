@@ -6,12 +6,13 @@ import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   FIELD_RANK_LIMIT,
   answerOutcome,
+  curatedProps,
+  curatedPropsEmptyReason,
   formatPropProbability,
   propGoverningAgeHours,
   printedOutcomes,
   propIsPresentedAsLive,
   propStaleOutcomes,
-  propsForDraw,
   rankedOutcomes,
   type PropMarket,
 } from "@/lib/tournamentProps";
@@ -29,12 +30,25 @@ import { stalenessLabel } from "@/lib/tournament";
  *
  * THE NAME (UX-P137, Alex's ruling 7). "Props/Futures" is gambling vocabulary
  * and the label was doing real damage: it is the only heading on a
- * probability-first page that requires a sportsbook to parse. The content is
- * unchanged — eleven curated questions, eight of them about reaching a round.
+ * probability-first page that requires a sportsbook to parse.
  *
  * `SECTION_HEADING` is a single constant because Alex picks the final wording
  * on his next pass and it should be a one-line change, not a search. The
  * alternatives, and why the rendered default won, are in the UX-P137 report.
+ *
+ * WHAT THIS SECTION IS NOW (UX-P138, Alex's ruling 8). It used to hold eleven
+ * questions, eight of which were "Does <player> reach the <round>?". Those are
+ * not props — they are the playoff grid, and they render there. What is left
+ * is the section's actual brief, in Alex's words: "genuinely fun items — 'Will
+ * Sinner actually play?' is the archetype", rotated by
+ * `lib/tournamentProps.curatedProps` so a question that resolves, goes dark, or
+ * is the second copy of a template drops out rather than sitting here forever.
+ *
+ * ⚠️ APPLIED TO TODAY'S REGISTER THAT RULE EMPTIES THIS SECTION. All three
+ * non-advance markets we curate are dark — 188 hours for `sinner-competes`,
+ * 810 for both `*-second-major`. The empty state below says so, with the
+ * count, because "nothing curated yet" would be a lie about a register holding
+ * eleven markets and a curation gap nobody would ever be told about.
  */
 
 /** Alex's pick lands here. See the report for the three candidates. */
@@ -142,14 +156,21 @@ export default function TournamentProps({
   markets: PropMarket[];
   draw: string;
 }) {
-  const visible = propsForDraw(markets, draw);
+  // ROTATION (ruling 8) — advance-to-round questions to the grid, resolved and
+  // dark ones out, one card per template family, most interesting first.
+  const curated = curatedProps(markets, draw);
+  const visible = curated.markets;
   const [expanded, setExpanded] = React.useState(false);
 
   if (visible.length === 0) {
-    // An empty section still appears, and says why. A section that vanishes
-    // when it has nothing teaches the reader it does not exist.
+    // An empty section still appears, and says WHY, with a number. A section
+    // that vanishes teaches the reader it does not exist; one that says
+    // "nothing curated yet" over a register holding eleven markets is simply
+    // wrong, and it is the only channel by which a curation gap reaches anyone
+    // who can close it.
+    const reason = curatedPropsEmptyReason(curated);
     return (
-      <section data-testid="tournament-props">
+      <section data-testid="tournament-props" data-considered={curated.considered}>
         <h2
           className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted"
           data-testid="props-heading"
@@ -159,21 +180,37 @@ export default function TournamentProps({
         <div
           className="rounded-2xl border border-dashed border-surface-border bg-surface-card px-4 py-5 text-center"
           data-testid="props-empty"
+          data-dropped-dark={curated.dropped.dark}
+          data-dropped-advance={curated.dropped.advance}
         >
-          <div className="text-[14px] font-semibold text-text-primary">Nothing curated yet</div>
-          <p className="mt-1 text-[12.5px] text-text-secondary">
-            Beyond the title race and today&rsquo;s matches, we only show questions we think are
-            worth asking. None are registered for this draw yet.
+          <div className="text-[14px] font-semibold text-text-primary">
+            {reason === null ? "Nothing curated yet" : "Nothing worth asking right now"}
+          </div>
+          <p className="mt-1 text-[12.5px] text-text-secondary" data-testid="props-empty-reason">
+            {reason ??
+              "Beyond the title race and today’s matches, we only show questions we think are worth asking. None are registered for this draw yet."}
           </p>
         </div>
+        {curated.dropped.advance > 0 && (
+          <p className="mt-2 text-[11px] text-text-muted" data-testid="props-moved-to-grid">
+            {curated.dropped.advance} question
+            {curated.dropped.advance === 1
+              ? " about reaching a round is"
+              : "s about reaching a round are"}{" "}
+            on the Bracket tab.
+          </p>
+        )}
       </section>
     );
   }
 
   const shown = expanded ? visible : visible.slice(0, COLLAPSED_LIST_COUNT);
 
+  const rotatedOut =
+    curated.dropped.dark + curated.dropped.resolved + curated.dropped.template;
+
   return (
-    <section data-testid="tournament-props">
+    <section data-testid="tournament-props" data-considered={curated.considered}>
       <h2
         className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted"
         data-testid="props-heading"
@@ -197,6 +234,25 @@ export default function TournamentProps({
           />
         )}
       </div>
+
+      {/* NO SILENT ROTATION. A section that quietly shrank from eleven cards to
+          one reads as "not much is happening"; the truth may be that ten
+          questions went dark, which is a different problem for a different
+          person. Advance-to-round drops are NOT counted here — they did not
+          rotate out, they moved, and the sentence says where. */}
+      {rotatedOut > 0 && (
+        <p className="mt-2 text-[11px] text-text-muted" data-testid="props-rotated-out">
+          {rotatedOut} other question{rotatedOut === 1 ? "" : "s"} rotated out — answered,
+          gone dark, or a near-duplicate of one above.
+        </p>
+      )}
+      {curated.dropped.advance > 0 && (
+        <p className="mt-1 text-[11px] text-text-muted" data-testid="props-moved-to-grid">
+          {curated.dropped.advance} question
+          {curated.dropped.advance === 1 ? " about reaching a round is" : "s about reaching a round are"}{" "}
+          on the Bracket tab.
+        </p>
+      )}
     </section>
   );
 }

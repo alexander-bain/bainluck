@@ -26,7 +26,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import ContenderChart from "@/components/tournament/ContenderChart";
 import TournamentProps from "@/components/tournament/TournamentProps";
-import TournamentSlate from "@/components/tournament/TournamentSlate";
+import TournamentMatches from "@/components/tournament/TournamentMatches";
+import { matchListFromSlate } from "@/lib/matchList";
 import {
   CHART_SERIES_COUNT,
   COLLAPSED_ROW_COUNT,
@@ -56,6 +57,7 @@ import {
   answerOutcome,
   printedOutcomes,
   propGoverningAgeHours,
+  propIsDark,
   propIsPresentedAsLive,
   propStaleOutcomes,
   propsForDraw,
@@ -402,49 +404,64 @@ describe("where to watch", () => {
     dark_after_hours: 48,
   });
 
-  it("prints the channels on EVERY match row, not once above the list", () => {
-    const html = render(
-      <TournamentSlate
-        slate={slateOf([slateMatch(1), slateMatch(2), slateMatch(3)])}
-        draw="mens-singles"
-        broadcasts={broadcasts}
+  // ⚠️ UX-P138's RULING 7 OVERRULED UX-P137's RULING 8 ON PLACEMENT, and these
+  // assertions were inverted rather than deleted. Alex's clarification: "on
+  // the event card's DETAIL view (tap), not on every row". The MATCH-LEVEL
+  // resolution he ruled for at UX-P137 is unchanged and still tested — what
+  // moved is where the answer is printed, and the strongest guard is now that
+  // it is NOT on the closed row.
+  const matchesOf = (matches: SlateMatch[], extra: Record<string, unknown> = {}) =>
+    render(
+      <TournamentMatches
+        entries={matchListFromSlate(matches, { broadcasts })}
+        {...extra}
       />
     );
-    expect(count(html, 'data-testid="slate-row-broadcast"')).toBe(3);
-    expect(count(html, 'data-broadcast-scope="tournament"')).toBe(3);
-    // The single line at the top of a long list is gone.
+
+  it("prints NO channel on the closed rows — ruling 7 moved it behind the tap", () => {
+    const html = matchesOf([slateMatch(1), slateMatch(2), slateMatch(3)]);
+    expect(html).not.toContain('data-testid="match-detail-broadcast"');
+    expect(html).not.toContain("Sky Sports");
+    // And the UX-P137 per-row line is gone with it, as is the single line
+    // above the list that UX-P137 replaced.
+    expect(html).not.toContain('data-testid="slate-row-broadcast"');
     expect(html).not.toContain('data-testid="slate-broadcast"');
   });
 
-  it("a match with its own channel overrides the region-wide one, on that row alone", () => {
+  it("prints the channel once the row is opened", () => {
+    const entries = matchListFromSlate([slateMatch(1)], { broadcasts });
     const html = render(
-      <TournamentSlate
-        slate={slateOf([
-          slateMatch(1, { broadcast: { region: "US", channels: ["ESPN+"], note: null } }),
-          slateMatch(2),
-        ])}
-        draw="mens-singles"
-        broadcasts={broadcasts}
-      />
+      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
     );
-    expect(count(html, 'data-broadcast-scope="match"')).toBe(1);
-    expect(count(html, 'data-broadcast-scope="tournament"')).toBe(1);
+    expect(count(html, 'data-testid="match-detail-broadcast"')).toBe(1);
+    expect(count(html, 'data-broadcast-scope="tournament"')).toBe(0);
+    expect(html).toContain('data-scope="tournament"');
+  });
+
+  it("a match with its own channel overrides the region-wide one", () => {
+    const entries = matchListFromSlate(
+      [slateMatch(1, { broadcast: { region: "US", channels: ["ESPN+"], note: null } })],
+      { broadcasts }
+    );
+    const html = render(
+      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
+    );
+    expect(html).toContain('data-scope="match"');
     expect(html).toContain("ESPN+");
   });
 
   it("prints no channel line at all when the register has no mapping", () => {
+    const entries = matchListFromSlate([slateMatch(1)]);
     const html = render(
-      <TournamentSlate slate={slateOf([slateMatch(1)])} draw="mens-singles" />
+      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
     );
-    expect(html).not.toContain('data-testid="slate-row-broadcast"');
+    expect(html).not.toContain('data-testid="match-detail-broadcast"');
   });
 
-  it("a long day collapses to five matches with an expander (ruling 5)", () => {
+  it("a long round collapses to five matches with an expander (ruling 5)", () => {
     const many = Array.from({ length: 12 }, (_, i) => slateMatch(i + 1));
-    const html = render(
-      <TournamentSlate slate={slateOf(many)} draw="mens-singles" broadcasts={broadcasts} />
-    );
-    expect(count(html, 'data-testid="slate-row"')).toBe(5);
+    const html = matchesOf(many);
+    expect(count(html, 'data-testid="match-row"')).toBe(5);
     expect(html).toContain("Show all 12");
   });
 });
@@ -738,15 +755,27 @@ describe("curated props", () => {
     is_answer: false,
   });
 
-  /** Fresh leader, stale runner-up — the card the old rule called live. */
-  const freshLeaderStaleRunner = () =>
+  /**
+   * Fresh leader, stale runner-up — the card the old rule called live.
+   *
+   * ⚠️ THE RUNNER-UP'S AGE IS A PARAMETER SINCE UX-P138, and the default moved
+   * from 480 hours to 30. Ruling 8's rotation drops a card whose governing age
+   * is past `PROP_DARK_AFTER_HOURS`, so a 480-hour specimen no longer RENDERS
+   * at all — it rotates out before `PropCard` sees it. Left at 480 these
+   * render assertions would have been asserting against an empty section and
+   * passing for the wrong reason, which is how a fixed defect quietly comes
+   * back. The pure-layer assertions below still use 480, because the rule they
+   * test does not care, and the interaction between the two rulings has its
+   * own test at the end of this block.
+   */
+  const freshLeaderStaleRunner = (runnerAgeHours = 30) =>
     market({
       title: "Who will win a Grand Slam in 2026?",
       answer_entity_key: null,
       price_state: "stale",
       outcomes: [
         outcome("leader", 0.5, true, 1),
-        outcome("runner", 0.3, false, 480),
+        outcome("runner", 0.3, false, runnerAgeHours),
         outcome("third", 0.2, true, 1),
       ],
     });
@@ -767,14 +796,31 @@ describe("curated props", () => {
     const html = render(
       <TournamentProps markets={[freshLeaderStaleRunner()]} draw="mens-singles" />
     );
-    // 480h = 20 days. A muted number with no stated reason reads as a bug.
+    // A muted number with no stated reason reads as a bug, or is not noticed.
     expect(html).toContain('data-testid="prop-age"');
-    expect(html).toContain("20 days ago");
+    expect(html).toContain("30 hours ago");
     expect(html).toContain("RUNNER");
   });
 
   it("the card is as old as its OLDEST printed outcome, not its newest", () => {
-    expect(propGoverningAgeHours(freshLeaderStaleRunner())).toBe(480);
+    expect(propGoverningAgeHours(freshLeaderStaleRunner(480))).toBe(480);
+    expect(propGoverningAgeHours(freshLeaderStaleRunner())).toBe(30);
+  });
+
+  it("RULING 8 MEETS CERT-411: the twenty-day card rotates out, still not live", () => {
+    // The two rules compose rather than replace each other, and this is the
+    // test that says which does what. `propIsPresentedAsLive` is still false
+    // for the 480-hour specimen — the CERT-411 fix is untouched — and ruling
+    // 8's rotation then removes the card from the section entirely, because a
+    // three-week-old number is not a question worth asking. If rotation were
+    // ever loosened, the muted-with-a-reason rendering above is what catches
+    // the card instead.
+    const ancient = freshLeaderStaleRunner(480);
+    expect(propIsPresentedAsLive(ancient)).toBe(false);
+    expect(propIsDark(ancient)).toBe(true);
+    const html = render(<TournamentProps markets={[ancient]} draw="mens-singles" />);
+    expect(html).toContain('data-testid="props-empty"');
+    expect(html).toContain("gone dark and rotated out");
   });
 
   it("an outcome the card does not PRINT cannot demote it", () => {
@@ -804,7 +850,10 @@ describe("curated props", () => {
       outcomes: [
         { ...outcome("one-plus", 0.99, true, 1), display_name: "1+ Grand Slam wins" },
         {
-          ...outcome("two-plus", 0.555, false, 480),
+          // 30h, not 480h — see the note on `freshLeaderStaleRunner`: past
+          // ruling 8's rotation bound the card never reaches the renderer and
+          // this assertion would pass against an empty section.
+          ...outcome("two-plus", 0.555, false, 30),
           display_name: "2+ Grand Slam wins",
           is_answer: true,
         },

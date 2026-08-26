@@ -48,8 +48,27 @@
  *      unfiltered by the gender pill, because the winner markets are the
  *      tradeable truth about this tournament on the day before a ceremony.
  *
- * The page is therefore: pills -> chart -> today's matches -> championship
- * board -> curated questions, with the bracket one tab away.
+ * UX-P138 (Alex's STRUCTURAL RULING 4) re-divides the two tabs, and this is
+ * the biggest change the page has taken since it was built:
+ *
+ *   **Tournament tab = the MATCH LIST with round pills.**
+ *   **Bracket tab = the PLAYOFF GRID — players × rounds.**
+ *
+ * The defect it fixes is that the page had TWO match lists. The slate lived
+ * here and the bracket's match cards lived one tab over, and nothing told the
+ * reader why they were different lists or which one to trust — because they
+ * never were different. They were the same fixtures, split by which pipeline
+ * produced them. `lib/matchList.ts` joins them into one; a draw position that
+ * also appears in the slate absorbs it, so a main-draw afternoon renders each
+ * match once instead of twice.
+ *
+ * The Bracket tab then gets the question a tree is actually read for — how far
+ * does this player get — as a grid whose every cell is a market's answer to
+ * exactly its own column. Nothing in it is chained or simulated; see
+ * `lib/playoffGrid.ts` for why that constraint is the whole design.
+ *
+ * The page is therefore: pills -> chart -> the match list -> championship
+ * board -> curated questions, with the playoff grid one tab away.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -67,7 +86,10 @@ import {
   seriesColorByEntity,
   toggleSelection,
 } from "@/lib/contenderChart";
-import TournamentSlate from "@/components/tournament/TournamentSlate";
+import { buildMatchList, type TitleChances } from "@/lib/matchList";
+import { buildPlayoffGrid } from "@/lib/playoffGrid";
+import { slateNotice } from "@/lib/slate";
+import TournamentMatches from "@/components/tournament/TournamentMatches";
 import TournamentProps from "@/components/tournament/TournamentProps";
 import { fetchTournament } from "@/lib/api";
 import type { TournamentPayload } from "@/lib/tournament";
@@ -159,14 +181,54 @@ export default function TournamentPage() {
   const rounds = useMemo(() => buildBracket(data?.bracket?.[draw] ?? []), [data, draw]);
 
   /**
-   * Pre-match prices for decided bracket matches (ruling 3), joined off the
-   * slate the page already has. No extra request: the slate is in the same
-   * payload, and a decided match's two names are the only join key either side
-   * shares.
+   * Pre-match prices for decided bracket matches (UX-P137, ruling 3), joined
+   * off the slate the page already has. No extra request: the slate is in the
+   * same payload, and a decided match's two names are the only join key either
+   * side shares.
    */
   const prematch = useMemo(
     () => prematchFromSlate(data?.slate?.matches ?? [], rounds),
     [data, rounds]
+  );
+
+  /**
+   * Title chances by entity, read off the BOARD.
+   *
+   * The board is where this number is published, so it is the board's copy the
+   * match list's chip and the grid's last column both read. The draw slot
+   * carries its own copy and it is only a fallback — two surfaces printing
+   * different values for one question is the divergence bug, not a feature
+   * (standing Alex ruling: the blend is the product).
+   */
+  const titleChances = useMemo<TitleChances>(() => {
+    const out: TitleChances = {};
+    for (const row of board?.rows ?? []) out[row.entity_key] = row.probability;
+    return out;
+  }, [board]);
+
+  /** ONE match list (ruling 4) — the draw where we have it, the slate where we do not. */
+  const matches = useMemo(
+    () =>
+      buildMatchList({
+        slate: (data?.slate?.matches ?? []).filter((match) => match.draw === draw),
+        rounds,
+        prematch,
+        titleChances,
+        broadcasts: data?.broadcasts,
+      }),
+    [data, draw, rounds, prematch, titleChances]
+  );
+
+  /** Players × rounds (ruling 4). Every cell a price; nothing derived. */
+  const grid = useMemo(
+    () =>
+      buildPlayoffGrid({
+        board,
+        propMarkets: data?.props ?? [],
+        matches,
+        draw,
+      }),
+    [board, data, matches, draw]
   );
 
   if (loading) {
@@ -221,7 +283,11 @@ export default function TournamentPage() {
           ))}
         </div>
 
-        {tab === "tournament" && (
+        {/* The gender pill shows on the Bracket tab too once the draw exists,
+            because the grid is one draw's field — but NOT before it, where
+            ruling 1 deliberately shows both boards unfiltered and a pill would
+            offer to filter something that is not filtered. */}
+        {(tab === "tournament" || data.draw_released) && (
           <div
             className="flex gap-1.5 border-b border-surface-border bg-surface-card px-4 pb-3"
             role="group"
@@ -265,27 +331,19 @@ export default function TournamentPage() {
                   onToggle={(key) =>
                     setSelection(toggleSelection(selectionKeys, key))
                   }
+                  onReset={() => setSelection(null)}
                 />
               )}
 
-              {/* Then today's matches. Alex took direction B's ordering: they
-                  are the half with live prices and the reason to open the page
-                  on a match day. The championship board follows. */}
-              <TournamentSlate
-                slate={
-                  data.slate ?? {
-                    matches: [],
-                    count: 0,
-                    incoherent: 0,
-                    dropped: {},
-                    price_state: "dark",
-                    newest_observed_at: null,
-                    age_hours: null,
-                    dark_after_hours: 48,
-                  }
-                }
-                draw={draw}
-                broadcasts={data.broadcasts}
+              {/* THEN THE MATCH LIST (ruling 4), with round pills. Alex took
+                  direction B's ordering at UX-P132 — matches are the half with
+                  live prices and the reason to open the page on a match day —
+                  and ruling 4 promotes this from "today's matches" to the
+                  tournament's matches. The championship board follows. */}
+              <TournamentMatches
+                entries={matches}
+                notice={data.slate ? slateNotice(data.slate) : null}
+                emptyHint="Nothing is on right now. Matches appear here as they are scheduled, and the draw fills them in on Thursday."
               />
 
               {board && <TournamentBoard board={board} seriesColors={seriesColors} />}
@@ -296,22 +354,17 @@ export default function TournamentPage() {
 
           {tab === "bracket" && (
             <div className="mt-6">
-              {/* THE FIXTURE SWAP (UX-P134): built from the register's own
-                  draw slots, so the ceremony is a data change and not a
-                  deploy. Empty until `draw_released` latches, at which point
-                  this fills without anything here changing.
-
-                  Before that latch it shows BOTH boards rather than nothing
-                  (ruling 1), the advance-to-stage markets under an unreached
-                  round (ruling 4), and the day's pre-match prices against
-                  decided matches (ruling 3). */}
+              {/* THE PLAYOFF GRID (UX-P138, ruling 4) — and before the draw,
+                  BOTH winner boards rather than an empty tab (UX-P137, ruling
+                  1). The ceremony stays a DATA change and not a deploy: the
+                  grid's rows are the board's, so it renders the moment
+                  `draw_released` latches and prices arrive, with nothing here
+                  changing. */}
               <TournamentBracket
-                rounds={rounds}
+                grid={grid}
                 drawReleased={data.draw_released}
                 preDrawBoards={data.boards}
-                propMarkets={data.props ?? []}
-                draw={draw}
-                prematch={prematch}
+                drawLabel={board?.label}
               />
             </div>
           )}

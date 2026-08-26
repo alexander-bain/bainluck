@@ -152,6 +152,79 @@ export function seriesColorByEntity(series: ChartSeries[]): Record<string, strin
 }
 
 /**
+ * Candidate rows for the picker, narrowed by what the reader typed.
+ *
+ * UX-P138, Alex's ruling 5: "is it as good as DataGolf's picker? If not, close
+ * the gap." The honest answer was no, and this was the biggest of the three
+ * gaps — DataGolf's picker filters as you type, ours made you expand a list of
+ * 41 names and scan. On a men's field of 44 that is not a picker, it is a
+ * directory. The report has the full comparison.
+ *
+ * Case- and accent-insensitive substring on the display name, matching
+ * ANYWHERE rather than at the start: a reader who knows a surname should not
+ * have to remember the first name it is filed under. Accent folding matters on
+ * this field specifically — "Sørensen" and "Dvořák" are exactly the names a
+ * reader types unaccented, and a picker that returns nothing for `sorensen`
+ * looks broken rather than strict.
+ */
+export function filterCandidates(
+  rows: TournamentRow[],
+  query: string
+): TournamentRow[] {
+  const needle = foldForSearch(query);
+  if (needle === "") return rows;
+  return rows.filter((row) => foldForSearch(row.display_name).includes(needle));
+}
+
+/**
+ * Lowercase, accent-stripped, trimmed — the one normalisation both sides use.
+ *
+ * NFD plus a combining-mark strip does NOT cover the Nordic and Slavic letters
+ * that are their own codepoints rather than a base plus an accent: `ø`, `æ`,
+ * `å`, `ł`, `đ`, `ß`. Those decompose to themselves, so `sorensen` would miss
+ * `Sørensen` and the picker would look broken on exactly the names this field
+ * is full of. The map is short and explicit because a PARTIAL fold is worse
+ * than none: it works on Dvořák, fails on Sørensen, and teaches the reader
+ * that search is unreliable rather than strict.
+ */
+const FOLD_SPECIALS: [RegExp, string][] = [
+  [/ø/g, "o"],
+  [/æ/g, "ae"],
+  [/å/g, "a"],
+  [/ł/g, "l"],
+  [/đ/g, "d"],
+  [/ð/g, "d"],
+  [/þ/g, "th"],
+  [/ß/g, "ss"],
+];
+
+function foldForSearch(value: string): string {
+  let out = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  for (const [pattern, replacement] of FOLD_SPECIALS) {
+    out = out.replace(pattern, replacement);
+  }
+  return out.trim();
+}
+
+/**
+ * Is this selection still the default? Drives whether a reset is offered.
+ *
+ * Order-insensitive on purpose: a reader who removed the second line and added
+ * it back has the same three players in a different order, and offering to
+ * "reset" a chart that already shows the default three is an affordance that
+ * does nothing.
+ */
+export function selectionIsDefault(
+  rows: TournamentRow[],
+  selection: string[]
+): boolean {
+  const base = defaultSelection(rows);
+  if (base.length !== selection.length) return false;
+  const set = new Set(selection);
+  return base.every((key) => set.has(key));
+}
+
+/**
  * Toggle one contender in or out of the selection.
  *
  * Refuses to empty the chart: removing the last line leaves a titled, bordered

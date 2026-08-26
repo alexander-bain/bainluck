@@ -1,39 +1,35 @@
 /**
- * CAPTURE RIG — the bracket, both draws, at phone width, ahead of the ceremony.
+ * CAPTURE RIG — the BRACKET TAB, at phone width, ahead of the ceremony.
  *
- * UX-P136, charter amendment 2026-08-25 ("blockers block items, never lanes").
- * Alex's verdict on the DUMMY bracket has to land before the real draw does,
- * so this renders the finished component against the synthetic 128-slot
- * fixture and writes one file he can open.
+ * Charter amendment 2026-08-25 ("blockers block items, never lanes"): Alex's
+ * verdict on the bracket has to land before the real draw does.
  *
  * Chromium is dead in this sandbox (Mach bootstrap denied), so a screenshot is
- * not available to this lane. This is the substitute the repo already uses and
- * that `usOpenBoardCapture` established: render the ACTUAL shipped component
- * with `renderToStaticMarkup`, wrap it in the app's OWN compiled stylesheet
- * from `.next/static/css`, and write a self-contained HTML file. It is the
- * real component and the real CSS — not a re-creation in mock markup.
+ * not available to this lane. This is the substitute the repo already uses:
+ * render the ACTUAL shipped component with `renderToStaticMarkup`, wrap it in
+ * the app's OWN compiled stylesheet from `.next/static/css`, and write a
+ * self-contained HTML file. Real component, real CSS — not a re-creation.
  *
- * UX-P137 re-renders it with Alex's five bracket rulings applied, and the
- * PRE-DRAW panel leads, because the ceremony is tomorrow and that panel is
- * what a real visitor sees first today.
+ * UX-P138 RE-RENDERS IT UNDER ALEX'S STRUCTURAL RULING 4: the Bracket tab is
+ * the PLAYOFF GRID now, not a round strip and a list of match cards. Those
+ * moved to the Tournament tab and are captured in `us-open-reskin.html`.
+ *
+ * The pre-draw panel still LEADS, because the ceremony is tomorrow and that
+ * panel is what a real visitor sees until it happens.
  *
  * Two jobs, and the second is why it lives under `__tests__`:
  *
  *   1. `UX_CAPTURE_DIR=<dir> npx jest --testPathPatterns=usOpenBracketCapture`
  *      writes `us-open-bracket.html`, every state at a 390px viewport.
- *
  *   2. With no env var set it is an ordinary test that renders each state and
  *      asserts the rig still works — a capture harness that has silently
  *      rotted is discovered at exactly the wrong moment.
  *
- * The draw fixture is a TEST ASSET. It lives under `__tests__/`, which the
- * Next.js app tree does not compile, so it cannot reach a production bundle
- * even by accident. On the real page this tab reads "Draw not released" until
- * `ingest_tournament_draw.py` latches `draw_released`.
- *
- * The BOARDS and the ADVANCE MARKETS in it are not synthetic — they are the
- * real production reads committed under `docs/mocks/us-open/`, which is what
- * makes the pre-draw panel a preview of Thursday rather than a drawing of one.
+ * WHICH NUMBERS ARE REAL, stated per panel in the artifact itself: the BOARDS
+ * and the ADVANCE-TO-ROUND markets are committed production reads, so the
+ * sparse grid in panels 2-3 is genuinely what Alex will see tomorrow. The DRAW
+ * is a synthetic fixture under `__tests__/`, which the Next.js app tree does
+ * not compile, so it cannot reach a production bundle even by accident.
  */
 
 import React from "react";
@@ -42,21 +38,17 @@ import fs from "node:fs";
 import path from "node:path";
 
 import TournamentBracket from "@/components/tournament/TournamentBracket";
-import {
-  buildBracket,
-  bracketProgress,
-  type PrematchPair,
-  type RoundName,
-} from "@/lib/bracket";
+import PlayoffGrid from "@/components/tournament/PlayoffGrid";
+import { buildBracket } from "@/lib/bracket";
+import { buildMatchList } from "@/lib/matchList";
+import { buildPlayoffGrid, type PlayoffGrid as GridModel } from "@/lib/playoffGrid";
 import type { PropMarket } from "@/lib/tournamentProps";
-import type { TournamentPayload } from "@/lib/tournament";
+import type { SlateData, SlateMatch } from "@/lib/slate";
+import type { TournamentBoardData, TournamentPayload, TournamentRow } from "@/lib/tournament";
 import {
   SYNTHETIC_MENS_DRAW,
-  SYNTHETIC_WOMENS_DRAW,
-  syntheticDrawWithHoles,
   syntheticFirstRoundResults,
   syntheticPartialResults,
-  syntheticPrematch,
 } from "@/__tests__/fixtures/syntheticDraw";
 
 const MOCKS = path.join(__dirname, "..", "..", "..", "docs", "mocks", "us-open");
@@ -85,99 +77,231 @@ const PROPS = JSON.parse(
   fs.readFileSync(path.join(MOCKS, "props-2026-08-26.json"), "utf8")
 ) as PropMarket[];
 
-const MENS_FRESH = buildBracket(SYNTHETIC_MENS_DRAW);
-const WOMENS_FRESH = buildBracket(SYNTHETIC_WOMENS_DRAW);
+const SLATE = JSON.parse(
+  fs.readFileSync(path.join(MOCKS, "slate-2026-08-25.json"), "utf8")
+) as SlateData;
 
-const DAY_RESULTS = syntheticPartialResults(SYNTHETIC_MENS_DRAW, 33);
-const MENS_DAY = buildBracket(SYNTHETIC_MENS_DRAW, DAY_RESULTS);
-const MENS_DAY_PREMATCH = syntheticPrematch(DAY_RESULTS, SYNTHETIC_MENS_DRAW);
+const MEN = PAYLOAD.boards[0];
+const WOMEN = PAYLOAD.boards[1];
+
+/** The grid Alex actually gets tomorrow: real boards, real curated markets. */
+const realGrid = (board: TournamentBoardData) =>
+  buildPlayoffGrid({
+    board,
+    propMarkets: PROPS,
+    matches: buildMatchList({
+      slate: SLATE.matches.filter((m) => m.draw === board.draw),
+    }),
+    draw: board.draw,
+  });
 
 /**
- * EARLY AFTERNOON — three matches in.
+ * A SECOND-WEEK state, so the design can be verdicted separately from the data.
  *
- * Needed because the 33-of-64 state, collapsed to five, shows five COMPLETE
- * R64 pairs: 33 decided fills matches 1-16 outright and only leaves match 17
- * half-filled, which is off the bottom of a collapsed list. The panel Alex
- * called uninterpretable would have rendered with no feeder text in it at all
- * and the artifact would have claimed a fix it did not show. At three decided,
- * R64's second card is a name against a hole, on screen, first five.
+ * Derived, never hand-written: the board rows are the synthetic draw's own
+ * slots, so the row shape is whatever `TournamentBoardData` actually is today
+ * and this fixture cannot drift away from the type. What it adds is the thing
+ * production does not have yet — a played draw and a priced next round — so
+ * the dense grid Alex is being asked to judge exists somewhere in the artifact
+ * rather than only in a sentence promising it later.
  */
-const EARLY_RESULTS = syntheticPartialResults(SYNTHETIC_MENS_DRAW, 3);
-const MENS_EARLY = buildBracket(SYNTHETIC_MENS_DRAW, EARLY_RESULTS);
-const MENS_EARLY_PREMATCH = syntheticPrematch(EARLY_RESULTS, SYNTHETIC_MENS_DRAW);
+const PLAYED = 40;
+const SYN_RESULTS = syntheticPartialResults(SYNTHETIC_MENS_DRAW, PLAYED);
+const SYN_ROUNDS = buildBracket(SYNTHETIC_MENS_DRAW, SYN_RESULTS);
 
-const R1_RESULTS = syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW);
-const MENS_R1_DONE = buildBracket(SYNTHETIC_MENS_DRAW, R1_RESULTS);
-const MENS_R1_PREMATCH = syntheticPrematch(R1_RESULTS, SYNTHETIC_MENS_DRAW);
+function synRow(index: number): TournamentRow {
+  const slot = SYNTHETIC_MENS_DRAW[index];
+  return {
+    entity_key: slot.entity_key,
+    display_name: slot.display_name,
+    seed: slot.seed,
+    country: null,
+    rank: index / 2 + 1,
+    state: "live",
+    probability: slot.probability ?? Number((0.06 - index * 0.001).toFixed(4)),
+    probability_is_live: true,
+    observed_at: "2026-09-02T18:00:00+00:00",
+    age_hours: 0.3,
+    price_state: "live",
+    freshest_observed_at: "2026-09-02T18:00:00+00:00",
+    freshest_age_hours: 0.3,
+    stale_sources: [],
+    mixed_freshness: false,
+    source_count: 2,
+    sources: [],
+    blend_rule: "equal_weight_midpoint",
+    divergent: false,
+    trend: [],
+    trend_delta: null,
+  };
+}
 
-const W_R1_RESULTS = syntheticFirstRoundResults(SYNTHETIC_WOMENS_DRAW);
-const WOMENS_R1_DONE = buildBracket(SYNTHETIC_WOMENS_DRAW, W_R1_RESULTS);
-const WOMENS_R1_PREMATCH = syntheticPrematch(W_R1_RESULTS, SYNTHETIC_WOMENS_DRAW);
+const SYN_BOARD: TournamentBoardData = {
+  draw: "mens-singles",
+  label: "Men's Singles",
+  rows: Array.from({ length: 16 }, (_, i) => synRow(i * 2)),
+  contenders: 16,
+  unpriced: 0,
+  rows_not_live: 0,
+  mixed_freshness_rows: 0,
+  price_state: "live",
+  newest_observed_at: "2026-09-02T18:00:00+00:00",
+  age_hours: 0.3,
+};
 
-const HOLED = buildBracket(syntheticDrawWithHoles(SYNTHETIC_MENS_DRAW, [1, 4, 9]));
+/**
+ * The next round, PRICED — one live match market per surviving player pair.
+ *
+ * This is the column that makes a real grid dense, and it is the one thing our
+ * pipeline could serve today and does not: `build_slate` prices qualifying and
+ * nothing else. Synthesised here rather than asserted in prose.
+ */
+const SYN_SLATE: SlateMatch[] = SYN_ROUNDS[1].matches
+  .filter((m) => m.top !== null && m.bottom !== null)
+  .slice(0, 12)
+  .map((m, i) => ({
+    matchup_key: `syn-r64-${i}`,
+    draw: "mens-singles",
+    draw_label: "Men's Singles",
+    round: "R64",
+    scheduled_date: "2026-09-02T19:00:00+00:00",
+    sides: [
+      {
+        entity_key: m.top!.entity_key,
+        display_name: m.top!.display_name,
+        seed: m.top!.seed,
+        country: null,
+        role: "participant",
+        probability: Number((0.5 + ((i * 7) % 34) / 100).toFixed(2)),
+        opening_probability: Number((0.5 + ((i * 5) % 30) / 100).toFixed(2)),
+        move: 0.02,
+        raw_probability: null,
+        raw_opening_probability: null,
+        age_hours: 0.3,
+        price_state: "live",
+      },
+      {
+        entity_key: m.bottom!.entity_key,
+        display_name: m.bottom!.display_name,
+        seed: m.bottom!.seed,
+        country: null,
+        role: "participant",
+        probability: Number((0.5 - ((i * 7) % 34) / 100).toFixed(2)),
+        opening_probability: Number((0.5 - ((i * 5) % 30) / 100).toFixed(2)),
+        move: -0.02,
+        raw_probability: null,
+        raw_opening_probability: null,
+        age_hours: 0.3,
+        price_state: "live",
+      },
+    ],
+    coherent: true,
+    raw_sum: 1,
+    opening_raw_sum: 1,
+    probability_is_live: true,
+    price_state: "live",
+    observed_at: "2026-09-02T18:50:00+00:00",
+    age_hours: 0.3,
+    freshest_observed_at: "2026-09-02T18:50:00+00:00",
+    freshest_age_hours: 0.3,
+    stale_sides: [],
+    mixed_freshness: false,
+    favourite: m.top!.entity_key,
+    has_moved: true,
+    source_count: 1,
+  }));
+
+/** Curated reach markets against the synthetic field, so the middle fills too. */
+const SYN_PROPS: PropMarket[] = [0, 2, 4, 6].map((i) => {
+  const slot = SYNTHETIC_MENS_DRAW[i * 2];
+  const surname = slot.display_name.split(" ").slice(-1)[0];
+  const round = i < 4 ? "quarterfinals" : "semifinals";
+  const key = `${surname.toLowerCase()}-${round}`;
+  return {
+    key,
+    title: `Does ${surname} reach the ${round}?`,
+    hook: null,
+    draw: "mens-singles",
+    source: "polymarket",
+    answer_entity_key: `${key}:yes`,
+    price_state: "live",
+    observed_at: "2026-09-02T18:00:00+00:00",
+    age_hours: 0.4,
+    freshest_observed_at: "2026-09-02T18:00:00+00:00",
+    freshest_age_hours: 0.4,
+    stale_outcomes: [],
+    mixed_freshness: false,
+    outcomes: [
+      {
+        entity_key: `${key}:yes`,
+        display_name: "Yes",
+        probability: Number((0.62 - i * 0.07).toFixed(3)),
+        probability_is_live: true,
+        observed_at: "2026-09-02T18:00:00+00:00",
+        age_hours: 0.4,
+        price_state: "live",
+        is_answer: true,
+      },
+    ],
+  };
+});
+
+const SYN_MATCHES = buildMatchList({ rounds: SYN_ROUNDS, slate: SYN_SLATE });
+const SYN_GRID: GridModel = buildPlayoffGrid({
+  board: SYN_BOARD,
+  propMarkets: SYN_PROPS,
+  matches: SYN_MATCHES,
+  draw: "mens-singles",
+});
 
 describe("the bracket capture rig still renders every state", () => {
   it("renders the pre-ceremony state WITH both winner boards", () => {
-    // Ruling 1. The panel that leads the artifact, because the ceremony is
-    // tomorrow and this is what a visitor sees until it happens.
     const html = renderToStaticMarkup(
-      <TournamentBracket rounds={[]} drawReleased={false} preDrawBoards={PAYLOAD.boards} />
+      <TournamentBracket grid={null} drawReleased={false} preDrawBoards={PAYLOAD.boards} />
     );
     expect(html).toContain('data-testid="bracket-unreleased"');
     expect((html.match(/data-testid="tournament-board"/g) ?? []).length).toBe(2);
   });
 
-  it("renders a fresh 128 draw for BOTH sides, collapsed", () => {
-    for (const rounds of [MENS_FRESH, WOMENS_FRESH]) {
-      const html = renderToStaticMarkup(
-        <TournamentBracket rounds={rounds} drawReleased initialRound="R128" />
-      );
-      expect((html.match(/data-testid="bracket-match"/g) ?? []).length).toBe(5);
-      expect(html).toContain('data-testid="bracket-round-strip"');
-      expect(html).toContain('data-testid="bracket-column-label"');
-    }
+  it("the REAL grid is sparse, and the artifact must not pretend otherwise", () => {
+    // The honest state, asserted rather than described. Today we price eight
+    // advance markets across both draws and one title column each; the middle
+    // is holes, and the panel says so with a counter.
+    const grid = realGrid(MEN);
+    expect(grid.rows.length).toBe(MEN.rows.length);
+    expect(grid.pricedCells).toBeLessThan(grid.totalCells);
+    expect(grid.columns.map((c) => c.key)).toContain("title");
+    // Alcaraz and Zverev have curated semi-final markets; Djokovic and Shelton
+    // quarter-finals. If the committed props file goes stale this drops to a
+    // one-column grid and the panel silently becomes the board again.
+    expect(grid.columns.filter((c) => c.kind === "reach").length).toBeGreaterThan(0);
   });
 
-  it("renders a part-played day and a completed first round", () => {
-    for (const rounds of [MENS_DAY, MENS_R1_DONE, WOMENS_R1_DONE]) {
-      const html = renderToStaticMarkup(<TournamentBracket rounds={rounds} drawReleased />);
-      expect(html).toContain('data-testid="tournament-bracket"');
-    }
+  it("the women's grid is a genuinely different field, not the men's twice", () => {
+    const men = renderToStaticMarkup(<PlayoffGrid grid={realGrid(MEN)} />);
+    const women = renderToStaticMarkup(<PlayoffGrid grid={realGrid(WOMEN)} />);
+    expect(men).toContain("Alcaraz");
+    expect(women).toContain("Sabalenka");
+    expect(women).not.toContain("Alcaraz");
   });
 
-  it("the two draws are genuinely different fields, not the same one twice", () => {
-    // A capture that shows the men's draw in both phones would pass every
-    // other assertion here and still fail the thing Alex is being asked to
-    // verdict — "both draws".
-    const men = renderToStaticMarkup(
-      <TournamentBracket rounds={MENS_FRESH} drawReleased initialRound="R128" />
-    );
-    const women = renderToStaticMarkup(
-      <TournamentBracket rounds={WOMENS_FRESH} drawReleased initialRound="R128" />
-    );
-    expect(men).toContain('data-entity="syn-m-1"');
-    expect(men).not.toContain('data-entity="syn-w-1"');
-    expect(women).toContain('data-entity="syn-w-1"');
-    expect(women).not.toContain('data-entity="syn-m-1"');
+  it("the SECOND-WEEK grid is dense, so the design can be judged apart from the data", () => {
+    expect(SYN_GRID.columns.length).toBeGreaterThan(2);
+    expect(SYN_GRID.pricedCells).toBeGreaterThan(SYN_GRID.rows.length);
+    // A played round produces reached ticks; a lost one produces an out row.
+    const states = SYN_GRID.rows.flatMap((r) => Object.values(r.cells).map((c) => c.state));
+    expect(states).toContain("priced");
   });
 
-  it("no state ever puts the whole 127-match draw on the page", () => {
-    // The layout gate this rig exists to prove. The old seven-column render
-    // was ~1,360px wide with a ~3,450px first column at a 390px viewport, and
-    // since UX-P137 even one round is five cards until the reader asks.
-    for (const rounds of [MENS_FRESH, MENS_DAY, MENS_R1_DONE, WOMENS_R1_DONE]) {
-      for (const round of ["R128", "R64", "R32", "QF", "F"] as RoundName[]) {
-        const html = renderToStaticMarkup(
-          <TournamentBracket rounds={rounds} drawReleased initialRound={round} />
-        );
-        expect((html.match(/data-testid="bracket-match"/g) ?? []).length).toBeLessThanOrEqual(5);
-      }
+  it("never puts more than four numeric columns on a phone", () => {
+    for (const grid of [realGrid(MEN), realGrid(WOMEN), SYN_GRID]) {
+      expect(grid.columns.length).toBeLessThanOrEqual(4);
     }
   });
 
   it("the committed props file really carries the advance-to-stage markets", () => {
-    // If this file goes stale the ruling-4 panel silently renders empty, and
-    // an empty panel is exactly what the ruling was issued about.
+    // If this file goes stale, every reach column silently disappears and the
+    // grid degrades to a one-column copy of the championship board.
     expect(PROPS.length).toBe(11);
     const advance = PROPS.filter((p) => /(-semifinals|-quarterfinals|-round-of-16)$/.test(p.key));
     expect(advance.length).toBe(8);
@@ -195,48 +319,30 @@ describe("the bracket capture rig still renders every state", () => {
       caption: string,
       note: string,
       body: React.ReactElement,
-      progress: { played: number; total: number } | null,
-      women = false
+      women = false,
+      showPills = true
     ) => `
   <div class="col">
     <div class="cap">${caption}</div>
     <div class="phone">
       <header class="hero"><h1>US Open 2026</h1><p>Flushing Meadows &middot; 08-30 to 09-13</p></header>
       <div class="tabs"><span>Tournament</span><span class="on">Bracket</span></div>
-      <div class="pills"><span${women ? "" : ' class="on"'}>Men's</span><span${
-        women ? ' class="on"' : ""
-      }>Women's</span></div>
+      ${
+        showPills
+          ? `<div class="pills"><span${women ? "" : ' class="on"'}>Men's</span><span${
+              women ? ' class="on"' : ""
+            }>Women's</span></div>`
+          : ""
+      }
       <div class="pad">${renderToStaticMarkup(body)}</div>
     </div>
-    <div class="sub">${note}${
-      progress
-        ? `<br><b>${progress.played} of ${progress.total}</b> decided in this state.`
-        : ""
-    }</div>
+    <div class="sub">${note}</div>
   </div>`;
-
-    const bracket = (props: {
-      rounds: ReturnType<typeof buildBracket>;
-      initialRound?: RoundName;
-      prematch?: Record<string, PrematchPair>;
-      initialExpanded?: boolean;
-      draw?: string;
-    }) => (
-      <TournamentBracket
-        rounds={props.rounds}
-        drawReleased
-        initialRound={props.initialRound}
-        prematch={props.prematch}
-        initialExpanded={props.initialExpanded}
-        propMarkets={PROPS}
-        draw={props.draw ?? "mens-singles"}
-      />
-    );
 
     const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>US Open bracket — Alex's five rulings applied</title>
+<title>US Open — the Bracket tab is the playoff grid (ruling 4)</title>
 <style>${appStylesheet()}</style>
 <style>
   body{background:#F5F5F7;margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Segoe UI,Roboto,sans-serif}
@@ -244,6 +350,7 @@ describe("the bracket capture rig still renders every state", () => {
   .note b{color:#111827}
   .note ol{margin:8px 0 0;padding-left:20px}
   .note li{margin-bottom:5px}
+  .warn{background:#FFFBEB;border:1px solid #FDE68A;border-radius:10px;padding:11px 14px;margin:10px 0 0}
   .rail{display:flex;gap:22px;justify-content:center;align-items:flex-start;flex-wrap:wrap;padding:20px 16px 60px;max-width:1400px;margin:0 auto}
   .col{width:390px}
   .phone{width:390px;background:#F5F5F7;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;max-height:820px;overflow-y:auto}
@@ -253,7 +360,7 @@ describe("the bracket capture rig still renders every state", () => {
   .tabs{display:flex;border-bottom:1px solid #E5E7EB;background:#fff}
   .tabs span{flex:1;text-align:center;padding:13px 0;font:600 13.5px inherit;color:#9CA3AF;border-bottom:2px solid transparent}
   .tabs span.on{color:#111827;border-bottom-color:#111827}
-  .pills{display:flex;gap:6px;padding:12px 16px;background:#fff;border-bottom:1px solid #E5E7EB}
+  .pills{display:flex;gap:6px;padding:0 16px 12px;background:#fff;border-bottom:1px solid #E5E7EB}
   .pills span{border-radius:999px;padding:6px 14px;font:600 13px inherit;background:#F0F0F2;color:#6B7280}
   .pills span.on{background:#111827;color:#F8FAFC}
   header.hero{padding:16px;background:#fff;border-bottom:1px solid #E5E7EB}
@@ -264,138 +371,106 @@ describe("the bracket capture rig still renders every state", () => {
 </style></head>
 <body>
 <div class="note">
-<b>US Open bracket &mdash; Alex's five rulings applied. Panel 1 leads, because the ceremony is tomorrow.</b>
-These are the SHIPPED component and the app's own compiled CSS at a 390px viewport. The DRAW names are
-a synthetic fixture that lives under <code>__tests__/</code> and cannot reach a production bundle; the
-BOARDS and the advance-to-stage markets are real production reads. Each phone scrolls &mdash; scroll
-inside one to see the whole panel.
+<b>The Bracket tab is the PLAYOFF GRID &mdash; your ruling 4, adopted.</b> These are the SHIPPED
+components and the app's own compiled CSS at a 390px viewport. Each phone scrolls.
 <ol>
-<li><b>The pre-draw view is not empty.</b> Both winner markets exist before the draw does, so the tab
-shows both boards under the honest sentence. This is the state every visitor sees until Thursday.</li>
-<li><b>Every percentage carries its column header.</b> The answer to your question: it is the chance of
-winning the WHOLE TOURNAMENT &mdash; <code>build_bracket</code> fills each slot from the register
-player's <code>kind: "outright"</code> sources, the champion market, the same outcomes the board reads.
-It now says so. A decided card means something different by its number, so it says <b>Pre-match</b>
-itself.</li>
-<li><b>Nothing renders blank.</b> An undetermined slot names the match its occupant comes from
-(&ldquo;Winner of R128 #23&rdquo;); a round-one hole says &ldquo;No registered player&rdquo;, which is
-what the backend contract calls it. A decided match prints the pre-match probability and an explicit
-<b>Won</b>/<b>Out</b>.</li>
-<li><b>An unreached round shows the markets on reaching it</b> &mdash; the register carries eight,
-priced. Pattern borrowed from <code>ProgressionLadder</code>, the MLB/NBA playoff table. (You recalled
-the Masters doing this; it does not &mdash; golf buckets props into sections and has no stage ladder.)</li>
-<li><b>Five, then expand</b>, on every list in every view.</li>
+<li><b>Adopted, not countered.</b> You invited a counter-structure and asked for both rendered if
+one existed. There isn't one worth your time, and the one-paragraph argument is in the report: the
+tree was measured unusable on a phone at UX-P136, one-round-at-a-time turned this tab into a second
+match list, and the grid is the only structure tried that answers &ldquo;how far does this player
+get&rdquo; without either. The match list moved to the Tournament tab
+(<code>us-open-reskin.html</code>), which is the other half of the ruling.</li>
+<li><b>Every cell is a market's answer to exactly its own column.</b> Three sources: your own match
+price for the next round, the register's curated &ldquo;does X reach the Y&rdquo; markets for the
+middle, and the championship board for the title. <b>Nothing is chained or simulated.</b> A grid of
+P(reach round N) is trivial to fill by multiplying match odds down the draw; it would be dense
+where this one is sparse and every number in it would be a model output printed in the type this
+app reserves for a price.</li>
+<li><b>Ruling 3 applied: &ldquo;priced to get there&rdquo; is gone.</b> The section reads
+<b>&ldquo;Chance of reaching&rdquo;</b>. <i>Priced</i> is a trading verb and <i>get there</i> is a
+bet's payoff condition. Runners-up rejected: &ldquo;Odds of reaching&rdquo; (the exact word the
+site's no-price-format rule exists to avoid) and &ldquo;Progression&rdquo; (accurate, and jargon).</li>
+<li><b>Ruling 8 applied: the eight &ldquo;Does Gauff reach the semifinals?&rdquo; cards are cells
+now,</b> not props. They were eight near-identical cards in a section meant for interesting
+questions &mdash; both the wrong home and the repeating template the same ruling forbids.</li>
 </ol>
+<div class="warn">
+<b>THE HONEST PART, and it is the thing to look at first.</b> Panels 2 and 3 are what you get
+tomorrow, on real data, and the middle of that grid is mostly holes: we price <b>eight</b>
+advance-to-round questions across both draws and one title column each. The dense
+&ldquo;next round&rdquo; column needs main-draw match prices and <code>build_slate</code> serves
+qualifying only. Panels 4-6 are a SECOND-WEEK state built on the synthetic draw so you can verdict
+the DESIGN separately from the data poverty &mdash; and so the ask (curate more reach markets,
+price the main draw) is visible rather than a promise. <b>The tab is also still called
+&ldquo;Bracket&rdquo; and holds no bracket</b>; that is one line in <code>TABS</code> if you want
+&ldquo;Path&rdquo; instead.
+</div>
 </div>
 
-<div class="lead">1 &mdash; What a visitor sees today, and until the ceremony</div>
+<div class="lead">1 &mdash; What a visitor sees today, and until the ceremony (UX-P137 ruling 1, unchanged)</div>
 <div class="rail">
 ${phone(
-  "1 &middot; Before the draw &mdash; ruling 1",
-  "Real production boards, both draws, on the Bracket tab. The old version of this panel was one sentence and nothing else.",
-  <TournamentBracket rounds={[]} drawReleased={false} preDrawBoards={PAYLOAD.boards} />,
-  null
-)}
-</div>
-
-<div class="lead">2 &mdash; The draw is out</div>
-<div class="rail">
-${phone(
-  "2 &middot; Men's &mdash; nothing played",
-  "Thursday afternoon. Five of sixty-four, then an expander &mdash; and the column says what its number is.",
-  bracket({ rounds: MENS_FRESH, initialRound: "R128" }),
-  bracketProgress(MENS_FRESH)
-)}
-${phone(
-  "3 &middot; Men's &mdash; the same round, expanded",
-  "What &ldquo;Show all 64&rdquo; opens onto. This is the state that used to be the DEFAULT.",
-  bracket({ rounds: MENS_FRESH, initialRound: "R128", initialExpanded: true }),
-  bracketProgress(MENS_FRESH)
-)}
-${phone(
-  "4 &middot; Women's &mdash; nothing played",
-  "The other draw, same component, a genuinely different field.",
-  bracket({ rounds: WOMENS_FRESH, initialRound: "R128", draw: "womens-singles" }),
-  bracketProgress(WOMENS_FRESH),
-  true
+  "1 &middot; Before the draw",
+  "Real production boards, both draws, unfiltered by the gender pill. The tradeable truth about this tournament on the day before a ceremony.",
+  <TournamentBracket grid={null} drawReleased={false} preDrawBoards={PAYLOAD.boards} />,
+  false,
+  false
 )}
 </div>
 
-<div class="lead">3 &mdash; Ruling 3: no blank rows, in the two states that produce them</div>
+<div class="lead">2 &mdash; The grid on REAL data: what tomorrow actually looks like</div>
 <div class="rail">
 ${phone(
-  "5 &middot; Early afternoon, 3 of 64 &mdash; ruling 3",
-  "The first results land. Card 2 of the next round is a name against a slot that names its feeder &mdash; this is the row that used to read &ldquo;&mdash; v &mdash;&rdquo;.",
-  bracket({ rounds: MENS_EARLY, initialRound: "R64", prematch: MENS_EARLY_PREMATCH }),
-  bracketProgress(MENS_EARLY)
+  "2 &middot; Men's &mdash; real boards, real markets",
+  "36 contenders, 4 curated reach markets, 36 title prices. The legend under the grid states its own coverage &mdash; a sparse grid that does not say it is sparse reads as a rendering fault.",
+  <PlayoffGrid grid={realGrid(MEN)} drawLabel={MEN.label} />
 )}
 ${phone(
-  "6 &middot; Mid-day, 33 of 64, expanded &mdash; ruling 3",
-  "The state a tournament day is actually in, whole. Sixteen filled pairs, then seventeen cards each naming what they are waiting on.",
-  bracket({
-    rounds: MENS_DAY,
-    initialRound: "R64",
-    prematch: MENS_DAY_PREMATCH,
-    initialExpanded: true,
-  }),
-  bracketProgress(MENS_DAY)
-)}
-${phone(
-  "7 &middot; Decided matches &mdash; ruling 3",
-  "Pre-match probability and an explicit outcome on both sides. The header says <b>Pre-match</b>, not the title label, because that is what the number is.",
-  bracket({ rounds: MENS_R1_DONE, initialRound: "R128", prematch: MENS_R1_PREMATCH }),
-  bracketProgress(MENS_R1_DONE)
-)}
-${phone(
-  "8 &middot; A draw with register holes &mdash; ruling 3",
-  "A round-one hole is not an unplayed feeder and does not get the feeder sentence.",
-  bracket({ rounds: HOLED, initialRound: "R128" }),
-  bracketProgress(HOLED)
-)}
-${phone(
-  "9 &middot; Women's &mdash; first round complete",
-  "The same decided treatment on the other draw.",
-  bracket({
-    rounds: WOMENS_R1_DONE,
-    initialRound: "R128",
-    prematch: WOMENS_R1_PREMATCH,
-    draw: "womens-singles",
-  }),
-  bracketProgress(WOMENS_R1_DONE),
-  true
-)}
-</div>
-
-<div class="lead">4 &mdash; Ruling 4: an unreached round is content, not emptiness</div>
-<div class="rail">
-${phone(
-  "10 &middot; Men's semi-finals &mdash; ruling 4",
-  "Nobody is there yet, and four real markets say who the market thinks gets there. Real Polymarket prices, 24-27h old, muted accordingly.",
-  bracket({ rounds: MENS_R1_DONE, initialRound: "SF", prematch: MENS_R1_PREMATCH }),
-  bracketProgress(MENS_R1_DONE)
-)}
-${phone(
-  "11 &middot; Men's quarter-finals &mdash; ruling 4",
-  "A different round, a different question, its own column label.",
-  bracket({ rounds: MENS_R1_DONE, initialRound: "QF", prematch: MENS_R1_PREMATCH }),
-  bracketProgress(MENS_R1_DONE)
-)}
-${phone(
-  "12 &middot; Women's second week &mdash; ruling 4",
-  "The women's tab has one. It shows one &mdash; not a padded five.",
-  bracket({
-    rounds: WOMENS_R1_DONE,
-    initialRound: "R16",
-    draw: "womens-singles",
-  }),
-  bracketProgress(WOMENS_R1_DONE),
+  "3 &middot; Women's &mdash; real boards, real markets",
+  "44 contenders and 4 curated reach markets, including the only round-of-16 one we hold. A genuinely different field, same component.",
+  <PlayoffGrid grid={realGrid(WOMEN)} drawLabel={WOMEN.label} />,
   true
 )}
 ${phone(
-  "13 &middot; The final &mdash; no market, no table",
-  "The other direction: a bordered empty table under a round we hold nothing for would re-add the emptiness ruling 4 removes.",
-  bracket({ rounds: MENS_R1_DONE, initialRound: "F", prematch: MENS_R1_PREMATCH }),
-  bracketProgress(MENS_R1_DONE)
+  "4 &middot; Men's &mdash; the same grid, expanded",
+  "What &ldquo;Show all 36&rdquo; opens onto. Every row the board holds, most of them title-only, which is the honest shape of the field.",
+  <PlayoffGrid grid={realGrid(MEN)} drawLabel={MEN.label} initialExpanded />
+)}
+</div>
+
+<div class="lead">3 &mdash; The grid in the second week: the design, judged apart from the data</div>
+<div class="rail">
+${phone(
+  "5 &middot; Second week &mdash; dense",
+  "SYNTHETIC draw and SYNTHETIC main-draw match prices. Next round from the match market, quarter-finals from curated markets, title from the board. This is the shape the grid is FOR.",
+  <PlayoffGrid grid={SYN_GRID} drawLabel="Men's Singles" />
+)}
+${phone(
+  "6 &middot; Second week &mdash; expanded",
+  "Sixteen survivors, four columns, holes where nobody prices the question. The ✓ is a round already reached; a knocked-out player's whole row goes to em-dashes.",
+  <PlayoffGrid grid={SYN_GRID} drawLabel="Men's Singles" initialExpanded />
+)}
+${phone(
+  "7 &middot; A round that does not fit",
+  "The width cap, said out loud. Three reach columns plus the title is what 390px holds; a fourth reach round is NAMED in the legend rather than dropped silently.",
+  <PlayoffGrid
+    grid={buildPlayoffGrid({
+      board: SYN_BOARD,
+      propMarkets: [
+        ...SYN_PROPS,
+        {
+          ...SYN_PROPS[0],
+          key: "extra-final",
+          title: `Does ${SYN_BOARD.rows[0].display_name.split(" ").slice(-1)[0]} reach the final?`,
+          answer_entity_key: "extra-final:yes",
+          outcomes: [{ ...SYN_PROPS[0].outcomes[0], entity_key: "extra-final:yes", probability: 0.31 }],
+        },
+      ],
+      matches: SYN_MATCHES,
+      draw: "mens-singles",
+    })}
+    drawLabel="Men's Singles"
+  />
 )}
 </div>
 </body></html>`;
@@ -406,41 +481,34 @@ ${phone(
     // The rig must not silently write a page whose panels failed to render.
     expect(fs.existsSync(out)).toBe(true);
     expect(html.length).toBeGreaterThan(20000);
-    expect(html).toContain('data-testid="bracket-unreleased"');
-    expect(html).toContain('data-testid="tournament-bracket"');
-    expect(html).toContain('data-testid="bracket-round-strip"');
-    expect(html).toContain('data-testid="bracket-round-unreached"');
-    expect(html).toContain('data-won="true"');
 
-    // ---- one assertion per ruling, so a panel cannot go quietly empty ----
-    // 1. The pre-draw panel really carries BOTH boards.
+    // ---- one assertion per claim the page makes, so no panel goes empty ----
+    // Ruling 1's pre-draw panel still carries BOTH boards.
+    expect(html).toContain('data-testid="bracket-unreleased"');
     expect((html.match(/data-testid="tournament-board"/g) ?? []).length).toBe(2);
-    // 2. Both column vocabularies are on the page and neither is missing.
+    // Ruling 4: the grid rendered, with rows and real cells, on every panel.
+    expect((html.match(/data-testid="playoff-grid"/g) ?? []).length).toBe(6);
+    expect((html.match(/data-testid="grid-row"/g) ?? []).length).toBeGreaterThan(40);
+    expect((html.match(/data-origin="curated"/g) ?? []).length).toBeGreaterThan(4);
+    expect((html.match(/data-origin="board"/g) ?? []).length).toBeGreaterThan(20);
+    expect(html).toContain('data-origin="match"');
+    // Ruling 3: the gambling phrasing is gone and the probability phrasing is in.
+    expect(html).toContain("Chance of reaching");
+    expect(html).not.toContain("Priced to get there");
+    // Ruling 2's vocabulary: each column still names its own question.
     expect(html).toContain("To win the title");
-    expect(html).toContain("Pre-match");
-    expect(html).toContain("To reach the semi-finals");
-    expect(html).toContain("To reach the quarter-finals");
-    // 3. No blank row survives anywhere in the artifact.
-    // Not just the prose above: the RENDERED rows must carry it. An earlier
-    // cut of this rig matched only the explanatory note, because the panel it
-    // was meant to prove had five complete pairs at the top of a collapsed
-    // list and no feeder text on screen at all.
-    expect(
-      (html.match(/data-testid="bracket-slot-empty" data-from="R128-/g) ?? []).length
-    ).toBeGreaterThan(10);
-    expect(html).toContain("No registered player");
-    expect(html).toContain('data-outcome="won"');
-    expect(html).toContain('data-outcome="out"');
-    expect(html).toContain('data-testid="bracket-prematch"');
-    // 4. The advance table rendered with real rows, not an empty frame.
-    expect(html).toContain('data-testid="bracket-advance"');
-    expect((html.match(/data-testid="bracket-advance-row"/g) ?? []).length).toBeGreaterThan(4);
-    // 5. Collapsed and expanded are BOTH on the page.
-    expect(html).toContain("Show all 64");
-    expect((html.match(/data-testid="bracket-match"/g) ?? []).length).toBeGreaterThan(64);
-    // BOTH draws, which is the half of the ask a single-draw capture would miss.
-    expect(html).toContain('data-entity="syn-m-1"');
-    expect(html).toContain('data-entity="syn-w-1"');
+    expect(html).toContain("To reach the");
+    // The holes are visible AND explained — this is the honesty claim.
+    expect(html).toContain('data-state="unpriced"');
+    expect(html).toContain("Not priced");
+    expect(html).toContain('data-testid="grid-coverage"');
+    // The width cap is never silent.
+    expect(html).toContain('data-testid="grid-dropped-columns"');
+    // Both draws, which is the half of the ask a single-draw capture would miss.
+    expect(html).toContain("Alcaraz");
+    expect(html).toContain("Sabalenka");
+    // Collapsed AND expanded are both on the page.
+    expect(html).toContain("Show all 36");
     // And the stylesheet actually loaded — an unstyled capture is not a verdict.
     expect(appStylesheet().length).toBeGreaterThan(1000);
   });

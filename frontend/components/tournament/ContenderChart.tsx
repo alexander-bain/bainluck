@@ -9,8 +9,10 @@ import {
   chartGeometry,
   chartSeriesFor,
   chartableRows,
+  filterCandidates,
   legendName,
   pointsInTimeframe,
+  selectionIsDefault,
   seriesEndpoint,
   seriesPoints,
   timeframeIsDrawable,
@@ -42,6 +44,23 @@ import { formatBoardProbability, type TournamentRow } from "@/lib/tournament";
  *   colour tie-in has to follow the same choice — two components disagreeing
  *   about which three players are "the" three would be worse than no tie-in.
  *
+ * WHAT UX-P138 CHANGED (Alex's ruling 5: "is it as good as DataGolf's picker?
+ * If not, close the gap"). The honest answer was no, in three specific ways,
+ * and the report gives the full comparison. Two are closed here:
+ *
+ * - **A filter.** DataGolf filters as you type. Ours made you expand a list of
+ *   41 names and scan it. On a 44-player field that is a directory, not a
+ *   picker. `filterCandidates` folds accents, because `Sørensen` and `Dvořák`
+ *   are exactly the names a reader types unaccented.
+ * - **A way back.** DataGolf has clear-all; ours had no route to the default
+ *   short of removing lines one at a time and re-adding the three you started
+ *   with. `Reset to top 3`, offered only when the selection has actually moved.
+ *
+ * The third gap is NOT closed and is not a gap this lane can close: DataGolf
+ * shows a hover tooltip reading every line's value at a point in time, which
+ * needs pointer state on an SVG this rig cannot render or screenshot. It is in
+ * the report as owed work, not as a solved item.
+ *
  * Standing doctrine still governs everything numeric — fixed 0-100 axis, no
  * smoothing, gaps stay gaps — and the honesty rule carries over: a chart drawn
  * from non-live prices is muted and says so.
@@ -55,15 +74,21 @@ export default function ContenderChart({
   draw,
   selection,
   onToggle,
+  onReset,
   initialPickerOpen = false,
+  initialFilter = "",
 }: {
   rows: TournamentRow[];
   draw: string;
   /** Entity keys currently drawn, in the order they were added. */
   selection: string[];
   onToggle: (entityKey: string) => void;
+  /** Back to the board's top three (ruling 5). Omitted, no reset is offered. */
+  onReset?: () => void;
   /** Capture seam: render with the picker already open. */
   initialPickerOpen?: boolean;
+  /** Capture seam: render the picker already filtered — a static page cannot type. */
+  initialFilter?: string;
 }) {
   const series = useMemo(() => chartSeriesFor(rows, selection), [rows, selection]);
 
@@ -73,6 +98,7 @@ export default function ContenderChart({
   const [timeframe, setTimeframe] = useState<Timeframe>("ALL");
   const [pickerOpen, setPickerOpen] = useState(initialPickerOpen);
   const [pickerExpanded, setPickerExpanded] = useState(false);
+  const [filter, setFilter] = useState(initialFilter);
 
   const geometry = useMemo(
     () => chartGeometry(series, timeframe, WIDTH, HEIGHT),
@@ -84,6 +110,14 @@ export default function ContenderChart({
     [rows, selection]
   );
 
+  /** Ruling 5's gap-closer: 41 names is a directory until you can type at it. */
+  const candidates = useMemo(
+    () => filterCandidates(available, filter),
+    [available, filter]
+  );
+
+  const canReset = onReset !== undefined && !selectionIsDefault(rows, selection);
+
   if (series.length === 0) return null;
 
   const drawable = series.some(
@@ -92,8 +126,8 @@ export default function ContenderChart({
   const anyLive = series.some((entry) => entry.isLive);
   const atCeiling = series.length >= MAX_SERIES_COUNT;
   const pickerVisible = pickerExpanded
-    ? available
-    : available.slice(0, COLLAPSED_LIST_COUNT);
+    ? candidates
+    : candidates.slice(0, COLLAPSED_LIST_COUNT);
 
   return (
     <section
@@ -204,6 +238,24 @@ export default function ContenderChart({
       <div className="mt-1.5 flex items-center justify-between">
         <span className="text-[11px] text-text-muted">
           {series.length} of {rows.length}
+          {canReset && (
+            // RULING 5's second gap. DataGolf's picker has a clear-all; ours
+            // had no way back to the default short of removing lines one at a
+            // time and re-adding the three you started with. Only offered when
+            // the selection has actually moved — an affordance that does
+            // nothing is worse than an absent one.
+            <>
+              {" · "}
+              <button
+                type="button"
+                onClick={onReset}
+                className="font-semibold text-text-secondary underline decoration-dotted underline-offset-2"
+                data-testid="chart-reset"
+              >
+                Reset to top 3
+              </button>
+            </>
+          )}
         </span>
         <div className="flex gap-1" role="group" aria-label="Chart timeframe">
           {TIMEFRAMES.map((option) => {
@@ -253,7 +305,33 @@ export default function ContenderChart({
           </button>
 
           {pickerOpen && (
-            <ul className="mt-1.5" data-testid="chart-picker-list">
+            <>
+              {/* THE FILTER (ruling 5). The single biggest gap against
+                  DataGolf: a 44-player field behind a five-then-expand list is
+                  a directory, not a picker. Folds accents, matches anywhere in
+                  the name — see `filterCandidates`. */}
+              <input
+                type="search"
+                value={filter}
+                onChange={(event) => {
+                  setFilter(event.target.value);
+                  setPickerExpanded(false);
+                }}
+                placeholder="Find a player"
+                aria-label="Find a player to add to the chart"
+                className="mt-1.5 w-full rounded-lg border border-surface-border bg-surface-elevated px-2.5 py-1.5 text-[12.5px] text-text-primary placeholder:text-text-muted"
+                data-testid="chart-picker-filter"
+                data-value={filter}
+              />
+              {candidates.length === 0 && (
+                <p
+                  className="mt-1.5 text-[12px] text-text-muted"
+                  data-testid="chart-picker-no-match"
+                >
+                  No contender in this draw matches &ldquo;{filter}&rdquo;.
+                </p>
+              )}
+              <ul className="mt-1.5" data-testid="chart-picker-list">
               {pickerVisible.map((row) => (
                 <li key={row.entity_key}>
                   <button
@@ -278,17 +356,18 @@ export default function ContenderChart({
                   </button>
                 </li>
               ))}
-              {available.length > COLLAPSED_LIST_COUNT && (
+              {candidates.length > COLLAPSED_LIST_COUNT && (
                 <li>
                   <ShowMore
                     expanded={pickerExpanded}
-                    total={available.length}
+                    total={candidates.length}
                     onToggle={() => setPickerExpanded((value) => !value)}
                     bordered={false}
                   />
                 </li>
               )}
-            </ul>
+              </ul>
+            </>
           )}
         </div>
       )}
