@@ -194,16 +194,30 @@ def kalshi_anchor_key(ticker: Optional[str]) -> Optional[AnchorKey]:
     if not ticker:
         return None
     from app.utils.prediction_market_matching import kalshi_game_id
-    from app.utils.sport_keys import get_sport_key_from_ticker
+    from app.utils.sport_keys import (
+        get_sport_key_from_ticker,
+        is_kalshi_game_level_ticker,
+    )
 
     raw = str(ticker).strip()
     if not raw:
         return None
 
+    # CERT-409 [P1]. `kalshi_game_id()` is a broad date-token extractor and
+    # `get_sport_key_from_ticker()` resolves futures prefixes ON PURPOSE, so
+    # neither is a game test. Inferring "game" from the pair promoted every
+    # date-shaped futures ticker — a best-of-seven series (`KXMLBSERIES-...`)
+    # carries both, and a series anchored as `game` can absorb one of its own
+    # fixtures. The classification must be POSITIVE and asked directly.
     game_id = kalshi_game_id(raw)
     sport_key = get_sport_key_from_ticker(raw)
 
-    if game_id and sport_key and sport_key not in _KALSHI_TENNIS_SPORT_KEYS:
+    if (
+        is_kalshi_game_level_ticker(raw)
+        and game_id
+        and sport_key
+        and sport_key not in _KALSHI_TENNIS_SPORT_KEYS
+    ):
         return AnchorKey(
             source=SOURCE_KALSHI,
             source_id=f"{sport_key}:{game_id}",

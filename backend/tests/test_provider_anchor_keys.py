@@ -204,6 +204,112 @@ def test_the_tennis_exclusion_is_the_reason_not_a_parser_accident():
     assert get_sport_key_from_ticker("KXWTAMATCH-26MAR01SWIGAU") == "tennis_wta"
 
 
+# ---------------------------------------------------------------------------
+# CERT-409 [P1] — a futures series must never become a `game` anchor
+# ---------------------------------------------------------------------------
+#
+# The defect: the helper asked `kalshi_game_id()` (a broad date-token
+# extractor) and `get_sport_key_from_ticker()` (which resolves game AND futures
+# prefixes on purpose), and inferred "game" from the pair. Neither question is
+# "is this a game". A best-of-seven playoff series carries a date token and a
+# sport key, so it answered yes — and a series that claims a single fixture's
+# identity is an absorption, which is precisely what ruling 048 forbids.
+#
+# THE THREE TICKERS BELOW ARE A PERMANENT RED SET. They are named in the
+# CERT-409 verdict; they do not get deleted when this test goes green.
+
+SERIES_RED_SET = (
+    "KXMLBSERIES-26OCT15NYYATL",
+    "KXNBASERIES-26MAY10BOSPHI",
+    "KXNHLSERIES-26MAY10FLORNG",
+)
+
+
+@pytest.mark.parametrize("ticker", SERIES_RED_SET)
+def test_a_playoff_series_is_never_a_game_anchor(ticker):
+    """CERT-409 [P1], stated as the three tickers the cert named."""
+    key = kalshi_anchor_key(ticker)
+    assert key.id_kind == ANCHOR_KIND_MARKET, (
+        f"{ticker} produced an anchor of kind {key.id_kind}. A best-of-seven "
+        "series is not a fixture; anchoring it as `game` lets the series "
+        "absorb one of its own games (ruling 048, gotcha #32)."
+    )
+    assert key.may_anchor_absorption is False
+    assert key.source_id == ticker
+
+
+@pytest.mark.parametrize("ticker", SERIES_RED_SET)
+def test_the_series_refusal_is_the_rule_not_a_parser_accident(ticker):
+    """The same discipline the tennis exclusion already gets.
+
+    Both inputs the old code trusted still say "yes" for these tickers — a date
+    token IS extractable and a sport key IS resolvable. If the refusal were an
+    accident of parsing, a parser improvement would silently re-promote them.
+    It is not: the refusal comes from a positive game-level classification.
+    """
+    from app.utils.prediction_market_matching import kalshi_game_id
+    from app.utils.sport_keys import get_sport_key_from_ticker, is_kalshi_game_ticker
+
+    assert kalshi_game_id(ticker), "premise: a date token is still extractable"
+    assert get_sport_key_from_ticker(ticker), "premise: a sport key still resolves"
+    assert is_kalshi_game_ticker(ticker) is False, (
+        "premise: the canonical game-ticker predicate already refuses this — "
+        "the anchor helper's bug was never asking it"
+    )
+
+
+def test_no_futures_prefix_can_produce_a_game_anchor():
+    """The structural negative control, over the whole futures map.
+
+    The three named tickers are the specimens; this is the class. Every futures
+    prefix in `sport_keys.py` gets a date-shaped token appended — the exact
+    shape that fooled the old code — and none of them may come back `game`.
+
+    This also covers a case the cert counted but did not name: 8 futures
+    prefixes are LONGER than a game prefix they happen to start with
+    (`kxmlbhrderby` extends the game prefix `kxmlbhr`), so a bare
+    `is_kalshi_game_ticker()` gate would still have promoted them.
+    """
+    from app.utils.sport_keys import KALSHI_FUTURES_TICKER_TO_SPORT_KEY
+
+    promoted = [
+        prefix
+        for prefix in KALSHI_FUTURES_TICKER_TO_SPORT_KEY
+        if kalshi_anchor_key(f"{prefix.upper()}-26MAY10BOSPHI").id_kind
+        == ANCHOR_KIND_GAME
+    ]
+    assert promoted == [], (
+        f"{len(promoted)} futures prefixes produced `game` anchors: "
+        f"{sorted(promoted)[:10]}"
+    )
+
+
+def test_every_game_prefix_still_anchors_as_a_game():
+    """The other direction, asserted so the fix cannot be a blanket refusal.
+
+    A rule that refused everything would pass the test above and silently stop
+    anchoring all 229 game prefixes — the anchor channel would go quiet and
+    look correct. Tennis is the one deliberate exclusion.
+    """
+    from app.utils.provider_anchor_keys import _KALSHI_TENNIS_SPORT_KEYS
+    from app.utils.sport_keys import (
+        KALSHI_GAME_TICKER_PREFIXES,
+        get_sport_key_from_ticker,
+    )
+
+    refused = []
+    for prefix in KALSHI_GAME_TICKER_PREFIXES:
+        ticker = f"{prefix.upper()}-26MAY10BOSPHI"
+        if get_sport_key_from_ticker(ticker) in _KALSHI_TENNIS_SPORT_KEYS:
+            continue  # the ruling's deliberate exclusion
+        if kalshi_anchor_key(ticker).id_kind != ANCHOR_KIND_GAME:
+            refused.append(prefix)
+    assert refused == [], (
+        f"{len(refused)} real game prefixes lost their `game` anchor: "
+        f"{sorted(refused)[:10]}"
+    )
+
+
 def test_an_unparseable_ticker_is_recorded_but_cannot_absorb():
     """Recording it is how the anchor is discovered later. `market` is what
     stops the recording from becoming an assertion."""
