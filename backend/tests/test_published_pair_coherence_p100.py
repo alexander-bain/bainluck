@@ -64,6 +64,11 @@ from app.tasks.precompute_calibration import (
 )
 from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
 
 def _population_sql() -> str:
     return _calibration_population_ctes()
@@ -444,10 +449,207 @@ class TestTheFoldCannotDisagreeWithTheBuilder:
         A timeout and "the exclusion removed nothing" are the same response
         shape and opposite facts. The fold must carry ``measured: false`` and
         must not exit 0 on a refusal.
+
+        This asserted the exit line VERBATIM until C-PUBLISHED-PAIR-1. It now
+        asserts the property, because the gate got STRICTER — a non-local
+        result exits 3 — and a literal-line assertion would have read that
+        tightening as a regression. The refusal arm is unchanged.
         """
         src = self._fold_source()
         assert '"measured": False' in src
-        assert 'return 0 if all(r.get("measured") for r in readings.values()) else 1' in src
+        assert 'if not all_measured:\n        return 1' in src
+        assert 'return 0 if out["criterion_4"]["locality_verdict"] == "local" else 3' in src
+
+    def test_the_two_readings_are_one_snapshot_on_one_connection(self):
+        """C-PUBLISHED-PAIR-1 P1 #1, both halves of it.
+
+        The blocked version made two ``POST /api/admin/db-query`` ROW requests
+        carrying ``--timeout-ms 5400000``. The row path REFUSES ``timeout_ms``
+        and runs under a hard-coded 10 s (``admin_data_quality.py``), so the
+        advertised budget could not be applied from the request body at all;
+        and two requests are two snapshots, so concurrent calibration writes
+        would show as movement the exclusion did not cause.
+        """
+        src = self._fold_source()
+        assert "REPEATABLE READ, READ ONLY" in src
+        assert "SET LOCAL statement_timeout" in src
+        # The HTTP rail is not merely unused — it is gone. A retained import is
+        # a retained temptation for the next author under time pressure.
+        assert "dbq_probe" not in src
+        assert "dbq_run" not in src
+
+    def test_the_admin_row_path_still_refuses_the_timeout_this_fold_stopped_asking_for(
+        self,
+    ):
+        """The premise above, asserted against the server rather than recalled.
+
+        If the row path ever grows a real ``timeout_ms``, this test fails and
+        the fold's docstring becomes wrong — which is the moment to revisit it.
+        """
+        from pathlib import Path
+
+        route = (
+            Path(__file__).resolve().parents[1]
+            / "app"
+            / "routes"
+            / "admin_data_quality.py"
+        ).read_text()
+        assert "`timeout_ms` is only supported with `explain: true`" in route
+        assert "SET LOCAL statement_timeout = '10s'" in route
+
+
+class TestCriterionFourCanActuallyFail:
+    """C-PUBLISHED-PAIR-1 P1 #2 — the artifact must SEPARATE the two outcomes.
+
+    The blocked version emitted ``bins_whose_row_identity_changed`` and nothing
+    else. Every bin holding a legitimately excluded row must appear in that
+    list, so it could not distinguish expected removal from an unrelated
+    survivor entering or leaving the bin — and because the digest hashed
+    outcome IDs alone, a survivor renormalized WITHIN its decile did not appear
+    at all.
+
+    Each test below is a mutant that the blocked artifact would have passed.
+    """
+
+    #: Two flagged legs (market 7) and three survivors spread across deciles.
+    BASELINE = {
+        1: {"market_id": 7, "p": 0.41, "is_winner": False, "truth": "eligible"},
+        2: {"market_id": 7, "p": 0.47, "is_winner": True, "truth": "eligible"},
+        3: {"market_id": 8, "p": 0.61, "is_winner": True, "truth": "eligible"},
+        4: {"market_id": 9, "p": 0.22, "is_winner": False, "truth": "eligible"},
+        5: {"market_id": 9, "p": 0.78, "is_winner": True, "truth": "ineligible"},
+    }
+    FLAGGED = {7}
+
+    @staticmethod
+    def _compare(proposed, flagged=None):
+        from scripts.fold_published_pair_coherence import compare_readings
+
+        return compare_readings(
+            TestCriterionFourCanActuallyFail.BASELINE,
+            proposed,
+            TestCriterionFourCanActuallyFail.FLAGGED if flagged is None else flagged,
+        )
+
+    def _survivors(self) -> dict:
+        return {k: dict(v) for k, v in self.BASELINE.items() if k not in (1, 2)}
+
+    def test_the_clean_exclusion_is_local(self):
+        """The control. Without it, a mutant test proves only that it says no."""
+        verdict = self._compare(self._survivors())
+        assert verdict["locality_verdict"] == "local"
+        assert verdict["removed"]["ids"] == [1, 2]
+        assert verdict["expected_removed"]["ids"] == [1, 2]
+        assert verdict["added"]["count"] == 0
+        assert verdict["mutated_survivors"]["count"] == 0
+
+    def test_a_same_bin_normalization_mutant_is_caught(self):
+        """The kill the old digest could not make.
+
+        Outcome 3 moves 0.61 -> 0.68. Same decile, same outcome ID, so an
+        ID-keyed per-bin digest is byte-identical and the bin never appears as
+        changed — while the curve moves.
+        """
+        from scripts.fold_published_pair_coherence import bin_of
+
+        proposed = self._survivors()
+        proposed[3]["p"] = 0.68
+        assert bin_of(0.61) == bin_of(0.68)  # the mutant really does stay put
+
+        verdict = self._compare(proposed)
+        assert verdict["locality_verdict"] == "not_local"
+        assert verdict["mutated_survivors"]["count"] == 1
+        assert verdict["mutated_survivors"]["same_bin"] == 1
+        assert verdict["mutated_survivors"]["cross_bin"] == 0
+
+    def test_a_cross_bin_normalization_mutant_is_caught(self):
+        """The same defect with a bin edge crossed — and named apart."""
+        proposed = self._survivors()
+        proposed[3]["p"] = 0.31
+
+        verdict = self._compare(proposed)
+        assert verdict["locality_verdict"] == "not_local"
+        assert verdict["mutated_survivors"]["cross_bin"] == 1
+        assert verdict["mutated_survivors"]["same_bin"] == 0
+
+    def test_a_row_the_baseline_excluded_cannot_appear(self):
+        """The exclusion may only REMOVE. An admitted row is not this rule."""
+        proposed = self._survivors()
+        proposed[99] = {
+            "market_id": 11,
+            "p": 0.5,
+            "is_winner": True,
+            "truth": "eligible",
+        }
+        verdict = self._compare(proposed)
+        assert verdict["locality_verdict"] == "not_local"
+        assert verdict["added"]["ids"] == [99]
+
+    def test_removing_a_row_no_flagged_market_explains_is_caught(self):
+        """A removal outside the flagged set is a side effect, not the rule."""
+        proposed = self._survivors()
+        del proposed[4]
+        verdict = self._compare(proposed)
+        assert verdict["locality_verdict"] == "not_local"
+        assert verdict["unexpectedly_removed"]["ids"] == [4]
+
+    def test_a_flagged_row_left_behind_is_caught(self):
+        """Both legs leave together — one surviving is the asymmetry bug."""
+        proposed = {k: dict(v) for k, v in self.BASELINE.items() if k != 1}
+        verdict = self._compare(proposed)
+        assert verdict["locality_verdict"] == "not_local"
+        assert verdict["expected_but_kept"]["ids"] == [2]
+
+    def test_the_truth_class_of_a_survivor_is_compared_too(self):
+        """Eligibility moving under the rule would re-grade, not exclude."""
+        proposed = self._survivors()
+        proposed[5]["truth"] = "eligible"
+        verdict = self._compare(proposed)
+        assert verdict["locality_verdict"] == "not_local"
+        assert verdict["mutated_survivors"]["count"] == 1
+
+    def test_the_bin_table_carries_counts_sums_winners_and_identity(self):
+        """Per-bin ROW IDENTITY, not only the numbers of changed bins."""
+        from scripts.fold_published_pair_coherence import fold_bins
+
+        bins = fold_bins(self.BASELINE)["eligible"]
+        assert set(bins[4]) == {"n", "sum_prob", "winners", "row_identity"}
+        assert bins[4]["n"] == 2 and bins[4]["winners"] == 1
+
+    def test_the_bin_identity_moves_when_a_value_moves_inside_the_bin(self):
+        """The digest's own regression test for the same-bin hole."""
+        from scripts.fold_published_pair_coherence import fold_bins
+
+        before = fold_bins(self.BASELINE)["eligible"][6]["row_identity"]
+        mutated = {k: dict(v) for k, v in self.BASELINE.items()}
+        mutated[3]["p"] = 0.68
+        after = fold_bins(mutated)["eligible"][6]["row_identity"]
+        assert before != after
+
+    def test_the_blocked_id_only_digest_would_have_missed_it(self):
+        """Red-first, kept rather than thrown away.
+
+        The BLOCKed artifact hashed ``STRING_AGG(outcome_id)``. Re-run here
+        against the same mutant, it is byte-identical across a survivor moving
+        0.61 -> 0.68 — so the old artifact reported an unchanged bin for a
+        change that moves the curve. The new suite is only meaningful beside
+        the demonstration that the old one passed.
+
+        This is a probe of a DELETED definition, restated locally on purpose:
+        pinning it against the live module would make it a second
+        implementation of the thing under test.
+        """
+        import hashlib
+
+        def id_only_digest(rows: dict) -> str:
+            members = sorted(
+                oid for oid, r in rows.items() if r["truth"] == "eligible" and 0.6 <= r["p"] < 0.7
+            )
+            return hashlib.md5(",".join(str(o) for o in members).encode()).hexdigest()
+
+        mutated = {k: dict(v) for k, v in self.BASELINE.items()}
+        mutated[3]["p"] = 0.68
+        assert id_only_digest(self.BASELINE) == id_only_digest(mutated)
 
 
 class TestTheOffSwitchIsConfinedToThisRule:
