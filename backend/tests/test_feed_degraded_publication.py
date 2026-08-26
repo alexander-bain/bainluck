@@ -122,9 +122,12 @@ async def _drive_feed(events, *, futures_side_effect, redis, monkeypatch):
 
     orig_remember = rc.remember_last_good
 
-    def spy_remember(key, payload):
+    def spy_remember(key, payload, **kwargs):
+        # **kwargs so the spy forwards `built_at` (CERT-409 [P1]) rather than
+        # rejecting it — a spy narrower than the function it wraps turns a
+        # caller-side improvement into a fake test failure.
         remembered.append(key)
-        return orig_remember(key, payload)
+        return orig_remember(key, payload, **kwargs)
 
     def spy_schedule(coro):
         published.append(coro)

@@ -214,6 +214,7 @@ def build_feed_cache_metadata(
     stale_ttl_seconds: int | None = FEED_RESPONSE_STALE_TTL_SECONDS,
     reason: str | None = None,
     live: bool | None = None,
+    built_at: float | None = None,
 ) -> dict[str, Any]:
     """Return stable cache metadata safe to expose in feed responses.
 
@@ -222,10 +223,19 @@ def build_feed_cache_metadata(
     ceiling verifiable from outside the process: ``.cache.live == true`` with
     ``.cache.ttl_seconds`` still at 60 would mean the live rule did not fire,
     and that is a distinction no amount of reading ``status`` can make.
+
+    ``built_at`` (CERT-409 [P1]) is the wall-clock epoch at which the payload's
+    CONTENT was computed — not the moment some tier copied it. It travels with
+    the payload through Redis and through every republication, because the live
+    ceiling is a bound on how old a SCORE may be, and every tier that re-stamped
+    its own read time was silently restarting that clock. Emitted only when
+    known, on the same discipline as ``live``.
     """
     metadata: dict[str, Any] = {
         "status": status,
     }
+    if built_at is not None:
+        metadata["built_at"] = float(built_at)
     if ttl_seconds is not None:
         metadata["ttl_seconds"] = ttl_seconds
     if stale_ttl_seconds is not None:

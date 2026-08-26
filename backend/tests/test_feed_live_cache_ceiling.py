@@ -501,15 +501,203 @@ def test_the_prewarm_beat_publishes_under_the_live_ceiling():
     )
 
 
-def test_no_writer_publishes_an_unconditional_stale_ttl():
-    """The ceiling has to hold at EVERY writer, so pin that there are no others.
+# ---------------------------------------------------------------------------
+# CERT-409 [P1] — a cache-tier copy must not restart the payload's age clock
+# ---------------------------------------------------------------------------
 
-    ``FEED_RESPONSE_STALE_TTL_SECONDS`` is still the correct constant for a
-    non-live page — it just may never reach a ``setex`` without passing through
-    ``feed_response_cache_ttls`` first. This test fails the day a fifth writer
-    is added with the flat constant inlined, which is the only way this fix
-    silently regresses.
+
+def test_a_redis_hit_does_not_launder_an_aged_payload_into_a_fresh_window():
+    """The cert's executable falsifier, kept as the regression test.
+
+    Read at t=59, remembered, recalled at t=118 under a declared 60s ceiling.
+    Pre-fix this returned the payload — `remember_last_good` stamped its own
+    read time, so a 59-second-old score got a brand-new 60-second window and
+    was served at 118 seconds under a branch that says 60 is the maximum.
     """
+    import app.utils.request_cache as rc
+    from app.utils.feed_cache import (
+        FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS as CEILING,
+    )
+
+    rc._reset_last_good_for_tests()
+
+    fake_now = {"t": 0.0}
+    real_time = rc.time.time
+    rc.time.time = lambda: fake_now["t"]
+    try:
+        built_at = 0.0  # the payload's CONTENT was computed at t=0
+        payload = {"items": [], "cache": {"status": "hit", "built_at": built_at}}
+
+        fake_now["t"] = 59.0  # ...and this process reads it out of Redis at t=59
+        rc.remember_last_good("k", payload, built_at=built_at)
+
+        fake_now["t"] = 118.0
+        recalled = rc.recall_last_good("k", max_age_s=CEILING)
+    finally:
+        rc.time.time = real_time
+        rc._reset_last_good_for_tests()
+
+    assert recalled is None, (
+        f"a payload built at t=0 was served at t=118 under a {CEILING}s "
+        "ceiling — the Redis hit reset its age (CERT-409 [P1])"
+    )
+
+
+def test_a_genuinely_fresh_build_still_uses_the_full_window():
+    """The other direction: provenance must not make the ceiling stricter.
+
+    Without this, "always refuse" would pass the test above and silently
+    disable last-good entirely — the fallback that exists so a Redis blip is
+    not a stampede of cold builds.
+    """
+    import app.utils.request_cache as rc
+    from app.utils.feed_cache import (
+        FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS as CEILING,
+    )
+
+    rc._reset_last_good_for_tests()
+
+    fake_now = {"t": 0.0}
+    real_time = rc.time.time
+    rc.time.time = lambda: fake_now["t"]
+    try:
+        rc.remember_last_good("k", {"items": []}, built_at=0.0)
+        fake_now["t"] = CEILING - 1
+        recalled = rc.recall_last_good("k", max_age_s=CEILING)
+    finally:
+        rc.time.time = real_time
+        rc._reset_last_good_for_tests()
+
+    assert recalled is not None, (
+        "a payload built 59s ago was refused under a 60s ceiling — the live "
+        "fallback is now stricter than the rule it enforces"
+    )
+
+
+def test_a_payload_with_no_provenance_falls_back_to_read_time():
+    """The rollout window, pinned. Entries published before `built_at` existed
+    carry no provenance; they must behave exactly as they did pre-fix rather
+    than being refused (which would empty last-good on deploy) or trusted
+    forever (which would be the bug with extra steps)."""
+    import app.utils.request_cache as rc
+
+    rc._reset_last_good_for_tests()
+
+    fake_now = {"t": 1000.0}
+    real_time = rc.time.time
+    rc.time.time = lambda: fake_now["t"]
+    try:
+        rc.remember_last_good("k", {"items": []}, built_at=None)
+        fake_now["t"] = 1030.0
+        within = rc.recall_last_good("k", max_age_s=60)
+        fake_now["t"] = 1100.0
+        beyond = rc.recall_last_good("k", max_age_s=60)
+    finally:
+        rc.time.time = real_time
+        rc._reset_last_good_for_tests()
+
+    assert within is not None
+    assert beyond is None
+
+
+def test_the_route_stamps_build_provenance_and_carries_it_across_tiers():
+    """The wiring, asserted at the route rather than the helper.
+
+    A correct `remember_last_good` is worthless if the route never passes
+    `built_at`. Every cache-tier copy site must forward provenance; only the
+    build site may mint it.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    import app.routes.feed as feed_module
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(feed_module.get_feed)))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "remember_last_good"
+    ]
+    assert calls, "no `remember_last_good` calls found — test premise is stale"
+
+    missing = [
+        ast.unparse(call)
+        for call in calls
+        if not any(kw.arg == "built_at" for kw in call.keywords)
+    ]
+    assert missing == [], (
+        f"{len(missing)} `remember_last_good` call(s) in `get_feed` do not pass "
+        f"`built_at`, so they re-stamp the payload's age: {missing}"
+    )
+
+
+def _setex_ttls_not_derived_from_live_helper(source: str) -> list[str]:
+    """Every ``setex`` TTL in ``source`` that is NOT bound to ``_live_ttls``.
+
+    CERT-409 [P2]. The previous version of this guard asserted
+    ``src.count("_live_ttls(") >= 5`` and that a constant name was absent.
+    Neither statement is about the ``setex`` calls, so appending a fifth writer
+    with an unconditional TTL left both true and the guard green — the guard
+    was self-oracular: it measured its own vocabulary, not the property.
+
+    So enumerate the writers instead of counting the helper. Names bound by
+    ``a, b = _live_ttls(...)`` are live-derived; a nested ``def``'s parameter
+    whose DEFAULT is a live-derived name inherits that (the closure-capture
+    idiom every publisher here uses). Any ``setex`` whose TTL argument is not
+    such a name is returned.
+    """
+    import ast
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(source))
+
+    live_derived: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        call = node.value
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)):
+            continue
+        if call.func.id != "_live_ttls":
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Tuple):
+                live_derived.update(
+                    el.id for el in target.elts if isinstance(el, ast.Name)
+                )
+
+    # Propagate through closure-captured defaults: `def _pub(_fresh_ttl=_fresh)`.
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        args = node.args
+        positional = args.posonlyargs + args.args
+        for arg, default in zip(positional[len(positional) - len(args.defaults):],
+                                args.defaults):
+            if isinstance(default, ast.Name) and default.id in live_derived:
+                live_derived.add(arg.arg)
+        for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+            if isinstance(default, ast.Name) and default.id in live_derived:
+                live_derived.add(arg.arg)
+
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr != "setex" or len(node.args) < 2:
+            continue
+        ttl = node.args[1]
+        if isinstance(ttl, ast.Name) and ttl.id in live_derived:
+            continue
+        offenders.append(ast.unparse(ttl))
+    return offenders
+
+
+def test_every_setex_writer_derives_its_ttl_from_the_live_helper():
+    """The ceiling has to hold at EVERY writer — asserted over the writers."""
     import inspect
 
     import app.routes.feed as feed_module
@@ -519,6 +707,34 @@ def test_no_writer_publishes_an_unconditional_stale_ttl():
         "`get_feed` publishes or reports a flat stale TTL again; route TTLs "
         "must come from `_live_ttls`/`feed_response_cache_ttls`"
     )
-    assert src.count("_live_ttls(") >= 5, (
-        "a cache path in `get_feed` stopped deriving its TTL from the payload"
+    offenders = _setex_ttls_not_derived_from_live_helper(src)
+    assert offenders == [], (
+        f"{len(offenders)} `setex` call(s) in `get_feed` publish a TTL that is "
+        f"not derived from `_live_ttls`: {offenders}. A live page cached under "
+        "an unconditional TTL is the #2216 bug returning."
+    )
+
+
+def test_the_fifth_writer_guard_actually_fails_on_a_fifth_writer():
+    """The retained mutant. CERT-409 [P2] exists because this was never proved.
+
+    A guard is only worth its runtime if something demonstrates it can go red.
+    This appends exactly the regression the guard claims to catch — a new
+    publisher on the principal's baseline TTL — and requires it be caught.
+    """
+    import inspect
+
+    import app.routes.feed as feed_module
+
+    clean = inspect.getsource(feed_module.get_feed)
+    assert _setex_ttls_not_derived_from_live_helper(clean) == [], "premise"
+
+    mutant = clean + (
+        "\n"
+        "    async def _publish_fifth_writer(_client=None, _key='k', _json='{}'):\n"
+        "        await _client.setex(_key, _cache_ttl, _json)\n"
+    )
+    assert _setex_ttls_not_derived_from_live_helper(mutant) == ["_cache_ttl"], (
+        "the fifth-writer guard did not catch a fifth unconditional writer — "
+        "it is self-oracular again"
     )

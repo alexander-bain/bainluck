@@ -1885,6 +1885,23 @@ async def get_feed(
             live=payload_contains_live_event(payload),
         )
 
+    def _payload_built_at(payload):
+        """The epoch this payload's CONTENT was computed, if it says (CERT-409).
+
+        Returns ``None`` for a payload published before this field existed — a
+        rollout window and a legitimate unknown. ``None`` makes
+        ``remember_last_good`` fall back to read-time, which is the pre-fix
+        behaviour: the ceiling is no weaker than it was for those, and becomes
+        exact as soon as the entry is rebuilt (60s for a live page).
+        """
+        if not isinstance(payload, dict):
+            return None
+        cache_meta = payload.get("cache")
+        if not isinstance(cache_meta, dict):
+            return None
+        built_at = cache_meta.get("built_at")
+        return built_at if isinstance(built_at, (int, float)) else None
+
     def _live_bounded_last_good(key):
         """Process-local last-good, with the live ceiling applied (#2216).
 
@@ -1951,7 +1968,13 @@ async def get_feed(
             if _fresh.is_ok:
                 payload = _safe_cache_payload(_fresh.value)
                 if payload is not None:
-                    _rc.remember_last_good(_cache_key, payload)
+                    # CERT-409 [P1]: read provenance BEFORE the metadata below
+                    # overwrites it, and re-emit it, so the age survives both
+                    # this hop and any later republication.
+                    _hit_built_at = _payload_built_at(payload)
+                    _rc.remember_last_good(
+                        _cache_key, payload, built_at=_hit_built_at
+                    )
                     _hit_live = payload_contains_live_event(payload)
                     _hit_fresh_ttl, _hit_stale_ttl = _live_ttls(payload)
                     payload["cache"] = build_feed_cache_metadata(
@@ -1959,6 +1982,7 @@ async def get_feed(
                         ttl_seconds=_hit_fresh_ttl,
                         stale_ttl_seconds=_hit_stale_ttl,
                         live=_hit_live,
+                        built_at=_hit_built_at,
                     )
                     _previous_at = _record_feed_timing(
                         _timings, _started_at, _previous_at, "cache_hit"
@@ -1988,7 +2012,10 @@ async def get_feed(
             if _stale.is_ok:
                 payload = _safe_cache_payload(_stale.value)
                 if payload is not None:
-                    _rc.remember_last_good(_cache_key, payload)
+                    _stale_built_at = _payload_built_at(payload)
+                    _rc.remember_last_good(
+                        _cache_key, payload, built_at=_stale_built_at
+                    )
                     _stale_live = payload_contains_live_event(payload)
                     _stale_fresh_ttl, _stale_stale_ttl = _live_ttls(payload)
                     payload["cache"] = build_feed_cache_metadata(
@@ -1996,6 +2023,7 @@ async def get_feed(
                         ttl_seconds=_stale_fresh_ttl,
                         stale_ttl_seconds=_stale_stale_ttl,
                         live=_stale_live,
+                        built_at=_stale_built_at,
                     )
                     _previous_at = _record_feed_timing(
                         _timings, _started_at, _previous_at, "cache_stale_hit"
@@ -2289,7 +2317,10 @@ async def get_feed(
                     else None
                 )
                 if _shared_payload is not None:
-                    _rc.remember_last_good(_cache_key, _shared_payload)
+                    _shared_built_at = _payload_built_at(_shared_payload)
+                    _rc.remember_last_good(
+                        _cache_key, _shared_payload, built_at=_shared_built_at
+                    )
                     # #2216: the live ceiling binds here too, and this is the
                     # path Alex was actually on — My Stuff is an IDENTIFIED
                     # request with a default personalization context, so it
@@ -2305,6 +2336,7 @@ async def get_feed(
                         stale_ttl_seconds=_inert_stale_ttl,
                         reason="inert_principal",
                         live=_inert_live,
+                        built_at=_shared_built_at,
                     )
                     if _is_build_leader and _sf_future is not None:
                         _rc.finish_build(_cache_key, _sf_future, result=_shared_payload)
@@ -2917,6 +2949,10 @@ async def get_feed(
         # fresh key's expiry, and the :stale mirror's — takes these two numbers.
         _built_live = payload_contains_live_event(payload)
         _publish_fresh_ttl, _publish_stale_ttl = _live_ttls(payload)
+        # CERT-409 [P1]: this is the ONE site where "now" is honestly the
+        # payload's age, because this is the only site that computed it. Every
+        # other tier copies and must carry this number rather than mint one.
+        _built_at = time.time()
         payload["cache"] = build_feed_cache_metadata(
             _cache_status,
             ttl_seconds=_publish_fresh_ttl if _cache_key else None,
@@ -2926,6 +2962,7 @@ async def get_feed(
                 else None
             ),
             live=_built_live,
+            built_at=_built_at,
         )
 
         # Queue 283 (C80): mark the build completeness on the payload so the client
@@ -2943,7 +2980,7 @@ async def get_feed(
         # shared truth — skip process last-good AND both Redis publications so the
         # last COMPLETE payload is preserved and the next same-key request rebuilds.
         if _cache_key and not _is_degraded_build:
-            _rc.remember_last_good(_cache_key, payload)
+            _rc.remember_last_good(_cache_key, payload, built_at=_built_at)
         if _is_build_leader and _sf_future is not None:
             _rc.finish_build(_cache_key, _sf_future, result=payload)
 
