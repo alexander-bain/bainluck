@@ -23,9 +23,22 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select, and_, or_, func, case, cast
+from sqlalchemy import (
+    select,
+    and_,
+    or_,
+    func,
+    case,
+    cast,
+    column,
+    exists,
+    literal,
+    true,
+    values,
+    String,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import load_only, selectinload
+from sqlalchemy.orm import aliased, load_only, selectinload
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.dependencies.auth import get_optional_user
@@ -7679,23 +7692,168 @@ async def _get_championship_probabilities(db: AsyncSession) -> dict[int, float]:
     return cache
 
 
+def _canonical_source_universe_cte():
+    """Every DISTINCT ``futures_markets.source``, as a loose index scan.
+
+    LAT-P093. The obvious spelling — ``SELECT DISTINCT source FROM
+    futures_markets`` — reads all 871,381 rows to return four, which would cost
+    more than the aggregate this module is removing. Postgres has no native
+    index skip scan before 18, so this is the standard recursive emulation over
+    ``ix_futures_markets_source``: take the smallest source, then repeatedly ask
+    for the smallest source strictly greater than the last. One ``LIMIT 1``
+    index probe per distinct value, plus one to terminate.
+
+    Measured on production 2026-08-26: **4 rows, 24.7ms, 135 buffers.**
+
+    Why this exists at all rather than a literal ``("kalshi", "polymarket",
+    "datagolf", "odds_api")``: four sources is a fact about today, not a
+    contract. A written-down list under-counts silently the day a fifth source
+    ships — the market simply stops earning its cross-source scoring bonus, and
+    a wrong count has exactly the same type as a right one (gotcha #53). The
+    table is the only honest authority for what sources exist.
+    """
+    seed = (
+        select(FuturesMarket.source.label("source"))
+        .where(FuturesMarket.source.isnot(None))
+        .order_by(FuturesMarket.source)
+        .limit(1)
+        .cte("canonical_source_universe", recursive=True)
+    )
+    _next = aliased(FuturesMarket)
+    step = select(
+        select(_next.source)
+        .where(_next.source > seed.c.source)
+        .order_by(_next.source)
+        .limit(1)
+        .scalar_subquery()
+        .label("source")
+    ).where(seed.c.source.isnot(None))
+    return seed.union_all(step)
+
+
+def _canonical_source_pairs_stmt(keys: set[str]):
+    """The (key, source) pairs behind a candidate key set — as index probes.
+
+    LAT-P093 replaces the grouped ``count(DISTINCT source)`` here because the
+    aggregate's cost tracks the number of DUPLICATE rows, which is the one
+    quantity that grows without bound. Production 2026-08-26: 345,334 rows
+    carrying a canonical key, behind 747 distinct keys and 4 distinct sources —
+    ~462 rows per key to produce at most four short strings.
+
+    ``EXPLAIN (ANALYZE, BUFFERS)`` over a real 150-key candidate set:
+
+        before  Aggregate (Sorted)  rows=150  1522.3ms  shared hit=70,779
+                  -> Index Only Scan ix_fm_canonical_source_count  rows=302,027
+        after   Aggregate           rows=150    27.7ms  shared hit= 2,118
+                  -> Index Only Scan ix_fm_canonical_source_count  loops=600
+
+    Both were run against production and returned **byte-identical results over
+    all 150 keys** — same counts, same sorted source names, zero diffs.
+
+    The shape is a semi-join over the (keys x sources) grid: each ``EXISTS`` is
+    one ``LIMIT 1`` probe of the covering partial index
+    ``ix_fm_canonical_source_count (canonical_market_key, source)``, so the work
+    is O(keys x sources) and no longer O(rows behind those keys).
+
+    The keys are enumerated as a ``VALUES`` list rather than bound as an array:
+    a bind followed by a cast is the asyncpg hazard this repo has already been
+    bitten by, and ``VALUES`` needs neither.
+
+    ⚠️ **The LATERAL is load-bearing — do not flatten it.** Written as a plain
+    cross join with the ``EXISTS`` in the outer ``WHERE``, the planner pulls the
+    semi-join up and hashes it, which puts an Aggregate over the FULL index back
+    underneath: cost 89,601, 872,813 planned rows, and **2.3-3.2s measured on
+    production** — slower than the aggregate this replaces. Measured, not
+    feared: that flattened form was written first and its plan is in the
+    LAT-P093 report. Correlating inside a LATERAL is what keeps it a nested loop
+    of ``LIMIT 1`` probes.
+    """
+    universe = _canonical_source_universe_cte()
+    candidates = values(
+        column("canonical_market_key", String), name="candidate_keys"
+    ).data([(key,) for key in sorted(keys)])
+
+    # `.correlate()` is not decoration. Without it SQLAlchemy cannot tell that
+    # `candidates` is supplied by the enclosing LATERAL, so it renders the whole
+    # VALUES list a SECOND time inside the EXISTS as an independent FROM entry —
+    # a cross join whose EXISTS is true whenever ANY candidate key carries the
+    # source. That answer is wrong for every key, and it is wrong in the
+    # direction that looks healthy (every key gets every source). The guard is
+    # mechanical: `test_candidate_keys_appear_exactly_once` counts the VALUES
+    # list in the compiled SQL.
+    probe = (
+        select(literal(1))
+        .where(
+            FuturesMarket.canonical_market_key == candidates.c.canonical_market_key,
+            FuturesMarket.source == universe.c.source,
+        )
+        .correlate(candidates, universe)
+        .exists()
+    )
+
+    per_key_sources = (
+        select(universe.c.source.label("source"))
+        .where(universe.c.source.isnot(None), probe)
+        .lateral("candidate_sources")
+    )
+
+    return select(
+        candidates.c.canonical_market_key,
+        per_key_sources.c.source,
+    ).select_from(candidates.join(per_key_sources, true()))
+
+
+def _canonical_source_counts_unkeyed_stmt():
+    """The whole-table map, for the admin trace/debug callers only.
+
+    Deliberately still the group-by. It is off the request path — feed scoring
+    always passes candidate keys — so it inherits no rewrite that nothing
+    measured it needing, and the ``keys=None`` contract (EVERY key, not just the
+    ones someone asked about) stays trivially readable.
+    """
+    return (
+        select(
+            FuturesMarket.canonical_market_key,
+            func.count(func.distinct(FuturesMarket.source)).label("source_count"),
+            func.array_agg(func.distinct(FuturesMarket.source)).label("sources"),
+        )
+        .where(FuturesMarket.canonical_market_key.isnot(None))
+        .group_by(FuturesMarket.canonical_market_key)
+    )
+
+
 async def _query_canonical_source_counts(
     db: AsyncSession,
     keys: Optional[set[str]],
 ) -> tuple[dict[str, int], dict[str, list[str]]]:
-    """The one group-by, returning (counts, source-names) — no caching, no
-    globals. Extracted (#2143) so the keyed and unkeyed branches share the query
-    while caching on entirely different terms."""
-    query = select(
-        FuturesMarket.canonical_market_key,
-        func.count(func.distinct(FuturesMarket.source)).label("source_count"),
-        func.array_agg(func.distinct(FuturesMarket.source)).label("sources"),
-    ).where(FuturesMarket.canonical_market_key.isnot(None))
-    if keys is not None:
-        query = query.where(FuturesMarket.canonical_market_key.in_(keys))
-    query = query.group_by(FuturesMarket.canonical_market_key)
+    """Return ``(counts, source-names)`` for canonical market keys — no caching,
+    no globals. Extracted (#2143) so the keyed and unkeyed branches share the
+    entry point while caching on entirely different terms.
 
-    result = await db.execute(query)
+    LAT-P093 splits the two branches' QUERIES apart as well, because they are
+    answering different questions at different scales. The keyed branch is the
+    cold-build hot path and probes; the unkeyed branch is the admin trace and
+    still groups. See ``_canonical_source_pairs_stmt``.
+    """
+    if keys is not None:
+        # An empty candidate set means "nothing to ask", never "ask about
+        # everything". Falling through would emit the unkeyed group-by over all
+        # 345,334 keyed rows on behalf of a caller that wanted zero of them.
+        if not keys:
+            return {}, {}
+
+        result = await db.execute(_canonical_source_pairs_stmt(keys))
+        names: dict[str, list[str]] = {}
+        for row in result.all():
+            names.setdefault(row.canonical_market_key, []).append(row.source)
+        # The pairs arrive grouped-and-ordered by construction (the CTE walks
+        # sources ascending), but the sort is kept explicit: `names` is a
+        # contract other callers read, and it must not depend on a plan detail.
+        names = {key: sorted(sources) for key, sources in names.items()}
+        counts = {key: len(sources) for key, sources in names.items()}
+        return counts, names
+
+    result = await db.execute(_canonical_source_counts_unkeyed_stmt())
     rows = result.all()
     counts = {row.canonical_market_key: row.source_count for row in rows}
     names = {
