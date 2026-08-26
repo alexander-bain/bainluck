@@ -1606,6 +1606,51 @@ def is_kalshi_game_ticker(external_id: str) -> bool:
     return any(ext_lower.startswith(prefix) for prefix in KALSHI_GAME_TICKER_PREFIXES)
 
 
+def is_kalshi_game_level_ticker(external_id: str) -> bool:
+    """Is this ticker game-level *unambiguously* — longest prefix wins.
+
+    CERT-409 [P1]. `is_kalshi_game_ticker()` above answers "does any game
+    prefix match", which is the right question for the matching scan and the
+    wrong one for a canonical identity key. Two ways it says yes about a
+    non-game:
+
+      * A futures prefix can STRICTLY EXTEND a game prefix. `kxmlbhrderby`
+        (the Home Run Derby) starts with the game prefix `kxmlbhr`, so a
+        `startswith` test calls the Derby a game. Eight futures prefixes have
+        this shape.
+      * The reverse also happens 134 times (`kxmlbrfi` extends the futures
+        prefix `kxmlb`), so "refuse if any futures prefix matches" is not the
+        fix either — it would silently stop anchoring 134 real game families.
+
+    So neither map is consulted for a boolean; both are consulted for a
+    LENGTH, and the more specific one wins. The two maps share no exact key
+    (asserted in `test_sport_keys.py`), so there is no tie to break.
+
+    Used by the `event_provider_anchors` key builder, where a false positive is
+    not a mislabeled row but an absorption — one game claiming another's
+    identity, the outcome ruling 048 exists to prevent (gotcha #32).
+    """
+    if not external_id:
+        return False
+    ext_lower = external_id.lower()
+
+    longest_game = max(
+        (len(p) for p in KALSHI_GAME_TICKER_PREFIXES if ext_lower.startswith(p)),
+        default=0,
+    )
+    if not longest_game:
+        return False
+    longest_futures = max(
+        (
+            len(p)
+            for p in KALSHI_FUTURES_TICKER_TO_SPORT_KEY
+            if ext_lower.startswith(p)
+        ),
+        default=0,
+    )
+    return longest_game > longest_futures
+
+
 def get_sport_keys_for_category(category: Optional[str]) -> Optional[list[str]]:
     """Get sport keys to scope team search for a given sport category.
 
