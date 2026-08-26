@@ -397,8 +397,8 @@ async def _prewarm_feed_shape(shape: dict, rc) -> dict:
     from app.utils.feed_cache import (
         FEED_PREWARM_KEY_SCOPE_KEY,
         FEED_PREWARM_SCOPE_KEY,
-        FEED_RESPONSE_STALE_TTL_SECONDS,
-        feed_response_cache_ttl,
+        feed_response_cache_ttls,
+        payload_contains_live_event,
     )
 
     label = shape["label"]
@@ -483,17 +483,28 @@ async def _prewarm_feed_shape(shape: dict, rc) -> dict:
         )
         return {"outcome": "no_key", "duration_s": duration_s}
 
-    ttl = feed_response_cache_ttl(my_teams_only=False, identified=False)
+    # #2216: the warmer is the SECOND writer on these keys and it must apply the
+    # live ceiling identically to the route. This matters more here than on the
+    # request path, not less: the warmer REPUBLISHES on a beat, so a warmer left
+    # on the 60s/300s principal TTLs would keep the anonymous Discover key alive
+    # at up to 360s forever, and a live score inside it with it. Same failure
+    # shape LAT-P001 closed on the key builder — two writers, one of them quietly
+    # disagreeing — which is why both now go through one function.
+    live = payload_contains_live_event(payload)
+    ttl, stale_ttl = feed_response_cache_ttls(
+        my_teams_only=False, identified=False, live=live
+    )
     body = json.dumps(payload, default=str)
     rc.setex(cache_key, ttl, body)
-    rc.setex(f"{cache_key}:stale", FEED_RESPONSE_STALE_TTL_SECONDS, body)
+    rc.setex(f"{cache_key}:stale", stale_ttl, body)
     logger.info(
-        "Pre-warmed %s feed in %.1fs (%d items, ttl=%ds, stale=%ds)",
+        "Pre-warmed %s feed in %.1fs (%d items, ttl=%ds, stale=%ds, live=%s)",
         label,
         duration_s,
         len(items),
         ttl,
-        FEED_RESPONSE_STALE_TTL_SECONDS,
+        stale_ttl,
+        live,
     )
     return {"outcome": "ok", "duration_s": duration_s, "items": len(items)}
 

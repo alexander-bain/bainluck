@@ -26,6 +26,37 @@ FEED_RESPONSE_TTL_ANON_SECONDS = 60
 FEED_RESPONSE_TTL_IDENTIFIED_SECONDS = 5
 FEED_RESPONSE_TTL_MY_TEAMS_SECONDS = 30
 
+# --- #2216: live-awareness -----------------------------------------------------
+# The principal TTLs above ask WHO is reading. They never ask WHAT the page
+# contains, so a page holding an in-progress game aged exactly as long as a page
+# of futures: 30-60s fresh, +300s on the stale mirror, and an UNBOUNDED
+# process-local last-good behind that. Alex's push alert said 1-0 while both My
+# Stuff cards said 0-0; the DB and ``GET /api/events/{id}`` both had 0-1. The
+# write side was right and the page cache served an older payload as current.
+#
+# ``GET /api/events/{id}`` has never had this bug because it stores the event's
+# status beside the payload and picks its TTL FROM that status
+# (``routes/events.py:1841`` / ``:5771-5773``). These constants are that same
+# rule for the card path, with the state read off the payload instead of a
+# single row — a feed page is "live" when any card on it is.
+#
+# THE NUMBER, written down and defended: **60 seconds is the live ceiling** —
+# the oldest a payload containing a live card may be and still be served.
+#   * 30s fresh mirrors ``_EVENT_DETAIL_LIVE_TTL`` exactly. The detail route and
+#     the card route read the SAME ORM fields; two different answers about the
+#     same score is the defect, so they get one staleness rule.
+#   * 60s on the stale mirror and on last-good is the actual fix. Fresh was
+#     never the problem (30s); 30 + 300 = 330s, unbounded on a Redis blip, was.
+#   * Past the ceiling the page is REBUILT, not served older. A five-minute-old
+#     score printed as current is the app lying quietly, and the reliability bar
+#     is "the app does what it's supposed to do".
+# Anti-stampede is preserved by the per-key singleflight, not by the ceiling:
+# waiters coalesce onto one leader, so refusing a stale live page costs one
+# build per key per process, never a herd.
+FEED_RESPONSE_TTL_LIVE_SECONDS = 30
+FEED_RESPONSE_STALE_TTL_LIVE_SECONDS = 60
+FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS = 60
+
 # LAT-P089 operator kill switch for the inert-principal share.
 FEED_INERT_PRINCIPAL_SHARE_ENV = "FEED_INERT_PRINCIPAL_SHARE"
 _INERT_SHARE_OFF_VALUES = frozenset({"0", "false", "no", "off"})
@@ -114,14 +145,84 @@ def feed_response_cache_ttl(
     )
 
 
+def payload_contains_live_event(payload: Any) -> bool:
+    """Whether a built feed payload carries at least one live card (#2216).
+
+    This is the feed's equivalent of the single ``event.status`` the detail
+    route stores beside its cached response. A page is only as fresh as its
+    fastest-moving card, so ONE live card makes the whole page live.
+
+    Deliberately permissive in two ways, both toward freshness:
+
+    * It does not filter on ``item["type"]``. Any card that declares itself
+      ``status == "live"`` counts. A new card type that carries a live score
+      should shorten the page's life on the day it ships, not on the day
+      somebody remembers to add it to an allowlist here.
+    * Anything it cannot parse — a non-dict payload, a missing or non-list
+      ``items`` — returns ``False``, i.e. "not live", i.e. the ordinary TTL.
+      That is the correct direction: this function only ever SHORTENS a TTL,
+      so failing closed would mean a malformed payload silently gets the long
+      one, while failing open would expire every unparseable page in 30s.
+
+    Pure — no I/O, no clock. It is called on both the write and the read side
+    precisely so the two cannot drift; the read path re-derives liveness from
+    the payload rather than trusting a flag stamped into it, because a stamped
+    flag can be dropped by any future serializer change without a test noticing.
+    """
+    if not isinstance(payload, dict):
+        return False
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return False
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data")
+        if isinstance(data, dict) and data.get("status") == "live":
+            return True
+    return False
+
+
+def feed_response_cache_ttls(
+    *,
+    my_teams_only: bool = False,
+    identified: bool = False,
+    live: bool = False,
+) -> tuple[int, int]:
+    """``(fresh_ttl, stale_ttl)`` for one feed response cache entry (#2216).
+
+    The principal rule (``feed_response_cache_ttl``) is unchanged and still
+    decides the baseline. ``live=True`` then applies the live ceiling as a
+    ``min``, never a replacement: the 5s identified TTL must stay 5s, because a
+    live-aware ceiling that LENGTHENED anybody's cache would be a latency fix
+    wearing a correctness fix's clothes.
+    """
+    fresh = feed_response_cache_ttl(
+        my_teams_only=my_teams_only, identified=identified
+    )
+    stale = FEED_RESPONSE_STALE_TTL_SECONDS
+    if live:
+        fresh = min(fresh, FEED_RESPONSE_TTL_LIVE_SECONDS)
+        stale = min(stale, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS)
+    return fresh, stale
+
+
 def build_feed_cache_metadata(
     status: str,
     *,
     ttl_seconds: int | None = None,
     stale_ttl_seconds: int | None = FEED_RESPONSE_STALE_TTL_SECONDS,
     reason: str | None = None,
+    live: bool | None = None,
 ) -> dict[str, Any]:
-    """Return stable cache metadata safe to expose in feed responses."""
+    """Return stable cache metadata safe to expose in feed responses.
+
+    ``live`` (#2216) is emitted only when known, so an untouched caller's
+    payload shape is byte-identical to before. It is the field that makes the
+    ceiling verifiable from outside the process: ``.cache.live == true`` with
+    ``.cache.ttl_seconds`` still at 60 would mean the live rule did not fire,
+    and that is a distinction no amount of reading ``status`` can make.
+    """
     metadata: dict[str, Any] = {
         "status": status,
     }
@@ -131,6 +232,8 @@ def build_feed_cache_metadata(
         metadata["stale_ttl_seconds"] = stale_ttl_seconds
     if reason:
         metadata["reason"] = reason
+    if live is not None:
+        metadata["live"] = bool(live)
     return metadata
 
 
