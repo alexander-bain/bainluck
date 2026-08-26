@@ -1597,3 +1597,524 @@ def evaluate_repair_contract(
         "allowed_mutations": [] if reasons else mutated,
         "reason_codes": sorted(set(reasons)),
     }
+
+
+# ---------------------------------------------------------------------------
+# The pair-opening complement repair plan (#2212, CAL-P097) — the SIXTH rail
+#
+# CERT-403A's first P1, verbatim:
+#
+#   "The historical repair has no executable, immutable ApplyPlan and leaves two
+#    mandatory write semantics undecided ... an attended historical UPDATE cannot
+#    be certified from a prose predicate. There is no frozen row set, no per-row
+#    before value/CAS, no complete-content digest, no refusal vocabulary, no
+#    rollback record, and no chosen treatment for the stale American-odds twin."
+#
+# Same reasoning as every sibling for the distinct schema and namespace: a
+# pair-opening repair and a mapping re-point must never be interchangeable at an
+# apply, and two plans holding the same integers must never share an address.
+#
+# THE TWO UNDECIDED WRITE SEMANTICS, NOW DECIDED — both are recorded here rather
+# than in a doc, because a decision the code does not enforce is a preference.
+#
+# 1. ``opening_american_odds``: **MOVES WITH THE PROBABILITY.** The staged spec
+#    said "must move with it or be NULLed" and did not choose. It moves, because
+#    the column is a pure function of ``opening_probability`` — every other row
+#    in the table carries the odds its probability implies, so recomputing is not
+#    an invention, it is the only self-consistent option. NULLing would trade one
+#    incoherence (a repaired probability beside a stale copied-Over odds) for a
+#    different one (a probability with no odds beside it, unique in its table).
+#    ``after_american`` is carried in the plan and inside the digest, so the
+#    reviewer approves the exact integer the apply writes.
+#
+# 2. Provenance: **``opening_source = 'pair_complement_repair'``.** The staged
+#    spec called provenance mandatory and said that if no column existed, that
+#    was a blocker on this half. A column DOES exist —
+#    ``FuturesOutcome.opening_source``, ``String(30)``, already carrying
+#    ``clob_history`` / ``first_snapshot`` / ``bid_ask_midpoint`` / NULL. So the
+#    blocker is discharged with **no migration and no DDL**: a repaired opening
+#    is permanently distinguishable from a quote, which is the property the
+#    writer gate exists to protect, and the apply is reversible because the
+#    before-image is in the plan.
+PAIR_OPENING_REPAIR_PLAN_SCHEMA = "pair-opening-complement-repair-plan/v1"
+_PAIR_OPENING_PLAN_NS = "pair-opening-complement-repair-plan"
+
+#: The provenance stamp. 22 chars, inside ``String(30)``.
+PAIR_OPENING_REPAIR_SOURCE = "pair_complement_repair"
+
+#: The CAS lost: the Under leg's ``opening_probability`` is no longer the value
+#: the reviewer approved. Distinct from MISSING for the reason gotcha #53 keeps
+#: costing — "someone rewrote it" and "the row is gone" send an operator at
+#: different next actions even though the plan's response to both is to skip.
+REASON_PAIR_OPENING_DRIFT = "PAIR_OPENING_BEFORE_DRIFT"
+#: The other two thirds of the same CAS. CERT-406A returned BLOCK because they
+#: did not exist: the gate compared ``opening_probability`` alone, so all three
+#: hostile one-field mutations — source rewritten to ``clob_history``, American
+#: odds rewritten to 999, and both together with the probability left alone —
+#: returned ``(True, [])`` and the rail called the row unchanged. The apply
+#: overwrites all three columns, so the compare half must bind all three; a CAS
+#: over a subset of its own write set is not a CAS. Separate codes rather than
+#: one, because the operator's next action differs: an odds twin that moved is
+#: arithmetic somebody recomputed, a source that moved is another writer having
+#: claimed the row.
+REASON_PAIR_AMERICAN_DRIFT = "PAIR_OPENING_AMERICAN_DRIFT"
+REASON_PAIR_SOURCE_DRIFT = "PAIR_OPENING_SOURCE_DRIFT"
+#: More than one reviewed field moved. Deliberately NOT a priority pick among
+#: the three above: a single-field code on a multi-field drift reads as a
+#: complete account of the damage and is not one. ``drifted_fields`` carries the
+#: full list on every drift entry regardless.
+REASON_PAIR_BEFORE_DRIFT_MULTI = "PAIR_OPENING_BEFORE_DRIFT_MULTI"
+REASON_PAIR_OUTCOME_MISSING = "PAIR_OUTCOME_ROW_MISSING"
+#: The caller showed the gate a row but not every reviewed column of it. Fails
+#: CLOSED, and is its own reason rather than drift, because the two states are
+#: not the same claim: drift is "the row moved", this is "nobody looked". The
+#: hazard is specific and silent — ``current.get("opening_american_odds")``
+#: returns ``None`` both when the column is NULL and when the SELECT never
+#: mentioned it, and the reviewed value is very often NULL, so a query that
+#: forgot a column would have compared ``None == None`` and passed. That is
+#: gotcha #53 exactly: an absence and a value arriving in the same shape.
+REASON_PAIR_OBSERVATION_INCOMPLETE = "PAIR_OBSERVATION_INCOMPLETE"
+#: The row already carries the repair stamp. NOT drift and NOT an error: it is
+#: this plan, already applied. Named separately so a re-invocation of the same
+#: plan_hash after a partial run reports "already done" rather than "drifted",
+#: which is the difference between resuming and re-reviewing.
+REASON_PAIR_ALREADY_REPAIRED = "PAIR_OPENING_ALREADY_REPAIRED"
+#: The stamp is there but the values are not the ones this plan would have
+#: written. "Already applied" is a claim about THIS plan, so it has to be
+#: checked against this plan's own after-image; a bare stamp test would let a
+#: row written by some other invocation — or a row this plan wrote and something
+#: else then edited — be reported as resumable and skipped without review.
+REASON_PAIR_STAMPED_NOT_THIS_PLAN = "PAIR_OPENING_STAMPED_NOT_THIS_PLAN"
+
+#: The three columns the apply overwrites, and therefore exactly the three the
+#: compare half must bind. A constant rather than three literals in two places,
+#: so the payload, the digest and the gate cannot drift apart in silence.
+PAIR_OPENING_REVIEWED_FIELDS: tuple[str, ...] = (
+    "opening_probability",
+    "opening_american_odds",
+    "opening_source",
+)
+
+#: Which single-field refusal each reviewed column raises.
+_PAIR_OPENING_FIELD_REASON: dict[str, str] = {
+    "opening_probability": REASON_PAIR_OPENING_DRIFT,
+    "opening_american_odds": REASON_PAIR_AMERICAN_DRIFT,
+    "opening_source": REASON_PAIR_SOURCE_DRIFT,
+}
+
+
+@dataclass(frozen=True)
+class PlannedPairOpeningRepair:
+    """One Under leg the dry-run decided to rewrite, and the state it read.
+
+    ``expected_before_opening`` and ``expected_before_source`` are the compare
+    halves of the compare-and-set. They are CARRIED, never re-read: an apply
+    that re-read them would be asking the question the review already answered,
+    from a world that has moved. That is #1798's defect in the UPDATE direction,
+    and the calibration pipeline writes these rows on a live schedule.
+
+    ``over_outcome_id`` / ``over_opening`` are the Over leg, which this apply
+    NEVER touches. They are inside the digest anyway, because ``after_opening``
+    is *defined* as ``1 - over_opening`` — a plan whose Over price changed since
+    review is a plan whose repaired value means something different, even if the
+    Under row it writes is untouched.
+    """
+
+    outcome_id: int
+    market_id: int
+    expected_before_opening: float
+    expected_before_american: int | None
+    expected_before_source: str | None
+    after_opening: float
+    after_american: int | None
+    over_outcome_id: int
+    over_opening: float
+    market_name: str | None = None
+
+    @property
+    def row_key(self) -> str:
+        """One Under leg is one work item, so its outcome id IS its key."""
+        return f"outcome:{int(self.outcome_id)}"
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "outcome_id": int(self.outcome_id),
+            "market_id": int(self.market_id),
+            "before": {
+                "opening_probability": float(self.expected_before_opening),
+                "opening_american_odds": self.expected_before_american,
+                "opening_source": self.expected_before_source,
+            },
+            "after": {
+                "opening_probability": float(self.after_opening),
+                "opening_american_odds": self.after_american,
+                "opening_source": PAIR_OPENING_REPAIR_SOURCE,
+            },
+            "over_outcome_id": int(self.over_outcome_id),
+            "over_opening": float(self.over_opening),
+            "market_name": self.market_name,
+        }
+
+    def digest_line(self) -> str:
+        """Every field the apply ACTS on, plus the value ``after`` is derived from.
+
+        ``market_name`` stays OUT — it is prose for the reviewer, and re-wording
+        it must not mint a new address (the ``label`` / ``matchup`` call the
+        create and espn rails already make).
+
+        ``over_opening`` is IN, and that is the queue-368 ``sport_id`` lesson
+        applied one rail along: it is not written, but ``after_opening`` is
+        arithmetically defined by it, so an artifact whose Over price was edited
+        while keeping its approved address would decode clean and repair to a
+        number nobody approved.
+
+        The provenance stamp is a module constant rather than a per-row field,
+        so it is not digested — but ``expected_before_source`` IS, because a row
+        whose source changed between review and apply is a row something else
+        has since written.
+        """
+        return digest_fields(
+            int(self.outcome_id),
+            int(self.market_id),
+            f"{float(self.expected_before_opening):.6f}",
+            self.expected_before_american,
+            self.expected_before_source,
+            f"{float(self.after_opening):.6f}",
+            self.after_american,
+            int(self.over_outcome_id),
+            f"{float(self.over_opening):.6f}",
+        )
+
+
+@dataclass(frozen=True)
+class PairOpeningRepairPlan:
+    """The reviewed complement repair, as a content-addressed object."""
+
+    rows: tuple[PlannedPairOpeningRepair, ...] = ()
+    context: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def entries(self) -> tuple[Any, ...]:
+        return self.rows
+
+    @property
+    def row_keys(self) -> tuple[str, ...]:
+        return tuple(sorted(r.row_key for r in self.rows))
+
+    @property
+    def outcome_ids(self) -> tuple[int, ...]:
+        return tuple(sorted({int(r.outcome_id) for r in self.rows}))
+
+    @property
+    def market_ids(self) -> tuple[int, ...]:
+        return tuple(sorted({int(r.market_id) for r in self.rows}))
+
+    @property
+    def plan_hash(self) -> str:
+        lines = sorted(r.digest_line() for r in self.rows)
+        return input_fingerprint(_PAIR_OPENING_PLAN_NS, str(len(lines)), *lines)
+
+    def duplicate_outcome_ids(self) -> list[int]:
+        """Outcome ids named twice. Must be empty: whichever ran second would
+        silently win, an outcome no reviewer chose because the artifact shows both."""
+        seen: dict[int, int] = {}
+        for r in self.rows:
+            seen[int(r.outcome_id)] = seen.get(int(r.outcome_id), 0) + 1
+        return sorted(k for k, n in seen.items() if n > 1)
+
+    def self_pointing_rows(self) -> list[int]:
+        """Rows whose ``after`` equals their ``before``. Must be empty.
+
+        A no-op WRITE is not harmless on a CAS rail: ``rowcount`` would be 1, so
+        the row reports APPLIED while nothing changed. On THIS population it is
+        also a live signal rather than a hypothetical — ``before == after``
+        means ``p == 1 - p``, i.e. ``p == 0.5``, which is exactly the
+        exact-0.5000 placeholder pair the half-spike exclusion removes. Such a
+        row must never reach this rail: it is not repairable by complement,
+        because its complement is itself.
+        """
+        return sorted(
+            int(r.outcome_id)
+            for r in self.rows
+            if abs(float(r.after_opening) - float(r.expected_before_opening)) < 1e-9
+        )
+
+    def incoherent_rows(self) -> list[int]:
+        """Rows where ``after != 1 - over_opening``. Must be empty.
+
+        The plan's whole licence is the measured direction result: ``p`` is the
+        Over leg's real price and the Under leg's is its complement. A row whose
+        ``after`` is not that complement is asserting a level nobody measured,
+        and it would be indistinguishable from a quote once written.
+        """
+        return sorted(
+            int(r.outcome_id)
+            for r in self.rows
+            if abs(float(r.after_opening) - (1.0 - float(r.over_opening))) > 1e-6
+        )
+
+    def out_of_range_rows(self) -> list[int]:
+        """Rows writing a probability outside (0, 1). Must be empty."""
+        return sorted(
+            int(r.outcome_id)
+            for r in self.rows
+            if not (0.0 < float(r.after_opening) < 1.0)
+        )
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "schema": PAIR_OPENING_REPAIR_PLAN_SCHEMA,
+            "plan_hash": self.plan_hash,
+            "row_count": len(self.rows),
+            "market_count": len(self.market_ids),
+            "duplicate_outcome_ids": self.duplicate_outcome_ids(),
+            "self_pointing_outcome_ids": self.self_pointing_rows(),
+            "incoherent_outcome_ids": self.incoherent_rows(),
+            "out_of_range_outcome_ids": self.out_of_range_rows(),
+            "provenance_stamp": PAIR_OPENING_REPAIR_SOURCE,
+            "rows": [r.as_payload() for r in self.rows],
+            "context": dict(self.context),
+        }
+
+
+def build_pair_opening_repair_plan(
+    rows: Iterable[PlannedPairOpeningRepair],
+    *,
+    context: Mapping[str, Any] | None = None,
+) -> PairOpeningRepairPlan:
+    return PairOpeningRepairPlan(rows=tuple(rows), context=dict(context or {}))
+
+
+def decode_pair_opening_repair_plan(
+    raw: Any,
+) -> tuple[PairOpeningRepairPlan | None, str]:
+    """``(plan, reason)``. The stored address is RE-DERIVED, never believed."""
+    if not isinstance(raw, Mapping):
+        return None, REASON_PLAN_MISSING
+    if raw.get("schema") != PAIR_OPENING_REPAIR_PLAN_SCHEMA:
+        return None, REASON_PLAN_CORRUPT
+    raw_rows = raw.get("rows")
+    if not isinstance(raw_rows, list):
+        return None, REASON_PLAN_CORRUPT
+    rows: list[PlannedPairOpeningRepair] = []
+    for row in raw_rows:
+        if not isinstance(row, Mapping):
+            return None, REASON_PLAN_CORRUPT
+        before, after = row.get("before"), row.get("after")
+        if not isinstance(before, Mapping) or not isinstance(after, Mapping):
+            return None, REASON_PLAN_CORRUPT
+        # Subscript + coerce, never ``.get()`` on a field the apply acts on: a
+        # missing field must land in the ``except`` and become
+        # PLAN_ARTIFACT_CORRUPT, not decode as None and sail past the digest.
+        try:
+            rows.append(
+                PlannedPairOpeningRepair(
+                    outcome_id=int(row["outcome_id"]),
+                    market_id=int(row["market_id"]),
+                    expected_before_opening=float(before["opening_probability"]),
+                    expected_before_american=(
+                        None
+                        if before["opening_american_odds"] is None
+                        else int(before["opening_american_odds"])
+                    ),
+                    expected_before_source=before["opening_source"],
+                    after_opening=float(after["opening_probability"]),
+                    after_american=(
+                        None
+                        if after["opening_american_odds"] is None
+                        else int(after["opening_american_odds"])
+                    ),
+                    over_outcome_id=int(row["over_outcome_id"]),
+                    over_opening=float(row["over_opening"]),
+                    market_name=row.get("market_name"),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            return None, REASON_PLAN_CORRUPT
+        # The provenance stamp is not a free field. An artifact that names a
+        # different one is asking for a write this rail does not perform.
+        if after.get("opening_source") != PAIR_OPENING_REPAIR_SOURCE:
+            return None, REASON_PLAN_CORRUPT
+    ctx = raw.get("context")
+    plan = PairOpeningRepairPlan(
+        rows=tuple(rows), context=dict(ctx) if isinstance(ctx, Mapping) else {}
+    )
+    if plan.plan_hash != raw.get("plan_hash"):
+        return None, REASON_PLAN_CORRUPT
+    # Four structural refusals, all fail-closed. Each of them describes a plan
+    # that would report success while doing something nobody approved.
+    if (
+        plan.duplicate_outcome_ids()
+        or plan.self_pointing_rows()
+        or plan.incoherent_rows()
+        or plan.out_of_range_rows()
+    ):
+        return None, REASON_PLAN_CORRUPT
+    return plan, "ok"
+
+
+def _pair_opening_field_diff(
+    expected: Mapping[str, Any], observed: Mapping[str, Any]
+) -> list[str]:
+    """Which of the three reviewed columns disagree, in declared order.
+
+    ``opening_probability`` compares numerically at 1e-9 because it is
+    ``Numeric(7, 6)`` and arrives as ``Decimal`` from asyncpg and ``float`` from
+    a fixture. The other two compare by VALUE and by NULL-ness: ``None`` and
+    ``0`` are different American odds and ``None`` and ``''`` are different
+    sources, so neither may be normalised into the other.
+    """
+    diffs: list[str] = []
+    for name in PAIR_OPENING_REVIEWED_FIELDS:
+        want, got = expected.get(name), observed.get(name)
+        if name == "opening_probability":
+            if got is None or want is None:
+                if got is not want:
+                    diffs.append(name)
+                continue
+            if abs(float(got) - float(want)) > 1e-9:
+                diffs.append(name)
+            continue
+        if name == "opening_american_odds":
+            if (want is None) != (got is None):
+                diffs.append(name)
+            elif want is not None and int(got) != int(want):
+                diffs.append(name)
+            continue
+        if want != got:
+            diffs.append(name)
+    return diffs
+
+
+def _pair_gate_entry(
+    row: PlannedPairOpeningRepair,
+    reason: str,
+    current: Mapping[str, Any] | None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """One row's refusal record.
+
+    Every entry carries the full reviewed before-image, not merely the field
+    that tripped: an operator triaging drift needs the row's whole approved
+    state to decide between re-deriving and resuming, and the field that moved
+    is rarely the field that explains why.
+    """
+    seen = dict(current) if current is not None else {}
+    return {
+        "outcome_id": int(row.outcome_id),
+        "reason_code": reason,
+        # Retained under their original names: these two keys predate the
+        # widening and are what the existing refusal report reads.
+        "expected_before_opening": float(row.expected_before_opening),
+        "observed_opening": seen.get("opening_probability"),
+        "expected_before": {
+            "opening_probability": float(row.expected_before_opening),
+            "opening_american_odds": row.expected_before_american,
+            "opening_source": row.expected_before_source,
+        },
+        "observed": {k: seen.get(k) for k in PAIR_OPENING_REVIEWED_FIELDS},
+        **extra,
+    }
+
+
+def pair_opening_repair_gate(
+    plan: PairOpeningRepairPlan,
+    observed: Mapping[int, Mapping[str, Any] | None],
+) -> tuple[bool, list[dict[str, Any]]]:
+    """The live half of the CAS, asked as a SET before any write.
+
+    *Every reviewed Under leg must STILL hold the WHOLE before-image the
+    reviewer approved* — the opening, its American twin, and its source.
+
+    ``observed`` maps ``outcome_id`` -> the row's current
+    ``{opening_probability, opening_american_odds, opening_source}``, with
+    ``None`` for an outcome id that has no row. All three keys are REQUIRED when
+    a row is present; a mapping missing any of them is refused rather than
+    compared (``REASON_PAIR_OBSERVATION_INCOMPLETE``), because a NULL column and
+    an unSELECTed column reach this function as the same ``None``.
+
+    CERT-406A's P1, which this is the fix for: the compare half used to read
+    ``opening_probability`` alone while the apply overwrote all three columns.
+    A concurrent writer could therefore change the odds twin, the provenance, or
+    both, after the dry-run and after the review, and the gate would return
+    ``(True, [])`` — destroying a before-image the reviewer had approved and
+    making the rollback record false, which is the one thing a rollback record
+    exists not to be. The plan's ``digest_line`` had bound all three fields from
+    the start; only the live half was narrow, so the artifact's address is
+    unchanged by this fix.
+
+    Rows are retired INDIVIDUALLY and by name, never skipped and never in bulk.
+    A wholesale refusal would let one live re-write cancel 822 approved
+    siblings, which is the failure ``create_gate``'s docstring records from the
+    create rail and ``mapping_repair_gate``'s from the mapping rail.
+
+    Returns ``(ok, drifted)``.
+    """
+    drifted: list[dict[str, Any]] = []
+    for row in plan.rows:
+        outcome_id = int(row.outcome_id)
+        expected = {
+            "opening_probability": float(row.expected_before_opening),
+            "opening_american_odds": row.expected_before_american,
+            "opening_source": row.expected_before_source,
+        }
+
+        current = observed.get(outcome_id)
+        if current is None:
+            drifted.append(
+                _pair_gate_entry(row, REASON_PAIR_OUTCOME_MISSING, None, drifted_fields=[])
+            )
+            continue
+
+        absent = [f for f in PAIR_OPENING_REVIEWED_FIELDS if f not in current]
+        if absent:
+            drifted.append(
+                _pair_gate_entry(
+                    row,
+                    REASON_PAIR_OBSERVATION_INCOMPLETE,
+                    current,
+                    drifted_fields=[],
+                    unobserved_fields=absent,
+                )
+            )
+            continue
+
+        if current.get("opening_source") == PAIR_OPENING_REPAIR_SOURCE:
+            # Carries this rail's stamp. That is only "this plan, already
+            # applied" if the row holds what THIS plan would have written; the
+            # after-image is the test, not the stamp. Reported so a resumed run
+            # is legible, and NOT counted as drift — telling an operator to
+            # re-review a plan that simply finished is how a correct partial run
+            # gets thrown away.
+            after = {
+                "opening_probability": float(row.after_opening),
+                "opening_american_odds": row.after_american,
+                "opening_source": PAIR_OPENING_REPAIR_SOURCE,
+            }
+            unexpected = _pair_opening_field_diff(after, current)
+            drifted.append(
+                _pair_gate_entry(
+                    row,
+                    REASON_PAIR_ALREADY_REPAIRED
+                    if not unexpected
+                    else REASON_PAIR_STAMPED_NOT_THIS_PLAN,
+                    current,
+                    drifted_fields=unexpected,
+                    expected_after=after,
+                )
+            )
+            continue
+
+        diffs = _pair_opening_field_diff(expected, current)
+        if diffs:
+            drifted.append(
+                _pair_gate_entry(
+                    row,
+                    _PAIR_OPENING_FIELD_REASON[diffs[0]]
+                    if len(diffs) == 1
+                    else REASON_PAIR_BEFORE_DRIFT_MULTI,
+                    current,
+                    drifted_fields=diffs,
+                )
+            )
+    return (not drifted), drifted

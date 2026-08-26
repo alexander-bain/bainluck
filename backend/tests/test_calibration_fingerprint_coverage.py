@@ -107,10 +107,34 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         loosened when it fires is not one. What matters is WHICH number moved:
         ``uncovered_sql_shaping`` is asserted separately below precisely because
         a behaviour-only input must not touch it, and this one does not.
+
+        CAL-P097 (#2212) moved the totals 47/44 -> 53/46 and the covered set
+        3 -> 7, adding the 0.5000-pair exclusion's six inputs. This tripwire
+        fired and the answer was NOT to loosen it: four of the six SHAPE THE
+        EMITTED SQL (the exact value and the three cell-scope constants), so
+        they were added to ``_main_input_fingerprint`` BY VALUE rather than
+        booked as new holes. ``uncovered_sql_shaping`` is therefore **still 21**
+        — the number with correctness consequences did not move, which is the
+        whole reason it is asserted apart from these. The +2 uncovered are the
+        rule text and the shape-column map, neither of which can change which
+        rows publish.
+
+        CAL-P099 (#2212, CERT-406B) moved input_count 53 -> 55 and covered
+        7 -> 9, and left ``uncovered_count`` at **46**: every input it added is
+        covered. Both are module-level SQL constants the rework created, and
+        both were caught by this tripwire rather than by review —
+        ``PUBLISHED_ROW_JOIN`` (the mode-price LEFT JOIN, now shared between
+        ``deduped`` and the published-removal counter) and
+        ``_HALF_SPIKE_FLAG_SQL`` (the half-spike leg test as one expression, so
+        the fold can render the population with the rule OFF). Neither is inside
+        any hashed function's source — ``inspect.getsource`` returns
+        ``{PUBLISHED_ROW_JOIN}``, not its value — so both are hashed BY VALUE
+        and ``uncovered_sql_shaping`` is **still 21**. Second queue running that
+        this pin fired and the answer was to cover the input, not loosen the pin.
         """
-        assert artifact["input_count"] == 47
-        assert len(artifact["covered_by_value"]) == 3
-        assert artifact["uncovered_count"] == 44
+        assert artifact["input_count"] == 55
+        assert len(artifact["covered_by_value"]) == 9
+        assert artifact["uncovered_count"] == 46
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -131,12 +155,25 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         """
         assert artifact["uncovered_sql_shaping"] == 21
 
-    def test_the_four_hashed_roots_are_derived_not_declared_here(self, artifact):
+    def test_the_hashed_roots_are_derived_not_declared_here(self, artifact):
+        """CAL-P099 adds a FIFTH root, and the addition is the interesting part.
+
+        Hoisting ``deduped``'s WHERE clause into ``published_row_predicate`` —
+        so the published-removal counter renders the same text instead of a
+        hand-written copy — moved that SQL out of
+        ``_calibration_population_ctes``'s source. Measured before the root was
+        added: mutating the predicate left the digest unchanged, i.e. every
+        exclusion in the curve had become editable without invalidating a
+        carried read. Hashing a function's source covers that function, never
+        its callees; a refactor is exactly when that is forgotten, so the helper
+        joins this list in the same commit that creates it.
+        """
         assert sorted(artifact["hashed_roots"]) == [
             "_calibration_population_ctes",
             "_main_futures_sql",
             "_virtual_market_ctes",
             "compute_calibration_payload",
+            "published_row_predicate",
         ]
 
     def test_the_proven_hole_is_listed_uncovered_and_sql_shaping(self, artifact):
@@ -159,9 +196,9 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         that is designed to lift (ruling 024's named failure).
 
         The cross-module FIVE is the assertion that carries the meaning and it
-        is unchanged; only the in-module remainder moved (38 -> 39 at CAL-P038),
-        which is the direction that costs nothing — an in-module input is behind
-        the freeze."""
+        is unchanged; only the in-module remainder moved (38 -> 39 at CAL-P038,
+        39 -> 41 at CAL-P097), which is the direction that costs nothing — an
+        in-module input is behind the freeze."""
         cross = sorted(
             r["name"]
             for r in artifact["inputs"]
@@ -175,7 +212,7 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
         ]
-        assert len(cross) + 39 == artifact["uncovered_count"]
+        assert len(cross) + 41 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

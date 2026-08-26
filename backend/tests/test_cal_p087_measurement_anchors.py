@@ -45,8 +45,8 @@ def collision_script():
     return _load("measure_2098_mode_price_collision.py")
 
 
-def test_every_substitution_anchor_appears_exactly_once(collision_script) -> None:
-    """One occurrence each — not zero (a no-op), not two (an ambiguous edit).
+def test_every_substitution_anchor_occupies_every_site_it_should(collision_script) -> None:
+    """Each anchor at every site it should occupy — never zero, never partially.
 
     CAL-P090 made this DIRECTION-AWARE, and the reason is that the defect being
     measured got fixed. Before `program/calibration-88` the chain was the
@@ -62,21 +62,40 @@ def test_every_substitution_anchor_appears_exactly_once(collision_script) -> Non
     two folds collapse to identical, and the measurement reports zero collisions
     having measured nothing (gotcha #53). Asserting each anchor independently
     would have permitted it.
+
+    CAL-P099 made the expected COUNT derived instead of fixed at 1, and that is
+    a real second site rather than a loosened pin. The published-row predicate
+    is now rendered twice — by ``deduped`` and by ``half_spike_pair_removed``,
+    which counts what the half-spike exclusion costs the published population —
+    out of the same ``PUBLISHED_ROW_JOIN`` text. The mode-price join therefore
+    appears once PER READING, and a hard-coded 1 reported "the chain matches
+    neither state" about a chain that matched one of them exactly. Worse than a
+    red test: the script's own ``_substitute`` aborts on a non-unique anchor, so
+    the #2098 instrument was BROKEN, not merely mis-asserted.
+
+    The consistency clause survives, because ``_expected_sites`` derives the
+    count from the chain. Substituting one join and not the other would measure
+    two different populations against each other, and that still fails here — as
+    does adding a third reading without wiring its join.
     """
     chain = _calibration_population_ctes()
     names = ("MODE_PRICES", "MODE_GROUPBY", "JOIN")
     blind = {n: chain.count(getattr(collision_script, f"{n}_FROM")) for n in names}
     scoped = {n: chain.count(getattr(collision_script, f"{n}_TO")) for n in names}
+    want = {
+        n: collision_script._expected_sites(chain, getattr(collision_script, f"{n}_TO"))
+        for n in names
+    }
 
-    is_blind = all(v == 1 for v in blind.values())
-    is_scoped = all(v == 1 for v in scoped.values())
+    is_blind = all(blind[n] == want[n] for n in names)
+    is_scoped = all(scoped[n] == want[n] for n in names)
     assert is_blind != is_scoped, (
         "the population chain matches NEITHER the source-blind nor the "
         "source-scoped mode_prices shape consistently, or matches both — so at "
         "least one substitution anchor would match nothing and the #2098 "
         "measurement would compare a fold against itself and report zero "
         f"collisions having measured nothing. blind_counts={blind} "
-        f"scoped_counts={scoped}"
+        f"scoped_counts={scoped} expected_sites={want}"
     )
 
 

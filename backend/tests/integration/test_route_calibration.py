@@ -338,6 +338,12 @@ class TestCalibrationPublicEndpoint:
             "nonexclusive_bundle_census",  # rung 4b: measured, not excluded
             "kalshi_prop_threshold_filter",  # Queue #186 (#941)
             "weather_wide_spread_filter",  # Queue #183 Item 4 (#182 twin)
+            # CAL-P097 (#2212, CERT-403B gate 6): the exact-0.5000 pair
+            # exclusion reports its own count and reason. A DELIBERATE
+            # public-contract addition — the staged spec's sixth criterion is
+            # that the excluded population is reported rather than silently
+            # dropped, and this key is where a reader sees what was removed.
+            "half_spike_pair_filter",
             "void_filter",
             "soccer_2way_filter",  # Queue #158 (#1011): soccer 2-way exclusion
             "heuristic_filter",  # #754 heuristic-exclusion transparency

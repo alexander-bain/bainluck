@@ -2,15 +2,22 @@
   "covered_by_value": [
     "CALIBRATION_POPULATION_VERSION",
     "COVERAGE_CENSUS_ENABLED",
-    "REPRESENTATIVE_TIE_AUTHORITY"
+    "HALF_SPIKE_EXACT_VALUE",
+    "HALF_SPIKE_PAIR_CELL_CATEGORY",
+    "HALF_SPIKE_PAIR_CELL_MARKET_TYPE",
+    "HALF_SPIKE_PAIR_CELL_SOURCE",
+    "PUBLISHED_ROW_JOIN",
+    "REPRESENTATIVE_TIE_AUTHORITY",
+    "_HALF_SPIKE_FLAG_SQL"
   ],
   "hashed_roots": [
     "_calibration_population_ctes",
     "_main_futures_sql",
     "_virtual_market_ctes",
-    "compute_calibration_payload"
+    "compute_calibration_payload",
+    "published_row_predicate"
   ],
-  "input_count": 47,
+  "input_count": 55,
   "inputs": [
     {
       "covered_by_value": false,
@@ -199,6 +206,73 @@
       ]
     },
     {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "HALF_SPIKE_EXACT_VALUE",
+      "origin": "app.tasks.precompute_calibration:HALF_SPIKE_EXACT_VALUE",
+      "sql_interpolated": false,
+      "used_in": []
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "HALF_SPIKE_PAIR_CELL_CATEGORY",
+      "origin": "app.tasks.precompute_calibration:HALF_SPIKE_PAIR_CELL_CATEGORY",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "HALF_SPIKE_PAIR_CELL_MARKET_TYPE",
+      "origin": "app.tasks.precompute_calibration:HALF_SPIKE_PAIR_CELL_MARKET_TYPE",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "HALF_SPIKE_PAIR_CELL_SOURCE",
+      "origin": "app.tasks.precompute_calibration:HALF_SPIKE_PAIR_CELL_SOURCE",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "HALF_SPIKE_PAIR_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:HALF_SPIKE_PAIR_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "HALF_SPIKE_PAIR_SHAPE_COLUMNS",
+      "origin": "app.tasks.precompute_calibration:HALF_SPIKE_PAIR_SHAPE_COLUMNS",
+      "sql_interpolated": false,
+      "used_in": [
+        "half_spike_pair_shape_columns"
+      ]
+    },
+    {
       "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
@@ -378,6 +452,17 @@
     {
       "covered_by_value": true,
       "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "PUBLISHED_ROW_JOIN",
+      "origin": "app.tasks.precompute_calibration:PUBLISHED_ROW_JOIN",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "REPRESENTATIVE_TIE_AUTHORITY",
       "origin": "app.tasks.precompute_calibration:REPRESENTATIVE_TIE_AUTHORITY",
@@ -538,6 +623,17 @@
       ]
     },
     {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "_HALF_SPIKE_FLAG_SQL",
+      "origin": "app.tasks.precompute_calibration:_HALF_SPIKE_FLAG_SQL",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
+    },
+    {
       "covered_by_value": false,
       "definition_sha16": "4cc1d3aa840a061b",
       "impact": "behavior_or_evidence",
@@ -551,8 +647,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "1f9acd476c2317d22b14c92af77981102a4fe454a91025322be246291f20f81a",
-  "uncovered_behavior_or_evidence": 23,
-  "uncovered_count": 44,
+  "source_sha256": "5e0d6f45d5d91c6ccca4ab7661c5b65be85411c58f02ed9ba8d0811761c073af",
+  "uncovered_behavior_or_evidence": 25,
+  "uncovered_count": 46,
   "uncovered_sql_shaping": 21
 }

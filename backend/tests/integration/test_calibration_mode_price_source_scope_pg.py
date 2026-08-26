@@ -321,23 +321,52 @@ _REVERTS = (
 )
 
 
+#: One occurrence of this marks one PUBLISHED-ROW READING of ``normalized``, and
+#: each such reading renders the mode-price join out of ``PUBLISHED_ROW_JOIN``.
+_PUBLISHED_READING_MARKER = "FROM normalized ro"
+
+
+def _expected_revert_sites(ctes: str, fixed: str) -> int:
+    """How many times a revert arm should match — DERIVED, not assumed.
+
+    CAL-P099 gave the join arm a second site and it was this gate, on a real
+    Postgres, that said so first: ``expected exactly one occurrence ... found 2``.
+    The cause is legitimate — ``deduped`` and ``half_spike_pair_removed`` (the
+    counter for what the half-spike exclusion costs the PUBLISHED population)
+    now render the same predicate out of one shared text, so the join appears
+    once per reading.
+
+    Deriving the count keeps every ounce of the original protection and adds
+    one. A revert that matched nothing still fails; a revert that matched only
+    SOME sites — reverting `deduped` while leaving the counter scoped, so the
+    two readings measure different populations — now fails too, where a
+    ``replace(..., 1)`` would have produced exactly that state silently.
+    """
+    if "mp.source = ro.source" in fixed:
+        return ctes.count(_PUBLISHED_READING_MARKER)
+    return 1
+
+
 def _revert_the_fix(ctes: str) -> str:
     """The pre-#2098 CTE chain, or a loud failure.
 
-    Every substitution must match EXACTLY ONCE. A revert arm that silently
-    failed to revert would execute the FIXED sql, observe no suppression, and
-    report that red-first was proved — the empty-200 failure shape (gotcha #53)
-    wearing a test's clothes. So the count is asserted, not assumed.
+    Every substitution must match at every site it should occupy. A revert arm
+    that silently failed to revert would execute the FIXED sql, observe no
+    suppression, and report that red-first was proved — the empty-200 failure
+    shape (gotcha #53) wearing a test's clothes. So the count is asserted, not
+    assumed, and the post-condition below is what makes the assertion binding
+    rather than decorative.
     """
     out = ctes
     for fixed, broken in _REVERTS:
+        want = _expected_revert_sites(out, fixed)
         n = out.count(fixed)
-        assert n == 1, (
-            f"cannot revert the #2098 fix: expected exactly one occurrence of "
+        assert n == want, (
+            f"cannot revert the #2098 fix: expected {want} occurrence(s) of "
             f"{fixed!r}, found {n}. The SQL moved — re-aim this arm rather than "
             "deleting it, or the red-first proof becomes vacuous."
         )
-        out = out.replace(fixed, broken, 1)
+        out = out.replace(fixed, broken)
     assert "mp.source" not in out, "revert incomplete"
     return out
 

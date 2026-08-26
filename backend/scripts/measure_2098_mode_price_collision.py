@@ -182,17 +182,50 @@ GROUP BY 1, 2, 3
 """
 
 
+#: The marker that identifies one PUBLISHED-ROW READING of ``normalized``.
+#: CAL-P099 added a second (``half_spike_pair_removed``, which counts what the
+#: half-spike exclusion costs the published population), and both readings
+#: render the SAME mode-price join out of ``PUBLISHED_ROW_JOIN`` — so the join
+#: anchor legitimately appears once per reading and substituting only one of
+#: them would measure two DIFFERENT populations against each other.
+PUBLISHED_READING_MARKER = "FROM normalized ro"
+
+
+def _expected_sites(chain: str, src: str) -> int:
+    """How many times an anchor SHOULD appear in this chain.
+
+    The mode-price join appears once per published-row reading; the two
+    ``mode_prices`` anchors are in the CTE's own definition and appear once,
+    full stop. Derived from the chain rather than hard-coded, so adding a third
+    reading without wiring its join is a refusal here instead of a silent
+    half-substitution downstream.
+    """
+    if src in (JOIN_FROM, JOIN_TO):
+        return chain.count(PUBLISHED_READING_MARKER)
+    return 1
+
+
 def _substitute(chain: str, pairs: list[tuple[str, str]]) -> str:
     out = chain
     for src, dst in pairs:
         n = out.count(src)
-        if n != 1:
+        want = _expected_sites(out, src)
+        if n != want:
             raise SystemExit(
-                f"ABORT: anchor appears {n} times, expected exactly 1. The chain has "
+                f"ABORT: anchor appears {n} times, expected {want}. The chain has "
                 f"moved and this script would otherwise compare a fold against itself "
                 f"and report zero collisions.\n  anchor: {src!r}"
             )
         out = out.replace(src, dst)
+        # Belt and braces: the replacement must have taken at every site. A
+        # `str.replace` that silently no-ops is exactly the state this whole
+        # abort exists to prevent, and counting the source before is not the
+        # same as counting the destination after.
+        if out.count(dst) < want:
+            raise SystemExit(
+                f"ABORT: substitution left {out.count(dst)} of {want} sites in "
+                f"place.\n  anchor: {src!r}"
+            )
     return out
 
 
@@ -208,7 +241,15 @@ SOURCE_SCOPE_PAIRS = [
 
 
 def _all_present(chain: str, anchors) -> bool:
-    return all(chain.count(a) == 1 for a in anchors)
+    """Every anchor present at every site it should occupy — CONSISTENTLY.
+
+    Not ``== 1``: CAL-P099 gave the mode-price join a second site, so a fixed 1
+    would report "matches neither state" on a chain that matches one of them
+    perfectly well. The consistency clause the direction test cares about is
+    preserved, because ``_expected_sites`` derives the count from the chain: a
+    half-applied edit (the GROUP BY scoped, one join not) still fails.
+    """
+    return all(chain.count(a) == _expected_sites(chain, a) for a in anchors)
 
 
 def build_chains() -> tuple[str, str, str]:

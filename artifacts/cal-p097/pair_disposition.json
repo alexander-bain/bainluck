@@ -1,0 +1,3307 @@
+{
+  "label": "pair_disposition",
+  "measured": true,
+  "tolerance": 0.02,
+  "disposition_sql": "CASE\n        WHEN n_legs <> 2                      THEN 'not_two_leg'\n        WHEN n_open < 2                       THEN 'partial_open'\n        WHEN ABS(sum_open - 1) <= 0.02       THEN 'complementary'\n        WHEN min_open = max_open\n             AND n_over = 1 AND n_under = 1\n             AND n_win = 1                    THEN 'repairable_named_ou'\n        WHEN min_open = max_open              THEN 'nonrepairable_identical'\n        ELSE                                       'other_noncomp'\n      END",
+  "note": "disposition is a single ordered CASE, so every market has exactly one value and the arms sum to the population by construction. CERT-403A P1#2 exists because a cross-tab let two different margins be quoted about the same rows.",
+  "binding": {
+    "elapsed_s": 216.9,
+    "shards": [
+      {
+        "lo": 1,
+        "hi": 1000001,
+        "duration_ms": 5085.3,
+        "sql_fingerprint": "93d02610ed3e8641"
+      },
+      {
+        "lo": 1000001,
+        "hi": 2000001,
+        "duration_ms": 1005.3,
+        "sql_fingerprint": "09f7a0311417f03a"
+      },
+      {
+        "lo": 2000001,
+        "hi": 3000001,
+        "duration_ms": 1147.3,
+        "sql_fingerprint": "40f55f206a5ef4df"
+      },
+      {
+        "lo": 3000001,
+        "hi": 4000001,
+        "duration_ms": 580.2,
+        "sql_fingerprint": "bea454c149f38295"
+      },
+      {
+        "lo": 4000001,
+        "hi": 5000001,
+        "duration_ms": 184.6,
+        "sql_fingerprint": "8222f4ef5153d090"
+      },
+      {
+        "lo": 5000001,
+        "hi": 6000001,
+        "duration_ms": 215.0,
+        "sql_fingerprint": "b9a34ad0ba3dd075"
+      },
+      {
+        "lo": 6000001,
+        "hi": 7000001,
+        "duration_ms": 220.7,
+        "sql_fingerprint": "8cf78a5dcd972e96"
+      },
+      {
+        "lo": 7000001,
+        "hi": 8000001,
+        "duration_ms": 1235.1,
+        "sql_fingerprint": "c3b4b1760606c913"
+      },
+      {
+        "lo": 8000001,
+        "hi": 9000001,
+        "duration_ms": 942.8,
+        "sql_fingerprint": "790c2480f6d09011"
+      },
+      {
+        "lo": 9000001,
+        "hi": 10000001,
+        "duration_ms": 927.4,
+        "sql_fingerprint": "581c039f0f701c33"
+      },
+      {
+        "lo": 10000001,
+        "hi": 11000001,
+        "duration_ms": 660.0,
+        "sql_fingerprint": "c36ab5996f9bcfdf"
+      },
+      {
+        "lo": 11000001,
+        "hi": 12000001,
+        "duration_ms": 735.4,
+        "sql_fingerprint": "e09218566940e3eb"
+      },
+      {
+        "lo": 12000001,
+        "hi": 13000001,
+        "duration_ms": 1276.0,
+        "sql_fingerprint": "0704f842c6fe2750"
+      },
+      {
+        "lo": 13000001,
+        "hi": 13500001,
+        "duration_ms": 209.6,
+        "sql_fingerprint": "5df8c0f1d460cadd"
+      },
+      {
+        "lo": 13500001,
+        "hi": 14000001,
+        "duration_ms": 3826.7,
+        "sql_fingerprint": "2f713e858b84b8b3"
+      },
+      {
+        "lo": 14000001,
+        "hi": 15000001,
+        "duration_ms": 62.9,
+        "sql_fingerprint": "650062bfe0d16f76"
+      },
+      {
+        "lo": 15000001,
+        "hi": 16000001,
+        "duration_ms": 120.3,
+        "sql_fingerprint": "50558729752f49d0"
+      },
+      {
+        "lo": 16000001,
+        "hi": 17000001,
+        "duration_ms": 1302.4,
+        "sql_fingerprint": "6dda16e09875f72d"
+      },
+      {
+        "lo": 17000001,
+        "hi": 18000001,
+        "duration_ms": 319.9,
+        "sql_fingerprint": "7332526c8e9fc057"
+      },
+      {
+        "lo": 18000001,
+        "hi": 19000001,
+        "duration_ms": 374.7,
+        "sql_fingerprint": "fb526febddae6f45"
+      },
+      {
+        "lo": 19000001,
+        "hi": 20000001,
+        "duration_ms": 1100.2,
+        "sql_fingerprint": "e5abbf450da14b01"
+      },
+      {
+        "lo": 20000001,
+        "hi": 21000001,
+        "duration_ms": 976.6,
+        "sql_fingerprint": "91f26f04f8d3d9c7"
+      },
+      {
+        "lo": 21000001,
+        "hi": 22000001,
+        "duration_ms": 1275.4,
+        "sql_fingerprint": "2692945b5b5f60de"
+      },
+      {
+        "lo": 22000001,
+        "hi": 23000001,
+        "duration_ms": 1250.6,
+        "sql_fingerprint": "a07ab07faecb31f2"
+      },
+      {
+        "lo": 23000001,
+        "hi": 24000001,
+        "duration_ms": 399.3,
+        "sql_fingerprint": "400d6f9e46ce6bed"
+      },
+      {
+        "lo": 24000001,
+        "hi": 25000001,
+        "duration_ms": 1168.1,
+        "sql_fingerprint": "365085627357e59f"
+      },
+      {
+        "lo": 25000001,
+        "hi": 26000001,
+        "duration_ms": 1260.6,
+        "sql_fingerprint": "24f7b57a9eac75bc"
+      },
+      {
+        "lo": 26000001,
+        "hi": 27000001,
+        "duration_ms": 1379.3,
+        "sql_fingerprint": "42260b63070a5e10"
+      },
+      {
+        "lo": 27000001,
+        "hi": 28000001,
+        "duration_ms": 1484.0,
+        "sql_fingerprint": "3a3060cc202f1b2c"
+      },
+      {
+        "lo": 28000001,
+        "hi": 29000001,
+        "duration_ms": 1316.5,
+        "sql_fingerprint": "d59573106e23acba"
+      },
+      {
+        "lo": 29000001,
+        "hi": 30000001,
+        "duration_ms": 1522.3,
+        "sql_fingerprint": "d4c8010bae5bdca5"
+      },
+      {
+        "lo": 30000001,
+        "hi": 31000001,
+        "duration_ms": 1313.5,
+        "sql_fingerprint": "2e60cd23108e3cdb"
+      },
+      {
+        "lo": 31000001,
+        "hi": 32000001,
+        "duration_ms": 1409.6,
+        "sql_fingerprint": "dee72fce9e94977f"
+      },
+      {
+        "lo": 32000001,
+        "hi": 33000001,
+        "duration_ms": 1597.3,
+        "sql_fingerprint": "f49da17630bab600"
+      },
+      {
+        "lo": 33000001,
+        "hi": 34000001,
+        "duration_ms": 1505.4,
+        "sql_fingerprint": "496a8ae03b70933b"
+      },
+      {
+        "lo": 34000001,
+        "hi": 34500001,
+        "duration_ms": 563.8,
+        "sql_fingerprint": "b3fd1468d266806d"
+      },
+      {
+        "lo": 34500001,
+        "hi": 35000001,
+        "duration_ms": 4996.1,
+        "sql_fingerprint": "7139f86319920978"
+      },
+      {
+        "lo": 35000001,
+        "hi": 36000001,
+        "duration_ms": 7203.4,
+        "sql_fingerprint": "a0ce5b93a6109f10"
+      },
+      {
+        "lo": 36000001,
+        "hi": 37000001,
+        "duration_ms": 1060.0,
+        "sql_fingerprint": "7be6bc990e4d3350"
+      },
+      {
+        "lo": 37000001,
+        "hi": 38000001,
+        "duration_ms": 1966.7,
+        "sql_fingerprint": "a9f712fb37574780"
+      },
+      {
+        "lo": 38000001,
+        "hi": 39000001,
+        "duration_ms": 1216.8,
+        "sql_fingerprint": "9c4089b93dd532bb"
+      },
+      {
+        "lo": 39000001,
+        "hi": 40000001,
+        "duration_ms": 182.1,
+        "sql_fingerprint": "7abadd07f7387f1b"
+      },
+      {
+        "lo": 40000001,
+        "hi": 41000001,
+        "duration_ms": 215.0,
+        "sql_fingerprint": "a39324fb9c24fc47"
+      },
+      {
+        "lo": 41000001,
+        "hi": 42000001,
+        "duration_ms": 205.7,
+        "sql_fingerprint": "a9cd833cb80171e8"
+      },
+      {
+        "lo": 42000001,
+        "hi": 43000001,
+        "duration_ms": 208.0,
+        "sql_fingerprint": "cb7b8dc72a710a3d"
+      },
+      {
+        "lo": 43000001,
+        "hi": 44000001,
+        "duration_ms": 185.4,
+        "sql_fingerprint": "332ee923ad6a8b66"
+      },
+      {
+        "lo": 44000001,
+        "hi": 45000001,
+        "duration_ms": 114.1,
+        "sql_fingerprint": "602263c2278ab5de"
+      },
+      {
+        "lo": 45000001,
+        "hi": 46000001,
+        "duration_ms": 189.1,
+        "sql_fingerprint": "e9bd8dcd5e39b3eb"
+      },
+      {
+        "lo": 46000001,
+        "hi": 47000001,
+        "duration_ms": 270.3,
+        "sql_fingerprint": "5953dfa60867c401"
+      },
+      {
+        "lo": 47000001,
+        "hi": 48000001,
+        "duration_ms": 233.3,
+        "sql_fingerprint": "4edf0a282fbdfbd7"
+      },
+      {
+        "lo": 48000001,
+        "hi": 49000001,
+        "duration_ms": 246.0,
+        "sql_fingerprint": "990a9a8306f5d1df"
+      },
+      {
+        "lo": 49000001,
+        "hi": 50000001,
+        "duration_ms": 205.4,
+        "sql_fingerprint": "46661f1b2bc769bb"
+      },
+      {
+        "lo": 50000001,
+        "hi": 51000001,
+        "duration_ms": 207.6,
+        "sql_fingerprint": "6065f0fa33b5d423"
+      },
+      {
+        "lo": 51000001,
+        "hi": 52000001,
+        "duration_ms": 121.2,
+        "sql_fingerprint": "85114cfc64e8f795"
+      },
+      {
+        "lo": 52000001,
+        "hi": 53000001,
+        "duration_ms": 5018.3,
+        "sql_fingerprint": "2a16df144a92d42a"
+      },
+      {
+        "lo": 53000001,
+        "hi": 53500001,
+        "duration_ms": 2543.9,
+        "sql_fingerprint": "e3ecc4e4d39b94d1"
+      },
+      {
+        "lo": 53500001,
+        "hi": 54000001,
+        "duration_ms": 1642.5,
+        "sql_fingerprint": "d774cdc1f015f7d8"
+      },
+      {
+        "lo": 54000001,
+        "hi": 55000001,
+        "duration_ms": 176.7,
+        "sql_fingerprint": "91afdd0f3f7ee767"
+      },
+      {
+        "lo": 55000001,
+        "hi": 56000001,
+        "duration_ms": 304.3,
+        "sql_fingerprint": "faa461c5c8f5c5b0"
+      },
+      {
+        "lo": 56000001,
+        "hi": 56500001,
+        "duration_ms": 1080.6,
+        "sql_fingerprint": "953e1eba120924c6"
+      },
+      {
+        "lo": 56500001,
+        "hi": 56750001,
+        "duration_ms": 1448.1,
+        "sql_fingerprint": "f37ef713ec5ad43d"
+      },
+      {
+        "lo": 56750001,
+        "hi": 56875001,
+        "duration_ms": 3255.7,
+        "sql_fingerprint": "0fa2ddc1bf00ae6a"
+      },
+      {
+        "lo": 56875001,
+        "hi": 57000001,
+        "duration_ms": 2744.3,
+        "sql_fingerprint": "55216706061ffe81"
+      },
+      {
+        "lo": 57000001,
+        "hi": 57250001,
+        "duration_ms": 6794.2,
+        "sql_fingerprint": "345a72d98af773e6"
+      },
+      {
+        "lo": 57250001,
+        "hi": 57375001,
+        "duration_ms": 4111.0,
+        "sql_fingerprint": "7b8c54c4a36b063a"
+      },
+      {
+        "lo": 57375001,
+        "hi": 57500001,
+        "duration_ms": 2202.0,
+        "sql_fingerprint": "846c839863be9642"
+      },
+      {
+        "lo": 57500001,
+        "hi": 58000001,
+        "duration_ms": 5299.7,
+        "sql_fingerprint": "5a4b07e97959ed85"
+      },
+      {
+        "lo": 58000001,
+        "hi": 59000001,
+        "duration_ms": 6228.5,
+        "sql_fingerprint": "93a7a47d5796354e"
+      },
+      {
+        "lo": 59000001,
+        "hi": 59600000,
+        "duration_ms": 5090.5,
+        "sql_fingerprint": "8849336bcd179099"
+      }
+    ],
+    "irreducible": [],
+    "by_disposition": {
+      "not_two_leg": {
+        "markets": 9415,
+        "eligible_markets": 3719,
+        "under_legs": 0,
+        "under_legs_with_cp": 0,
+        "cells": {
+          "basketball/quantity": {
+            "markets": 2,
+            "under_legs_with_cp": 0
+          },
+          "economics/quantity": {
+            "markets": 689,
+            "under_legs_with_cp": 0
+          },
+          "entertainment/quantity": {
+            "markets": 108,
+            "under_legs_with_cp": 0
+          },
+          "esports/quantity": {
+            "markets": 6,
+            "under_legs_with_cp": 0
+          },
+          "geopolitics/quantity": {
+            "markets": 13,
+            "under_legs_with_cp": 0
+          },
+          "politics/quantity": {
+            "markets": 124,
+            "under_legs_with_cp": 0
+          },
+          "weather/quantity": {
+            "markets": 2731,
+            "under_legs_with_cp": 0
+          },
+          "tech/quantity": {
+            "markets": 31,
+            "under_legs_with_cp": 0
+          },
+          "football/quantity": {
+            "markets": 4,
+            "under_legs_with_cp": 0
+          },
+          "rodeo/quantity": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "olympics/quantity": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "weightlifting/quantity": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "baseball/quantity": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "hockey/quantity": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "soccer/quantity": {
+            "markets": 6,
+            "under_legs_with_cp": 0
+          }
+        }
+      },
+      "other_noncomp": {
+        "markets": 5622,
+        "eligible_markets": 619,
+        "under_legs": 2132,
+        "under_legs_with_cp": 900,
+        "cells": {
+          "cricket/container_member": {
+            "markets": 2,
+            "under_legs_with_cp": 0
+          },
+          "economics/container_member": {
+            "markets": 2,
+            "under_legs_with_cp": 0
+          },
+          "entertainment/container_member": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "esports/container_member": {
+            "markets": 360,
+            "under_legs_with_cp": 0
+          },
+          "esports/quantity": {
+            "markets": 20,
+            "under_legs_with_cp": 12
+          },
+          "soccer/quantity": {
+            "markets": 14,
+            "under_legs_with_cp": 14
+          },
+          "tennis/quantity": {
+            "markets": 6,
+            "under_legs_with_cp": 1
+          },
+          "baseball/quantity": {
+            "markets": 202,
+            "under_legs_with_cp": 201
+          },
+          "tennis/container_member": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "soccer/container_member": {
+            "markets": 11,
+            "under_legs_with_cp": 0
+          }
+        }
+      },
+      "partial_open": {
+        "markets": 107167,
+        "eligible_markets": 1708,
+        "under_legs": 47352,
+        "under_legs_with_cp": 4206,
+        "cells": {
+          "economics/container_member": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "esports/container_member": {
+            "markets": 373,
+            "under_legs_with_cp": 0
+          },
+          "tennis/container_member": {
+            "markets": 9,
+            "under_legs_with_cp": 0
+          },
+          "esports/quantity": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "soccer/quantity": {
+            "markets": 11,
+            "under_legs_with_cp": 6
+          },
+          "baseball/container_member": {
+            "markets": 20,
+            "under_legs_with_cp": 0
+          },
+          "baseball/quantity": {
+            "markets": 830,
+            "under_legs_with_cp": 0
+          },
+          "football/container_member": {
+            "markets": 345,
+            "under_legs_with_cp": 0
+          },
+          "hockey/quantity": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "tennis/quantity": {
+            "markets": 5,
+            "under_legs_with_cp": 0
+          },
+          "soccer/container_member": {
+            "markets": 111,
+            "under_legs_with_cp": 0
+          },
+          "entertainment/quantity": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          }
+        }
+      },
+      "complementary": {
+        "markets": 341471,
+        "eligible_markets": 16279,
+        "under_legs": 186071,
+        "under_legs_with_cp": 184379,
+        "cells": {
+          "economics/container_member": {
+            "markets": 254,
+            "under_legs_with_cp": 0
+          },
+          "entertainment/container_member": {
+            "markets": 50,
+            "under_legs_with_cp": 0
+          },
+          "esports/container_member": {
+            "markets": 3581,
+            "under_legs_with_cp": 0
+          },
+          "geopolitics/container_member": {
+            "markets": 4,
+            "under_legs_with_cp": 0
+          },
+          "politics/container_member": {
+            "markets": 57,
+            "under_legs_with_cp": 0
+          },
+          "soccer/container_member": {
+            "markets": 2834,
+            "under_legs_with_cp": 0
+          },
+          "soccer/quantity": {
+            "markets": 2590,
+            "under_legs_with_cp": 2590
+          },
+          "baseball/quantity": {
+            "markets": 2438,
+            "under_legs_with_cp": 2437
+          },
+          "mma/quantity": {
+            "markets": 35,
+            "under_legs_with_cp": 35
+          },
+          "motorsports/container_member": {
+            "markets": 5,
+            "under_legs_with_cp": 0
+          },
+          "tennis/quantity": {
+            "markets": 725,
+            "under_legs_with_cp": 725
+          },
+          "mma/container_member": {
+            "markets": 87,
+            "under_legs_with_cp": 0
+          },
+          "tennis/container_member": {
+            "markets": 1277,
+            "under_legs_with_cp": 0
+          },
+          "esports/quantity": {
+            "markets": 223,
+            "under_legs_with_cp": 222
+          },
+          "baseball/container_member": {
+            "markets": 142,
+            "under_legs_with_cp": 0
+          },
+          "cricket/container_member": {
+            "markets": 98,
+            "under_legs_with_cp": 0
+          },
+          "tech/container_member": {
+            "markets": 84,
+            "under_legs_with_cp": 0
+          },
+          "basketball/quantity": {
+            "markets": 1005,
+            "under_legs_with_cp": 1005
+          },
+          "golf/container_member": {
+            "markets": 59,
+            "under_legs_with_cp": 0
+          },
+          "football/quantity": {
+            "markets": 2,
+            "under_legs_with_cp": 2
+          },
+          "hockey/quantity": {
+            "markets": 565,
+            "under_legs_with_cp": 565
+          },
+          "basketball/container_member": {
+            "markets": 131,
+            "under_legs_with_cp": 0
+          },
+          "football/container_member": {
+            "markets": 32,
+            "under_legs_with_cp": 0
+          },
+          "weather/container_member": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          }
+        }
+      },
+      "nonrepairable_identical": {
+        "markets": 11720,
+        "eligible_markets": 1006,
+        "under_legs": 489,
+        "under_legs_with_cp": 288,
+        "cells": {
+          "politics/container_member": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "esports/container_member": {
+            "markets": 51,
+            "under_legs_with_cp": 0
+          },
+          "soccer/container_member": {
+            "markets": 941,
+            "under_legs_with_cp": 0
+          },
+          "baseball/container_member": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "cricket/container_member": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "tennis/container_member": {
+            "markets": 9,
+            "under_legs_with_cp": 0
+          },
+          "entertainment/container_member": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          },
+          "football/container_member": {
+            "markets": 1,
+            "under_legs_with_cp": 0
+          }
+        }
+      },
+      "repairable_named_ou": {
+        "markets": 7155,
+        "eligible_markets": 823,
+        "under_legs": 7155,
+        "under_legs_with_cp": 4899,
+        "cells": {
+          "soccer/quantity": {
+            "markets": 250,
+            "under_legs_with_cp": 249
+          },
+          "baseball/quantity": {
+            "markets": 500,
+            "under_legs_with_cp": 493
+          },
+          "tennis/quantity": {
+            "markets": 25,
+            "under_legs_with_cp": 25
+          },
+          "basketball/quantity": {
+            "markets": 39,
+            "under_legs_with_cp": 39
+          },
+          "esports/quantity": {
+            "markets": 8,
+            "under_legs_with_cp": 8
+          },
+          "hockey/quantity": {
+            "markets": 1,
+            "under_legs_with_cp": 1
+          }
+        }
+      }
+    },
+    "rows": [
+      {
+        "category": "baseball",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 5815,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "baseball",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 142,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "baseball",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 2516,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "baseball",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "baseball",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 857,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "baseball",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 5175,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "baseball",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 20,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "baseball",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 17771,
+        "under_legs": 17771,
+        "under_legs_with_cp": 17089
+      },
+      {
+        "category": "baseball",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 2438,
+        "under_legs": 2438,
+        "under_legs_with_cp": 2437
+      },
+      {
+        "category": "baseball",
+        "market_type": "quantity",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 39,
+        "under_legs": 39,
+        "under_legs_with_cp": 28
+      },
+      {
+        "category": "baseball",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "baseball",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "baseball",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 868,
+        "under_legs": 868,
+        "under_legs_with_cp": 303
+      },
+      {
+        "category": "baseball",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": true,
+        "markets": 202,
+        "under_legs": 202,
+        "under_legs_with_cp": 201
+      },
+      {
+        "category": "baseball",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 18667,
+        "under_legs": 18667,
+        "under_legs_with_cp": 1387
+      },
+      {
+        "category": "baseball",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 830,
+        "under_legs": 830,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "baseball",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": false,
+        "markets": 1876,
+        "under_legs": 1876,
+        "under_legs_with_cp": 1548
+      },
+      {
+        "category": "baseball",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": true,
+        "markets": 500,
+        "under_legs": 500,
+        "under_legs_with_cp": 493
+      },
+      {
+        "category": "basketball",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 1704,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "basketball",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 131,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "basketball",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 1156,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "basketball",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 228,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "basketball",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 3485,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "basketball",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 2298,
+        "under_legs": 2298,
+        "under_legs_with_cp": 2192
+      },
+      {
+        "category": "basketball",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 1005,
+        "under_legs": 1005,
+        "under_legs_with_cp": 1005
+      },
+      {
+        "category": "basketball",
+        "market_type": "quantity",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 209,
+        "under_legs": 209,
+        "under_legs_with_cp": 25
+      },
+      {
+        "category": "basketball",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 6,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "basketball",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "basketball",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 762,
+        "under_legs": 762,
+        "under_legs_with_cp": 197
+      },
+      {
+        "category": "basketball",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 7874,
+        "under_legs": 7874,
+        "under_legs_with_cp": 29
+      },
+      {
+        "category": "basketball",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": false,
+        "markets": 1643,
+        "under_legs": 1643,
+        "under_legs_with_cp": 282
+      },
+      {
+        "category": "basketball",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": true,
+        "markets": 39,
+        "under_legs": 39,
+        "under_legs_with_cp": 39
+      },
+      {
+        "category": "boxing",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "boxing",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "chess",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 198,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "cricket",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 1512,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "cricket",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 98,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "cricket",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 29,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "cricket",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "cricket",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 8,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "cricket",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": true,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "cricket",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 399,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "cricket",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 13,
+        "under_legs": 13,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "crypto",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "culture",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 17,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "cycling",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "economics",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 6594,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "economics",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 254,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "economics",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 288,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "economics",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 24,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "economics",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": true,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "economics",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 2633,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "economics",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "economics",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 654,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "economics",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 689,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "entertainment",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 1326,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "entertainment",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 50,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "entertainment",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 82,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "entertainment",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "entertainment",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 29,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "entertainment",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "entertainment",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 654,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "entertainment",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 266,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "entertainment",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 108,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "entertainment",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 3,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "entertainment",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 44420,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 3581,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 1429,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": true,
+        "markets": 51,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 1480,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": true,
+        "markets": 360,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 29407,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 373,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 3446,
+        "under_legs": 3446,
+        "under_legs_with_cp": 3344
+      },
+      {
+        "category": "esports",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 223,
+        "under_legs": 223,
+        "under_legs_with_cp": 222
+      },
+      {
+        "category": "esports",
+        "market_type": "quantity",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 4,
+        "under_legs": 4,
+        "under_legs_with_cp": 4
+      },
+      {
+        "category": "esports",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 6,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 93,
+        "under_legs": 93,
+        "under_legs_with_cp": 72
+      },
+      {
+        "category": "esports",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": true,
+        "markets": 20,
+        "under_legs": 20,
+        "under_legs_with_cp": 12
+      },
+      {
+        "category": "esports",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 1575,
+        "under_legs": 1575,
+        "under_legs_with_cp": 261
+      },
+      {
+        "category": "esports",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 1,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "esports",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": false,
+        "markets": 108,
+        "under_legs": 108,
+        "under_legs_with_cp": 100
+      },
+      {
+        "category": "esports",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": true,
+        "markets": 8,
+        "under_legs": 8,
+        "under_legs_with_cp": 8
+      },
+      {
+        "category": "football",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 126,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "football",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 32,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "football",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "football",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "football",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 308,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "football",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 345,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "football",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 3,
+        "under_legs": 3,
+        "under_legs_with_cp": 3
+      },
+      {
+        "category": "football",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 2,
+        "under_legs": 2,
+        "under_legs_with_cp": 2
+      },
+      {
+        "category": "football",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "football",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 4,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "geopolitics",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 479,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "geopolitics",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 4,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "geopolitics",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 67,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "geopolitics",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 29,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "geopolitics",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 305,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "geopolitics",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 26,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "geopolitics",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 13,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "golf",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 2454,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "golf",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 59,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "golf",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 19,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "golf",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 1119,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "golf",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "hockey",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 318,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "hockey",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 384,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "hockey",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 70,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "hockey",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 532,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "hockey",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 46,
+        "under_legs": 46,
+        "under_legs_with_cp": 31
+      },
+      {
+        "category": "hockey",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 565,
+        "under_legs": 565,
+        "under_legs_with_cp": 565
+      },
+      {
+        "category": "hockey",
+        "market_type": "quantity",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 4,
+        "under_legs": 4,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "hockey",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "hockey",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "hockey",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 92,
+        "under_legs": 92,
+        "under_legs_with_cp": 26
+      },
+      {
+        "category": "hockey",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 1002,
+        "under_legs": 1002,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "hockey",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 1,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "hockey",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": false,
+        "markets": 341,
+        "under_legs": 341,
+        "under_legs_with_cp": 20
+      },
+      {
+        "category": "hockey",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 1,
+        "under_legs_with_cp": 1
+      },
+      {
+        "category": "legal",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "mma",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 685,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "mma",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 87,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "mma",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "mma",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 292,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "mma",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 306,
+        "under_legs": 306,
+        "under_legs_with_cp": 306
+      },
+      {
+        "category": "mma",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 35,
+        "under_legs": 35,
+        "under_legs_with_cp": 35
+      },
+      {
+        "category": "mma",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 137,
+        "under_legs": 137,
+        "under_legs_with_cp": 15
+      },
+      {
+        "category": "motorsports",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 239,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "motorsports",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 5,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "motorsports",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "motorsports",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "motorsports",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 58,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "motorsports",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "olympics",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 6,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "olympics",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 2,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "olympics",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 6,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "olympics",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "pickleball",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 11,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "politics",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 1841,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "politics",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 57,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "politics",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 300,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "politics",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "politics",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 77,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "politics",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 820,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "politics",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 304,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "politics",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 124,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "politics",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "politics",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "rodeo",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 28,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "rodeo",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 4,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "rodeo",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 100,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "rodeo",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "rugby",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 4,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "rugby",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 1,
+        "under_legs_with_cp": 1
+      },
+      {
+        "category": "soccer",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 27652,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "soccer",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 2834,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "soccer",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 2339,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "soccer",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": true,
+        "markets": 941,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "soccer",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 77,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "soccer",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": true,
+        "markets": 11,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "soccer",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 9415,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "soccer",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 111,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "soccer",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 94131,
+        "under_legs": 94131,
+        "under_legs_with_cp": 93886
+      },
+      {
+        "category": "soccer",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 2590,
+        "under_legs": 2590,
+        "under_legs_with_cp": 2590
+      },
+      {
+        "category": "soccer",
+        "market_type": "quantity",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 75,
+        "under_legs": 75,
+        "under_legs_with_cp": 73
+      },
+      {
+        "category": "soccer",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "soccer",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 6,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "soccer",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 56,
+        "under_legs": 56,
+        "under_legs_with_cp": 55
+      },
+      {
+        "category": "soccer",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": true,
+        "markets": 14,
+        "under_legs": 14,
+        "under_legs_with_cp": 14
+      },
+      {
+        "category": "soccer",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 7098,
+        "under_legs": 7098,
+        "under_legs_with_cp": 957
+      },
+      {
+        "category": "soccer",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 11,
+        "under_legs": 11,
+        "under_legs_with_cp": 6
+      },
+      {
+        "category": "soccer",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": false,
+        "markets": 823,
+        "under_legs": 823,
+        "under_legs_with_cp": 788
+      },
+      {
+        "category": "soccer",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": true,
+        "markets": 250,
+        "under_legs": 250,
+        "under_legs_with_cp": 249
+      },
+      {
+        "category": "table_tennis",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 28522,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "table_tennis",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "table_tennis",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 147,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "table_tennis",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 466,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "table_tennis",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 36089,
+        "under_legs": 36089,
+        "under_legs_with_cp": 35794
+      },
+      {
+        "category": "table_tennis",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 12,
+        "under_legs": 12,
+        "under_legs_with_cp": 12
+      },
+      {
+        "category": "table_tennis",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 3064,
+        "under_legs": 3064,
+        "under_legs_with_cp": 15
+      },
+      {
+        "category": "tech",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 870,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tech",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 84,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tech",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 54,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tech",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 30,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tech",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 359,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tech",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 69,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tech",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 31,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tennis",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 21692,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tennis",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 1277,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tennis",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 1552,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tennis",
+        "market_type": "container_member",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": true,
+        "markets": 9,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tennis",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 26,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tennis",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tennis",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 3379,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tennis",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 9,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tennis",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 24397,
+        "under_legs": 24397,
+        "under_legs_with_cp": 24152
+      },
+      {
+        "category": "tennis",
+        "market_type": "quantity",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 725,
+        "under_legs": 725,
+        "under_legs_with_cp": 725
+      },
+      {
+        "category": "tennis",
+        "market_type": "quantity",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 158,
+        "under_legs": 158,
+        "under_legs_with_cp": 158
+      },
+      {
+        "category": "tennis",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 7,
+        "under_legs": 7,
+        "under_legs_with_cp": 7
+      },
+      {
+        "category": "tennis",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": true,
+        "markets": 6,
+        "under_legs": 6,
+        "under_legs_with_cp": 1
+      },
+      {
+        "category": "tennis",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 7074,
+        "under_legs": 7074,
+        "under_legs_with_cp": 1536
+      },
+      {
+        "category": "tennis",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": true,
+        "markets": 5,
+        "under_legs": 5,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "tennis",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": false,
+        "markets": 1541,
+        "under_legs": 1541,
+        "under_legs_with_cp": 1346
+      },
+      {
+        "category": "tennis",
+        "market_type": "quantity",
+        "disposition": "repairable_named_ou",
+        "has_eligible": true,
+        "markets": 25,
+        "under_legs": 25,
+        "under_legs_with_cp": 25
+      },
+      {
+        "category": "weather",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": false,
+        "markets": 184,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "weather",
+        "market_type": "container_member",
+        "disposition": "complementary",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "weather",
+        "market_type": "container_member",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 16,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "weather",
+        "market_type": "container_member",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 32,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "weather",
+        "market_type": "quantity",
+        "disposition": "nonrepairable_identical",
+        "has_eligible": false,
+        "markets": 3,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "weather",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": false,
+        "markets": 4361,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "weather",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 2731,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "weather",
+        "market_type": "quantity",
+        "disposition": "other_noncomp",
+        "has_eligible": false,
+        "markets": 5,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "weather",
+        "market_type": "quantity",
+        "disposition": "partial_open",
+        "has_eligible": false,
+        "markets": 9,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      },
+      {
+        "category": "weightlifting",
+        "market_type": "quantity",
+        "disposition": "not_two_leg",
+        "has_eligible": true,
+        "markets": 1,
+        "under_legs": 0,
+        "under_legs_with_cp": 0
+      }
+    ]
+  },
+  "deltas": {
+    "elapsed_s": 48.2,
+    "shards": [
+      {
+        "lo": 1,
+        "hi": 1000001,
+        "duration_ms": 230.9,
+        "sql_fingerprint": "875a476b590a721e"
+      },
+      {
+        "lo": 1000001,
+        "hi": 2000001,
+        "duration_ms": 186.8,
+        "sql_fingerprint": "f9c3b1b7535d9594"
+      },
+      {
+        "lo": 2000001,
+        "hi": 3000001,
+        "duration_ms": 207.6,
+        "sql_fingerprint": "3bd6953579786a87"
+      },
+      {
+        "lo": 3000001,
+        "hi": 4000001,
+        "duration_ms": 127.7,
+        "sql_fingerprint": "87e714cde8c182e2"
+      },
+      {
+        "lo": 4000001,
+        "hi": 5000001,
+        "duration_ms": 161.0,
+        "sql_fingerprint": "7b8f76f18d3f1a7e"
+      },
+      {
+        "lo": 5000001,
+        "hi": 6000001,
+        "duration_ms": 173.7,
+        "sql_fingerprint": "681aa46a3fa000a1"
+      },
+      {
+        "lo": 6000001,
+        "hi": 7000001,
+        "duration_ms": 125.9,
+        "sql_fingerprint": "39466e1bb67ad186"
+      },
+      {
+        "lo": 7000001,
+        "hi": 8000001,
+        "duration_ms": 193.1,
+        "sql_fingerprint": "7e36ca562da6cf39"
+      },
+      {
+        "lo": 8000001,
+        "hi": 9000001,
+        "duration_ms": 163.2,
+        "sql_fingerprint": "57df51500d838f42"
+      },
+      {
+        "lo": 9000001,
+        "hi": 10000001,
+        "duration_ms": 131.1,
+        "sql_fingerprint": "8aa5e91a880393e9"
+      },
+      {
+        "lo": 10000001,
+        "hi": 11000001,
+        "duration_ms": 108.9,
+        "sql_fingerprint": "2fe11e7ea82dfce2"
+      },
+      {
+        "lo": 11000001,
+        "hi": 12000001,
+        "duration_ms": 217.8,
+        "sql_fingerprint": "b06fbfad254490fe"
+      },
+      {
+        "lo": 12000001,
+        "hi": 13000001,
+        "duration_ms": 229.9,
+        "sql_fingerprint": "cf549cc85cadf892"
+      },
+      {
+        "lo": 13000001,
+        "hi": 14000001,
+        "duration_ms": 1064.5,
+        "sql_fingerprint": "9be0fefe82260863"
+      },
+      {
+        "lo": 14000001,
+        "hi": 15000001,
+        "duration_ms": 51.1,
+        "sql_fingerprint": "87004692e76f8bad"
+      },
+      {
+        "lo": 15000001,
+        "hi": 16000001,
+        "duration_ms": 114.0,
+        "sql_fingerprint": "f753af91daaf07d4"
+      },
+      {
+        "lo": 16000001,
+        "hi": 17000001,
+        "duration_ms": 706.5,
+        "sql_fingerprint": "561c83bac8bed1a2"
+      },
+      {
+        "lo": 17000001,
+        "hi": 18000001,
+        "duration_ms": 81.7,
+        "sql_fingerprint": "8c9faaeb7df5b2bd"
+      },
+      {
+        "lo": 18000001,
+        "hi": 19000001,
+        "duration_ms": 151.8,
+        "sql_fingerprint": "2ada0ca6a0cdcae5"
+      },
+      {
+        "lo": 19000001,
+        "hi": 20000001,
+        "duration_ms": 307.4,
+        "sql_fingerprint": "bb3e19db8d38328d"
+      },
+      {
+        "lo": 20000001,
+        "hi": 21000001,
+        "duration_ms": 787.8,
+        "sql_fingerprint": "d5cccf8e36049ed4"
+      },
+      {
+        "lo": 21000001,
+        "hi": 22000001,
+        "duration_ms": 322.0,
+        "sql_fingerprint": "3c2b0b17d268fe53"
+      },
+      {
+        "lo": 22000001,
+        "hi": 23000001,
+        "duration_ms": 380.5,
+        "sql_fingerprint": "b5075c71e305bd42"
+      },
+      {
+        "lo": 23000001,
+        "hi": 24000001,
+        "duration_ms": 263.7,
+        "sql_fingerprint": "01489dd479fa4de9"
+      },
+      {
+        "lo": 24000001,
+        "hi": 25000001,
+        "duration_ms": 455.1,
+        "sql_fingerprint": "3295cb3be6511b1a"
+      },
+      {
+        "lo": 25000001,
+        "hi": 26000001,
+        "duration_ms": 696.9,
+        "sql_fingerprint": "d05d2a37ae64cd70"
+      },
+      {
+        "lo": 26000001,
+        "hi": 27000001,
+        "duration_ms": 644.5,
+        "sql_fingerprint": "7d36af99c423acea"
+      },
+      {
+        "lo": 27000001,
+        "hi": 28000001,
+        "duration_ms": 373.0,
+        "sql_fingerprint": "8a6f48e02cea24ef"
+      },
+      {
+        "lo": 28000001,
+        "hi": 29000001,
+        "duration_ms": 551.1,
+        "sql_fingerprint": "c6167f416089ec68"
+      },
+      {
+        "lo": 29000001,
+        "hi": 30000001,
+        "duration_ms": 598.2,
+        "sql_fingerprint": "6e13fefb5b965535"
+      },
+      {
+        "lo": 30000001,
+        "hi": 31000001,
+        "duration_ms": 348.7,
+        "sql_fingerprint": "fdf77d6314f1718c"
+      },
+      {
+        "lo": 31000001,
+        "hi": 32000001,
+        "duration_ms": 387.2,
+        "sql_fingerprint": "5783b1a6f42c06c3"
+      },
+      {
+        "lo": 32000001,
+        "hi": 33000001,
+        "duration_ms": 463.4,
+        "sql_fingerprint": "8138f7c1bf861e46"
+      },
+      {
+        "lo": 33000001,
+        "hi": 34000001,
+        "duration_ms": 445.4,
+        "sql_fingerprint": "a73bfd4127178f65"
+      },
+      {
+        "lo": 34000001,
+        "hi": 35000001,
+        "duration_ms": 1012.1,
+        "sql_fingerprint": "86c92664a1dbdc01"
+      },
+      {
+        "lo": 35000001,
+        "hi": 36000001,
+        "duration_ms": 880.9,
+        "sql_fingerprint": "01549f474d561da4"
+      },
+      {
+        "lo": 36000001,
+        "hi": 37000001,
+        "duration_ms": 272.9,
+        "sql_fingerprint": "16db27aad87042dc"
+      },
+      {
+        "lo": 37000001,
+        "hi": 38000001,
+        "duration_ms": 498.9,
+        "sql_fingerprint": "baa2ef4046919993"
+      },
+      {
+        "lo": 38000001,
+        "hi": 39000001,
+        "duration_ms": 301.7,
+        "sql_fingerprint": "403aec315ceaca44"
+      },
+      {
+        "lo": 39000001,
+        "hi": 40000001,
+        "duration_ms": 22.5,
+        "sql_fingerprint": "e2ecf6a665a3d6e5"
+      },
+      {
+        "lo": 40000001,
+        "hi": 41000001,
+        "duration_ms": 67.5,
+        "sql_fingerprint": "28ce0b4ba48586d8"
+      },
+      {
+        "lo": 41000001,
+        "hi": 42000001,
+        "duration_ms": 41.7,
+        "sql_fingerprint": "6c8b0c50be01f588"
+      },
+      {
+        "lo": 42000001,
+        "hi": 43000001,
+        "duration_ms": 43.2,
+        "sql_fingerprint": "cfaa88b43ed6a1d5"
+      },
+      {
+        "lo": 43000001,
+        "hi": 44000001,
+        "duration_ms": 63.0,
+        "sql_fingerprint": "6f12403805bec1d8"
+      },
+      {
+        "lo": 44000001,
+        "hi": 45000001,
+        "duration_ms": 43.9,
+        "sql_fingerprint": "3793cb1458309d93"
+      },
+      {
+        "lo": 45000001,
+        "hi": 46000001,
+        "duration_ms": 52.9,
+        "sql_fingerprint": "953c3c6be058c8d3"
+      },
+      {
+        "lo": 46000001,
+        "hi": 47000001,
+        "duration_ms": 111.6,
+        "sql_fingerprint": "50c82d001221e6d4"
+      },
+      {
+        "lo": 47000001,
+        "hi": 48000001,
+        "duration_ms": 35.7,
+        "sql_fingerprint": "1cf95ee47554c9ea"
+      },
+      {
+        "lo": 48000001,
+        "hi": 49000001,
+        "duration_ms": 79.0,
+        "sql_fingerprint": "260ca3ba973ef55d"
+      },
+      {
+        "lo": 49000001,
+        "hi": 50000001,
+        "duration_ms": 52.3,
+        "sql_fingerprint": "47beb59271a9cf31"
+      },
+      {
+        "lo": 50000001,
+        "hi": 51000001,
+        "duration_ms": 68.3,
+        "sql_fingerprint": "c94a4b944cc384e4"
+      },
+      {
+        "lo": 51000001,
+        "hi": 52000001,
+        "duration_ms": 87.2,
+        "sql_fingerprint": "f828691168b38ded"
+      },
+      {
+        "lo": 52000001,
+        "hi": 53000001,
+        "duration_ms": 167.9,
+        "sql_fingerprint": "6dc33c76ba7a19d4"
+      },
+      {
+        "lo": 53000001,
+        "hi": 54000001,
+        "duration_ms": 159.4,
+        "sql_fingerprint": "d918de0b19decc56"
+      },
+      {
+        "lo": 54000001,
+        "hi": 55000001,
+        "duration_ms": 222.4,
+        "sql_fingerprint": "f249c70178b982cd"
+      },
+      {
+        "lo": 55000001,
+        "hi": 56000001,
+        "duration_ms": 278.2,
+        "sql_fingerprint": "fca85b3283f6eb85"
+      },
+      {
+        "lo": 56000001,
+        "hi": 57000001,
+        "duration_ms": 3418.3,
+        "sql_fingerprint": "a0a893c9214ac6f3"
+      },
+      {
+        "lo": 57000001,
+        "hi": 58000001,
+        "duration_ms": 7949.8,
+        "sql_fingerprint": "ca793511c50cd706"
+      },
+      {
+        "lo": 58000001,
+        "hi": 59000001,
+        "duration_ms": 5091.9,
+        "sql_fingerprint": "4dd6cdd9b58e40d9"
+      },
+      {
+        "lo": 59000001,
+        "hi": 59600000,
+        "duration_ms": 1911.5,
+        "sql_fingerprint": "a0b4a8365c6a56ec"
+      }
+    ],
+    "irreducible": [],
+    "cells": {
+      "esports/container_member": {
+        "complementary": {
+          "as_is": {
+            "ece": 2.46,
+            "n": 7162,
+            "gap": 0.03
+          },
+          "repaired": {
+            "ece": 2.46,
+            "n": 7162,
+            "gap": 0.03
+          }
+        },
+        "other_noncomp": {
+          "as_is": {
+            "ece": 22.31,
+            "n": 583,
+            "gap": -5.21
+          },
+          "repaired": {
+            "ece": 22.31,
+            "n": 583,
+            "gap": -5.21
+          }
+        },
+        "nonrepairable_identical": {
+          "as_is": {
+            "ece": 16.94,
+            "n": 102,
+            "gap": -11.94
+          },
+          "repaired": {
+            "ece": 16.94,
+            "n": 102,
+            "gap": -11.94
+          }
+        }
+      },
+      "soccer/container_member": {
+        "complementary": {
+          "as_is": {
+            "ece": 13.51,
+            "n": 5668,
+            "gap": -2.78
+          },
+          "repaired": {
+            "ece": 13.51,
+            "n": 5668,
+            "gap": -2.78
+          }
+        },
+        "nonrepairable_identical": {
+          "as_is": {
+            "ece": 19.29,
+            "n": 1882,
+            "gap": -15.14
+          },
+          "repaired": {
+            "ece": 19.29,
+            "n": 1882,
+            "gap": -15.14
+          }
+        },
+        "other_noncomp": {
+          "as_is": {
+            "ece": null,
+            "n": 21,
+            "gap": null
+          },
+          "repaired": {
+            "ece": null,
+            "n": 21,
+            "gap": null
+          }
+        }
+      },
+      "soccer/quantity": {
+        "complementary": {
+          "as_is": {
+            "ece": 8.24,
+            "n": 5180,
+            "gap": -0.36
+          },
+          "repaired": {
+            "ece": 8.24,
+            "n": 5180,
+            "gap": -0.36
+          }
+        },
+        "other_noncomp": {
+          "as_is": {
+            "ece": null,
+            "n": 28,
+            "gap": null
+          },
+          "repaired": {
+            "ece": null,
+            "n": 28,
+            "gap": null
+          }
+        },
+        "repairable_named_ou": {
+          "as_is": {
+            "ece": 21.39,
+            "n": 500,
+            "gap": -3.56
+          },
+          "repaired": {
+            "ece": 21.19,
+            "n": 500,
+            "gap": -3.76
+          }
+        }
+      },
+      "tennis/quantity": {
+        "other_noncomp": {
+          "as_is": {
+            "ece": null,
+            "n": 7,
+            "gap": null
+          },
+          "repaired": {
+            "ece": null,
+            "n": 7,
+            "gap": null
+          }
+        },
+        "complementary": {
+          "as_is": {
+            "ece": 4.2,
+            "n": 1450,
+            "gap": -0.19
+          },
+          "repaired": {
+            "ece": 4.2,
+            "n": 1450,
+            "gap": -0.19
+          }
+        },
+        "repairable_named_ou": {
+          "as_is": {
+            "ece": 38.02,
+            "n": 50,
+            "gap": -1.29
+          },
+          "repaired": {
+            "ece": 38.02,
+            "n": 50,
+            "gap": -1.29
+          }
+        }
+      },
+      "baseball/quantity": {
+        "other_noncomp": {
+          "as_is": {
+            "ece": 34.51,
+            "n": 403,
+            "gap": -19.63
+          },
+          "repaired": {
+            "ece": 34.51,
+            "n": 403,
+            "gap": -19.63
+          }
+        },
+        "complementary": {
+          "as_is": {
+            "ece": 13.54,
+            "n": 4876,
+            "gap": -6.25
+          },
+          "repaired": {
+            "ece": 13.54,
+            "n": 4876,
+            "gap": -6.25
+          }
+        },
+        "repairable_named_ou": {
+          "as_is": {
+            "ece": 25.59,
+            "n": 1000,
+            "gap": -21.18
+          },
+          "repaired": {
+            "ece": 25.09,
+            "n": 1000,
+            "gap": -20.51
+          }
+        }
+      },
+      "basketball/quantity": {
+        "repairable_named_ou": {
+          "as_is": {
+            "ece": 14.69,
+            "n": 78,
+            "gap": -6.5
+          },
+          "repaired": {
+            "ece": 14.69,
+            "n": 78,
+            "gap": -6.5
+          }
+        },
+        "complementary": {
+          "as_is": {
+            "ece": 5.83,
+            "n": 2010,
+            "gap": -0.15
+          },
+          "repaired": {
+            "ece": 5.83,
+            "n": 2010,
+            "gap": -0.15
+          }
+        }
+      }
+    }
+  }
+}
