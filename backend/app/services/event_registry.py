@@ -48,6 +48,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Event, Sport
+from app.services.anchor_channel import (
+    COLLISION,
+    anchor_key_for_claim,
+    duplicate_tag,
+    find_event_by_anchor,
+    record_anchor,
+)
 from app.utils.espn_helpers import commence_correction_inverts_completion
 from app.utils.name_normalization import names_match
 
@@ -255,6 +262,31 @@ class EventClaim:
     # absorbing behaviour. Adding a caller is the moment to answer this question.
     schedule_derived: bool = False
 
+    # The PROVIDER's own id, when ``source_id`` above is something we synthesized.
+    #
+    # This exists because of a defect caught while wiring #2213's Step 2. The
+    # prediction-market call site builds ``source_id`` as
+    # ``f"pm_{market.source}_{market.external_id}"`` — a synthetic, prefixed
+    # string. Kalshi and Polymarket have no id column on ``events``, so Step 1
+    # ignores it and ``_attach_claim`` ignores it, which is why nobody noticed it
+    # was not the provider's id: it had no reader.
+    #
+    # The anchor channel IS that reader, and it is the one place where the
+    # distinction is load-bearing. ``kalshi_anchor_key("pm_kalshi_KXMLBGAME-...")``
+    # cannot find a game token in a prefixed string, so it degrades to
+    # ``id_kind='market'`` — recorded, and permanently unable to anchor. The rail
+    # would have looked correct, passed every test, written rows, and resolved
+    # nothing.
+    #
+    # Set this at any call site whose ``source_id`` is not verbatim what the
+    # provider calls the thing. Leave it None when it is.
+    provider_id: Optional[str] = None
+
+    @property
+    def anchor_source_id(self) -> Optional[str]:
+        """The id an anchor key must be built from — the provider's, never ours."""
+        return self.provider_id or self.source_id
+
 
 @dataclass
 class EventIdentity:
@@ -288,9 +320,26 @@ async def find_or_create_event(
             # Steps 1-3: Try to find existing event
             event = await _find_existing(session, identity, sport_id)
             if event:
-                _attach_claim(event, identity.claim)
+                attached_new = _attach_claim(event, identity.claim)
                 _update_fields_by_priority(event, identity)
                 await session.flush()
+                # A correspondence is established when a previously-empty column
+                # just took this id, or when the provider has no column that
+                # could ever have held it. Anything else is a repeat poll and
+                # writes nothing (#2213).
+                #
+                # The column-less providers are re-offered every time rather
+                # than tracked: arriving via their own anchor makes the write a
+                # CONFIRMED no-op, and one `ON CONFLICT DO NOTHING` on the
+                # 15-minute prediction-market matcher is cheaper than threading
+                # "how did we get here" through the cascade's return type.
+                await _record_claim_anchor(
+                    session, event, identity, sport_id,
+                    established=(
+                        attached_new
+                        or identity.claim.source in _SOURCES_WITHOUT_ID_COLUMN
+                    ),
+                )
                 return event, False
 
             # #210 / gotcha #32: never CREATE a teamless placeholder event. A
@@ -335,6 +384,13 @@ async def find_or_create_event(
             session.add(event)
             await session.flush()
 
+            # A created row is always a new correspondence. Recording it here is
+            # what stops the NEXT claim carrying the same provider id from
+            # creating a third row — the failure mode #2213 is a photograph of.
+            await _record_claim_anchor(
+                session, event, identity, sport_id, established=True
+            )
+
             logger.info(
                 "Created event %d: %s vs %s (%s, %s) [source=%s anchored=%s]",
                 event.id, identity.home_team_name, identity.away_team_name,
@@ -366,10 +422,26 @@ async def _find_existing(
     if event:
         return event
 
-    # Step 2: Cross-source ID lookup (not applicable for the first source,
-    # but handles cases where we have the ESPN ID and want to find
-    # the event created by Odds API)
-    # This step is implicit — Step 3 will find it by sport+date+teams
+    # Step 2: Cross-source ID — the anchor channel (#2213, queue 413).
+    #
+    # This step used to read "implicit — Step 3 will find it by sport+date+teams".
+    # Ruling 048 closed Step 3 to unanchored claims and nothing replaced that
+    # sentence, so Step 2 has been ABSENT rather than implicit ever since. For
+    # Kalshi and Polymarket it was never implicit even before 048: they have no
+    # id column on `events` at all, so Step 1 returns None unconditionally and
+    # 99.61% of rows measured `NO_ANCHOR_CHANNEL`.
+    #
+    # This is ruling 048 ARM A — a SHARED id — read out of `event_provider_anchors`
+    # instead of out of one of the three id columns that happen to exist. It is
+    # not a new absorption power and it is deliberately NOT gated on
+    # `schedule_derived`: Step 1 absorbs on a shared id today without that flag,
+    # and requiring it here would make the table stricter than the column for no
+    # reason. What keeps this honest is upstream, in `provider_anchor_keys`:
+    # only `id_kind='game'` is ever consulted, every `source_id` is
+    # namespace-qualified, and an unrecognised namespace yields no key at all.
+    anchored_event = await _find_by_anchor(session, identity, sport_id)
+    if anchored_event:
+        return anchored_event
 
     # Step 3: Structured match — sport + date + teams.
     #
@@ -422,6 +494,143 @@ async def _find_by_source_id(
         return None
 
     return result.scalar_one_or_none()
+
+
+#: Providers with no id column on `events`. For these the anchor channel is not
+#: an optimisation — it is the ONLY route to a prior row, which is why they made
+#: up 99.61% of the `NO_ANCHOR_CHANNEL` population (kalshi 73,678, polymarket
+#: 503, measured 2026-08-20).
+_SOURCES_WITHOUT_ID_COLUMN = frozenset({"kalshi", "polymarket"})
+
+
+async def _find_by_anchor(
+    session: AsyncSession,
+    identity: EventIdentity,
+    sport_id: int,
+) -> Optional[Event]:
+    """Step 2: does some row already carry this provider id in the channel?"""
+    key = anchor_key_for_claim(
+        identity.claim.source, identity.claim.anchor_source_id
+    )
+    event_id = await find_event_by_anchor(
+        session, key, expected_sport_id=sport_id
+    )
+    if event_id is None:
+        return None
+
+    event = (
+        await session.execute(select(Event).where(Event.id == event_id))
+    ).scalar_one_or_none()
+
+    if event is None:
+        # The anchor names a row that no longer exists. The FK is ON DELETE
+        # CASCADE so this should be unreachable; if it happens, a dangling
+        # assertion must not become an absorption target.
+        logger.warning(
+            "Anchor %s:%s names event %s, which does not exist — treating as a miss",
+            key.source, key.source_id, event_id,
+        )
+        return None
+
+    logger.info(
+        "Step 2 anchor hit: %s claim %r resolved to event %s (%s vs %s)",
+        identity.claim.source, identity.claim.source_id, event.id,
+        identity.home_team_name, identity.away_team_name,
+    )
+    return event
+
+
+async def _record_claim_anchor(
+    session: AsyncSession,
+    event: Event,
+    identity: EventIdentity,
+    sport_id: int,
+    *,
+    established: bool,
+) -> None:
+    """Write the claim's anchor when a correspondence was newly ESTABLISHED.
+
+    ``established`` is the whole cost control. A repeat poll of a claim whose id
+    is already on its column establishes nothing, and Tier-1 live polling runs at
+    32s — an `INSERT ... ON CONFLICT DO NOTHING` per source per event per cycle
+    would be a steady stream of no-op writes bought for no information.
+
+    A ``COLLISION`` here is not an error to swallow. It is the first moment the
+    system holds proof, keyed on an id rather than guessed from names and a time
+    window, that two rows are one game.
+    """
+    if not established:
+        return
+
+    key = anchor_key_for_claim(
+        identity.claim.source, identity.claim.anchor_source_id
+    )
+    if key is None:
+        return
+
+    result = await record_anchor(
+        session,
+        event_id=event.id,
+        key=key,
+        claim_context={
+            "source": identity.claim.source,
+            "schedule_derived": identity.claim.schedule_derived,
+            "commence_time_source": identity.commence_time_source,
+        },
+    )
+
+    if result.outcome != COLLISION or result.canonical_event_id == event.id:
+        return
+
+    # Re-run the Step 2 read to establish that the incumbent is in THIS sport.
+    # A cross-sport hit is a data defect that `find_event_by_anchor` already
+    # logged and refused; tagging on it would record a duplicate relationship
+    # between two rows that are not the same game. One extra query, on a path
+    # that fires only on a genuine conflict.
+    same_sport_canonical = await find_event_by_anchor(
+        session, key, expected_sport_id=sport_id
+    )
+    if same_sport_canonical != result.canonical_event_id:
+        return
+
+    await _tag_duplicate_of(session, event.id, result.canonical_event_id)
+
+
+async def _tag_duplicate_of(
+    session: AsyncSession, event_id: int, canonical_event_id: int
+) -> None:
+    """Record `event_id` as a proven duplicate of `canonical_event_id`.
+
+    Written with Core SQL against the row rather than by mutating
+    ``Event.event_tags`` in memory. ``event_tags`` is JSONB, and gotcha #4 is
+    that a JSONB ORM assignment can silently fail to persist; gotcha #5 is that
+    mixing the two styles in one session is where flush ordering bites. A
+    server-side `||` on the column we are not otherwise touching avoids both,
+    and the `NOT @>` predicate makes it idempotent in the database rather than
+    in a caller's memory.
+
+    This is a LABEL, not a merge. Nothing is deleted, nothing is repointed, and
+    both rows stay addressable — the drain that consumes these tags is #1946
+    Item 8 and does not exist yet. A tag that outruns its consumer is still the
+    right thing to write, because the alternative is that the proof exists only
+    in a log line.
+    """
+    from sqlalchemy import text as _text
+
+    tag = duplicate_tag(canonical_event_id)
+    await session.execute(
+        _text(
+            "UPDATE events SET event_tags = COALESCE(event_tags, '[]'::jsonb) "
+            "|| CAST(:tag_array AS jsonb) "
+            "WHERE id = :event_id "
+            "AND NOT COALESCE(event_tags, '[]'::jsonb) @> CAST(:tag_array AS jsonb)"
+        ),
+        {"tag_array": f'["{tag}"]', "event_id": event_id},
+    )
+    logger.warning(
+        "Tagged event %s as %s — id-anchored duplicate, proven not guessed (#2213)",
+        event_id, tag,
+    )
 
 
 async def _find_by_structured_match(
@@ -508,12 +717,19 @@ async def _find_by_structured_match(
     return None
 
 
-def _attach_claim(event: Event, claim: EventClaim) -> None:
-    """Attach a source's ID to an event. Idempotent — won't overwrite existing IDs."""
+def _attach_claim(event: Event, claim: EventClaim) -> bool:
+    """Attach a source's ID to an event. Idempotent — won't overwrite existing IDs.
+
+    Returns True when this call ESTABLISHED a binding that did not exist before —
+    i.e. it wrote an id into a previously-empty column. That return is what the
+    anchor write path uses to tell a new correspondence from a repeat poll
+    (#2213); every caller that ignores it behaves exactly as before.
+    """
     if claim.source == "odds_api":
         if not event.external_id:
             event.external_id = claim.source_id
-        elif event.external_id != claim.source_id:
+            return True
+        if event.external_id != claim.source_id:
             logger.info(
                 "Event %d already has external_id=%s, incoming=%s (same game, different API ID)",
                 event.id, event.external_id, claim.source_id,
@@ -521,9 +737,12 @@ def _attach_claim(event: Event, claim: EventClaim) -> None:
     elif claim.source == "statpal":
         if not event.statpal_fixture_id:
             event.statpal_fixture_id = claim.source_id
+            return True
     elif claim.source == "espn":
         if not event.espn_id:
             event.espn_id = claim.source_id
+            return True
+    return False
 
 
 def _update_fields_by_priority(event: Event, identity: EventIdentity) -> None:

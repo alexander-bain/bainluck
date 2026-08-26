@@ -29,10 +29,14 @@ from app.models.models import (
     MatchingOverride,
     GolfLeaderboardSnapshot,
     DiscoverPairwiseLabel,
+    SettlementCapture,
+    EventProviderAnchor,
 )
 
 __all__ = [
     "Sport",
+    "SettlementCapture",
+    "EventProviderAnchor",
     "Team",
     "Event",
     "OddsSnapshot",

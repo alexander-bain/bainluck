@@ -100,6 +100,26 @@ EVENT_CHILD_DISPOSITIONS: dict[str, Disposition] = {
     "score_snapshots": "SUBSTANCE",
     "scoring_plays": "SUBSTANCE",
     "win_prob_snapshots": "SUBSTANCE",
+    # Added 2026-08-26 (#2213, queue 413) when `event_provider_anchors` gained an
+    # ORM model and this derivation could finally see it. The rail refused to run
+    # until it was classified, which is this file working exactly as designed —
+    # the table has existed in Postgres since 2026-08-24 and was invisible here
+    # for two days purely because no model declared the FK.
+    #
+    # SUBSTANCE, and the reasoning is worth stating because the first instinct is
+    # POINTER. An anchor row is not an observation about the game — nobody watched
+    # anything to produce it — so on the letter of the definition it looks like a
+    # bare reference. But the classification's actual question is *"does this row's
+    # presence mean the parent is not an anonymous duplicate?"*, and for an anchor
+    # the answer is the strongest yes in the table: a provider id NAMES this row.
+    # The delete rail exists to remove rows that nothing names.
+    #
+    # The FK is ON DELETE CASCADE, so a delete would silently take the anchor with
+    # it and release the id back to the pool — which is tidy, and is exactly why
+    # this must not be POINTER. Ruling 048's drain has one piece of evidence and
+    # it is this row; a rail that can destroy its own evidence while reporting a
+    # clean deletion is the shape of failure that produced #1779/#1798.
+    "event_provider_anchors": "SUBSTANCE",
 }
 
 #: Polymorphic references with no database FK. Not derivable — enumerated, and the
@@ -113,7 +133,16 @@ EVENT_POINTER_TABLES: dict[str, tuple[str, str]] = {
 #: any statement naming them. The rail names them in its response anyway — an effect
 #: nothing in the output mentions is an effect nobody reviews (R4's silent half).
 CASCADING_CHILD_TABLES: frozenset[str] = frozenset(
-    {"espn_snapshots", "game_moments", "win_prob_snapshots"}
+    {
+        "espn_snapshots",
+        "game_moments",
+        "win_prob_snapshots",
+        # `ON DELETE CASCADE` in the `anchors_and_captures` migration (#1946).
+        # Listed so the rail NAMES it — R4's silent half is the whole reason this
+        # set exists, and an anchor is the one child whose silent removal would
+        # also remove the proof that the deletion was correct.
+        "event_provider_anchors",
+    }
 )
 
 
