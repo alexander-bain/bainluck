@@ -67,6 +67,10 @@ function row(index: number, overrides: Partial<TournamentRow> = {}): TournamentR
     observed_at: "2026-08-25T11:00:00+00:00",
     age_hours: 1,
     price_state: "live",
+    freshest_observed_at: "2026-08-25T11:00:00+00:00",
+    freshest_age_hours: 1,
+    stale_sources: [],
+    mixed_freshness: false,
     source_count: 2,
     sources: [],
     blend_rule: "mean",
@@ -85,6 +89,8 @@ function board(count: number, overrides: Partial<TournamentBoardData> = {}): Tou
     rows,
     contenders: count,
     unpriced: 0,
+    rows_not_live: 0,
+    mixed_freshness_rows: 0,
     price_state: "live",
     newest_observed_at: "2026-08-25T11:00:00+00:00",
     age_hours: 1,
@@ -302,12 +308,16 @@ describe("curated props", () => {
     draw: null,
     source: "kalshi",
     outcomes: [
-      { entity_key: "yes", display_name: "Jannik Sinner", probability: 0.22, probability_is_live: true, is_answer: true },
+      { entity_key: "yes", display_name: "Jannik Sinner", probability: 0.22, probability_is_live: true, observed_at: "2026-08-25T11:00:00+00:00", age_hours: 1, price_state: "live", is_answer: true },
     ],
     answer_entity_key: "yes",
     price_state: "live",
     observed_at: "2026-08-25T11:00:00+00:00",
     age_hours: 1,
+    freshest_observed_at: "2026-08-25T11:00:00+00:00",
+    freshest_age_hours: 1,
+    stale_outcomes: [],
+    mixed_freshness: false,
     ...overrides,
   });
 
@@ -329,9 +339,9 @@ describe("curated props", () => {
       title: "Can Sinner win a second major this year?",
       answer_entity_key: "two-plus",
       outcomes: [
-        { entity_key: "one-plus", display_name: "1+ Grand Slam wins", probability: 0.99, probability_is_live: true, is_answer: false },
-        { entity_key: "two-plus", display_name: "2+ Grand Slam wins", probability: 0.555, probability_is_live: true, is_answer: true },
-        { entity_key: "three-plus", display_name: "3+ Grand Slam wins", probability: 0.01, probability_is_live: true, is_answer: false },
+        { entity_key: "one-plus", display_name: "1+ Grand Slam wins", probability: 0.99, probability_is_live: true, observed_at: "2026-08-25T11:00:00+00:00", age_hours: 1, price_state: "live", is_answer: false },
+        { entity_key: "two-plus", display_name: "2+ Grand Slam wins", probability: 0.555, probability_is_live: true, observed_at: "2026-08-25T11:00:00+00:00", age_hours: 1, price_state: "live", is_answer: true },
+        { entity_key: "three-plus", display_name: "3+ Grand Slam wins", probability: 0.01, probability_is_live: true, observed_at: "2026-08-25T11:00:00+00:00", age_hours: 1, price_state: "live", is_answer: false },
       ],
     });
     expect(answerOutcome(ladder)?.display_name).toBe("2+ Grand Slam wins");
@@ -352,8 +362,8 @@ describe("curated props", () => {
       title: "Who will win a Grand Slam in 2026?",
       answer_entity_key: null,
       outcomes: [
-        { entity_key: "a", display_name: "A", probability: 0.2, probability_is_live: true, is_answer: false },
-        { entity_key: "b", display_name: "B", probability: 0.5, probability_is_live: true, is_answer: false },
+        { entity_key: "a", display_name: "A", probability: 0.2, probability_is_live: true, observed_at: "2026-08-25T11:00:00+00:00", age_hours: 1, price_state: "live", is_answer: false },
+        { entity_key: "b", display_name: "B", probability: 0.5, probability_is_live: true, observed_at: "2026-08-25T11:00:00+00:00", age_hours: 1, price_state: "live", is_answer: false },
       ],
     });
     expect(rankedOutcomes(field).map((o) => o.display_name)).toEqual(["B", "A"]);
@@ -369,8 +379,8 @@ describe("curated props", () => {
     const field = market({
       answer_entity_key: null,
       outcomes: [
-        { entity_key: "a", display_name: "A", probability: null, probability_is_live: false, is_answer: false },
-        { entity_key: "b", display_name: "B", probability: 0.5, probability_is_live: true, is_answer: false },
+        { entity_key: "a", display_name: "A", probability: null, probability_is_live: false, observed_at: null, age_hours: null, price_state: "dark", is_answer: false },
+        { entity_key: "b", display_name: "B", probability: 0.5, probability_is_live: true, observed_at: "2026-08-25T11:00:00+00:00", age_hours: 1, price_state: "live", is_answer: false },
       ],
     });
     expect(rankedOutcomes(field).map((o) => o.display_name)).toEqual(["B"]);
