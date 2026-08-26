@@ -231,3 +231,118 @@ class TestTheRunnerAndTheReaderAgree:
         ).read_text()
         assert f'identity = "{GATE_IDENTITY}"' in reader
         assert f'schema = "{GATE_SCHEMA}"' in reader
+
+
+# ---------------------------------------------------------------------------
+# CAL-P101 — ``projection_delta``: the column-set half of G3
+# ---------------------------------------------------------------------------
+
+
+class TestProjectionDelta:
+    """The byte total and the column set answer different questions.
+
+    G3.2's ``Plan Width`` ratio is an estimate built from ``pg_statistic``; on
+    an unANALYZEd seed every column is priced by ``get_typavgwidth`` instead.
+    Membership of ``Output`` is not an estimate, so it is gradeable anywhere —
+    and it is the rewrite's actual structural claim. These tests pin the
+    reader; the CI gate applies it to a real plan.
+    """
+
+    @staticmethod
+    def _mets(cols):
+        return {"sort_output": list(cols), "sort_output_n": len(cols)}
+
+    def test_the_deferred_relations_leave_and_the_base_columns_stay(self):
+        from app.utils.fold_narrowing_gate import projection_delta
+
+        out = projection_delta(
+            self._mets(["fo.id", "fo.name", "cv.source", "mb.win_count", "mfd.cp_sum"]),
+            self._mets(["fo.id", "fo.name", "cv.source"]),
+        )
+
+        assert out["measured"] is True
+        assert out["dropped"] == ["mb.win_count", "mfd.cp_sum"]
+        assert out["dropped_n"] == 2
+        assert out["retained_n"] == 3
+        assert out["added"] == []
+        assert out["deferred_alias_survivors"] == []
+
+    def test_a_surviving_deferred_column_is_named_not_just_counted(self):
+        """The whole point: a partial defer must not read as a defer.
+
+        Eight of nine relations leaving and one staying still shrinks the byte
+        total, still shrinks the column count, and still leaves the window
+        computed over a nine-way join. Only the alias check catches it.
+        """
+        from app.utils.fold_narrowing_gate import projection_delta
+
+        out = projection_delta(
+            self._mets(["fo.id", "mb.win_count", "gpm.market_id"]),
+            self._mets(["fo.id", "gpm.market_id"]),
+        )
+
+        assert out["dropped_n"] == 1
+        assert out["deferred_alias_survivors"] == ["gpm.market_id"]
+
+    def test_an_identical_projection_reports_an_empty_delta(self):
+        from app.utils.fold_narrowing_gate import projection_delta
+
+        out = projection_delta(self._mets(["fo.id"]), self._mets(["fo.id"]))
+
+        assert out["measured"] is True
+        assert out["dropped_n"] == 0
+        assert out["deferred_alias_survivors"] == []
+
+    @pytest.mark.parametrize(
+        "old_cols,new_cols,missing",
+        [
+            ([], ["fo.id"], "old"),
+            (["fo.id"], [], "new"),
+            ([], [], "old/new"),
+        ],
+    )
+    def test_a_missing_output_list_is_not_measured(self, old_cols, new_cols, missing):
+        """``EXPLAIN`` without ``VERBOSE`` omits ``Output`` entirely.
+
+        An absent column list read as "no columns survived" would be a perfect
+        score from a statement that was never asked the question — this gate's
+        own version of the empty 200 (gotcha #53).
+        """
+        from app.utils.fold_narrowing_gate import projection_delta
+
+        out = projection_delta(self._mets(old_cols), self._mets(new_cols))
+
+        assert out["measured"] is False
+        assert missing in out["reason"]
+        assert "dropped_n" not in out
+
+    def test_every_deferred_alias_in_the_sql_is_declared_to_the_reader(self):
+        """The alias list is a copy of the SQL, so it can rot silently.
+
+        A LEFT JOIN renamed in ``precompute_calibration.py`` and not here would
+        make ``deferred_alias_survivors`` blind to exactly the relation that
+        moved — the check would keep returning ``[]`` and mean nothing.
+        """
+        import pathlib
+        import re
+
+        from app.utils.fold_narrowing_gate import DEFERRED_JOIN_ALIASES
+
+        source = (
+            pathlib.Path(__file__).parents[1]
+            / "app"
+            / "tasks"
+            / "precompute_calibration.py"
+        ).read_text()
+        block = source.split("ranked_outcomes AS MATERIALIZED (", 1)[1]
+        block = block.split("\n            ),", 1)[0]
+        aliases = set(
+            re.findall(r"LEFT JOIN\s+\w+\s+(\w+)\s+ON\s+\1\.market_id", block)
+        )
+
+        assert aliases, "no LEFT JOIN aliases found — the SQL shape moved"
+        assert aliases == set(DEFERRED_JOIN_ALIASES), (
+            "the deferred-join alias list and the SQL disagree: "
+            f"sql-only={sorted(aliases - set(DEFERRED_JOIN_ALIASES))} "
+            f"reader-only={sorted(set(DEFERRED_JOIN_ALIASES) - aliases)}"
+        )

@@ -448,6 +448,31 @@ def named_node_metrics(plan_root: dict, cte_name: str) -> dict[str, Any]:
         "sort_actual_loops": loops,
         "sort_input_rows": (rows * loops) if rows is not None and loops else rows,
         "sort_plan_width": sort.get("Plan Width"),
+        # CAL-P101. ``Plan Width`` is a BYTE ESTIMATE — the sum, over the node's
+        # output columns, of each column's estimated average width. Two things
+        # follow that the first CI execution of G3.2 had no way to say.
+        #
+        # First, it is a property of the DATA as much as of the projection: with
+        # no ``pg_statistic`` row for a column, the planner falls back to
+        # ``get_typavgwidth``, which prices a ``varchar(n)`` at ``32 + (n-32)/2``
+        # — 141 B for ``varchar(255)`` — regardless of what the column holds. So
+        # a seeded CI database and a production database can disagree about the
+        # width of an IDENTICAL projection by an order of magnitude, in the
+        # direction that matters here.
+        #
+        # Second, the byte total cannot say WHICH columns moved. The rewrite's
+        # claim is a claim about the column SET: the nine per-market LEFT JOINs
+        # are no longer under the Sort, so their columns are not in its output.
+        # That is decidable from ``Output`` alone, on any database, with no
+        # statistics involved — and ``EXPLAIN VERBOSE`` has been returning it in
+        # the same JSON all along. Carrying it costs nothing and it is the only
+        # part of G3 that a synthetic seed can grade honestly.
+        #
+        # This does NOT restate G3.2's bar. ``G3_MAX_WIDTH_RATIO`` is unchanged
+        # and its verdict is unchanged; these two keys are evidence for whoever
+        # reads the red, not a second ruler.
+        "sort_output": list(sort.get("Output") or ()),
+        "sort_output_n": len(sort.get("Output") or ()),
         # Which of SORT_NODE_TYPES was measured. An Incremental Sort reports
         # per-group statistics instead of one Sort Method / Sort Space Used, so
         # those come back None here and the reader needs to know that is a
@@ -463,6 +488,75 @@ def named_node_metrics(plan_root: dict, cte_name: str) -> dict[str, Any]:
         "windowagg_actual_total_ms": inner.get("Actual Total Time"),
         "windowagg_subtree_total_cost": outer.get("Total Cost"),
         "windowagg_nodes": len(windows),
+    }
+
+
+#: The nine per-market relations the rewrite defers to ``ranked_outcomes``.
+#: Their columns are what must LEAVE the Sort's output; the aliases are the
+#: ones the shipping statement writes, so a rename in the SQL shows up here as
+#: an unaccounted-for survivor rather than as a silent pass.
+DEFERRED_JOIN_ALIASES = (
+    "mb",
+    "emb",
+    "nwm",
+    "dam",
+    "opm",
+    "nbm",
+    "gpm",
+    "mfc",
+    "mfd",
+)
+
+
+def projection_delta(old_metrics: dict, new_metrics: dict) -> dict[str, Any]:
+    """What the rewrite actually removed from under the Sort, by COLUMN.
+
+    G3.2 grades the byte total, which needs statistics to mean anything. This
+    grades the column set, which does not — a column is in ``Output`` or it is
+    not, and no ``ANALYZE`` changes that. The two answer different questions and
+    a reader needs both: "the projection did not narrow" and "the width
+    estimator has no statistics" produce the same disappointing ratio and have
+    opposite fixes.
+
+    ``measured`` is False when either plan carried no ``Output`` — ``EXPLAIN``
+    without ``VERBOSE`` omits it entirely, and an empty list read as "no columns
+    survived" would be this gate's own version of the empty-200 (gotcha #53).
+    """
+    old_cols = list(old_metrics.get("sort_output") or ())
+    new_cols = list(new_metrics.get("sort_output") or ())
+    if not old_cols or not new_cols:
+        missing = [
+            label
+            for label, cols in (("old", old_cols), ("new", new_cols))
+            if not cols
+        ]
+        return {
+            "measured": False,
+            "reason": (
+                f"no Output column list on the {'/'.join(missing)} Sort — "
+                "EXPLAIN must be run with VERBOSE for this to be gradeable"
+            ),
+        }
+
+    old_set, new_set = set(old_cols), set(new_cols)
+    dropped = sorted(old_set - new_set)
+    survivors = sorted(
+        col
+        for col in new_set
+        if col.split(".", 1)[0] in DEFERRED_JOIN_ALIASES
+    )
+    return {
+        "measured": True,
+        "reason": None,
+        "old_output_n": len(old_cols),
+        "new_output_n": len(new_cols),
+        "dropped": dropped,
+        "dropped_n": len(dropped),
+        "added": sorted(new_set - old_set),
+        "retained_n": len(old_set & new_set),
+        # Empty is the pass shape: no column of a deferred relation may still be
+        # projected by the narrowed Sort.
+        "deferred_alias_survivors": survivors,
     }
 
 

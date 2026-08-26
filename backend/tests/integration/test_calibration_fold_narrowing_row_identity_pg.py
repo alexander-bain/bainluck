@@ -1061,6 +1061,7 @@ async def test_new_sort_is_narrower_than_the_old_sort():
         NEW_WINDOW_CTE,
         OLD_WINDOW_CTE,
         named_node_metrics,
+        projection_delta,
     )
     from app.utils.sql_comment_strip import strip_sql_comments
 
@@ -1078,6 +1079,7 @@ async def test_new_sort_is_narrower_than_the_old_sort():
             widths: dict[str, object] = {}
             why: dict[str, object] = {}
             spines: dict[str, str] = {}
+            mets: dict[str, dict] = {}
             for label, chain, cte in (
                 ("old", fused, OLD_WINDOW_CTE),
                 ("new", narrowed, new_cte),
@@ -1106,6 +1108,7 @@ async def test_new_sort_is_narrower_than_the_old_sort():
                 # So the reason and the plan's node spine travel WITH the red.
                 why[label] = metrics.get("reason")
                 spines[label] = _plan_spine(plan[0]["Plan"])
+                mets[label] = metrics
 
             assert widths["old"], (
                 "no Sort under the OLD window CTE — the named node moved and "
@@ -1118,16 +1121,153 @@ async def test_new_sort_is_narrower_than_the_old_sort():
                 f"reasons={why}\nNEW plan spine:\n{spines['new']}"
             )
             ratio = widths["new"] / widths["old"]
+            # CAL-P101. The bar and the predicate below are byte-for-byte the
+            # frozen ones. What changed is that the red now carries the column
+            # set alongside the byte total, because the first CI execution of
+            # this assertion produced "1114 B, 93.9% of 1186 B" and that number
+            # is compatible with two opposite worlds: a rewrite that deferred
+            # nothing, and a rewrite that deferred nine relations' worth of
+            # narrow scalars while the planner priced the RETAINED text columns
+            # at ``get_typavgwidth`` defaults because the seed is never
+            # ``ANALYZE``d. One is a refutation, one is an unmeasurable, and the
+            # byte total cannot tell them apart. ``dropped`` can.
+            delta = projection_delta(mets["old"], mets["new"])
             assert ratio <= G3_MAX_WIDTH_RATIO, (
                 f"the narrowed Sort is {widths['new']} B, {ratio:.1%} of OLD's "
                 f"{widths['old']} B — G3.2's bar is {G3_MAX_WIDTH_RATIO:.0%}. "
-                "The whole rewrite is the width."
+                "The whole rewrite is the width.\n"
+                f"projection delta: {delta}\n"
+                f"OLD Sort output ({mets['old'].get('sort_output_n')} cols): "
+                f"{mets['old'].get('sort_output')}\n"
+                f"NEW Sort output ({mets['new'].get('sort_output_n')} cols): "
+                f"{mets['new'].get('sort_output')}"
             )
     finally:
         # Always, including on an assertion failure. Under FOLD_GATE_MUTANT
         # every one of these tests is SUPPOSED to fail, and a failing test
         # that leaves its seed behind hands the next of the loop's six runs
         # a database it did not build.
+        async with Session() as session:
+            await _cleanup(session)
+        await engine.dispose()
+
+
+async def test_the_narrowed_sort_no_longer_projects_the_deferred_joins():
+    """CAL-P101 — the part of the narrowing a synthetic seed CAN grade.
+
+    ⚠️ **THIS IS NOT G3.2 AND IT DOES NOT DISCHARGE G3.2.** The frozen width bar
+    is unchanged, still graded by the test above, and still the cert's to rule
+    on. This test is authored by the fix's own lane and is EVIDENCE, not
+    acceptance. It is here because the two questions are separable and only one
+    of them is answerable in CI.
+
+    G3.2 asks how many BYTES the narrowed Sort carries. ``Plan Width`` is the
+    sum of the planner's estimated average width per output column, and those
+    estimates come from ``pg_statistic``. This seed is never ``ANALYZE``d, so
+    every column falls back to ``get_typavgwidth`` — which prices a
+    ``varchar(255)`` at 141 B whatever it holds, and a boolean at 1 B. The nine
+    relations this rewrite defers contribute booleans, two bigints and a
+    numeric; the columns it must retain include five text columns. On an
+    unANALYZEd seed the retained text therefore sets a floor the deferred
+    scalars cannot move, and the ratio is dominated by an estimate rather than
+    by the rewrite. That is not an argument that the bar is wrong — it is an
+    argument that this database cannot grade it.
+
+    What this database CAN grade is the column set, because membership of
+    ``Output`` is not an estimate. The rewrite's structural claim is exactly
+    that: the nine per-market LEFT JOINs are no longer under the window, so
+    none of their columns is in the Sort's projection. If that is false the
+    rewrite did not happen, on any database, and no amount of statistics would
+    rescue it.
+
+    The ``wide_shape`` mutant is this test's own control: under it the NEW chain
+    IS the pre-split chain, every deferred alias reappears in the projection,
+    and this assertion fails.
+    """
+    import json
+
+    from sqlalchemy import text
+
+    from app.utils.fold_narrowing_gate import (
+        DEFERRED_JOIN_ALIASES,
+        NEW_WINDOW_CTE,
+        OLD_WINDOW_CTE,
+        named_node_metrics,
+        projection_delta,
+    )
+    from app.utils.sql_comment_strip import strip_sql_comments
+
+    fused, narrowed = _chains()
+    engine, Session = await _engine_and_session()
+    try:
+        async with Session() as session:
+            await _cleanup(session)
+            await _seed(session)
+
+            new_cte = OLD_WINDOW_CTE if MUTANT == "wide_shape" else NEW_WINDOW_CTE
+            mets: dict[str, dict] = {}
+            spines: dict[str, str] = {}
+            for label, chain, cte in (
+                ("old", fused, OLD_WINDOW_CTE),
+                ("new", narrowed, new_cte),
+            ):
+                raw = (
+                    await session.execute(
+                        text(
+                            strip_sql_comments(
+                                "EXPLAIN (VERBOSE, FORMAT JSON) WITH "
+                                + chain
+                                + " SELECT * FROM deduped"
+                            )
+                        )
+                    )
+                ).scalar()
+                plan = json.loads(raw) if isinstance(raw, str) else raw
+                mets[label] = named_node_metrics(plan[0]["Plan"], cte)
+                spines[label] = _plan_spine(plan[0]["Plan"])
+
+            delta = projection_delta(mets["old"], mets["new"])
+            reasons = {k: v.get("reason") for k, v in mets.items()}
+            assert delta["measured"], (
+                f"{delta.get('reason')}\nreasons={reasons}"
+                f"\nOLD plan spine:\n{spines['old']}"
+                f"\nNEW plan spine:\n{spines['new']}"
+            )
+
+            # An empty delta is the shape this test must never pass on: if the
+            # two projections are identical the rewrite deferred nothing, and a
+            # bare subset check would call that a clean pass (gotcha #53 — the
+            # emptier reading is not the safer one).
+            assert delta["dropped_n"] > 0, (
+                "the NEW Sort projects the SAME column set as the OLD one — "
+                "nothing was deferred. "
+                f"old_n={delta['old_output_n']} new_n={delta['new_output_n']}"
+            )
+
+            assert delta["deferred_alias_survivors"] == [], (
+                "the narrowed Sort still projects columns from relations this "
+                "rewrite claims to defer: "
+                f"{delta['deferred_alias_survivors']}. Deferred aliases are "
+                f"{list(DEFERRED_JOIN_ALIASES)}.\n"
+                f"NEW Sort output: {mets['new'].get('sort_output')}"
+            )
+
+            # Printed, never asserted — the byte figures belong to G3.2 and to
+            # the production runner. They are here so one CI run answers both
+            # "did the projection narrow" and "by how many estimated bytes",
+            # instead of costing a round trip per question.
+            old_w = mets["old"].get("sort_plan_width")
+            new_w = mets["new"].get("sort_plan_width")
+            print(
+                "\n[CAL-P101 projection delta] "
+                f"columns {delta['old_output_n']} -> {delta['new_output_n']} "
+                f"(dropped {delta['dropped_n']}, retained {delta['retained_n']}); "
+                f"estimated width {old_w} B -> {new_w} B"
+                + (f" ({new_w / old_w:.1%})" if old_w and new_w else "")
+                + f"\n[CAL-P101 dropped columns] {delta['dropped']}"
+                + f"\n[CAL-P101 NEW Sort output] {mets['new'].get('sort_output')}"
+            )
+    finally:
         async with Session() as session:
             await _cleanup(session)
         await engine.dispose()

@@ -430,7 +430,11 @@ jobs:
         # GREEN. This one proves the green means something, by breaking the
         # rewrite five different ways and requiring the gate to notice each one:
         #
-        #   wide_shape        the pre-rewrite wide row  -> the width clause fails
+        #   wide_shape        the pre-rewrite wide row  -> the width clause fails,
+        #                                                  and (CAL-P101) the
+        #                                                  projection check too:
+        #                                                  every deferred alias
+        #                                                  is back under the Sort
         #   global_rn1        §3's rejected shortcut    -> members disappear
         #   row_swap          same aggregates, new id   -> buckets green, rows red
         #   flag_flip         one census-only flag      -> buckets green, values red
