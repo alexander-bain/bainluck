@@ -118,8 +118,11 @@ async def list_ufc_card_concepts(
     *,
     statuses: tuple[str, ...] = ("upcoming", "live"),
     limit: int = 20,
+    rows: list | None = None,
 ) -> list[dict]:
-    return await list_card_concepts(UFC_CONFIG, db, statuses=statuses, limit=limit)
+    return await list_card_concepts(
+        UFC_CONFIG, db, statuses=statuses, limit=limit, rows=rows
+    )
 
 
 class UFCEventAdapter(CombatEventAdapter):

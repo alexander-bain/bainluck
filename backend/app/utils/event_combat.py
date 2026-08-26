@@ -431,6 +431,7 @@ async def list_card_concepts(
     *,
     statuses: tuple[str, ...] = ("upcoming", "live"),
     limit: int = 20,
+    rows: list | None = None,
 ) -> list[dict]:
     """Enumerate CARD concepts (not query-driven) for the sports feed — group open
     fight markets by card date-token, one descriptor per card. Returns lightweight
@@ -440,28 +441,22 @@ async def list_card_concepts(
          main_event_id, latest_commence}
 
     Read-only, best-effort. Mirrors _score_golf_tournaments' "pull my own data,
-    emit candidates" pattern — no dependency on the request-path futures pools."""
+    emit candidates" pattern — no dependency on the request-path futures pools.
+
+    `rows` is LAT-P094's accelerator: the concept tier reads every source's open
+    markets in one scan and hands each lister its slice, because this read alone
+    visited 50,749 rows to emit 168 and ran once per source. Passing nothing
+    keeps the standalone read — the /event adapters and the suites use it."""
     from datetime import datetime, timezone
 
-    from app.models import FuturesMarket
+    from app.utils.event_concept_population import (
+        COMBAT_PROJECTION,
+        select_open_markets,
+    )
 
     now = datetime.now(timezone.utc)
-    rows = list(
-        (
-            await db.execute(
-                select(
-                    FuturesMarket.id,
-                    FuturesMarket.external_id,
-                    FuturesMarket.name,
-                    FuturesMarket.commence_time,
-                    FuturesMarket.market_metadata,
-                ).where(
-                    FuturesMarket.llm_sport_category == cfg.llm_category,
-                    FuturesMarket.status == "open",
-                )
-            )
-        ).all()
-    )
+    if rows is None:
+        rows = await select_open_markets(db, cfg.llm_category, COMBAT_PROJECTION)
 
     # Group fight markets by card token.
     cards: dict[str, dict] = {}

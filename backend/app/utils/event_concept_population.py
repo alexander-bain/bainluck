@@ -45,7 +45,7 @@ rather than trusting that measurement to hold (`event_concept_warmer.py`).
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 logger = logging.getLogger(__name__)
 
@@ -63,20 +63,163 @@ LISTED_STATUSES: tuple[str, ...] = ("upcoming", "live", "settled")
 #: copy of the very thing this module exists to stop copying.
 UNSETTLED_STATUSES: tuple[str, ...] = ("upcoming", "live")
 
+
+class ConceptSource(NamedTuple):
+    """One concept source, and everything needed to read its markets ONCE."""
+
+    label: str
+    aliases: tuple[str, ...]  #: sport_filter values that select this source
+    limit: int
+    module_path: str
+    func_name: str
+    category: str  #: the `llm_sport_category` its open markets carry
+    projection: tuple[str, ...]  #: FuturesMarket columns, in its row-loop order
+
+
 #: The concept sources, in the order `_score_event_concepts` has always asked
-#: them. Each row: (label, sport_filter aliases, per-source limit, module,
-#: function). Imports stay lazy — these modules pull in models and adapters, and
+#: them. Imports stay lazy — these modules pull in models and adapters, and
 #: this module is imported by both a route and a Celery task.
-CONCEPT_SOURCES: tuple[tuple[str, tuple[str, ...], int, str, str], ...] = (
-    ("ufc", ("mma", "all", "ufc"), 12, "app.utils.event_ufc", "list_ufc_card_concepts"),
-    ("f1", ("motorsports", "f1", "all"), 8, "app.utils.event_f1", "list_f1_gp_concepts"),
-    ("cycling", ("cycling", "all"), 6, "app.utils.event_cycling", "list_cycling_concepts"),
+#:
+#: `projection` is the lister's OWN column order, declared here rather than in
+#: the lister, because the prefetch has to hand back rows in exactly that shape.
+#: Each lister builds its standalone read from this same tuple (LAT-P094), so
+#: the two cannot disagree — the whole reason this module exists is that two
+#: copies of one list always drift.
+#: Each lister's own column order. Imported BY the listers rather than copied
+#: into them — a projection that disagrees with the row loop it feeds silently
+#: mis-assigns columns, which is a data bug wearing a latency fix's clothes.
+COMBAT_PROJECTION: tuple[str, ...] = (
+    "id",
+    "external_id",
+    "name",
+    "commence_time",
+    "market_metadata",
 )
+F1_PROJECTION: tuple[str, ...] = ("id", "name", "status", "resolution_date")
+CYCLING_PROJECTION: tuple[str, ...] = ("name", "status", "resolution_date")
+
+CONCEPT_SOURCES: tuple[ConceptSource, ...] = (
+    ConceptSource(
+        "ufc",
+        ("mma", "all", "ufc"),
+        12,
+        "app.utils.event_ufc",
+        "list_ufc_card_concepts",
+        "mma",
+        COMBAT_PROJECTION,
+    ),
+    ConceptSource(
+        "f1",
+        ("motorsports", "f1", "all"),
+        8,
+        "app.utils.event_f1",
+        "list_f1_gp_concepts",
+        "motorsports",
+        F1_PROJECTION,
+    ),
+    ConceptSource(
+        "cycling",
+        ("cycling", "all"),
+        6,
+        "app.utils.event_cycling",
+        "list_cycling_concepts",
+        "cycling",
+        CYCLING_PROJECTION,
+    ),
+)
+
+#: `projection` lookup for the listers' own standalone reads. Keyed by category
+#: so a lister asks with the one thing it already knows about itself.
+PROJECTION_BY_CATEGORY: dict[str, tuple[str, ...]] = {
+    s.category: s.projection for s in CONCEPT_SOURCES
+}
 
 
 def _source_applies(aliases: tuple[str, ...], sport_filter: str | None) -> bool:
     """A source runs when there is no filter, or the filter names it."""
     return not sport_filter or sport_filter in aliases
+
+
+async def select_open_markets(
+    db: Any, category: str, projection: tuple[str, ...]
+) -> list:
+    """One source's open markets, in its own column order.
+
+    The standalone read every lister falls back to when it is handed no
+    prefetched rows — the `/event` adapters, the warmer and four suites call
+    the listers directly, so this path is not a degraded mode, it is the
+    single-source mode.
+    """
+    from sqlalchemy import select
+
+    from app.models import FuturesMarket
+
+    cols = [getattr(FuturesMarket, name) for name in projection]
+    return list(
+        (
+            await db.execute(
+                select(*cols).where(
+                    FuturesMarket.llm_sport_category == category,
+                    FuturesMarket.status == "open",
+                )
+            )
+        ).all()
+    )
+
+
+async def prefetch_open_markets(
+    db: Any, categories: tuple[str, ...] | set[str]
+) -> dict[str, list]:
+    """ONE read of the open markets every applicable source needs (LAT-P094).
+
+    WHY, measured on production 2026-08-26. `futures_markets` has no index on
+    `llm_sport_category` for the general case, so each source's own read is an
+    index scan over every open market — 50,749 rows visited to emit 168, 27,839
+    buffers, ~520ms, and it ran three times per cold feed build for 315 rows in
+    total. Six interleaved A/B round trips: three reads 1,109.5ms p50 vs one
+    combined read 453.4ms p50.
+
+    The rows come back re-projected per source, so each lister consumes exactly
+    the tuple shape its own read would have produced.
+    """
+    from sqlalchemy import select
+
+    from app.models import FuturesMarket
+
+    wanted = {c for c in categories if c in PROJECTION_BY_CATEGORY}
+    if not wanted:
+        return {}
+
+    # The union of every applicable projection, plus the category itself so the
+    # rows can be split back out. Ordered, so the index map below is stable.
+    columns: list[str] = ["llm_sport_category"]
+    for source in CONCEPT_SOURCES:
+        if source.category not in wanted:
+            continue
+        for name in source.projection:
+            if name not in columns:
+                columns.append(name)
+    index_of = {name: i for i, name in enumerate(columns)}
+
+    rows = list(
+        (
+            await db.execute(
+                select(*[getattr(FuturesMarket, n) for n in columns]).where(
+                    FuturesMarket.status == "open",
+                    FuturesMarket.llm_sport_category.in_(sorted(wanted)),
+                )
+            )
+        ).all()
+    )
+
+    out: dict[str, list] = {c: [] for c in wanted}
+    picks = {c: tuple(index_of[n] for n in PROJECTION_BY_CATEGORY[c]) for c in wanted}
+    for row in rows:
+        bucket = out.get(row[0])
+        if bucket is None:
+            continue
+        bucket.append(tuple(row[i] for i in picks[row[0]]))
+    return out
 
 
 async def list_all_concepts(
@@ -91,17 +234,43 @@ async def list_all_concepts(
     whole tier the way a throw inside `_score_events` once emptied the entire
     Sports tab (#1091). The healthy siblings survive, and the failure is logged
     rather than swallowed silently.
+
+    LAT-P094: the sources' market reads are collapsed into ONE scan up front.
+    That makes the prefetch a single point three sources depend on, so it gets
+    the same best-effort treatment they have — if it fails, every lister runs
+    its own read exactly as before and the tier still ships.
     """
+    applicable = [
+        s for s in CONCEPT_SOURCES if _source_applies(s.aliases, sport_filter)
+    ]
+    if not applicable:
+        return []
+
+    try:
+        prefetched: dict[str, list] | None = await prefetch_open_markets(
+            db, {s.category for s in applicable}
+        )
+    except Exception as e:
+        logger.warning(
+            "Concepts: shared open-market prefetch failed, falling back to "
+            "per-source reads: %s",
+            e,
+        )
+        prefetched = None
+
     concepts: list[dict] = []
-    for label, aliases, limit, module_path, func_name in CONCEPT_SOURCES:
-        if not _source_applies(aliases, sport_filter):
-            continue
+    for source in applicable:
         try:
-            module = __import__(module_path, fromlist=[func_name])
-            lister = getattr(module, func_name)
-            concepts += await lister(db, statuses=statuses, limit=limit)
+            module = __import__(source.module_path, fromlist=[source.func_name])
+            lister = getattr(module, source.func_name)
+            extra = (
+                {"rows": prefetched.get(source.category, [])}
+                if prefetched is not None
+                else {}
+            )
+            concepts += await lister(db, statuses=statuses, limit=source.limit, **extra)
         except Exception as e:
-            logger.warning("Concepts: failed to list %s concepts: %s", label, e)
+            logger.warning("Concepts: failed to list %s concepts: %s", source.label, e)
     return concepts
 
 

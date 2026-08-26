@@ -80,6 +80,7 @@ async def list_f1_gp_concepts(
     *,
     statuses: tuple[str, ...] = ("upcoming", "live"),
     limit: int = 20,
+    rows: list | None = None,
 ) -> list[dict]:
     """Enumerate F1 Grand Prix concepts for the sports feed (L2-86 B5) — the
     winner-field analogue of `list_ufc_card_concepts`. Groups open motorsports
@@ -91,28 +92,20 @@ async def list_f1_gp_concepts(
          latest_commence}
 
     Read-only, best-effort. Uses `resolution_date` (the race time) as the event
-    time — `commence_time` is the market-open date, not the race (gotcha #14)."""
+    time — `commence_time` is the market-open date, not the race (gotcha #14).
+
+    `rows` is LAT-P094's accelerator — the concept tier reads every source's
+    open markets in one scan instead of one per source; see
+    `event_concept_population.prefetch_open_markets`. Passing nothing keeps the
+    standalone read."""
     from datetime import datetime, timezone
 
-    from app.models import FuturesMarket
+    from app.utils.event_concept_population import F1_PROJECTION, select_open_markets
     from app.utils.name_normalization import clean_slug
 
     now = datetime.now(timezone.utc)
-    rows = list(
-        (
-            await db.execute(
-                select(
-                    FuturesMarket.id,
-                    FuturesMarket.name,
-                    FuturesMarket.status,
-                    FuturesMarket.resolution_date,
-                ).where(
-                    FuturesMarket.llm_sport_category == "motorsports",
-                    FuturesMarket.status == "open",
-                )
-            )
-        ).all()
-    )
+    if rows is None:
+        rows = await select_open_markets(db, "motorsports", F1_PROJECTION)
 
     # Anchor each GP on its main-race winner market; group by distinctive GP token.
     # The lister is F1-Grand-Prix-scoped: require "grand prix" in the name. This

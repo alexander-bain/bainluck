@@ -176,6 +176,15 @@ class _RecordingDB:
     def market_reads(self) -> list[str]:
         return [s for s in self.statements if "futures_markets" in s]
 
+    @property
+    def per_source_reads(self) -> list[str]:
+        """Market reads naming exactly one category — i.e. a source's own read.
+
+        A prefetch that fails is still an attempted read and is still recorded,
+        so counting fallbacks means counting the single-category ones.
+        """
+        return [s for s in self.market_reads if len(_categories_named(s)) == 1]
+
     async def execute(self, stmt, *_a, **_k):
         sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
         self.statements.append(sql)
@@ -185,9 +194,7 @@ class _RecordingDB:
         if "futures_markets" not in sql:
             return _Result([])
 
-        categories = {
-            c for c in ("mma", "motorsports", "cycling") if f"'{c}'" in sql
-        }
+        categories = _categories_named(sql)
         if self._fail_on_multi_category and len(categories) > 1:
             raise RuntimeError("prefetch is down")
 
@@ -237,9 +244,8 @@ async def test_the_single_scan_names_every_registered_source_category():
     await population.list_all_concepts(db)
 
     registered = {s.category for s in population.CONCEPT_SOURCES}
-    assert registered == {"mma", "motorsports", "cycling"}, (
-        "specimen drift: this test's fixtures cover the registered sources"
-    )
+    covered_by_the_specimen = {"mma", "motorsports", "cycling"}
+    assert registered == covered_by_the_specimen, "specimen drift: a source moved"
     assert _categories_named(db.market_reads[0]) == registered
 
 
@@ -301,7 +307,7 @@ async def test_the_consolidated_path_returns_what_the_per_source_path_returned()
     per_source = await population.list_all_concepts(per_source_db)
 
     assert len(shared_db.market_reads) == 1
-    assert len(per_source_db.market_reads) == 3
+    assert len(per_source_db.per_source_reads) == 3
 
     assert shared == per_source, "the consolidation changed the answer"
     assert shared, "the specimen produced no concepts — the comparison is vacuous"
@@ -324,7 +330,8 @@ async def test_a_failed_prefetch_falls_back_per_source_and_the_tier_survives():
     db = _RecordingDB(fail_on_multi_category=True)
     concepts = await population.list_all_concepts(db)
 
-    assert len(db.market_reads) == 3, "the sources did not fall back to their own read"
+    fell_back = len(db.per_source_reads)
+    assert fell_back == 3, f"only {fell_back} sources fell back to their own read"
     assert {c["domain"] for c in concepts} == {"ufc", "f1", "cycling"}
 
 
