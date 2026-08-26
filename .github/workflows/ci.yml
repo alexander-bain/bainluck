@@ -384,7 +384,13 @@ jobs:
         # CAL-P096 / C-FOLD-EXPLAIN-1 §3. The narrowing rewrite moves
         # `ranked_outcomes`' two window functions off a nine-way LEFT JOIN and
         # onto the narrow `fo ⋈ virtual_market ⋈ clean_vms` row, then joins the
-        # nine per-market slices back afterwards. Its acceptance bar is ROW
+        # nine per-market slices back afterwards. CAL-P102 narrowed it a second
+        # time — the windows now read a KEY-ONLY CTE (partition key, ordering
+        # expression, tie-break outcome id, surrogate) and the payload rejoins on
+        # the surrogate — because deferring the nine joins still measured 93.9%
+        # of the old Sort width against a frozen 25% bar. This step is unchanged
+        # by that: it diffs the emitted relations, not the CTE names. Its
+        # acceptance bar is ROW
         # IDENTITY — the same final rows with the same values — not aggregate
         # equality, because an aggregate can be right while `rn` picks a
         # different representative and the published observation, its winner

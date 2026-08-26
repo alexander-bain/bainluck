@@ -118,12 +118,29 @@ G1_REQUIRED_COLUMNS: tuple[str, ...] = (
 
 #: The CTE that carries the two window functions, per tree. OLD computes them
 #: inside ``ranked_outcomes`` (over the nine-way LEFT JOIN); NEW computes them
-#: inside ``ranked_outcomes_core`` (over ``fo ⋈ virtual_market ⋈ clean_vms``) and
-#: joins the nine afterwards. G3's "named node" is version-specific for exactly
-#: this reason, and the frozen text says so: *"the Sort directly feeding the
-#: ``ranked_outcomes`` WindowAgg (or the renamed core equivalent)"*.
+#: inside ``ranked_outcomes_core``, which since CAL-P102 is the KEY-ONLY relation
+#: — the partition key, the ordering expression, the tie-break outcome id and the
+#: surrogate that joins the payload back — and nothing else. G3's "named node" is
+#: version-specific for exactly this reason, and the frozen text says so: *"the
+#: Sort directly feeding the ``ranked_outcomes`` WindowAgg (or the renamed core
+#: equivalent)"*.
+#:
+#: ⚠️ ``NEW_WINDOW_CTE`` DID NOT MOVE across CAL-P102, and that is deliberate.
+#: The obvious way to write the second narrowing was to add a new CTE for the
+#: window and leave the payload named ``ranked_outcomes_core``; the gate would
+#: then have found no WindowAgg under the named node and reported NOT_MEASURED —
+#: an instrument change, mid-flight, on the criterion the rewrite is being graded
+#: against. The name stays with the windows so the frozen bar keeps measuring the
+#: same node role it was frozen on.
 OLD_WINDOW_CTE = "ranked_outcomes"
 NEW_WINDOW_CTE = "ranked_outcomes_core"
+
+#: The CTE that carries the POPULATION on the new tree — the scan, its WHERE, and
+#: the payload projection. G4.5's predicate belongs here rather than on the window
+#: CTE: since CAL-P102 the window CTE has no ``WHERE`` and no ``fo`` alias, so the
+#: old target would have produced a syntax error instead of a narrowed population,
+#: and a control that cannot execute is a control that stopped controlling.
+NEW_POPULATION_CTE = "ranked_outcomes_base"
 
 #: The node types that ARE the window's sort. Both, and the second one is not a
 #: nicety — it is what the gate's first CI execution actually found.
@@ -785,9 +802,13 @@ def mutant_flag_flip(new_chain: str) -> str:
 
 
 def mutant_narrow_population(new_chain: str) -> str:
-    """G4.5 — add a population predicate solely to make the timing gate pass."""
+    """G4.5 — add a population predicate solely to make the timing gate pass.
+
+    Targets ``NEW_POPULATION_CTE``: the predicate has to land where the rows are
+    selected, and since CAL-P102 that is the base scan rather than the window.
+    """
     return append_to_cte(
-        strip_sql_comments(new_chain), NEW_WINDOW_CTE, "AND MOD(fo.id, 2) = 0"
+        strip_sql_comments(new_chain), NEW_POPULATION_CTE, "AND MOD(fo.id, 2) = 0"
     )
 
 

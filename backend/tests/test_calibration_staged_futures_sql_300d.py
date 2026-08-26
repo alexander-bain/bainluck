@@ -146,29 +146,47 @@ class TestGenerationRead:
 
 
 class TestRepresentativeTieAuthority:
+    # CAL-P102 moved the two windows onto a key-only CTE to get the Sort's
+    # projection under the frozen G3.2 width bar, so the authority is now written
+    # in TWO places that have to agree: ``ranked_outcomes_base`` projects the
+    # ordering expression and the canonical id, and ``ranked_outcomes_core``
+    # orders by those columns. The three tests below assert BOTH halves. Pinning
+    # only the ``ORDER BY`` line would now pass while the base projected the
+    # wrong expression into it — which is a weaker test than the one it replaced,
+    # not a differently-spelled one.
+
+    @staticmethod
+    def _ordering_columns(sql: str, window: str) -> str:
+        """The ORDER BY of one window in ``ranked_outcomes_core``."""
+        match = re.search(
+            rf"{window}\(\) OVER \(\s*PARTITION BY b\.vm_id\s*ORDER BY ([^\n]+)\n", sql
+        )
+        assert match, f"{window} window not found"
+        return match.group(1).strip()
+
     def test_window_breaks_ties_on_canonical_outcome_id(self):
         sql = _calibration_population_ctes()
-        assert "ORDER BY ABS(fo.opening_probability - 0.5), fo.id" in sql
+        assert "ABS(fo.opening_probability - 0.5) AS rn_order_val" in sql
+        assert "fo.id AS outcome_id" in sql
+        assert self._ordering_columns(sql, "ROW_NUMBER") == "b.rn_order_val, b.outcome_id"
 
     def test_horizon_scope_gets_the_same_authority(self):
         """The horizon finalizes on a snapshot price but must be just as stable."""
         sql = _calibration_population_ctes(rn_order="ABS(hp.horizon_prob - 0.5)")
-        assert "ORDER BY ABS(hp.horizon_prob - 0.5), fo.id" in sql
+        assert "ABS(hp.horizon_prob - 0.5) AS rn_order_val" in sql
+        assert "fo.id AS outcome_id" in sql
+        assert self._ordering_columns(sql, "ROW_NUMBER") == "b.rn_order_val, b.outcome_id"
 
     def test_delta_instrument_ranks_on_distance_alone(self):
         """``rn_distance_rank`` must NOT carry the tie-break.
 
         Its whole job is to still see the tie that ``rn`` has just resolved. If
-        someone "consistently" adds ``fo.id`` here too, every rank becomes
+        someone "consistently" adds the outcome id here too, every rank becomes
         distinct, the census silently reports zero, and the one-time delta is
         unmeasurable rather than measured-as-none.
         """
         sql = _calibration_population_ctes()
-        match = re.search(
-            r"RANK\(\) OVER \(\s*PARTITION BY cv\.vm_id\s*ORDER BY ([^\n]+)\n", sql
-        )
-        assert match, "rn_distance_rank window not found"
-        assert match.group(1).strip() == "ABS(fo.opening_probability - 0.5)"
+        assert self._ordering_columns(sql, "RANK") == "b.rn_order_val"
 
     def test_delta_is_reported_as_identity_not_exclusion(self):
         sql = _main_futures_sql()

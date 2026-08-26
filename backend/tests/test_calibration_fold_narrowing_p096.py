@@ -178,15 +178,207 @@ class TestTheSplitExists:
         names = select_list(cte_body(sql, "ranked_outcomes_core"))
         assert not set(names) & set(DEFERRED_COLUMNS)
 
-    def test_outer_reads_only_the_core_and_the_nine(self, sql: str) -> None:
+    def test_outer_reads_only_the_base_the_ranks_and_the_nine(self, sql: str) -> None:
         body = strip_comments(cte_body(sql, "ranked_outcomes"))
-        assert "FROM ranked_outcomes_core core" in body
+        assert "FROM ranked_outcomes_base base" in body
+        assert "JOIN ranked_outcomes_core core ON core.row_key = base.row_key" in body
         assert "futures_outcomes" not in body, (
             "the outer CTE must not re-scan futures_outcomes — every base column "
-            "it needs is projected by the core"
+            "it needs is projected by the base CTE, and re-scanning would pay for "
+            "the six EXISTS-shaped flags a second time"
         )
         for relation, alias in DEFERRED_JOINS.items():
-            assert f"LEFT JOIN {relation} {alias} ON {alias}.market_id = core.market_id" in body
+            assert f"LEFT JOIN {relation} {alias} ON {alias}.market_id = base.market_id" in body
+
+
+class TestTheWindowSortCarriesKeysOnly:
+    """CAL-P102 — the second narrowing, and the property G3.2 actually grades.
+
+    CAL-P096 deferred ten columns and the Sort still measured **93.9%** of the
+    old width (CI run 33016072464: NEW 1114 B vs OLD 1186 B, frozen bar 25%).
+    A column count is not a byte count, and the ten it moved were the narrow
+    ones. So the window's input is now four values and nothing else.
+
+    These are structural pins, not a width measurement — the width is CI's job,
+    on a real plan, against the frozen bar. What they can prove locally is that
+    no payload column has crept back under the Sort, which is the only way the
+    ratio silently returns.
+    """
+
+    #: Everything the two windows need, and the exhaustive list of what the
+    #: window CTE is allowed to project.
+    WINDOW_INPUTS = {"row_key", "rn", "rn_distance_rank"}
+
+    def test_the_window_cte_projects_keys_and_ranks_only(self, sql: str) -> None:
+        assert set(select_list(cte_body(sql, "ranked_outcomes_core"))) == self.WINDOW_INPUTS
+
+    def test_no_payload_column_survives_under_the_sort(self, sql: str) -> None:
+        """The regression this exists to catch, stated as the whole column set.
+
+        A future author adding "just one more" column to the window CTE to save
+        a join is the exact move that produced 93.9%.
+        """
+        payload = set(select_list(cte_body(sql, "ranked_outcomes_base")))
+        leaked = payload & set(select_list(cte_body(sql, "ranked_outcomes_core")))
+        assert leaked <= {"row_key"}, f"payload columns are back under the Sort: {leaked}"
+
+    def test_the_window_cte_reads_the_base_and_only_the_base(self, sql: str) -> None:
+        body = strip_comments(cte_body(sql, "ranked_outcomes_core"))
+        assert "FROM ranked_outcomes_base b" in body
+        assert "JOIN" not in body, (
+            "a join in the window CTE puts columns back into the Sort's input, "
+            "which is the thing the frozen G3.2 bar measures"
+        )
+
+    def test_the_surrogate_key_is_orderless_and_therefore_sortless(
+        self, sql: str
+    ) -> None:
+        """``ROW_NUMBER() OVER ()`` adds a WindowAgg and no Sort.
+
+        Give it an ORDER BY and the base CTE grows a sort of the WIDE row — the
+        exact cost this rewrite removes, reintroduced one CTE earlier where no
+        gate is looking for it.
+        """
+        body = strip_comments(cte_body(sql, "ranked_outcomes_base"))
+        assert "ROW_NUMBER() OVER () AS row_key" in body
+
+    def test_the_ranks_rejoin_one_to_one_on_the_surrogate(self, sql: str) -> None:
+        """Ruling 125, read in the duplicate direction.
+
+        ``outcome_id`` is NOT unique in the base relation: ``clean_vms`` groups
+        by five columns while the join above matches on ``(vm_id, source)``, so a
+        grouped ``vm_id`` whose markets disagree about category or exclusivity
+        carries two ``cv`` rows and two copies of each outcome. Joining the ranks
+        back on ``outcome_id`` would pair every copy with every rank.
+        """
+        body = strip_comments(cte_body(sql, "ranked_outcomes"))
+        assert "JOIN ranked_outcomes_core core ON core.row_key = base.row_key" in body
+        assert "core.outcome_id" not in body, (
+            "the ranks must be keyed on the surrogate — outcome_id is not unique "
+            "in this relation and would fan the join out"
+        )
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {},
+            {"frozen_vm_roster": True},
+            {
+                "curve_price": "hp.snapshot_probability",
+                "curve_price_join": "JOIN horizon_price hp ON hp.outcome_id = fo.id",
+                "rn_order": "ABS(hp.snapshot_probability - 0.5)",
+                "leading_ctes": "horizon_price AS (SELECT 1 AS outcome_id, 0.5 AS snapshot_probability),\n",
+            },
+        ],
+        ids=["headline", "frozen_roster", "horizon"],
+    )
+    def test_every_alias_reference_across_the_split_resolves(
+        self, kwargs: dict
+    ) -> None:
+        """Splitting one CTE into two turns column references into a contract.
+
+        Before CAL-P102 the outer CTE read one relation, so a typo was a typo.
+        Now ``base.`` and ``core.`` name two different relations and ``b.`` names
+        a third view of the first — and there is no local Postgres to catch a
+        reference that does not resolve (``initdb`` dies on ``shmget``), so the
+        first executor is CI's ``search-recall`` job, which ``deploy`` needs.
+        """
+        emitted = _calibration_population_ctes(**kwargs)
+        base_cols = set(select_list(cte_body(emitted, "ranked_outcomes_base")))
+        core_cols = set(select_list(cte_body(emitted, "ranked_outcomes_core")))
+        outer = strip_comments(cte_body(emitted, "ranked_outcomes"))
+        refs: dict[str, set[str]] = {}
+        for alias, col in re.findall(r"\b(base|core)\.([A-Za-z_][A-Za-z0-9_]*)", outer):
+            refs.setdefault(alias, set()).add(col)
+        assert refs.get("base", set()) <= base_cols, (
+            f"unresolved: {sorted(refs.get('base', set()) - base_cols)}"
+        )
+        assert refs.get("core", set()) <= core_cols, (
+            f"unresolved: {sorted(refs.get('core', set()) - core_cols)}"
+        )
+        window = strip_comments(cte_body(emitted, "ranked_outcomes_core"))
+        b_refs = {c for _, c in re.findall(r"\b(b)\.([A-Za-z_][A-Za-z0-9_]*)", window)}
+        assert b_refs <= base_cols, f"unresolved: {sorted(b_refs - base_cols)}"
+
+    def test_outcome_id_is_provably_not_a_key_of_the_base_relation(
+        self, sql: str
+    ) -> None:
+        """The premise behind the surrogate, read out of the SQL rather than asserted.
+
+        ``clean_vms`` inherits ``vm_stats``'s GROUP BY, and that grouping is
+        WIDER than the ``(vm_id, source)`` the base scan joins on. So one
+        ``(vm_id, source)`` can carry several ``cv`` rows — a grouped vm whose
+        member markets disagree about ``category``, ``is_grouped`` or
+        ``mutually_exclusive`` — and each one multiplies every outcome of every
+        market in that vm.
+
+        This is a PRE-EXISTING property of the chain, not something the rewrite
+        introduces, and the rewrite must reproduce it exactly rather than quietly
+        de-duplicate it. What the test pins is the reason the join back cannot be
+        keyed on ``outcome_id``: if the day comes that ``vm_stats`` groups on
+        ``(vm_id, source)`` alone, this goes red and the surrogate can be
+        reconsidered on purpose instead of by accident.
+        """
+        vm_stats = strip_comments(cte_body(sql, "vm_stats"))
+        group_by = vm_stats[vm_stats.rindex("GROUP BY") :]
+        beyond = {
+            c
+            for c in ("vm.category", "vm.is_grouped", "vm.mutually_exclusive")
+            if c in group_by
+        }
+        assert beyond, (
+            "vm_stats no longer groups beyond (vm_id, source) — re-derive whether "
+            "outcome_id has become a key of the base relation"
+        )
+        base = strip_comments(cte_body(sql, "ranked_outcomes_base"))
+        assert "JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source" in base
+
+    def test_the_ordering_expression_is_projected_not_restated(self, sql: str) -> None:
+        """``rn_order_val`` must BE ``{rn_order}``, carried one CTE forward.
+
+        A restated expression is a second definition, and the two would only
+        have to disagree once for ``rn`` — and therefore which row publishes —
+        to move with no methodology change.
+        """
+        emitted = _calibration_population_ctes(rn_order="ABS(fo.opening_probability - 0.5)")
+        base = strip_comments(cte_body(emitted, "ranked_outcomes_base"))
+        assert "ABS(fo.opening_probability - 0.5) AS rn_order_val" in base
+        core = strip_comments(cte_body(emitted, "ranked_outcomes_core"))
+        assert "ABS(" not in core, "the window CTE must sort on the projected column"
+
+    def test_the_population_predicate_lives_where_the_mutant_targets_it(
+        self, sql: str
+    ) -> None:
+        """G4.5 appends its predicate to ``NEW_POPULATION_CTE``.
+
+        If the WHERE and the mutant's target ever separate, the control appends
+        valid-looking SQL to a CTE with no ``fo`` in scope and raises instead of
+        narrowing — and a control that cannot execute is one that stopped
+        controlling.
+        """
+        from app.utils.fold_narrowing_gate import NEW_POPULATION_CTE, mutant_narrow_population
+
+        assert NEW_POPULATION_CTE == "ranked_outcomes_base"
+        body = strip_comments(cte_body(sql, NEW_POPULATION_CTE))
+        assert "FROM futures_outcomes fo" in body and "WHERE" in body
+        mutated = mutant_narrow_population(sql)
+        assert "AND MOD(fo.id, 2) = 0" in strip_comments(
+            cte_body(mutated, NEW_POPULATION_CTE)
+        )
+
+    def test_the_rn1_mutant_still_resolves_against_the_outer_alias(
+        self, sql: str
+    ) -> None:
+        """G4.2 appends ``WHERE core.rn = 1`` to ``ranked_outcomes``.
+
+        CAL-P102 renamed the payload alias rather than the rank alias precisely
+        so this stays a mutant instead of becoming a syntax error.
+        """
+        from app.utils.fold_narrowing_gate import mutant_global_rn1
+
+        body = strip_comments(cte_body(mutant_global_rn1(sql), "ranked_outcomes"))
+        assert "WHERE core.rn = 1" in body
+        assert "JOIN ranked_outcomes_core core" in body
 
 
 class TestDeferredJoinsAreRowPreserving:
@@ -281,10 +473,15 @@ class TestWindowsDependOnCoreOnly:
         # is not a total order, so the tie-break on the immutable outcome id is
         # what makes rn reproducible at all. Narrowing the window's input must not
         # be an excuse to lose it.
+        #
+        # CAL-P102: the aliases moved with the window (``b`` over
+        # ``ranked_outcomes_base``, projecting ``outcome_id`` = ``fo.id`` and
+        # ``rn_order_val`` = the same ``{rn_order}`` expression). The ORDER is
+        # what this test is about, and it is unchanged.
         core = strip_comments(cte_body(sql, "ranked_outcomes_core"))
         clause = self._window_clauses(core[core.index("ROW_NUMBER()") :])[0]
-        assert "PARTITION BY cv.vm_id" in clause
-        assert clause.rstrip().endswith("fo.id")
+        assert "PARTITION BY b.vm_id" in clause
+        assert clause.rstrip().endswith("b.outcome_id")
 
 
 class TestEmittedRelationIsUnchanged:
@@ -344,18 +541,29 @@ class TestEveryCallPathSplits:
         )
         assert len(select_list(cte_body(emitted, "ranked_outcomes"))) == 31
 
-    def test_the_horizon_price_join_stays_in_the_core(self) -> None:
+    def test_the_horizon_price_join_stays_below_the_window(self) -> None:
         # The horizon join is an INNER join and therefore a FILTER: it decides
         # which outcomes exist at the snapshot. It must run BEFORE the window, or
         # rn would be ranked over rows the horizon does not contain.
+        #
+        # CAL-P102 moved the window one CTE UP, not the filter down: the join
+        # lives in ``ranked_outcomes_base``, which the window CTE reads whole with
+        # no predicate of its own — so "before the window" still holds, and this
+        # asserts both halves rather than only where the join sits.
         emitted = _calibration_population_ctes(
             curve_price="hp.snapshot_probability",
             curve_price_join="JOIN horizon_price hp ON hp.outcome_id = fo.id",
             rn_order="ABS(hp.snapshot_probability - 0.5)",
             leading_ctes="horizon_price AS (SELECT 1 AS outcome_id, 0.5 AS snapshot_probability),\n",
         )
+        base = strip_comments(cte_body(emitted, "ranked_outcomes_base"))
+        assert "JOIN horizon_price hp ON hp.outcome_id = fo.id" in base
         core = strip_comments(cte_body(emitted, "ranked_outcomes_core"))
-        assert "JOIN horizon_price hp ON hp.outcome_id = fo.id" in core
+        assert "FROM ranked_outcomes_base b" in core
+        assert "WHERE" not in core, (
+            "the window CTE must rank the base population WHOLE — a predicate "
+            "here would rank a different multiset than the one that publishes"
+        )
 
 
 # ===========================================================================
@@ -487,9 +695,16 @@ class TestTheMutantsApplyOrRaise:
             cte_body(new_chain, "deduped")
         )
 
-    def test_narrow_population_lands_in_the_core(self, new_chain: str) -> None:
+    def test_narrow_population_lands_where_the_population_is(
+        self, new_chain: str
+    ) -> None:
+        # CAL-P102: the window CTE no longer has a WHERE or an ``fo`` alias, so
+        # the predicate goes on the base scan. Asserted BOTH ways — it must land
+        # on the population and must NOT land on the window, because appending it
+        # there would be a syntax error dressed as a control.
         mutated = gate.mutant_narrow_population(new_chain)
-        assert "AND MOD(fo.id, 2) = 0" in cte_body(mutated, "ranked_outcomes_core")
+        assert "AND MOD(fo.id, 2) = 0" in cte_body(mutated, gate.NEW_POPULATION_CTE)
+        assert "AND MOD(fo.id, 2) = 0" not in cte_body(mutated, "ranked_outcomes_core")
 
     def test_a_missing_anchor_raises_rather_than_returning_the_input(self) -> None:
         with pytest.raises(ValueError):

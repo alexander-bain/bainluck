@@ -2084,7 +2084,7 @@ def _calibration_population_ctes(
             -- the plan, and no index on ``futures_odds_snapshots`` can accelerate a
             -- Sort on ``(vm_id, ABS(cp-0.5))``.
             --
-            -- So the window moves to the narrow row. ``ranked_outcomes_core`` is the
+            -- So the window moves off the wide row. ``ranked_outcomes_base`` is the
             -- ``fo ⋈ virtual_market ⋈ clean_vms`` scan and NOTHING else — every
             -- column it carries is derivable from those three, including the four
             -- EXISTS-shaped flags and the prop-threshold band, none of which need a
@@ -2092,6 +2092,21 @@ def _calibration_population_ctes(
             -- ``ranked_outcomes``, which projects the identical column list in the
             -- identical order, so every downstream CTE sees exactly the relation it
             -- saw before.
+            --
+            -- ⚠️ CAL-P102 — READ THIS BEFORE QUOTING THE PARAGRAPH ABOVE. Deferring
+            -- the nine joins was necessary and NOT sufficient, and the gap between
+            -- those two words is the whole of CAL-P099..P102. The frozen G3.2 bar
+            -- is a BYTE ratio — the new Sort's ``Plan Width`` at most 25% of the
+            -- old — and after CAL-P096 it measured **93.9%** (CI run 33016072464:
+            -- NEW 1114 B vs OLD 1186 B). The projection diagnostic CAL-P101 added
+            -- says why in one line: 27 columns became 17, ten left, and the ten
+            -- that left were the cheap ones. Column count is not byte count.
+            --
+            -- The fix is the second CTE below, ``ranked_outcomes_core``: the two
+            -- windows now read a KEY-ONLY relation — partition key, ordering
+            -- expression, tie-break outcome id, surrogate — and the payload
+            -- rejoins on the surrogate afterwards. Its own comment carries the
+            -- four-part argument for why that is the same ``rn``.
             --
             -- ⚠️ WHAT THIS DELIBERATELY DOES NOT DO, because the semantics forbid it.
             -- C-FOLD-EXPLAIN-1 §3 proposed joining the flags after ``rn = 1`` is
@@ -2116,8 +2131,33 @@ def _calibration_population_ctes(
             -- in ``tests/test_calibration_fold_narrowing_p096.py``, and the emitted
             -- row identity is guarded against the frozen pre-split SQL in
             -- ``tests/fixtures/cal_p096_fused_population_ctes.sql``.
-            ranked_outcomes_core AS MATERIALIZED (
+            ranked_outcomes_base AS MATERIALIZED (
                 SELECT
+                    -- CAL-P102: the join key back from the narrow window CTE.
+                    --
+                    -- It has to be a SURROGATE, and that is ruling 125's clause
+                    -- ("a join that can DELETE a row must carry every dimension
+                    -- that identifies the row") read in the duplicate direction.
+                    -- The obvious key, ``outcome_id``, is NOT unique in this
+                    -- relation: ``clean_vms`` is ``GROUP BY (vm_id, source,
+                    -- category, is_grouped, mutually_exclusive)`` while the join
+                    -- above matches on ``(vm_id, source)`` alone, so a grouped
+                    -- ``vm_id`` whose member markets disagree about category or
+                    -- exclusivity yields TWO ``cv`` rows and therefore two copies
+                    -- of every outcome. Joining back on ``outcome_id`` would pair
+                    -- each copy with each rank and square them.
+                    --
+                    -- The full natural key would work and is the wrong choice
+                    -- here: it puts ``source`` and ``category`` — two more TEXT
+                    -- columns — into the very Sort this rewrite exists to narrow,
+                    -- and ``Plan Width`` prices an unanalyzed ``varchar(255)`` at
+                    -- 141 B whatever it holds. One ``bigint`` carries the same
+                    -- identity in 8.
+                    --
+                    -- ``OVER ()`` has no ORDER BY, so it adds a WindowAgg and no
+                    -- Sort. The key is execution-local by design: it never reaches
+                    -- ``deduped``, and nothing compares it across two runs.
+                    ROW_NUMBER() OVER () AS row_key,
                     -- Queue #157 (#1012): raw curve price. The per-market
                     -- normalization divisor joins in ``ranked_outcomes`` below; the
                     -- actual normalization (cp / mnm.cp_sum) is DEFERRED further
@@ -2201,21 +2241,13 @@ def _calibration_population_ctes(
                     -- favourite/underdog preference — any side preference would be
                     -- a product decision about which half of a book we believe,
                     -- and this is only a determinism rule.
-                    ROW_NUMBER() OVER (
-                        PARTITION BY cv.vm_id
-                        ORDER BY {rn_order}, fo.id
-                    ) AS rn,
-                    -- The one-time delta instrument. RANK over the DISTANCE ONLY
-                    -- is 1 for every row tied at the minimum, so ``rn = 2 AND
-                    -- rn_distance_rank = 1`` marks exactly those questions whose
-                    -- representative the new authority had to choose. Its ORDER BY
-                    -- is a prefix of ``rn``'s, so PostgreSQL satisfies both windows
-                    -- from one sort and this costs no extra pass over the heaviest
-                    -- CTE in the product.
-                    RANK() OVER (
-                        PARTITION BY cv.vm_id
-                        ORDER BY {rn_order}
-                    ) AS rn_distance_rank
+                    --
+                    -- CAL-P102: the ORDER BY expression is projected here and the
+                    -- two windows themselves moved to ``ranked_outcomes_core``
+                    -- below. It is the SAME expression over the SAME rows, so the
+                    -- ordering — and therefore ``rn`` — is unchanged; only the
+                    -- width of the row the sort carries is.
+                    {rn_order} AS rn_order_val
                 FROM futures_outcomes fo
                 JOIN virtual_market vm ON vm.market_id = fo.market_id
                 JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
@@ -2236,6 +2268,76 @@ def _calibration_population_ctes(
                   -- never-bid/never-traded phantom is COUNTED as excluded here, not
                   -- silently removed at eligibility; a bid-bearing volume=0 row now
                   -- survives is_liquid and reaches the curve (the C44 #1 fix).
+            ),
+            -- CAL-P102 — THE SECOND NARROWING, and the one G3.2 actually asked
+            -- for.
+            --
+            -- CAL-P096 moved the nine per-market LEFT JOINs out from under the
+            -- window and that was real: the Sort's projection fell from 27
+            -- columns to 17. It was also not enough. The frozen G3.2 bar is the
+            -- new Sort's ``Plan Width`` at most 25% of the old one, and the
+            -- seventeen SURVIVING columns still carry almost the whole estimated
+            -- tuple: measured on CI run 33016072464, NEW 1114 B vs OLD 1186 B —
+            -- **93.9%**. A column count is not a byte count, and the deferred
+            -- ten were the narrow ones.
+            --
+            -- So the window moves off the payload row entirely. The two window
+            -- functions need exactly four values — the partition key, the
+            -- ordering expression, the tie-break outcome id, and a way back to
+            -- the row — and this CTE carries those and nothing else. The payload
+            -- rejoins afterwards on ``row_key``.
+            --
+            -- Why this is the same ``rn``, not a new one:
+            --
+            -- * The population is IDENTICAL. This CTE reads ``ranked_outcomes_base``
+            --   whole, with no predicate of its own, so the window ranks the same
+            --   multiset it ranked before — including the horizon path, whose
+            --   INNER ``horizon_price`` join is a filter and stays in the base.
+            -- * The ORDER BY is the SAME EXPRESSION. ``rn_order_val`` is
+            --   ``{rn_order}`` projected one CTE earlier; sorting by a column and
+            --   sorting by the expression that produced it order identically,
+            --   NULLs included.
+            -- * The tie-break survives. ``b.outcome_id`` IS ``fo.id`` — Alex's
+            --   2026-08-03 tie authority is untouched, which matters because
+            --   distance from 50% alone is not a total order and ``deduped``
+            --   publishes only ``rn = 1``.
+            -- * The join back is 1:1 on a surrogate that is unique by
+            --   construction. See ``row_key``'s note above for why the natural
+            --   key is not.
+            --
+            -- MATERIALIZED for the same reason as its neighbours: one referent,
+            -- so PG12+ would inline it, put the window back over the wide row,
+            -- and undo this while every row count stayed self-consistent.
+            ranked_outcomes_core AS MATERIALIZED (
+                SELECT
+                    b.row_key,
+                    -- Queue 300D Item 1 (C126 P1) / Alex's 2026-08-03 ruling: the
+                    -- tie AUTHORITY. Distance from 50% ALONE is not a total order
+                    -- — complementary binary sides are routinely equidistant
+                    -- (0.40 / 0.60) — so with no secondary key PostgreSQL may
+                    -- return either tied row across plans or rebuilds, and the
+                    -- published observation, its winner label and its bucket
+                    -- could all move with no source-data or methodology change.
+                    -- Ties break on the immutable canonical outcome ID.
+                    -- Deliberately NOT a Yes/No or favourite/underdog preference:
+                    -- any side preference would be a product decision about which
+                    -- half of a book we believe, and this is only a determinism
+                    -- rule.
+                    ROW_NUMBER() OVER (
+                        PARTITION BY b.vm_id
+                        ORDER BY b.rn_order_val, b.outcome_id
+                    ) AS rn,
+                    -- The one-time delta instrument. RANK over the DISTANCE ONLY
+                    -- is 1 for every row tied at the minimum, so ``rn = 2 AND
+                    -- rn_distance_rank = 1`` marks exactly those questions whose
+                    -- representative the new authority had to choose. Its ORDER BY
+                    -- is a prefix of ``rn``'s, so PostgreSQL satisfies both windows
+                    -- from one sort and this costs no extra pass.
+                    RANK() OVER (
+                        PARTITION BY b.vm_id
+                        ORDER BY b.rn_order_val
+                    ) AS rn_distance_rank
+                FROM ranked_outcomes_base b
             ),
             -- CAL-P096: the nine per-MARKET slices, joined AFTER the window.
             --
@@ -2263,26 +2365,26 @@ def _calibration_population_ctes(
             -- self-consistent.
             ranked_outcomes AS MATERIALIZED (
                 SELECT
-                    core.raw_cp,
+                    base.raw_cp,
                     -- Queue #262 Item 1: candidate membership (structural, terminal)
                     -- vs divisor (price-expression). is_mex_normalized keys on the
                     -- candidate so an incomplete horizon field is dropped WHOLE even
                     -- when <3 members are present at the snapshot.
                     mfc.market_id AS candidate_market_id,
                     mfd.cp_sum AS mnm_cp_sum,
-                    core.market_id,
-                    core.outcome_id,
-                    core.outcome_name,
-                    core.market_type,
-                    core.llm_league,
-                    core.is_winner,
-                    core.price_moved,
-                    core.vm_id, core.source, core.category,
-                    core.eligible, core.is_grouped,
-                    core.is_multi,
-                    core.is_liquid,
-                    core.is_poly_placeholder,
-                    core.is_poly_never_traded,
+                    base.market_id,
+                    base.outcome_id,
+                    base.outcome_name,
+                    base.market_type,
+                    base.llm_league,
+                    base.is_winner,
+                    base.price_moved,
+                    base.vm_id, base.source, base.category,
+                    base.eligible, base.is_grouped,
+                    base.is_multi,
+                    base.is_liquid,
+                    base.is_poly_placeholder,
+                    base.is_poly_never_traded,
                     -- L2-79 Item 1: malformed 2-outcome mex binary (winner count
                     -- 0 = void, or 2 = impossible). mb.win_count carries which.
                     (mb.market_id IS NOT NULL) AS is_malformed_binary,
@@ -2303,22 +2405,31 @@ def _calibration_population_ctes(
                     -- L2-79 Item 2: golf one-sided-ask placeholder — this outcome
                     -- sits in the >=0.80 band of an over-subscribed golf mex market.
                     (gpm.market_id IS NOT NULL
-                     AND core.golf_band_cp
+                     AND base.golf_band_cp
                          >= {GOLF_PLACEHOLDER_HIGH_BAND}) AS is_golf_placeholder,
-                    core.is_kalshi_prop_threshold,
-                    core.is_weather_wide_spread,
+                    base.is_kalshi_prop_threshold,
+                    base.is_weather_wide_spread,
                     core.rn,
                     core.rn_distance_rank
-                FROM ranked_outcomes_core core
-                LEFT JOIN malformed_binaries mb ON mb.market_id = core.market_id
-                LEFT JOIN esports_multi_bundles emb ON emb.market_id = core.market_id
-                LEFT JOIN no_winner_markets nwm ON nwm.market_id = core.market_id
-                LEFT JOIN draw_authority_markets dam ON dam.market_id = core.market_id
-                LEFT JOIN orphan_partition_markets opm ON opm.market_id = core.market_id
-                LEFT JOIN nonexclusive_bundle_markets nbm ON nbm.market_id = core.market_id
-                LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = core.market_id
-                LEFT JOIN mex_field_candidates mfc ON mfc.market_id = core.market_id
-                LEFT JOIN mex_field_divisor mfd ON mfd.market_id = core.market_id
+                FROM ranked_outcomes_base base
+                -- CAL-P102: the ranks rejoin here, 1:1 on the surrogate.
+                --
+                -- The RANK CTE keeps the alias ``core``, and that is deliberate
+                -- rather than tidy: ``core.rn`` is the anchor the G4.2 mutant
+                -- (``WHERE core.rn = 1``) appends to this CTE, and an alias
+                -- rename would have turned that control into a SQL error — a
+                -- mutant that cannot execute is a control that silently stops
+                -- controlling. The payload row takes the new alias instead.
+                JOIN ranked_outcomes_core core ON core.row_key = base.row_key
+                LEFT JOIN malformed_binaries mb ON mb.market_id = base.market_id
+                LEFT JOIN esports_multi_bundles emb ON emb.market_id = base.market_id
+                LEFT JOIN no_winner_markets nwm ON nwm.market_id = base.market_id
+                LEFT JOIN draw_authority_markets dam ON dam.market_id = base.market_id
+                LEFT JOIN orphan_partition_markets opm ON opm.market_id = base.market_id
+                LEFT JOIN nonexclusive_bundle_markets nbm ON nbm.market_id = base.market_id
+                LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = base.market_id
+                LEFT JOIN mex_field_candidates mfc ON mfc.market_id = base.market_id
+                LEFT JOIN mex_field_divisor mfd ON mfd.market_id = base.market_id
             ),
             -- Queue #257 Item 1: FIELD-COMPLETENESS aggregation. For each
             -- normalization CANDIDATE market (mex/field, single winner over all
