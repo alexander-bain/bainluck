@@ -47,6 +47,7 @@ import TournamentBracket from "@/components/tournament/TournamentBracket";
 import { buildBracket } from "@/lib/bracket";
 import TournamentSlate from "@/components/tournament/TournamentSlate";
 import TournamentProps from "@/components/tournament/TournamentProps";
+import { TOURNAMENT_PROPS_ENABLED } from "@/lib/tournamentFlags";
 import { fetchTournament } from "@/lib/api";
 import type { TournamentPayload } from "@/lib/tournament";
 
@@ -216,7 +217,14 @@ export default function TournamentPage() {
                   <TournamentBoard key={board.draw} board={board} />
                 ))}
 
-              <TournamentProps markets={data.props ?? []} draw={draw} />
+              {/* OFF since INT-131 (Alex product call 2026-08-26): CERT-411
+                  BLOCK is scoped to TournamentProps — a fresh leader beside a
+                  stale runner renders data-live=true against a server
+                  data-price-state=dark. Boards passed; props re-enable when its
+                  fix certs. See lib/tournamentFlags.ts. */}
+              {TOURNAMENT_PROPS_ENABLED && (
+                <TournamentProps markets={data.props ?? []} draw={draw} />
+              )}
             </>
           )}
 
