@@ -249,6 +249,152 @@ committed file; the clock is not.
 
 ---
 
+## DRAW CEREMONY RUNBOOK — the exact sequence for the day (UX-P136)
+
+**Read this once before the ceremony, then execute it.** Every command below was run end to end
+on 2026-08-26 against the synthetic 128-slot draw, and the outputs quoted are the real ones. Draw
+day is four steps: **ingest → latch → swap → publish**. They are not four decisions; the latch and
+the slots are written by the same command precisely so nobody has to sequence them under time
+pressure.
+
+**Starting state, measured 2026-08-26:** register `version: 4`, `supersedes_version: 3`,
+`draw_released: false`, 211 players (96 men / 115 women).
+
+**The one thing that will look alarming and is expected:** the register holds 96 men and 115 women
+against 128 slots a side, so **45 drawn names have no registered identity**. That is not a bug and
+no regeneration pass can fix it — the register is built from *markets*, and nobody quotes a
+qualifier who has not qualified yet. `--register-from-draw` is the sanctioned answer and step 1
+requires it. Without that flag the script refuses on all 45 and writes nothing.
+
+### Step 1 — Ingest the draw, DRY, and read the admitted list
+
+Save the draw as `{"mens-singles": [{"slot": 1, "name": "...", "seed": 1}, ...], "womens-singles": [...]}`,
+128 entries per side.
+
+```bash
+cd backend && python3 scripts/ingest_tournament_draw.py \
+  --register data/tournament_registers/us-open-2026.json \
+  --draw /tmp/usopen-draw-2026.json \
+  --version 5 --supersedes-version 4 --register-from-draw \
+  --out /tmp/proposed-v5.json
+```
+
+`--out` is what makes this dry: it writes a candidate elsewhere and leaves the committed register
+untouched. **Verification — all four lines, or stop:**
+
+```
+draw_released: False -> True
+players with a draw slot: 256
+  mens-singles: 128/128
+  womens-singles: 128/128
+...
+findings:   none
+transition: clean
+```
+
+- `128/128` on **both** sides. A short side means the draw file is short, and `buildBracket`
+  refuses a non-power-of-two rather than truncating — you would ship an empty tab with no
+  explanation, which is worse than a late one.
+- `findings: none` and `transition: clean`. The script refuses to write on either, so a
+  non-empty value here is a stop, not a warning.
+- **Read the `ADMITTED FROM THE DRAW (n)` list by name.** It is itemised rather than counted for
+  exactly this moment. Each admitted row is `role: participant`, `sources: []`, `draw-ceremony`
+  provenance — a name and a slot, no market, so no number can render for them anywhere.
+- Exit code must be `0`. `1` means it refused; nothing was written and the register is intact.
+
+### Step 2 — Write it in place (this IS the latch)
+
+Re-run the identical command **without `--out`**:
+
+```bash
+cd backend && python3 scripts/ingest_tournament_draw.py \
+  --register data/tournament_registers/us-open-2026.json \
+  --draw /tmp/usopen-draw-2026.json \
+  --version 5 --supersedes-version 4 --register-from-draw
+```
+
+There is no separate latch step and there must not be one. `draw_slot` is rejected by
+`validate_player` while `draw_released` is false — before the ceremony a slot is a guess wearing
+the authority of a fact — so the slots and the latch have to land in the **same version**. This
+script is the only thing that writes both.
+
+**Verification:**
+
+```bash
+python3 -c "import json; d=json.load(open('data/tournament_registers/us-open-2026.json')); \
+print(d['version'], d['supersedes_version'], d['draw_released'], \
+sum(1 for p in d['players'] if p.get('draw_slot') is not None))"
+# expect: 5 4 True 256
+```
+
+### Step 3 — The fixture swap. There is nothing to swap.
+
+**This step is a verification only, and that is the whole design.** The bracket has been built
+against a synthetic fixture since Day 3, but the fixture was never wired into the page — it lives
+under `frontend/__tests__/fixtures/`, which the Next.js app tree does not compile, so it cannot
+reach a production bundle. The page has always read `data.bracket[draw]` from the API, which reads
+`build_bracket`, which returns `[]` until the latch. **The ceremony is a data change, not a
+deploy.** Confirm the swap happened by confirming the same code returns something different:
+
+```bash
+cd backend && python3 -c "
+import json, sys; sys.path.insert(0,'.')
+from app.utils.tournament_slate import build_bracket
+reg = json.load(open('data/tournament_registers/us-open-2026.json'))
+for d in ('mens-singles','womens-singles'):
+    s = build_bracket(reg, prices={}, draw=d)
+    print(d, 'len', len(s), 'filled', sum(1 for x in s if x), 'holes', sum(1 for x in s if not x))
+"
+# expect: len 128, filled 128, holes 0 — on BOTH draws
+```
+
+Measured on the rehearsal: `mens-singles len=128 filled=128 holes=0`, same for the women's.
+Pre-latch the same call returns `[]`.
+
+**A `holes` count above zero is not fatal but must be understood before publishing.** A hole is a
+slot the register holds no player for; the frontend renders it as an undetermined slot and — since
+UX-P136 — **never advances the opponent past it as a bye**. With `--register-from-draw` in step 1
+there should be no holes at all, so any hole means a draw-file entry the script could not use.
+
+### Step 4 — Publish and verify on the page
+
+Commit the register (it is a committed file, so this is an ordinary deploy of data) and hand it to
+the Integrator like any other branch — **this lane does not push.** After it lands:
+
+```bash
+source ~/.claude/.env && curl -s "$BAINLUCK_API/api/tournaments/us-open" \
+  | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+print('draw_released', d['draw_released'])
+for k,v in (d.get('bracket') or {}).items():
+    print(k, 'len', len(v), 'filled', sum(1 for x in v if x))
+"
+# expect: draw_released True, and 128/128 on both draws
+```
+
+Then open `/tournaments/us-open` → **Bracket** tab. What correct looks like:
+
+- The tab opens on the **Round of 128** with 64 match cards, two names each and **no winners** —
+  the draw is out, nothing has been played. A winner showing here on ceremony day is a bug.
+- The round strip shows all seven rounds; R64 onward say *"Nobody has reached the … yet"* rather
+  than rendering rows of empty cards.
+- Most names carry **no probability**. That is correct: a 128 field is mostly unpriced, and an
+  admitted-from-the-draw player has `sources: []` and can never carry a number.
+- The **Tournament** tab is unchanged. The bracket has its own tab specifically so it can never
+  displace the boards — the charter's safety property, and the reason a janky bracket is
+  survivable on the marquee weekend.
+
+### If it goes wrong
+
+`git revert` the register commit. The latch is a field in a committed JSON file, so rollback is a
+file rollback and the bracket returns to "Draw not released" — the boards and the slate are not
+touched by any of this, because `build_bracket` is the only consumer of `draw_slot`.
+
+**Never hand-edit `draw_released` to true.** It would pass a naive read and fail
+`validate_player` on every slot, and the failure surfaces as an empty bracket with no explanation.
+
+---
+
 ## Alex's mock verdict — the re-skin (2026-08-25, UX-P132)
 
 Taste rulings, applied as a re-skin and never a restructure. Reference screenshot:

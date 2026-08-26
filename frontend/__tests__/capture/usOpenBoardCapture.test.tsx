@@ -284,6 +284,11 @@ describe("US Open board capture rig", () => {
     // ceremony. The fixture lives under __tests__/ and cannot reach a
     // production bundle; on the real page this tab still reads "Draw not
     // released" until the register latches `draw_released`.
+    //
+    // This is the THUMBNAIL only, so the hub capture shows all four surfaces
+    // in one place. The bracket's own verdict artifact is
+    // `usOpenBracketCapture` -> `us-open-bracket.html`, which renders both
+    // draws and every state at phone width (UX-P136).
     const rounds = buildBracket(
       SYNTHETIC_MENS_DRAW,
       syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
@@ -347,8 +352,8 @@ at Alex's request; the real page says "Draw not released" until the ceremony.
   </div>
 </div>
 
-<div class="cap">Bracket tab — dummy draw, ahead of Thursday's ceremony</div>
-<div class="wide">${bracket}</div>
+<div class="cap">Bracket tab — dummy draw, ahead of Thursday's ceremony (full states: us-open-bracket.html)</div>
+<div class="rail"><div class="phone"><div class="pad">${bracket}</div></div></div>
 </body></html>`;
 
     const out = path.join(dir, "us-open-reskin.html");

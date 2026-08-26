@@ -16,11 +16,13 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import TournamentBracket from "@/components/tournament/TournamentBracket";
-import { bracketProgress, buildBracket, ROUND_NAMES } from "@/lib/bracket";
+import { bracketProgress, buildBracket, roundIsUnreached, ROUND_NAMES } from "@/lib/bracket";
 import {
   SYNTHETIC_MENS_DRAW,
   SYNTHETIC_WOMENS_DRAW,
+  syntheticDrawWithHoles,
   syntheticFirstRoundResults,
+  syntheticPartialResults,
 } from "../fixtures/syntheticDraw";
 
 describe("the synthetic fixture is a usable stand-in for a real draw", () => {
@@ -120,6 +122,74 @@ describe("results advance winners and only winners", () => {
   });
 });
 
+describe("NOTHING advances without a declared result (UX-P136 regression)", () => {
+  // The bug: a `null` opponent slot was read as a bye and advanced the other
+  // side. It fired in two places, and BOTH printed a player into a round it
+  // had not reached — the one thing the charter forbids, because a projection
+  // rendered this way is indistinguishable from a result.
+
+  it("does not advance a winner past an UNDECIDED sibling match", () => {
+    // Two first-round matches feed R64-1. Decide only the first. The winner of
+    // R128-1 belongs in R64 and NOWHERE further, because R128-2 is still on
+    // court and R64-1 therefore has not been played.
+    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, syntheticPartialResults(SYNTHETIC_MENS_DRAW, 1));
+
+    expect(rounds[1].matches[0].top?.entity_key).toBe("syn-m-1");
+    expect(rounds[1].matches[0].bottom).toBeNull();
+    // The bug walked syn-m-1 straight into R32 for beating an empty slot.
+    expect(rounds[1].matches[0].winnerKey).toBeNull();
+    expect(rounds[2].matches[0].top).toBeNull();
+    expect(rounds[2].matches[0].bottom).toBeNull();
+  });
+
+  it("keeps a half-played first round out of every later round", () => {
+    // THIRTY-THREE, not thirty-two, and the odd number is the whole point. An
+    // even count fills R64 in complete pairs, so no match is ever left with
+    // one side — the bug cannot fire and a green here would mean nothing. At
+    // 33, R64's seventeenth match holds one name against an empty slot, which
+    // is exactly the shape that used to promote him.
+    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, syntheticPartialResults(SYNTHETIC_MENS_DRAW, 33));
+    const named = rounds[1].matches.flatMap((m) => [m.top, m.bottom]).filter(Boolean);
+    expect(named).toHaveLength(33);
+    expect(rounds[1].matches[16].top?.entity_key).toBe("syn-m-65");
+    expect(rounds[1].matches[16].bottom).toBeNull();
+    for (const later of rounds.slice(2)) {
+      expect(later.matches.every((m) => m.top === null && m.bottom === null)).toBe(true);
+    }
+  });
+
+  it("treats a register HOLE as undetermined, not as a bye", () => {
+    // The backend's own contract: `None` is "a slot we hold no registered
+    // player for … not a bye, and never a name we invented". The fold used to
+    // disagree with the function feeding it, and promoted the opponent.
+    const holed = syntheticDrawWithHoles(SYNTHETIC_MENS_DRAW, [1]);
+    const rounds = buildBracket(holed);
+
+    expect(rounds[0].matches[0].top?.entity_key).toBe("syn-m-1");
+    expect(rounds[0].matches[0].bottom).toBeNull();
+    expect(rounds[0].matches[0].winnerKey).toBeNull();
+    // syn-m-1 did not win the Round of 128 by being the only one in it.
+    expect(rounds[1].matches[0].top).toBeNull();
+  });
+
+  it("refuses a result naming somebody who is not in the match", () => {
+    // A data fault, and the honest response is an empty slot rather than a
+    // name teleported across the draw.
+    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, { "R128-1": "syn-m-99" });
+    expect(rounds[0].matches[0].winnerKey).toBeNull();
+    expect(rounds[1].matches[0].top).toBeNull();
+  });
+});
+
+describe("roundIsUnreached", () => {
+  it("is true for a round nobody has got to, false for one with names", () => {
+    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW));
+    expect(roundIsUnreached(rounds[0])).toBe(false);
+    expect(roundIsUnreached(rounds[1])).toBe(false);
+    expect(roundIsUnreached(rounds[2])).toBe(true);
+  });
+});
+
 describe("TournamentBracket rendering", () => {
   it("renders the not-yet state before the draw is released", () => {
     const html = renderToStaticMarkup(
@@ -138,13 +208,44 @@ describe("TournamentBracket rendering", () => {
     expect(html).toContain('data-testid="bracket-unreleased"');
   });
 
-  it("renders one column per round once released", () => {
+  it("offers every round as a chip, and renders ONE of them", () => {
+    // The 128-draw layout gate (UX-P136). Seven side-by-side columns is
+    // ~1,360px wide and ~3,450px tall in its first column; at the 390px
+    // viewport this page targets that is unreadable in two dimensions at once.
     const html = renderToStaticMarkup(
       <TournamentBracket rounds={buildBracket(SYNTHETIC_MENS_DRAW)} drawReleased />
     );
-    expect(html.match(/data-testid="bracket-round"/g)).toHaveLength(7);
-    expect(html).toContain('data-round="R128"');
-    expect(html).toContain('data-round="F"');
+    expect(html.match(/data-testid="bracket-round-chip"/g)).toHaveLength(7);
+    // ...but only one round's matches are in the document.
+    expect(html.match(/data-testid="bracket-round"[^-]/g) ?? []).toHaveLength(1);
+  });
+
+  it("never renders more than one round's worth of match cards", () => {
+    // The cost gate behind the layout change: the old render put all 127
+    // matches on the page at once.
+    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW));
+    const html = renderToStaticMarkup(<TournamentBracket rounds={rounds} drawReleased />);
+    const cards = (html.match(/data-testid="bracket-match"/g) ?? []).length;
+    expect(cards).toBeLessThanOrEqual(64);
+    expect(cards).toBeGreaterThan(0);
+  });
+
+  it("opens on the round the tournament is actually in", () => {
+    // R128 fully played, so the tab should open on R64 — not on a round that
+    // finished, and not on an empty Final.
+    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW));
+    const html = renderToStaticMarkup(<TournamentBracket rounds={rounds} drawReleased />);
+    expect(html).toContain('data-testid="bracket-round-title" data-round="R64"');
+  });
+
+  it("collapses an unreached round to a sentence, not to empty cards", () => {
+    const rounds = buildBracket(SYNTHETIC_MENS_DRAW, syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW));
+    const html = renderToStaticMarkup(
+      <TournamentBracket rounds={rounds} drawReleased initialRound="QF" />
+    );
+    expect(html).toContain('data-testid="bracket-round-unreached"');
+    expect(html).toContain("Nobody has reached the quarter-finals yet");
+    expect(html).not.toContain('data-testid="bracket-match"');
   });
 
   it("marks a decided match and its winner", () => {
@@ -152,7 +253,9 @@ describe("TournamentBracket rendering", () => {
       SYNTHETIC_MENS_DRAW,
       syntheticFirstRoundResults(SYNTHETIC_MENS_DRAW)
     );
-    const html = renderToStaticMarkup(<TournamentBracket rounds={rounds} drawReleased />);
+    const html = renderToStaticMarkup(
+      <TournamentBracket rounds={rounds} drawReleased initialRound="R128" />
+    );
     expect(html).toContain('data-decided="true"');
     expect(html).toContain('data-won="true"');
   });
@@ -163,6 +266,33 @@ describe("TournamentBracket rendering", () => {
     );
     expect(html).toContain('data-decided="false"');
     expect(html).not.toContain('data-won="true"');
+  });
+
+  it("renders the women's draw as readily as the men's", () => {
+    const html = renderToStaticMarkup(
+      <TournamentBracket
+        rounds={buildBracket(SYNTHETIC_WOMENS_DRAW, syntheticFirstRoundResults(SYNTHETIC_WOMENS_DRAW))}
+        drawReleased
+        initialRound="R128"
+      />
+    );
+    expect(html).toContain('data-entity="syn-w-1"');
+    expect(html).toContain('data-won="true"');
+  });
+
+  it("prints no probability for a slot that has none, rather than a plausible one", () => {
+    const html = renderToStaticMarkup(
+      <TournamentBracket
+        rounds={buildBracket(SYNTHETIC_MENS_DRAW)}
+        drawReleased
+        initialRound="R128"
+      />
+    );
+    // Slot 101 is unpriced in the fixture, as most of a 128 field really is.
+    const idx = html.indexOf('data-entity="syn-m-101"');
+    expect(idx).toBeGreaterThan(-1);
+    const cell = html.slice(idx, idx + 400);
+    expect(cell).not.toMatch(/\d+\.\d%/);
   });
 
   it("reports progress on screen", () => {
