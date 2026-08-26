@@ -311,27 +311,24 @@ async def list_cycling_concepts(
     *,
     statuses: tuple[str, ...] = ("upcoming", "live"),
     limit: int = 10,
+    rows: list | None = None,
 ) -> list[dict]:
     """Enumerate cycling Grand-Tour concepts for the sports feed (the winner-field
     analogue of list_f1_gp_concepts). Returns lightweight dicts the feed scorer turns
-    into concept cards linking to /event/{key}. Read-only, best-effort."""
-    from app.models import FuturesMarket
+    into concept cards linking to /event/{key}. Read-only, best-effort.
+
+    `rows` is LAT-P094's accelerator — the concept tier reads every source's open
+    markets in one scan instead of one per source; see
+    `event_concept_population.prefetch_open_markets`. Passing nothing keeps the
+    standalone read."""
+    from app.utils.event_concept_population import (
+        CYCLING_PROJECTION,
+        select_open_markets,
+    )
 
     now = datetime.now(timezone.utc)
-    rows = list(
-        (
-            await db.execute(
-                select(
-                    FuturesMarket.name,
-                    FuturesMarket.status,
-                    FuturesMarket.resolution_date,
-                ).where(
-                    FuturesMarket.llm_sport_category == "cycling",
-                    FuturesMarket.status == "open",
-                )
-            )
-        ).all()
-    )
+    if rows is None:
+        rows = await select_open_markets(db, "cycling", CYCLING_PROJECTION)
 
     per_race: dict[str, dict] = {}
     for name, status, res in rows:
