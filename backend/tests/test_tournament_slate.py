@@ -776,7 +776,8 @@ def _synthetic_draw_path():
     return _Path(__file__).resolve().parents[1] / "data/tournament_registers/_synthetic-usopen-draw.json"
 
 
-def _run_ingest(tmp_path, *, allow_unregistered: bool, register=None):
+def _run_ingest(tmp_path, *, allow_unregistered: bool, register=None,
+                register_from_draw: bool = False):
     import json as _json
     import subprocess
     import sys as _sys
@@ -798,6 +799,8 @@ def _run_ingest(tmp_path, *, allow_unregistered: bool, register=None):
     ]
     if allow_unregistered:
         cmd.append("--allow-unregistered")
+    if register_from_draw:
+        cmd.append("--register-from-draw")
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(root))
     out = (
         _json.loads((tmp_path / "out.json").read_text())
@@ -825,6 +828,100 @@ def test_the_ingest_latches_draw_released_and_writes_slots(tmp_path):
     slotted = [p for p in out["players"] if p.get("draw_slot") is not None]
     assert len(slotted) > 100
     assert all(1 <= p["draw_slot"] <= 128 for p in slotted)
+
+
+# ── The ceremony path (UX-P135): the draw may register the players it names ──
+#
+# The Tuesday rehearsal found Thursday's blocker: 96 men / 115 women registered
+# against 128 slots a side, so the real ingest would have refused on 45 names
+# and written nothing. No regeneration over MARKET data can close that gap —
+# nobody quotes a qualifier who has not qualified. The draw sheet can, because
+# it is the document that decides who is in the tournament.
+
+
+def test_the_ceremony_can_register_the_players_it_names(tmp_path):
+    """The blocker, gone: 128/128 both draws, from a register holding 96/115."""
+    result, out = _run_ingest(tmp_path, allow_unregistered=False, register_from_draw=True)
+    assert result.returncode == 0, result.stderr
+    for draw in ("mens-singles", "womens-singles"):
+        slotted = [
+            p for p in out["players"]
+            if p.get("draw") == draw and p.get("draw_slot") is not None
+        ]
+        assert len(slotted) == 128, f"{draw} filled {len(slotted)}/128"
+        assert sorted(p["draw_slot"] for p in slotted) == list(range(1, 129))
+
+
+def test_an_admitted_player_carries_a_NAME_AND_NO_MARKET(tmp_path):
+    """`sources: []` is the safety property, not an omission.
+
+    The draw is definitive about membership and silent about price. An admitted
+    player therefore has a name and a slot and nothing a probability could
+    attach to — which is what makes admitting them honest rather than an
+    invention.
+    """
+    _, out = _run_ingest(tmp_path, allow_unregistered=False, register_from_draw=True)
+    admitted = [
+        p for p in out["players"]
+        if (p.get("evidence") or {}).get("kind") == "draw-ceremony"
+    ]
+    assert len(admitted) == 45
+    for player in admitted:
+        assert player["sources"] == []
+        assert player["role"] == "participant"
+        assert player["display_name"]
+        assert isinstance(player["draw_slot"], int)
+
+
+def test_an_admitted_player_can_never_reach_a_championship_board(tmp_path):
+    """The containment, asserted rather than argued.
+
+    `board_players` ranks priced contenders; an admitted participant is neither.
+    If that ever changed, a nameless 0% would appear below Alcaraz.
+    """
+    from app.utils.tournament_board import build_boards
+
+    _, out = _run_ingest(tmp_path, allow_unregistered=False, register_from_draw=True)
+    admitted = {
+        p["entity_key"] for p in out["players"]
+        if (p.get("evidence") or {}).get("kind") == "draw-ceremony"
+    }
+    payload = build_boards(out, prices={}, now=NOW)
+    on_board = [
+        r["entity_key"] for board in payload["boards"] for r in board["rows"]
+        if r["entity_key"] in admitted
+    ]
+    assert on_board == []
+    assert payload["render_findings"] == []
+
+
+def test_an_admitted_player_renders_in_the_bracket_with_no_number(tmp_path):
+    """The payoff: a full bracket where every slot is a name, none a guess."""
+    _, out = _run_ingest(tmp_path, allow_unregistered=False, register_from_draw=True)
+    for draw in ("mens-singles", "womens-singles"):
+        bracket = build_bracket(out, prices={}, draw=draw)
+        assert len(bracket) == 128
+        assert all(slot is not None for slot in bracket), "no undetermined holes"
+        assert all(slot["probability"] is None for slot in bracket)
+        assert all(slot["display_name"] for slot in bracket)
+
+
+def test_admission_never_collides_two_players_onto_one_key(tmp_path):
+    """The synthetic draw names 'Synthetic Qualifier 116' in BOTH draws.
+
+    A shared slug would silently overwrite one with the other, and the second
+    draw's bracket would point at the first draw's player.
+    """
+    _, out = _run_ingest(tmp_path, allow_unregistered=False, register_from_draw=True)
+    keys = [p["entity_key"] for p in out["players"]]
+    assert len(keys) == len(set(keys))
+
+
+def test_admission_is_OPT_IN_and_the_default_still_refuses(tmp_path):
+    """The flag is the decision. Without it nothing is written, unchanged."""
+    result, out = _run_ingest(tmp_path, allow_unregistered=False)
+    assert result.returncode == 1
+    assert out is None
 
 
 def test_the_ingest_result_is_a_valid_transition_not_merely_a_valid_file(tmp_path):
