@@ -190,6 +190,65 @@ async def test_probe_count_is_bounded_by_keys_times_sources():
         )
 
 
+@pytest.mark.asyncio
+async def test_candidate_keys_appear_exactly_once():
+    """The key set must be rendered ONCE — a second copy is a cross join.
+
+    This is not hypothetical; it is the bug the first draft of the fix shipped
+    into `_compiled()` and this assertion is what caught it. Written without an
+    explicit `.correlate()`, SQLAlchemy cannot tell that the candidate VALUES
+    list is supplied by the enclosing LATERAL, so it renders the entire list a
+    SECOND time inside the EXISTS as an independent FROM entry. The EXISTS then
+    reads "does ANY candidate key carry this source", which is true for
+    essentially every (key, source) pair.
+
+    The reason this needs a mechanical guard rather than review: the wrong
+    answer is uniformly GENEROUS. Every market gets every source, every market
+    looks multi-source, and the cross-source scoring bonus fires everywhere —
+    a feed that still renders, still ranks, and is wrong. Nothing about it
+    reads as broken from the outside.
+    """
+    keys = {"soccer::championship:2026", "politics:US:championship:2028"}
+    db = _RecordingSession([])
+
+    await feed_module._query_canonical_source_counts(db, keys)
+
+    sql = _compiled(db.statements[-1])
+    for key in keys:
+        assert sql.count(f"'{key}'") == 1, (
+            f"candidate key {key!r} is rendered {sql.count(chr(39) + key + chr(39))} "
+            "times. More than once means the EXISTS is not correlated to the "
+            "outer LATERAL and the query is a cross join — every key would come "
+            "back carrying every source."
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_probe_stays_inside_a_lateral():
+    """Flattening the LATERAL into a cross join + outer EXISTS lets the planner
+    pull the semi-join up and hash it, which puts an Aggregate over the whole
+    index back underneath.
+
+    Measured on production 2026-08-26, same 150 keys, same data:
+
+        LATERAL   Nested Loop Semi, cost 10,682   ->   45.8-76.7 ms
+        flattened Hash Join + Aggregate,
+                  cost 89,601, 872,813 planned rows -> 2,272-3,170 ms
+
+    The flattened form is SLOWER than the aggregate it was meant to replace. It
+    is also the more natural thing to write, which is why it is pinned rather
+    than remembered."""
+    db = _RecordingSession([])
+
+    await feed_module._query_canonical_source_counts(db, {"tech::championship:2026"})
+
+    sql = _compiled(db.statements[-1]).lower()
+    assert "lateral" in sql, (
+        "the (key, source) probe must stay inside a LATERAL; flattened, the "
+        "planner hashes it and the cost goes back up to 89,601"
+    )
+
+
 # --------------------------------------------------------------------------
 # 2. the source universe is derived, never written down
 # --------------------------------------------------------------------------
