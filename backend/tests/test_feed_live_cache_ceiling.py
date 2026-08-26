@@ -514,7 +514,6 @@ def test_a_redis_hit_does_not_launder_an_aged_payload_into_a_fresh_window():
     read time, so a 59-second-old score got a brand-new 60-second window and
     was served at 118 seconds under a branch that says 60 is the maximum.
     """
-    import app.utils.request_cache as rc
     from app.utils.feed_cache import (
         FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS as CEILING,
     )
@@ -550,7 +549,6 @@ def test_a_genuinely_fresh_build_still_uses_the_full_window():
     disable last-good entirely — the fallback that exists so a Redis blip is
     not a stampede of cold builds.
     """
-    import app.utils.request_cache as rc
     from app.utils.feed_cache import (
         FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS as CEILING,
     )
@@ -579,7 +577,6 @@ def test_a_payload_with_no_provenance_falls_back_to_read_time():
     carry no provenance; they must behave exactly as they did pre-fix rather
     than being refused (which would empty last-good on deploy) or trusted
     forever (which would be the bug with extra steps)."""
-    import app.utils.request_cache as rc
 
     rc._reset_last_good_for_tests()
 
