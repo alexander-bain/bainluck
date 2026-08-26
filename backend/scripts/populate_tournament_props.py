@@ -105,13 +105,6 @@ CURATION: dict[str, dict] = {
         "draw": "mens-singles",
         "answer": "2+ Grand Slam wins",
     },
-    "KXATPCOMPETE-26USOALC": {
-        "key": "alcaraz-competes",
-        "title": "Will Alcaraz actually play?",
-        "hook": "A withdrawal reshapes the entire men's board.",
-        "draw": "mens-singles",
-        "answer": "Yes",
-    },
     "KXATPCOMPETE-26USOSIN": {
         "key": "sinner-competes",
         "title": "Will Sinner actually play?",
@@ -142,6 +135,108 @@ DECLINED: dict[str, str] = {
     "KXATPGRANDSLAM-26": "season-long field resolving 2027-01-07; leaders already settled at .97-.99",
     "KXWTAGRANDSLAM-26": "season-long field resolving 2027-01-07; leaders already settled at .99",
     "KXATPGRANDSLAMFIELD-26": "already resolved in substance (Yes .99); not a US Open question",
+    # CURATED OUT 2026-08-26 (UX-P135), having been curated IN by UX-P134.
+    # "Will Alcaraz actually play?" was measured at Yes .905 and 808.7h old —
+    # 33.7 days without a reading, the oldest thing in the section. The draw
+    # ceremony is tomorrow, after which the question answers itself. Its twin
+    # `KXATPCOMPETE-26USOSIN` is KEPT: at Yes .63 and 186.7h it is both the
+    # freshest incumbent and genuinely undecided, which is the whole difference.
+    "KXATPCOMPETE-26USOALC": "Yes .905 at 808.7h (33.7d); near-decided and the draw resolves it tomorrow",
+}
+
+# ---------------------------------------------------------------------------
+# THE ADVANCE LADDER (UX-P135, Day 5)
+#
+# Polymarket runs one binary per player per round — "Will <player> advance to
+# the <round>?" — 336 of them across 84 US Open players. That population is a
+# LADDER, which is exactly the shape the feed audit drives to zero: curating
+# Alcaraz at R16 *and* QF *and* SF is three cards asking one question three
+# times, and the reader learns nothing from the second and third.
+#
+# So the rule here is ONE QUESTION PER PLAYER, at the deepest round the market
+# still calls close. Everything else about a player is dropped, and the drop is
+# what makes this curation rather than an import. Selected on three grounds,
+# all of which have to hold:
+#
+#   1. A name a casual fan recognises. This section competes with the boards
+#      above it, which already print all 80 contenders in rank order.
+#   2. Genuine uncertainty — roughly .25 to .75. A .95 is a fact wearing a
+#      probability, and the section already lost two cards to that test.
+#   3. A question the boards do not already answer. "Who wins?" is the board.
+#      "Does the second week happen for this player?" is not, and for a
+#      128-draw tournament it is the more askable one for eleven of them.
+#
+# BOTH DRAWS, deliberately. UX-P134 curated four props, all men's, so the
+# women's tab shipped the honest-empty state. Four of the eight below are
+# women's — the first cards that tab has ever had.
+#
+# ** THESE ARE NOT LIVE. ** Measured 2026-08-26: 23.2-25.3h, which is `stale`
+# under the page's own thresholds, and the page will render them muted with
+# their age. They are curated anyway because 23 hours is not 34 days, the
+# questions are better than the ones they sit beside, and the honesty treatment
+# exists precisely so that a good stale number can still be shown. What is NOT
+# claimed is the thing the Day-4 mission expected: these ladders were 3.6-5.6h
+# old when that mission measured them and they are not now. See the report.
+#
+# Keyed on `external_id` (the Polymarket condition hash), like the Kalshi half,
+# because our own `market_id` is a local surrogate and a re-ingest can move it.
+ADVANCE_CURATION: dict[str, dict] = {
+    "0x0d62271aa9d9c4e2aa5aa6e4d7f044c7b0821bd93bb999dc06c51f150d1cf4e3": {
+        "key": "alcaraz-semifinals",
+        "title": "Does Alcaraz reach the semifinals?",
+        "hook": "The men's favourite, and the market still calls it close to a coin flip.",
+        "draw": "mens-singles",
+        "answer": "Yes",
+    },
+    "0x234cfdf2f118eb7f349a9f9abfc23556c930eab2e05fa113962b0192488c8910": {
+        "key": "djokovic-quarterfinals",
+        "title": "Does Djokovic reach the quarterfinals?",
+        "hook": "Twenty-four majors, and the second week is no longer a formality.",
+        "draw": "mens-singles",
+        "answer": "Yes",
+    },
+    "0x91ee5878ac149eab31e866607043b21bc9cc4ddce4d6970447d3250eb4751022": {
+        "key": "zverev-semifinals",
+        "title": "Does Zverev reach the semifinals?",
+        "hook": "Perennially close to a first major. The market has him at even money.",
+        "draw": "mens-singles",
+        "answer": "Yes",
+    },
+    "0xdc42f3b0ded6249c92e3eea60572ca39d917786e1965ee1024e13a0796dd8720": {
+        "key": "shelton-quarterfinals",
+        "title": "Does Shelton reach the quarterfinals?",
+        "hook": "The loudest home crowd in tennis, and a market split down the middle.",
+        "draw": "mens-singles",
+        "answer": "Yes",
+    },
+    "0x24fd9fa0a695ad98c2fc3ca7300a97353b8025bf9af231a223e5df1498aeefeb": {
+        "key": "sabalenka-semifinals",
+        "title": "Does Sabalenka reach the semifinals?",
+        "hook": "The women's favourite. Even the market cannot separate it.",
+        "draw": "womens-singles",
+        "answer": "Yes",
+    },
+    "0xea5b210653d6791dfb36b4f7e800fd6a3ee7a7c356557cc0fe53e02c26c89883": {
+        "key": "swiatek-semifinals",
+        "title": "Does Swiatek reach the semifinals?",
+        "hook": "Dominant almost everywhere else; New York has been the exception.",
+        "draw": "womens-singles",
+        "answer": "Yes",
+    },
+    "0xbd82f2526c64cfa634da82c90f3db653ef6d47925fa1edf9e16db95844fb9b5a": {
+        "key": "gauff-semifinals",
+        "title": "Does Gauff reach the semifinals?",
+        "hook": "The home favourite, and the market is far less sure than the crowd.",
+        "draw": "womens-singles",
+        "answer": "Yes",
+    },
+    "0x1e045109e228f8b7381dcc21bf9ba320b5bd5d237cb02f038cabdaf96b2a1b0f": {
+        "key": "osaka-round-of-16",
+        "title": "Does Osaka reach the second week?",
+        "hook": "Two US Open titles, and a first week the market rates a coin flip.",
+        "draw": "womens-singles",
+        "answer": "Yes",
+    },
 }
 
 
@@ -156,6 +251,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--register", required=True)
     parser.add_argument("--dump", required=True)
+    parser.add_argument(
+        "--advance-dump",
+        help="second dump, the Polymarket 'advance to the <round>' binaries "
+        "(UX-P135). Optional so the Kalshi-only pass still runs unchanged.",
+    )
     parser.add_argument("--observed-at", required=True)
     parser.add_argument("--version", type=int, required=True)
     parser.add_argument("--supersedes-version", type=int, required=True)
@@ -164,6 +264,20 @@ def main() -> int:
 
     register = json.loads(Path(args.register).read_text())
     rows = read_query_dump(Path(args.dump))
+    if args.advance_dump:
+        rows = rows + read_query_dump(Path(args.advance_dump))
+
+    # One curation table, assembled from two. Keeping them separate above is
+    # editorial (the two populations were surveyed on different days, against
+    # different bars); keeping them separate HERE would duplicate the refusal
+    # logic, which is the part that must not diverge.
+    curation = {**CURATION, **ADVANCE_CURATION}
+    keys = [spec["key"] for spec in curation.values()]
+    if len(set(keys)) != len(keys):
+        # Two curations writing one card key would silently drop one of them,
+        # and the section would be short with nothing to point at.
+        print(f"REFUSED: duplicate curation keys in {sorted(keys)}", file=sys.stderr)
+        return 1
 
     by_market: dict[str, list[dict]] = {}
     for row in rows:
@@ -172,7 +286,7 @@ def main() -> int:
     props: list[dict] = []
     skipped: list[str] = []
     for market_ext, market_rows in sorted(by_market.items()):
-        spec = CURATION.get(market_ext)
+        spec = curation.get(market_ext)
         if spec is None:
             # In the dump but not curated. Not an error — it is the bar working.
             skipped.append(market_ext)
@@ -244,7 +358,7 @@ def main() -> int:
     for prop in props:
         print(f"  {prop['key']}: {len(prop['outcomes'])} outcomes ({prop['market_external_id']})")
     print(f"in the dump but below the bar: {len(skipped)} {skipped}")
-    missing = sorted(set(CURATION) - set(by_market))
+    missing = sorted(set(curation) - set(by_market))
     if missing:
         print(f"curated but ABSENT from the dump: {missing}")
     print(f"findings: {findings or 'none'}")

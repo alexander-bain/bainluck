@@ -2,7 +2,7 @@
   "schema_version": "tournament-register/v1",
   "tournament": "us-open",
   "season": "2026",
-  "version": 3,
+  "version": 4,
   "generated_at": "2026-08-25T21:30:00+00:00",
   "draw_released": false,
   "players": [
@@ -7320,7 +7320,7 @@
       ]
     }
   ],
-  "supersedes_version": 2,
+  "supersedes_version": 3,
   "broadcasts": [
     {
       "region": "US",
@@ -7348,25 +7348,234 @@
   ],
   "props": [
     {
-      "key": "alcaraz-competes",
-      "title": "Will Alcaraz actually play?",
-      "hook": "A withdrawal reshapes the entire men's board.",
+      "key": "alcaraz-semifinals",
+      "title": "Does Alcaraz reach the semifinals?",
+      "hook": "The men's favourite, and the market still calls it close to a coin flip.",
       "draw": "mens-singles",
-      "source": "kalshi",
-      "market_id": 55686527,
-      "market_external_id": "KXATPCOMPETE-26USOALC",
+      "source": "polymarket",
+      "market_id": 59556735,
+      "market_external_id": "0x0d62271aa9d9c4e2aa5aa6e4d7f044c7b0821bd93bb999dc06c51f150d1cf4e3",
       "outcomes": [
         {
-          "entity_key": "alcaraz-competes:yes",
+          "entity_key": "alcaraz-semifinals:yes",
           "display_name": "Yes",
-          "outcome_id": 206815611,
+          "outcome_id": 221650932,
           "is_answer": true
+        },
+        {
+          "entity_key": "alcaraz-semifinals:no",
+          "display_name": "No",
+          "outcome_id": 221650933,
+          "is_answer": false
         }
       ],
       "evidence": {
         "kind": "prop-census",
-        "observed_at": "2026-08-25T23:35:00+00:00",
-        "market_name": "Carlos Alcaraz to play in the US Open",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Carlos Alcaraz advance to the Semifinals in Men's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "osaka-round-of-16",
+      "title": "Does Osaka reach the second week?",
+      "hook": "Two US Open titles, and a first week the market rates a coin flip.",
+      "draw": "womens-singles",
+      "source": "polymarket",
+      "market_id": 59556783,
+      "market_external_id": "0x1e045109e228f8b7381dcc21bf9ba320b5bd5d237cb02f038cabdaf96b2a1b0f",
+      "outcomes": [
+        {
+          "entity_key": "osaka-round-of-16:yes",
+          "display_name": "Yes",
+          "outcome_id": 221651059,
+          "is_answer": true
+        },
+        {
+          "entity_key": "osaka-round-of-16:no",
+          "display_name": "No",
+          "outcome_id": 221651060,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Naomi Osaka advance to the Round of 16 in Women's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "djokovic-quarterfinals",
+      "title": "Does Djokovic reach the quarterfinals?",
+      "hook": "Twenty-four majors, and the second week is no longer a formality.",
+      "draw": "mens-singles",
+      "source": "polymarket",
+      "market_id": 59556823,
+      "market_external_id": "0x234cfdf2f118eb7f349a9f9abfc23556c930eab2e05fa113962b0192488c8910",
+      "outcomes": [
+        {
+          "entity_key": "djokovic-quarterfinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221651182,
+          "is_answer": true
+        },
+        {
+          "entity_key": "djokovic-quarterfinals:no",
+          "display_name": "No",
+          "outcome_id": 221651183,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Novak Djokovic advance to the Quarterfinals in Men's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "sabalenka-semifinals",
+      "title": "Does Sabalenka reach the semifinals?",
+      "hook": "The women's favourite. Even the market cannot separate it.",
+      "draw": "womens-singles",
+      "source": "polymarket",
+      "market_id": 59559137,
+      "market_external_id": "0x24fd9fa0a695ad98c2fc3ca7300a97353b8025bf9af231a223e5df1498aeefeb",
+      "outcomes": [
+        {
+          "entity_key": "sabalenka-semifinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221667150,
+          "is_answer": true
+        },
+        {
+          "entity_key": "sabalenka-semifinals:no",
+          "display_name": "No",
+          "outcome_id": 221667151,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Aryna Sabalenka advance to the Semifinals in Women's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "zverev-semifinals",
+      "title": "Does Zverev reach the semifinals?",
+      "hook": "Perennially close to a first major. The market has him at even money.",
+      "draw": "mens-singles",
+      "source": "polymarket",
+      "market_id": 59556734,
+      "market_external_id": "0x91ee5878ac149eab31e866607043b21bc9cc4ddce4d6970447d3250eb4751022",
+      "outcomes": [
+        {
+          "entity_key": "zverev-semifinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221650930,
+          "is_answer": true
+        },
+        {
+          "entity_key": "zverev-semifinals:no",
+          "display_name": "No",
+          "outcome_id": 221650931,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Alexander Zverev advance to the Semifinals in Men's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "gauff-semifinals",
+      "title": "Does Gauff reach the semifinals?",
+      "hook": "The home favourite, and the market is far less sure than the crowd.",
+      "draw": "womens-singles",
+      "source": "polymarket",
+      "market_id": 59559140,
+      "market_external_id": "0xbd82f2526c64cfa634da82c90f3db653ef6d47925fa1edf9e16db95844fb9b5a",
+      "outcomes": [
+        {
+          "entity_key": "gauff-semifinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221667156,
+          "is_answer": true
+        },
+        {
+          "entity_key": "gauff-semifinals:no",
+          "display_name": "No",
+          "outcome_id": 221667157,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Coco Gauff advance to the Semifinals in Women's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "shelton-quarterfinals",
+      "title": "Does Shelton reach the quarterfinals?",
+      "hook": "The loudest home crowd in tennis, and a market split down the middle.",
+      "draw": "mens-singles",
+      "source": "polymarket",
+      "market_id": 59556827,
+      "market_external_id": "0xdc42f3b0ded6249c92e3eea60572ca39d917786e1965ee1024e13a0796dd8720",
+      "outcomes": [
+        {
+          "entity_key": "shelton-quarterfinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221651190,
+          "is_answer": true
+        },
+        {
+          "entity_key": "shelton-quarterfinals:no",
+          "display_name": "No",
+          "outcome_id": 221651191,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Ben Shelton advance to the Quarterfinals in Men's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "swiatek-semifinals",
+      "title": "Does Swiatek reach the semifinals?",
+      "hook": "Dominant almost everywhere else; New York has been the exception.",
+      "draw": "womens-singles",
+      "source": "polymarket",
+      "market_id": 59559144,
+      "market_external_id": "0xea5b210653d6791dfb36b4f7e800fd6a3ee7a7c356557cc0fe53e02c26c89883",
+      "outcomes": [
+        {
+          "entity_key": "swiatek-semifinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221667164,
+          "is_answer": true
+        },
+        {
+          "entity_key": "swiatek-semifinals:no",
+          "display_name": "No",
+          "outcome_id": 221667165,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Iga Swiatek advance to the Semifinals in Women's Singles at the 2026 US Open?",
         "answer": "Yes"
       }
     },
@@ -7388,7 +7597,7 @@
       ],
       "evidence": {
         "kind": "prop-census",
-        "observed_at": "2026-08-25T23:35:00+00:00",
+        "observed_at": "2026-08-26T19:35:47+00:00",
         "market_name": "Jannik Sinner to play in the US Open",
         "answer": "Yes"
       }
@@ -7423,7 +7632,7 @@
       ],
       "evidence": {
         "kind": "prop-census",
-        "observed_at": "2026-08-25T23:35:00+00:00",
+        "observed_at": "2026-08-26T19:35:47+00:00",
         "market_name": "Carlos Alcaraz: Grand Slam wins in 2026",
         "answer": "2+ Grand Slam wins"
       }
@@ -7458,11 +7667,11 @@
       ],
       "evidence": {
         "kind": "prop-census",
-        "observed_at": "2026-08-25T23:35:00+00:00",
+        "observed_at": "2026-08-26T19:35:47+00:00",
         "market_name": "Jannik Sinner: Grand Slam wins in 2026",
         "answer": "2+ Grand Slam wins"
       }
     }
   ],
-  "props_observed_at": "2026-08-25T23:35:00+00:00"
+  "props_observed_at": "2026-08-26T19:35:47+00:00"
 }
