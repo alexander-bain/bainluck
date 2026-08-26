@@ -20,6 +20,10 @@
  *   so, and it is never permitted to upgrade a non-live row.
  */
 
+import type { BracketSlot } from "./bracket";
+import type { Broadcast, SlateData } from "./slate";
+import type { PropMarket } from "./tournamentProps";
+
 export type PriceState = "live" | "stale" | "dark";
 
 export interface TournamentTrendPoint {
@@ -31,6 +35,9 @@ export interface TournamentSourceView {
   source: string;
   probability: number;
   observed_at: string | null;
+  /** THIS contributor's own freshness (UX-P135). The row's verdict is the AND. */
+  age_hours: number | null;
+  price_state: PriceState;
 }
 
 export interface TournamentRow {
@@ -42,9 +49,21 @@ export interface TournamentRow {
   state: string;
   probability: number | null;
   probability_is_live: boolean;
+  /**
+   * The GOVERNING (oldest) contributor's reading — "as of when is this whole
+   * number true". Not the newest: a blend containing a 20-day-old leg is a
+   * 20-day-old number however recently its other leg moved (UX-P135).
+   */
   observed_at: string | null;
   age_hours: number | null;
   price_state: PriceState;
+  /** The newest contributor's reading — an extra fact beside the verdict. */
+  freshest_observed_at: string | null;
+  freshest_age_hours: number | null;
+  /** Names of the contributors that are not live, so the UI can say which. */
+  stale_sources: string[];
+  /** Some contributors live, some not. A wholly stale row is NOT mixed. */
+  mixed_freshness: boolean;
   source_count: number;
   sources: TournamentSourceView[];
   blend_rule: string | null;
@@ -59,6 +78,9 @@ export interface TournamentBoardData {
   rows: TournamentRow[];
   contenders: number;
   unpriced: number;
+  /** How many priced rows are not live, and how many blend legs of unequal age. */
+  rows_not_live: number;
+  mixed_freshness_rows: number;
   price_state: PriceState;
   newest_observed_at: string | null;
   age_hours: number | null;
@@ -74,6 +96,22 @@ export interface TournamentPayload {
   register_generated_at: string;
   draw_released: boolean;
   boards: TournamentBoardData[];
+  /**
+   * The daily slate (UX-P132). Optional so a client built against this type
+   * still compiles against a server that predates it — and so the Today tab
+   * degrades to its empty state rather than throwing if the key is absent.
+   */
+  slate?: SlateData;
+  /** Curated props & futures (UX-P132). Optional for the same reason as `slate`. */
+  props?: PropMarket[];
+  /** Where to watch — static per-tournament mapping (UX-P132, Alex's item 4). */
+  broadcasts?: Broadcast[];
+  /**
+   * Positional bracket slots per draw (UX-P134). Empty arrays until the draw
+   * ceremony latches `draw_released`; `null` entries are slots the register
+   * holds no player for and render as undetermined, never as an invented name.
+   */
+  bracket?: Record<string, (BracketSlot | null)[]>;
   render_findings: string[];
   generated_at: string;
 }
@@ -103,6 +141,42 @@ export function stalenessLabel(ageHours: number | null): string {
   }
   const days = Math.floor(ageHours / 24);
   return `${days} days ago`;
+}
+
+/** How a source id reads in a sentence. Unknown ids pass through unchanged. */
+const SOURCE_LABELS: Record<string, string> = {
+  kalshi: "Kalshi",
+  polymarket: "Polymarket",
+  odds_api: "sportsbooks",
+  espn: "ESPN",
+};
+
+export function sourceLabel(source: string): string {
+  return SOURCE_LABELS[source] ?? source;
+}
+
+/**
+ * The line under a muted row, explaining WHICH reading is old.
+ *
+ * `null` for a live row — a healthy row says nothing, or the admission stops
+ * being an admission.
+ *
+ * The mixed case is the one this function exists for (UX-P135). A row blended
+ * from a one-hour Kalshi price and a twenty-day Polymarket price is muted, and
+ * "20 days ago" alone would be read as "we have not looked at this in three
+ * weeks" — which is false and would make the whole board look more abandoned
+ * than it is. Naming the stale leg is both more honest and less alarming:
+ * "Polymarket 20 days ago" says exactly what is wrong and implies the rest is
+ * not. It deliberately reports the GOVERNING age, never the freshest, because
+ * the age has to be true of the number printed beside it.
+ */
+export function rowFreshnessLabel(row: TournamentRow): string | null {
+  if (rowIsPresentedAsLive(row)) return null;
+  const when = stalenessLabel(row.age_hours);
+  if (row.mixed_freshness && row.stale_sources.length > 0) {
+    return `${row.stale_sources.map(sourceLabel).join(" + ")} ${when}`;
+  }
+  return when;
 }
 
 export interface BoardNotice {

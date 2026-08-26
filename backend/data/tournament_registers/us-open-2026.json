@@ -2,8 +2,8 @@
   "schema_version": "tournament-register/v1",
   "tournament": "us-open",
   "season": "2026",
-  "version": 1,
-  "generated_at": "2026-08-25T00:50:00+00:00",
+  "version": 4,
+  "generated_at": "2026-08-25T21:30:00+00:00",
   "draw_released": false,
   "players": [
     {
@@ -29,9 +29,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "alexander-bublik",
@@ -56,7 +58,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -72,9 +75,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "alexander-zverev",
@@ -99,7 +104,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -115,9 +121,77 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "alexandre-muller",
+      "display_name": "Alexandre Muller",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "alexis-galarneau",
+      "display_name": "Alexis Galarneau",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "andre-ilagan",
+      "display_name": "Andre Ilagan",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "andrea-guerrieri",
+      "display_name": "Andrea Guerrieri",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "andrea-pellegrino",
+      "display_name": "Andrea Pellegrino",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "andrew-johnson",
+      "display_name": "Andrew Johnson",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "andrey-rublev",
@@ -142,7 +216,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -158,9 +233,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "arthur-fils",
@@ -185,7 +262,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -201,9 +279,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "aziz-dougaz",
+      "display_name": "Aziz Dougaz",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "ben-shelton",
@@ -228,7 +319,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -244,9 +336,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "billy-harris",
+      "display_name": "Billy Harris",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "borna-gojo",
+      "display_name": "Borna Gojo",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "cameron-norrie",
@@ -271,9 +387,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "carlos-alcaraz",
@@ -298,7 +416,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -314,9 +433,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "casper-ruud",
@@ -341,9 +462,88 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "christopher-o-connell",
+      "display_name": "Christopher O'Connell",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "coleman-wong",
+      "display_name": "Coleman Wong",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "colton-smith",
+      "display_name": "Colton Smith",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "cristian-garin",
+      "display_name": "Cristian Garin",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "dalibor-svrcina",
+      "display_name": "Dalibor Svrcina",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "dan-added",
+      "display_name": "Dan Added",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "daniel-rincon",
+      "display_name": "Daniel Rincon",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "daniil-medvedev",
@@ -368,7 +568,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -384,9 +585,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "dino-prizmic",
@@ -411,9 +614,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "elias-ymer",
+      "display_name": "Elias Ymer",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "federico-cina",
+      "display_name": "Federico Cina",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "felix-auger-aliassime",
@@ -438,7 +665,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -454,9 +682,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "flavio-cobolli",
@@ -481,7 +711,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -497,9 +728,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "frances-tiafoe",
@@ -524,7 +757,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -540,9 +774,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "francesco-passaro",
+      "display_name": "Francesco Passaro",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "francisco-cerundolo",
@@ -567,9 +814,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "frederico-ferreira-silva",
+      "display_name": "Frederico Ferreira Silva",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "gabriel-diallo",
@@ -594,9 +854,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "genaro-alberto-olivieri",
+      "display_name": "Genaro Alberto Olivieri",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "grigor-dimitrov",
@@ -621,9 +894,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "harry-wendelken",
+      "display_name": "Harry Wendelken",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "holger-rune",
@@ -648,7 +934,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -664,9 +951,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "hubert-hurkacz",
@@ -691,7 +980,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -707,9 +997,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "hugo-dellien",
+      "display_name": "Hugo Dellien",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "jack-draper",
@@ -734,7 +1037,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -750,9 +1054,44 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "jack-pinnington-jones",
+      "display_name": "Jack Pinnington Jones",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "jack-secord",
+      "display_name": "Jack Secord",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "jacob-fearnley",
+      "display_name": "Jacob Fearnley",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "jakub-mensik",
@@ -777,7 +1116,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -793,9 +1133,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "jan-lennard-struff",
@@ -820,9 +1162,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "jannik-sinner",
@@ -847,7 +1191,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -863,9 +1208,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "jerome-kym",
+      "display_name": "Jerome Kym",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "jiri-lehecka",
@@ -890,9 +1248,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "joao-fonseca",
@@ -917,7 +1277,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -933,9 +1294,44 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "joel-schwaerzler",
+      "display_name": "Joel Schwaerzler",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "jordan-lee",
+      "display_name": "Jordan Lee",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "jurij-rodionov",
+      "display_name": "Jurij Rodionov",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "karen-khachanov",
@@ -960,9 +1356,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "kei-nishikori",
+      "display_name": "Kei Nishikori",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "kyrian-jacquet",
+      "display_name": "Kyrian Jacquet",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "learner-tien",
@@ -987,9 +1407,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "liam-draxl",
+      "display_name": "Liam Draxl",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "lorenzo-musetti",
@@ -1014,7 +1447,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -1030,9 +1464,77 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "luca-nardi",
+      "display_name": "Luca Nardi",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "luka-pavlovic",
+      "display_name": "Luka Pavlovic",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "lukas-neumayer",
+      "display_name": "Lukas Neumayer",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "mackenzie-mcdonald",
+      "display_name": "Mackenzie McDonald",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "maks-kasnikowski",
+      "display_name": "Maks Kasnikowski",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "marco-cecchinato",
+      "display_name": "Marco Cecchinato",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "matteo-berrettini",
@@ -1057,9 +1559,66 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "michael-antonius",
+      "display_name": "Michael Antonius",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "moez-echargui",
+      "display_name": "Moez Echargui",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "nicolai-budkov-kjaer",
+      "display_name": "Nicolai Budkov Kjaer",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "nicolas-mejia",
+      "display_name": "Nicolas Mejia",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "nikoloz-basilashvili",
+      "display_name": "Nikoloz Basilashvili",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "novak-djokovic",
@@ -1084,7 +1643,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -1100,9 +1660,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "otto-virtanen",
+      "display_name": "Otto Virtanen",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "rafael-jodar",
@@ -1127,9 +1700,44 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "rei-sakamoto",
+      "display_name": "Rei Sakamoto",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "remy-bertola",
+      "display_name": "Remy Bertola",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "rio-noguchi",
+      "display_name": "Rio Noguchi",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "sebastian-korda",
@@ -1154,9 +1762,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "seong-chan-hong",
+      "display_name": "Seong-Chan Hong",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "stefanos-sakellaridis",
+      "display_name": "Stefanos Sakellaridis",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "stefanos-tsitsipas",
@@ -1181,9 +1813,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "taro-daniel",
+      "display_name": "Taro Daniel",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "taylor-fritz",
@@ -1208,7 +1853,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -1224,9 +1870,55 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139236"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "thiago-seyboth-wild",
+      "display_name": "Thiago Seyboth Wild",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "toby-samuel",
+      "display_name": "Toby Samuel",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "tom-gentzsch",
+      "display_name": "Tom Gentzsch",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "tomas-barrios",
+      "display_name": "Tomas Barrios",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "tommy-paul",
@@ -1251,9 +1943,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "tristan-boyer",
+      "display_name": "Tristan Boyer",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "tristan-schoolkate",
+      "display_name": "Tristan Schoolkate",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "valentin-vacherot",
@@ -1278,9 +1994,55 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXATP-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "vilius-gaubas",
+      "display_name": "Vilius Gaubas",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "yunchaokete-bu",
+      "display_name": "Yunchaokete Bu",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "zdenek-kolar",
+      "display_name": "Zdenek Kolar",
+      "draw": "mens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "alevtina-ibragimova",
+      "display_name": "Alevtina Ibragimova",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "alexandra-eala",
@@ -1305,9 +2067,44 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "alexandra-shubladze",
+      "display_name": "Alexandra Shubladze",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "aliaksandra-sasnovich",
+      "display_name": "Aliaksandra Sasnovich",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "alice-tubello",
+      "display_name": "Alice Tubello",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "amanda-anisimova",
@@ -1332,7 +2129,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -1348,9 +2146,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "anastasia-potapova",
@@ -1375,9 +2175,66 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "anastasiia-sobolieva",
+      "display_name": "Anastasiia Sobolieva",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "andrea-lazaro-garcia",
+      "display_name": "Andrea Lazaro Garcia",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "angela-fita-boluda",
+      "display_name": "Angela Fita Boluda",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "annika-penickova",
+      "display_name": "Annika Penickova",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "anouk-koevermans",
+      "display_name": "Anouk Koevermans",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "aryna-sabalenka",
@@ -1402,7 +2259,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -1418,9 +2276,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "ashlyn-krueger",
@@ -1445,9 +2305,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "astra-sharma",
+      "display_name": "Astra Sharma",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "barbora-krejcikova",
@@ -1472,7 +2345,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -1488,9 +2362,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "beatriz-haddad-maia",
@@ -1515,9 +2391,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "belinda-bencic",
@@ -1542,9 +2420,44 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "bianca-andreescu",
+      "display_name": "Bianca Andreescu",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "carson-branstine",
+      "display_name": "Carson Branstine",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "clara-burel",
+      "display_name": "Clara Burel",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "clara-tauson",
@@ -1569,9 +2482,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "coco-gauff",
@@ -1596,7 +2511,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -1612,9 +2528,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "dalma-galfi",
+      "display_name": "Dalma Galfi",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "daria-kasatkina",
@@ -1639,9 +2568,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "darja-semenistaja",
+      "display_name": "Darja Semenistaja",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "darya-astakhova",
+      "display_name": "Darya Astakhova",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "dayana-yastremska",
@@ -1666,9 +2619,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "despina-papamichail",
+      "display_name": "Despina Papamichail",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "diana-shnaider",
@@ -1693,9 +2659,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "dominika-salkova",
+      "display_name": "Dominika Salkova",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "donna-vekic",
@@ -1720,9 +2699,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "ekaterina-alexandrova",
@@ -1747,9 +2728,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "ekaterine-gorgodze",
+      "display_name": "Ekaterine Gorgodze",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "elena-pridankina",
+      "display_name": "Elena Pridankina",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "elena-rybakina",
@@ -1774,7 +2779,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -1790,9 +2796,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "elina-svitolina",
@@ -1817,7 +2825,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -1833,9 +2842,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "elise-mertens",
@@ -1860,9 +2871,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "elvina-kalieva",
+      "display_name": "Elvina Kalieva",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "emma-navarro",
@@ -1887,7 +2911,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -1903,9 +2928,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "emma-raducanu",
@@ -1930,9 +2957,99 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "francesca-jones",
+      "display_name": "Francesca Jones",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "francisca-jorge",
+      "display_name": "Francisca Jorge",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "gabriela-knutson",
+      "display_name": "Gabriela Knutson",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "hanyu-guo",
+      "display_name": "Hanyu Guo",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "harmony-tan",
+      "display_name": "Harmony Tan",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "hayu-kinoshita",
+      "display_name": "Hayu Kinoshita",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "heather-watson",
+      "display_name": "Heather Watson",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "himeno-sakatsume",
+      "display_name": "Himeno Sakatsume",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "iga-swiatek",
@@ -1957,7 +3074,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -1973,9 +3091,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "iryna-shymanovich",
+      "display_name": "Iryna Shymanovich",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "iva-jovic",
@@ -2000,9 +3131,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "jasmine-paolini",
@@ -2027,7 +3160,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -2043,9 +3177,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "jelena-ostapenko",
@@ -2070,7 +3206,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -2086,9 +3223,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "jeline-vandromme",
+      "display_name": "Jeline Vandromme",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "jennifer-ruggeri",
+      "display_name": "Jennifer Ruggeri",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "jessica-pegula",
@@ -2113,7 +3274,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -2129,9 +3291,44 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "joanna-garland",
+      "display_name": "Joanna Garland",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "julia-avdeeva",
+      "display_name": "Julia Avdeeva",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "julieta-pareja",
+      "display_name": "Julieta Pareja",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "karolina-muchova",
@@ -2156,7 +3353,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -2172,9 +3370,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "katherine-sebov",
+      "display_name": "Katherine Sebov",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "katie-boulter",
@@ -2199,9 +3410,88 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "katie-swan",
+      "display_name": "Katie Swan",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "katrina-scott",
+      "display_name": "Katrina Scott",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "kristina-liutova",
+      "display_name": "Kristina Liutova",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "kristina-mladenovic",
+      "display_name": "Kristina Mladenovic",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "leyre-romero-gormaz",
+      "display_name": "Leyre Romero Gormaz",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "linda-fruhvirtova",
+      "display_name": "Linda Fruhvirtova",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "linda-klimovicova",
+      "display_name": "Linda Klimovicova",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "linda-noskova",
@@ -2226,7 +3516,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -2242,9 +3533,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "liudmila-samsonova",
@@ -2269,9 +3562,55 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "lucia-bronzetti",
+      "display_name": "Lucia Bronzetti",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "lucrezia-stefanini",
+      "display_name": "Lucrezia Stefanini",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "maddison-inglis",
+      "display_name": "Maddison Inglis",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "madison-brengle",
+      "display_name": "Madison Brengle",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "madison-keys",
@@ -2296,7 +3635,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -2312,9 +3652,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "mai-hontama",
+      "display_name": "Mai Hontama",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "maja-chwalinska",
@@ -2339,9 +3692,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "maria-lourdes-carle",
+      "display_name": "Maria Lourdes Carle",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "maria-sakkari",
@@ -2366,9 +3732,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "mariam-bolkvadze",
+      "display_name": "Mariam Bolkvadze",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "marie-bouzkova",
@@ -2393,9 +3772,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "marina-bassols-ribera",
+      "display_name": "Marina Bassols Ribera",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "marketa-vondrousova",
@@ -2420,9 +3812,11 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
     },
     {
       "entity_key": "marta-kostyuk",
@@ -2447,9 +3841,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "martyna-kubka",
+      "display_name": "Martyna Kubka",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "mary-stoiana",
+      "display_name": "Mary Stoiana",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "maya-joint",
@@ -2474,9 +3892,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "mia-ristic",
+      "display_name": "Mia Ristic",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "mirra-andreeva",
@@ -2501,7 +3932,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -2517,9 +3949,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "mona-barthel",
+      "display_name": "Mona Barthel",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "naomi-osaka",
@@ -2544,7 +3989,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -2560,9 +4006,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "noma-noha-akugue",
+      "display_name": "Noma Noha Akugue",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "nuria-brancaccio",
+      "display_name": "Nuria Brancaccio",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "paula-badosa",
@@ -2587,7 +4057,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -2603,9 +4074,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "polina-iatcenko",
+      "display_name": "Polina Iatcenko",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "priscilla-hon",
+      "display_name": "Priscilla Hon",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "qinwen-zheng",
@@ -2630,7 +4125,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -2646,9 +4142,55 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "rebecca-marino",
+      "display_name": "Rebecca Marino",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "robin-montgomery",
+      "display_name": "Robin Montgomery",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "sara-sorribes-tormo",
+      "display_name": "Sara Sorribes Tormo",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "sofia-costoulas",
+      "display_name": "Sofia Costoulas",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "sofia-kenin",
@@ -2673,9 +4215,33 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "storm-hunter",
+      "display_name": "Storm Hunter",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "tatiana-prozorova",
+      "display_name": "Tatiana Prozorova",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "tereza-valentova",
@@ -2700,9 +4266,44 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "tyra-caterina-grant",
+      "display_name": "Tyra Caterina Grant",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "vendula-valdmannova",
+      "display_name": "Vendula Valdmannova",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "veronika-podrez",
+      "display_name": "Veronika Podrez",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "victoria-mboko",
@@ -2727,7 +4328,8 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "KXWTA-26USO"
-          }
+          },
+          "kind": "outright"
         },
         {
           "source": "polymarket",
@@ -2743,9 +4345,22 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
-          }
+          },
+          "kind": "outright"
         }
-      ]
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "whitney-osuigwe",
+      "display_name": "Whitney Osuigwe",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
     },
     {
       "entity_key": "xiyu-wang",
@@ -2770,10 +4385,3293 @@
             "kind": "outright-field-census",
             "observed_at": "2026-08-25T00:50:00+00:00",
             "market_external_id": "139255"
+          },
+          "kind": "outright"
+        }
+      ],
+      "role": "contender"
+    },
+    {
+      "entity_key": "yeon-woo-ku",
+      "display_name": "Yeon-Woo Ku",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    },
+    {
+      "entity_key": "yue-yuan",
+      "display_name": "Yue Yuan",
+      "draw": "womens-singles",
+      "role": "participant",
+      "seed": null,
+      "country": null,
+      "draw_slot": null,
+      "section": null,
+      "sources": []
+    }
+  ],
+  "matchups": [
+    {
+      "matchup_key": "womens-singles:noma-noha-akugue-vs-sara-sorribes-tormo:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T16:35:00Z",
+      "players": [
+        "sara-sorribes-tormo",
+        "noma-noha-akugue"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486059,
+          "outcome_id": 221383371,
+          "market_external_id": "0x9e86533ab5718cbfda3355f086cd51d5407c64052b70f3baad0ff05314c3a37a",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898347",
+            "source_labels": [
+              "Sara Sorribes Tormo",
+              "Noma Noha Akugue"
+            ],
+            "start_time": "2026-08-25T16:35:00Z"
+          },
+          "sides": {
+            "sara-sorribes-tormo": {
+              "outcome_id": 221383371,
+              "outcome_external_id": "0x9e86533ab5718cbfda3355f086cd51d5407c64052b70f3baad0ff05314c3a37a_yes",
+              "source_label": "Sara Sorribes Tormo"
+            },
+            "noma-noha-akugue": {
+              "outcome_id": 221383372,
+              "outcome_external_id": "0x9e86533ab5718cbfda3355f086cd51d5407c64052b70f3baad0ff05314c3a37a_no",
+              "source_label": "Noma Noha Akugue"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:annika-penickova-vs-martyna-kubka:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T18:30:00Z",
+      "players": [
+        "martyna-kubka",
+        "annika-penickova"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486002,
+          "outcome_id": 221383286,
+          "market_external_id": "0xc7ca0dc31557fcf8ef5c2779d8c98b021af62902f984a41f55cc0bf2e25177b9",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:26.967512+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898374",
+            "source_labels": [
+              "Martyna Kubka",
+              "Annika Penickova"
+            ],
+            "start_time": "2026-08-25T18:30:00Z"
+          },
+          "sides": {
+            "martyna-kubka": {
+              "outcome_id": 221383286,
+              "outcome_external_id": "0xc7ca0dc31557fcf8ef5c2779d8c98b021af62902f984a41f55cc0bf2e25177b9_yes",
+              "source_label": "Martyna Kubka"
+            },
+            "annika-penickova": {
+              "outcome_id": 221383287,
+              "outcome_external_id": "0xc7ca0dc31557fcf8ef5c2779d8c98b021af62902f984a41f55cc0bf2e25177b9_no",
+              "source_label": "Annika Penickova"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:maks-kasnikowski-vs-nicolai-budkov-kjaer:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T18:45:00Z",
+      "players": [
+        "maks-kasnikowski",
+        "nicolai-budkov-kjaer"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59487861,
+          "outcome_id": 221386868,
+          "market_external_id": "0xaac928fab9635b2df7349397f0af015109be0d876eede9113e4a54ec8e68c726",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898607",
+            "source_labels": [
+              "Maks Kasnikowski",
+              "Nicolai Budkov Kjaer"
+            ],
+            "start_time": "2026-08-25T18:45:00Z"
+          },
+          "sides": {
+            "maks-kasnikowski": {
+              "outcome_id": 221386868,
+              "outcome_external_id": "0xaac928fab9635b2df7349397f0af015109be0d876eede9113e4a54ec8e68c726_yes",
+              "source_label": "Maks Kasnikowski"
+            },
+            "nicolai-budkov-kjaer": {
+              "outcome_id": 221386869,
+              "outcome_external_id": "0xaac928fab9635b2df7349397f0af015109be0d876eede9113e4a54ec8e68c726_no",
+              "source_label": "Nicolai Budkov Kjaer"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:alice-tubello-vs-priscilla-hon:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T19:05:00Z",
+      "players": [
+        "alice-tubello",
+        "priscilla-hon"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486051,
+          "outcome_id": 221383359,
+          "market_external_id": "0xfd95df807508d1bc8eff75d921ff66b1b914e4eb96899e54c444135045405873",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898350",
+            "source_labels": [
+              "Alice Tubello",
+              "Priscilla Hon"
+            ],
+            "start_time": "2026-08-25T19:05:00Z"
+          },
+          "sides": {
+            "alice-tubello": {
+              "outcome_id": 221383359,
+              "outcome_external_id": "0xfd95df807508d1bc8eff75d921ff66b1b914e4eb96899e54c444135045405873_yes",
+              "source_label": "Alice Tubello"
+            },
+            "priscilla-hon": {
+              "outcome_id": 221383360,
+              "outcome_external_id": "0xfd95df807508d1bc8eff75d921ff66b1b914e4eb96899e54c444135045405873_no",
+              "source_label": "Priscilla Hon"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:kristina-liutova-vs-tatiana-prozorova:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T19:10:00Z",
+      "players": [
+        "kristina-liutova",
+        "tatiana-prozorova"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486006,
+          "outcome_id": 221383293,
+          "market_external_id": "0x4eba82036b1d3d7824eeb2e2144974a734a193e3454e865731328fc25a4d6a2b",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:26.967512+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898372",
+            "source_labels": [
+              "Kristina Liutova",
+              "Tatiana Prozorova"
+            ],
+            "start_time": "2026-08-25T19:10:00Z"
+          },
+          "sides": {
+            "kristina-liutova": {
+              "outcome_id": 221383293,
+              "outcome_external_id": "0x4eba82036b1d3d7824eeb2e2144974a734a193e3454e865731328fc25a4d6a2b_yes",
+              "source_label": "Kristina Liutova"
+            },
+            "tatiana-prozorova": {
+              "outcome_id": 221383294,
+              "outcome_external_id": "0x4eba82036b1d3d7824eeb2e2144974a734a193e3454e865731328fc25a4d6a2b_no",
+              "source_label": "Tatiana Prozorova"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:andre-ilagan-vs-tristan-boyer:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T19:15:00Z",
+      "players": [
+        "andre-ilagan",
+        "tristan-boyer"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59487883,
+          "outcome_id": 221386901,
+          "market_external_id": "0x36bdd8c69aa4badb093acc8851c95fd7f9b94a65bfcc822b752a5840b821c6fe",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898594",
+            "source_labels": [
+              "Andre Ilagan",
+              "Tristan Boyer"
+            ],
+            "start_time": "2026-08-25T19:15:00Z"
+          },
+          "sides": {
+            "andre-ilagan": {
+              "outcome_id": 221386901,
+              "outcome_external_id": "0x36bdd8c69aa4badb093acc8851c95fd7f9b94a65bfcc822b752a5840b821c6fe_yes",
+              "source_label": "Andre Ilagan"
+            },
+            "tristan-boyer": {
+              "outcome_id": 221386902,
+              "outcome_external_id": "0x36bdd8c69aa4badb093acc8851c95fd7f9b94a65bfcc822b752a5840b821c6fe_no",
+              "source_label": "Tristan Boyer"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:darya-astakhova-vs-marina-bassols-ribera:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T19:20:00Z",
+      "players": [
+        "darya-astakhova",
+        "marina-bassols-ribera"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486000,
+          "outcome_id": 221383283,
+          "market_external_id": "0x190e16bc116b4d1c861f4e305fb7dfbcf17050d4df7c68f7956cdc9388773b91",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:26.967512+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898375",
+            "source_labels": [
+              "Darya Astakhova",
+              "Marina Bassols Ribera"
+            ],
+            "start_time": "2026-08-25T19:20:00Z"
+          },
+          "sides": {
+            "darya-astakhova": {
+              "outcome_id": 221383283,
+              "outcome_external_id": "0x190e16bc116b4d1c861f4e305fb7dfbcf17050d4df7c68f7956cdc9388773b91_yes",
+              "source_label": "Darya Astakhova"
+            },
+            "marina-bassols-ribera": {
+              "outcome_id": 221383284,
+              "outcome_external_id": "0x190e16bc116b4d1c861f4e305fb7dfbcf17050d4df7c68f7956cdc9388773b91_no",
+              "source_label": "Marina Bassols Ribera"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:christopher-o-connell-vs-stefanos-sakellaridis:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T19:30:00Z",
+      "players": [
+        "stefanos-sakellaridis",
+        "christopher-o-connell"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59487855,
+          "outcome_id": 221386859,
+          "market_external_id": "0x8063a72fc42c4fad4002d79a0e3b56fcdc58cad1c8504abd1513f2d3f8ba8fb3",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898608",
+            "source_labels": [
+              "Stefanos Sakellaridis",
+              "Christopher O'Connell"
+            ],
+            "start_time": "2026-08-25T19:30:00Z"
+          },
+          "sides": {
+            "stefanos-sakellaridis": {
+              "outcome_id": 221386859,
+              "outcome_external_id": "0x8063a72fc42c4fad4002d79a0e3b56fcdc58cad1c8504abd1513f2d3f8ba8fb3_yes",
+              "source_label": "Stefanos Sakellaridis"
+            },
+            "christopher-o-connell": {
+              "outcome_id": 221386860,
+              "outcome_external_id": "0x8063a72fc42c4fad4002d79a0e3b56fcdc58cad1c8504abd1513f2d3f8ba8fb3_no",
+              "source_label": "Christopher O'Connell"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:joanna-garland-vs-leyre-romero-gormaz:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T19:30:00Z",
+      "players": [
+        "joanna-garland",
+        "leyre-romero-gormaz"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486045,
+          "outcome_id": 221383350,
+          "market_external_id": "0x762a087bff77a82b18398c6651752a7adfe0968cfdd7684f872d951a1d653dc9",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898351",
+            "source_labels": [
+              "Joanna Garland",
+              "Leyre Romero Gormaz"
+            ],
+            "start_time": "2026-08-25T19:30:00Z"
+          },
+          "sides": {
+            "joanna-garland": {
+              "outcome_id": 221383350,
+              "outcome_external_id": "0x762a087bff77a82b18398c6651752a7adfe0968cfdd7684f872d951a1d653dc9_yes",
+              "source_label": "Joanna Garland"
+            },
+            "leyre-romero-gormaz": {
+              "outcome_id": 221383351,
+              "outcome_external_id": "0x762a087bff77a82b18398c6651752a7adfe0968cfdd7684f872d951a1d653dc9_no",
+              "source_label": "Leyre Romero Gormaz"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:mona-barthel-vs-whitney-osuigwe:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T19:40:00Z",
+      "players": [
+        "whitney-osuigwe",
+        "mona-barthel"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486049,
+          "outcome_id": 221383356,
+          "market_external_id": "0x960a2f2f53a8a3c38668bca39ca4a3385bce7490560ddeaf2aa06fc793e4bb1c",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898349",
+            "source_labels": [
+              "Whitney Osuigwe",
+              "Mona Barthel"
+            ],
+            "start_time": "2026-08-25T19:40:00Z"
+          },
+          "sides": {
+            "whitney-osuigwe": {
+              "outcome_id": 221383356,
+              "outcome_external_id": "0x960a2f2f53a8a3c38668bca39ca4a3385bce7490560ddeaf2aa06fc793e4bb1c_yes",
+              "source_label": "Whitney Osuigwe"
+            },
+            "mona-barthel": {
+              "outcome_id": 221383357,
+              "outcome_external_id": "0x960a2f2f53a8a3c38668bca39ca4a3385bce7490560ddeaf2aa06fc793e4bb1c_no",
+              "source_label": "Mona Barthel"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:francesca-jones-vs-nuria-brancaccio:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T19:50:00Z",
+      "players": [
+        "francesca-jones",
+        "nuria-brancaccio"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486053,
+          "outcome_id": 221383362,
+          "market_external_id": "0xa236217566fc057f54f8b2d5a096cee473ca6a47f27f738113db30dba51d099b",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898348",
+            "source_labels": [
+              "Francesca Jones",
+              "Nuria Brancaccio"
+            ],
+            "start_time": "2026-08-25T19:50:00Z"
+          },
+          "sides": {
+            "francesca-jones": {
+              "outcome_id": 221383362,
+              "outcome_external_id": "0xa236217566fc057f54f8b2d5a096cee473ca6a47f27f738113db30dba51d099b_yes",
+              "source_label": "Francesca Jones"
+            },
+            "nuria-brancaccio": {
+              "outcome_id": 221383363,
+              "outcome_external_id": "0xa236217566fc057f54f8b2d5a096cee473ca6a47f27f738113db30dba51d099b_no",
+              "source_label": "Nuria Brancaccio"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:borna-gojo-vs-zdenek-kolar:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T20:40:00Z",
+      "players": [
+        "zdenek-kolar",
+        "borna-gojo"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59487865,
+          "outcome_id": 221386874,
+          "market_external_id": "0x78c280e3f8d303514d8870684e237cc823b4f2b6e12d5ae773dec5a105f1664a",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898602",
+            "source_labels": [
+              "Zdenek Kolar",
+              "Borna Gojo"
+            ],
+            "start_time": "2026-08-25T20:40:00Z"
+          },
+          "sides": {
+            "zdenek-kolar": {
+              "outcome_id": 221386874,
+              "outcome_external_id": "0x78c280e3f8d303514d8870684e237cc823b4f2b6e12d5ae773dec5a105f1664a_yes",
+              "source_label": "Zdenek Kolar"
+            },
+            "borna-gojo": {
+              "outcome_id": 221386875,
+              "outcome_external_id": "0x78c280e3f8d303514d8870684e237cc823b4f2b6e12d5ae773dec5a105f1664a_no",
+              "source_label": "Borna Gojo"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:federico-cina-vs-luca-nardi:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T20:55:00Z",
+      "players": [
+        "luca-nardi",
+        "federico-cina"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59487867,
+          "outcome_id": 221386877,
+          "market_external_id": "0x64d0bfe3504833d07c6a15baf69ec83fe90f8531e8600ab22bae66037b3123c8",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898603",
+            "source_labels": [
+              "Luca Nardi",
+              "Federico Cina"
+            ],
+            "start_time": "2026-08-25T20:55:00Z"
+          },
+          "sides": {
+            "luca-nardi": {
+              "outcome_id": 221386877,
+              "outcome_external_id": "0x64d0bfe3504833d07c6a15baf69ec83fe90f8531e8600ab22bae66037b3123c8_yes",
+              "source_label": "Luca Nardi"
+            },
+            "federico-cina": {
+              "outcome_id": 221386878,
+              "outcome_external_id": "0x64d0bfe3504833d07c6a15baf69ec83fe90f8531e8600ab22bae66037b3123c8_no",
+              "source_label": "Federico Cina"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:julia-avdeeva-vs-katherine-sebov:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T20:55:00Z",
+      "players": [
+        "julia-avdeeva",
+        "katherine-sebov"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486016,
+          "outcome_id": 221383308,
+          "market_external_id": "0xa00aa55065242cfdbb3fdbd3d9d92d7a5501944f012ee36721332434eb3a3ccb",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898369",
+            "source_labels": [
+              "Julia Avdeeva",
+              "Katherine Sebov"
+            ],
+            "start_time": "2026-08-25T20:55:00Z"
+          },
+          "sides": {
+            "julia-avdeeva": {
+              "outcome_id": 221383308,
+              "outcome_external_id": "0xa00aa55065242cfdbb3fdbd3d9d92d7a5501944f012ee36721332434eb3a3ccb_yes",
+              "source_label": "Julia Avdeeva"
+            },
+            "katherine-sebov": {
+              "outcome_id": 221383309,
+              "outcome_external_id": "0xa00aa55065242cfdbb3fdbd3d9d92d7a5501944f012ee36721332434eb3a3ccb_no",
+              "source_label": "Katherine Sebov"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:astra-sharma-vs-yeon-woo-ku:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T21:05:00Z",
+      "players": [
+        "yeon-woo-ku",
+        "astra-sharma"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486039,
+          "outcome_id": 221383341,
+          "market_external_id": "0x731c90edf1a97383521f385352af3785f84a2a05663312a6bb3984a58d32eebe",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898354",
+            "source_labels": [
+              "Yeon-Woo Ku",
+              "Astra Sharma"
+            ],
+            "start_time": "2026-08-25T21:05:00Z"
+          },
+          "sides": {
+            "yeon-woo-ku": {
+              "outcome_id": 221383341,
+              "outcome_external_id": "0x731c90edf1a97383521f385352af3785f84a2a05663312a6bb3984a58d32eebe_yes",
+              "source_label": "Yeon-Woo Ku"
+            },
+            "astra-sharma": {
+              "outcome_id": 221383342,
+              "outcome_external_id": "0x731c90edf1a97383521f385352af3785f84a2a05663312a6bb3984a58d32eebe_no",
+              "source_label": "Astra Sharma"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:andrea-pellegrino-vs-colton-smith:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T21:20:00Z",
+      "players": [
+        "colton-smith",
+        "andrea-pellegrino"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59485848,
+          "outcome_id": 221383138,
+          "market_external_id": "0x63286fcbe2b0aff6765329e2bafecf8d1b6eb57630e8a111ad50ec2f277bb9ba",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898596",
+            "source_labels": [
+              "Colton Smith",
+              "Andrea Pellegrino"
+            ],
+            "start_time": "2026-08-25T21:20:00Z"
+          },
+          "sides": {
+            "colton-smith": {
+              "outcome_id": 221383138,
+              "outcome_external_id": "0x63286fcbe2b0aff6765329e2bafecf8d1b6eb57630e8a111ad50ec2f277bb9ba_yes",
+              "source_label": "Colton Smith"
+            },
+            "andrea-pellegrino": {
+              "outcome_id": 221383139,
+              "outcome_external_id": "0x63286fcbe2b0aff6765329e2bafecf8d1b6eb57630e8a111ad50ec2f277bb9ba_no",
+              "source_label": "Andrea Pellegrino"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:harmony-tan-vs-mary-stoiana:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T21:25:00Z",
+      "players": [
+        "harmony-tan",
+        "mary-stoiana"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486008,
+          "outcome_id": 221383296,
+          "market_external_id": "0xed9d4cdf2b280cbae38b8a8d89aa68809d18ab0168434c3c4afd19338f471db6",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:26.967512+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898371",
+            "source_labels": [
+              "Harmony Tan",
+              "Mary Stoiana"
+            ],
+            "start_time": "2026-08-25T21:25:00Z"
+          },
+          "sides": {
+            "harmony-tan": {
+              "outcome_id": 221383296,
+              "outcome_external_id": "0xed9d4cdf2b280cbae38b8a8d89aa68809d18ab0168434c3c4afd19338f471db6_yes",
+              "source_label": "Harmony Tan"
+            },
+            "mary-stoiana": {
+              "outcome_id": 221383297,
+              "outcome_external_id": "0xed9d4cdf2b280cbae38b8a8d89aa68809d18ab0168434c3c4afd19338f471db6_no",
+              "source_label": "Mary Stoiana"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:katie-swan-vs-katrina-scott:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T21:25:00Z",
+      "players": [
+        "katie-swan",
+        "katrina-scott"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486010,
+          "outcome_id": 221383299,
+          "market_external_id": "0xcb4272bb8a4b403a4f16a74a5205adc51d1ddcc60a5833b27a7625b17e5deccc",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:26.967512+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898370",
+            "source_labels": [
+              "Katie Swan",
+              "Katrina Scott"
+            ],
+            "start_time": "2026-08-25T21:25:00Z"
+          },
+          "sides": {
+            "katie-swan": {
+              "outcome_id": 221383299,
+              "outcome_external_id": "0xcb4272bb8a4b403a4f16a74a5205adc51d1ddcc60a5833b27a7625b17e5deccc_yes",
+              "source_label": "Katie Swan"
+            },
+            "katrina-scott": {
+              "outcome_id": 221383300,
+              "outcome_external_id": "0xcb4272bb8a4b403a4f16a74a5205adc51d1ddcc60a5833b27a7625b17e5deccc_no",
+              "source_label": "Katrina Scott"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:alexandra-shubladze-vs-anastasiia-sobolieva:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T21:30:00Z",
+      "players": [
+        "anastasiia-sobolieva",
+        "alexandra-shubladze"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486047,
+          "outcome_id": 221383353,
+          "market_external_id": "0xcbd4b48615fc8bca080e98c445fb9a61b6fbdc4b315d831b2ce43c61d7275c77",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898353",
+            "source_labels": [
+              "Anastasiia Sobolieva",
+              "Alexandra Shubladze"
+            ],
+            "start_time": "2026-08-25T21:30:00Z"
+          },
+          "sides": {
+            "anastasiia-sobolieva": {
+              "outcome_id": 221383353,
+              "outcome_external_id": "0xcbd4b48615fc8bca080e98c445fb9a61b6fbdc4b315d831b2ce43c61d7275c77_yes",
+              "source_label": "Anastasiia Sobolieva"
+            },
+            "alexandra-shubladze": {
+              "outcome_id": 221383354,
+              "outcome_external_id": "0xcbd4b48615fc8bca080e98c445fb9a61b6fbdc4b315d831b2ce43c61d7275c77_no",
+              "source_label": "Alexandra Shubladze"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:hanyu-guo-vs-yue-yuan:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T21:30:00Z",
+      "players": [
+        "yue-yuan",
+        "hanyu-guo"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486012,
+          "outcome_id": 221383302,
+          "market_external_id": "0xff54174a4e1a68cb5ff288056664139de774be33ee383ddcf8d943b3d39e44e2",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:26.967512+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898368",
+            "source_labels": [
+              "Yue Yuan",
+              "Hanyu Guo"
+            ],
+            "start_time": "2026-08-25T21:30:00Z"
+          },
+          "sides": {
+            "yue-yuan": {
+              "outcome_id": 221383302,
+              "outcome_external_id": "0xff54174a4e1a68cb5ff288056664139de774be33ee383ddcf8d943b3d39e44e2_yes",
+              "source_label": "Yue Yuan"
+            },
+            "hanyu-guo": {
+              "outcome_id": 221383303,
+              "outcome_external_id": "0xff54174a4e1a68cb5ff288056664139de774be33ee383ddcf8d943b3d39e44e2_no",
+              "source_label": "Hanyu Guo"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:dan-added-vs-jerome-kym:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T21:35:00Z",
+      "players": [
+        "jerome-kym",
+        "dan-added"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59487881,
+          "outcome_id": 221386898,
+          "market_external_id": "0x2b4807fb7e556eb3b13759a91bbfadaf1d1b199bed5ff55f6063abd02d20a821",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898595",
+            "source_labels": [
+              "Jerome Kym",
+              "Dan Added"
+            ],
+            "start_time": "2026-08-25T21:35:00Z"
+          },
+          "sides": {
+            "jerome-kym": {
+              "outcome_id": 221386898,
+              "outcome_external_id": "0x2b4807fb7e556eb3b13759a91bbfadaf1d1b199bed5ff55f6063abd02d20a821_yes",
+              "source_label": "Jerome Kym"
+            },
+            "dan-added": {
+              "outcome_id": 221386899,
+              "outcome_external_id": "0x2b4807fb7e556eb3b13759a91bbfadaf1d1b199bed5ff55f6063abd02d20a821_no",
+              "source_label": "Dan Added"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:darja-semenistaja-vs-hayu-kinoshita:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T21:35:00Z",
+      "players": [
+        "darja-semenistaja",
+        "hayu-kinoshita"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486043,
+          "outcome_id": 221383347,
+          "market_external_id": "0x9e8e20d29d867b2db2d0636611a99bcc33be4de3f4d1ee58c5ddba5ee158cffe",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898352",
+            "source_labels": [
+              "Darja Semenistaja",
+              "Hayu Kinoshita"
+            ],
+            "start_time": "2026-08-25T21:35:00Z"
+          },
+          "sides": {
+            "darja-semenistaja": {
+              "outcome_id": 221383347,
+              "outcome_external_id": "0x9e8e20d29d867b2db2d0636611a99bcc33be4de3f4d1ee58c5ddba5ee158cffe_yes",
+              "source_label": "Darja Semenistaja"
+            },
+            "hayu-kinoshita": {
+              "outcome_id": 221383348,
+              "outcome_external_id": "0x9e8e20d29d867b2db2d0636611a99bcc33be4de3f4d1ee58c5ddba5ee158cffe_no",
+              "source_label": "Hayu Kinoshita"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:maddison-inglis-vs-storm-hunter:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T21:35:00Z",
+      "players": [
+        "storm-hunter",
+        "maddison-inglis"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486041,
+          "outcome_id": 221383344,
+          "market_external_id": "0x724f2edb13bd9c07f9764eaa7385893494ea52bcbdb6e3af188d59a6d45968c4",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898355",
+            "source_labels": [
+              "Storm Hunter",
+              "Maddison Inglis"
+            ],
+            "start_time": "2026-08-25T21:35:00Z"
+          },
+          "sides": {
+            "storm-hunter": {
+              "outcome_id": 221383344,
+              "outcome_external_id": "0x724f2edb13bd9c07f9764eaa7385893494ea52bcbdb6e3af188d59a6d45968c4_yes",
+              "source_label": "Storm Hunter"
+            },
+            "maddison-inglis": {
+              "outcome_id": 221383345,
+              "outcome_external_id": "0x724f2edb13bd9c07f9764eaa7385893494ea52bcbdb6e3af188d59a6d45968c4_no",
+              "source_label": "Maddison Inglis"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:rio-noguchi-vs-yunchaokete-bu:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T22:00:00Z",
+      "players": [
+        "yunchaokete-bu",
+        "rio-noguchi"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59487871,
+          "outcome_id": 221386883,
+          "market_external_id": "0xe3a5c6a4d8057b7d8a14d3091183aab4ee27b232f21c603a9574b81898b46094",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898601",
+            "source_labels": [
+              "Yunchaokete Bu",
+              "Rio Noguchi"
+            ],
+            "start_time": "2026-08-25T22:00:00Z"
+          },
+          "sides": {
+            "yunchaokete-bu": {
+              "outcome_id": 221386883,
+              "outcome_external_id": "0xe3a5c6a4d8057b7d8a14d3091183aab4ee27b232f21c603a9574b81898b46094_yes",
+              "source_label": "Yunchaokete Bu"
+            },
+            "rio-noguchi": {
+              "outcome_id": 221386884,
+              "outcome_external_id": "0xe3a5c6a4d8057b7d8a14d3091183aab4ee27b232f21c603a9574b81898b46094_no",
+              "source_label": "Rio Noguchi"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:hugo-dellien-vs-moez-echargui:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T22:05:00Z",
+      "players": [
+        "moez-echargui",
+        "hugo-dellien"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59487869,
+          "outcome_id": 221386880,
+          "market_external_id": "0x198184c526ba51c86c8e5673606be5fec262c5c830c7ab8738fce6c1387d9350",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898604",
+            "source_labels": [
+              "Moez Echargui",
+              "Hugo Dellien"
+            ],
+            "start_time": "2026-08-25T22:05:00Z"
+          },
+          "sides": {
+            "moez-echargui": {
+              "outcome_id": 221386880,
+              "outcome_external_id": "0x198184c526ba51c86c8e5673606be5fec262c5c830c7ab8738fce6c1387d9350_yes",
+              "source_label": "Moez Echargui"
+            },
+            "hugo-dellien": {
+              "outcome_id": 221386881,
+              "outcome_external_id": "0x198184c526ba51c86c8e5673606be5fec262c5c830c7ab8738fce6c1387d9350_no",
+              "source_label": "Hugo Dellien"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:jennifer-ruggeri-vs-sofia-costoulas:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T22:10:00Z",
+      "players": [
+        "sofia-costoulas",
+        "jennifer-ruggeri"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486027,
+          "outcome_id": 221383323,
+          "market_external_id": "0x89e7549071b11d454a35968ef4e6c15823945e0cd35f7f6d1238ad5d4331abdd",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898363",
+            "source_labels": [
+              "Sofia Costoulas",
+              "Jennifer Ruggeri"
+            ],
+            "start_time": "2026-08-25T22:10:00Z"
+          },
+          "sides": {
+            "sofia-costoulas": {
+              "outcome_id": 221383323,
+              "outcome_external_id": "0x89e7549071b11d454a35968ef4e6c15823945e0cd35f7f6d1238ad5d4331abdd_yes",
+              "source_label": "Sofia Costoulas"
+            },
+            "jennifer-ruggeri": {
+              "outcome_id": 221383324,
+              "outcome_external_id": "0x89e7549071b11d454a35968ef4e6c15823945e0cd35f7f6d1238ad5d4331abdd_no",
+              "source_label": "Jennifer Ruggeri"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:jack-secord-vs-tristan-schoolkate:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T22:35:00Z",
+      "players": [
+        "jack-secord",
+        "tristan-schoolkate"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59487853,
+          "outcome_id": 221386856,
+          "market_external_id": "0xe2fd27e7c8b4dac83c1b3960de0b34cb04870e185f3ded38cd8a4be490479f1a",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898611",
+            "source_labels": [
+              "Jack Secord",
+              "Tristan Schoolkate"
+            ],
+            "start_time": "2026-08-25T22:35:00Z"
+          },
+          "sides": {
+            "jack-secord": {
+              "outcome_id": 221386856,
+              "outcome_external_id": "0xe2fd27e7c8b4dac83c1b3960de0b34cb04870e185f3ded38cd8a4be490479f1a_yes",
+              "source_label": "Jack Secord"
+            },
+            "tristan-schoolkate": {
+              "outcome_id": 221386857,
+              "outcome_external_id": "0xe2fd27e7c8b4dac83c1b3960de0b34cb04870e185f3ded38cd8a4be490479f1a_no",
+              "source_label": "Tristan Schoolkate"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:andrew-johnson-vs-taro-daniel:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T22:55:00Z",
+      "players": [
+        "taro-daniel",
+        "andrew-johnson"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59489379,
+          "outcome_id": 221388367,
+          "market_external_id": "0x1090836fe7f95f0e2c3d22462de29c63b9187110deeb0c0725dc5aab92a315f9",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898610",
+            "source_labels": [
+              "Taro Daniel",
+              "Andrew Johnson"
+            ],
+            "start_time": "2026-08-25T22:55:00Z"
+          },
+          "sides": {
+            "taro-daniel": {
+              "outcome_id": 221388367,
+              "outcome_external_id": "0x1090836fe7f95f0e2c3d22462de29c63b9187110deeb0c0725dc5aab92a315f9_yes",
+              "source_label": "Taro Daniel"
+            },
+            "andrew-johnson": {
+              "outcome_id": 221388368,
+              "outcome_external_id": "0x1090836fe7f95f0e2c3d22462de29c63b9187110deeb0c0725dc5aab92a315f9_no",
+              "source_label": "Andrew Johnson"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-dalma-galfi:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T22:55:00Z",
+      "players": [
+        "dalma-galfi",
+        "aliaksandra-sasnovich"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486018,
+          "outcome_id": 221383311,
+          "market_external_id": "0xb8252e9019061e0b2ed030c3f2d8681f76f7e1bc6ca7772f7d5942616dccab73",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898365",
+            "source_labels": [
+              "Dalma Galfi",
+              "Aliaksandra Sasnovich"
+            ],
+            "start_time": "2026-08-25T22:55:00Z"
+          },
+          "sides": {
+            "dalma-galfi": {
+              "outcome_id": 221383311,
+              "outcome_external_id": "0xb8252e9019061e0b2ed030c3f2d8681f76f7e1bc6ca7772f7d5942616dccab73_yes",
+              "source_label": "Dalma Galfi"
+            },
+            "aliaksandra-sasnovich": {
+              "outcome_id": 221383312,
+              "outcome_external_id": "0xb8252e9019061e0b2ed030c3f2d8681f76f7e1bc6ca7772f7d5942616dccab73_no",
+              "source_label": "Aliaksandra Sasnovich"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:maria-lourdes-carle-vs-vendula-valdmannova:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T22:55:00Z",
+      "players": [
+        "vendula-valdmannova",
+        "maria-lourdes-carle"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59486022,
+          "outcome_id": 221383317,
+          "market_external_id": "0x157a0d0e1a75e14059aa5c79087c7b5a000a5a0c0f2630334e508744a18dfb60",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898364",
+            "source_labels": [
+              "Vendula Valdmannova",
+              "Maria Lourdes Carle"
+            ],
+            "start_time": "2026-08-25T22:55:00Z"
+          },
+          "sides": {
+            "vendula-valdmannova": {
+              "outcome_id": 221383317,
+              "outcome_external_id": "0x157a0d0e1a75e14059aa5c79087c7b5a000a5a0c0f2630334e508744a18dfb60_yes",
+              "source_label": "Vendula Valdmannova"
+            },
+            "maria-lourdes-carle": {
+              "outcome_id": 221383318,
+              "outcome_external_id": "0x157a0d0e1a75e14059aa5c79087c7b5a000a5a0c0f2630334e508744a18dfb60_no",
+              "source_label": "Maria Lourdes Carle"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:elvina-kalieva-vs-kristina-mladenovic:2026-08-25",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T23:05:00Z",
+      "players": [
+        "elvina-kalieva",
+        "kristina-mladenovic"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59488109,
+          "outcome_id": 221387237,
+          "market_external_id": "0xb20d08c2945aa3832cb8f43aeeaf350e9b2a50f0aa1120c40f99f1433938ddff",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T07:18:33.130285+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898362",
+            "source_labels": [
+              "Elvina Kalieva",
+              "Kristina Mladenovic"
+            ],
+            "start_time": "2026-08-25T23:05:00Z"
+          },
+          "sides": {
+            "elvina-kalieva": {
+              "outcome_id": 221387237,
+              "outcome_external_id": "0xb20d08c2945aa3832cb8f43aeeaf350e9b2a50f0aa1120c40f99f1433938ddff_yes",
+              "source_label": "Elvina Kalieva"
+            },
+            "kristina-mladenovic": {
+              "outcome_id": 221387238,
+              "outcome_external_id": "0xb20d08c2945aa3832cb8f43aeeaf350e9b2a50f0aa1120c40f99f1433938ddff_no",
+              "source_label": "Kristina Mladenovic"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:liam-draxl-vs-nicolas-mejia:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T23:30:00Z",
+      "players": [
+        "nicolas-mejia",
+        "liam-draxl"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59487851,
+          "outcome_id": 221386853,
+          "market_external_id": "0x6dd41d230185eef74e9e34407f3440084533464806ffa49904c1df82e23cd1c4",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898609",
+            "source_labels": [
+              "Nicolas Mejia",
+              "Liam Draxl"
+            ],
+            "start_time": "2026-08-25T23:30:00Z"
+          },
+          "sides": {
+            "nicolas-mejia": {
+              "outcome_id": 221386853,
+              "outcome_external_id": "0x6dd41d230185eef74e9e34407f3440084533464806ffa49904c1df82e23cd1c4_yes",
+              "source_label": "Nicolas Mejia"
+            },
+            "liam-draxl": {
+              "outcome_id": 221386854,
+              "outcome_external_id": "0x6dd41d230185eef74e9e34407f3440084533464806ffa49904c1df82e23cd1c4_no",
+              "source_label": "Liam Draxl"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:nikoloz-basilashvili-vs-seong-chan-hong:2026-08-25",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-25T23:30:00Z",
+      "players": [
+        "seong-chan-hong",
+        "nikoloz-basilashvili"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59487848,
+          "outcome_id": 221386850,
+          "market_external_id": "0x008896d1faada2a2d23877e3d04099d5007dce9097fbb4463fef2507ddd122b3",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T08:17:40.529018+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "898612",
+            "source_labels": [
+              "Seong-Chan Hong",
+              "Nikoloz Basilashvili"
+            ],
+            "start_time": "2026-08-25T23:30:00Z"
+          },
+          "sides": {
+            "seong-chan-hong": {
+              "outcome_id": 221386850,
+              "outcome_external_id": "0x008896d1faada2a2d23877e3d04099d5007dce9097fbb4463fef2507ddd122b3_yes",
+              "source_label": "Seong-Chan Hong"
+            },
+            "nikoloz-basilashvili": {
+              "outcome_id": 221386851,
+              "outcome_external_id": "0x008896d1faada2a2d23877e3d04099d5007dce9097fbb4463fef2507ddd122b3_no",
+              "source_label": "Nikoloz Basilashvili"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:alexandre-muller-vs-rei-sakamoto:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "rei-sakamoto",
+        "alexandre-muller"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59540163,
+          "outcome_id": 221568626,
+          "market_external_id": "0x6416f26cb56dd788fcb1d8b34e90f26c5cc710d36df713be83b932933544b674",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T15:20:17.416997+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "908235",
+            "source_labels": [
+              "Rei Sakamoto",
+              "Alexandre Muller"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "rei-sakamoto": {
+              "outcome_id": 221568626,
+              "outcome_external_id": "0x6416f26cb56dd788fcb1d8b34e90f26c5cc710d36df713be83b932933544b674_yes",
+              "source_label": "Rei Sakamoto"
+            },
+            "alexandre-muller": {
+              "outcome_id": 221568627,
+              "outcome_external_id": "0x6416f26cb56dd788fcb1d8b34e90f26c5cc710d36df713be83b932933544b674_no",
+              "source_label": "Alexandre Muller"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:alexis-galarneau-vs-dalibor-svrcina:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "dalibor-svrcina",
+        "alexis-galarneau"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59530997,
+          "outcome_id": 221539125,
+          "market_external_id": "0x963dc28ee6ae5e0a4a9c089b372af3fbcdf23e8e0895f1e3d6ea8d75679786e1",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T09:20:36.829665+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906991",
+            "source_labels": [
+              "Dalibor Svrcina",
+              "Alexis Galarneau"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "dalibor-svrcina": {
+              "outcome_id": 221539125,
+              "outcome_external_id": "0x963dc28ee6ae5e0a4a9c089b372af3fbcdf23e8e0895f1e3d6ea8d75679786e1_yes",
+              "source_label": "Dalibor Svrcina"
+            },
+            "alexis-galarneau": {
+              "outcome_id": 221539126,
+              "outcome_external_id": "0x963dc28ee6ae5e0a4a9c089b372af3fbcdf23e8e0895f1e3d6ea8d75679786e1_no",
+              "source_label": "Alexis Galarneau"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:andrea-guerrieri-vs-joel-schwaerzler:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "andrea-guerrieri",
+        "joel-schwaerzler"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59529360,
+          "outcome_id": 221537268,
+          "market_external_id": "0x2d523794d30f00ba32f4e67c7d659c3b73b519909208850937ab8e5868064fd4",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T09:20:36.829665+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906989",
+            "source_labels": [
+              "Andrea Guerrieri",
+              "Joel Schwaerzler"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "andrea-guerrieri": {
+              "outcome_id": 221537268,
+              "outcome_external_id": "0x2d523794d30f00ba32f4e67c7d659c3b73b519909208850937ab8e5868064fd4_yes",
+              "source_label": "Andrea Guerrieri"
+            },
+            "joel-schwaerzler": {
+              "outcome_id": 221537269,
+              "outcome_external_id": "0x2d523794d30f00ba32f4e67c7d659c3b73b519909208850937ab8e5868064fd4_no",
+              "source_label": "Joel Schwaerzler"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:aziz-dougaz-vs-kyrian-jacquet:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "kyrian-jacquet",
+        "aziz-dougaz"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59529368,
+          "outcome_id": 221537286,
+          "market_external_id": "0x08f4561844c8f400ef28654e65f0b2414db49e01e15c7e8c6692dcad8741d50f",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T09:20:36.829665+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906987",
+            "source_labels": [
+              "Kyrian Jacquet",
+              "Aziz Dougaz"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "kyrian-jacquet": {
+              "outcome_id": 221537286,
+              "outcome_external_id": "0x08f4561844c8f400ef28654e65f0b2414db49e01e15c7e8c6692dcad8741d50f_yes",
+              "source_label": "Kyrian Jacquet"
+            },
+            "aziz-dougaz": {
+              "outcome_id": 221537287,
+              "outcome_external_id": "0x08f4561844c8f400ef28654e65f0b2414db49e01e15c7e8c6692dcad8741d50f_no",
+              "source_label": "Aziz Dougaz"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:billy-harris-vs-toby-samuel:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "toby-samuel",
+        "billy-harris"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59529358,
+          "outcome_id": 221537265,
+          "market_external_id": "0xdde4637fae6598689e52198a25ec868b423e3b191225bdfaee59b4b7e2fd446f",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T09:20:36.829665+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906990",
+            "source_labels": [
+              "Toby Samuel",
+              "Billy Harris"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "toby-samuel": {
+              "outcome_id": 221537265,
+              "outcome_external_id": "0xdde4637fae6598689e52198a25ec868b423e3b191225bdfaee59b4b7e2fd446f_yes",
+              "source_label": "Toby Samuel"
+            },
+            "billy-harris": {
+              "outcome_id": 221537266,
+              "outcome_external_id": "0xdde4637fae6598689e52198a25ec868b423e3b191225bdfaee59b4b7e2fd446f_no",
+              "source_label": "Billy Harris"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:coleman-wong-vs-lukas-neumayer:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "coleman-wong",
+        "lukas-neumayer"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59540166,
+          "outcome_id": 221568632,
+          "market_external_id": "0x03a1967897c8922033e0cc0ffa9685c3ac294511e929cc97d7079e490e5d5ba7",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T15:20:17.416997+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "908236",
+            "source_labels": [
+              "Coleman Wong",
+              "Lukas Neumayer"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "coleman-wong": {
+              "outcome_id": 221568632,
+              "outcome_external_id": "0x03a1967897c8922033e0cc0ffa9685c3ac294511e929cc97d7079e490e5d5ba7_yes",
+              "source_label": "Coleman Wong"
+            },
+            "lukas-neumayer": {
+              "outcome_id": 221568633,
+              "outcome_external_id": "0x03a1967897c8922033e0cc0ffa9685c3ac294511e929cc97d7079e490e5d5ba7_no",
+              "source_label": "Lukas Neumayer"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:cristian-garin-vs-elias-ymer:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "elias-ymer",
+        "cristian-garin"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59529364,
+          "outcome_id": 221537277,
+          "market_external_id": "0x943afc34cc8ca67fefe5402b04e390119837e184764e29d030a2f6e02b3eec26",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T09:20:36.829665+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906988",
+            "source_labels": [
+              "Elias Ymer",
+              "Cristian Garin"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "elias-ymer": {
+              "outcome_id": 221537277,
+              "outcome_external_id": "0x943afc34cc8ca67fefe5402b04e390119837e184764e29d030a2f6e02b3eec26_yes",
+              "source_label": "Elias Ymer"
+            },
+            "cristian-garin": {
+              "outcome_id": 221537278,
+              "outcome_external_id": "0x943afc34cc8ca67fefe5402b04e390119837e184764e29d030a2f6e02b3eec26_no",
+              "source_label": "Cristian Garin"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:daniel-rincon-vs-jordan-lee:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "daniel-rincon",
+        "jordan-lee"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59529376,
+          "outcome_id": 221537298,
+          "market_external_id": "0xa8b94893208c86c3dc74a6ad4f8d8dccc3c17ebbc53182fb50d46bb02769f07d",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T09:20:36.829665+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906983",
+            "source_labels": [
+              "Daniel Rincon",
+              "Jordan Lee"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "daniel-rincon": {
+              "outcome_id": 221537298,
+              "outcome_external_id": "0xa8b94893208c86c3dc74a6ad4f8d8dccc3c17ebbc53182fb50d46bb02769f07d_yes",
+              "source_label": "Daniel Rincon"
+            },
+            "jordan-lee": {
+              "outcome_id": 221537299,
+              "outcome_external_id": "0xa8b94893208c86c3dc74a6ad4f8d8dccc3c17ebbc53182fb50d46bb02769f07d_no",
+              "source_label": "Jordan Lee"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:francesco-passaro-vs-tom-gentzsch:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "francesco-passaro",
+        "tom-gentzsch"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59540170,
+          "outcome_id": 221568638,
+          "market_external_id": "0x1ccbd092403fc55ebf99144b394cd4edddbf7931a953f1ffbe6c340ac711efcb",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T15:20:17.416997+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "908233",
+            "source_labels": [
+              "Francesco Passaro",
+              "Tom Gentzsch"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "francesco-passaro": {
+              "outcome_id": 221568638,
+              "outcome_external_id": "0x1ccbd092403fc55ebf99144b394cd4edddbf7931a953f1ffbe6c340ac711efcb_yes",
+              "source_label": "Francesco Passaro"
+            },
+            "tom-gentzsch": {
+              "outcome_id": 221568639,
+              "outcome_external_id": "0x1ccbd092403fc55ebf99144b394cd4edddbf7931a953f1ffbe6c340ac711efcb_no",
+              "source_label": "Tom Gentzsch"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:frederico-ferreira-silva-vs-jurij-rodionov:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "frederico-ferreira-silva",
+        "jurij-rodionov"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59525078,
+          "outcome_id": 221530365,
+          "market_external_id": "0xf3ff9cf7777d9eb644ecc23eb1b67b07d86605480653c6c772b749d5c522e0f8",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-24T23:18:41.441009+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "905095",
+            "source_labels": [
+              "Frederico Ferreira Silva",
+              "Jurij Rodionov"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "frederico-ferreira-silva": {
+              "outcome_id": 221530365,
+              "outcome_external_id": "0xf3ff9cf7777d9eb644ecc23eb1b67b07d86605480653c6c772b749d5c522e0f8_yes",
+              "source_label": "Frederico Ferreira Silva"
+            },
+            "jurij-rodionov": {
+              "outcome_id": 221530366,
+              "outcome_external_id": "0xf3ff9cf7777d9eb644ecc23eb1b67b07d86605480653c6c772b749d5c522e0f8_no",
+              "source_label": "Jurij Rodionov"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:genaro-alberto-olivieri-vs-tomas-barrios:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "genaro-alberto-olivieri",
+        "tomas-barrios"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59529370,
+          "outcome_id": 221537289,
+          "market_external_id": "0x1a6b2318d9998236b3d1bf99d1fd98ee4441a23ac6ee9b7d269eb5393aa16ad5",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T09:20:36.829665+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906986",
+            "source_labels": [
+              "Genaro Alberto Olivieri",
+              "Tomas Barrios"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "genaro-alberto-olivieri": {
+              "outcome_id": 221537289,
+              "outcome_external_id": "0x1a6b2318d9998236b3d1bf99d1fd98ee4441a23ac6ee9b7d269eb5393aa16ad5_yes",
+              "source_label": "Genaro Alberto Olivieri"
+            },
+            "tomas-barrios": {
+              "outcome_id": 221537290,
+              "outcome_external_id": "0x1a6b2318d9998236b3d1bf99d1fd98ee4441a23ac6ee9b7d269eb5393aa16ad5_no",
+              "source_label": "Tomas Barrios"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:harry-wendelken-vs-remy-bertola:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "remy-bertola",
+        "harry-wendelken"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59535584,
+          "outcome_id": 221558486,
+          "market_external_id": "0x0e02e689d080412e956966d12a671c7dc92bda20155ed6ccfb290e6848a5b741",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T09:20:36.829665+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906981",
+            "source_labels": [
+              "Remy Bertola",
+              "Harry Wendelken"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "remy-bertola": {
+              "outcome_id": 221558486,
+              "outcome_external_id": "0x0e02e689d080412e956966d12a671c7dc92bda20155ed6ccfb290e6848a5b741_yes",
+              "source_label": "Remy Bertola"
+            },
+            "harry-wendelken": {
+              "outcome_id": 221558487,
+              "outcome_external_id": "0x0e02e689d080412e956966d12a671c7dc92bda20155ed6ccfb290e6848a5b741_no",
+              "source_label": "Harry Wendelken"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:jack-pinnington-jones-vs-otto-virtanen:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "otto-virtanen",
+        "jack-pinnington-jones"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59540159,
+          "outcome_id": 221568617,
+          "market_external_id": "0xbeba06876eb8b74cf754c2ae4efcb31d9b6863a043b1d47cc6794cd7b61d5523",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T15:20:17.416997+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "908237",
+            "source_labels": [
+              "Otto Virtanen",
+              "Jack Pinnington Jones"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "otto-virtanen": {
+              "outcome_id": 221568617,
+              "outcome_external_id": "0xbeba06876eb8b74cf754c2ae4efcb31d9b6863a043b1d47cc6794cd7b61d5523_yes",
+              "source_label": "Otto Virtanen"
+            },
+            "jack-pinnington-jones": {
+              "outcome_id": 221568618,
+              "outcome_external_id": "0xbeba06876eb8b74cf754c2ae4efcb31d9b6863a043b1d47cc6794cd7b61d5523_no",
+              "source_label": "Jack Pinnington Jones"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:jacob-fearnley-vs-luka-pavlovic:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "jacob-fearnley",
+        "luka-pavlovic"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59529374,
+          "outcome_id": 221537295,
+          "market_external_id": "0xc3fec16275e0ad7465edc69287bf5880d2a5305a4ed65b1c937a56dbca6aae25",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T09:20:36.829665+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906984",
+            "source_labels": [
+              "Jacob Fearnley",
+              "Luka Pavlovic"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "jacob-fearnley": {
+              "outcome_id": 221537295,
+              "outcome_external_id": "0xc3fec16275e0ad7465edc69287bf5880d2a5305a4ed65b1c937a56dbca6aae25_yes",
+              "source_label": "Jacob Fearnley"
+            },
+            "luka-pavlovic": {
+              "outcome_id": 221537296,
+              "outcome_external_id": "0xc3fec16275e0ad7465edc69287bf5880d2a5305a4ed65b1c937a56dbca6aae25_no",
+              "source_label": "Luka Pavlovic"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:kei-nishikori-vs-michael-antonius:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "kei-nishikori",
+        "michael-antonius"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59565146,
+          "outcome_id": 221683528,
+          "market_external_id": "0x45ae6446bc3fe24fa1becba819568f9409f2af09b4bf0e65ec24d41dffb9c4af",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T21:19:06.004197+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "910501",
+            "source_labels": [
+              "Kei Nishikori",
+              "Michael Antonius"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "kei-nishikori": {
+              "outcome_id": 221683528,
+              "outcome_external_id": "0x45ae6446bc3fe24fa1becba819568f9409f2af09b4bf0e65ec24d41dffb9c4af_yes",
+              "source_label": "Kei Nishikori"
+            },
+            "michael-antonius": {
+              "outcome_id": 221683529,
+              "outcome_external_id": "0x45ae6446bc3fe24fa1becba819568f9409f2af09b4bf0e65ec24d41dffb9c4af_no",
+              "source_label": "Michael Antonius"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:mackenzie-mcdonald-vs-thiago-seyboth-wild:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "thiago-seyboth-wild",
+        "mackenzie-mcdonald"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59540168,
+          "outcome_id": 221568635,
+          "market_external_id": "0xa304a2b41d13422339237f10de6a627a0dc6657c9abc9ecbb7d33fad9ad52ec1",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T15:20:17.416997+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "908234",
+            "source_labels": [
+              "Thiago Seyboth Wild",
+              "Mackenzie McDonald"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "thiago-seyboth-wild": {
+              "outcome_id": 221568635,
+              "outcome_external_id": "0xa304a2b41d13422339237f10de6a627a0dc6657c9abc9ecbb7d33fad9ad52ec1_yes",
+              "source_label": "Thiago Seyboth Wild"
+            },
+            "mackenzie-mcdonald": {
+              "outcome_id": 221568636,
+              "outcome_external_id": "0xa304a2b41d13422339237f10de6a627a0dc6657c9abc9ecbb7d33fad9ad52ec1_no",
+              "source_label": "Mackenzie McDonald"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "mens-singles:marco-cecchinato-vs-vilius-gaubas:2026-08-26",
+      "draw": "mens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "vilius-gaubas",
+        "marco-cecchinato"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59529372,
+          "outcome_id": 221537292,
+          "market_external_id": "0x1fceb7b49ecbf339e3a3c85b168d4e666e0c689dc7864b19804b29d462def230",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T09:20:36.829665+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906985",
+            "source_labels": [
+              "Vilius Gaubas",
+              "Marco Cecchinato"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "vilius-gaubas": {
+              "outcome_id": 221537292,
+              "outcome_external_id": "0x1fceb7b49ecbf339e3a3c85b168d4e666e0c689dc7864b19804b29d462def230_yes",
+              "source_label": "Vilius Gaubas"
+            },
+            "marco-cecchinato": {
+              "outcome_id": 221537293,
+              "outcome_external_id": "0x1fceb7b49ecbf339e3a3c85b168d4e666e0c689dc7864b19804b29d462def230_no",
+              "source_label": "Marco Cecchinato"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:alevtina-ibragimova-vs-mariam-bolkvadze:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "alevtina-ibragimova",
+        "mariam-bolkvadze"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59527521,
+          "outcome_id": 221534235,
+          "market_external_id": "0x1f4599b7a40fc150ee35bc3a5464aec8ffdb7b95904d28f7c1ced44f2052128c",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T08:18:01.053524+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906818",
+            "source_labels": [
+              "Alevtina Ibragimova",
+              "Mariam Bolkvadze"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "alevtina-ibragimova": {
+              "outcome_id": 221534235,
+              "outcome_external_id": "0x1f4599b7a40fc150ee35bc3a5464aec8ffdb7b95904d28f7c1ced44f2052128c_yes",
+              "source_label": "Alevtina Ibragimova"
+            },
+            "mariam-bolkvadze": {
+              "outcome_id": 221534236,
+              "outcome_external_id": "0x1f4599b7a40fc150ee35bc3a5464aec8ffdb7b95904d28f7c1ced44f2052128c_no",
+              "source_label": "Mariam Bolkvadze"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:andrea-lazaro-garcia-vs-mai-hontama:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "mai-hontama",
+        "andrea-lazaro-garcia"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59527513,
+          "outcome_id": 221534223,
+          "market_external_id": "0xd966142037c9abc41355412a73956a6fa160d1ee2b90a52fcf25e26a58301709",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T08:18:01.053524+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906821",
+            "source_labels": [
+              "Mai Hontama",
+              "Andrea Lazaro Garcia"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "mai-hontama": {
+              "outcome_id": 221534223,
+              "outcome_external_id": "0xd966142037c9abc41355412a73956a6fa160d1ee2b90a52fcf25e26a58301709_yes",
+              "source_label": "Mai Hontama"
+            },
+            "andrea-lazaro-garcia": {
+              "outcome_id": 221534224,
+              "outcome_external_id": "0xd966142037c9abc41355412a73956a6fa160d1ee2b90a52fcf25e26a58301709_no",
+              "source_label": "Andrea Lazaro Garcia"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:angela-fita-boluda-vs-heather-watson:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "heather-watson",
+        "angela-fita-boluda"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59529436,
+          "outcome_id": 221537364,
+          "market_external_id": "0xf5a3422bff0274ce67f923b6b63e0db02ad43a8ad490abde387c4b9560201f2c",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T08:18:01.053524+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906828",
+            "source_labels": [
+              "Heather Watson",
+              "Angela Fita Boluda"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "heather-watson": {
+              "outcome_id": 221537364,
+              "outcome_external_id": "0xf5a3422bff0274ce67f923b6b63e0db02ad43a8ad490abde387c4b9560201f2c_yes",
+              "source_label": "Heather Watson"
+            },
+            "angela-fita-boluda": {
+              "outcome_id": 221537365,
+              "outcome_external_id": "0xf5a3422bff0274ce67f923b6b63e0db02ad43a8ad490abde387c4b9560201f2c_no",
+              "source_label": "Angela Fita Boluda"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:anouk-koevermans-vs-linda-klimovicova:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "anouk-koevermans",
+        "linda-klimovicova"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59527509,
+          "outcome_id": 221534220,
+          "market_external_id": "0x20b3cfc4f3a20128b54bf1b3affd60a98a98149f1040b4b14483c305dacdff40",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T08:18:01.053524+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906823",
+            "source_labels": [
+              "Anouk Koevermans",
+              "Linda Klimovicova"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "anouk-koevermans": {
+              "outcome_id": 221534220,
+              "outcome_external_id": "0x20b3cfc4f3a20128b54bf1b3affd60a98a98149f1040b4b14483c305dacdff40_yes",
+              "source_label": "Anouk Koevermans"
+            },
+            "linda-klimovicova": {
+              "outcome_id": 221534221,
+              "outcome_external_id": "0x20b3cfc4f3a20128b54bf1b3affd60a98a98149f1040b4b14483c305dacdff40_no",
+              "source_label": "Linda Klimovicova"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:bianca-andreescu-vs-veronika-podrez:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "bianca-andreescu",
+        "veronika-podrez"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59538878,
+          "outcome_id": 221566247,
+          "market_external_id": "0xbd47b9e6e4e1e55850c387ef56f77e6a6e2d7ec2c45618adf311518d682daede",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T14:21:16.570982+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "908016",
+            "source_labels": [
+              "Bianca Andreescu",
+              "Veronika Podrez"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "bianca-andreescu": {
+              "outcome_id": 221566247,
+              "outcome_external_id": "0xbd47b9e6e4e1e55850c387ef56f77e6a6e2d7ec2c45618adf311518d682daede_yes",
+              "source_label": "Bianca Andreescu"
+            },
+            "veronika-podrez": {
+              "outcome_id": 221566248,
+              "outcome_external_id": "0xbd47b9e6e4e1e55850c387ef56f77e6a6e2d7ec2c45618adf311518d682daede_no",
+              "source_label": "Veronika Podrez"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:carson-branstine-vs-linda-fruhvirtova:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "linda-fruhvirtova",
+        "carson-branstine"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59538901,
+          "outcome_id": 221566292,
+          "market_external_id": "0x9a2718cc26f900461808e1ee7c5c1fd2611305fb7272cf5989ca6422336f49e7",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T14:21:16.570982+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "908009",
+            "source_labels": [
+              "Linda Fruhvirtova",
+              "Carson Branstine"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "linda-fruhvirtova": {
+              "outcome_id": 221566292,
+              "outcome_external_id": "0x9a2718cc26f900461808e1ee7c5c1fd2611305fb7272cf5989ca6422336f49e7_yes",
+              "source_label": "Linda Fruhvirtova"
+            },
+            "carson-branstine": {
+              "outcome_id": 221566293,
+              "outcome_external_id": "0x9a2718cc26f900461808e1ee7c5c1fd2611305fb7272cf5989ca6422336f49e7_no",
+              "source_label": "Carson Branstine"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:clara-burel-vs-qinwen-zheng:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "qinwen-zheng",
+        "clara-burel"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59527517,
+          "outcome_id": 221534229,
+          "market_external_id": "0x81e11c490206e9aa982bcd4ef28539acc154f249859f77a96fefb67a94281faf",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T08:18:01.053524+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906817",
+            "source_labels": [
+              "Qinwen Zheng",
+              "Clara Burel"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "qinwen-zheng": {
+              "outcome_id": 221534229,
+              "outcome_external_id": "0x81e11c490206e9aa982bcd4ef28539acc154f249859f77a96fefb67a94281faf_yes",
+              "source_label": "Qinwen Zheng"
+            },
+            "clara-burel": {
+              "outcome_id": 221534230,
+              "outcome_external_id": "0x81e11c490206e9aa982bcd4ef28539acc154f249859f77a96fefb67a94281faf_no",
+              "source_label": "Clara Burel"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:despina-papamichail-vs-ekaterine-gorgodze:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "despina-papamichail",
+        "ekaterine-gorgodze"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59538896,
+          "outcome_id": 221566283,
+          "market_external_id": "0xdf65a1e75ada48152c82a3d593181b7fd4cfa5f34e3b90167a789719af2096bd",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T14:21:16.570982+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "908012",
+            "source_labels": [
+              "Despina Papamichail",
+              "Ekaterine Gorgodze"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "despina-papamichail": {
+              "outcome_id": 221566283,
+              "outcome_external_id": "0xdf65a1e75ada48152c82a3d593181b7fd4cfa5f34e3b90167a789719af2096bd_yes",
+              "source_label": "Despina Papamichail"
+            },
+            "ekaterine-gorgodze": {
+              "outcome_id": 221566284,
+              "outcome_external_id": "0xdf65a1e75ada48152c82a3d593181b7fd4cfa5f34e3b90167a789719af2096bd_no",
+              "source_label": "Ekaterine Gorgodze"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:dominika-salkova-vs-gabriela-knutson:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "dominika-salkova",
+        "gabriela-knutson"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59538883,
+          "outcome_id": 221566256,
+          "market_external_id": "0xe5f4c6dcd4b9d4724e305033d19c59e75715523b0ff5e1a5b4dfcdc8f5514c85",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T14:21:16.570982+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "908013",
+            "source_labels": [
+              "Dominika Salkova",
+              "Gabriela Knutson"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "dominika-salkova": {
+              "outcome_id": 221566256,
+              "outcome_external_id": "0xe5f4c6dcd4b9d4724e305033d19c59e75715523b0ff5e1a5b4dfcdc8f5514c85_yes",
+              "source_label": "Dominika Salkova"
+            },
+            "gabriela-knutson": {
+              "outcome_id": 221566257,
+              "outcome_external_id": "0xe5f4c6dcd4b9d4724e305033d19c59e75715523b0ff5e1a5b4dfcdc8f5514c85_no",
+              "source_label": "Gabriela Knutson"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:elena-pridankina-vs-rebecca-marino:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "elena-pridankina",
+        "rebecca-marino"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59527524,
+          "outcome_id": 221534238,
+          "market_external_id": "0x673369808c906823576b4b10adc544355e887c36ba68ebfd0f2b223565054b64",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T08:18:01.053524+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906816",
+            "source_labels": [
+              "Elena Pridankina",
+              "Rebecca Marino"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "elena-pridankina": {
+              "outcome_id": 221534238,
+              "outcome_external_id": "0x673369808c906823576b4b10adc544355e887c36ba68ebfd0f2b223565054b64_yes",
+              "source_label": "Elena Pridankina"
+            },
+            "rebecca-marino": {
+              "outcome_id": 221534239,
+              "outcome_external_id": "0x673369808c906823576b4b10adc544355e887c36ba68ebfd0f2b223565054b64_no",
+              "source_label": "Rebecca Marino"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:francisca-jorge-vs-mia-ristic:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "francisca-jorge",
+        "mia-ristic"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59527504,
+          "outcome_id": 221534214,
+          "market_external_id": "0x6ff03fc9821ee6d974b9771b1d51b2ac6289fa17bfc1442c383608e8720a494c",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T08:18:01.053524+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906826",
+            "source_labels": [
+              "Francisca Jorge",
+              "Mia Ristic"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "francisca-jorge": {
+              "outcome_id": 221534214,
+              "outcome_external_id": "0x6ff03fc9821ee6d974b9771b1d51b2ac6289fa17bfc1442c383608e8720a494c_yes",
+              "source_label": "Francisca Jorge"
+            },
+            "mia-ristic": {
+              "outcome_id": 221534215,
+              "outcome_external_id": "0x6ff03fc9821ee6d974b9771b1d51b2ac6289fa17bfc1442c383608e8720a494c_no",
+              "source_label": "Mia Ristic"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:himeno-sakatsume-vs-tyra-caterina-grant:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "tyra-caterina-grant",
+        "himeno-sakatsume"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59538892,
+          "outcome_id": 221566274,
+          "market_external_id": "0xe3f4cf5d10a4b8d547b5a275de41110a9eb2b144e5f465647633ed6a1cf79613",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T14:21:16.570982+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "908011",
+            "source_labels": [
+              "Tyra Caterina Grant",
+              "Himeno Sakatsume"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "tyra-caterina-grant": {
+              "outcome_id": 221566274,
+              "outcome_external_id": "0xe3f4cf5d10a4b8d547b5a275de41110a9eb2b144e5f465647633ed6a1cf79613_yes",
+              "source_label": "Tyra Caterina Grant"
+            },
+            "himeno-sakatsume": {
+              "outcome_id": 221566275,
+              "outcome_external_id": "0xe3f4cf5d10a4b8d547b5a275de41110a9eb2b144e5f465647633ed6a1cf79613_no",
+              "source_label": "Himeno Sakatsume"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:iryna-shymanovich-vs-julieta-pareja:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "julieta-pareja",
+        "iryna-shymanovich"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59527519,
+          "outcome_id": 221534232,
+          "market_external_id": "0xf5f389e119bfeb6186dae919b45d84edcf27ea3f9a866cc11063972cf77b489b",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T08:18:01.053524+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906819",
+            "source_labels": [
+              "Julieta Pareja",
+              "Iryna Shymanovich"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "julieta-pareja": {
+              "outcome_id": 221534232,
+              "outcome_external_id": "0xf5f389e119bfeb6186dae919b45d84edcf27ea3f9a866cc11063972cf77b489b_yes",
+              "source_label": "Julieta Pareja"
+            },
+            "iryna-shymanovich": {
+              "outcome_id": 221534233,
+              "outcome_external_id": "0xf5f389e119bfeb6186dae919b45d84edcf27ea3f9a866cc11063972cf77b489b_no",
+              "source_label": "Iryna Shymanovich"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:jeline-vandromme-vs-robin-montgomery:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "robin-montgomery",
+        "jeline-vandromme"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59527506,
+          "outcome_id": 221534217,
+          "market_external_id": "0xdfc0110272c0a7a10730f907097400dd35f07dc998135b6c7d411e2662ce41ac",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T08:18:01.053524+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906827",
+            "source_labels": [
+              "Robin Montgomery",
+              "Jeline Vandromme"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "robin-montgomery": {
+              "outcome_id": 221534217,
+              "outcome_external_id": "0xdfc0110272c0a7a10730f907097400dd35f07dc998135b6c7d411e2662ce41ac_yes",
+              "source_label": "Robin Montgomery"
+            },
+            "jeline-vandromme": {
+              "outcome_id": 221534218,
+              "outcome_external_id": "0xdfc0110272c0a7a10730f907097400dd35f07dc998135b6c7d411e2662ce41ac_no",
+              "source_label": "Jeline Vandromme"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:lucia-bronzetti-vs-polina-iatcenko:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "lucia-bronzetti",
+        "polina-iatcenko"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59529449,
+          "outcome_id": 221537388,
+          "market_external_id": "0x36b026cef51fa573c6946511dd67754bdbe0d93bd0667741b5d593396e281f5c",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T08:18:01.053524+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906824",
+            "source_labels": [
+              "Lucia Bronzetti",
+              "Polina Iatcenko"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "lucia-bronzetti": {
+              "outcome_id": 221537388,
+              "outcome_external_id": "0x36b026cef51fa573c6946511dd67754bdbe0d93bd0667741b5d593396e281f5c_yes",
+              "source_label": "Lucia Bronzetti"
+            },
+            "polina-iatcenko": {
+              "outcome_id": 221537389,
+              "outcome_external_id": "0x36b026cef51fa573c6946511dd67754bdbe0d93bd0667741b5d593396e281f5c_no",
+              "source_label": "Polina Iatcenko"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "matchup_key": "womens-singles:lucrezia-stefanini-vs-madison-brengle:2026-08-26",
+      "draw": "womens-singles",
+      "round": "qualifying",
+      "scheduled_date": "2026-08-26T15:00:00Z",
+      "players": [
+        "madison-brengle",
+        "lucrezia-stefanini"
+      ],
+      "sources": [
+        {
+          "source": "polymarket",
+          "kind": "match",
+          "market_id": 59527515,
+          "outcome_id": 221534226,
+          "market_external_id": "0x79e7c5ae02d3d0fcb9e2fcf4e717896fc3cc30d3c7dde6b8a65d909742e8c24f",
+          "status": "live",
+          "terminal_result": null,
+          "price_observed_at": "2026-08-25T08:18:01.053524+00:00",
+          "evidence": {
+            "kind": "match-market-census",
+            "observed_at": "2026-08-25T21:30:00+00:00",
+            "polymarket_event_id": "906820",
+            "source_labels": [
+              "Madison Brengle",
+              "Lucrezia Stefanini"
+            ],
+            "start_time": "2026-08-26T15:00:00Z"
+          },
+          "sides": {
+            "madison-brengle": {
+              "outcome_id": 221534226,
+              "outcome_external_id": "0x79e7c5ae02d3d0fcb9e2fcf4e717896fc3cc30d3c7dde6b8a65d909742e8c24f_yes",
+              "source_label": "Madison Brengle"
+            },
+            "lucrezia-stefanini": {
+              "outcome_id": 221534227,
+              "outcome_external_id": "0x79e7c5ae02d3d0fcb9e2fcf4e717896fc3cc30d3c7dde6b8a65d909742e8c24f_no",
+              "source_label": "Lucrezia Stefanini"
+            }
           }
         }
       ]
     }
   ],
-  "matchups": []
+  "supersedes_version": 3,
+  "broadcasts": [
+    {
+      "region": "US",
+      "channels": [
+        "ESPN",
+        "ESPN2",
+        "ESPN+"
+      ],
+      "note": "ESPN holds exclusive US rights through 2026."
+    },
+    {
+      "region": "UK",
+      "channels": [
+        "Sky Sports Tennis"
+      ],
+      "note": null
+    },
+    {
+      "region": "AU",
+      "channels": [
+        "Stan Sport"
+      ],
+      "note": null
+    }
+  ],
+  "props": [
+    {
+      "key": "alcaraz-semifinals",
+      "title": "Does Alcaraz reach the semifinals?",
+      "hook": "The men's favourite, and the market still calls it close to a coin flip.",
+      "draw": "mens-singles",
+      "source": "polymarket",
+      "market_id": 59556735,
+      "market_external_id": "0x0d62271aa9d9c4e2aa5aa6e4d7f044c7b0821bd93bb999dc06c51f150d1cf4e3",
+      "outcomes": [
+        {
+          "entity_key": "alcaraz-semifinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221650932,
+          "is_answer": true
+        },
+        {
+          "entity_key": "alcaraz-semifinals:no",
+          "display_name": "No",
+          "outcome_id": 221650933,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Carlos Alcaraz advance to the Semifinals in Men's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "osaka-round-of-16",
+      "title": "Does Osaka reach the second week?",
+      "hook": "Two US Open titles, and a first week the market rates a coin flip.",
+      "draw": "womens-singles",
+      "source": "polymarket",
+      "market_id": 59556783,
+      "market_external_id": "0x1e045109e228f8b7381dcc21bf9ba320b5bd5d237cb02f038cabdaf96b2a1b0f",
+      "outcomes": [
+        {
+          "entity_key": "osaka-round-of-16:yes",
+          "display_name": "Yes",
+          "outcome_id": 221651059,
+          "is_answer": true
+        },
+        {
+          "entity_key": "osaka-round-of-16:no",
+          "display_name": "No",
+          "outcome_id": 221651060,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Naomi Osaka advance to the Round of 16 in Women's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "djokovic-quarterfinals",
+      "title": "Does Djokovic reach the quarterfinals?",
+      "hook": "Twenty-four majors, and the second week is no longer a formality.",
+      "draw": "mens-singles",
+      "source": "polymarket",
+      "market_id": 59556823,
+      "market_external_id": "0x234cfdf2f118eb7f349a9f9abfc23556c930eab2e05fa113962b0192488c8910",
+      "outcomes": [
+        {
+          "entity_key": "djokovic-quarterfinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221651182,
+          "is_answer": true
+        },
+        {
+          "entity_key": "djokovic-quarterfinals:no",
+          "display_name": "No",
+          "outcome_id": 221651183,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Novak Djokovic advance to the Quarterfinals in Men's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "sabalenka-semifinals",
+      "title": "Does Sabalenka reach the semifinals?",
+      "hook": "The women's favourite. Even the market cannot separate it.",
+      "draw": "womens-singles",
+      "source": "polymarket",
+      "market_id": 59559137,
+      "market_external_id": "0x24fd9fa0a695ad98c2fc3ca7300a97353b8025bf9af231a223e5df1498aeefeb",
+      "outcomes": [
+        {
+          "entity_key": "sabalenka-semifinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221667150,
+          "is_answer": true
+        },
+        {
+          "entity_key": "sabalenka-semifinals:no",
+          "display_name": "No",
+          "outcome_id": 221667151,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Aryna Sabalenka advance to the Semifinals in Women's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "zverev-semifinals",
+      "title": "Does Zverev reach the semifinals?",
+      "hook": "Perennially close to a first major. The market has him at even money.",
+      "draw": "mens-singles",
+      "source": "polymarket",
+      "market_id": 59556734,
+      "market_external_id": "0x91ee5878ac149eab31e866607043b21bc9cc4ddce4d6970447d3250eb4751022",
+      "outcomes": [
+        {
+          "entity_key": "zverev-semifinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221650930,
+          "is_answer": true
+        },
+        {
+          "entity_key": "zverev-semifinals:no",
+          "display_name": "No",
+          "outcome_id": 221650931,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Alexander Zverev advance to the Semifinals in Men's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "gauff-semifinals",
+      "title": "Does Gauff reach the semifinals?",
+      "hook": "The home favourite, and the market is far less sure than the crowd.",
+      "draw": "womens-singles",
+      "source": "polymarket",
+      "market_id": 59559140,
+      "market_external_id": "0xbd82f2526c64cfa634da82c90f3db653ef6d47925fa1edf9e16db95844fb9b5a",
+      "outcomes": [
+        {
+          "entity_key": "gauff-semifinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221667156,
+          "is_answer": true
+        },
+        {
+          "entity_key": "gauff-semifinals:no",
+          "display_name": "No",
+          "outcome_id": 221667157,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Coco Gauff advance to the Semifinals in Women's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "shelton-quarterfinals",
+      "title": "Does Shelton reach the quarterfinals?",
+      "hook": "The loudest home crowd in tennis, and a market split down the middle.",
+      "draw": "mens-singles",
+      "source": "polymarket",
+      "market_id": 59556827,
+      "market_external_id": "0xdc42f3b0ded6249c92e3eea60572ca39d917786e1965ee1024e13a0796dd8720",
+      "outcomes": [
+        {
+          "entity_key": "shelton-quarterfinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221651190,
+          "is_answer": true
+        },
+        {
+          "entity_key": "shelton-quarterfinals:no",
+          "display_name": "No",
+          "outcome_id": 221651191,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Ben Shelton advance to the Quarterfinals in Men's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "swiatek-semifinals",
+      "title": "Does Swiatek reach the semifinals?",
+      "hook": "Dominant almost everywhere else; New York has been the exception.",
+      "draw": "womens-singles",
+      "source": "polymarket",
+      "market_id": 59559144,
+      "market_external_id": "0xea5b210653d6791dfb36b4f7e800fd6a3ee7a7c356557cc0fe53e02c26c89883",
+      "outcomes": [
+        {
+          "entity_key": "swiatek-semifinals:yes",
+          "display_name": "Yes",
+          "outcome_id": 221667164,
+          "is_answer": true
+        },
+        {
+          "entity_key": "swiatek-semifinals:no",
+          "display_name": "No",
+          "outcome_id": 221667165,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Will Iga Swiatek advance to the Semifinals in Women's Singles at the 2026 US Open?",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "sinner-competes",
+      "title": "Will Sinner actually play?",
+      "hook": "A withdrawal reshapes the entire men's board.",
+      "draw": "mens-singles",
+      "source": "kalshi",
+      "market_id": 59172808,
+      "market_external_id": "KXATPCOMPETE-26USOSIN",
+      "outcomes": [
+        {
+          "entity_key": "sinner-competes:yes",
+          "display_name": "Yes",
+          "outcome_id": 219796782,
+          "is_answer": true
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Jannik Sinner to play in the US Open",
+        "answer": "Yes"
+      }
+    },
+    {
+      "key": "alcaraz-second-major",
+      "title": "Can Alcaraz win a second major this year?",
+      "hook": "The other half of the men's duopoly, chasing the same thing.",
+      "draw": "mens-singles",
+      "source": "kalshi",
+      "market_id": 53796,
+      "market_external_id": "KXGRANDSLAM-CALC26",
+      "outcomes": [
+        {
+          "entity_key": "alcaraz-second-major:2+-grand-slam-wins",
+          "display_name": "2+ Grand Slam wins",
+          "outcome_id": 848773,
+          "is_answer": true
+        },
+        {
+          "entity_key": "alcaraz-second-major:3+-grand-slam-wins",
+          "display_name": "3+ Grand Slam wins",
+          "outcome_id": 848772,
+          "is_answer": false
+        },
+        {
+          "entity_key": "alcaraz-second-major:all-4-grand-slam-wins",
+          "display_name": "All 4 Grand Slam wins",
+          "outcome_id": 848771,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Carlos Alcaraz: Grand Slam wins in 2026",
+        "answer": "2+ Grand Slam wins"
+      }
+    },
+    {
+      "key": "sinner-second-major",
+      "title": "Can Sinner win a second major this year?",
+      "hook": "He already has one in 2026. The next chance is this fortnight.",
+      "draw": "mens-singles",
+      "source": "kalshi",
+      "market_id": 53795,
+      "market_external_id": "KXGRANDSLAM-JSIN26",
+      "outcomes": [
+        {
+          "entity_key": "sinner-second-major:1+-grand-slam-wins",
+          "display_name": "1+ Grand Slam wins",
+          "outcome_id": 848770,
+          "is_answer": false
+        },
+        {
+          "entity_key": "sinner-second-major:2+-grand-slam-wins",
+          "display_name": "2+ Grand Slam wins",
+          "outcome_id": 848769,
+          "is_answer": true
+        },
+        {
+          "entity_key": "sinner-second-major:3+-grand-slam-wins",
+          "display_name": "3+ Grand Slam wins",
+          "outcome_id": 848768,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-26T19:35:47+00:00",
+        "market_name": "Jannik Sinner: Grand Slam wins in 2026",
+        "answer": "2+ Grand Slam wins"
+      }
+    }
+  ],
+  "props_observed_at": "2026-08-26T19:35:47+00:00"
 }

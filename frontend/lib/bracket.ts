@@ -59,6 +59,28 @@ export interface BracketRound {
  * `slots` is positional: index 0 plays index 1, index 2 plays index 3, and so
  * on. `results` maps a match id to the entity key that won it; absent entries
  * mean "not played", never "not yet predicted".
+ *
+ * NOTHING ADVANCES WITHOUT A DECLARED RESULT (fixed UX-P136).
+ *
+ * This used to advance a player whose opponent slot was `null`, reading it as
+ * a bye. It is not a bye, and the backend that produces these slots says so in
+ * its own contract — `build_bracket` returns `None` "where the draw has a slot
+ * we hold no registered player for … not a bye, and never a name we invented
+ * to fill the shape."
+ *
+ * The rule was wrong in both places it fired:
+ *
+ *   - In round one, `null` is a register hole. Advancing the opponent prints a
+ *     player into the Round of 64 for winning a match against nobody.
+ *   - In every later round, `null` is the ordinary state of a feeder that has
+ *     not been played yet. On a real tournament day the draw completes a few
+ *     matches at a time, so half of round one decided would have silently
+ *     walked those winners two rounds forward.
+ *
+ * Both print a name in a round it has not reached, which is the one thing the
+ * charter's reliability doctrine forbids: a projection that looks exactly like
+ * a result. A bye is not currently expressible in the register at all, so
+ * there is no case this loses — only the invented one.
  */
 export function buildBracket(
   slots: (BracketSlot | null)[],
@@ -90,21 +112,17 @@ export function buildBracket(
       const id = `${round}-${i / 2 + 1}`;
       const declared = results[id] ?? null;
 
-      // A bye advances without being a "result": one side is simply absent.
-      const implicit =
-        top !== null && bottom === null
-          ? top.entity_key
-          : bottom !== null && top === null
-            ? bottom.entity_key
-            : null;
-      const winnerKey = declared ?? implicit;
-
-      matches.push({ id, round, top, bottom, winnerKey: declared });
-      next.push(
-        winnerKey === null
+      // A declared winner must actually be in the match. A result naming
+      // somebody who is not one of these two slots is a data fault, and
+      // advancing `null` is the honest response to it — better an empty slot
+      // than a name teleported across the draw.
+      const advancing =
+        declared === null
           ? null
-          : [top, bottom].find((s) => s?.entity_key === winnerKey) ?? null
-      );
+          : [top, bottom].find((s) => s?.entity_key === declared) ?? null;
+
+      matches.push({ id, round, top, bottom, winnerKey: advancing?.entity_key ?? null });
+      next.push(advancing);
     }
 
     rounds.push({ round, label: ROUND_LABELS[round], matches });
@@ -112,6 +130,18 @@ export function buildBracket(
   }
 
   return rounds;
+}
+
+/**
+ * A round nobody has reached yet: every slot in it is still undetermined.
+ *
+ * Worth its own predicate because the alternative is what the component used
+ * to do — render 16 identical "— v —" cards for the Round of 32 on the morning
+ * the draw comes out. Sixty-two empty cards is not information, it is a wall
+ * that buries the two rounds that DO have names in them.
+ */
+export function roundIsUnreached(round: BracketRound): boolean {
+  return round.matches.every((m) => m.top === null && m.bottom === null);
 }
 
 /** How much of the draw is actually decided — for an honest progress line. */

@@ -431,9 +431,19 @@ def test_committed_register_blend_coverage_is_reported(committed):
 
 
 def test_committed_register_market_ids_are_a_bounded_load(committed):
+    """Both loads stay id-lists, not scans.
+
+    Widened by UX-P132's second population pass: ``market_ids()`` now spans the
+    four outright fields AND one condition market per slate row. The bound that
+    matters is that it tracks the register's own contents — if this ever grows
+    without the matchup count growing, something is pinning markets nobody asked
+    for.
+    """
     view = TournamentRegister(committed)
-    assert len(view.market_ids()) == 4
     assert len(view.market_ids("kalshi")) == 2
+    assert len(view.market_ids()) == 4 + len(committed["matchups"])
+    # Two priceable sides per slate row, all distinct.
+    assert len(view.matchup_outcome_ids()) == 2 * len(committed["matchups"])
 
 
 def test_committed_register_file_is_stable_json():
@@ -450,3 +460,232 @@ def test_load_register_returns_none_for_an_absent_tournament():
 def test_load_register_degrades_to_none_on_a_corrupt_file(tmp_path: Path):
     (tmp_path / "us-open-2026.json").write_text("{not json")
     assert load_register("us-open", "2026", directory=tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# The SECOND population pass — contenders vs participants (UX-P132)
+#
+# The Day-1 census stated the consequence and this section enforces it:
+# *contenders and participants are different sets*. v1 was seeded from the two
+# outright fields (80 contenders, right for the boards); the slate's players are
+# the qualifying draw, 131 of whom will never appear in an outright field.
+# Registering them without a role would have put a qualifier's
+# P(wins-this-match) on the championship board above Alcaraz.
+# ---------------------------------------------------------------------------
+
+def _participant(**overrides):
+    player = {
+        "entity_key": "diego-dedura-palomero",
+        "display_name": "Diego Dedura-Palomero",
+        "draw": "mens-singles",
+        "role": "participant",
+        "seed": None,
+        "country": None,
+        "draw_slot": None,
+        "section": None,
+        "sources": [],
+    }
+    player.update(overrides)
+    return player
+
+
+def _matchup(**overrides):
+    matchup = {
+        "matchup_key": "mens-singles:a-vs-b:2026-08-26",
+        "draw": "mens-singles",
+        "round": "qualifying",
+        "scheduled_date": "2026-08-26T15:00:00Z",
+        "players": ["jannik-sinner", "diego-dedura-palomero"],
+        "sources": [{
+            "source": "polymarket",
+            "kind": "match",
+            "market_id": 59484194,
+            "outcome_id": 900001,
+            "status": "live",
+            "terminal_result": None,
+            "evidence": {"kind": "match-market-census", "observed_at": NOW.isoformat()},
+            "sides": {
+                "jannik-sinner": {"outcome_id": 900001},
+                "diego-dedura-palomero": {"outcome_id": 900002},
+            },
+        }],
+    }
+    matchup.update(overrides)
+    return matchup
+
+
+def test_absent_role_reads_as_contender():
+    """v1 registers have no ``role`` key at all and must keep rendering."""
+    assert _tr.player_role({"entity_key": "x"}) == "contender"
+    assert _tr.player_role({"entity_key": "x", "role": None}) == "contender"
+    assert _tr.player_role(None) == "contender"
+
+
+def test_absent_kind_reads_as_outright():
+    assert _tr.source_kind({"source": "kalshi"}) == "outright"
+    assert _tr.source_kind({"source": "kalshi", "kind": None}) == "outright"
+
+
+def test_a_participant_with_no_sources_is_valid():
+    """The whole point: a qualifier has no outright identity and is still real."""
+    register = _register(players=[_player(), _participant()])
+    assert validate_register(register, CONTRACT) == []
+
+
+def test_a_contender_with_no_sources_is_still_rejected():
+    """Loosening the rule for participants must not loosen it for contenders."""
+    register = _register(players=[_player(sources=[])])
+    assert "REGISTER_PLAYER_NO_SOURCES" in validate_register(register, CONTRACT)
+
+
+def test_a_participant_carrying_a_source_is_rejected():
+    """A contender labelled participant would be silently missing from its board."""
+    register = _register(players=[_participant(sources=[_source()])])
+    findings = validate_register(register, CONTRACT)
+    assert "INVALID_PARTICIPANT_SOURCES" in findings
+    assert classify(findings)["classification"] == "invalid"
+
+
+def test_a_match_quote_on_a_player_entry_is_rejected():
+    """P(wins this match) must never reach the blend that answers P(wins title)."""
+    register = _register(players=[_player(sources=[_source(kind="match")])])
+    findings = validate_register(register, CONTRACT)
+    assert "INVALID_MATCH_SOURCE_ON_PLAYER" in findings
+    assert classify(findings)["classification"] == "invalid"
+
+
+def test_an_unknown_source_kind_is_rejected():
+    register = _register(players=[_player(sources=[_source(kind="spread")])])
+    assert "UNKNOWN_SOURCE_KIND" in validate_register(register, CONTRACT)
+
+
+def test_an_invalid_role_is_rejected():
+    register = _register(players=[_player(role="spectator")])
+    assert "INVALID_PLAYER_ROLE" in validate_register(register, CONTRACT)
+
+
+def test_board_players_excludes_participants():
+    view = TournamentRegister(_register(players=[_player(), _participant()]))
+    assert [p["entity_key"] for p in view.board_players("mens-singles")] == ["jannik-sinner"]
+    # draw_players still sees everyone — the filter is a board concern.
+    assert len(view.draw_players("mens-singles")) == 2
+
+
+def test_a_matchup_between_registered_players_validates():
+    register = _register(players=[_player(), _participant()], matchups=[_matchup()])
+    assert validate_register(register, CONTRACT) == []
+
+
+def test_the_unregistered_matchup_rule_still_bites():
+    """The rule that keeps a stale Cincinnati market off the slate is intact."""
+    register = _register(players=[_player()], matchups=[_matchup()])
+    findings = validate_register(register, CONTRACT)
+    assert "MATCHUP_PLAYER_NOT_REGISTERED" in findings
+    assert classify(findings)["classification"] == "invalid"
+
+
+def test_both_sides_sharing_one_outcome_is_rejected():
+    """One quote rendered as two players, which a normalizer would then 'fix'."""
+    matchup = _matchup()
+    matchup["sources"][0]["sides"]["diego-dedura-palomero"] = {"outcome_id": 900001}
+    register = _register(players=[_player(), _participant()], matchups=[matchup])
+    findings = validate_register(register, CONTRACT)
+    assert "MATCHUP_SIDES_SHARE_OUTCOME" in findings
+    assert classify(findings)["classification"] == "invalid"
+
+
+def test_one_outcome_feeding_two_matchups_is_rejected():
+    """The same quote presented as two different matches — both rows look fine."""
+    second = _matchup(matchup_key="mens-singles:a-vs-c:2026-08-27")
+    register = _register(
+        players=[_player(), _participant()], matchups=[_matchup(), second]
+    )
+    findings = validate_register(register, CONTRACT)
+    assert "MATCHUP_IDENTITY_REUSED" in findings
+    assert classify(findings)["classification"] == "invalid"
+
+
+def test_sides_must_name_exactly_the_matchup_players():
+    matchup = _matchup()
+    matchup["sources"][0]["sides"] = {"jannik-sinner": {"outcome_id": 900001}}
+    register = _register(players=[_player(), _participant()], matchups=[matchup])
+    assert "MATCHUP_SIDES_MISMATCH" in validate_register(register, CONTRACT)
+
+
+# ---- the committed register, after the second pass -------------------------
+
+def test_committed_register_carries_both_populations(committed):
+    view = TournamentRegister(committed)
+    counters = view.counters()
+    assert counters["role_contender"] == 80, counters
+    assert counters["role_participant"] > 100, counters
+    assert counters["matchups"] > 0, counters
+
+
+def test_committed_boards_are_contenders_only(committed):
+    """The contamination guard, asserted on the shipped file rather than a fixture."""
+    view = TournamentRegister(committed)
+    for draw in DRAWS:
+        for player in view.board_players(draw):
+            assert _tr.player_role(player) == "contender", player["entity_key"]
+            assert player["sources"], player["entity_key"]
+    total_board = sum(len(view.board_players(d)) for d in DRAWS)
+    assert total_board == 80
+
+
+def test_committed_participants_carry_no_priceable_player_identity(committed):
+    for player in committed["players"]:
+        if _tr.player_role(player) == "participant":
+            assert player["sources"] == [], player["entity_key"]
+
+
+def test_committed_matchup_sides_map_to_distinct_named_players(committed):
+    """The load-bearing field: entity_key -> outcome_id, so the slate prints names."""
+    assert committed["matchups"], "the second population pass produced no matchups"
+    by_key = {p["entity_key"]: p for p in committed["players"]}
+    for matchup in committed["matchups"]:
+        for block in matchup["sources"]:
+            sides = block["sides"]
+            assert set(sides) == set(matchup["players"])
+            ids = [side["outcome_id"] for side in sides.values()]
+            assert len(set(ids)) == 2, matchup["matchup_key"]
+            for key in sides:
+                # A side must resolve to a real display name, never "Yes"/"No".
+                assert by_key[key]["display_name"] not in {"Yes", "No"}
+
+
+def test_committed_matchups_pin_the_source_own_labels(committed):
+    """Provenance for the sides mapping: the source's labels, not a title parse.
+
+    Nothing in our database carries which player ``Yes`` means — the repo's only
+    Yes-to-competitor rule is a market-NAME parse that ships with an inversion
+    backstop because it is unreliable. The mapping was read from Polymarket's
+    own ordered ``outcomes`` array and pinned here, so it stays checkable.
+    """
+    for matchup in committed["matchups"]:
+        for block in matchup["sources"]:
+            labels = block["evidence"]["source_labels"]
+            assert len(labels) == 2 and all(labels), matchup["matchup_key"]
+            registered = {
+                normalize_player_name(side["source_label"])
+                for side in block["sides"].values()
+            }
+            assert registered == {normalize_player_name(x) for x in labels}
+
+
+def test_committed_slate_carries_no_already_played_match(committed):
+    """The stale-open guard, asserted on the shipped file.
+
+    At generation time our database held **all 324** US Open qualification rows
+    at ``status='open'`` with ``resolution_date`` 08-31/09-02, while the source
+    reported **95 of 162** matches already finished with real dates of
+    08-24/25/26. A slate keyed on our own columns would have presented 64
+    finished Monday matches as Sunday's card (gotchas #33 and #14). Every
+    registered match must therefore start no earlier than the grace window
+    before the register was generated.
+    """
+    generated = datetime.fromisoformat(committed["generated_at"].replace("Z", "+00:00"))
+    floor = generated - timedelta(hours=6)
+    for matchup in committed["matchups"]:
+        start = datetime.fromisoformat(matchup["scheduled_date"].replace("Z", "+00:00"))
+        assert start >= floor, f"{matchup['matchup_key']} started {start}, floor {floor}"

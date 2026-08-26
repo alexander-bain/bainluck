@@ -204,6 +204,188 @@ def test_live_row_is_marked_live():
     assert row["price_state"] == "live"
 
 
+# ---------------------------------------------------------------------------
+# THE MIXED-CONTRIBUTOR BOUNDARY — the gap `C-USOPEN-DAY3-TIER2` named
+#
+# Every test above this block puts contributors of the SAME age in a row, or a
+# stale row BESIDE a fresh one. Both stayed green through the real defect,
+# which is why the cert found it and the suite did not: the failure lives
+# INSIDE one row, between its own legs. The reviewer's specimen verbatim —
+# 1h Kalshi 0.40 + 20d Polymarket 0.44 -> blended 0.42 rendered live.
+#
+# The kill criterion these encode: *a row may not be presented live while any
+# value contributing to its published blend is stale or dark.*
+# ---------------------------------------------------------------------------
+
+def _mixed_row(fresh_age: float, stale_age: float, now=NOW):
+    """One row, two contributors, two different ages."""
+    payload = build_boards(
+        _two_source_register(),
+        prices={
+            ("kalshi", 1, 10): _priced(0.40, age_hours=fresh_age),
+            ("polymarket", 2, 20): _priced(0.44, age_hours=stale_age),
+        },
+        now=now,
+    )
+    return next(
+        r for r in payload["boards"][0]["rows"] if r["entity_key"] == "player-a"
+    )
+
+
+def test_the_reviewers_specimen_does_not_read_live():
+    """1h Kalshi + 20d Polymarket -> 0.42, and it is NOT a live number.
+
+    The number is still published — it is the best estimate we have and
+    dropping it throws away the fresh half too. What is refused is the
+    CONFIDENCE: `probability_is_live` is false, so the client renders it muted
+    with its age, exactly as it would a wholly stale row.
+    """
+    row = _mixed_row(fresh_age=1.0, stale_age=20 * 24)
+    assert row["probability"] == pytest.approx(0.42)
+    assert row["probability_is_live"] is False
+    assert row["price_state"] == "dark"
+
+
+def test_a_mixed_row_ages_from_its_OLDEST_contributor():
+    """`age_hours` describes the number as printed, not its luckiest leg.
+
+    "1 hour ago" was never true of a blend that contains a twenty-day-old
+    value. The governing age is the oldest, so the label the reader sees is
+    the one that is true of the whole row.
+    """
+    row = _mixed_row(fresh_age=1.0, stale_age=20 * 24)
+    assert row["age_hours"] == pytest.approx(480.0)
+    assert row["observed_at"] == (NOW - timedelta(hours=20 * 24)).isoformat()
+
+
+def test_a_mixed_row_still_shows_the_freshest_reading():
+    """Honest partial freshness: the fresh leg is not hidden, only demoted.
+
+    Suppressing it would tell the reader nothing moved today when half the row
+    did. It is a separate field from `observed_at` so that a client reading
+    only the obvious name gets the pessimistic answer.
+    """
+    row = _mixed_row(fresh_age=1.0, stale_age=20 * 24)
+    assert row["freshest_age_hours"] == pytest.approx(1.0)
+    assert row["freshest_observed_at"] == (NOW - timedelta(hours=1)).isoformat()
+    assert row["mixed_freshness"] is True
+    assert row["stale_sources"] == ["polymarket"]
+
+
+def test_a_mixed_row_names_the_stale_contributor_per_source():
+    """Each source carries its own verdict, so the UI can say WHICH leg is old."""
+    row = _mixed_row(fresh_age=1.0, stale_age=20 * 24)
+    by_source = {s["source"]: s for s in row["sources"]}
+    assert by_source["kalshi"]["price_state"] == "live"
+    assert by_source["kalshi"]["age_hours"] == pytest.approx(1.0)
+    assert by_source["polymarket"]["price_state"] == "dark"
+    assert by_source["polymarket"]["age_hours"] == pytest.approx(480.0)
+
+
+@pytest.mark.parametrize(
+    "stale_age",
+    [
+        STALE_PRICE_HOURS + 0.01,   # the first instant it is not live
+        DARK_PRICE_HOURS,           # the last instant it is merely stale
+        DARK_PRICE_HOURS + 0.01,    # the first instant it is dark
+        20 * 24,                    # the reviewer's specimen
+        32 * 24,                    # the #2199 population's far end
+    ],
+)
+def test_one_non_live_contributor_is_enough_to_kill_the_row(stale_age):
+    """The AND, swept across the boundary. ONE is enough — there is no quorum.
+
+    Parametrized over the thresholds rather than one comfortable value: an
+    off-by-one at `STALE_PRICE_HOURS` is precisely the bug that would let the
+    common case through while the dramatic 20-day case looks guarded.
+    """
+    row = _mixed_row(fresh_age=0.1, stale_age=stale_age)
+    assert row["probability_is_live"] is False
+    assert row["mixed_freshness"] is True
+
+
+def test_a_row_is_live_only_when_EVERY_contributor_is_live():
+    """The positive direction, or the AND is asserting nothing.
+
+    Both legs inside the window, both ages different — the guard must not have
+    become "reject anything with unequal timestamps".
+    """
+    row = _mixed_row(fresh_age=0.1, stale_age=STALE_PRICE_HOURS)
+    assert row["probability_is_live"] is True
+    assert row["price_state"] == "live"
+    assert row["mixed_freshness"] is False
+    assert row["stale_sources"] == []
+    # ...and the governing age is still the older of the two.
+    assert row["age_hours"] == pytest.approx(STALE_PRICE_HOURS)
+
+
+def test_a_fresh_leg_beside_a_never_observed_leg_is_not_live():
+    """An absent timestamp is older than any timestamp (gotcha #53).
+
+    The mixed version of `test_price_with_no_observation_time_is_not_live`:
+    one contributor with a real reading cannot vouch for one that has none.
+    """
+    payload = build_boards(
+        _two_source_register(),
+        prices={
+            ("kalshi", 1, 10): _priced(0.40, age_hours=0.1),
+            ("polymarket", 2, 20): {"probability": 0.44, "observed_at": None},
+        },
+        now=NOW,
+    )
+    row = payload["boards"][0]["rows"][0]
+    assert row["probability"] == pytest.approx(0.42)
+    assert row["probability_is_live"] is False
+    assert row["price_state"] == "dark"
+    assert row["age_hours"] is None
+    assert row["observed_at"] is None
+    # The fresh leg is still reported — the row knows more than "never".
+    assert row["freshest_age_hours"] == pytest.approx(0.1)
+
+
+def test_the_board_banner_is_still_the_newest_reading_not_the_governing_one():
+    """The AND is a ROW rule and must not have leaked up to the board.
+
+    A board whose banner fired because one of forty rows carries a 30-day leg
+    would be a banner nobody reads. Rows are individually honest; the board
+    reports the strongest true claim about the page.
+    """
+    payload = build_boards(
+        _two_source_register(),
+        prices={
+            ("kalshi", 1, 10): _priced(0.40, age_hours=1.0),
+            ("polymarket", 2, 20): _priced(0.44, age_hours=20 * 24),
+            ("kalshi", 1, 11): _priced(0.10, age_hours=0.5),
+        },
+        now=NOW,
+    )
+    board = payload["boards"][0]
+    assert board["price_state"] == "live"
+    assert board["age_hours"] == pytest.approx(0.5)
+    # ...and the mixed row inside it is counted rather than described.
+    assert board["mixed_freshness_rows"] == 1
+    assert board["rows_not_live"] == 1
+
+
+def test_a_single_source_row_is_unaffected_by_the_AND():
+    """A one-legged row has nothing to disagree with itself about.
+
+    Guards the regression risk in the other direction: an AND implemented over
+    an empty or singleton list must not start refusing the simple case.
+    """
+    payload = build_boards(
+        _two_source_register(),
+        prices={("kalshi", 1, 11): _priced(0.10, age_hours=1.0)},
+        now=NOW,
+    )
+    row = next(
+        r for r in payload["boards"][0]["rows"] if r["entity_key"] == "player-b"
+    )
+    assert row["source_count"] == 1
+    assert row["probability_is_live"] is True
+    assert row["mixed_freshness"] is False
+
+
 def test_price_with_no_observation_time_is_not_live():
     payload = build_boards(
         _two_source_register(),
@@ -543,8 +725,15 @@ def test_no_row_anywhere_claims_live_without_a_fresh_observation():
 
     This is the assertion the page's honesty actually rests on: whatever the
     ranking, whatever the source count, `probability_is_live` is true only when
-    there is an observation inside the stale window. Written as a sweep so a
-    future row shape cannot slip past the per-case tests above.
+    EVERY value inside the row's published blend is inside the stale window.
+    Written as a sweep so a future row shape cannot slip past the per-case
+    tests above.
+
+    UX-P135 widened it. The sweep originally held only single-source rows, so
+    it could not have caught `C-USOPEN-DAY3-TIER2` — it asserted the row's
+    stated age was fresh, which was true of the mixed row's newest leg. Two
+    multi-source rows are now in it, and the assertion is over every
+    CONTRIBUTOR's age rather than the row's summary.
     """
     register = _register(
         [
@@ -552,6 +741,20 @@ def test_no_row_anywhere_claims_live_without_a_fresh_observation():
             _player("stale", "Stale", "mens-singles", [_source("kalshi", 1, 2)]),
             _player("dark", "Dark", "mens-singles", [_source("kalshi", 1, 3)]),
             _player("unseen", "Unseen", "mens-singles", [_source("kalshi", 1, 4)]),
+            # The specimen: fresh Kalshi, twenty-day Polymarket.
+            _player(
+                "mixed",
+                "Mixed",
+                "mens-singles",
+                [_source("kalshi", 1, 5), _source("polymarket", 2, 6)],
+            ),
+            # ...and its healthy twin, so the sweep can say yes to a blend.
+            _player(
+                "both-fresh",
+                "Both Fresh",
+                "mens-singles",
+                [_source("kalshi", 1, 7), _source("polymarket", 2, 8)],
+            ),
         ]
     )
     payload = build_boards(
@@ -561,6 +764,10 @@ def test_no_row_anywhere_claims_live_without_a_fresh_observation():
             ("kalshi", 1, 2): _priced(0.30, age_hours=STALE_PRICE_HOURS + 2),
             ("kalshi", 1, 3): _priced(0.20, age_hours=30 * 24),
             ("kalshi", 1, 4): {"probability": 0.10, "observed_at": None},
+            ("kalshi", 1, 5): _priced(0.40, age_hours=1),
+            ("polymarket", 2, 6): _priced(0.44, age_hours=20 * 24),
+            ("kalshi", 1, 7): _priced(0.55, age_hours=1),
+            ("polymarket", 2, 8): _priced(0.57, age_hours=2),
         },
         now=NOW,
     )
@@ -568,7 +775,89 @@ def test_no_row_anywhere_claims_live_without_a_fresh_observation():
         if row["probability_is_live"]:
             assert row["age_hours"] is not None
             assert row["age_hours"] <= STALE_PRICE_HOURS
+            # THE CONTRIBUTOR-LEVEL FORM. The summary age agreeing is not
+            # enough — that is precisely what stayed green through the defect.
+            assert row["stale_sources"] == []
+            for source in row["sources"]:
+                assert source["age_hours"] is not None
+                assert source["age_hours"] <= STALE_PRICE_HOURS
         else:
             assert row["price_state"] in ("stale", "dark")
-    live = [r["entity_key"] for r in payload["boards"][0]["rows"] if r["probability_is_live"]]
-    assert live == ["fresh"]
+    live = sorted(
+        r["entity_key"] for r in payload["boards"][0]["rows"] if r["probability_is_live"]
+    )
+    assert live == ["both-fresh", "fresh"]
+
+
+# ---------------------------------------------------------------------------
+# Contenders only — the second population pass must not contaminate the boards
+# (UX-P132)
+# ---------------------------------------------------------------------------
+
+def _participant(entity_key: str, name: str, draw: str):
+    """A qualifying-draw player: registered identity, no outright price."""
+    return {
+        "entity_key": entity_key,
+        "display_name": name,
+        "draw": draw,
+        "role": "participant",
+        "seed": None,
+        "country": None,
+        "draw_slot": None,
+        "section": None,
+        "sources": [],
+    }
+
+
+def test_a_participant_never_reaches_a_board():
+    """The defect this prevents: a first-round qualifier ranked above Alcaraz.
+
+    A participant's only quote is P(wins this match). Ranked on a championship
+    board it is not a wrong number — it is an answer to a different question,
+    which is worse, because it looks entirely plausible.
+    """
+    register = _register([
+        _player("carlos-alcaraz", "Carlos Alcaraz", "mens-singles",
+                [_source("kalshi", 1, 11)]),
+        _participant("diego-dedura-palomero", "Diego Dedura-Palomero", "mens-singles"),
+    ])
+    payload = build_boards(
+        register,
+        prices={("kalshi", 1, 11): _priced(0.30)},
+        now=NOW,
+    )
+    board = payload["boards"][0]
+    assert [row["entity_key"] for row in board["rows"]] == ["carlos-alcaraz"]
+    # And they do not inflate the "more registered players have no price" line.
+    assert board["unpriced"] == 0
+    assert board["contenders"] == 1
+
+
+def test_a_draw_with_only_participants_produces_no_board():
+    """A qualifying-only draw has no championship board to build."""
+    register = _register([
+        _player("carlos-alcaraz", "Carlos Alcaraz", "mens-singles",
+                [_source("kalshi", 1, 11)]),
+        _participant("aliona-falei", "Aliona Falei", "womens-singles"),
+    ])
+    payload = build_boards(
+        register, prices={("kalshi", 1, 11): _priced(0.30)}, now=NOW
+    )
+    assert [b["draw"] for b in payload["boards"]] == ["mens-singles"]
+
+
+def test_a_v1_register_without_roles_still_renders_every_player():
+    """Backwards compatibility: absent `role` reads as contender, not as nothing."""
+    register = _register([
+        _player("carlos-alcaraz", "Carlos Alcaraz", "mens-singles",
+                [_source("kalshi", 1, 11)]),
+        _player("jannik-sinner", "Jannik Sinner", "mens-singles",
+                [_source("kalshi", 1, 12)]),
+    ])
+    assert all("role" not in p for p in register["players"])
+    payload = build_boards(
+        register,
+        prices={("kalshi", 1, 11): _priced(0.30), ("kalshi", 1, 12): _priced(0.52)},
+        now=NOW,
+    )
+    assert len(payload["boards"][0]["rows"]) == 2

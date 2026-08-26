@@ -655,6 +655,7 @@ HEAVY_TASKS = {
     "app.tasks.flow_sentinel",
     "app.tasks.grid_sentinel",
     "app.tasks.grid_register_sentinel",
+    "app.tasks.tournament_register_sentinel",
     "app.tasks.horizon_sentinel",
     "app.tasks.settled_concept_sentinel",
     "app.tasks.calibration_sentinel",
@@ -2362,6 +2363,28 @@ def grid_register_sentinel(self, apply=False, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.tournament_register_sentinel")
+def tournament_register_sentinel(self, file_issues=True):
+    """Tournament Register Sentinel (UX-P134): diff each committed tournament
+    register against current source inventory, daily, from the day its page
+    goes live. `/tournaments/us-open` pins 211 players, 66 matchups and 4
+    curated props to exact `(source, market_id, outcome_id)` triples; a pinned
+    register that drifts renders nothing, or renders a name against a market
+    that is no longer that player's, and neither has a symptom the page can
+    show. Files ONE deduped P2 per tournament and closes it when the drift
+    clears. NEVER republishes: the register is a committed file reviewed as
+    code, so a drift ruling during a live tournament is a human's. Identity
+    only — reads no probabilities and writes no market data (gotcha #21). The
+    300s soft limit sits under the 360s hard limit and above the run's 180s
+    inner deadline, so it can never SIGKILL untracked (#966)."""
+    from app.tasks.tournament_register_sentinel import _run_tournament_register_sentinel
+    return _tracked_run(
+        "tournament_register_sentinel",
+        _run_tournament_register_sentinel(file_issues=file_issues),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.horizon_sentinel")
 def horizon_sentinel(self, file_issues=True):
     """Horizon Sentinel (Queue #223): read THE HORIZON CALENDAR
@@ -3743,6 +3766,17 @@ celery_app.conf.beat_schedule = {
         # not publish until apply=True is passed explicitly.
         "task": "app.tasks.grid_register_sentinel",
         "schedule": crontab(minute=32, hour=7),  # Daily 07:32 UTC
+        "options": {"queue": "heavy"},
+    },
+    "tournament-register-sentinel-daily": {
+        # UX-P134: the US Open register goes live for main-draw Sunday, so its
+        # daily drift guard registers now. 07:36 UTC — after the grid register
+        # sentinel (07:32) and before the horizon sentinel (07:40), so the
+        # three never contend for the heavy dyno. Detect-and-file only; there
+        # is no apply flag because a committed register is never republished by
+        # a task.
+        "task": "app.tasks.tournament_register_sentinel",
+        "schedule": crontab(minute=36, hour=7),  # Daily 07:36 UTC
         "options": {"queue": "heavy"},
     },
     "horizon-sentinel-daily": {

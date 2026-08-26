@@ -34,6 +34,7 @@ from app.models import FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.tournament_board import TREND_DAYS, build_boards
 from app.utils.tournament_register import TournamentRegister, load_register
+from app.utils.tournament_slate import build_bracket, build_props, build_slate
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,10 @@ async def _load_prices(
                 FuturesOutcome.id,
                 FuturesOutcome.name,
                 FuturesOutcome.current_probability,
+                # The SCRIPT. Loaded here rather than in a second query because
+                # the slate's move is only meaningful against the same row's own
+                # opening price.
+                FuturesOutcome.opening_probability,
             ).where(FuturesOutcome.id.in_(outcome_ids))
         )
     ).all()
@@ -132,6 +137,11 @@ async def _load_prices(
             "probability": (
                 float(row.current_probability)
                 if row.current_probability is not None
+                else None
+            ),
+            "opening_probability": (
+                float(row.opening_probability)
+                if row.opening_probability is not None
                 else None
             ),
             "observed_at": observed_by_id.get(row.id),
@@ -201,7 +211,7 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
         raise HTTPException(status_code=503, detail="Tournament register unavailable")
 
     reg = TournamentRegister(register)
-    outcome_ids = sorted(
+    board_outcome_ids = sorted(
         {
             block["outcome_id"]
             for player in reg.players
@@ -209,10 +219,21 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
             if isinstance(block, dict) and isinstance(block.get("outcome_id"), int)
         }
     )
+    # The slate's identities are pinned on the MATCHUPS, not on player entries —
+    # a qualifying participant has no player-level source by construction. Both
+    # sets are bounded by the register, so this stays two id-list lookups rather
+    # than becoming a scan.
+    slate_outcome_ids = reg.matchup_outcome_ids()
+    prop_outcome_ids = reg.prop_outcome_ids()
 
     now = datetime.now(timezone.utc)
-    prices = await _load_prices(db, outcome_ids)
-    series = await _load_series(db, outcome_ids, now=now)
+    prices = await _load_prices(
+        db,
+        sorted(set(board_outcome_ids) | set(slate_outcome_ids) | set(prop_outcome_ids)),
+    )
+    # Trend lines are a board feature. Loading series for the slate's ~130
+    # outcomes would triple the per-request scan to draw nothing.
+    series = await _load_series(db, board_outcome_ids, now=now)
 
     # Re-key the loaded prices onto the register's identity tuple. Anything the
     # query returned that the register does not pin simply has no key here and
@@ -232,6 +253,19 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
     payload = build_boards(
         register, prices=by_identity, series_by_outcome=series, now=now
     )
+    payload["slate"] = build_slate(register, prices=prices, now=now)
+    payload["props"] = build_props(register, prices=prices, now=now)
+    # THE FIXTURE SWAP (UX-P134). Empty until the draw ceremony latches
+    # `draw_released`; populated by the same `ingest_tournament_draw.py` run, so
+    # Thursday is a data change and not a deploy.
+    payload["bracket"] = {
+        draw: build_bracket(register, prices=prices, draw=draw)
+        for draw in ("mens-singles", "womens-singles")
+    }
+    # Where to watch — a static per-tournament mapping, register-owned so it can
+    # be corrected without a deploy. Served verbatim; there is nothing to
+    # compute and nothing to get wrong at request time.
+    payload["broadcasts"] = reg.broadcasts
     payload["slug"] = slug
     payload["title"] = spec["title"]
     payload["subtitle"] = spec["subtitle"]

@@ -28,6 +28,21 @@ Three doctrines are enforced here rather than documented:
    and a boolean the client cannot round past.  We show that we do not know,
    rather than showing July and calling it now.
 
+   **Freshness is a property of the WHOLE blend, so it is an AND over the
+   contributors, not a MAX over their timestamps** (UX-P135, cert
+   ``C-USOPEN-DAY3-TIER2``).  The first version of this module computed row
+   freshness from the *newest* contributor while ``blend_with_verdict``
+   consumed every contributor regardless of age, so a 1h Kalshi price beside a
+   20d Polymarket price published a blended 0.42 as ``probability_is_live:
+   true``.  The blended number is one hour old in none of its parts and twenty
+   days old in one of them; "one hour ago" was never true of it.  A row is live
+   only when *every* value inside its published blend is live, and the row's
+   own ``observed_at`` / ``age_hours`` describe the **governing** (oldest)
+   contributor — the strongest claim that is true of the number as printed.
+   The freshest reading is still visible, as ``freshest_observed_at``, because
+   suppressing it would hide that half the row moved today; it is an extra
+   fact, never the verdict.
+
 Trend lines are the real daily means and nothing else — no smoothing, no
 interpolation across missing days, no curve fitting.  Movement IS the product
 (charter design doctrine), and a smoother is a machine for hiding it.
@@ -44,6 +59,7 @@ from app.utils.tournament_register import (
     STALE_PRICE_HOURS,
     TournamentRegister,
     check_rendered_rows,
+    player_role,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,6 +105,41 @@ def price_state(age_hours: Optional[float]) -> str:
     if age_hours <= DARK_PRICE_HOURS:
         return "stale"
     return "dark"
+
+
+def governing_age_hours(
+    observed_ats: list[Optional[datetime]], now: datetime
+) -> Optional[float]:
+    """The age of the OLDEST contributor — ``None`` when any was never seen.
+
+    This is the whole per-contributor AND, and it is one line because
+    ``price_state`` is monotone in age: the oldest contributor is by
+    construction the one in the worst state, and an absent timestamp is older
+    than any timestamp (it reads ``dark``, gotcha #53).  So there is no
+    severity table to keep in step with the thresholds — feeding this into
+    ``price_state`` yields exactly ``worst(price_state(each))``.
+
+    An empty list is ``None``: no contributors is not fresh.
+    """
+    if not observed_ats:
+        return None
+    if any(observed is None for observed in observed_ats):
+        return None
+    return max(_age_hours(observed, now) or 0.0 for observed in observed_ats)
+
+
+def freshest_observation(
+    observed_ats: list[Optional[datetime]],
+) -> Optional[datetime]:
+    """The newest reading among the contributors — an extra fact, not a verdict.
+
+    Kept visible so a mixed row can say "one source moved an hour ago" while
+    still refusing to call itself live.  It is deliberately a separate field
+    from ``observed_at`` so that a client which reads only the obvious name
+    gets the pessimistic answer.
+    """
+    seen = [observed for observed in observed_ats if observed is not None]
+    return max(seen) if seen else None
 
 
 def _merge_daily_series(
@@ -161,21 +212,37 @@ def build_boards(
 
     # Draw order is the register's own, deduplicated — so a register that only
     # carries one draw produces one board rather than an empty second one.
+    # CONTENDERS decide which boards exist: a draw present only as qualifying
+    # participants has no championship board to build.
     draws: list[str] = []
     for player in reg.players:
         draw = player.get("draw")
-        if isinstance(draw, str) and draw not in draws:
+        if (
+            isinstance(draw, str)
+            and draw not in draws
+            and player_role(player) == "contender"
+        ):
             draws.append(draw)
 
     for draw in draws:
         rows: list[dict[str, Any]] = []
         unpriced = 0
 
-        for player in reg.draw_players(draw):
+        # `board_players`, never `draw_players`. After UX-P132's second
+        # population pass the register carries qualifying participants whose
+        # only price is P(wins this match); ranking one of those against
+        # P(wins the tournament) would put a first-round qualifier above
+        # Alcaraz on the men's board with a number that is not wrong so much
+        # as an answer to a different question.
+        for player in reg.board_players(draw):
             blend_rows: list[dict[str, Any]] = []
             source_views: list[dict[str, Any]] = []
             contributors: list[tuple[str, int]] = []
-            newest: Optional[datetime] = None
+            # Every contributor's OWN observation time, in blend order. The
+            # list — not a running max — is the fix: the verdict needs the
+            # oldest, the display needs the newest, and a max destroys one of
+            # them at the moment it is taken.
+            contributor_times: list[Optional[datetime]] = []
             settled_result: Optional[str] = None
 
             for block in player.get("sources") or []:
@@ -233,17 +300,23 @@ def build_boards(
                 blend_rows.append(
                     {"source": block.get("source"), "probability": probability}
                 )
+                source_age = _age_hours(observed_at, now)
                 source_views.append(
                     {
                         "source": block.get("source"),
                         "probability": round(probability, 6),
                         "observed_at": observed_at.isoformat() if observed_at else None,
+                        # Each contributor answers for its own freshness. The
+                        # row's verdict is the AND of these, and a UI that
+                        # wants to name the stale one reads them here rather
+                        # than re-deriving a threshold client-side.
+                        "age_hours": round(source_age, 2) if source_age is not None else None,
+                        "price_state": price_state(source_age),
                     }
                 )
                 if isinstance(block.get("outcome_id"), int):
                     contributors.append((str(block.get("source")), block["outcome_id"]))
-                if observed_at is not None and (newest is None or observed_at > newest):
-                    newest = observed_at
+                contributor_times.append(observed_at)
 
             if settled_result is not None and not blend_rows:
                 # Settled means settled: a result, never a probability.
@@ -259,6 +332,10 @@ def build_boards(
                         "observed_at": None,
                         "age_hours": None,
                         "price_state": "dark",
+                        "freshest_observed_at": None,
+                        "freshest_age_hours": None,
+                        "stale_sources": [],
+                        "mixed_freshness": False,
                         "source_count": 0,
                         "sources": [],
                         "blend_rule": None,
@@ -278,8 +355,18 @@ def build_boards(
                 unpriced += 1
                 continue
 
-            age = _age_hours(newest, now)
+            # THE AND. `age` is the governing (oldest) contributor's, so
+            # `row_state` is the worst contributor's state and the row cannot
+            # read live while any value inside its blend is stale or dark.
+            age = governing_age_hours(contributor_times, now)
             row_state = price_state(age)
+            newest = freshest_observation(contributor_times)
+            freshest_age = _age_hours(newest, now)
+            stale_sources = [
+                view["source"]
+                for view in source_views
+                if view["price_state"] != "live"
+            ]
             trend = _merge_daily_series(series_by_outcome, contributors)
             trend_delta = (
                 round(trend[-1]["probability"] - trend[0]["probability"], 6)
@@ -297,9 +384,26 @@ def build_boards(
                     "probability": round(blend, 6),
                     # The field the client cannot round past. See module docstring.
                     "probability_is_live": row_state == "live",
-                    "observed_at": newest.isoformat() if newest else None,
+                    # GOVERNING, not newest: "as of when is this whole number
+                    # true". A row whose Polymarket leg is 20 days old is a
+                    # 20-day-old number, however recently Kalshi moved.
+                    "observed_at": (
+                        min(t for t in contributor_times if t is not None).isoformat()
+                        if age is not None
+                        else None
+                    ),
                     "age_hours": round(age, 2) if age is not None else None,
                     "price_state": row_state,
+                    # The freshest reading, kept visible so partial movement is
+                    # not hidden — an extra fact beside the verdict, never it.
+                    "freshest_observed_at": newest.isoformat() if newest else None,
+                    "freshest_age_hours": (
+                        round(freshest_age, 2) if freshest_age is not None else None
+                    ),
+                    # Named, so the UI can say WHICH leg is old rather than
+                    # muting the row with no explanation.
+                    "stale_sources": stale_sources,
+                    "mixed_freshness": 0 < len(stale_sources) < len(source_views),
                     "source_count": len(blend_rows),
                     "sources": source_views,
                     "blend_rule": rule,
@@ -315,10 +419,17 @@ def build_boards(
         for index, row in enumerate(rows, start=1):
             row["rank"] = index
 
+        # The BOARD reports the newest thing anyone has seen — the strongest
+        # true claim about the page as a whole, and deliberately not an AND.
+        # Rows carry their own verdict; making one 30-day row paint the banner
+        # over 43 live ones would retire the banner as a signal (the
+        # crying-wolf failure), and every row is individually honest already.
+        # It reads `freshest_observed_at` because `observed_at` is now the
+        # governing contributor's, which would make this a max-of-oldest.
         observed = [
-            datetime.fromisoformat(r["observed_at"])
+            datetime.fromisoformat(r["freshest_observed_at"])
             for r in rows
-            if r.get("observed_at")
+            if r.get("freshest_observed_at")
         ]
         board_newest = max(observed) if observed else None
         board_age = _age_hours(board_newest, now)
@@ -331,6 +442,13 @@ def build_boards(
                 "rows": rows,
                 "contenders": len(rows),
                 "unpriced": unpriced,
+                # Quantified rather than described: how much of this board is
+                # not a live number, and how much of it is a blend of legs of
+                # different ages. Both are zero on a healthy board.
+                "rows_not_live": sum(
+                    1 for r in rows if r["probability"] is not None and not r["probability_is_live"]
+                ),
+                "mixed_freshness_rows": sum(1 for r in rows if r["mixed_freshness"]),
                 "price_state": board_state,
                 "newest_observed_at": board_newest.isoformat() if board_newest else None,
                 "age_hours": round(board_age, 2) if board_age is not None else None,

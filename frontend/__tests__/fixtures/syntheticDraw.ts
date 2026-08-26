@@ -96,3 +96,41 @@ export function syntheticFirstRoundResults(
   }
   return results;
 }
+
+/**
+ * The state the draw is actually in for most of a tournament day: SOME
+ * first-round matches decided, the rest still on court.
+ *
+ * This exists because its absence hid a real bug (UX-P136). Every fixture was
+ * all-or-nothing — no results, or all 64 — and the fold advanced a player
+ * whose opponent slot was `null`, reading an undecided feeder as a bye. With
+ * only the two extremes covered, nothing was ever half-decided, so nothing
+ * ever exercised the branch that walked players into rounds they had not
+ * reached. A day at the US Open is nothing BUT the half-decided state.
+ */
+export function syntheticPartialResults(
+  draw: BracketSlot[],
+  decided: number
+): Record<string, string> {
+  const results: Record<string, string> = {};
+  for (let i = 0; i < decided * 2 && i < draw.length; i += 2) {
+    results[`R128-${i / 2 + 1}`] = draw[i].entity_key;
+  }
+  return results;
+}
+
+/**
+ * A draw with holes: slots the register holds no player for.
+ *
+ * The backend emits exactly this — `build_bracket` returns `None` "where the
+ * draw has a slot we hold no registered player for … not a bye, and never a
+ * name we invented to fill the shape" — so the frontend has to be gated
+ * against it or the two halves disagree about what a hole means.
+ */
+export function syntheticDrawWithHoles(
+  draw: BracketSlot[],
+  holeIndexes: number[]
+): (BracketSlot | null)[] {
+  const holes = new Set(holeIndexes);
+  return draw.map((slot, i) => (holes.has(i) ? null : slot));
+}

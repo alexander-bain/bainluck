@@ -124,3 +124,66 @@ class TestCacheDiscipline:
 
     def test_series_scan_is_bounded(self):
         assert tournaments.MAX_SERIES_ROWS <= 50000
+
+
+class TestSlateContract:
+    """The daily slate — the half of this page that has live prices (UX-P132)."""
+
+    async def test_slate_is_in_the_payload(self, client):
+        body = (await client.get("/api/tournaments/us-open")).json()
+        assert "slate" in body
+        for key in (
+            "matches", "count", "incoherent", "dropped",
+            "price_state", "newest_observed_at", "age_hours",
+        ):
+            assert key in body["slate"], key
+
+    async def test_empty_database_is_an_honest_empty_slate(self, client):
+        """No prices must never become a fabricated match card."""
+        slate = (await client.get("/api/tournaments/us-open")).json()["slate"]
+        assert slate["price_state"] == "dark"
+        assert slate["newest_observed_at"] is None
+        for row in slate["matches"]:
+            assert row["probability_is_live"] is False
+            assert all(side["probability"] is None for side in row["sides"])
+
+    async def test_slate_never_emits_a_yes_no_side(self, client):
+        """The measured failure: 'Yes 54% / No 47%' instead of two players."""
+        slate = (await client.get("/api/tournaments/us-open")).json()["slate"]
+        for row in slate["matches"]:
+            for side in row["sides"]:
+                assert side["display_name"] not in {"Yes", "No", ""}
+
+    async def test_participants_never_reach_a_championship_board(self, client):
+        """The contamination guard, at the route boundary.
+
+        The register carries ~130 qualifying participants whose only price is
+        P(wins this match). If one reached a board it would be ranked against
+        P(wins the tournament) — a first-round qualifier above Alcaraz, with a
+        number that is not wrong so much as an answer to a different question.
+        """
+        body = (await client.get("/api/tournaments/us-open")).json()
+        board_keys = {
+            row["entity_key"] for board in body["boards"] for row in board["rows"]
+        }
+        board_capacity = sum(
+            len(b["rows"]) + b["unpriced"] for b in body["boards"]
+        )
+        assert board_capacity == 80, board_capacity
+
+        slate_only = {
+            side["entity_key"]
+            for row in body["slate"]["matches"]
+            for side in row["sides"]
+            if side["role"] == "participant"
+        }
+        assert board_keys.isdisjoint(slate_only)
+
+    def test_slate_and_board_loads_are_both_bounded_id_lists(self):
+        """Neither half may become a table scan as the register grows."""
+        source = inspect.getsource(tournaments.get_tournament)
+        assert "matchup_outcome_ids" in source
+        assert "board_outcome_ids" in source
+        # Trend series stay a board concern; loading them for the slate's ~130
+        # outcomes would triple the per-request scan to draw nothing.
+        assert "_load_series(db, board_outcome_ids" in source

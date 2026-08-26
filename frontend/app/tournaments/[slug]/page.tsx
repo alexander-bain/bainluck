@@ -18,9 +18,23 @@
  *     which is a bet on #2199 never being fixed, and #2199 is being fixed in
  *     another lane right now.
  *
- * The Title tab is the landing tab, so the championship boards are still the
- * first thing on screen. That keeps the charter's ship order (boards are layer
- * 1) without hiding the live half.
+ * UX-P132 (Day 3) built the slate additively as designed, and then applied
+ * ALEX'S MOCK VERDICT, which re-skins the layout above. The verdict, and what
+ * changed here:
+ *
+ *   1. **C stays the base, but takes A's pill toggle everywhere** — and NEVER
+ *      two stacked gender lists. One `draw` pill now flips the slate, the
+ *      chart and the contender list together, so only one draw is on screen at
+ *      a time.
+ *   2. **B's ordering: today's matches lead the page.** The Today tab is gone
+ *      as a tab; the slate is the first thing under the pills. It is the half
+ *      with live prices, so it is the half worth opening the page for.
+ *   3. The Bracket keeps its own tab. That was C's safety property — the
+ *      bracket can never displace the boards — and the verdict did not
+ *      overrule it, so it stands.
+ *
+ * The page is therefore: pills -> today's matches -> championship chart+board
+ * -> props, with the bracket one tab away.
  */
 
 import { useEffect, useState } from "react";
@@ -30,15 +44,28 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
+import { buildBracket } from "@/lib/bracket";
+import TournamentSlate from "@/components/tournament/TournamentSlate";
+import TournamentProps from "@/components/tournament/TournamentProps";
 import { fetchTournament } from "@/lib/api";
 import type { TournamentPayload } from "@/lib/tournament";
 
-type Tab = "title" | "today" | "bracket";
+type Tab = "tournament" | "bracket";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "title", label: "Title" },
-  { id: "today", label: "Today" },
+  { id: "tournament", label: "Tournament" },
   { id: "bracket", label: "Bracket" },
+];
+
+/**
+ * The gender pill. Alex's verdict: take direction A's toggle EVERYWHERE, and
+ * never two stacked gender lists. One toggle flips the slate, the chart and the
+ * contender list together, so the page only ever shows one draw at a time and
+ * the reader never scrolls one draw to reach the other.
+ */
+const DRAWS: { id: string; label: string }[] = [
+  { id: "mens-singles", label: "Men's" },
+  { id: "womens-singles", label: "Women's" },
 ];
 
 export default function TournamentPage() {
@@ -52,7 +79,8 @@ export default function TournamentPage() {
   const [data, setData] = useState<TournamentPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>("title");
+  const [tab, setTab] = useState<Tab>("tournament");
+  const [draw, setDraw] = useState<string>("mens-singles");
 
   useEffect(() => {
     if (!slug) return;
@@ -130,32 +158,78 @@ export default function TournamentPage() {
           ))}
         </div>
 
-        <div className="px-4 pb-16">
-          {tab === "title" && (
-            <>
-              {data.boards.map((board) => (
-                <TournamentBoard key={board.draw} board={board} />
-              ))}
-            </>
-          )}
+        {tab === "tournament" && (
+          <div
+            className="flex gap-1.5 border-b border-surface-border bg-surface-card px-4 pb-3"
+            role="group"
+            aria-label="Draw"
+            data-testid="draw-toggle"
+          >
+            {DRAWS.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                aria-pressed={draw === entry.id}
+                onClick={() => setDraw(entry.id)}
+                data-testid="draw-pill"
+                data-draw={entry.id}
+                data-active={draw === entry.id ? "true" : "false"}
+                className={`rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
+                  draw === entry.id
+                    ? "bg-text-primary text-text-inverse"
+                    : "bg-surface-elevated text-text-secondary"
+                }`}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
+        )}
 
-          {tab === "today" && (
-            <div
-              className="mt-6 rounded-2xl border border-surface-border bg-surface-card px-4 py-6 text-center"
-              data-testid="slate-placeholder"
-            >
-              <div className="text-[15px] font-semibold text-text-primary">
-                Today&rsquo;s matches
-              </div>
-              <p className="mt-1 text-[13px] text-text-secondary">
-                The day&rsquo;s slate arrives here before the main draws begin.
-              </p>
-            </div>
+        <div className="px-4 pb-16">
+          {tab === "tournament" && (
+            <>
+              {/* TODAY LEADS. Alex took direction B's ordering: the day's
+                  matches are the first thing on the page, because they are the
+                  half with live prices and the reason to open it on a match
+                  day. The championship board follows. */}
+              <TournamentSlate
+                slate={
+                  data.slate ?? {
+                    matches: [],
+                    count: 0,
+                    incoherent: 0,
+                    dropped: {},
+                    price_state: "dark",
+                    newest_observed_at: null,
+                    age_hours: null,
+                    dark_after_hours: 48,
+                  }
+                }
+                draw={draw}
+                broadcasts={data.broadcasts}
+              />
+
+              {data.boards
+                .filter((board) => board.draw === draw)
+                .map((board) => (
+                  <TournamentBoard key={board.draw} board={board} />
+                ))}
+
+              <TournamentProps markets={data.props ?? []} draw={draw} />
+            </>
           )}
 
           {tab === "bracket" && (
             <div className="mt-6">
-              <TournamentBracket rounds={[]} drawReleased={data.draw_released} />
+              {/* THE FIXTURE SWAP (UX-P134): built from the register's own
+                  draw slots, so the ceremony is a data change and not a
+                  deploy. Empty until `draw_released` latches, at which point
+                  this fills without anything here changing. */}
+              <TournamentBracket
+                rounds={buildBracket(data.bracket?.[draw] ?? [])}
+                drawReleased={data.draw_released}
+              />
             </div>
           )}
         </div>

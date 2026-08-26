@@ -73,10 +73,60 @@ DRAWS = ("mens-singles", "womens-singles")
 #: than Q1/Q2/Q3 because the sources do not distinguish them by name.
 ROUNDS = ("qualifying", "R128", "R64", "R32", "R16", "QF", "SF", "F")
 
+#: **Contenders and participants are different sets** — the design consequence
+#: the Day-1 census stated and this field enforces (UX-P132).
+#:
+#: v1 was seeded from the two outright winner fields: 80 *contenders*, exactly
+#: right for the championship boards.  The daily slate's players are the
+#: *qualifying draw*, and most of them will never appear in an outright field,
+#: so every qualifying matchup failed ``MATCHUP_PLAYER_NOT_REGISTERED``.  The
+#: fix is not to loosen that rule — it is the rule that keeps a stale Cincinnati
+#: market off the slate — but to register the participants too.
+#:
+#: The role is what stops the second population pass from contaminating the
+#: first.  A qualifier's only priceable identity is a *match* market, and a
+#: match probability is P(wins this match), not P(wins the tournament).  Without
+#: this split, populating the slate would have put "Diego Dedura-Palomero 54%"
+#: on the men's championship board, above Alcaraz, sourced from a first-round
+#: qualifying quote.  Boards read ``board_players``; participants are invisible
+#: to them by construction rather than by a filter somebody has to remember.
+PLAYER_ROLES = ("contender", "participant")
+
+#: Absent ``role`` reads as ``contender``, so v1 registers stay valid and keep
+#: rendering exactly as they did.
+DEFAULT_PLAYER_ROLE = "contender"
+
+#: What KIND of question a pinned identity answers.  ``outright`` is "wins the
+#: tournament"; ``match`` is "wins this match".  The two must never be blended
+#: or ranked against each other — they are different questions that happen to
+#: share a unit.
+SOURCE_KINDS = ("outright", "match")
+DEFAULT_SOURCE_KIND = "outright"
+
 REQUIRED_REGISTER_FIELDS = frozenset(
     {"schema_version", "tournament", "season", "version", "generated_at",
      "draw_released", "players", "matchups"}
 )
+
+#: Curated props and futures (UX-P132, Alex's item 5): "beyond the two winner
+#: markets and today's matches, surface a section of interesting tournament
+#: props/futures — curated, not a dump."
+#:
+#: The curation lives HERE, in the committed file, for the same reason every
+#: other row on this page does: a market not in the register does not render.
+#: That makes "curated, not a dump" a structural property rather than a
+#: promise — there is no code path that could surface an uncurated market,
+#: because the page never asks the database what exists.
+#:
+#: Optional. A register with no ``props`` key is valid and renders an honest
+#: empty section, which is the state until a population pass runs.
+REQUIRED_PROP_FIELDS = frozenset({"key", "title", "source", "outcomes"})
+
+#: Where to watch (UX-P132, Alex's item 4). A static per-tournament mapping is
+#: explicitly acceptable for v1. It is register-owned rather than hardcoded in
+#: the route so it travels with the tournament and can be corrected without a
+#: deploy — the same reason every other fact on this page lives in the file.
+REQUIRED_BROADCAST_FIELDS = frozenset({"region", "channels"})
 REQUIRED_PLAYER_FIELDS = frozenset({"entity_key", "display_name", "draw", "sources"})
 REQUIRED_MATCHUP_FIELDS = frozenset(
     {"matchup_key", "draw", "round", "scheduled_date", "players", "sources"}
@@ -154,6 +204,28 @@ STRUCTURAL_FINDINGS = frozenset({
     "MATCHUP_PLAYER_REPEATED",
     "MATCHUP_SIDES_MISMATCH",
     "MATCHUP_SIDE_MISSING_IDENTITY",
+    # Both sides of a match reading the SAME outcome id renders one quote as
+    # two players and makes the pair sum to 2x — the shape a normalizer would
+    # then "fix" into a plausible 50/50. Structural, so it is rejected before
+    # any display rule gets a chance to launder it.
+    "MATCHUP_SIDES_SHARE_OUTCOME",
+    # One outcome feeding two different matchups: the same quote presented as
+    # two separate matches. Registry-level, so validate_matchup cannot see it.
+    "MATCHUP_IDENTITY_REUSED",
+    # A curated prop whose outcomes cannot be priced, or whose two outcomes are
+    # one quote read twice. Listed explicitly rather than relying on a name
+    # prefix — which is the hole this whole set exists to close.
+    "PROP_OUTCOME_MISSING_IDENTITY",
+    "PROP_OUTCOME_REUSED",
+    # Two outcomes both claiming to answer the question. The card prints one
+    # number, so a second claimant means the register cannot say which — and
+    # whichever the renderer picked would be arbitrary. Structural for the same
+    # reason as the sides rules: it is an identity ambiguity, not a display
+    # preference, and a display rule would launder it into a plausible answer.
+    "PROP_MULTIPLE_ANSWERS",
+    # "Where to watch:" with nothing after it. Small, and still a promise the
+    # page cannot keep.
+    "BROADCAST_NO_CHANNELS",
 })
 
 #: Findings from ``validate_transition`` only.  These never reach ``classify``:
@@ -189,6 +261,28 @@ def is_non_player(name: Any) -> bool:
     return name.strip().lower() in NON_PLAYER_NAMES
 
 
+def player_role(player: Any) -> str:
+    """A player's role, defaulting to ``contender`` when absent.
+
+    Read through this helper everywhere rather than ``player["role"]``: v1
+    registers have no ``role`` key at all, and a ``KeyError`` — or worse, a
+    ``.get("role")`` returning ``None`` that then compares unequal to
+    ``"contender"`` — would silently empty the championship boards.
+    """
+    if not isinstance(player, dict):
+        return DEFAULT_PLAYER_ROLE
+    role = player.get("role")
+    return role if isinstance(role, str) and role else DEFAULT_PLAYER_ROLE
+
+
+def source_kind(block: Any) -> str:
+    """A source block's kind, defaulting to ``outright``.  Same reason as above."""
+    if not isinstance(block, dict):
+        return DEFAULT_SOURCE_KIND
+    kind = block.get("kind")
+    return kind if isinstance(kind, str) and kind else DEFAULT_SOURCE_KIND
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
@@ -205,6 +299,8 @@ def validate_source_entry(entry: Any, *, sources: set[str]) -> list[str]:
         findings.append("UNKNOWN_SOURCE")
     if entry["status"] not in REGISTER_STATUSES:
         findings.append("UNKNOWN_REGISTER_STATUS")
+    if source_kind(entry) not in SOURCE_KINDS:
+        findings.append("UNKNOWN_SOURCE_KIND")
 
     evidence = entry.get("evidence")
     if (
@@ -244,6 +340,10 @@ def validate_player(player: Any, *, draw_released: bool, sources: set[str]) -> l
     if is_non_player(player.get("display_name")) or is_non_player(player.get("entity_key")):
         findings.append("INVALID_NON_PLAYER_ENTITY")
 
+    role = player_role(player)
+    if role not in PLAYER_ROLES:
+        findings.append("INVALID_PLAYER_ROLE")
+
     seed = player.get("seed")
     if seed is not None and (not isinstance(seed, int) or isinstance(seed, bool) or not 1 <= seed <= 32):
         findings.append("INVALID_SEED")
@@ -258,7 +358,19 @@ def validate_player(player: Any, *, draw_released: bool, sources: set[str]) -> l
             findings.append("INVALID_DRAW_SLOT")
 
     source_blocks = player.get("sources")
-    if not isinstance(source_blocks, list) or not source_blocks:
+    if not isinstance(source_blocks, list):
+        findings.append("REGISTER_PLAYER_NO_SOURCES")
+        return findings
+
+    if role == "participant":
+        # A participant's only priceable identity is the matchup's `sides`. If
+        # one carries a player-level source block it is a contender that was
+        # labelled wrongly, and it would be invisible to the board it belongs
+        # on — a silent omission, which is the failure mode a register exists
+        # to make impossible.
+        if source_blocks:
+            findings.append("INVALID_PARTICIPANT_SOURCES")
+    elif not source_blocks:
         findings.append("REGISTER_PLAYER_NO_SOURCES")
         return findings
 
@@ -270,6 +382,12 @@ def validate_player(player: Any, *, draw_released: bool, sources: set[str]) -> l
             if name in seen_sources:
                 findings.append("DUPLICATE_SOURCE_FOR_PLAYER")
             seen_sources.add(name)
+            if source_kind(block) != "outright":
+                # A match quote on a contender's player entry would reach the
+                # championship board through `build_boards` and be blended with
+                # outright prices — P(wins this match) averaged into P(wins the
+                # tournament). Different questions, one number, silently wrong.
+                findings.append("INVALID_MATCH_SOURCE_ON_PLAYER")
 
     return findings
 
@@ -318,10 +436,95 @@ def validate_matchup(matchup: Any, *, entity_keys: set[str], sources: set[str]) 
         if not isinstance(sides, dict) or set(sides) != set(players if isinstance(players, list) else []):
             findings.append("MATCHUP_SIDES_MISMATCH")
             continue
+
+        side_outcomes: list[Any] = []
         for side in sides.values():
             if not isinstance(side, dict) or side.get("outcome_id") is None:
                 findings.append("MATCHUP_SIDE_MISSING_IDENTITY")
+                continue
+            side_outcomes.append(side["outcome_id"])
+        if len(side_outcomes) == 2 and side_outcomes[0] == side_outcomes[1]:
+            findings.append("MATCHUP_SIDES_SHARE_OUTCOME")
 
+    return findings
+
+
+def validate_prop(prop: Any, *, sources: set[str]) -> list[str]:
+    """Validate one curated prop/futures entry."""
+    if not isinstance(prop, dict):
+        return ["REGISTER_PROP_WRONG_SHAPE"]
+    if REQUIRED_PROP_FIELDS - prop.keys():
+        return ["REGISTER_PROP_MISSING_FIELDS"]
+
+    findings: list[str] = []
+    if prop["source"] not in sources:
+        findings.append("UNKNOWN_SOURCE")
+    draw = prop.get("draw")
+    if draw is not None and draw not in DRAWS:
+        findings.append("UNKNOWN_DRAW")
+
+    outcomes = prop.get("outcomes")
+    if not isinstance(outcomes, list) or not outcomes:
+        findings.append("REGISTER_PROP_NO_OUTCOMES")
+        return findings
+
+    seen: set[Any] = set()
+    answers: list[Any] = []
+    for outcome in outcomes:
+        if not isinstance(outcome, dict):
+            findings.append("REGISTER_PROP_OUTCOME_WRONG_SHAPE")
+            continue
+        if not outcome.get("entity_key") or not outcome.get("display_name"):
+            findings.append("PROP_OUTCOME_MISSING_IDENTITY")
+        if outcome.get("is_answer") is True:
+            answers.append(outcome.get("entity_key"))
+        outcome_id = outcome.get("outcome_id")
+        if outcome_id is None:
+            findings.append("PROP_OUTCOME_MISSING_IDENTITY")
+            continue
+        if outcome_id in seen:
+            # One quote rendered as two outcomes of the same question.
+            findings.append("PROP_OUTCOME_REUSED")
+        seen.add(outcome_id)
+
+    # THE ANSWER RULE (UX-P134). A prop card prints one big number under a
+    # question, so something has to decide WHICH outcome that number is. The
+    # renderer used to take the highest-probability outcome, and the census
+    # that populated this section proved how badly that fails: under "Can
+    # Sinner complete the calendar slam?" the market's own outcomes are the
+    # threshold ladder 1+/2+/3+, and the max is "1+ Grand Slam wins" at 99% —
+    # so the card would have printed **99%** under a question whose true
+    # answer, "All 4", is 1%. Not a rounding error; the opposite answer.
+    #
+    # So the answering outcome is NAMED in the register, offline, by the agent
+    # who curated the question — the same doctrine as the matchup sides
+    # mapping, and for the same reason: an identity decision made once against
+    # the evidence beats a request-time heuristic that is admittedly wrong.
+    # A field market where no single outcome answers the question marks none,
+    # and the renderer shows a ranked list instead of a headline number.
+    if len(answers) > 1:
+        findings.append("PROP_MULTIPLE_ANSWERS")
+
+    return findings
+
+
+def validate_broadcasts(broadcasts: Any) -> list[str]:
+    """Validate the where-to-watch mapping.  Absent is valid."""
+    if broadcasts is None:
+        return []
+    if not isinstance(broadcasts, list):
+        return ["REGISTER_BROADCASTS_WRONG_SHAPE"]
+
+    findings: list[str] = []
+    for entry in broadcasts:
+        if not isinstance(entry, dict) or REQUIRED_BROADCAST_FIELDS - entry.keys():
+            findings.append("REGISTER_BROADCAST_MISSING_FIELDS")
+            continue
+        channels = entry.get("channels")
+        if not isinstance(channels, list) or not channels:
+            findings.append("BROADCAST_NO_CHANNELS")
+        elif any(not isinstance(c, str) or not c.strip() for c in channels):
+            findings.append("BROADCAST_NO_CHANNELS")
     return findings
 
 
@@ -398,6 +601,7 @@ def validate_register(register: Any, contract: dict[str, Any]) -> list[str]:
             identities[identity] = key
 
     matchup_keys: set[str] = set()
+    matchup_identities: dict[tuple, str] = {}
     for matchup in matchups:
         findings.extend(validate_matchup(matchup, entity_keys=entity_keys, sources=sources))
         if not isinstance(matchup, dict) or "matchup_key" not in matchup:
@@ -405,6 +609,31 @@ def validate_register(register: Any, contract: dict[str, Any]) -> list[str]:
         if matchup["matchup_key"] in matchup_keys:
             findings.append("DUPLICATE_MATCHUP_KEY")
         matchup_keys.add(matchup["matchup_key"])
+
+        # One outcome id may back exactly one slate row. Two matchups sharing a
+        # side is one quote rendered as two matches — visible to nobody, since
+        # both rows look individually plausible.
+        for block in matchup.get("sources") or []:
+            if not isinstance(block, dict) or block.get("status") == "missing":
+                continue
+            for side in (block.get("sides") or {}).values():
+                if not isinstance(side, dict) or side.get("outcome_id") is None:
+                    continue
+                identity = (block.get("source"), side["outcome_id"])
+                owner = matchup_identities.get(identity)
+                if owner is not None and owner != matchup["matchup_key"]:
+                    findings.append("MATCHUP_IDENTITY_REUSED")
+                matchup_identities[identity] = matchup["matchup_key"]
+
+    prop_keys: set[str] = set()
+    for prop in register.get("props") or []:
+        findings.extend(validate_prop(prop, sources=sources))
+        if isinstance(prop, dict) and prop.get("key"):
+            if prop["key"] in prop_keys:
+                findings.append("DUPLICATE_PROP_KEY")
+            prop_keys.add(prop["key"])
+
+    findings.extend(validate_broadcasts(register.get("broadcasts")))
 
     return sorted(set(findings))
 
@@ -680,6 +909,20 @@ class TournamentRegister:
     def draw_players(self, draw: str) -> list[dict[str, Any]]:
         return [p for p in self.players if p.get("draw") == draw]
 
+    def board_players(self, draw: str) -> list[dict[str, Any]]:
+        """Contenders only — the championship board's population.
+
+        Separate from ``draw_players`` on purpose. After the second population
+        pass the register carries ~4x more participants than contenders, and a
+        board built from ``draw_players`` would rank a qualifier's
+        P(wins-this-match) alongside Alcaraz's P(wins-the-title). The filter
+        lives here, once, rather than at each call site.
+        """
+        return [
+            p for p in self.players
+            if p.get("draw") == draw and player_role(p) == "contender"
+        ]
+
     def market_ids(self, source: str | None = None) -> list[int]:
         """Distinct market ids the register pins, for a bounded targeted load."""
         ids = set()
@@ -718,10 +961,40 @@ class TournamentRegister:
             counts[f"{len(live)}_source"] += 1
         return dict(sorted(counts.items()))
 
+    @property
+    def props(self) -> list[dict[str, Any]]:
+        return [p for p in (self.data.get("props") or []) if isinstance(p, dict)]
+
+    @property
+    def broadcasts(self) -> list[dict[str, Any]]:
+        return [b for b in (self.data.get("broadcasts") or []) if isinstance(b, dict)]
+
+    def prop_outcome_ids(self) -> list[int]:
+        """Every outcome id a curated prop would price — bounded, like the rest."""
+        ids: set[int] = set()
+        for prop in self.props:
+            for outcome in prop.get("outcomes") or []:
+                if isinstance(outcome, dict) and isinstance(outcome.get("outcome_id"), int):
+                    ids.add(outcome["outcome_id"])
+        return sorted(ids)
+
+    def matchup_outcome_ids(self) -> list[int]:
+        """Every outcome id a slate row would price — the bounded slate load."""
+        ids: set[int] = set()
+        for matchup in self.matchups:
+            for block in matchup.get("sources") or []:
+                if not isinstance(block, dict) or block.get("status") == "missing":
+                    continue
+                for side in (block.get("sides") or {}).values():
+                    if isinstance(side, dict) and isinstance(side.get("outcome_id"), int):
+                        ids.add(side["outcome_id"])
+        return sorted(ids)
+
     def counters(self) -> dict[str, int]:
         counts: Counter = Counter()
         for player in self.players:
             counts[f"players_{player.get('draw', 'unknown')}"] += 1
+            counts[f"role_{player_role(player)}"] += 1
             for block in player.get("sources") or []:
                 if isinstance(block, dict):
                     counts[f"source_{block.get('status', 'invalid')}"] += 1
