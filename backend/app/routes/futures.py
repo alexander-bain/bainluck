@@ -1,5 +1,6 @@
 """Futures/Outrights API endpoints."""
 
+import logging
 import re
 import unicodedata
 from collections import defaultdict
@@ -7,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
@@ -23,6 +24,8 @@ from app.utils.tournament_stages import (
     tournament_names_match,
     is_game_level_market,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -1528,8 +1531,76 @@ async def get_playoff_grid(
     }
 
 
+async def _read_grouped_feed_cache(cache_key: str):
+    """Fresh-then-stale read of the shared grouped-feed entry.
+
+    Returns ``(payload, status)`` with status ``"hit"`` or ``"stale_hit"``, or
+    ``(None, None)``. It never raises. The caller was about to pay a ~1 s build
+    anyway, so every failure here degrades to that build rather than to an error:
+    a cache that can 500 the endpoint it was added to speed up is a net loss at
+    any hit rate (the same contract ``_read_shared_feed_cache`` states in
+    ``routes/feed.py``).
+    """
+    import json as _json
+
+    from app.utils import request_cache as _rc
+
+    try:
+        client = await _rc.get_shared_async_redis()
+        if client is None:
+            return None, None
+        for suffix, status in (("", "hit"), (":stale", "stale_hit")):
+            got = await _rc.bounded_redis_call(
+                lambda k=f"{cache_key}{suffix}": client.get(k)
+            )
+            if got.is_ok and got.value is not None:
+                try:
+                    payload = _json.loads(got.value)
+                except Exception:
+                    continue  # malformed is a typed miss, never a crash
+                if isinstance(payload, dict):
+                    return payload, status
+    except Exception:
+        logger.debug("grouped-feed cache read failed", exc_info=True)
+    return None, None
+
+
+async def _publish_grouped_feed_cache(cache_key: str, payload: dict) -> None:
+    """Publish one grouped-feed shape under the key the route just read.
+
+    Best-effort by construction: the response has already been built and the
+    caller is about to return it, so a Redis failure must cost the next visitor a
+    rebuild and this visitor nothing.
+    """
+    import json as _json
+
+    from app.utils import request_cache as _rc
+    from app.utils.grouped_feed_cache import (
+        GROUPED_FEED_STALE_TTL_SECONDS,
+        GROUPED_FEED_TTL_SECONDS,
+    )
+
+    try:
+        client = await _rc.get_shared_async_redis()
+        if client is None:
+            return
+        body = _json.dumps(payload, default=str)
+        await _rc.bounded_redis_call(
+            lambda: client.setex(cache_key, GROUPED_FEED_TTL_SECONDS, body)
+        )
+        await _rc.bounded_redis_call(
+            lambda: client.setex(
+                f"{cache_key}:stale", GROUPED_FEED_STALE_TTL_SECONDS, body
+            )
+        )
+    except Exception:
+        logger.debug("grouped-feed cache write failed", exc_info=True)
+
+
 @router.get("/grouped-feed")
 async def grouped_feed(
+    request: Request,
+    response: Response,
     category: Optional[str] = Query(None, description="Filter by category (sports, crypto, politics, weather)"),
     sport: Optional[str] = Query(None, description="Filter by sport"),
     sports_only: bool = Query(False, description="Restrict to /sports-page sport categories (excludes esports/geopolitics/crypto/etc.)"),
@@ -1547,11 +1618,45 @@ async def grouped_feed(
 
     Each group includes metadata for rendering the appropriate card type
     (ThresholdSparkline, PlayerStatCard, ProgressionLadder, etc.)
+
+    LAT-P100: this route had no cache of any kind while being one of the three
+    requests the native Sports tab issues on every open — measured 1,034.5 ms p50
+    (max 1,308) for the native shape and 683.0 ms p50 for the web one, on every
+    open, for every person. It reads ``limit * 5`` markets with their outcomes
+    eagerly loaded and then runs three grouping passes over them, and it takes no
+    principal at all, so one shared entry per shape serves everybody. The pre-warm
+    beat keeps both real shapes warm; this read is what makes that warm worth
+    anything, and the request path still publishes on a miss so the cache works
+    even if the beat is broken.
     """
     from ..utils.market_grouping import (
         detect_stat_prop_groups,
         detect_playoff_progression_groups,
         detect_threshold_groups,
+    )
+    from ..utils.grouped_feed_cache import (
+        GROUPED_FEED_CACHE_HEADER,
+        GROUPED_FEED_PREWARM_SCOPE_KEY,
+        grouped_feed_cache_key,
+    )
+
+    # LAT-P100. The marker is read from the ASGI *scope*, never from a header or
+    # query param, so it is unreachable from HTTP — an outside caller must not be
+    # able to force cold rebuilds of an expensive endpoint.
+    _prewarm_rebuild = bool(
+        getattr(request, "scope", None)
+        and request.scope.get(GROUPED_FEED_PREWARM_SCOPE_KEY)
+    )
+    _cache_key = grouped_feed_cache_key(
+        category=category, sport=sport, sports_only=sports_only, limit=limit
+    )
+    if not _prewarm_rebuild:
+        _cached, _status = await _read_grouped_feed_cache(_cache_key)
+        if _cached is not None:
+            response.headers[GROUPED_FEED_CACHE_HEADER] = _status
+            return _cached
+    response.headers[GROUPED_FEED_CACHE_HEADER] = (
+        "prewarm" if _prewarm_rebuild else "miss"
     )
 
     filters = [
@@ -1727,7 +1832,7 @@ async def grouped_feed(
             },
         })
 
-    return {
+    payload = {
         "feed": feed_items[:limit],
         "total_grouped": len([f for f in feed_items if f["type"] != "market"]),
         "total_ungrouped": len(ungrouped),
@@ -1737,6 +1842,15 @@ async def grouped_feed(
             "threshold": len(threshold_groups),
         },
     }
+
+    # An EMPTY feed must never become shared truth for 3 minutes — the same
+    # contract the feed pre-warm enforces (Queue 283 / C80). A transient empty
+    # read published here would be served to everyone until it expired, which is
+    # strictly worse than the 1-second build it replaced.
+    if payload["feed"]:
+        await _publish_grouped_feed_cache(_cache_key, payload)
+
+    return payload
 
 
 @router.get("/multi-history")
