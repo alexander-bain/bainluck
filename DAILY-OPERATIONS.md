@@ -40,7 +40,7 @@ state lives in files, so it is always safe), and talk to Fable for rulings.
 - Idle runner tab printing nothing = inbox empty = that lane has no staged work (a signal for
   Fable, never a failure).
 
-### The one command (added by the fold, 2026-08-26 — the staged note said "started once by Alex")
+### The one command
 
 ```bash
 ~/bainluck/start-lanes.sh      # after a reboot, or any time a lane's window is gone
@@ -65,8 +65,9 @@ nothing else.
 ## Morning (about 5 minutes)
 
 > **Superseded in part by v5.** Steps 1 and 2 are now the runners' job: the digest is
-> `~/bainluck/YOUR-TURN.md` (check it any time, not just at 6:45am), and the Claude windows
-> come up from `~/bainluck/start-lanes.sh` instead of five hand-typed lines. The launch lines
+> `~/bainluck/YOUR-TURN.md` (check it any time, not just at 6:45am), and the four **Claude**
+> windows come up from `~/bainluck/start-lanes.sh` instead of being typed by hand. The Codex
+> row is the exception — that window is still launched and pasted by Alex. The launch lines
 > and the cross-root write grant below are still the record of **what** each window is and
 > **what** lets it write — the runner types them for you, it does not change them.
 
