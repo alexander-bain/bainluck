@@ -162,6 +162,32 @@ class KalshiScanReport:
     unreached_existing: int = 0
     loop_deadline_hit: bool = False
 
+    # --- the empty-event market backfill (#2214) --------------------------
+    # `events_unreached` above says the loop never GOT to an event. These say
+    # the opposite and worse thing: the loop got there and found nothing to
+    # upsert, because the event arrived with zero markets. That is the larger
+    # population by an order of magnitude — the 2026-08-26 ring reads
+    # `events_fetched 16,340 / events_processed 389` with `loop_deadline_hit`
+    # false on every beat — and until now it was computed in `kalshi_api` and
+    # then dropped on the floor: the fields existed in the fetch's telemetry
+    # dict and no caller ever copied them here. Instrumentation that does not
+    # reach the report is not instrumentation, and it is why the mechanism went
+    # a week without being read off the artifact that exists to show it.
+    #: Fetched events carrying zero markets — every one dropped by the upsert
+    #: loop's `if not event.markets: continue`.
+    events_without_markets: int = 0
+    #: How many of those the backfill was willing to try.
+    market_backfill_candidates: int = 0
+    #: Of the candidates, how many belong to a series deliberately fetched
+    #: WITHOUT nested markets. This is the population the backfill OWES; a beat
+    #: that fills only the accidental remainder is not doing its job.
+    market_backfill_stripped_candidates: int = 0
+    #: True when the step was skipped outright for want of budget. Post-#2214
+    #: this should be false: the step holds a reserved floor.
+    market_backfill_skipped_past_deadline: bool = False
+    #: Events the backfill actually put markets into.
+    market_backfill_filled: int = 0
+
     duration_s: float = 0.0
     notes: List[str] = field(default_factory=list)
 
