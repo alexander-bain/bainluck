@@ -103,6 +103,12 @@ const NOTHING_ALLOWED: TelemetryExpectation = {
     { id: "analytics_google", hostSuffix: "analytics.google.com", expect: "absent" },
     { id: "vercel_insights", pathPrefix: "/_vercel/insights", expect: "absent" },
     { id: "vercel_speed", pathPrefix: "/_vercel/speed-insights", expect: "absent" },
+    // UX-P144. The FIRST-PARTY rail, and the one this pack could not see. Every
+    // rule above is a third-party collector; `/api/feed/interactions` is ours,
+    // and it POSTed the reader's scroll — session id attached — on a declined
+    // and an unanswered page alike. A denial that only silences other people's
+    // telemetry is not the denial the banner offered.
+    { id: "discover_interactions", pathPrefix: "/api/feed/interactions", expect: "absent" },
   ],
 };
 
@@ -315,6 +321,20 @@ test("consent.grant — exactly one page view for the page you are on", async ({
         { id: "vercel_insights", pathPrefix: "/_vercel/insights", expect: "at_least", count: 0 },
         { id: "vercel_speed", pathPrefix: "/_vercel/speed-insights", expect: "at_least", count: 0 },
         { id: "analytics_google", hostSuffix: "analytics.google.com", expect: "at_least", count: 0 },
+        // UX-P144. On a GRANT this rail may fire — that is the reader's choice
+        // working. Allowlisted at `at_least 0` for the same reason
+        // `ga4_other_events_allowed` is: the ledger is exhaustive, so leaving it
+        // unlisted would red the journey under a different name. Volume is
+        // deliberately not asserted here; the batching contract that keeps a
+        // scroll from spending the reader's own 60/min budget is pinned in
+        // `__tests__/lib/discoverInteractionsConsent.test.ts`, where a unit can
+        // count requests deterministically and a 5s browser window cannot.
+        {
+          id: "discover_interactions_allowed_on_grant",
+          pathPrefix: "/api/feed/interactions",
+          expect: "at_least",
+          count: 0,
+        },
       ],
     },
   });

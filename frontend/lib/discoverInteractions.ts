@@ -6,6 +6,11 @@ import type {
   FeedConceptData,
 } from "@/lib/types";
 import { resolveShape, SHAPE_UNSHAPED, type MarketShape } from "@/lib/marketShape";
+import {
+  getTelemetryConsent,
+  isAnalyticsGranted,
+  type ConsentLevel,
+} from "@/lib/analytics/telemetryConsent";
 
 // Concept feed items (UFC/F1/cycling event concepts) carry a `domain`, not an
 // `llm_sport_category`. Map the domain to the canonical sport category so concept
@@ -71,6 +76,21 @@ export interface DiscoverProfile {
 const PROFILE_KEY = "discover_interaction_profile_v1";
 const SESSION_KEY = "bainluck_session_id";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+/**
+ * Mirrors `DiscoverInteractionBatch.interactions` (`max_length=50`) in
+ * backend/app/routes/feed.py. The endpoint has ALWAYS accepted a batch; this
+ * client sent exactly one interaction per request, which is what made a normal
+ * Discover scroll self-throttling — see `flushDiscoverInteractions`.
+ */
+const MAX_BATCH = 50;
+
+/**
+ * How long a queued interaction waits for company before it is sent. Short
+ * enough that a reader who taps straight through still records their taps,
+ * long enough that a scroll past a screenful of cards is ONE request.
+ */
+const FLUSH_DELAY_MS = 2000;
 
 const ACTION_WEIGHTS: Record<DiscoverAction, number> = {
   impression: 0.05,
@@ -233,13 +253,84 @@ export function getDiscoverSessionId(): string | undefined {
   }
 }
 
-export function sendDiscoverInteraction(
-  analytics: DiscoverItemAnalytics,
-  action: DiscoverAction,
-  positionIndex?: number,
-  source = "card"
-): void {
-  if (typeof window === "undefined") return;
+/**
+ * One interaction as the batch endpoint receives it.
+ */
+export interface DiscoverInteractionItem {
+  action: DiscoverAction;
+  item_type: DiscoverItemAnalytics["content_type"];
+  item_id: string;
+  category: string;
+  item_name: string;
+  score: number;
+  rank?: number;
+  surface: "web";
+  source: string;
+  market_type: MarketShape;
+}
+
+/**
+ * MAY WE SEND THIS AT ALL — the pure gate, and the fix for the whole
+ * `consent.*` browser-audit family.
+ *
+ * `/api/feed/interactions` is non-essential behavioural telemetry: it records
+ * every card a reader scrolls past, keyed to their session id, so the server
+ * can personalise their feed. It is exactly the kind of collection the consent
+ * banner asks about — and it was the ONE rail on this page that never asked.
+ * The GA4 event fired beside it (`trackEvent`) has always been consent-gated
+ * and the localStorage profile never leaves the device; this call did neither.
+ *
+ * `null` (no choice yet) is a DENIAL, not a soft default, exactly as
+ * `isAnalyticsGranted` defines it — a first visit must produce zero
+ * non-essential telemetry, the same as an explicit Decline.
+ */
+export function mayCaptureDiscoverInteraction(consent: ConsentLevel): boolean {
+  return isAnalyticsGranted(consent);
+}
+
+/** Interactions waiting for a batch. Never sent unless consent allows it. */
+let pending: DiscoverInteractionItem[] = [];
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let unloadHooked = false;
+
+/** Drop everything queued. Used on revoke and after a send. */
+export function dropPendingDiscoverInteractions(): void {
+  pending = [];
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+}
+
+/** Test seam: what is currently queued and unsent. */
+export function peekPendingDiscoverInteractions(): DiscoverInteractionItem[] {
+  return pending.slice();
+}
+
+/**
+ * Send whatever is queued — if and only if consent allows it RIGHT NOW.
+ *
+ * The gate is re-read here and not just at enqueue time, because a reader can
+ * revoke while a batch is still waiting. That is `consent.grant_then_revoke`
+ * and `consent.deferred_event` precisely: a queued event must not land after a
+ * revoke. Denied at flush time means the batch is DROPPED, never sent late.
+ *
+ * Reading the gate here also means an interaction captured before the consent
+ * authority has hydrated is decided once it has, rather than being refused for
+ * a race the reader did not cause.
+ */
+export function flushDiscoverInteractions(): void {
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  const batch = pending;
+  pending = [];
+  if (batch.length === 0) return;
+
+  // No grant, no request. The reader who declined generates no network traffic
+  // at all — not a request that fails, not a request that is ignored.
+  if (!mayCaptureDiscoverInteraction(getTelemetryConsent())) return;
 
   try {
     const sessionId = getDiscoverSessionId();
@@ -252,23 +343,71 @@ export function sendDiscoverInteraction(
     void fetch(`${API_URL}/api/feed/interactions`, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        interactions: [{
-          action,
-          item_type: analytics.content_type,
-          item_id: String(analytics.item_id),
-          category: analytics.category,
-          item_name: analytics.item_name,
-          score: analytics.score,
-          rank: typeof positionIndex === "number" ? positionIndex + 1 : undefined,
-          surface: "web",
-          source,
-          market_type: analytics.market_type,
-        }],
-        provenance: "user",
-      }),
+      body: JSON.stringify({ interactions: batch, provenance: "user" }),
       keepalive: true,
     }).catch(() => {});
+  } catch {
+    // First-party interaction capture should never affect the feed.
+  }
+}
+
+/**
+ * Capture one interaction.
+ *
+ * TWO things changed here, and they are the same defect seen from two sides.
+ *
+ * ONE — it is consent-gated (see `mayCaptureDiscoverInteraction`).
+ *
+ * TWO — it BATCHES. This fired one cross-origin POST per card that crossed the
+ * viewport (`app/discover/page.tsx`, threshold 0.55), so an ordinary scroll
+ * through Discover issued dozens of requests in seconds and spent the reader's
+ * own 60/minute anonymous budget (`ANON_RATE_LIMIT`) on impression beacons. The
+ * 429s that followed are cross-origin, and a 429 the browser cannot read
+ * surfaces to the page as an opaque CORS failure — which is why this arrived on
+ * the board as ~20 separate `console.no_errors` / `network.no_unexpected_
+ * failures` issues rather than as one rate-limit bug (#2081 named the
+ * mechanism; this is the cause behind it). The endpoint has always taken 50 per
+ * request; only the client refused to use it.
+ */
+export function sendDiscoverInteraction(
+  analytics: DiscoverItemAnalytics,
+  action: DiscoverAction,
+  positionIndex?: number,
+  source = "card"
+): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    pending.push({
+      action,
+      item_type: analytics.content_type,
+      item_id: String(analytics.item_id),
+      category: analytics.category,
+      item_name: analytics.item_name,
+      score: analytics.score,
+      rank: typeof positionIndex === "number" ? positionIndex + 1 : undefined,
+      surface: "web",
+      source,
+      market_type: analytics.market_type,
+    });
+
+    // A full batch goes now — the server rejects a 51st, so the cap is a
+    // contract and not a tuning knob.
+    if (pending.length >= MAX_BATCH) {
+      flushDiscoverInteractions();
+      return;
+    }
+
+    // Anything still queued when the page goes away is sent with the batch.
+    // Hooked lazily so a page nobody interacts with adds no listeners.
+    if (!unloadHooked) {
+      unloadHooked = true;
+      window.addEventListener("pagehide", flushDiscoverInteractions);
+    }
+
+    if (flushTimer === null) {
+      flushTimer = setTimeout(flushDiscoverInteractions, FLUSH_DELAY_MS);
+    }
   } catch {
     // First-party interaction capture should never affect the feed.
   }
