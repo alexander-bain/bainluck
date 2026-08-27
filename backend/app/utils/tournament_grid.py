@@ -49,7 +49,10 @@ reads the match list, never reads the props, never multiplies anything.
 
 ``unlinked`` and ``unregistered`` — THE ALARM STATES
     ``unlinked``: the register pins an identity for this cell and the database
-    returned nothing for it.  The market exists, the link is broken.
+    returned nothing for it.  The market exists, the link is broken.  **ANY
+    registered leg that fails to load raises this**, including the case where
+    the other leg loaded fine: a two-source cell missing one source is a broken
+    two-source claim, not a one-source answer, and it publishes no number.
     ``unregistered``: the register carries no cell at all for a (player, round)
     the grid has a column for.  Nobody censused it.
     Both are OUR defect, both name the missing linkage in the cell itself, and
@@ -302,6 +305,7 @@ def _price_cell(
 
     blend_rows: list[dict[str, Any]] = []
     source_views: list[dict[str, Any]] = []
+    unlinked_views: list[dict[str, Any]] = []
     observed_times: list[Optional[datetime]] = []
     unlinked: list[str] = []
 
@@ -319,6 +323,11 @@ def _price_cell(
             unlinked.append(
                 f"{block.get('source')} {block.get('market_external_id') or block.get('market_id')}"
             )
+            unlinked_views.append({
+                "source": block.get("source"),
+                "state": "unlinked",
+                "market_external_id": block.get("market_external_id"),
+            })
             continue
 
         blend_rows.append({"source": block.get("source"), "probability": probability})
@@ -333,13 +342,40 @@ def _price_cell(
         })
         observed_times.append(observed)
 
-    if not blend_rows:
-        return _cell(
-            CELL_UNLINKED,
-            note=f"Registered but unpriced: {'; '.join(unlinked)}",
-            censused_at=censused_at,
-            sources=[{"source": b.get("source"), "state": "unlinked"} for b in live_blocks],
+    if unlinked:
+        # ── PARTIAL IS STILL BROKEN, AND IT IS THE HARDER CASE TO SEE.
+        #
+        # This used to be two paths: every leg missing was an alarm, and ONE leg
+        # missing printed the survivor as a live single-source number with
+        # `is_alarm=False`.  CERT C-UX-P139-GRID-REGISTER-1's P1 executed that
+        # second path — a registered Polymarket+Kalshi SF cell with Kalshi
+        # absent returned `state='live'`, `source_count=1`, `alarm_cells=0` —
+        # and it is exactly the laundering the amendment forbids: the grid's own
+        # eval read green while the page published a half-answered question
+        # wearing the confident type.
+        #
+        # A registered two-source cell is a claim that TWO markets answer this
+        # question.  If one of them does not load, the claim is broken, and a
+        # broken claim is an alarm with a named fix (link the market) — not a
+        # number with a footnote.  So the number is WITHHELD, not muted: a price
+        # the reader can see is a price the reader will believe, and one leg of
+        # a two-leg blend is not the number this cell promised.
+        priced_note = (
+            f"{len(source_views)} of {len(live_blocks)} registered sources priced; "
+            f"unpriced: {'; '.join(unlinked)}"
+            if source_views
+            else f"Registered but unpriced: {'; '.join(unlinked)}"
         )
+        cell = _cell(
+            CELL_UNLINKED,
+            note=priced_note,
+            censused_at=censused_at,
+            sources=source_views + unlinked_views,
+        )
+        # The specimen stays identifiable: a fully-dead cell and a half-dead one
+        # are the same alarm to the reader and two different fixes to us.
+        cell["partially_unlinked"] = bool(source_views)
+        return cell
 
     blend, divergence, rule = blend_with_verdict(blend_rows)
     if blend is None:
@@ -365,13 +401,10 @@ def _price_cell(
         censused_at=censused_at,
         blend_rule=rule,
         divergent=divergence is not None,
-        # A partially-linked cell still prints its number — one live source is
-        # a real answer — but it says the other one is missing rather than
-        # quietly halving its own source count.
-        note=(f"Unpriced leg: {'; '.join(unlinked)}" if unlinked else None),
     )
     cell["freshest_observed_at"] = newest.isoformat() if newest else None
-    cell["partially_unlinked"] = bool(unlinked)
+    # Every registered leg loaded, or this function returned an alarm above.
+    cell["partially_unlinked"] = False
     return cell
 
 

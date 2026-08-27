@@ -223,6 +223,119 @@ describe("no cell is ever blank", () => {
 });
 
 // ---------------------------------------------------------------------------
+// CERT C-UX-P139-GRID-REGISTER-1 [P1] — the specimen, at the RENDER
+// ---------------------------------------------------------------------------
+//
+// The cert executed a registered Polymarket+Kalshi SF cell with Polymarket
+// loaded and Kalshi absent and got `state='live'`, `probability_is_live=true`,
+// `source_count=1`, `is_alarm=false`, `alarm_cells=0`. The backend fix turns
+// that cell into an alarm and withholds the number; these assertions are what
+// a reader would actually have seen, because the backend guard alone stays
+// green the day this component starts printing `cell.sources[0].probability`
+// (the plant rule — `reference_plant_must_hit_the_render`).
+
+describe("cert P1 — one missing leg is an alarm at the render, not a number", () => {
+  /** The server's shape for the specimen, post-fix. */
+  const PARTIAL_CELL = {
+    state: "unlinked" as const,
+    probability: null,
+    probability_is_live: false,
+    sources: [
+      { source: "polymarket", probability: 0.6, price_state: "live", market_external_id: "0x000a" },
+      { source: "kalshi", state: "unlinked", market_external_id: "KXSFALCARAZ" },
+    ],
+    source_count: 2,
+    observed_at: null,
+    age_hours: null,
+    blend_rule: null,
+    divergent: false,
+    note: "1 of 2 registered sources priced; unpriced: kalshi KXSFALCARAZ",
+    censused_at: "2026-08-27T00:00:00+00:00",
+    is_alarm: true,
+    partially_unlinked: true,
+  };
+
+  function partialGrid() {
+    return grid({
+      rows: [{
+        entity_key: "carlos-alcaraz", display_name: "Carlos Alcaraz", seed: 2, rank: 1,
+        on_board: true,
+        cells: {
+          ...Object.fromEntries(["R16", "QF", "F", "title"].map((k) => [k, cell()])),
+          SF: PARTIAL_CELL,
+        },
+      }],
+      counts: { live: 4, unlinked: 1 },
+      priced_cells: 4,
+      alarm_cells: 1,
+    });
+  }
+
+  it("the surviving leg's price never reaches the DOM", () => {
+    const html = renderToStaticMarkup(<PlayoffGrid grid={partialGrid()} />);
+    const sf = html.split('data-column="SF"').slice(1).join("");
+    // 0.6 would print as "60%". The other four cells are untouched, so this is
+    // scoped to the SF cell's own markup rather than to the whole grid.
+    expect(sf).not.toContain("60%");
+  });
+
+  it("the cell renders as an alarm, not as a live number", () => {
+    const html = renderToStaticMarkup(<PlayoffGrid grid={partialGrid()} />);
+    expect(html).toContain('data-state="unlinked" data-column="SF"');
+    const sfCell = html.match(
+      /data-testid="grid-cell" data-state="unlinked" data-column="SF"[^>]*/
+    )?.[0] ?? "";
+    expect(sfCell).toContain('data-live="false"');
+    expect(sfCell).toContain('data-alarm="true"');
+  });
+
+  it("the banner fires and the eval reads RED", () => {
+    const model = partialGrid();
+    const html = renderToStaticMarkup(<PlayoffGrid grid={model} />);
+    expect(html).toContain('data-testid="grid-alarm-banner"');
+    expect(html).toContain('data-count="1"');
+    // The laundering the cert named: the grid used to report zero alarms while
+    // publishing this cell.
+    expect(gridEvalVerdict(model)).toBe("red");
+  });
+
+  it("it says WHICH leg failed, and that it is ours", () => {
+    const html = renderToStaticMarkup(<PlayoffGrid grid={partialGrid()} />);
+    expect(html).toContain("KXSFALCARAZ");
+    expect(html).toContain("1 of 2 registered sources priced");
+    expect(html).toContain("fault on our side");
+  });
+
+  it("a fully-loaded two-source cell still prints its blended number", () => {
+    // The fix withholds a BROKEN cell, not a working one.
+    const html = renderToStaticMarkup(
+      <PlayoffGrid
+        grid={grid({
+          rows: [{
+            entity_key: "carlos-alcaraz", display_name: "Carlos Alcaraz", seed: 2, rank: 1,
+            on_board: true,
+            cells: {
+              ...Object.fromEntries(["R16", "QF", "F", "title"].map((k) => [k, cell()])),
+              SF: cell({
+                probability: 0.58,
+                source_count: 2,
+                sources: [
+                  { source: "polymarket", probability: 0.6 },
+                  { source: "kalshi", probability: 0.56 },
+                ],
+                blend_rule: "equal_weight_midpoint",
+              }),
+            },
+          }],
+        })}
+      />
+    );
+    expect(html).toContain("58%");
+    expect(html).not.toContain('data-testid="grid-alarm-banner"');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Ruling 4 — the semifinal column, and the sum check
 // ---------------------------------------------------------------------------
 

@@ -274,6 +274,158 @@ class TestNoCellIsEverBlank:
         assert sum(grid["counts"].values()) == grid["total_cells"]
 
 
+def _two_source_reach(round_name="SF", **kwargs):
+    """A registered TWO-source cell: Polymarket outcome 1, Kalshi outcome 2.
+
+    The shape the cert's specimen needs. `_reach`'s default second block is a
+    censused ABSENCE (Kalshi publishes no ladder), which is a different fact —
+    here both sources are registered live and both are expected to price.
+    """
+    reach = _reach("carlos-alcaraz", round_name, kalshi_missing=False, **kwargs)
+    reach["sources"].append({
+        "source": "kalshi",
+        "kind": "reach",
+        "market_id": 20,
+        "outcome_id": 2,
+        "market_external_id": "KXSFALCARAZ",
+        "source_name": "Yes",
+        "question_round": round_name,
+        "question_draw": "mens-singles",
+        "question_subject": "Carlos Alcaraz",
+        "status": "live",
+        "terminal_result": None,
+        "price_observed_at": NOW.isoformat(),
+        "evidence": {"kind": "census", "observed_at": NOW.isoformat()},
+    })
+    return reach
+
+
+class TestOneMissingLegIsAnAlarmNotAOneSourceAnswer:
+    """CERT C-UX-P139-GRID-REGISTER-1 [P1], as the executable specimen.
+
+    The cert ran this exact case against `582d31a9`: a registered
+    Polymarket+Kalshi SF cell with Polymarket loaded and Kalshi absent returned
+    ``state='live'``, ``probability_is_live=True``, ``source_count=1``,
+    ``partially_unlinked=True``, ``is_alarm=False`` — and the grid reported
+    ``alarm_cells=0``.
+
+    That is partial-success laundering, and it is worse here than the all-legs-
+    missing case it sat beside, because it is INVISIBLE: the all-missing cell
+    prints "!" and gets counted, while this one prints a confident percentage
+    under a two-source question and leaves the critical eval reading green. A
+    registered two-source cell is a claim that two markets answer this question.
+    One of them failing to load breaks the claim, and a broken claim is an
+    alarm with a named fix, not a number with a footnote.
+    """
+
+    def _grid(self, prices):
+        return build_playoff_grid(
+            _register([_two_source_reach()]),
+            board_rows=[_board_row()],
+            prices=prices,
+            draw="mens-singles",
+            now=NOW,
+        )
+
+    def test_the_specimen_one_good_leg_one_missing_leg(self):
+        # Polymarket (outcome 1) loaded; Kalshi (outcome 2) absent.
+        grid = self._grid({1: {"probability": 0.60, "observed_at": NOW}})
+        cell = grid["rows"][0]["cells"]["SF"]
+
+        assert cell["state"] == CELL_UNLINKED
+        assert cell["is_alarm"] is True
+        assert grid["alarm_cells"] == 1
+
+    def test_the_surviving_leg_is_not_published_as_a_number(self):
+        """WITHHELD, not muted. A price the reader can see is one they believe,
+        and one leg of a two-leg blend is not the number the cell promised."""
+        grid = self._grid({1: {"probability": 0.60, "observed_at": NOW}})
+        cell = grid["rows"][0]["cells"]["SF"]
+
+        assert cell["probability"] is None
+        assert cell["probability_is_live"] is False
+
+    def test_it_names_which_leg_failed_and_says_how_many_priced(self):
+        grid = self._grid({1: {"probability": 0.60, "observed_at": NOW}})
+        cell = grid["rows"][0]["cells"]["SF"]
+
+        assert "KXSFALCARAZ" in cell["note"]
+        assert "1 of 2" in cell["note"]
+        # Both legs are still enumerated, so the fix is a lookup rather than an
+        # investigation: which one loaded, which one did not.
+        states = {s["source"]: s.get("state") for s in cell["sources"]}
+        assert states["kalshi"] == "unlinked"
+        assert states.get("polymarket") is None  # the loaded leg carries a price
+        assert any(s.get("probability") == 0.6 for s in cell["sources"])
+
+    def test_a_partial_failure_is_distinguishable_from_a_total_one(self):
+        """Same alarm to the reader, two different fixes for us."""
+        partial = self._grid({1: {"probability": 0.60, "observed_at": NOW}})
+        total = self._grid({})
+
+        assert partial["rows"][0]["cells"]["SF"]["partially_unlinked"] is True
+        assert total["rows"][0]["cells"]["SF"]["partially_unlinked"] is False
+        assert total["rows"][0]["cells"]["SF"]["state"] == CELL_UNLINKED
+
+    def test_the_other_leg_missing_fails_the_same_way(self):
+        """Not a Polymarket rule. Either leg. Kalshi loaded, Polymarket absent."""
+        grid = self._grid({2: {"probability": 0.44, "observed_at": NOW}})
+        cell = grid["rows"][0]["cells"]["SF"]
+
+        assert cell["state"] == CELL_UNLINKED
+        assert cell["probability"] is None
+        assert cell["is_alarm"] is True
+        assert "0x000a" in cell["note"]
+
+    def test_both_legs_present_still_blends_and_still_reads_live(self):
+        """The fix withholds a BROKEN cell, not a working one."""
+        grid = self._grid({
+            1: {"probability": 0.60, "observed_at": NOW},
+            2: {"probability": 0.56, "observed_at": NOW},
+        })
+        cell = grid["rows"][0]["cells"]["SF"]
+
+        assert cell["state"] == CELL_LIVE
+        assert cell["probability"] == pytest.approx(0.58)
+        assert cell["source_count"] == 2
+        assert cell["is_alarm"] is False
+        assert cell["partially_unlinked"] is False
+        assert grid["alarm_cells"] == 0
+
+    def test_a_censused_absence_beside_a_live_leg_is_still_not_an_alarm(self):
+        """The boundary this must not cross. A source that was ASKED and does
+        not carry the market is a `missing` block — it never enters the live
+        set, so a single registered source pricing alone stays a real answer.
+        Kalshi carries no ladder at all for this tournament; if that read as an
+        alarm, every cell on the page would be red for a fact about the world."""
+        grid = build_playoff_grid(
+            _register([_reach("carlos-alcaraz", "SF")]),   # kalshi = missing
+            board_rows=[_board_row()],
+            prices={1: {"probability": 0.60, "observed_at": NOW}},
+            draw="mens-singles",
+            now=NOW,
+        )
+        cell = grid["rows"][0]["cells"]["SF"]
+
+        assert cell["state"] == CELL_LIVE
+        assert cell["probability"] == 0.6
+        assert cell["is_alarm"] is False
+        assert grid["alarm_cells"] == 0
+
+    def test_the_partial_cell_is_excluded_from_the_column_sum(self):
+        """A withheld number must not be counted as coverage either way — the
+        sum check reports `priced_rows`, and a broken cell is not a priced one."""
+        grid = self._grid({1: {"probability": 0.60, "observed_at": NOW}})
+        check = next(c for c in grid["column_sums"] if c["key"] == "SF")
+
+        assert check["priced_rows"] == 0
+        assert check["sum"] == 0
+
+    def test_the_counters_still_account_for_every_cell(self):
+        grid = self._grid({1: {"probability": 0.60, "observed_at": NOW}})
+        assert sum(grid["counts"].values()) == grid["total_cells"]
+
+
 class TestFreshnessIsInherited:
     """One vocabulary. A grid cell is live/stale/dark by the page's own rule."""
 

@@ -307,6 +307,24 @@ ENFORCED_TASKS = frozenset({
     # stale was already attempted this window", which are opposite states and are
     # given different `reason`s rather than one shared silence.
     "futures_price_refresh",           # terminal + snapshots_written + remaining_stale
+    # UX-P143 / CERT C-UX-P139-GRID-REGISTER-1 [P2]: the two rails that keep the
+    # tournament hub current. Enrolled in the SAME change that gives them
+    # terminals, per the trap thirty lines up — the cert found them calling
+    # `_tracked_run` with no terminal at all, so `verdict_for` returned the
+    # non-authoritative legacy unknown and both read GREEN by default.
+    #
+    # They need it more than most, because their failure does not show: a dead
+    # price refresh does not blank the grid, it lets every number on it AGE, and
+    # a dead results sync does not show a wrong score, it shows none. The page
+    # looks the same either way. `tournament_price_refresh` returns `failed` for
+    # an unreadable register, a fetch that raised, zero markets returned, a write
+    # that raised, and zero snapshots written; `no_work` for a register that pins
+    # no Polymarket identity (a retired tournament is honest, and still not
+    # GREEN). `tournament_results_sync` returns `failed` when nothing reached the
+    # cache and `complete` with a populated `errors` list — hence PARTIAL — when
+    # only some tours landed.
+    "tournament_price_refresh",        # terminal + reason + snapshots_written
+    "tournament_results_sync",         # terminal + reason + written + errors
 })
 
 

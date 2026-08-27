@@ -41,6 +41,22 @@ register is retired.
 This task NEVER creates a market and never touches identity.  It updates prices
 for outcomes the register already pins, which is why it is safe to run at a
 cadence the discovery poll could not sustain.
+
+═══ WHY BOTH RAILS SPEAK THE TERMINAL VOCABULARY (CERT P2, gotcha #53) ═══
+
+Both functions here return a ``terminal`` and both labels are in
+``task_verdict.ENFORCED_TASKS``.  CERT C-UX-P139-GRID-REGISTER-1's P2 found them
+returning a bare ``verdict`` string that nothing reads: ``verdict_for`` produced
+``TaskVerdict(unknown, authoritative=False)``, whose ``blocks_success`` is False,
+so a rail that refreshed nothing forever was indistinguishable from a healthy one
+in task metrics.
+
+That is this codebase's founding false-GREEN shape and it is especially sharp
+here, because the failure is SILENT BY CONSTRUCTION: the page keeps rendering.
+A dead refresh rail does not blank the grid — it lets every number on it age,
+wearing whatever freshness word the gates give it, which is precisely the
+27-hour state this task was written to end.  "It returned" is not "it worked",
+so the zero-yield states below are terminals and not log lines.
 """
 
 from __future__ import annotations
@@ -60,6 +76,11 @@ BATCH_SIZE = 40
 #: register can never turn a 10-minute task into a Gamma flood.  Well above the
 #: US Open's ~420 and well below anything that would matter.
 MAX_MARKETS = 2000
+
+#: What the scheduled run refreshes when nobody named anything.  Named, like the
+#: route's own table.
+DEFAULT_PRICE_TARGETS: list[tuple[str, str]] = [("us-open", "2026")]
+DEFAULT_RESULT_TARGETS: list[tuple[str, str]] = [("us-open", "US Open")]
 
 
 def registered_polymarket_conditions(register: dict[str, Any]) -> dict[str, list[int]]:
@@ -103,19 +124,23 @@ async def _refresh_registered_tournament_prices(
     tournaments: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Re-price every Polymarket market a committed tournament register pins."""
-    from sqlalchemy import select, update
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
-
-    from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
     from app.services.polymarket_api import PolymarketAPIService
-    from app.tasks.base import get_task_session
-    from app.tasks.polymarket import _resolve_market_probability
-    from app.utils.odds_math import probability_to_american
     from app.utils.tournament_register import load_register
 
     # Explicit, like the route's own table: a register is refreshed because
     # somebody said so, never because a file appeared in a directory.
-    targets = tournaments or [("us-open", "2026")]
+    #
+    # `is None` and not `or`: an explicitly EMPTY list means "refresh nothing"
+    # and must reach the `no_work` terminal below. Falling back to the default
+    # on `[]` would turn a deliberate no-op into a full run, and — worse for
+    # this file — make the terminal unreachable and its guard untestable.
+    targets = DEFAULT_PRICE_TARGETS if tournaments is None else tournaments
+    if not targets:
+        return _refresh_terminal(
+            {"tournaments": 0, "conditions_requested": 0, "errors": []},
+            "no_work",
+            "no_targets",
+        )
 
     stats: dict[str, Any] = {
         "tournaments": 0,
@@ -138,13 +163,19 @@ async def _refresh_registered_tournament_prices(
         for condition, outcome_ids in registered_polymarket_conditions(register).items():
             wanted.setdefault(condition, []).extend(outcome_ids)
 
+    if not stats["tournaments"]:
+        # NOT `no_work`. The registers are committed files in this repo; if none
+        # of the named ones loads, something is broken here, not absent upstream.
+        return _refresh_terminal(stats, "failed", "no_readable_register")
+
     conditions = sorted(wanted)[:MAX_MARKETS]
     stats["conditions_requested"] = len(conditions)
     if not conditions:
-        # gotcha #53: "it returned" is not "it worked". Nothing to refresh is a
-        # real state, and it is reported as one rather than as a green run.
-        stats["verdict"] = "no_registered_polymarket_identities"
-        return stats
+        # A loaded register that pins no Polymarket identity. Authoritative
+        # UNKNOWN rather than failed — a retired tournament is the honest case —
+        # but never GREEN: a refresh rail that refreshed nothing has not proved
+        # it can refresh anything.
+        return _refresh_terminal(stats, "no_work", "no_registered_polymarket_identities")
 
     service = PolymarketAPIService()
     try:
@@ -153,13 +184,58 @@ async def _refresh_registered_tournament_prices(
         )
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed
         stats["errors"].append(f"gamma fetch failed: {exc}")
-        stats["verdict"] = "fetch_failed"
-        return stats
+        return _refresh_terminal(stats, "failed", "fetch_failed")
 
     stats["markets_returned"] = len(markets)
     stats["not_returned"] = len(conditions) - len({m.condition_id for m in markets})
 
+    if not markets:
+        # We asked for identities the register pins BY ID and Gamma returned
+        # none of them. Either the ids are wrong or the rail cannot reach Gamma;
+        # both are ours to fix and neither is a run that worked.
+        return _refresh_terminal(stats, "failed", "no_markets_returned")
+
     now = datetime.now(timezone.utc)
+    try:
+        await _write_refreshed_prices(markets, stats, now=now)
+    except Exception as exc:  # noqa: BLE001
+        # A WRITE THAT FAILED IS THE QUIETEST FAILURE THIS RAIL HAS. The fetch
+        # worked, the numbers are in memory, and nothing reaches the page. It is
+        # caught here rather than left to raise so the summary itself carries the
+        # terminal — task metrics then distinguish "could not write" from "wrote
+        # nothing to write" instead of showing one bare exception string.
+        logger.exception("tournament price refresh: write failed")
+        stats["errors"].append(f"write failed: {exc}")
+        return _refresh_terminal(stats, "failed", "write_failed")
+
+    if not stats["snapshots_written"]:
+        # Markets came back and not one price landed. The grid keeps rendering
+        # and every number on it keeps ageing — the exact invisible failure.
+        return _refresh_terminal(stats, "failed", "no_prices_written")
+
+    return _refresh_terminal(stats, "complete", "prices_written")
+
+
+def _refresh_terminal(stats: dict[str, Any], terminal: str, reason: str) -> dict[str, Any]:
+    """Stamp the contract fields and log once. Every return goes through here."""
+    stats["terminal"] = terminal
+    stats["reason"] = reason
+    logger.info("tournament price refresh: %s", stats)
+    return stats
+
+
+async def _write_refreshed_prices(
+    markets: list[Any], stats: dict[str, Any], *, now: datetime
+) -> None:
+    """Update every registered outcome these markets price, and snapshot it."""
+    from sqlalchemy import select, update
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
+    from app.tasks.base import get_task_session
+    from app.tasks.polymarket import _resolve_market_probability
+    from app.utils.odds_math import probability_to_american
+
     async with get_task_session() as session:
         for market in markets:
             probability = _resolve_market_probability(market)
@@ -223,10 +299,6 @@ async def _refresh_registered_tournament_prices(
 
         await session.commit()
 
-    stats["verdict"] = "ok" if stats["snapshots_written"] else "no_prices_written"
-    logger.info("tournament price refresh: %s", stats)
-    return stats
-
 
 # ---------------------------------------------------------------------------
 # ESPN results sync (UX-P139, Alex's item 9)
@@ -260,10 +332,15 @@ async def _sync_tournament_results(
 
     # Named, like the route's own table: a tournament is synced because
     # somebody wrote it down. `espn_event_name` selects it out of a scoreboard
-    # that also carries whatever else is on that week.
-    targets = tournaments or [("us-open", "US Open")]
+    # that also carries whatever else is on that week. `is None`, not `or`, for
+    # the reason given on the price rail: an explicit `[]` means nothing to sync
+    # and has to be able to say so.
+    targets = DEFAULT_RESULT_TARGETS if tournaments is None else tournaments
 
     stats: dict[str, Any] = {"tournaments": 0, "written": 0, "errors": []}
+    if not targets:
+        return _results_terminal(stats, "no_work", "no_targets")
+
     for slug, event_name in targets:
         try:
             from app.services.espn_tennis import fetch_tournament_results
@@ -291,7 +368,20 @@ async def _sync_tournament_results(
             stats["errors"].append(f"{slug} cache write: {exc}")
 
     # gotcha #53: "it returned" is not "it worked". A run that wrote nothing is
-    # a failure even when nothing raised.
-    stats["verdict"] = "ok" if stats["written"] else "nothing_written"
+    # a failure even when nothing raised — and it is INVISIBLE from the page,
+    # because the results section falls back to its cached payload and then to
+    # an honest empty. Neither of those is a signal that the rail is dead.
+    if not stats["written"]:
+        return _results_terminal(stats, "failed", "nothing_written")
+    # A run that wrote SOME tours and errored on others returns `complete` here
+    # and is downgraded to PARTIAL by the contract's own damage rule — the
+    # `errors` list is the caveat, and it is read rather than restated.
+    return _results_terminal(stats, "complete", "results_cached")
+
+
+def _results_terminal(stats: dict[str, Any], terminal: str, reason: str) -> dict[str, Any]:
+    """Stamp the contract fields and log once. Every return goes through here."""
+    stats["terminal"] = terminal
+    stats["reason"] = reason
     logger.info("tournament results sync: %s", stats)
     return stats
