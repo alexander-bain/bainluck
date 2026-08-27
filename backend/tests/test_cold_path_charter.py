@@ -113,9 +113,9 @@ def test_sports_native_shape_tracks_the_ios_client(cps):
     client = IOS / "Services" / "APIClient.swift"
     if not (vm.exists() and client.exists()):
         pytest.skip("ios sources not available")
-    assert 'fetchFeed(mode: "sports")' in vm.read_text(), (
-        "FeedViewModel no longer requests mode=sports — re-derive the Sports row"
-    )
+    assert (
+        'fetchFeed(mode: "sports")' in vm.read_text()
+    ), "FeedViewModel no longer requests mode=sports — re-derive the Sports row"
     match = re.search(
         r"func fetchFeed\((?:[^)]*?)limit:\s*Int\s*=\s*(\d+)",
         client.read_text(),
@@ -139,9 +139,9 @@ def test_web_shapes_track_the_frontend_page_limit(cps):
     limit = int(match.group(1))
     for key in ("discover_web", "sports_web"):
         path = _path_by_key(cps, key).path
-        assert f"limit={limit}" in path, (
-            f"{key} measures {path} but the web first paint asks limit={limit}"
-        )
+        assert (
+            f"limit={limit}" in path
+        ), f"{key} measures {path} but the web first paint asks limit={limit}"
 
 
 def test_my_stuff_blocking_request_is_the_one_that_fires_signed_out(cps):

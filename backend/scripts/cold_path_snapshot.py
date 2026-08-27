@@ -425,10 +425,20 @@ def _split_queries(headers: dict) -> int | None:
 #: something warm answered. Listed explicitly rather than as "not hit", so a new
 #: status the route grows shows up as UNKNOWN instead of being silently counted
 #: as cold (or silently counted as warm, which is worse).
-COLD_STATUSES = frozenset({"miss", "error", "coalesced", "unavailable", "disabled",
-                           "disabled_debug", "disabled_reviewed_filter"})
-WARM_STATUSES = frozenset({"hit", "stale_hit", "shared_hit", "shared_stale_hit",
-                           "last_good"})
+COLD_STATUSES = frozenset(
+    {
+        "miss",
+        "error",
+        "coalesced",
+        "unavailable",
+        "disabled",
+        "disabled_debug",
+        "disabled_reviewed_filter",
+    }
+)
+WARM_STATUSES = frozenset(
+    {"hit", "stale_hit", "shared_hit", "shared_stale_hit", "last_good"}
+)
 
 
 def _classify(sample: dict) -> str:
@@ -467,8 +477,13 @@ def measure(
     out: dict = {
         "label": label,
         "schema": "lat-p099-cold-path/1",
-        "requests": {"feed": 0, "trending": 0, "typeahead": 0, "search": 0,
-                     "health": 0},
+        "requests": {
+            "feed": 0,
+            "trending": 0,
+            "typeahead": 0,
+            "search": 0,
+            "health": 0,
+        },
         "term_set": term_set,
     }
 
@@ -559,21 +574,29 @@ def _summarize(rows: list[dict]) -> dict:
         "p50_warm": _p50(warm),
         "cold_share": (len(cold) / len(graded)) if graded else None,
         "statuses": statuses,
-        "errors": [r for r in rows if r.get("error") or (r.get("http") not in (200, None))],
+        "errors": [
+            r for r in rows if r.get("error") or (r.get("http") not in (200, None))
+        ],
     }
 
 
 def report(snap: dict) -> int:
     print("# LAT-P099 — the cold paths a user walks")
-    print(f"slug   : {snap['commit']}  uptime {snap['uptime_seconds']}s  "
-          f"warm_slug={snap['warm_slug']}")
+    print(
+        f"slug   : {snap['commit']}  uptime {snap['uptime_seconds']}s  "
+        f"warm_slug={snap['warm_slug']}"
+    )
     print(f"run    : {snap['label']}   term set `{snap['term_set']}`")
-    print(f"floor  : sandbox transport wall p50 "
-          f"{_fmt(snap['transport_floor_wall_p50_ms'])} ms — every number below "
-          f"is SERVER time (`x-response-time`), not wall.")
+    print(
+        f"floor  : sandbox transport wall p50 "
+        f"{_fmt(snap['transport_floor_wall_p50_ms'])} ms — every number below "
+        f"is SERVER time (`x-response-time`), not wall."
+    )
     if not snap["warm_slug"]:
-        print("⚠️  SLUG IS YOUNGER THAN 5 MINUTES. A cold process reads as a "
-              "regression. Re-run.")
+        print(
+            "⚠️  SLUG IS YOUNGER THAN 5 MINUTES. A cold process reads as a "
+            "regression. Re-run."
+        )
     print()
 
     met = True
@@ -582,15 +605,21 @@ def report(snap: dict) -> int:
     for p in PATHS:
         verdicts[p.key] = _summarize(snap["tab_samples"][p.key])
 
-    print("## THE HEADLINE — what gates first paint on each tab, server-side, "
-          "over the real cache mix")
-    print(f"{'tab':10s} {'surface':8s} {'n':>3s} {'p50 all':>9s} "
-          f"{'p50 cold':>9s} {'cold%':>6s} {'max':>9s}  bar      verdict")
+    print(
+        "## THE HEADLINE — what gates first paint on each tab, server-side, "
+        "over the real cache mix"
+    )
+    print(
+        f"{'tab':10s} {'surface':8s} {'n':>3s} {'p50 all':>9s} "
+        f"{'p50 cold':>9s} {'cold%':>6s} {'max':>9s}  bar      verdict"
+    )
     for tab in TABS:
         blocking = [p for p in PATHS if p.tab == tab and p.blocking]
         if not blocking:
-            print(f"{tab:10s} {'—':8s} {'—':>3s} {'0':>9s} {'0':>9s} "
-                  f"{'—':>6s} {'0':>9s}  {'n/a':<8s} NO SERVER DEPENDENCY")
+            print(
+                f"{tab:10s} {'—':8s} {'—':>3s} {'0':>9s} {'0':>9s} "
+                f"{'—':>6s} {'0':>9s}  {'n/a':<8s} NO SERVER DEPENDENCY"
+            )
             continue
         for p in blocking:
             s = verdicts[p.key]
@@ -604,10 +633,12 @@ def report(snap: dict) -> int:
             else:
                 verdict += " (ungraded)"
             share = "—" if s["cold_share"] is None else f"{s['cold_share']:.0%}"
-            print(f"{tab:10s} {p.surface:8s} {s['n']:>3d} "
-                  f"{_fmt(s['p50_all']):>9s} {_fmt(s['p50_cold']):>9s} "
-                  f"{share:>6s} {_fmt(s['max_all']):>9s}  "
-                  f"{TAB_FIRST_LOAD_BAR_MS:<8.0f} {verdict}")
+            print(
+                f"{tab:10s} {p.surface:8s} {s['n']:>3d} "
+                f"{_fmt(s['p50_all']):>9s} {_fmt(s['p50_cold']):>9s} "
+                f"{share:>6s} {_fmt(s['max_all']):>9s}  "
+                f"{TAB_FIRST_LOAD_BAR_MS:<8.0f} {verdict}"
+            )
             if (
                 p.barred
                 and s["max_all"] is not None
@@ -618,11 +649,13 @@ def report(snap: dict) -> int:
                     f"the native client's non-retryable "
                     f"{CLIENT_DEADLINE_MS:,.0f} ms budget"
                 )
-    print("   Browse: ZERO network requests on appear "
-          "(Views/LeaguesView.swift:55-78 renders static arrays and calls only "
-          "AnalyticsService.trackScreen; the web Browse is a link dropdown "
-          "with no route). Asserted from source and pinned by a test — a "
-          "request that is never issued has no latency to measure.")
+    print(
+        "   Browse: ZERO network requests on appear "
+        "(Views/LeaguesView.swift:55-78 renders static arrays and calls only "
+        "AnalyticsService.trackScreen; the web Browse is a link dropdown "
+        "with no route). Asserted from source and pinned by a test — a "
+        "request that is never issued has no latency to measure."
+    )
 
     print()
     print("## the rest of each tab's request set — not gating, still paid")
@@ -630,12 +663,16 @@ def report(snap: dict) -> int:
         rest = [p for p in PATHS if p.tab == tab and not p.blocking]
         for p in rest:
             s = verdicts[p.key]
-            print(f"   {tab:10s} {p.path:58s} n={s['n']:<3d} "
-                  f"p50 {_fmt(s['p50_all']):>9s}  max {_fmt(s['max_all']):>9s}")
+            print(
+                f"   {tab:10s} {p.path:58s} n={s['n']:<3d} "
+                f"p50 {_fmt(s['p50_all']):>9s}  max {_fmt(s['max_all']):>9s}"
+            )
 
     print()
-    print("## cache-state split — the p50 above is a statement about THIS as "
-          "much as about latency")
+    print(
+        "## cache-state split — the p50 above is a statement about THIS as "
+        "much as about latency"
+    )
     for p in PATHS:
         s = verdicts[p.key]
         print(f"   {p.tab:10s} {p.surface:8s} {p.key:30s} {s['statuses']}")
@@ -650,34 +687,49 @@ def report(snap: dict) -> int:
     ta = _summarize(snap["typeahead_cold_samples"])
     ta_ok = ta["p50_all"] is not None and ta["p50_all"] <= TYPEAHEAD_COLD_BAR_MS
     met = met and ta_ok
-    print(f"   typeahead COLD BUILD (debug_timing, non-voting): n={ta['n']} "
-          f"p50 {_fmt(ta['p50_all'])} ms  bar {TYPEAHEAD_COLD_BAR_MS:.0f}  "
-          f"{'MET' if ta_ok else 'NOT MET'}")
-    print("      ⚠️  debug mode reads ~2.2x LOW vs a true first touch "
-          "(measured, LAT-P097). Not comparable to the voting-mode series.")
-    for r in sorted(snap["typeahead_cold_samples"],
-                    key=lambda r: r.get("server_ms") or 0):
-        print(f"      {r['term']:20s} {_fmt(r.get('server_ms')):>9s} ms  "
-              f"q={r.get('queries')}")
+    print(
+        f"   typeahead COLD BUILD (debug_timing, non-voting): n={ta['n']} "
+        f"p50 {_fmt(ta['p50_all'])} ms  bar {TYPEAHEAD_COLD_BAR_MS:.0f}  "
+        f"{'MET' if ta_ok else 'NOT MET'}"
+    )
+    print(
+        "      ⚠️  debug mode reads ~2.2x LOW vs a true first touch "
+        "(measured, LAT-P097). Not comparable to the voting-mode series."
+    )
+    for r in sorted(
+        snap["typeahead_cold_samples"], key=lambda r: r.get("server_ms") or 0
+    ):
+        print(
+            f"      {r['term']:20s} {_fmt(r.get('server_ms')):>9s} ms  "
+            f"q={r.get('queries')}"
+        )
 
     if snap["with_search"]:
         se = _summarize(snap["search_cold_samples"])
         se_ok = se["p50_all"] is not None and se["p50_all"] <= SEARCH_COLD_BAR_MS
         met = met and se_ok
-        print(f"   search COLD /api/events/search: n={se['n']} "
-              f"p50 {_fmt(se['p50_all'])} ms  max {_fmt(se['max_all'])} ms  "
-              f"bar {SEARCH_COLD_BAR_MS:.0f}  {'MET' if se_ok else 'NOT MET'}")
-        for r in sorted(snap["search_cold_samples"],
-                        key=lambda r: r.get("server_ms") or 0):
-            print(f"      {r['term']:20s} {_fmt(r.get('server_ms')):>9s} ms  "
-                  f"q={r.get('queries')}")
+        print(
+            f"   search COLD /api/events/search: n={se['n']} "
+            f"p50 {_fmt(se['p50_all'])} ms  max {_fmt(se['max_all'])} ms  "
+            f"bar {SEARCH_COLD_BAR_MS:.0f}  {'MET' if se_ok else 'NOT MET'}"
+        )
+        for r in sorted(
+            snap["search_cold_samples"], key=lambda r: r.get("server_ms") or 0
+        ):
+            print(
+                f"      {r['term']:20s} {_fmt(r.get('server_ms')):>9s} ms  "
+                f"q={r.get('queries')}"
+            )
         if se["max_all"] is not None and se["max_all"] > CLIENT_DEADLINE_MS:
             hard_fail.append(
                 f"cold search: max {se['max_all']:,.1f} ms exceeds the "
-                f"{CLIENT_DEADLINE_MS:,.0f} ms client budget")
+                f"{CLIENT_DEADLINE_MS:,.0f} ms client budget"
+            )
     else:
-        print("   search COLD: NOT RUN (--with-search opts in; it writes "
-              "search_query_logs, the table #1916 exists to clean)")
+        print(
+            "   search COLD: NOT RUN (--with-search opts in; it writes "
+            "search_query_logs, the table #1916 exists to clean)"
+        )
         met = False
 
     if hard_fail:
@@ -692,39 +744,60 @@ def report(snap: dict) -> int:
     print()
     r = snap["requests"]
     print("## contamination declared by this run")
-    print(f"   /api/feed              {r.get('feed', 0):>4d} requests — ALL of them "
-          "land in the always-sampled `latency-stats` window. Subtract them "
-          "before quoting that window as organic.")
-    print(f"   other tab endpoints    {r.get('other', 0):>4d} — trending / "
-          "grouped-feed / predictions, all read-only")
-    print(f"   /api/events/typeahead  {r['typeahead']:>4d} — debug_timing, "
-          "0 votes into search:trending:24h")
-    print(f"   /api/events/search     {r['search']:>4d} — each writes one "
-          "search_query_logs row (#1916)")
+    print(
+        f"   /api/feed              {r.get('feed', 0):>4d} requests — ALL of them "
+        "land in the always-sampled `latency-stats` window. Subtract them "
+        "before quoting that window as organic."
+    )
+    print(
+        f"   other tab endpoints    {r.get('other', 0):>4d} — trending / "
+        "grouped-feed / predictions, all read-only"
+    )
+    print(
+        f"   /api/events/typeahead  {r['typeahead']:>4d} — debug_timing, "
+        "0 votes into search:trending:24h"
+    )
+    print(
+        f"   /api/events/search     {r['search']:>4d} — each writes one "
+        "search_query_logs row (#1916)"
+    )
     print(f"   /api/health            {r['health']:>4d}")
     if snap.get("stats_before"):
-        print(f"   organic latency-stats read taken BEFORE this run: "
-              f"{snap['stats_before']}")
+        print(
+            f"   organic latency-stats read taken BEFORE this run: "
+            f"{snap['stats_before']}"
+        )
     else:
-        print("   ⚠️  no --stats-before recorded. Ruling 127 requires the "
-              "organic feed census to be read FIRST; without it this run's "
-              "own feed requests are inside any window later quoted.")
+        print(
+            "   ⚠️  no --stats-before recorded. Ruling 127 requires the "
+            "organic feed census to be read FIRST; without it this run's "
+            "own feed requests are inside any window later quoted."
+        )
     return 0 if met else 1
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--label", required=True)
-    ap.add_argument("--n", type=int, default=3,
-                    help="rounds per tab path (round-robin, not blocked)")
+    ap.add_argument(
+        "--n",
+        type=int,
+        default=3,
+        help="rounds per tab path (round-robin, not blocked)",
+    )
     ap.add_argument("--n-search", type=int, default=6)
     ap.add_argument("--term-set", choices=sorted(TERM_SETS), default="obscure")
-    ap.add_argument("--with-search", action="store_true",
-                    help="also measure cold /api/events/search — writes "
-                         "search_query_logs (#1916)")
-    ap.add_argument("--stats-before",
-                    help="path to the latency-stats JSON read BEFORE this run "
-                         "(ruling 127's organic-first protocol)")
+    ap.add_argument(
+        "--with-search",
+        action="store_true",
+        help="also measure cold /api/events/search — writes "
+        "search_query_logs (#1916)",
+    )
+    ap.add_argument(
+        "--stats-before",
+        help="path to the latency-stats JSON read BEFORE this run "
+        "(ruling 127's organic-first protocol)",
+    )
     ap.add_argument("--out")
     args = ap.parse_args()
 
@@ -732,8 +805,14 @@ def main() -> int:
         print("source ~/.claude/.env first", file=sys.stderr)
         return 2
 
-    snap = measure(args.n, args.label, args.term_set, args.n_search,
-                   args.with_search, args.stats_before)
+    snap = measure(
+        args.n,
+        args.label,
+        args.term_set,
+        args.n_search,
+        args.with_search,
+        args.stats_before,
+    )
     if args.out:
         with open(args.out, "w") as fh:
             json.dump(snap, fh, indent=2)
