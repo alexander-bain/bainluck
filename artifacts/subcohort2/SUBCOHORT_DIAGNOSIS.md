@@ -3,14 +3,175 @@
 **Ranking metric (authoritative since 2026-08-24):** `n_eligible × (ece_eligible − 3)`. Truth-eligible
 rows only — the legs whose winner was established INDEPENDENTLY of the market's own price
 (`CALIBRATION_TRUTH_ELIGIBLE_SOURCES`), which is what the published curve actually grades.  
-**Ranking source:** `artifacts/cal-p094/eligible_fold_all_cells.json` (22 cells, sargable id-range
-fold, 0 irreducible). The historical input `ARTIFACT-CAL-P076-1978-ALL-CELLS-CENSUS.json` at
-`4eb2a725` v3859 is retained below as evidence, not as ordering.  
+**Ranking source (authoritative since 2026-08-26, CAL-P103):** the durable checkpoint
+`durable_state_snapshots identity='calibration:cohort_cell_census' schema_version='cohort-cell-census/v2'`,
+`complete=true`, **49 cells**, written `2026-08-26 22:01:31Z`, `len 160371`.
+`artifacts/cal-p094/eligible_fold_all_cells.json` (22 cells) is **superseded and must not be
+re-quoted as the board** — its own `league_scope_note` restricts it to 11 leagues, so it could not
+rank the other 27 cells at all. The historical input
+`ARTIFACT-CAL-P076-1978-ALL-CELLS-CENSUS.json` at `4eb2a725` v3859 is retained below as evidence,
+not as ordering.  
 **Bar:** Alex verbatim "anything with a reasonable sample size that has ECE over 3 is miscalculated,
 unless you convince me otherwise."  
 **Method per cell — mechanism-ranked, each number EXECUTED with stored output:** `price-source
 fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to-1)` →
 `capture-age/hindsight` → `grading truth` → `binning noise floor` (calculation, not shrug).
+
+---
+
+## STATUS 2026-08-26 (CAL-P103) — THE BOARD IS COMPLETE FOR THE FIRST TIME. 49 CELLS, NO `NEEDS RE-CUT` CLASS LEFT, AND 21 ARE OVER BAR
+
+`handoff: SUBCOHORT-TRUTH-3 → SUBCOHORT_DIAGNOSIS.md STATUS (run.2628 v2)`
+
+*Folded per the declared handoff (`.claude/handoff/SUBCOHORT-TRUTH-1-HANDOFF.md` §
+C-SUBCOHORT-TRUTH-3 22:03Z and § C-SUBCOHORT-TRUTH-4 23:31Z). The worker fold `run.2628`
+(`backend/scripts/fold_cohort_cell_eligible.py`, sargable `id` rail) landed its checkpoint at
+22:01:31Z; Alex independently verified `complete=true` at 22:24Z.*
+
+**This lane did not take the handoff's table on trust.** Every number below was re-read from the
+durable payload in production this session, read-only, via `POST /api/admin/db-query`:
+
+| what | reading | fingerprint |
+|---|---|---|
+| checkpoint identity | `cohort-cell-census/v2`, `complete=true`, `updated_at 2026-08-26 22:01:31.042923+00`, `len 160371`, `jsonb_array_length(payload->'cells') = 49` | `2406f40223c4fa1f`, 132.7 ms |
+| the 26 measured cells, ranked by `n_eligible × (ece_eligible − 3)` | 26 rows, `truncated: false` | `d7235b92a54a1de6`, 100.6 ms |
+| the 23 cells with `ece_eligible IS NULL` | 23 rows | `bab8fa5b3c895473` |
+
+26 + 23 = **49**, and no cell appears in two classes. `measured: true` on all 49; `measured_reason`
+is `NULL` on all 49 — there is no partial and no irreducible remainder to disclose.
+
+### 🟢 WHAT THIS FOLD ACTUALLY CHANGES: CLASS D IS GONE
+
+CAL-P101's board below is a 50-cell board with a 13-cell hole in it — class **D, "NO ELIGIBLE CUT
+YET"** — and that section's own closing paragraph named clearing it as owed item #1. `run.2628` cut
+all thirteen. They did not land where the refuted "under-bar-by-bound" premise predicted:
+
+| the 13 class-D cells | now | |
+|---|---|---|
+| **6 came in OVER bar** | `tech/quantity` **11.54**, `football/container_member` **13.28**, `entertainment/container_member` **11.55**, `tech/container_member` **7.44**, `entertainment/quantity` **5.06**, `cricket/container_member` **4.22** | 15 over bar → **21** |
+| **3 came in UNDER bar** | `weather/quantity` **1.87** (n_e 27,356), `mma/container_member` **2.82**, `mma/quantity` **2.49** | measured, not bounded |
+| **4 fell below `MIN_CELL_N`** | `football/quantity` (n_e 21), `motorsports/container_member` (10), `weather/container_member` (2), `rodeo/container_member` (0) | ECE ABSENT, never 0.0 |
+
+**Owed item #2 is discharged, and the answer is the reassuring one.** `weather/quantity` was the
+single largest population resting on the refuted bound — CAL-P101 flagged it as "unmeasured, not
+under bar", census n 64,117. Measured: **1.87 pp on 27,356 eligible legs.** It is genuinely under
+the bar, it is the second-largest eligible n on the whole board, and it is not a queue item.
+
+**Owed item #1 is discharged in full**, and the honest read is that clearing the hole made the
+queue longer, not shorter: the excusing bound was wrong in the direction that costs work.
+
+### THE REPLACEMENT BOARD — 21 / 5 / 23, ranked on `n_eligible × (ece_eligible − 3)`
+
+`σ` uses this file's convention, `SE = 50/√n_e` pp. `ece_all (n_all)` is the same cell on the
+*unfiltered* graded population — the number the curve does **not** publish — kept beside each row
+so nobody re-reads a phantom figure as a defect.
+
+**A. OVER BAR — 21 cells. This is the queue.**
+
+| # | cell | `ece_e` | `n_e` | excess | σ | impact | `ece_all` (`n_all`) | eligible share |
+|---:|---|---:|---:|---:|---:|---:|---|---:|
+| 1 | baseball/quantity | 15.86 | 6,778 | 12.86 | **21.2σ** | 87,165 | 21.67 (48,340) | 14.0% |
+| 2 | soccer/quantity | 8.51 | 5,749 | 5.51 | **8.4σ** | 31,677 | 44.87 (202,834) | 2.8% |
+| 3 | soccer/container_member | 6.27 | 7,682 | 3.27 | **5.7σ** | 25,120 | 27.99 (76,141) | 10.1% |
+| 4 | economics/quantity | 5.13 | 4,719 | 2.13 | 2.9σ | 10,051 | 8.03 (10,359) | 45.6% |
+| 5 | hockey/quantity | 10.94 | 1,137 | 7.94 | **5.4σ** | 9,028 | 21.71 (2,062) | 55.1% |
+| 6 | basketball/quantity | 5.73 | 2,104 | 2.73 | 2.5σ | 5,744 | 24.37 (13,124) | 16.0% |
+| 7 | politics/quantity | 6.12 | 1,152 | 3.12 | 2.1σ | 3,594 | 8.64 (3,557) | 32.4% |
+| 8 | tennis/quantity | 5.01 | 1,512 | 2.01 | 1.6σ | 3,039 | 24.71 (56,960) | 2.7% |
+| 9 | baseball/container_member | 12.44 | 286 | 9.44 | **3.2σ** | 2,700 | 20.29 (18,219) | 1.6% |
+| 10 | golf/container_member | 25.11 | 118 | 22.11 | **4.8σ** | 2,609 | 22.48 (5,964) | 2.0% |
+| 11 | entertainment/quantity | 5.06 | 820 | 2.06 | 1.2σ | 1,689 | 5.39 (2,790) | 29.4% |
+| 12 | tech/quantity | 11.54 | 185 | 8.54 | 2.3σ | 1,580 | 10.69 (566) | 32.7% |
+| 13 | esports/container_member | 3.15 | 8,217 | 0.15 | 0.3σ | 1,233 | 20.28 (120,953) | 6.8% |
+| 14 | geopolitics/quantity | 19.36 | 60 | 16.36 | 2.5σ | 982 | 14.13 (228) | 26.3% |
+| 15 | basketball/container_member | 6.65 | 262 | 3.65 | 1.2σ | 956 | 26.10 (7,167) | 3.7% |
+| 16 | esports/quantity | 4.84 | 506 | 1.84 | 0.8σ | 931 | 21.75 (8,786) | 5.8% |
+| 17 | entertainment/container_member | 11.55 | 103 | 8.55 | 1.7σ | 881 | 23.34 (3,344) | 3.1% |
+| 18 | football/container_member | 13.28 | 73 | 10.28 | 1.8σ | 750 | 19.59 (450) | 16.2% |
+| 19 | tech/container_member | 7.44 | 168 | 4.44 | 1.2σ | 746 | 23.74 (2,119) | 7.9% |
+| 20 | politics/container_member | 7.90 | 116 | 4.90 | 1.1σ | 568 | 13.84 (4,990) | 2.3% |
+| 21 | cricket/container_member | 4.22 | 201 | 1.22 | 0.3σ | 245 | 30.87 (3,424) | 5.9% |
+
+Total board excess: **191,288**. Rank 1 alone is **45.6%** of it. Ranks 1–5 are **85.2%** of it.
+
+**B. UNDER BAR — 5 cells, measured, no query owed.** `weather/quantity` 1.87 (27,356),
+`tennis/container_member` 2.07 (2,583), `economics/container_member` 2.87 (513),
+`mma/container_member` 2.82 (174), `mma/quantity` 2.49 (70).
+
+**C. NULL — 23 cells, `n_eligible < 30`, `MIN_CELL_N = 30` so ECE is ABSENT and never 0.0** (the
+datagolf-card mistake, #2172). The four that carry a large *phantom* `ece_all` and will keep
+attracting attention until this row is quoted at them:
+
+| cell | `n_eligible` | `ece_all` | `n_all` |
+|---|---:|---:|---:|
+| table_tennis/quantity | **0** | 44.72 | 73,809 |
+| table_tennis/container_member | **0** | 46.69 | 59,164 |
+| hockey/container_member | **0** | 41.07 | 1,528 |
+| chess/container_member | **0** | 50.00 | 792 |
+
+The other 19: `geopolitics/cm` (n_e 8), `motorsports/cm` (10), `weather/cm` (2), `rodeo/cm` (0),
+`football/quantity` (21), `culture/cm` (0), `olympics/{cm,q}`, `pickleball/cm`, `cricket/quantity`,
+`rugby/{cm,q}`, `weightlifting/quantity`, `boxing/cm`, `motorsports/quantity`, `crypto/cm`,
+`legal/cm`, `rodeo/quantity`, `cycling/cm`.
+
+**`hockey/container_member` stays answered.** Zero of its 1,528 graded legs carry a truth-eligible
+`resolution_source`. Its 41.07 pp was computed entirely over rows the published curve never
+contained. This is now the third consecutive document to say so; it is not a bisection candidate.
+
+### 🔶 THREE CORRECTIONS TO THE HANDOFF THIS FOLD CONSUMES
+
+Folded with corrections, on the same principle CAL-P101 folded under — the tracked file must not
+inherit a claim the payload it cites does not make.
+
+1. **`weather/quantity` is listed in two different buckets in the same handoff section.**
+   C-SUBCOHORT-TRUTH-3 puts `weather/quantity 1.87 (27,356)` in the under-bar five *and* names
+   `weather/q etc.` in the 23 null cells. The payload is unambiguous: `measured: true`,
+   `n_eligible 27,356`, `ece_eligible 1.87` — **under bar, not null.** C-SUBCOHORT-TRUTH-4's table
+   has it right; the earlier prose does not. This board follows the payload.
+2. **Two impacts in the handoff are one off the unrounded arithmetic:** `economics/quantity` 10,052
+   (this fold: **10,051**) and `esports/container_member` 1,232 (**1,233**). Immaterial to every
+   rank; recorded so a future reader does not "reconcile" them into a third number.
+3. **`golf/quantity` leaves the board, and the board is 49 not 50.** CAL-P101 carried it as a 50th
+   cell on the note that it "appears only in the fold". It is absent from the 49-cell census
+   enumeration in both directions — not in the 26 measured, not in the 23 null. It was an artifact
+   of the scope-limited file, and it goes with that file.
+
+### 🔴 THE RANK ORDER IS IMPACT, AND IMPACT IS NOT SIGNIFICANCE. ONLY SIX OF THE 21 CLEAR 3σ
+
+Alex's bar is a bar on ECE, and `impact` is what orders the queue — but a queue is a claim that the
+cell is real, and on this board **15 of the 21 are under 3σ, and three are under 1σ.**
+
+The six that are both large and significant: **ranks 1, 2, 3, 5, 9, 10** — `baseball/quantity`,
+`soccer/quantity`, `soccer/container_member`, `hockey/quantity`, `baseball/container_member`,
+`golf/container_member`.
+
+The two that will waste the most time if read off the rank column alone:
+
+* **Rank 13 `esports/container_member` — 3.15, i.e. 0.15 pp over the bar at 0.3σ**, on the largest
+  eligible n of any over-bar cell (8,217). It ranks 13th only because n is big. It is
+  indistinguishable from the noise floor and should not be worked as a defect.
+* **Rank 21 `cricket/container_member` — 1.22 pp over at 0.3σ on n 201.** Same shape, small n.
+
+**All six cells promoted out of class D** (ranks 11, 12, 17, 18, 19, 21) land between 0.3σ and
+2.3σ. They are over bar on the point estimate and not one of them is established. **This is the note
+the previous two folds did not carry, and it is the difference between a 21-item queue and a
+6-item one.**
+
+### What is owed after this fold
+
+1. **Nothing is owed on class D. It no longer exists** — every one of the 49 cells is now either
+   measured or explicitly `n_eligible < 30`.
+2. **Rank 1 `baseball/quantity` remains the whole queue's headline at 45.6% of total excess**, and
+   its two named mechanisms are the ones already in flight (the 0.5000 placeholder pair on
+   `program/calibration-96`, and the published-pair incoherence of CAL-P100 below, whose cert
+   `C-PUBLISHED-PAIR-1` is re-staged at `program/calibration-99 @ 11294448`). Neither is measured
+   against this board yet, and neither should be — ruling 134.
+3. **The `15.86` / `16.64` two-rail discrepancy on rank 1 survives this fold unchanged.** The
+   durable v2 checkpoint reads **15.86**, the same as the sargable fold; the ANY-paged rail reads
+   16.64 on the identical n. Two rails, same population size to the row, 0.78 pp apart. Still not
+   averaged, still owed by whoever next touches the binning.
+4. **The six sub-2σ promotions want an interval before they want a mechanism.** A ladder run on
+   `entertainment/quantity` at 1.2σ is a ladder run on noise.
 
 ---
 
