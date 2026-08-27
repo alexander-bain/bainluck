@@ -4,6 +4,13 @@ date: 2026-08-24
 author: Alex
 issues: #2107, #2143
 supersedes: partially amends ruling 130
+superseded-by: **ruling 136 (2026-08-26) retires this ruling's arm A for #2107.**
+The 6 h floor below was itself unrunnable — ~41 % per attempt, ~868 days expected wait for seven
+consecutive banked days — and the gate banked zero days in the three days it was live. The
+reasoning about attribution was also aimed at the wrong object: #2107's subject is a code change
+present in every deployed slug, not a slug. Read 136 for what is in force. What survives here is
+the served-requests floor and the general shape of the argument (an unrunnable falsifier grades
+INCONCLUSIVE forever, which reads as "not yet proven"), which 136 quotes back at this ruling.
 
 Ruling 130 said a window straddling a release is INCONCLUSIVE, because its errors
 cannot be attributed to a slug. That is correct about attribution and it turned
@@ -80,3 +87,10 @@ to is unfalsifiable without the number. Both go to INCONCLUSIVE.
 Implemented in `backend/scripts/watch_2107_feed_500s.py` (verdict `NARROWED`,
 `MIN_POST_RELEASE_EXPOSURE_HOURS`, `MIN_SERVED_REQUESTS`, `sum_buckets_since`),
 pinned by `backend/tests/test_watch_2107_exposure_floor.py`.
+
+**Amendment 2026-08-26 (ruling 136).** `NARROWED`, `MIN_POST_RELEASE_EXPOSURE_HOURS` and
+`test_watch_2107_exposure_floor.py` no longer exist. The retirement is pinned in
+`backend/tests/test_watch_2107_blast_window.py::TestRetiredCriteriaStayRetired`, which fails if any
+of them comes back — the next lane to hit a stuck gate will reach for exactly these, because they
+read as the strict option. `MIN_SERVED_REQUESTS` and `sum_buckets_since` survive: the floor is now
+counted in requests outside a deploy blast band, and the bucket sum is arm A's truncation fallback.

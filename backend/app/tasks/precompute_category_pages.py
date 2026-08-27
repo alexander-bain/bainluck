@@ -329,7 +329,24 @@ PRECOMPUTE_STATUS_TTL = 6 * 3600
 # the 300s stale window, so the mirror never decays and the worst case a visitor
 # can see becomes a stale_hit, not a cold build.
 FEED_PREWARM_ENABLED_KEY = "discover_feed_prewarm:enabled"
-FEED_PREWARM_DEADLINE_S = 25.0
+# LAT-P099: 25.0 -> 20.0, because the worst case is a SUM and the fourth shape
+# put it exactly on the task's soft limit — `test_prewarm_is_bounded` computes
+# `20 (base) + DEADLINE * len(SHAPES)` and 20 + 25*4 = 120 == soft_time_limit.
+#
+# Lowering it costs nothing real, and the reason is not headroom arithmetic but
+# what the deadline is FOR. It bounds the beat; it is not a licence for a slow
+# build. The native client gives up at 6 s (`DiscoverViewModel.retryBudget`), so
+# any shape still building at 20 s is warming a payload no user would have
+# waited for — the request that shape serves has already failed. Against
+# measurement it is not close: the WHOLE beat (base + every shape) runs at
+# p50 9.8 s / p95 14.2 s on production (`measure_beat_cost.py`, 2026-08-27,
+# 233 runs/24 h), and the shape this cycle adds measured 872 ms.
+#
+# The general form, because the next shape will hit this again: a per-item
+# deadline multiplied by an item count is a budget that silently tightens every
+# time someone adds an item, and it fails at the moment of the addition rather
+# than at the moment of the mistake.
+FEED_PREWARM_DEADLINE_S = 20.0
 FEED_PREWARM_STATUS_KEY = "bainluck:precompute:feed_prewarm:last"
 FEED_PREWARM_STATUS_TTL = 6 * 3600
 
@@ -337,6 +354,8 @@ FEED_PREWARM_STATUS_TTL = 6 * 3600
 #   Discover  frontend/app/discover/page.tsx -> initialFeedRequest() + event_pct 0.15
 #   Sports    frontend/app/sports/page.tsx   -> initialFeedRequest() + mode "sports"
 #   Native    DiscoverViewModel.firstPageLimit = 50, eventPct 0.15
+#   Native    FeedViewModel.fetchSportsFeed -> fetchFeed(mode: "sports") at
+#             APIClient.fetchFeed's DEFAULT limit of 50 (LAT-P099)
 # The two web shapes are anonymous by the L2-242 shared-anon contract (no
 # x-session-id on the cold first request), which is what makes ONE warmed key
 # serve every first-time visitor. `test_feed_prewarm.py` pins each shape against
@@ -350,6 +369,32 @@ FEED_PREWARM_STATUS_TTL = 6 * 3600
 # the other half of one fix. The inert-principal share in `routes/feed.py`
 # routes such a request to the anonymous key; this entry is what makes that key
 # warm when it gets there. Neither half is worth much without the other.
+# LAT-P099: the SPORTS half of LAT-P089's fix was never applied, and the tab
+# paid for it every single open. Measured on production 2026-08-27 (v3908,
+# `06fdad74`), one fresh `x-session-id` per sample, the client's exact
+# first-paint shape:
+#
+#     Discover native  limit=50 event_pct=0.15   57 ms   shared_hit  3/3
+#     Sports   native  limit=50 mode=sports     872 ms   MISS        3/3
+#     Sports   web     limit=20 mode=sports      18 ms   hit         3/3
+#
+# Same client, same release, same second — and the only difference between the
+# 57 ms row and the 872 ms row is that one of them has a line in this tuple.
+# Native asks `mode=sports` at APIClient.fetchFeed's DEFAULT limit of 50
+# (`FeedViewModel.swift:499` -> `APIClient.swift:606`); the warmed sports shape
+# is the WEB's limit of 20. A different limit is a different cache key, so the
+# inert-principal share (`routes/feed.py:2224`) looked up an anonymous entry
+# that nothing had ever published and fell through to a full cold build —
+# 3 of 3 samples, `X-Feed-Cache: miss`, on the request that gates the tab's
+# first paint.
+#
+# This is LAT-P089's own lesson arriving a second time, which is the part worth
+# recording: that cycle explained at length that the native shape is a
+# different key and enrolled `discover_native` — for the tab it was looking at.
+# The sibling tab, one line below, was reasoned about in the same comment
+# ("the anonymous Discover + Sports first-paint response cache") and left
+# warming the wrong key. A fix scoped to the surface that surfaced the bug is
+# how a class survives its own repair.
 FEED_PREWARM_SHAPES: tuple[dict, ...] = (
     {"label": "discover", "limit": 20, "offset": 0, "event_pct": 0.15, "mode": None},
     {"label": "sports", "limit": 20, "offset": 0, "event_pct": None, "mode": "sports"},
@@ -360,6 +405,13 @@ FEED_PREWARM_SHAPES: tuple[dict, ...] = (
         "event_pct": 0.15,
         "mode": None,
     },
+    {
+        "label": "sports_native",
+        "limit": 50,
+        "offset": 0,
+        "event_pct": None,
+        "mode": "sports",
+    },
 )
 
 #: The WEB first-paint shapes, i.e. the ones whose `limit` must track
@@ -367,6 +419,15 @@ FEED_PREWARM_SHAPES: tuple[dict, ...] = (
 #: than over "all shapes", which silently stopped being the same thing the
 #: moment the native shape was enrolled.
 FEED_PREWARM_WEB_LABELS: frozenset[str] = frozenset({"discover", "sports"})
+
+#: The NATIVE first-paint shapes, whose `limit` must track the iOS client's
+#: constant instead. Declared as its own set for the reason the web set is:
+#: LAT-P099 shipped because "the native shape is enrolled" was true of one tab
+#: and false of the other, and a test that asserts over a NAMED set fails when a
+#: member goes missing, where a test asserting over "all shapes" cannot.
+FEED_PREWARM_NATIVE_LABELS: frozenset[str] = frozenset(
+    {"discover_native", "sports_native"}
+)
 
 
 def _build_prewarm_request(scope_key: str):

@@ -145,7 +145,12 @@ def test_prewarm_passes_every_get_feed_parameter_explicitly():
 def test_warm_shapes_match_the_first_paint_requests():
     """Warming a shape the clients don't request warms a key nobody reads."""
     shapes = {s["label"]: s for s in pcp.FEED_PREWARM_SHAPES}
-    assert set(shapes) == {"discover", "sports", "discover_native"}
+    assert set(shapes) == {
+        "discover",
+        "sports",
+        "discover_native",
+        "sports_native",
+    }
 
     assert shapes["discover"]["limit"] == 20
     assert shapes["discover"]["offset"] == 0
@@ -163,6 +168,187 @@ def test_warm_shapes_match_the_first_paint_requests():
     assert shapes["discover_native"]["offset"] == 0
     assert shapes["discover_native"]["event_pct"] == 0.15
     assert shapes["discover_native"]["mode"] is None
+
+    # LAT-P099: the native SPORTS first paint — the same defect, on the tab
+    # LAT-P089 was not looking at. Measured 872 ms p50, `X-Feed-Cache: miss`
+    # 3 of 3, against 57 ms `shared_hit` 3 of 3 for the Discover row directly
+    # above it, same client, same release, same session.
+    assert shapes["sports_native"]["limit"] == 50
+    assert shapes["sports_native"]["offset"] == 0
+    assert shapes["sports_native"]["event_pct"] is None
+    assert shapes["sports_native"]["mode"] == "sports"
+
+
+def test_every_native_first_paint_shape_is_warmed():
+    """The set, not the members — this is the test that would have caught it.
+
+    `test_warm_shapes_match_the_first_paint_requests` above asserts each shape
+    it KNOWS about, which is exactly why it stayed green for the whole time the
+    native Sports tab was paying a cold build: nobody had written the missing
+    member down, so nothing could notice it was missing. Asserting over a
+    declared NAMED set moves the failure from "someone remembers" to "the set
+    is short".
+    """
+    labels = {s["label"] for s in pcp.FEED_PREWARM_SHAPES}
+    missing = pcp.FEED_PREWARM_NATIVE_LABELS - labels
+    assert not missing, (
+        f"native first-paint shape(s) {sorted(missing)} are declared but not "
+        "warmed — the tab pays a full cold build on every open, and the "
+        "inert-principal share has no anonymous entry to route to"
+    )
+    assert not (pcp.FEED_PREWARM_NATIVE_LABELS & pcp.FEED_PREWARM_WEB_LABELS)
+
+
+#: What each NATIVE client actually puts on the wire, transcribed once. The
+#: numbers and strings in here are not trusted on their own — the two tests
+#: below this dict pin `limit` and `mode` against the Swift sources — but the
+#: SHAPE (which params are present, and what the route's Discover-default guard
+#: leaves them as) has to be written down somewhere to be checkable at all.
+#:
+#: `mode` is the subtle one. Native Discover sends none, and the guard at
+#: `routes/feed.py:1822` rewrites it to "discover"; native Sports sends
+#: "sports" and the guard skips it, leaving `event_pct` as None. Both then key
+#: through `{mode or 'discover'}`, which is why the warmer's `mode: None` and
+#: the route's rewritten `"discover"` land on the same string.
+NATIVE_CLIENT_REQUEST_SHAPES: dict[str, dict] = {
+    "discover_native": dict(
+        sport=None,
+        limit=50,
+        offset=0,
+        include_events=True,
+        include_futures=True,
+        tags=None,
+        event_pct=0.15,
+        my_teams_only=False,
+        mode="discover",  # the guard's rewrite of an absent mode
+    ),
+    "sports_native": dict(
+        sport=None,
+        limit=50,
+        offset=0,
+        include_events=True,
+        include_futures=True,
+        tags=None,
+        event_pct=None,  # the guard SKIPS mode=sports, so this stays None
+        my_teams_only=False,
+        mode="sports",
+    ),
+}
+
+
+@pytest.mark.parametrize("label", sorted(NATIVE_CLIENT_REQUEST_SHAPES))
+def test_the_warmed_anon_key_is_the_key_the_inert_share_reads(label):
+    """The whole fix in one assertion, provable without a deploy.
+
+    A native client is the `s:<uuid>` principal, so it can never hit the key the
+    warmer publishes directly. LAT-P089's inert-principal share
+    (`routes/feed.py:2224`) is what saves it: when the personalization context
+    equals a default-constructed one, the request re-derives the ANONYMOUS key
+    of its own shape and reads that instead of building.
+
+    So a warmed native shape helps only if the anonymous key the warmer
+    publishes is byte-identical to the anonymous key the share computes. If the
+    two strings differ the warmer warms a key nobody reads — which fails
+    EXACTLY as silently as warming nothing, and is the failure mode LAT-P099
+    was repairing when it found the Sports tab paying 872 ms a cold build with
+    `X-Feed-Cache: miss` on 3 of 3 samples.
+
+    Asserting it here rather than predicting it is the point: the alternative is
+    shipping and finding out, and this class of defect does not announce itself
+    — a broken warmer and a working one produce the same logs.
+    """
+    shape = next(
+        s for s in pcp.FEED_PREWARM_SHAPES if s["label"] == label
+    )
+    # What the warmer publishes: `_prewarm_feed_shape` calls the route with an
+    # anonymous synthetic request, `include_events`/`include_futures` both True,
+    # and no sport/tags/my_teams — and the route derives the key from that.
+    warmed_key = feed_response_cache_key(
+        user_id=None,
+        session_id=None,
+        sport=None,
+        limit=shape["limit"],
+        offset=shape["offset"],
+        include_events=True,
+        include_futures=True,
+        tags=None,
+        event_pct=shape["event_pct"],
+        my_teams_only=False,
+        mode=shape["mode"],
+    )
+    # What the share reads: `feed_response_cache_key(user_id=None,
+    # session_id=None, **_cache_shape)` over the CLIENT's request shape.
+    client_shape = NATIVE_CLIENT_REQUEST_SHAPES[label]
+    shared_key = feed_response_cache_key(
+        user_id=None, session_id=None, **client_shape
+    )
+    assert warmed_key == shared_key, (
+        f"{label}: the warmer publishes {warmed_key} but the inert-principal "
+        f"share reads {shared_key} — the tab pays a full cold build on every "
+        "open and nothing in the logs says so"
+    )
+    # And the private key must still be its own, or the share would be pointless.
+    private_key = feed_response_cache_key(
+        user_id=None, session_id="a-native-install-uuid", **client_shape
+    )
+    assert private_key != shared_key
+
+
+def test_native_sports_warm_shape_tracks_the_ios_client():
+    """Pin against the Swift constants, not a copy of the numbers.
+
+    Two constants have to agree for this shape to warm anything: the mode
+    string `FeedViewModel` sends, and the DEFAULT limit `APIClient.fetchFeed`
+    applies when it is not given one. The second is the one that broke —
+    nothing in `FeedViewModel` mentions 50, so a reader of the Sports call site
+    cannot see which limit it asks for, and a warmer author reading only that
+    file would write the web's 20.
+    """
+    view_model = (
+        Path(__file__).resolve().parents[2]
+        / "ios"
+        / "Bain Luck"
+        / "Bain Luck"
+        / "ViewModels"
+        / "FeedViewModel.swift"
+    )
+    client = (
+        Path(__file__).resolve().parents[2]
+        / "ios"
+        / "Bain Luck"
+        / "Bain Luck"
+        / "Services"
+        / "APIClient.swift"
+    )
+    if not (view_model.exists() and client.exists()):
+        pytest.skip("ios sources not available")
+
+    assert 'fetchFeed(mode: "sports")' in view_model.read_text(), (
+        "FeedViewModel no longer requests mode=sports at the default limit — "
+        "re-derive the sports_native warm shape from whatever it asks now"
+    )
+    limit_match = re.search(
+        r"func fetchFeed\((?:[^)]*?)limit:\s*Int\s*=\s*(\d+)",
+        client.read_text(),
+        re.S,
+    )
+    assert limit_match, "could not read APIClient.fetchFeed's default limit"
+    native_limit = int(limit_match.group(1))
+
+    shape = next(
+        s for s in pcp.FEED_PREWARM_SHAPES if s["label"] == "sports_native"
+    )
+    assert shape["limit"] == native_limit, (
+        f"warmer warms limit={shape['limit']} but the native Sports first "
+        f"paint requests limit={native_limit} — a different cache key, so "
+        "nothing is warmed and the failure is silent"
+    )
+    assert shape["mode"] == "sports"
+    assert shape["offset"] == 0
+    # The Discover-default guard at routes/feed.py:1822 skips mode=sports, so
+    # event_pct stays None on the request path. A warmer that supplied 0.15
+    # here would key differently from the request and warm nothing.
+    assert shape["event_pct"] is None
 
 
 def test_warm_limit_tracks_the_frontend_page_limit():
@@ -393,6 +579,16 @@ def test_prewarm_is_bounded():
     assert pcp.FEED_PREWARM_DEADLINE_S <= 30
     # Worst case: base deadline (20s) + one deadline per shape, under the task's
     # soft_time_limit of 120s.
+    #
+    # 🔴 THIS BUDGET TIGHTENS EVERY TIME A SHAPE IS ADDED, and it fires at the
+    # addition rather than at the mistake. LAT-P099's fourth shape landed the
+    # product exactly ON the limit (20 + 25*4 = 120) and the deadline came down
+    # to 20 s to make room — which is fine, because the deadline bounds the beat
+    # and is not a licence for a slow build: the native client gives up at 6 s,
+    # so a shape still building at 20 s is warming a payload nobody waited for.
+    # A FIFTH shape will need more than another constant nudge. Give the pass a
+    # single wall budget rather than a per-shape one, and read gotcha #34 first —
+    # a shared budget consumed in loop order starves whatever is last.
     worst_case = 20 + pcp.FEED_PREWARM_DEADLINE_S * len(pcp.FEED_PREWARM_SHAPES)
     assert worst_case < 120, f"worst-case warm pass {worst_case}s exceeds soft_time_limit"
 

@@ -1,0 +1,87 @@
+{
+  "salt": "LAT-P097-warm",
+  "requests_issued": 29,
+  "trending_votes_cast": 8,
+  "commit": "baae52c2",
+  "uptime_seconds": 377,
+  "warm_slug": true,
+  "feed_warm_ms": [
+    22.0,
+    27.0,
+    22.0,
+    17.0,
+    20.0,
+    18.0
+  ],
+  "feed_warm_p50": 21.0,
+  "feed_stats": {
+    "window": "1 hour",
+    "generated_at": "2026-08-27T00:21:08.850008+00:00",
+    "n": 27,
+    "oldest_sample_age_s": 0.4,
+    "span_s": 2473.9,
+    "buckets": {
+      "hit": 2,
+      "miss": 7,
+      "other": 4,
+      "stale_hit": 14
+    },
+    "miss_n": 7,
+    "miss_p50_ms": 3731.7,
+    "miss_max_ms": 6481.6,
+    "miss_share": 0.25925925925925924
+  },
+  "typeahead_warm_ms": [
+    26.0,
+    25.0,
+    26.0,
+    27.0,
+    26.0,
+    29.0
+  ],
+  "typeahead_warm_p50": 26.0,
+  "typeahead_cold": [
+    {
+      "term": "kaiserslautern",
+      "ms": 2305.0,
+      "queries": 8
+    },
+    {
+      "term": "sanfrecce",
+      "ms": 1503.0,
+      "queries": 8
+    },
+    {
+      "term": "empoli",
+      "ms": 1490.0,
+      "queries": 8
+    },
+    {
+      "term": "randers",
+      "ms": 2025.0,
+      "queries": 8
+    },
+    {
+      "term": "bochum",
+      "ms": 1656.0,
+      "queries": 7
+    },
+    {
+      "term": "heidenheim",
+      "ms": 1715.0,
+      "queries": 7
+    },
+    {
+      "term": "elfsborg",
+      "ms": 1808.0,
+      "queries": 8
+    },
+    {
+      "term": "cagliari",
+      "ms": 1735.0,
+      "queries": 8
+    }
+  ],
+  "typeahead_cold_discarded": [],
+  "typeahead_cold_p50": 1725.0
+}

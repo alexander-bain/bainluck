@@ -7,26 +7,58 @@ WHY THIS EXISTS AT ALL, AND WHY 24h IS NOT ENOUGH
 cache held ORM rows that one rollback could expire (see `routes/events.py`,
 `TeamSnapshot`). The cert window that confirmed the diagnosis independently
 also defined what would REFUTE the fix, and the number in it is the point:
-**BAILUCK-ZK fired on 4 of 5 days**. A clean 24 h therefore has roughly a 1-in-5
+**BAINLUCK-ZK fired on 4 of 5 days**. A clean 24 h therefore has roughly a 1-in-5
 chance of being clean by luck alone. Merging is not closure; a week of silence
 is closure.
 
-    closure = 7 CONSECUTIVE days, post-deploy, with BOTH arms clean:
-      arm A — Sentry BAINLUCK-ZK 24 h event count is ZERO
-      arm B — a 1 req/min GET /api/feed probe records ZERO 5xx
+    closure = 7 CONSECUTIVE UTC dates, post-deploy, with BOTH arms clean:
+      arm A — Sentry BAINLUCK-ZK events, blast-window-excluded, are ZERO
+      arm B — a 1 req/min GET /api/feed probe records ZERO attributable 5xx
 
 Both arms, because either alone is refutable. Sentry alone trusts that a
 handled 500 still reports. The probe alone trusts that one requester's traffic
-reaches every process.
+reaches every process — and only arm A sees the 500s that real user traffic
+provokes while the probe is asleep between samples.
 
-FOUR THINGS THIS REFUSES TO DO, each because the program has been burned by it
+THE CRITERION, PRE-REGISTERED (ruling 136, frozen 2026-08-26 before grading resumed)
+
+A window is **CLEAN** when all of these hold:
+
+  1. the probe served >= MIN_SERVED_REQUESTS requests outside any blast window;
+  2. it observed ZERO `/api/feed` 5xx outside any blast window;
+  3. arm A's Sentry count, blast-window-excluded, is ZERO;
+  4. every commit `/api/health` reported contains the #2107 fix;
+  5. no web worker restarted mid-window.
+
+**Releases inside the window are tolerated.** What is NOT tolerated is an error
+inside DEPLOY_BLAST_WINDOW_MINUTES of a deploy boundary: it cannot make the
+window CLEAN (an error was observed) and it cannot make it FAILED (it may be the
+cutover rather than the code), so it is INCONCLUSIVE, logged with the boundary it
+was measured against.
+
+WHY RELEASES ARE TOLERATED — ruling 136, and it is an attribution correction
+
+Ruling 130 disqualified any window containing a deploy, on the grounds that it
+"measures two different systems". That is true of a SLUG and false of the thing
+this file tests. #2107's fix is a code change — `b2e3e1a9` plus `42f2356b` — and
+EVERY slug deployed since it merged contains it. A boundary between two slugs
+that both carry the fix is not a change of the system under test.
+
+That reasoning is only sound if the slugs really do carry it, so clause 4 above
+checks it rather than assuming it: `--fix-commit` is verified against every
+observed commit with `git merge-base --is-ancestor`. Tolerating releases without
+that check would let a ROLLBACK to a pre-fix slug bank a clean day for a fix that
+was not running — the hole the tolerance would otherwise open.
+
+FIVE THINGS THIS REFUSES TO DO, each because the program has been burned by it
 
 1. **PASS over no samples.** A window that collected nothing reports
    NO_SAMPLES, never PASS. An empty result is a response shape, not a fact
    (gotcha #53) — the trade backfill recorded ten weeks of SUCCESS on exactly
    this confusion.
 2. **Span a restart silently.** A restart clears every process-global, so it
-   also clears the state the watch is watching. A window in which a worker's
+   also clears the state the watch is watching, and unlike a release that IS a
+   change of the system under test. A window in which a worker's
    `uptime_seconds` RESETS — or in which a worker is born mid-window — is
    recorded with `restarted: true` and does NOT count toward the seven. The
    worker-horizon half of this program has been defeated five times by exactly
@@ -43,38 +75,52 @@ FOUR THINGS THIS REFUSES TO DO, each because the program has been burned by it
    and the watch says so rather than quietly reporting it as met. If web scales,
    the coverage line starts showing more ids and the assertion becomes real
    without an edit here.
-4. **Grade a window that straddles a release** (ruling 130, banked on this
-   branch). A window containing a deploy measures two different systems and
-   reports one number: it cannot FAIL (the errors may belong to the retired
-   slug) and it cannot PASS (part of its duration certifies a slug that no
-   longer runs). It is INCONCLUSIVE, a third verdict, logged and excluded from
-   the seven — never silently dropped, because a run that discards windows and
-   a run with nothing to report look identical (gotcha #53). Both arms are
-   bound, and each arm's own interval decides it: arm B by the `commit` set
-   observed **inside the window**, arm A by whether a release landed inside its
-   **24 h lookback** (`--last-release-at`, or the recorded commit history — see
-   `arm_a_release_window`). Arm A's straddle therefore does not suppress arm
-   B's 5xx, which are still attributable to a single slug.
+4. **Credit a deploy boundary it does not know about.** Blast windows are built
+   from boundaries this run can NAME: `--release-at` / `--releases-from-heroku`
+   for exact release times, plus every commit transition the probe itself saw.
+   An error in a stretch whose boundaries are unknown COUNTS — fail-closed
+   toward FAILED, which is the recoverable error, because a false FAILED costs a
+   re-run while a false CLEAN closes a P0. `boundary_source` records which.
+5. **Grade arm A against an org it cannot reach.** `SENTRY_ORG` defaulted to
+   `bain-luck` until 2026-08-26; the org is `alexander-bain`, so every run that
+   did not inherit the env var got a 404, which arm A reports as UNKNOWN, which
+   graded the day INCONCLUSIVE. Arm A was one unset variable from being
+   permanently unreadable, and nobody saw it because ruling 130's straddle check
+   disqualified every window before arm A was ever reached.
+
+WHAT WAS RETIRED, AND WHY IT IS NAMED HERE RATHER THAN DELETED
+
+`MIN_POST_RELEASE_EXPOSURE_HOURS` (ruling 135, 6.0 h) is **retired**. Measured
+2026-08-27 over the 100 most recent releases (295.8 h, 0.34 releases/hour,
+median gap 0.63 h): a day banked only if no release landed in the probe hour
+(78 %) AND >= 6 h had passed since the last release (52 %) — jointly ~41 %, and
+in practice worse, because without `--last-release-at` the 6 h bound came from
+`_narrow_since` walking recorded windows back until the SHA changed, and at one
+window per day consecutive windows essentially never share a SHA. Seven
+CONSECUTIVE banked days at p = 0.41 is an expected wait of about two years.
+The floor is now stated in REQUESTS (`MIN_SERVED_REQUESTS`), which is what the
+instrument can actually vouch for: a floor in hours measures the deploy cadence,
+a floor in requests measures the exposure.
 
 USAGE
 
     # one day's window (run it once per day, or from a scheduler)
-    python3 scripts/watch_2107_feed_500s.py --minutes 60
+    python3 scripts/watch_2107_feed_500s.py --releases-from-heroku
 
     # a short confidence read that is explicitly NOT a day
     python3 scripts/watch_2107_feed_500s.py --minutes 5 --label smoke
 
-    # a day whose arm-A lookback you can vouch for (ruling 130) — take the
-    # timestamp from `heroku releases -a bainluck`, not from memory
-    python3 scripts/watch_2107_feed_500s.py --minutes 60 \
-        --counts-as-day --last-release-at 2026-08-22T18:04:00+00:00
+    # boundaries supplied by hand instead of by the Heroku CLI
+    python3 scripts/watch_2107_feed_500s.py --minutes 60 \\
+        --release-at 2026-08-27T00:45:58+00:00 --release-at 2026-08-27T00:14:27+00:00
 
     # where the seven days stand
     python3 scripts/watch_2107_feed_500s.py --summarize
 
 Environment: `BAINLUCK_API` (required), `SENTRY_AUTH_TOKEN` (arm A; without it
-arm A reports UNKNOWN and the day cannot count clean). Both live in the
-untracked `~/.claude/.env` — never in a tracked file.
+arm A reports UNKNOWN and the day cannot count clean), `SENTRY_ORG` (defaults to
+the correct org). Both live in the untracked `~/.claude/.env` — never in a
+tracked file.
 
 Exit codes follow the gate convention (gotcha #54): `0` clean, `1` a REAL
 failure of the thing being watched, `3` could-not-measure. `1` is a result;
@@ -86,6 +132,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -95,60 +142,287 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-SENTRY_ORG = os.getenv("SENTRY_ORG", "bain-luck")
+# The org is `alexander-bain`. It was `bain-luck` here until 2026-08-26, which
+# 404s — see docstring point 5. A wrong org does not error loudly; it becomes
+# arm A UNKNOWN, which becomes INCONCLUSIVE, which reads as "not yet proven".
+SENTRY_ORG = os.getenv("SENTRY_ORG", "alexander-bain")
 SENTRY_ISSUE_SHORT_ID = "BAINLUCK-ZK"
 REQUIRED_CLEAN_DAYS = 7
-# Arm A reads a rolling 24 h count, so its straddle question is about 24 h —
-# not about the probe window's length. Keep the two intervals separate.
-RELEASE_LOOKBACK_HOURS = 24
+# Arm A reads a rolling 24 h count, so its interval is 24 h — not the probe
+# window's length. Keep the two intervals separate.
+ARM_A_LOOKBACK_HOURS = 24
 
-# ---- ruling 135: arm A narrows to the live slug, above a MINIMUM-EXPOSURE FLOOR
+# ---- ruling 136: the blast window, DERIVED from BAINLUCK-ZK's own event times
 #
-# Alex ruled Option B (2026-08-24): arm A may scope its lookback to
-# `max(deploy_time, window_start)` instead of a flat 24 h, so that a release does
-# not disqualify the day — BUT a day counts toward the seven only when the
-# narrowed window actually carried enough exposure for "no failures" to mean
-# something. Both halves are load-bearing; the narrowing without the floor is the
-# relaxation LAT-P087 declined to make on its own authority.
+# Every one of the issue's 35 lifetime events was timestamped and measured
+# against the preceding release, across the 100 releases spanning
+# 2026-08-14T16:59:38Z -> 2026-08-27T00:45:58Z (295.8 h):
 #
-# 6.0 is DERIVED, not chosen. Measured across 96 production deploys /
-# 2026-08-12..08-24 (median gap 0.67 h, p90 11.0 h), the number of UTC dates that
-# could host a 60-minute window whose post-release exposure clears the floor:
+#     B      wall-clock covered   ZK events inside   enrichment   detection lost
+#     2 min        1.1 %            0/35  ( 0.0 %)      0.00x          0.0 %
+#     5 min        2.7 %            3/35  ( 8.6 %)      3.12x          8.6 %
+#    10 min        5.4 %            4/35  (11.4 %)      2.12x         11.4 %   <-
+#    15 min        7.9 %            5/35  (14.3 %)      1.80x         14.3 %
+#    20 min       10.3 %            5/35  (14.3 %)      1.38x         14.3 %
+#    30 min       14.4 %            8/35  (22.9 %)      1.59x         22.9 %
+#    60 min       22.3 %           11/35  (31.4 %)      1.41x         31.4 %
 #
-#     floor    dates OK    longest CONSECUTIVE run
-#      24 h       2                 2      <- the flat-24h spec: unschedulable
-#      12 h       9                 4      <- still short of REQUIRED_CLEAN_DAYS
-#       6 h      12                12      <- clears 7 with 5 days of headroom
-#       4 h      12                12
+# Enrichment peaks at 5 min and is back to background by 20 min — the signature
+# of a cutover transient that dies out within minutes. The four near-deploy
+# events sit at 3.1, 3.3, 4.7 and 7.1 minutes, so 10 minutes covers all of them
+# while the last point is still enriched 2.12x, and it costs the falsifier
+# 11.4 % of its historical detection power. The bug is overwhelmingly NOT a
+# deploy artifact: its median event fires 517 minutes after the last release.
 #
-# So 6 h is the most conservative floor that still admits a seven-day streak.
-# 12 h is not a stricter version of this criterion — it is an unrunnable one, and
-# an unrunnable falsifier grades INCONCLUSIVE forever, which reads as "not yet
-# proven" and so is never investigated (the `_detect_restart` failure, again).
-MIN_POST_RELEASE_EXPOSURE_HOURS = 6.0
+# SHORTER IS FAIL-CLOSED and that is why this is an upper bound rather than a
+# margin. A short B grades a transient error FAILED, which costs a re-run; a
+# long B grades a real regression INCONCLUSIVE, which costs the falsifier. 30
+# and 60 are rejected on that ground despite being more tolerant.
+DEPLOY_BLAST_WINDOW_MINUTES = 10
 
-# The window must also have SERVED enough real requests. This is the floor's
-# other half and it answers a different question from the hours: six deploy-free
-# hours during which nobody asked for the feed is six hours of nothing observed.
+# The window must have SERVED enough real requests OUTSIDE the blast bands.
+# Six deploy-free hours during which nobody asked for the feed is six hours of
+# nothing observed; a bug that never had a chance to fire did not fail to fire.
 # A 60-minute probe at `--interval 60` makes 60 requests, so 50 tolerates a few
 # transport blips while refusing a window that was gutted.
 #
-# Counted from the probe's OWN successful samples, deliberately, because that is
-# the only request count this instrument can vouch for. Production exposes no
-# readable per-interval counter of real user feed requests: `user_seen_markets`
-# is EMPTY (0 rows, ever — measured 2026-08-24, so it is not a traffic signal at
-# all), `pg_stat_statements` holds only ingestion writes for `futures_markets`,
-# and `pg_stat_user_indexes.idx_scan` on the feed's partial indexes conflates the
+# Counted from the probe's OWN samples, deliberately, because that is the only
+# request count this instrument can vouch for. Production exposes no readable
+# per-interval counter of real user feed requests: `user_seen_markets` is EMPTY
+# (0 rows, ever — measured 2026-08-24, so it is not a traffic signal at all),
+# `pg_stat_statements` holds only ingestion writes for `futures_markets`, and
+# `pg_stat_user_indexes.idx_scan` on the feed's partial indexes conflates the
 # hourly warmer rail with real users. Rather than infer a number from a counter
-# that measures something else, the floor is stated over what was actually
-# observed. If a real-traffic counter lands later, raise this to it.
+# that measures something else, the floor is stated over what was observed.
 MIN_SERVED_REQUESTS = 50
 
+# The default window is 90 minutes, and that number is DERIVED from the floor
+# above rather than picked for roundness. A blast band costs the window ~10 of
+# its samples, so at one sample per minute the floor and the window length are
+# coupled. Simulated over the same 100 releases, stepping a candidate window
+# start every 5 minutes across the whole 295.8 h span and counting how many
+# start times still clear 50 served requests outside every band:
+#
+#      60 min   3184/3538 = 90.0 %      -> 7 consecutive days = 47.8 %
+#      75 min   3429/3535 = 97.0 %
+#      90 min   3524/3532 = 99.8 %      -> 7 consecutive days = 98.6 %   <-
+#     120 min   3526/3526 = 100.0 %
+#
+# 60 minutes leaves a single mid-window deploy sitting right on the floor (60
+# samples minus ~11 blasted = 49), which is the ruling-135 mistake in miniature:
+# a criterion that happens to be clearable is not a criterion that is runnable.
+# 90 absorbs four deploys and still clears. Expected wait to seven consecutive
+# clean days: ~7.1 days at 90 min, against ~868 days under the retired rule.
+DEFAULT_WINDOW_MINUTES = 90
+
+# The two commits that together are the #2107 fix. Defaults so that a bare run
+# still checks clause 4 rather than skipping it — the check is the thing that
+# makes tolerating releases safe, so it must not be opt-in.
+DEFAULT_FIX_COMMITS = (
+    "b2e3e1a9",  # the team cache holds detached snapshots
+    "42f2356b",  # season_stats was handed out by reference
+)
+
+HEROKU_APP = os.getenv("HEROKU_APP", "bainluck")
+
 DEFAULT_STATE = Path(__file__).resolve().parents[2] / "docs/audits/latency/2107-watch.jsonl"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 RC_CLEAN = 0
 RC_FAILED = 1
 RC_CANNOT_MEASURE = 3
+
+
+def _parse_stamp(value) -> datetime | None:
+    """ISO8601 -> aware UTC datetime, or None. Naive input is read as UTC."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+# ------------------------------------------------------- deploy blast windows
+
+
+def heroku_release_times(app: str = HEROKU_APP, count: int = 200) -> tuple[list[datetime], str]:
+    """(release timestamps, source) from the Heroku CLI, or ([], reason) on failure.
+
+    Shelling out is a dependency and dependencies fail, so this NEVER raises and
+    never blocks a run. It returns a source string that is recorded on the row,
+    because "no boundaries were known" and "boundaries were known and there were
+    none" are different facts that a bare empty list collapses (gotcha #53).
+
+    Failing soft is also fail-CLOSED here, which is why it is safe: with fewer
+    known boundaries, more errors fall outside every blast band and count as
+    FAILED. A false FAILED costs a re-run. A false CLEAN closes a P0.
+    """
+    try:
+        out = subprocess.run(
+            ["heroku", "releases", "-a", app, "-n", str(count), "--json"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except Exception as exc:
+        return [], f"heroku-unavailable ({type(exc).__name__})"
+    if out.returncode != 0:
+        return [], f"heroku-exit-{out.returncode}"
+    try:
+        rows = json.loads(out.stdout)
+    except Exception:
+        return [], "heroku-unparseable"
+    stamps = [t for t in (_parse_stamp(r.get("created_at")) for r in rows) if t]
+    if not stamps:
+        return [], "heroku-empty"
+    return sorted(stamps), f"heroku ({len(stamps)} releases)"
+
+
+def deploy_boundaries(
+    timeline: list[dict],
+    explicit: list[datetime] | None = None,
+) -> list[dict]:
+    """Every deploy boundary this run can NAME, as {at, source, uncertain_from}.
+
+    Two sources, and they are kept apart on the row rather than merged into one
+    number, because they carry different precision:
+
+    * **explicit** — `--release-at` or the Heroku CLI. Exact to the second.
+    * **observed** — a commit transition in the probe's own identity timeline.
+      The deploy happened somewhere between the last sample on the old SHA and
+      the first on the new one, so the boundary is recorded with
+      `uncertain_from` at the earlier of the two and the blast band is measured
+      from THERE. At `--interval 60` that widens the band by at most a sample.
+
+    The observed source exists because a release can land inside the window with
+    no `--release-at` covering it, and a boundary the run cannot see is a
+    boundary whose transient errors get attributed to the code (docstring point
+    4). Recording both is cheaper than choosing.
+    """
+    out: list[dict] = []
+    for at in sorted(explicit or []):
+        out.append({"at": at.isoformat(), "source": "explicit",
+                    "uncertain_from": at.isoformat()})
+
+    prev_sha, prev_at = None, None
+    for point in timeline:
+        sha = point.get("commit")
+        at = _parse_stamp(point.get("at"))
+        if not sha or at is None:
+            continue
+        if prev_sha is not None and sha != prev_sha:
+            out.append({
+                "at": at.isoformat(),
+                "source": "observed",
+                "uncertain_from": (prev_at or at).isoformat(),
+                "from_commit": prev_sha[:12],
+                "to_commit": sha[:12],
+            })
+        prev_sha, prev_at = sha, at
+    return out
+
+
+def blast_bands(
+    boundaries: list[dict],
+    minutes: float = DEPLOY_BLAST_WINDOW_MINUTES,
+) -> list[tuple[datetime, datetime]]:
+    """Boundaries -> [start, end] intervals inside which an error is unattributable."""
+    bands = []
+    for b in boundaries:
+        start = _parse_stamp(b.get("uncertain_from")) or _parse_stamp(b.get("at"))
+        anchor = _parse_stamp(b.get("at")) or start
+        if start is None or anchor is None:
+            continue
+        bands.append((start, anchor + timedelta(minutes=minutes)))
+    return bands
+
+
+def in_blast(when: datetime | None, bands: list[tuple[datetime, datetime]]) -> bool:
+    if when is None:
+        return False
+    return any(start <= when <= end for start, end in bands)
+
+
+def attribute_errors(failures: list[dict], bands: list[tuple[datetime, datetime]]) -> dict:
+    """Split observed failures into attributable and blast-window ones.
+
+    Ruling 136's whole mechanism sits in this split. An error OUTSIDE every band
+    is the live code's and refutes the fix. An error INSIDE a band may be the
+    cutover, so it can neither pass nor fail the window — but it is carried out
+    of here with the band it matched, because an excluded error that is not
+    printed is an error nobody ever reads (ruling 130's logged-not-dropped
+    clause, which survives this amendment unchanged).
+    """
+    attributable, blasted = [], []
+    for f in failures:
+        when = _parse_stamp(f.get("at"))
+        (blasted if in_blast(when, bands) else attributable).append(f)
+    return {
+        "attributable": attributable,
+        "blast_window": blasted,
+        "attributable_count": len(attributable),
+        "blast_window_count": len(blasted),
+    }
+
+
+# ---------------------------------------------------------- clause 4: ancestry
+
+
+def check_fix_ancestry(commits: dict, fix_commits: list[str]) -> dict:
+    """Does every observed slug contain the fix? This is what makes clause 1 safe.
+
+    Tolerating releases rests entirely on "every deployed slug carries the fix",
+    and that sentence is checkable rather than assumable: `/api/health` reports
+    the commit, and `git merge-base --is-ancestor` answers it exactly.
+
+    Three outcomes, and the middle one is the reason the function exists:
+
+    * **CONTAINS** — every observed SHA has every fix commit as an ancestor.
+    * **MISSING** — some slug did NOT carry the fix. A rollback. The window
+      measured a system without the fix in it and must not bank; grading it
+      CLEAN is precisely the hole that tolerating releases would open.
+    * **UNRESOLVED** — a SHA is not in this clone (unfetched, or a short SHA
+      that no longer resolves). Not knowing is not the same as knowing it is
+      fine, so this grades INCONCLUSIVE and says which SHA to fetch.
+    """
+    seen = sorted(sha for sha in (commits or {}) if sha)
+    if not fix_commits:
+        return {"verdict": "UNCHECKED", "reason": "no --fix-commit supplied",
+                "commits": seen, "missing": [], "unresolved": []}
+    if not seen:
+        return {"verdict": "UNRESOLVED", "reason": "no commit was observed at all",
+                "commits": [], "missing": [], "unresolved": []}
+
+    missing, unresolved = [], []
+    for sha in seen:
+        if not _git_ok(["cat-file", "-e", f"{sha}^{{commit}}"]):
+            unresolved.append(sha)
+            continue
+        for fix in fix_commits:
+            if not _git_ok(["merge-base", "--is-ancestor", fix, sha]):
+                missing.append(f"{sha[:12]} lacks {fix[:12]}")
+
+    if unresolved:
+        return {"verdict": "UNRESOLVED", "commits": seen, "missing": missing,
+                "unresolved": unresolved,
+                "reason": "not in this clone: " + ", ".join(s[:12] for s in unresolved)
+                          + " — fetch it, or the slug's contents are unknown"}
+    if missing:
+        return {"verdict": "MISSING", "commits": seen, "missing": missing,
+                "unresolved": [], "reason": "; ".join(missing)}
+    return {"verdict": "CONTAINS", "commits": seen, "missing": [], "unresolved": [],
+            "reason": f"all {len(seen)} observed slug(s) contain "
+                      f"{', '.join(f[:12] for f in fix_commits)}"}
+
+
+def _git_ok(args: list[str]) -> bool:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(REPO_ROOT), *args],
+            capture_output=True, timeout=30,
+        ).returncode == 0
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------- arm B: probe
@@ -189,17 +463,26 @@ def _identify_process(api: str) -> dict:
 
 
 def run_probe(api: str, minutes: int, interval: float, limit: int) -> dict:
-    """1 req/min against `/api/feed`, recording every status and every process."""
+    """1 req/min against `/api/feed`, recording every status, process and commit.
+
+    The identity read now runs on EVERY sample rather than every fifth. Ruling
+    136 measures a 10-minute blast band from a commit transition, so a boundary
+    located to within five samples is a boundary located to within a band's
+    length — the sampling rate stopped being a cost question and became a
+    precision one. It is one extra `/api/health` per minute.
+    """
     started_monotonic = time.monotonic()
     deadline = started_monotonic + minutes * 60
     statuses: Counter = Counter()
     processes: Counter = Counter()
     commits: Counter = Counter()
     failures: list[dict] = []
+    timeline: list[dict] = []
     # pid -> {"first_uptime", "last_uptime", "born_at_elapsed"}. Seeing N process
     # ids is NOT a restart (see `_detect_restart`); an uptime that resets is.
     uptimes: dict[str, dict] = {}
     samples = 0
+    sample_times: list[str] = []
 
     def _note_uptime(ident: dict) -> None:
         pid, up = ident.get("process_id"), ident.get("uptime_seconds")
@@ -220,24 +503,18 @@ def run_probe(api: str, minutes: int, interval: float, limit: int) -> dict:
         status, _ = _get(f"{api}/api/feed?limit={limit}")
         samples += 1
         statuses[str(status)] += 1
+        sample_times.append(stamp)
+
+        ident = _identify_process(api)
+        if ident.get("process_id"):
+            processes[ident["process_id"]] += 1
+        if ident.get("commit"):
+            commits[ident["commit"]] += 1
+            timeline.append({"at": stamp, "commit": ident["commit"]})
+        _note_uptime(ident)
 
         if status is None or status >= 500:
-            # Only pay for the identity read when it is worth attributing.
-            ident = _identify_process(api)
             failures.append({"at": stamp, "status": status, **ident})
-            if ident.get("process_id"):
-                processes[ident["process_id"]] += 1
-            if ident.get("commit"):
-                commits[ident["commit"]] += 1
-            _note_uptime(ident)
-        elif samples % 5 == 1:
-            # Coverage sampling: every fifth probe, cheap enough to run all day.
-            ident = _identify_process(api)
-            if ident.get("process_id"):
-                processes[ident["process_id"]] += 1
-            if ident.get("commit"):
-                commits[ident["commit"]] += 1
-            _note_uptime(ident)
 
         if time.monotonic() >= deadline:
             break
@@ -246,23 +523,28 @@ def run_probe(api: str, minutes: int, interval: float, limit: int) -> dict:
     server_errors = sum(n for s, n in statuses.items() if s != "None" and int(s) >= 500)
     transport = statuses.get("None", 0)
     restarted, restart_reasons = _detect_restart(uptimes)
-    straddled, straddle_reasons = _detect_release(commits)
+    released, release_reasons = _detect_release(commits)
     return {
         "samples": samples,
+        "sample_times": sample_times,
         "statuses": dict(statuses),
         "server_errors": server_errors,
         "transport_errors": transport,
         "failures": failures[:50],
         "process_ids": dict(processes),
         "commits": dict(commits),
+        "commit_timeline_len": len(timeline),
+        "timeline": timeline,
         # Ruling 129: a dyno runs WEB_CONCURRENCY workers, so the worker count is
         # dynos x WEB_CONCURRENCY. Recorded, not inferred (docstring point 3).
         "worker_count": len(processes),
         "uptimes": uptimes,
         "restarted": restarted,
         "restart_reasons": restart_reasons,
-        "release_straddle": straddled,
-        "release_reasons": straddle_reasons,
+        # Ruling 136: a release inside the window is RECORDED and no longer
+        # disqualifying. The field keeps its name so old rows stay readable.
+        "release_straddle": released,
+        "release_reasons": release_reasons,
     }
 
 
@@ -270,16 +552,20 @@ def _detect_restart(uptimes: dict[str, dict]) -> tuple[bool, list[str]]:
     """A restart is an uptime that RESETS — not a second process id.
 
     `restarted` was `len(processes) > 1`, which reads "more than one worker
-    answered" as "the web process restarted mid-window". Ruling 129 (banked on
-    this branch at 79f1313b) is exactly that correction in the other direction:
-    the two leaders were WEB_CONCURRENCY, not the dyno count. Production runs
-    ONE web dyno with `WEB_CONCURRENCY=2`, so two stable process ids answer
-    every hour of every day — measured 2026-08-24, both reporting uptime 6,701 s
-    and climbing together. The old predicate was therefore not merely
-    imprecise, it was **unconditionally true**, and every window it would ever
-    grade was INCONCLUSIVE. A seven-day falsifier that cannot bank day one is
-    not a strict falsifier; it is a broken one, and it fails in the direction
-    where nobody goes looking, because "not yet closed" is the expected reading.
+    answered" as "the web process restarted mid-window". Ruling 129 is exactly
+    that correction in the other direction: the two leaders were
+    WEB_CONCURRENCY, not the dyno count. Production runs ONE web dyno with
+    `WEB_CONCURRENCY=2`, so two stable process ids answer every hour of every
+    day — measured 2026-08-24, both reporting uptime 6,701 s and climbing
+    together. The old predicate was therefore not merely imprecise, it was
+    **unconditionally true**, and every window it would ever grade was
+    INCONCLUSIVE. A seven-day falsifier that cannot bank day one is not a strict
+    falsifier; it is a broken one, and it fails in the direction where nobody
+    goes looking, because "not yet closed" is the expected reading.
+
+    This one survives ruling 136 unamended, and the contrast is the point: a
+    RELEASE between two fix-carrying slugs is not a change of the system under
+    test, but a RESTART clears the process-globals this issue is about, so it is.
 
     Two direct signals, both from `uptime_seconds`, which was already collected:
 
@@ -302,26 +588,17 @@ def _detect_restart(uptimes: dict[str, dict]) -> tuple[bool, list[str]]:
 
 
 def _detect_release(commits: dict) -> tuple[bool, list[str]]:
-    """Arm B's straddle test: did the deployed commit CHANGE inside the window?
+    """Did the deployed commit CHANGE inside the window? RECORDED, not disqualifying.
 
-    Ruling 130. `/api/health` already reports `commit`, and `run_probe` already
-    counts them — the signal was being collected and thrown away. Two or more
-    distinct SHAs answering inside one window is a release landing inside it,
-    full stop; there is no heuristic here about whether the release "could have"
-    touched `/api/feed`, because the ruling decides on the boundary, not on a
-    guess about relevance.
-
-    Deliberately NOT the same test as `_detect_restart`. A restart with no new
-    slug (a dyno cycle, a memory-quota kill) resets process-globals and is
-    graded by the restart arm; a release with no restart is impossible on Heroku
-    but the two signals still answer different questions and a window can trip
-    exactly one of them. Collapsing them would print one reason for two causes,
-    which is the failure this whole file is written against.
+    Under ruling 130 this returned the verdict. Under ruling 136 it returns a
+    fact: the window saw a release, which is now expected — 22 % of random
+    60-minute windows contain one at the measured cadence of 0.34 releases/hour.
+    What the release buys is a BOUNDARY (see `deploy_boundaries`), and what the
+    boundary buys is a blast band. The window itself is still gradeable.
 
     Absent commits are ignored rather than counted as a change: `/api/health`
     predating the field reports `None`, and "the instrument cannot see it" is
-    not "the value differed" (gotcha #53). That case is already caught by the
-    `process_ids` arm.
+    not "the value differed" (gotcha #53).
     """
     seen = sorted(sha for sha in commits if sha)
     if len(seen) < 2:
@@ -329,231 +606,9 @@ def _detect_release(commits: dict) -> tuple[bool, list[str]]:
     shown = ", ".join(sha[:12] for sha in seen)
     return True, [
         f"{len(seen)} distinct commits answered inside the window ({shown}) — "
-        "a release landed mid-window"
+        "a release landed mid-window; ruling 136 tolerates it and measures a "
+        f"{DEPLOY_BLAST_WINDOW_MINUTES}-minute blast band from the transition"
     ]
-
-
-def _parse_stamp(value: str | None) -> datetime | None:
-    """ISO8601 -> aware UTC datetime, or None. Naive input is read as UTC."""
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-
-
-def _narrow_since(
-    rows: list[dict],
-    window_commits: dict,
-    window_started: datetime | None,
-) -> datetime | None:
-    """Earliest instant this run can ATTRIBUTE to the currently-deployed slug.
-
-    Ruling 135's narrowing needs a lower bound on when the live slug took over.
-    ``--last-release-at`` gives it exactly; without it, the recorded history can
-    still bound it — and a bound is enough, because the bound is used only to
-    move the count's start LATER, never earlier.
-
-    The current slug is whatever answered this window. If more than one SHA did,
-    there is no "current slug" to narrow to and this returns None (arm B already
-    disqualifies that window anyway). Otherwise walk the recorded windows newest
-    first and keep taking rows that answered with that same single SHA; the first
-    row that disagrees, or carries no commit at all, ends the run. The earliest
-    still-agreeing row's start is the bound.
-
-    Deliberately CONSERVATIVE in one direction: an observation gap inside the run
-    is not filled in — the bound can only be as old as the oldest row we actually
-    saw on this slug, so unobserved deploy-free hours are simply not credited.
-    Under-crediting exposure makes a day fail the floor and grade INCONCLUSIVE;
-    over-crediting would let a barely-exposed window bank. Only one of those two
-    errors is recoverable by running again tomorrow.
-    """
-    current = {sha for sha in (window_commits or {}) if sha}
-    if len(current) != 1:
-        return None
-    sha = next(iter(current))
-
-    dated = []
-    for row in rows:
-        started = _parse_stamp(row.get("started_at"))
-        if started is not None:
-            dated.append((started, (row.get("probe") or {}).get("commits") or {}))
-    dated.sort(key=lambda pair: pair[0], reverse=True)
-
-    bound = window_started
-    for started, commits in dated:
-        shas = {s for s in commits if s}
-        if shas != {sha}:
-            break
-        if bound is None or started < bound:
-            bound = started
-    return bound
-
-
-def arm_a_release_window(
-    rows: list[dict],
-    now: datetime,
-    window_commits: dict,
-    last_release_at: datetime | None = None,
-    lookback_hours: int = RELEASE_LOOKBACK_HOURS,
-    window_started: datetime | None = None,
-    min_exposure_hours: float = MIN_POST_RELEASE_EXPOSURE_HOURS,
-) -> dict:
-    """Did a release land inside arm A's 24 h lookback? STRADDLED / CLEAR / UNKNOWN.
-
-    Ruling 130 binds BOTH arms, and arm A's interval is not the probe window —
-    it is the 24 h Sentry `statsPeriod`. A perfectly single-slug 60-minute probe
-    can sit inside a 24 h count that spans two deploys, and that count is the
-    thing being scored against zero.
-
-    Three sources of knowledge, in descending authority:
-
-    1. ``--last-release-at``. The operator reading Heroku's release list knows
-       the answer exactly. It wins, and it is the escape hatch that keeps this
-       from stalling a first run.
-    2. **The commit set** — this window's, plus every recorded window inside the
-       lookback, plus the most recent recorded window at or BEFORE the lookback
-       start. More than one distinct SHA across that set is a release inside it.
-    3. Nothing. Then the answer is UNKNOWN, not CLEAR.
-
-    That anchor row in (2) is the part worth being careful about. Rows *inside*
-    the lookback all start after `now - 24h` by construction, so agreeing with
-    each other says nothing about the hours before the earliest of them; a fresh
-    state file with one row in it would read as unanimous and certify 24 h it
-    never observed. Requiring an observation at or before the boundary is what
-    makes CLEAR mean covered. It costs one warm-up day, after which every run
-    has an anchor — a bounded cost, unlike `_detect_restart`'s old predicate,
-    which was unconditionally true and could never resolve at all.
-
-    RULING 135 adds a fourth verdict, **NARROWED**, and it is what makes arm A
-    runnable at all. LAT-P087 measured the flat-24h rule against production and
-    found it unschedulable: 96 deploys in 12 days, so only 2 of 12 UTC dates
-    could host a deploy-free 24 h and the longest consecutive run was 2 — against
-    a seven-day requirement. Alex ruled Option B: scope the count to the live
-    slug (`max(deploy_time, window_start)`) instead of disqualifying the day,
-    ABOVE a minimum-exposure floor. Below the floor the verdict stays STRADDLED,
-    because "no failures in the 40 minutes since the deploy" is not evidence
-    about the deploy — it is evidence about 40 minutes. See
-    MIN_POST_RELEASE_EXPOSURE_HOURS for how 6 h was derived from those deploys.
-
-    Narrowing also changes what a NON-ZERO count means, which is half the point:
-    an unnarrowed count spanning two slugs cannot refute anything (the events may
-    be the retired slug's), so it could only ever grade INCONCLUSIVE. A narrowed
-    count IS attributable to the running slug, so a non-zero one is a real
-    FAILED. The relaxation and the sharpening are the same edit.
-    """
-    if last_release_at is not None:
-        age_h = (now - last_release_at).total_seconds() / 3600.0
-        if age_h < lookback_hours:
-            if age_h >= min_exposure_hours:
-                return {
-                    "verdict": "NARROWED",
-                    "reason": f"--last-release-at is {age_h:.1f}h ago, inside the "
-                              f"{lookback_hours}h lookback — ruling 135: arm A is "
-                              f"scoped to the {age_h:.1f}h since it, which clears the "
-                              f"{min_exposure_hours}h exposure floor",
-                    "source": "operator",
-                    "narrow_since": last_release_at.isoformat(),
-                    "exposure_hours": round(age_h, 2),
-                }
-            return {
-                "verdict": "STRADDLED",
-                "reason": f"--last-release-at is {age_h:.1f}h ago; ruling 135 would "
-                          f"narrow arm A to it, but {age_h:.1f}h is under the "
-                          f"{min_exposure_hours}h minimum-exposure floor — too little "
-                          f"exposure for silence to mean anything",
-                "source": "operator",
-                "narrow_since": last_release_at.isoformat(),
-                "exposure_hours": round(age_h, 2),
-            }
-        return {
-            "verdict": "CLEAR",
-            "reason": f"--last-release-at is {age_h:.1f}h ago, outside the "
-                      f"{lookback_hours}h arm-A lookback",
-            "source": "operator",
-            "narrow_since": None,
-            "exposure_hours": None,
-        }
-
-    floor = now - timedelta(hours=lookback_hours)
-    inside, anchor, anchor_at = [], None, None
-    for row in rows:
-        started = _parse_stamp(row.get("started_at"))
-        if started is None:
-            continue
-        commits = (row.get("probe") or {}).get("commits") or {}
-        if started >= floor:
-            inside.append((started, commits))
-        elif anchor_at is None or started > anchor_at:
-            anchor_at, anchor = started, commits
-
-    seen = {sha for sha in (window_commits or {}) if sha}
-    for _started, commits in inside:
-        seen.update(sha for sha in commits if sha)
-    anchor_shas = {sha for sha in (anchor or {}) if sha}
-    seen.update(anchor_shas)
-
-    if len(seen) > 1:
-        shown = ", ".join(sorted(sha[:12] for sha in seen))
-        since = _narrow_since(rows, window_commits, window_started)
-        if since is None:
-            return {
-                "verdict": "STRADDLED",
-                "reason": f"{len(seen)} distinct commits recorded within the "
-                          f"{lookback_hours}h arm-A lookback ({shown}), and this "
-                          "window itself saw more than one — there is no single live "
-                          "slug to narrow to (ruling 135)",
-                "source": "history",
-                "narrow_since": None,
-                "exposure_hours": None,
-            }
-        exposure_h = (now - since).total_seconds() / 3600.0
-        if exposure_h >= min_exposure_hours:
-            return {
-                "verdict": "NARROWED",
-                "reason": f"{len(seen)} distinct commits inside the {lookback_hours}h "
-                          f"lookback ({shown}); ruling 135 scopes arm A to the live "
-                          f"slug from {since.isoformat()} — {exposure_h:.1f}h of "
-                          f"observed exposure, clearing the {min_exposure_hours}h floor",
-                "source": "history",
-                "narrow_since": since.isoformat(),
-                "exposure_hours": round(exposure_h, 2),
-            }
-        return {
-            "verdict": "STRADDLED",
-            "reason": f"{len(seen)} distinct commits inside the {lookback_hours}h "
-                      f"lookback ({shown}); the live slug is only attributable from "
-                      f"{since.isoformat()} = {exposure_h:.1f}h, under the "
-                      f"{min_exposure_hours}h minimum-exposure floor (ruling 135). "
-                      "Pass --last-release-at if the real deploy is older than the "
-                      "oldest window observed on this slug.",
-            "source": "history",
-            "narrow_since": since.isoformat(),
-            "exposure_hours": round(exposure_h, 2),
-        }
-
-    if not anchor_shas:
-        return {
-            "verdict": "UNKNOWN",
-            "reason": f"no recorded window with a commit at or before the "
-                      f"{lookback_hours}h lookback start ({floor.isoformat()}) — "
-                      "arm A's 24h cannot be certified deploy-free. Pass "
-                      "--last-release-at, or run again once a day of history exists.",
-            "source": "history",
-            "narrow_since": None,
-            "exposure_hours": None,
-        }
-
-    return {
-        "verdict": "CLEAR",
-        "reason": f"one commit ({next(iter(seen))[:12]}) across the "
-                  f"{lookback_hours}h lookback, anchored at {anchor_at.isoformat()}",
-        "source": "history",
-        "narrow_since": None,
-        "exposure_hours": None,
-    }
 
 
 # --------------------------------------------------------------- arm A: sentry
@@ -562,19 +617,18 @@ def arm_a_release_window(
 def sum_buckets_since(buckets: list, since: datetime | None) -> tuple[int, int, bool]:
     """(total_24h, total_since, narrowed) over Sentry's hourly `stats.24h` points.
 
-    Ruling 135's narrowing is a SUM over a subrange, and Sentry already hands the
-    subrange over: `stats.24h` is a list of `[epoch_seconds, count]` buckets, so
-    scoping the count to the live slug is arithmetic on data already fetched —
-    no second API call, no different endpoint, and nothing inferred.
+    Retained as arm A's FALLBACK path. Hourly buckets cannot express a 10-minute
+    blast band — excluding a band would drop a whole hour with it — which is why
+    ruling 136 moved arm A's primary read onto per-event timestamps
+    (`sentry_events_since`). This is what answers when the event list may be
+    truncated and a count is still owed.
 
     A bucket is kept when any part of it lies at or after `since`, i.e. when
-    `bucket_start + width > since`. That deliberately keeps the bucket the deploy
-    landed inside, whose events may belong to either slug. Rounding a partial
-    bucket INTO the narrowed count can only turn a would-be CLEAN into a FIRED —
-    never the reverse — and a false FAILED gets investigated while a false CLEAN
-    closes the issue. Width is read off consecutive timestamps rather than
-    assumed, falling back to one hour, so a granularity change upstream does not
-    silently shift the boundary.
+    `bucket_start + width > since`. Rounding a partial bucket INTO the count can
+    only turn a would-be CLEAN into a FIRED — never the reverse — and a false
+    FAILED gets investigated while a false CLEAN closes the issue. Width is read
+    off consecutive timestamps rather than assumed, falling back to one hour, so
+    a granularity change upstream does not silently shift the boundary.
     """
     points = [p for p in buckets if len(p) > 1]
     total = sum(int(p[1]) for p in points)
@@ -593,59 +647,112 @@ def sum_buckets_since(buckets: list, since: datetime | None) -> tuple[int, int, 
     return total, sum(int(p[1]) for p in kept), len(kept) != len(points)
 
 
-def sentry_24h_count(token: str | None, since: datetime | None = None) -> dict:
-    """BAINLUCK-ZK's events in the last 24 h, optionally narrowed to `since`.
+def _sentry_get(url: str, token: str):
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=45) as resp:
+        return json.loads(resp.read())
 
-    Reads the 24 h STATS buckets, never the issue's `count` — that field is
-    LIFETIME (gotcha #49), and a dormant bug shows thousands there while firing
-    zero today. Reading it would make this watch permanently, confidently red.
 
-    `since` is ruling 135's narrowing (see `arm_a_release_window`). Both numbers
-    are reported: `count_24h` unchanged for continuity with rows recorded before
-    this, and `count_scored` — the one the verdict is taken from. `narrowed` says
-    whether narrowing actually dropped a bucket, so a caller can tell "scoped"
-    from "asked for a scope that covered everything anyway"; a grader that
-    assumed the former would attribute a pre-release event to the live slug.
+def sentry_events_since(
+    token: str | None,
+    bands: list[tuple[datetime, datetime]],
+    now: datetime,
+    lookback_hours: int = ARM_A_LOOKBACK_HOURS,
+) -> dict:
+    """Arm A: BAINLUCK-ZK events in the lookback, blast-window-excluded.
+
+    Reads per-event timestamps, not the issue's `count` — that field is LIFETIME
+    (gotcha #49), and a dormant bug shows thousands there while firing zero
+    today. Reading it would make this watch permanently, confidently red.
+
+    Ruling 136 needs SECOND precision, because a 10-minute band is a sixth of a
+    Sentry stats bucket. The events endpoint gives exactly that. The 24 h bucket
+    total is still read alongside it and is used two ways: as the continuity
+    number (`count_24h`, comparable with rows recorded before this) and as a
+    TRUNCATION DETECTOR.
+
+    Truncation is the one way this read can lie in the dangerous direction. The
+    events endpoint pages at 100, so a flood could return the newest 100 and
+    hide the rest. If the page is full AND the bucket total exceeds what came
+    back, the event list is not trustworthy and the verdict falls back to the
+    unexcluded bucket total — which can only produce FIRED, never a false CLEAN.
     """
     if not token:
         return {"verdict": "UNKNOWN", "reason": "SENTRY_AUTH_TOKEN not set",
-                "count_24h": None, "count_scored": None, "narrowed": False,
-                "since": since.isoformat() if since else None}
+                "count_24h": None, "count_scored": None, "source": None,
+                "excluded_by_blast": 0}
 
-    query = urllib.parse.urlencode({"query": f"issue:{SENTRY_ISSUE_SHORT_ID}", "statsPeriod": "24h"})
+    floor = now - timedelta(hours=lookback_hours)
+    query = urllib.parse.urlencode(
+        {"query": f"issue:{SENTRY_ISSUE_SHORT_ID}", "statsPeriod": "24h"})
     url = f"https://sentry.io/api/0/organizations/{SENTRY_ORG}/issues/?{query}"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
-        with urllib.request.urlopen(req, timeout=45) as resp:
-            issues = json.loads(resp.read())
+        issues = _sentry_get(url, token)
     except Exception as exc:
-        return {"verdict": "UNKNOWN", "reason": f"{type(exc).__name__}",
-                "count_24h": None, "count_scored": None, "narrowed": False,
-                "since": since.isoformat() if since else None}
+        return {"verdict": "UNKNOWN", "reason": f"{type(exc).__name__} on {SENTRY_ORG}",
+                "count_24h": None, "count_scored": None, "source": None,
+                "excluded_by_blast": 0}
+    if isinstance(issues, dict):  # an error body, not a list of issues
+        return {"verdict": "UNKNOWN",
+                "reason": f"sentry returned an error object: {str(issues)[:120]}",
+                "count_24h": None, "count_scored": None, "source": None,
+                "excluded_by_blast": 0}
 
     if not issues:
         # The issue not being returned for a 24h window is the CLEAN reading —
         # but say which reading it is, so nobody later mistakes it for "the
         # issue does not exist" (gotcha #53 again).
         return {"verdict": "CLEAN", "reason": "no 24h events for this issue",
-                "count_24h": 0, "count_scored": 0, "narrowed": False,
-                "since": since.isoformat() if since else None}
+                "count_24h": 0, "count_scored": 0, "source": "issues-endpoint",
+                "excluded_by_blast": 0}
 
-    buckets = (issues[0].get("stats") or {}).get("24h") or []
-    total, scored, narrowed = sum_buckets_since(buckets, since)
-    if scored == 0:
-        reason = None if total == 0 else (
-            f"{total} events in 24h, but 0 since {since.isoformat()} — "
-            "the events predate the live slug (ruling 135)")
+    issue = issues[0]
+    total = sum(int(p[1]) for p in ((issue.get("stats") or {}).get("24h") or []) if len(p) > 1)
+
+    events, truncated = [], False
+    try:
+        raw = _sentry_get(
+            f"https://sentry.io/api/0/issues/{issue.get('id')}/events/?statsPeriod=24h", token)
+        if isinstance(raw, list):
+            events = [t for t in (_parse_stamp(e.get("dateCreated")) for e in raw) if t]
+            truncated = len(raw) >= 100
+        else:
+            truncated = True
+    except Exception:
+        truncated = True
+
+    in_lookback = [t for t in events if t >= floor]
+    if truncated and total > len(in_lookback):
+        return {
+            "verdict": "FIRED" if total else "CLEAN",
+            "count_24h": total, "count_scored": total,
+            "source": "buckets-fallback", "excluded_by_blast": 0,
+            "issue_id": issue.get("id"),
+            "reason": f"{total} events in 24h; the per-event list was truncated "
+                      f"({len(in_lookback)} returned) so no blast-window exclusion "
+                      "was applied — graded on the unexcluded total",
+        }
+
+    kept = [t for t in in_lookback if not in_blast(t, bands)]
+    excluded = len(in_lookback) - len(kept)
+    if kept:
+        reason = (f"{len(kept)} event(s) outside every blast window, newest "
+                  f"{max(kept).isoformat()}"
+                  + (f"; {excluded} excluded as within "
+                     f"{DEPLOY_BLAST_WINDOW_MINUTES}m of a deploy" if excluded else ""))
+    elif excluded:
+        reason = (f"0 attributable events; all {excluded} in the lookback landed within "
+                  f"{DEPLOY_BLAST_WINDOW_MINUTES}m of a deploy boundary (ruling 136)")
     else:
-        reason = f"{scored} events" + (f" since {since.isoformat()}" if since else " in 24h")
+        reason = f"0 events in the {lookback_hours}h lookback"
     return {
-        "verdict": "CLEAN" if scored == 0 else "FIRED",
+        "verdict": "CLEAN" if not kept else "FIRED",
         "count_24h": total,
-        "count_scored": scored,
-        "narrowed": narrowed,
-        "since": since.isoformat() if since else None,
-        "issue_id": issues[0].get("id"),
+        "count_scored": len(kept),
+        "excluded_by_blast": excluded,
+        "source": "events-endpoint",
+        "issue_id": issue.get("id"),
+        "last_seen": issue.get("lastSeen"),
         "reason": reason,
     }
 
@@ -653,88 +760,94 @@ def sentry_24h_count(token: str | None, since: datetime | None = None) -> dict:
 # ------------------------------------------------------------------- verdicts
 
 
-def grade_window(probe: dict, sentry: dict, counts_as_day: bool, release: dict) -> dict:
-    """Ruling 130 puts the straddle checks INSIDE the cascade, per arm, on purpose.
+def grade_window(
+    probe: dict,
+    sentry: dict,
+    counts_as_day: bool,
+    errors: dict,
+    ancestry: dict,
+    boundaries: list[dict],
+    boundary_source: str,
+) -> dict:
+    """The pre-registered cascade (ruling 136). Order is the specification.
 
-    A blanket "release anywhere near this window -> INCONCLUSIVE" pre-check would
-    be wrong in one direction that matters: arm B's 5xx, observed inside a window
-    that ran end to end on a single slug, ARE attributable to that slug, and a
-    24 h lookback containing yesterday's deploy does not make them unattributable.
-    Suppressing them would convert a real refutation into a shrug.
+    Every branch below was frozen before grading resumed, and the ORDER is as
+    load-bearing as the branches — a floor placed ahead of the failure check
+    would let a gutted window suppress a real refutation, and a failure check
+    placed ahead of the ancestry check would attribute a pre-fix slug's 500s to
+    the fix.
 
-    So each straddle sits immediately ahead of the arm it disqualifies:
+      1. NO_SAMPLES        — nothing was collected. Never a pass (gotcha #53).
+      2. FAILED            — a 5xx OUTSIDE every blast band. The refutation, and
+                             it comes first so nothing downstream can swallow it.
+      3. INCONCLUSIVE      — the observed slugs do not (or may not) carry the fix.
+      4. INCONCLUSIVE      — a 5xx INSIDE a blast band: cannot pass, cannot fail.
+      5. INCONCLUSIVE      — the served-request floor was not cleared.
+      6. FAILED            — arm A fired outside every blast band.
+      7. INCONCLUSIVE      — arm A unreadable. One arm is not the falsifier.
+      8. INCONCLUSIVE      — a worker restarted; the state under watch was cleared.
+      9. INCONCLUSIVE      — transport errors, or no process_id ever came back.
+     10. CLEAN.
 
-      arm B straddle -> ahead of the 5xx FAILED  (errors may be the retired slug's)
-      arm A straddle -> ahead of the Sentry FAILED, behind the 5xx one
-
-    `release` is a required argument with no default. A default would let a
-    caller skip the check and still get a CLEAN, which is the exact shape of
-    every silent-coverage bug this program has spent the month on.
-
-    RULING 135 adds two things, both fail-closed:
-
-    * **NARROWED** is no longer disqualifying. It falls through to the Sentry
-      check, where the count it is scored against is the narrowed one. But a
-      NARROWED release verdict whose count was NOT actually narrowed is refused
-      rather than trusted — otherwise the relaxation would score the live slug
-      against two slugs' events.
-    * a **served-requests floor**. The window must have completed
-      MIN_SERVED_REQUESTS real requests, sitting immediately after the 5xx check
-      and ahead of everything that can produce a CLEAN. Ordering matters both
-      ways: a real 5xx refutes the fix however few requests were made, so the
-      floor must not suppress it; and a window that served almost nothing must
-      not bank, because a bug that never had a chance to fire did not fail to
-      fire. The old cascade had no volume criterion at all — a window that made
-      one successful request and 59 transport errors would have been graded on
-      `transport_errors > 0`, which is luck rather than a floor.
+    Note what is NOT in this list: "a release landed". Ruling 136 retired it.
     """
     reasons = []
-    release = release or {"verdict": "UNKNOWN", "reason": "no release verdict supplied"}
-    served = probe["samples"] - probe.get("transport_errors", 0)
+
+    # Clause 2/3 are about 5xx. A transport error is a request that got NO
+    # answer, which is not evidence of a 500 — it keeps its own INCONCLUSIVE
+    # branch further down, and it must not be counted as a refutation here.
+    def _is_5xx(f):
+        return f.get("status") is not None
+
+    blasted = sum(1 for f in errors["blast_window"] if _is_5xx(f))
+    attributable = sum(1 for f in errors["attributable"] if _is_5xx(f))
+
+    # `run_probe` caps the recorded `failures` list at 50 so one bad hour cannot
+    # write an unbounded row. The COUNT is uncapped, so the two can disagree —
+    # and an error the cap hid is not thereby inside a blast window. Charging the
+    # remainder to `attributable` keeps clause 3 true in the one case where the
+    # truncation could otherwise soften a FAILED into an INCONCLUSIVE.
+    unrecorded = max(0, probe["server_errors"] - (attributable + blasted))
+    attributable += unrecorded
+
+    served_total = probe["samples"] - probe.get("transport_errors", 0)
+    bands = blast_bands(boundaries)
+    served_clean = sum(
+        1 for t in probe.get("sample_times", [])
+        if not in_blast(_parse_stamp(t), bands)
+    ) - probe.get("transport_errors", 0)
+    served_clean = max(0, min(served_clean, served_total))
+
     if probe["samples"] == 0:
         verdict = "NO_SAMPLES"
         reasons.append("probe collected zero samples — this is not a pass")
-    elif probe.get("release_straddle"):
-        verdict = "INCONCLUSIVE"
-        reasons.append(
-            "ruling 130: the window straddles a release, so its 5xx count is "
-            "unattributable — " + "; ".join(probe.get("release_reasons") or ["unspecified"])
-        )
-    elif probe["server_errors"] > 0:
+    elif attributable > 0:
         verdict = "FAILED"
-        reasons.append(f"{probe['server_errors']} 5xx on /api/feed")
-    elif served < MIN_SERVED_REQUESTS:
-        verdict = "INCONCLUSIVE"
         reasons.append(
-            f"ruling 135 exposure floor: only {served} of {probe['samples']} requests "
-            f"were served (floor {MIN_SERVED_REQUESTS}) — the window did not exercise "
-            "/api/feed enough for silence to be evidence"
+            f"{attributable} 5xx on /api/feed outside every "
+            f"{DEPLOY_BLAST_WINDOW_MINUTES}-minute deploy blast window — "
+            "attributable to the running code (ruling 136)"
         )
-    elif release["verdict"] in ("STRADDLED", "UNKNOWN"):
+    elif ancestry["verdict"] in ("MISSING", "UNRESOLVED", "UNCHECKED"):
         verdict = "INCONCLUSIVE"
         reasons.append(
-            f"ruling 130: arm A's 24h lookback is {release['verdict']} — "
-            f"{release['reason']}"
+            f"ruling 136 clause 4: fix ancestry is {ancestry['verdict']} — "
+            f"{ancestry['reason']}. Tolerating releases is only sound while every "
+            "observed slug carries the fix."
         )
-    elif release["verdict"] == "NARROWED" and not release.get("exposure_hours"):
-        # A NARROWED verdict is a claim about how much exposure it narrowed TO.
-        # Without the number the claim is unfalsifiable, so it is refused.
+    elif blasted > 0:
         verdict = "INCONCLUSIVE"
         reasons.append(
-            "ruling 135: arm A reports NARROWED but carries no exposure_hours — "
-            "the narrowing cannot be checked against the floor"
+            f"{blasted} 5xx landed within {DEPLOY_BLAST_WINDOW_MINUTES}m of a deploy "
+            f"boundary ({boundary_source}) — unattributable, so the window can neither "
+            "bank nor refute (ruling 136)"
         )
-    elif (
-        release["verdict"] == "NARROWED"
-        and sentry.get("verdict") == "FIRED"
-        and not sentry.get("narrowed")
-    ):
-        # The count spans the retired slug too, so it cannot refute the live one.
+    elif served_clean < MIN_SERVED_REQUESTS:
         verdict = "INCONCLUSIVE"
         reasons.append(
-            f"ruling 135: arm A narrowed to {release.get('narrow_since')} but the "
-            f"Sentry count was not narrowed (narrowed={sentry.get('narrowed')!r}) — "
-            f"{sentry.get('count_scored')} events are not attributable to the live slug"
+            f"exposure floor: only {served_clean} of {probe['samples']} requests were "
+            f"served outside a blast window (floor {MIN_SERVED_REQUESTS}) — the window "
+            "did not exercise /api/feed enough for silence to be evidence"
         )
     elif sentry["verdict"] == "FIRED":
         verdict = "FAILED"
@@ -754,8 +867,7 @@ def grade_window(probe: dict, sentry: dict, counts_as_day: bool, release: dict) 
     elif not probe["process_ids"]:
         # No `process_id` came back at any point, so the window cannot say WHICH
         # process it cleared — and a coverage arm that measured nothing must not
-        # be scored as a coverage arm that passed. Expected before this fix
-        # deploys, since `process_id` ships with it.
+        # be scored as a coverage arm that passed.
         verdict = "INCONCLUSIVE"
         reasons.append(
             "no process_id observed — /api/health predates this fix, so coverage is unmeasured"
@@ -766,10 +878,16 @@ def grade_window(probe: dict, sentry: dict, counts_as_day: bool, release: dict) 
     return {
         "verdict": verdict,
         "reasons": reasons,
-        "served_requests": served,
+        "criterion": "ruling-136",
+        "served_requests": served_total,
+        "served_outside_blast": served_clean,
         "served_floor": MIN_SERVED_REQUESTS,
-        "exposure_hours": release.get("exposure_hours"),
-        "exposure_floor_hours": MIN_POST_RELEASE_EXPOSURE_HOURS,
+        "blast_window_minutes": DEPLOY_BLAST_WINDOW_MINUTES,
+        "deploy_boundaries": len(boundaries),
+        "boundary_source": boundary_source,
+        "errors_attributable": attributable,
+        "errors_in_blast_window": blasted,
+        "fix_ancestry": ancestry["verdict"],
         "counts_toward_seven": bool(counts_as_day and verdict == "CLEAN"),
     }
 
@@ -789,6 +907,69 @@ def _read_rows(state_path: Path) -> list[dict]:
     return rows
 
 
+def streak_from_rows(rows: list[dict]) -> dict:
+    """Consecutive clean UTC dates, plus WHY the streak ends where it does.
+
+    A streak of ROWS is not a streak of DAYS. The original counter walked rows
+    backwards and incremented per row with no reference to the calendar, so
+    seven windows run back-to-back in one afternoon satisfied a falsifier that
+    says "seven consecutive days". The falsifier's unit is a DAY; count days.
+
+    One clean window per UTC date is what a date contributes. Two clean windows
+    on the same date are still one day; a non-clean window anywhere on a date
+    disqualifies that date, because the day was not clean.
+
+    Ruling 136 adds the second half: say WHY it ended. A streak stopped by a
+    FAILED day and a streak stopped by a day nobody could grade print the same
+    number, and only one of them is about the fix. `stopped_by` distinguishes
+    them, because three days were lost to exactly that ambiguity.
+    """
+    days = [r for r in rows if r.get("is_day")]
+    by_date: dict[str, dict] = {}
+    for row in days:
+        date = (row.get("started_at") or "")[:10]
+        if not date:
+            continue
+        verdict = (row.get("grade") or {}).get("verdict")
+        clean = bool(row.get("counts_toward_seven"))
+        rec = by_date.setdefault(date, {"clean": clean, "verdicts": []})
+        rec["clean"] = rec["clean"] and clean
+        rec["verdicts"].append(verdict)
+
+    streak, cursor, stopped_by = 0, None, "no recorded day-window"
+    for date in sorted(by_date, reverse=True):
+        rec = by_date[date]
+        if not rec["clean"]:
+            worst = "FAILED" if "FAILED" in rec["verdicts"] else (
+                rec["verdicts"][0] if rec["verdicts"] else "UNKNOWN")
+            stopped_by = f"{date} graded {worst}"
+            break
+        day = datetime.strptime(date, "%Y-%m-%d").date()
+        if cursor is not None and (cursor - day).days != 1:
+            stopped_by = f"calendar gap before {cursor.isoformat()} (no window on the day prior)"
+            break
+        cursor = day
+        streak += 1
+    else:
+        if streak:
+            stopped_by = "start of recorded history"
+
+    clean_dates = sorted(d for d, r in by_date.items() if r["clean"])
+    earliest_close = None
+    if clean_dates and streak:
+        newest = datetime.strptime(clean_dates[-1], "%Y-%m-%d").date()
+        earliest_close = (newest + timedelta(days=REQUIRED_CLEAN_DAYS - streak)).isoformat()
+    return {
+        "streak": streak,
+        "required": REQUIRED_CLEAN_DAYS,
+        "stopped_by": stopped_by,
+        "by_date": by_date,
+        "clean_dates": clean_dates,
+        "day_windows": len(days),
+        "earliest_closure_date": earliest_close,
+    }
+
+
 def summarize(state_path: Path) -> int:
     if not state_path.exists():
         print(f"#2107 watch: NO STATE at {state_path} — nothing has been recorded yet.")
@@ -796,47 +977,24 @@ def summarize(state_path: Path) -> int:
         return RC_CANNOT_MEASURE
 
     rows = _read_rows(state_path)
-    days = [r for r in rows if r.get("counts_toward_seven") is not None and r.get("is_day")]
-
-    # A streak of ROWS is not a streak of DAYS. The original counter walked
-    # `days` backwards and incremented per row, with no reference to the calendar
-    # whatsoever — so seven windows run back-to-back in a single afternoon
-    # satisfied a falsifier that says "seven consecutive days", and the artifact
-    # it wrote would have read as closure evidence to every future reader. The
-    # falsifier's unit is a DAY; count days.
-    #
-    # One clean window per UTC date is what a date contributes. Two clean windows
-    # on the same date are still one day; a FAILED window anywhere on a date
-    # disqualifies that whole date, because the day was not clean.
-    by_date: dict[str, bool] = {}
-    for row in days:
-        date = (row.get("started_at") or "")[:10]
-        if not date:
-            continue
-        clean = bool(row.get("counts_toward_seven"))
-        by_date[date] = clean if date not in by_date else (by_date[date] and clean)
-
-    streak = 0
-    cursor = None
-    for date in sorted(by_date, reverse=True):
-        if not by_date[date]:
-            break
-        day = datetime.strptime(date, "%Y-%m-%d").date()
-        if cursor is not None and (cursor - day).days != 1:
-            break  # a calendar gap ends the streak; "consecutive" means consecutive
-        cursor = day
-        streak += 1
+    s = streak_from_rows(rows)
 
     print(f"#2107 watch — {state_path}")
-    print(f"  windows recorded: {len(rows)}   day-windows: {len(days)}"
-          f"   distinct UTC dates: {len(by_date)}")
+    print(f"  criterion: ruling 136 (frozen 2026-08-26) — releases tolerated, "
+          f"{DEPLOY_BLAST_WINDOW_MINUTES}m blast window, "
+          f"{MIN_SERVED_REQUESTS}-request exposure floor")
+    print(f"  windows recorded: {len(rows)}   day-windows: {s['day_windows']}"
+          f"   distinct UTC dates: {len(s['by_date'])}")
+    days = [r for r in rows if r.get("is_day")]
     for row in days[-10:]:
+        grade = row.get("grade") or {}
         print(
-            f"   {row.get('started_at', '?')[:19]}  {row['grade']['verdict']:<13}"
-            f" samples={row['probe']['samples']:<5} 5xx={row['probe']['server_errors']}"
+            f"   {row.get('started_at', '?')[:19]}  {grade.get('verdict', '?'):<13}"
+            f" samples={row['probe']['samples']:<5}"
+            f" 5xx={grade.get('errors_attributable', row['probe'].get('server_errors'))}"
+            f"(+{grade.get('errors_in_blast_window', 0)} blast)"
             f" sentry={row['sentry'].get('count_scored', row['sentry'].get('count_24h'))}"
-            f"{'(scoped)' if row['sentry'].get('narrowed') else ''}"
-            f" exposure={row.get('release', {}).get('exposure_hours')}"
+            f" fix={grade.get('fix_ancestry', '?')}"
             f" processes={len(row['probe'].get('process_ids') or {})}"
         )
     non_day = len(rows) - len(days)
@@ -844,32 +1002,33 @@ def summarize(state_path: Path) -> int:
         print(f"  NOTE: {non_day} window(s) recorded with is_day=false — these can NEVER "
               f"bank, whatever their verdict. Check the --label/--counts-as-day used.")
 
-    # Ruling 130: an INCONCLUSIVE window is logged, not dropped. A streak stuck
-    # at 3/7 because every window straddles a deploy and a streak stuck at 3/7
-    # because the fix keeps regressing print the same number, and only one of
-    # them is about the fix. Say which.
-    straddled = [
-        r for r in days
-        if any("ruling 130" in reason for reason in (r.get("grade") or {}).get("reasons") or [])
-    ]
-    if straddled:
-        dates = sorted({(r.get("started_at") or "")[:10] for r in straddled})
-        print(f"  RELEASE-STRADDLED (ruling 130): {len(straddled)} day-window(s) on "
-              f"{', '.join(dates)} measured across a deploy and were DISCARDED — "
-              f"neither banked nor counted against. Re-run on a deploy-free date.")
-    print(f"  clean UTC dates: {sorted(d for d, c in by_date.items() if c)}")
-    print(f"  consecutive clean days: {streak}/{REQUIRED_CLEAN_DAYS}")
-    if streak >= REQUIRED_CLEAN_DAYS:
+    # Ruling 130's logged-not-dropped clause survives ruling 136 unchanged: an
+    # INCONCLUSIVE window is reported, never silently discarded.
+    inconclusive = [r for r in days if (r.get("grade") or {}).get("verdict") == "INCONCLUSIVE"]
+    if inconclusive:
+        dates = sorted({(r.get("started_at") or "")[:10] for r in inconclusive})
+        print(f"  INCONCLUSIVE: {len(inconclusive)} day-window(s) on {', '.join(dates)} "
+              f"— neither banked nor counted against. Re-run them.")
+
+    print(f"  clean UTC dates: {s['clean_dates']}")
+    print(f"  consecutive clean days: {s['streak']}/{REQUIRED_CLEAN_DAYS}"
+          f"   (streak ends at: {s['stopped_by']})")
+    if s["streak"] >= REQUIRED_CLEAN_DAYS:
         print("  VERDICT: CLOSABLE — the 7-day falsifier was not refuted.")
         return RC_CLEAN
-    print(f"  VERDICT: OPEN — {REQUIRED_CLEAN_DAYS - streak} more clean day(s) required.")
+    if s["earliest_closure_date"]:
+        print(f"  EARLIEST CLOSURE DATE: {s['earliest_closure_date']} "
+              f"(UTC), and only if every day between banks.")
+    print(f"  VERDICT: OPEN — {REQUIRED_CLEAN_DAYS - s['streak']} more clean day(s) required.")
     print("  Merge is not closure. Do not close #2107 on this.")
     return RC_FAILED
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--minutes", type=int, default=60, help="probe window length")
+    ap.add_argument("--minutes", type=int, default=DEFAULT_WINDOW_MINUTES,
+                    help=f"probe window length (default {DEFAULT_WINDOW_MINUTES}; see "
+                         "DEFAULT_WINDOW_MINUTES for why 60 is not enough)")
     ap.add_argument("--interval", type=float, default=60.0, help="seconds between probes")
     ap.add_argument("--limit", type=int, default=20, help="/api/feed?limit=")
     ap.add_argument("--label", default="day",
@@ -878,12 +1037,23 @@ def main() -> int:
                     action=argparse.BooleanOptionalAction, default=None,
                     help="whether this window banks toward the seven. Defaults to "
                          "(--label == 'day') for backward compatibility.")
+    ap.add_argument("--release-at", dest="release_at", action="append", default=[],
+                    help="ISO8601 UTC timestamp of a production release inside the "
+                         "lookback (ruling 136). Repeatable. Each one anchors a "
+                         f"{DEPLOY_BLAST_WINDOW_MINUTES}-minute blast window.")
     ap.add_argument("--last-release-at", dest="last_release_at", default=None,
-                    help="ISO8601 UTC timestamp of the most recent production release "
-                         "(ruling 130). Highest-authority answer to 'does arm A's 24h "
-                         "lookback contain a deploy'; without it the recorded commit "
-                         "history is used, and a state file with under a day of history "
-                         "grades UNKNOWN rather than CLEAR.")
+                    help="deprecated alias for a single --release-at, kept so existing "
+                         "schedulers keep working")
+    ap.add_argument("--releases-from-heroku", action="store_true",
+                    help=f"read release times from `heroku releases -a {HEROKU_APP} --json`. "
+                         "Fails soft and records boundary_source; failing soft is "
+                         "fail-CLOSED, since fewer known boundaries means more errors "
+                         "count as FAILED.")
+    ap.add_argument("--fix-commit", dest="fix_commits", action="append", default=None,
+                    help="commit that must be an ancestor of every observed slug "
+                         f"(ruling 136 clause 4). Repeatable. Defaults to "
+                         f"{', '.join(DEFAULT_FIX_COMMITS)}. Pass --fix-commit '' to skip, "
+                         "which grades INCONCLUSIVE rather than CLEAN.")
     ap.add_argument("--state", type=Path, default=DEFAULT_STATE)
     ap.add_argument("--summarize", action="store_true")
     args = ap.parse_args()
@@ -896,54 +1066,70 @@ def main() -> int:
         print("#2107 watch: CANNOT MEASURE — BAINLUCK_API is not set (source ~/.claude/.env)")
         return RC_CANNOT_MEASURE
 
+    fix_commits = (list(DEFAULT_FIX_COMMITS) if args.fix_commits is None
+                   else [c for c in args.fix_commits if c])
+
+    explicit: list[datetime] = []
+    boundary_bits: list[str] = []
+    for raw in list(args.release_at) + ([args.last_release_at] if args.last_release_at else []):
+        parsed = _parse_stamp(raw)
+        if parsed is None:
+            print(f"#2107 watch: CANNOT MEASURE — --release-at {raw!r} is not ISO8601")
+            return RC_CANNOT_MEASURE
+        explicit.append(parsed)
+    if explicit:
+        boundary_bits.append(f"operator ({len(explicit)} release times)")
+    if args.releases_from_heroku:
+        stamps, source = heroku_release_times()
+        explicit.extend(stamps)
+        boundary_bits.append(source)
+    boundary_source = " + ".join(boundary_bits) or "probe-observed transitions only"
+
     started = datetime.now(timezone.utc)
     # Resolve the banking decision BEFORE the hour of probing, and say it out loud.
     # `--label` used to double as the switch: any descriptive label silently set
     # `counts_toward_seven=false`, and the window burned an hour before anyone
-    # could see it had never been eligible. Worse, a false `counts_toward_seven`
-    # reads to a later reader as "the fix regressed" when it means "the label was
-    # wrong" — the same shape as gotcha #53, two causes collapsed into one value.
+    # could see it had never been eligible.
     counts_as_day = args.counts_as_day
     if counts_as_day is None:
         counts_as_day = args.label == "day"
     print(f"#2107 watch — probing {api}/api/feed every {args.interval:.0f}s for {args.minutes}m")
+    print(f"   criterion: ruling 136 · blast window {DEPLOY_BLAST_WINDOW_MINUTES}m · "
+          f"exposure floor {MIN_SERVED_REQUESTS} requests")
+    print(f"   deploy boundaries: {boundary_source}")
+    print(f"   fix commits checked: {', '.join(fix_commits) if fix_commits else 'NONE (will grade INCONCLUSIVE)'}")
     print(f"   label={args.label!r}  BANKS TOWARD THE SEVEN: {counts_as_day}"
           f"{'' if counts_as_day else '  <-- this window can never bank; pass --counts-as-day to change that'}")
 
-    last_release_at = None
-    if args.last_release_at:
-        last_release_at = _parse_stamp(args.last_release_at)
-        if last_release_at is None:
-            print(f"#2107 watch: CANNOT MEASURE — --last-release-at "
-                  f"{args.last_release_at!r} is not ISO8601")
-            return RC_CANNOT_MEASURE
-
     probe = run_probe(api, args.minutes, args.interval, args.limit)
-    # Order matters since ruling 135: the release verdict decides WHAT INTERVAL
-    # arm A is counted over, so it has to be resolved before the count is read.
-    release = arm_a_release_window(
-        _read_rows(args.state),
-        datetime.now(timezone.utc),
-        probe.get("commits") or {},
-        last_release_at=last_release_at,
-        window_started=started,
-    )
-    sentry = sentry_24h_count(
-        os.getenv("SENTRY_AUTH_TOKEN"),
-        since=_parse_stamp(release.get("narrow_since"))
-        if release["verdict"] == "NARROWED" else None,
-    )
-    grade = grade_window(probe, sentry, counts_as_day=counts_as_day, release=release)
 
+    boundaries = deploy_boundaries(probe.get("timeline") or [], explicit)
+    bands = blast_bands(boundaries)
+    errors = attribute_errors(probe.get("failures") or [], bands)
+    ancestry = check_fix_ancestry(probe.get("commits") or {}, fix_commits)
+    sentry = sentry_events_since(
+        os.getenv("SENTRY_AUTH_TOKEN"), bands, datetime.now(timezone.utc))
+    grade = grade_window(
+        probe, sentry, counts_as_day=counts_as_day, errors=errors,
+        ancestry=ancestry, boundaries=boundaries, boundary_source=boundary_source)
+
+    # The full timeline is a per-sample record and would dominate the state file;
+    # the boundaries derived FROM it are what any later reader needs.
+    probe_row = {k: v for k, v in probe.items() if k not in ("timeline", "sample_times")}
     row = {
         "issue": 2107,
         "label": args.label,
         "is_day": counts_as_day,
+        "criterion": "ruling-136",
         "started_at": started.isoformat(),
         "ended_at": datetime.now(timezone.utc).isoformat(),
-        "probe": probe,
+        "probe": probe_row,
+        "boundaries": boundaries,
+        "boundary_source": boundary_source,
+        "errors": {k: v for k, v in errors.items() if k.endswith("count")}
+        | {"blast_window_events": errors["blast_window"]},
+        "ancestry": ancestry,
         "sentry": sentry,
-        "release": release,
         "grade": grade,
         "counts_toward_seven": grade["counts_toward_seven"],
     }
@@ -953,7 +1139,8 @@ def main() -> int:
         fh.write(json.dumps(row) + "\n")
 
     print(json.dumps(
-        {k: row[k] for k in ("label", "probe", "sentry", "release", "grade")}, indent=2))
+        {k: row[k] for k in ("label", "boundary_source", "ancestry", "sentry", "grade")},
+        indent=2))
     print(f"   recorded -> {args.state}")
 
     if grade["verdict"] == "CLEAN":

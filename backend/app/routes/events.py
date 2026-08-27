@@ -1313,6 +1313,40 @@ def _build_futures_name_filter(ilike_futures_filter, fts_q: str):
     and `backend/scripts/gate_futures_name_fts_index.py`. Do not "optimise" this
     by deleting the FTS arm; `test_futures_name_filter_arms.py` is red-first
     against exactly that.
+
+    ⚠️ THE CODE-ONLY LEVER WAS TRIED AND IT FAILS ITS OWN CENSUS (LAT-P097).
+    "DDL, not code" is a conclusion, so it was tested rather than asserted. The
+    candidate: replace the FTS half with a second ILIKE over the query term's
+    POSTGRES STEM, computed in SQL so the stemmer is the same one FTS uses —
+    ``name ILIKE '%champions%' OR name ILIKE '%champion%'``. It needs no DDL, no
+    new dependency, and it is fast: production plans are index-identical whether
+    the pattern is a literal or a runtime expression, and three interleaved
+    rounds measured the arm at **6,293.9 -> 259.0 ms for `champions` (24.3x)** and
+    **3,423.7 -> 24.8 ms for `werder` (137.8x)**, 26,106 -> 4,315 buffers, with an
+    unindexed-column control moving 594 -> 2,101 ms in the same rounds to absorb
+    the host contention.
+
+    On the ten-term LAT-P096 census it looked perfect: **zero rows lost on all
+    ten.** Widened to 36 terms — the 30-day `/search` head plus deliberate
+    stemming hazards — it loses recall on four, and one of them is a head query:
+
+        grammys      15 ->   5   (-10)   head rank 7   stem `grammi`
+        cities      744 ->   4  (-740)                 stem `citi`
+        qualifying 1074 -> 237  (-837)                 stem `qualifi`
+        trophies     15 ->   8    (-7)                 stem `trophi`
+
+    One cause, and it is structural: Porter maps a trailing ``y`` to ``i``, so the
+    stem of `grammys` is `grammi`, which is **not a substring of "Grammy"** —
+    while FTS matches it, because FTS compares stems on both sides. A substring
+    cannot express stem equivalence, and every ``-y``/``-ies`` word in English is
+    in this class. Truncating the trailing ``i`` repairs recall and costs
+    precision on a ranked list that is cut at 20 (`qualifying` also gained 473
+    rows the FTS half never admitted), so it trades a measured loss for an
+    unmeasured one.
+
+    The lever is therefore REJECTED on measurement, and the DDL is not merely the
+    convenient fix — it is the only one that preserves the recall the census
+    pins. Full working: `docs/audits/latency/lat-p097-*`.
     """
     return or_(_fts_filter(FuturesMarket.name, fts_q), ilike_futures_filter)
 
@@ -4282,6 +4316,50 @@ async def typeahead_search(
     """
     import json as _json
     from app.tasks.redis_state import get_redis_client
+
+    # LAT-P098/#1866: AN EVAL CALL IS NOT A USER'S INTENT, AND MUST NOT VOTE.
+    #
+    # The debug flags already mean "this answer is not interchangeable with a
+    # user's" on BOTH cache directions (read and write, below). The trending
+    # zset is the third direction and it was missed, so every measurement probe
+    # cast a real vote into the distribution that decides what the warmer warms.
+    #
+    # MEASURED 2026-08-27, LAT-P098, `GET /api/events/search/trending`:
+    #
+    #     celtics         62   <- the only real user traffic in the top five
+    #     emmy             9   <- LAT-P097 done-bar probe
+    #     wimbledon        8   <- LAT-P097 done-bar probe
+    #     hurricane        8   <- LAT-P097 done-bar probe
+    #     tour de france   6   <- LAT-P097 done-bar probe
+    #
+    # Four of the top five were one lane's own cold probes, and `emmy` was still
+    # being served warm FIVE HOURS after its last touch against a 65 s TTL —
+    # i.e. it had been elected into the warmer's 40-term head and was being
+    # rebuilt every ~37 s. The head is a fixed 40 slots, so those are slots a
+    # real user's term is not holding, and the displaced term pays ~4 s.
+    #
+    # 🔴 THIS IS #1866's CLOSED LOOP THROUGH AN UNGUARDED DOOR, and it had
+    # already been SEEN: `test_typeahead_trending_cache_hit_2117.py`'s header
+    # records `zzq obscure probe lat82` and `qqx another probe` doing the same
+    # thing on 2026-08-23 — "THEY ARE THE DISTRIBUTION and the warmer will spend
+    # 2 of 40 slots on them" — and it was written down as a transient footnote
+    # rather than fixed. It recurred four days later and took ranks 2-5.
+    #
+    # WHY THE INSTRUMENTS' OWN ARITHMETIC DID NOT CATCH IT: they priced the
+    # contamination against `search_query_logs`' 30-day head (a cut near 65
+    # votes) while writing to the `search:trending:24h` zset, whose rank 2 sits
+    # at 9. `resolve_head` blends BOTH sources, ~20 slots each, so a probe needs
+    # single-digit votes to buy a warm slot, not 65. A contamination budget
+    # priced against the wrong distribution is not a budget.
+    #
+    # ⚠️ SET-ONLY, NEVER AN `else`. `typeahead_warmer` sets this same ContextVar
+    # to True before calling this route in-process; assigning `bool(debug_*)`
+    # here would clobber the warmer's own suppression and re-open #1866 proper.
+    # `test_the_warmer_suppression_is_never_clobbered_by_a_non_debug_call` pins
+    # exactly that, and it is the load-bearing half of this fix.
+    if debug_evidence or debug_timing:
+        _suppress_trending_write.set(True)
+
     _cache_key = f"bainluck:typeahead:{q.lower().strip()}"
     # A debug-evidence answer NEVER touches the cache, in either direction. It
     # must not read a normal entry (it would return without `_evidence` and the
