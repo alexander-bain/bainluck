@@ -252,10 +252,11 @@ export function matchDetailNote(entry: {
     // which names a disagreement between two numbers that do not exist. The
     // released main draw is 96 such rows; getting this sentence wrong would
     // have been the page's most-printed sentence on ceremony day.
-    return "Nobody is quoting this match yet. It is in the draw; the price comes later.";
+    // UX-P146: "the price comes later" — Alex's product-wide ruling on the noun.
+    return "Nobody is quoting this match yet. It is in the draw; the number comes later.";
   }
   if (!entry.coherent) {
-    return "The two prices for this match do not agree yet, so we are not showing a split.";
+    return "The two numbers for this match do not agree yet, so we are not showing a split.";
   }
 
   if (entry.decided) {

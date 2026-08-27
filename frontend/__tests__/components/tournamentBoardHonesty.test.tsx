@@ -117,13 +117,17 @@ describe("a stale board says so, visibly", () => {
   it("renders a notice naming the age of the reading", () => {
     const html = renderToStaticMarkup(<TournamentBoard board={DARK_BOARD} />);
     expect(html).toContain('data-testid="price-state-notice"');
-    expect(html).toContain("Prices paused");
+    expect(html).toContain("Updates paused");
     expect(html).toContain("8 days ago");
   });
 
   it("says the numbers are not live, in words", () => {
+    // UX-P146: the sentence used to end "not live prices". Alex's product-wide
+    // ruling took the noun; the ADMISSION is what this test is for and it is
+    // unchanged, so the assertion moved with the wording rather than being
+    // dropped.
     const html = renderToStaticMarkup(<TournamentBoard board={DARK_BOARD} />);
-    expect(html).toContain("not live prices");
+    expect(html).toContain("not live ones");
   });
 
   it("marks every row non-live in the markup itself", () => {
@@ -158,7 +162,7 @@ describe("a live board does NOT cry wolf", () => {
   it("renders no notice at all", () => {
     const html = renderToStaticMarkup(<TournamentBoard board={board()} />);
     expect(html).not.toContain('data-testid="price-state-notice"');
-    expect(html).not.toContain("Prices paused");
+    expect(html).not.toContain("Updates paused");
   });
 
   it("marks its rows live", () => {
@@ -332,9 +336,9 @@ describe("boardNotice", () => {
     const never = boardNotice(
       board({ price_state: "dark", age_hours: null, newest_observed_at: null })
     );
-    expect(never?.headline).toBe("No prices yet");
+    expect(never?.headline).toBe("No numbers yet");
     const quiet = boardNotice(board({ price_state: "dark", age_hours: 200 }));
-    expect(quiet?.headline).toBe("Prices paused");
+    expect(quiet?.headline).toBe("Updates paused");
   });
 });
 
@@ -505,7 +509,7 @@ describe("board rendering", () => {
     // UX-P145: was "12 more registered players have no price". *Registered* is
     // the name of our JSON file. The COUNT is the point of the line and it is
     // still here — the reader must not be shown a board that looks complete.
-    expect(html).toContain("12 more players in this draw have no price yet");
+    expect(html).toContain("12 more players in this draw have no number yet");
   });
 
   it("renders an honest empty board", () => {
@@ -515,7 +519,7 @@ describe("board rendering", () => {
       />
     );
     expect(html).toContain('data-testid="board-empty"');
-    expect(html).toContain("No prices yet");
+    expect(html).toContain("No numbers yet");
   });
 
   it("whispers the source count without becoming a comparison surface", () => {

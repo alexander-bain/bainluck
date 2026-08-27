@@ -211,9 +211,15 @@ export interface BoardNotice {
 /**
  * The visible admission. `null` only when the board is genuinely live.
  *
- * The wording says what we are showing and what we are not: "the last
- * confirmed reading, not a live price". A banner that only says "some data may
- * be delayed" lets the reader keep believing the number.
+ * The wording says what we are showing and what we are not: the last confirmed
+ * reading, not a live one. A banner that only says "some data may be delayed"
+ * lets the reader keep believing the number.
+ *
+ * UX-P146: said *price* four times and now says none. Alex's product-wide
+ * ruling — "'price' as a noun is banned in user-facing copy; the word is
+ * PROBABILITY". The admission is unchanged in force and in specificity; only
+ * the vocabulary moved. See `tournamentPlainLanguage.test.tsx`, which pins both
+ * halves: the banned word absent AND the staleness still stated.
  */
 export function boardNotice(board: TournamentBoardData): BoardNotice | null {
   if (board.price_state === "live") return null;
@@ -221,15 +227,15 @@ export function boardNotice(board: TournamentBoardData): BoardNotice | null {
   if (board.price_state === "dark" && board.newest_observed_at === null) {
     return {
       tone: "dark",
-      headline: "No prices yet",
+      headline: "No numbers yet",
       detail:
-        "We have not recorded a price for this draw. Nothing below is a live number.",
+        "No market has put a probability on this draw yet. Nothing below is a live number.",
     };
   }
   return {
     tone: board.price_state,
-    headline: "Prices paused",
-    detail: `Last confirmed reading ${when}. These are the last prices we saw, not live prices.`,
+    headline: "Updates paused",
+    detail: `Last confirmed reading ${when}. These are the last probabilities we saw, not live ones.`,
   };
 }
 

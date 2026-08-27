@@ -620,6 +620,39 @@ the INT-108 amendment's first instinct was "keep `owner_pid` accurate" — which
 the same discipline fix that had already failed twice in that very file.
 **Proposing the failed remedy is easy precisely because it is always locally
 reasonable.**
+
+### 24. A translation layer may not speak the source vocabulary in its own voice.
+
+When a product exists to turn one domain's language into another's, the
+translated surface is not allowed to carry the source language — least of all in
+the sentence that **explains** the translated number. Doing the conversion and
+then naming the result in the old vocabulary hands the reader back the thing you
+removed, at the last step, after they had already been spared it.
+
+The tell is that the argument for keeping the word is always **consistency**:
+several surfaces already use it, and changing one would make them disagree. That
+argument is backwards. Consistency is a property worth having *about the right
+word*; several surfaces agreeing on the wrong one is not one reason to keep it,
+it is several places to fix.
+
+Where our names legitimately survive: enum values, data attributes, column
+names, code, comments, reports. The boundary is **rendered text a reader sees** —
+which is also what makes the guard cheap, because a sweep over rendered text
+with attributes stripped is indifferent to the data contracts by construction
+rather than by an exception list.
+
+*Charter case (ruling **138**).* Alex, 2026-08-27: *"'price' as a noun is banned
+in user-facing copy — the word is PROBABILITY."* The morning's earlier line had
+banned *priced* as a verb and kept *price* as the noun, on exactly the
+consistency argument above. The named failure: a platform whose whole premise is
+"60% vs 40%, not -150/+130" was printing **"Prices paused"** over the number it
+had just finished translating.
+
+*The limit, so this is not read as a ban on a word:* it forbids naming OUR
+output in the source vocabulary. It does not forbid the word where the subject
+genuinely is the source thing — `/economics` still says "the price at the pump",
+because that market is about a price.
+
 # MECHANICAL SPECS — enforced by the Integrator, not judged by it
 
 Everything above this line is a **clause**: a sentence a reader applies with judgement.

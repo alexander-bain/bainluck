@@ -187,11 +187,11 @@ export default function TournamentBoard({
         {board.rows.length === 0 ? (
           <div className="px-4 py-6 text-center text-[13.5px] text-text-secondary" data-testid="board-empty">
             <div className="mb-1 text-[15px] font-semibold text-text-primary">
-              No prices to show
+              {/* UX-P145 took the trading VERB out of "nobody has priced it
+                  yet" and kept the noun. UX-P146: Alex's product-wide ruling
+                  takes the noun too — the word is PROBABILITY. */}
+              No numbers to show
             </div>
-            {/* UX-P145: "nobody has priced it yet" used *priced* as a trading
-                verb. The noun stays — "prices" is what a prediction market
-                publishes and every reader of this page knows it. */}
             We know who is in this draw, but no market has put a number on it yet.
           </div>
         ) : (
@@ -239,7 +239,7 @@ export default function TournamentBoard({
             {/* UX-P145: was "N more registered players" — *registered* is the
                 name of our JSON file, not a fact about the draw. */}
             {board.unpriced} more {board.unpriced === 1 ? "player in" : "players in"} this draw{" "}
-            {board.unpriced === 1 ? "has" : "have"} no price yet.
+            {board.unpriced === 1 ? "has" : "have"} no number yet.
           </div>
         )}
       </div>

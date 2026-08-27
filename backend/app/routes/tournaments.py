@@ -343,7 +343,13 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
     # DECIDED MATCHES, WITH THE SCORE (UX-P139, Alex's item 9). A separate
     # section rather than a field on the slate, because a slate structurally
     # cannot hold a finished match — see `build_results`.
-    payload["results"] = build_results(register, results=await _espn_results(slug))
+    # `prices` so a finished match can print what the market said BEFORE it
+    # (UX-P146, Alex on the UX-P145 artifact). No extra query: the matchup
+    # outcome ids are already in the one `IN (...)` above, and the number used
+    # is `opening_probability`, which is loaded on the same row.
+    payload["results"] = build_results(
+        register, results=await _espn_results(slug), prices=prices
+    )
     payload["broadcasts"] = reg.broadcasts
     payload["slug"] = slug
     payload["title"] = spec["title"]

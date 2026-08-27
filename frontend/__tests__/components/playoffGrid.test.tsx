@@ -501,7 +501,7 @@ describe("item 1 — the draw panel states the date and time", () => {
 describe("the cell vocabulary", () => {
   it("names every state in a sentence a reader can hear", () => {
     expect(gridCellExplanation(cell({ state: "live" }), "To reach the semi-finals"))
-      .toContain("Live price");
+      .toContain("Live number");
     expect(gridCellExplanation(cell({ state: "stale", age_hours: 27 }), "SF"))
       .toContain("27h ago");
     expect(gridCellExplanation(cell({ state: "no_market", note: "No SF market at kalshi" }), "SF"))

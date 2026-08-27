@@ -217,7 +217,7 @@ describe("independent binaries", () => {
 
   it("counts the refusals so a thin slate is explainable", () => {
     const html = render(slate({ matches: [incoherent], incoherent: 1 }));
-    expect(html).toContain("1 match has prices that do not agree");
+    expect(html).toContain("1 match has numbers that do not agree");
   });
 });
 
@@ -287,7 +287,7 @@ describe("honesty treatment", () => {
   it("presents a live row in the live treatment", () => {
     const html = render(slate());
     expect(html).toContain('data-live="true"');
-    expect(html).not.toContain("Prices paused");
+    expect(html).not.toContain("Updates paused");
   });
 
   it("never upgrades a row the server did not call live", () => {
@@ -396,15 +396,15 @@ describe("honesty treatment", () => {
 
   it("says so in words when the slate is not live", () => {
     const html = render(slate({ price_state: "stale", age_hours: 30 }));
-    expect(html).toContain("Prices paused");
-    expect(html).toContain("not live prices");
+    expect(html).toContain("Updates paused");
+    expect(html).toContain("not live ones");
   });
 
   it("distinguishes never-observed from merely stale", () => {
     const notice = slateNotice(
       slate({ price_state: "dark", newest_observed_at: null, age_hours: null })
     );
-    expect(notice?.headline).toBe("No prices yet");
+    expect(notice?.headline).toBe("No numbers yet");
   });
 
   it("is silent when genuinely live", () => {

@@ -209,8 +209,22 @@ export default function ContenderChart({
            * width. Nothing else changes: `preserveAspectRatio="none"` means the
            * viewBox never needed to match the rendered box, and the axis labels
            * are HTML positioned by percentage for exactly that reason.
+           *
+           * UX-P146 adds the third step, because killing the page's 1280px
+           * column moved the width this was measured against. The left track,
+           * end to end, arithmetic rather than estimate:
+           *
+           *   `lg`  (1024px window) → 1024 − 48 site − 48 page − 32 gap,
+           *                           ×1.35/2.35, − 28 card = ~486px plot
+           *   `xl`  (1280px window) → same chain = ~627px
+           *   `2xl` (1600px+, where `max-w-content` finally binds) = ~817px
+           *
+           * Against 160px those are 3.0:1, 3.9:1 and 5.1:1 — so the aspect was
+           * fine where UX-P145 measured it and goes flat again past `xl`, which
+           * is exactly the range the shell used to cut off. `2xl:h-56` (224px)
+           * puts the widest case back at 3.6:1, next to the phone's 3.7.
            */
-          className="block h-24 w-full lg:h-40"
+          className="block h-24 w-full lg:h-40 2xl:h-56"
           preserveAspectRatio="none"
           role="img"
           aria-label={

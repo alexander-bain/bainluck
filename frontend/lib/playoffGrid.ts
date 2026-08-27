@@ -288,7 +288,8 @@ export function gridCellGlyph(cell: GridCell): string {
 export function gridCellExplanation(cell: GridCell, columnLabel: string): string {
   switch (cell.state) {
     case "live":
-      return `${columnLabel}. Live price.`;
+      // UX-P146: was "Live price." Alex's product-wide ruling on the noun.
+      return `${columnLabel}. Live number.`;
     case "stale":
       return `${columnLabel}. Last seen ${formatAge(cell.age_hours)} ago.`;
     case "dark":
