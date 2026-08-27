@@ -82,13 +82,14 @@ of it, ranked by distinct sessions:
 
 Two things in that table are worth naming rather than averaging away:
 
-- **`patriots`: five rows, one session, nine seconds.** One person submitted the same word four
+- **`patriots`: five rows, one session, nine seconds.** One person submitted the same word five
   times in a row. Row-ranked, that single person's frustration would lead the head — more rows
   than any genuinely shared query has in total. This is the artifact `MIN_HEAD_SESSIONS = 2` exists
   to refuse, and it is not hypothetical: it is the largest single entry in the real data.
-- **Those four submissions returned `25, 0, 0, 25` results.** Same query, same session, same nine
-  seconds. That is a user-visible reliability defect on a graded surface and it is filed in §7 —
-  it is not this queue's scope, but it is the most important thing this census turned up.
+- **Those five submissions returned `25, 0, 0, 0, 25` results, in that order.** Same query, same
+  session, same nine seconds. That is a user-visible reliability defect on a graded surface, filed as **#2239** — not
+  this queue's scope, but the most important thing this census turned up. Note the denominator:
+  **four of the 13 attested rows in 30 days are that one incident.**
 
 ## 4. What shipped
 
@@ -158,13 +159,14 @@ response cache is on a separate switch and is unaffected.
 
 ## 7. For Fable — three findings, none of them this queue's scope
 
-1. 🔴 **`/api/events/search` returns 0 results intermittently for a query that has 25.** Session
+1. 🔴 **#2239 — `/api/events/search` returns 0 results intermittently for a query that has 25.** Session
    `DABC07D4…`, 2026-08-14 22:16:02–22:16:10 UTC, query `patriots`, five submissions,
    `result_count` = **25, 0, 0, 0, 25**. A real person retyped the same word four times because
    search kept coming back empty. This is Alex's #1 priority class (reliability) on a graded
    surface, it is in the *organic* traffic rather than a probe, and it is invisible to the Flow
    Sentinel because the gold set asks each query once. Suspect the LAT-P007 `degraded` path
-   returning an empty body under the 20 s budget. **Worth a queue on its own.**
+   returning an empty body under the 20 s budget — gotcha #53's shape, an empty 200 being a response
+   shape rather than an absence. **Worth a queue on its own, ahead of anything else in this lane.**
 2. **This lane's own probe traffic is 74 % of `search_query_logs`** and has been silently
    corrupting every head-selection question asked of that table, including #1916's. The attestation
    filter fixes the *read*; it does not stop the *writes*. #1916's `X-Bainluck-Origin` header (its
@@ -187,3 +189,23 @@ response cache is on a separate switch and is unaffected.
   that `/search` has almost no organic repeat demand *yet*, and the value of this queue is that the
   warmer is now correct and self-gating, so it converts demand into speed automatically instead of
   waiting on somebody to re-litigate #1916.
+
+## 9. Gate evidence
+
+Full backend suite, ONE run, on the frozen committed tree at `36f5a913`, unpiped, exit code read by
+value:
+
+    20312 passed, 112 skipped, 61 xfailed, 114 warnings in 837.16s (0:13:57)
+    FULL SUITE EXIT CODE: 0
+
+An earlier run of the same suite was **discarded**, not reported: `black` reformatted a test file
+while it was in flight, which is the no-source-edits-during-pytest class (`inspect.getsource`
+re-reads the file, and three of this queue's own tests use it). It was killed **by pid** after
+resolving each pid's cwd via `lsof` — the calibration lane had its own suite running at the same
+time and `pkill -f pytest` would have taken it out.
+
+`ruff` and `black` clean on every file this branch touches. The 4 ruff errors in
+`app/tasks/__init__.py` are pre-existing: the identical 4 are present on `origin/master`'s copy of
+the file.
+
+Frontend and native gates NOT run, and not owed: zero frontend files and zero iOS files changed.
