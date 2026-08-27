@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
+from app.services.anchor_channel import invalidate_scalar_anchor
 
 logger = logging.getLogger(__name__)
 
@@ -1199,6 +1200,10 @@ async def cleanup_oscillation(
         "snapshots_deleted": 0,
         "espn_ids_cleared": 0,
         "espn_id_collisions_fixed": 0,
+        #: Anchor rows deleted because the column they were copied from was
+        #: cleared here. Reported rather than assumed — zero is the normal
+        #: reading, and a silent zero looks the same as a step that never ran.
+        "espn_anchors_invalidated": 0,
         "wps_cleaned": 0,
         "details": [],
     }
@@ -1291,6 +1296,16 @@ async def cleanup_oscillation(
                 UPDATE events SET espn_id = NULL
                 WHERE espn_id = :eid
             """), {"eid": espn_id})
+            # CERT-410 [P1]. An `espn:<espn_id> -> event` anchor was copied from
+            # the column we have just cleared on every holder. Left behind, it
+            # keeps resolving and keeps absorbing — an incoming claim carrying
+            # this id would land on a row that no longer has any claim to it,
+            # which is precisely the collision this sweep exists to undo.
+            # Unscoped by event on purpose: after the UPDATE above NO event
+            # holds this id, so there is no holder left to corroborate against.
+            results["espn_anchors_invalidated"] += await invalidate_scalar_anchor(
+                db, source="espn", source_id=espn_id
+            )
 
     if not dry_run:
         await db.commit()

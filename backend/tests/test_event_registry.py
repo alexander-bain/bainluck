@@ -38,10 +38,13 @@ class _FakeScalarResult:
 
 
 class _FakeExecuteResult:
-    def __init__(self, *, scalar=None, rows=None, first_row=None):
+    def __init__(self, *, scalar=None, rows=None, first_row=None, rowcount=0):
         self._scalar = scalar
         self._rows = rows or []
         self._first_row = first_row
+        #: DML results carry one; a SELECT double leaving it 0 is harmless
+        #: because nothing reads `rowcount` off a SELECT.
+        self.rowcount = rowcount
 
     def scalar_one_or_none(self):
         return self._scalar

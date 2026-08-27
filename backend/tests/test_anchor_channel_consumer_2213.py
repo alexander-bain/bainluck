@@ -58,10 +58,13 @@ from app.services.anchor_channel import (
     COLLISION,
     CONFIRMED,
     NO_KEY,
+    STALE_INCUMBENT,
     WROTE,
+    anchor_is_current,
     anchor_key_for_claim,
     duplicate_tag,
     find_event_by_anchor,
+    invalidate_scalar_anchor,
     record_anchor,
 )
 from app.services.event_registry import (
@@ -128,6 +131,7 @@ class _AnchorSession(_FakeRegistrySession):
         super().__init__(**kwargs)
         self.anchors = dict(anchors or {})
         self.anchor_writes = []
+        self.anchor_deletes = []
         self.event_sports = dict(event_sports or {})
         self.tagged = []
         #: Step 2 loads the anchored row by primary key.
@@ -151,6 +155,31 @@ class _AnchorSession(_FakeRegistrySession):
             return _FakeExecuteResult(
                 first_row=(hit, self.event_sports.get(hit, MLB_SPORT_ID))
             )
+
+        # CERT-410 [P1]. The corroboration read: what does the anchored event
+        # carry in its OWN columns right now? Answered from the seeded event
+        # rows rather than from a flag, so a test makes an anchor stale the way
+        # production does — by re-keying the column — and cannot make it stale
+        # by asserting that it is.
+        if "SELECT espn_id, external_id, statpal_fixture_id FROM events" in sql:
+            self.statements.append(statement)
+            row = self.by_id.get(params["event_id"])
+            if row is None:
+                return _FakeExecuteResult()
+            return _FakeExecuteResult(
+                first_row=(row.espn_id, row.external_id, row.statpal_fixture_id)
+            )
+
+        if "DELETE FROM event_provider_anchors" in sql:
+            self.statements.append(statement)
+            key = (params["source"], params["source_id"], params["id_kind"])
+            scoped = params.get("event_id")
+            held = self.anchors.get(key)
+            if held is None or (scoped is not None and held != scoped):
+                return _FakeExecuteResult(rowcount=0)
+            del self.anchors[key]
+            self.anchor_deletes.append((key, scoped))
+            return _FakeExecuteResult(rowcount=1)
 
         if "INSERT INTO event_provider_anchors" in sql:
             self.statements.append(statement)
@@ -588,3 +617,342 @@ class TestTheRefusals:
 
     def test_duplicate_tag_names_the_canonical(self):
         assert duplicate_tag(ESPN_ROW_ID) == f"provenance:duplicate-of:{ESPN_ROW_ID}"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# CERT-410 [P1] — a scalar-derived anchor is a COPY, and the column is the truth
+# ══════════════════════════════════════════════════════════════════════════
+
+#: The cert's executed specimen, verbatim: the anchor still names the old id,
+#: the event has been re-keyed to a new one.
+STALE_ESPN_ID = "401816665"
+REKEYED_ESPN_ID = "401816999"
+
+
+class TestAStaleScalarAnchorHasNoAuthority:
+    """The finding that blocked this branch, turned into a permanent red.
+
+    `event_provider_anchors` records `(source, source_id, id_kind)` and nothing
+    about *when* the copy was taken. For Kalshi and Polymarket that is complete
+    — no column exists to disagree with. For ESPN, StatPal and the Odds API the
+    anchor is a cache of a mutable, non-unique column, and two live paths change
+    it underneath: `repair_event_espn_id` re-keys it, and the source-intelligence
+    collision sweep clears it to NULL. Before the fix the stale copy outranked
+    the live column and absorbed a different game.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_cert_specimen_no_longer_absorbs(self):
+        """CERT-410's executed case: `espn:old-id -> 200` while 200 carries `new-id`.
+
+        The claim arrives with the OLD id. Step 1 misses (no column holds it),
+        the ruling 048 gate keeps an unanchored claim out of Step 3, so the
+        anchor is the ONLY route to event 200 — which is what makes this a clean
+        read of Step 2 rather than of the matcher.
+        """
+        rekeyed = _row(event_id=ESPN_ROW_ID, espn_id=REKEYED_ESPN_ID)
+        session = _AnchorSession(
+            anchors={("espn", STALE_ESPN_ID, ANCHOR_KIND_GAME): ESPN_ROW_ID},
+            event_sports={ESPN_ROW_ID: MLB_SPORT_ID},
+            structured_candidates=[rekeyed],
+            sport_id=MLB_SPORT_ID,
+        )
+
+        assert await find_event_by_anchor(
+            session,
+            anchor_key_for_claim("espn", STALE_ESPN_ID),
+            expected_sport_id=MLB_SPORT_ID,
+        ) is None, (
+            "the anchor was copied from events.espn_id, which now holds a "
+            "different value — the copy has been disproven and may not absorb"
+        )
+
+        event, created = await find_or_create_event(
+            session, _identity("espn", STALE_ESPN_ID)
+        )
+        assert created is True, (
+            "an old-id claim resolving to a re-keyed event is an absorption of "
+            "a DIFFERENT game — the cert's whole finding"
+        )
+        assert event.id != ESPN_ROW_ID
+
+    @pytest.mark.asyncio
+    async def test_a_cleared_column_voids_its_anchor(self):
+        """The NULL transition, which is the source-intelligence sweep's own write.
+
+        That sweep clears `espn_id` on *every* holder of a colliding id
+        precisely because it has decided the linkage is wrong. An anchor that
+        survives it re-asserts the linkage the sweep just withdrew.
+        """
+        cleared = _row(event_id=ESPN_ROW_ID, espn_id=None)
+        session = _AnchorSession(
+            anchors={("espn", STALE_ESPN_ID, ANCHOR_KIND_GAME): ESPN_ROW_ID},
+            event_sports={ESPN_ROW_ID: MLB_SPORT_ID},
+            structured_candidates=[cleared],
+            sport_id=MLB_SPORT_ID,
+        )
+        assert await find_event_by_anchor(
+            session,
+            anchor_key_for_claim("espn", STALE_ESPN_ID),
+            expected_sport_id=MLB_SPORT_ID,
+        ) is None
+
+    @pytest.mark.asyncio
+    async def test_statpal_corroboration_is_namespace_qualified(self):
+        """A raw string compare would read every live StatPal anchor as stale.
+
+        The anchor's `source_id` is `s6:355372`; the column holds the bare
+        `355372`. Corroboration therefore re-derives the key from the current
+        column value instead of comparing strings — and this asserts BOTH
+        directions, because a check that only refused would have passed the
+        stale test above while silently disabling StatPal entirely.
+        """
+        live = _row(event_id=STATPAL_ROW_ID, statpal_fixture_id=STATPAL_ID_SHORT)
+        session = _AnchorSession(
+            anchors={("statpal", f"s6:{STATPAL_ID_SHORT}", ANCHOR_KIND_GAME): STATPAL_ROW_ID},
+            event_sports={STATPAL_ROW_ID: MLB_SPORT_ID},
+            structured_candidates=[live],
+            sport_id=MLB_SPORT_ID,
+        )
+        assert await find_event_by_anchor(
+            session,
+            anchor_key_for_claim("statpal", STATPAL_ID_SHORT),
+            expected_sport_id=MLB_SPORT_ID,
+        ) == STATPAL_ROW_ID
+
+        # Re-keyed into the OTHER namespace — the 21-group shape from queue 411.
+        live.statpal_fixture_id = STATPAL_ID_LONG
+        assert await find_event_by_anchor(
+            session,
+            anchor_key_for_claim("statpal", STATPAL_ID_SHORT),
+            expected_sport_id=MLB_SPORT_ID,
+        ) is None
+
+    @pytest.mark.asyncio
+    async def test_a_current_espn_anchor_still_absorbs(self):
+        """The must-not-regress control (gotcha #43): refusing everything is not a fix."""
+        current = _row(event_id=ESPN_ROW_ID, espn_id=STALE_ESPN_ID)
+        session = _AnchorSession(
+            anchors={("espn", STALE_ESPN_ID, ANCHOR_KIND_GAME): ESPN_ROW_ID},
+            event_sports={ESPN_ROW_ID: MLB_SPORT_ID},
+            structured_candidates=[current],
+            sport_id=MLB_SPORT_ID,
+        )
+        assert await find_event_by_anchor(
+            session,
+            anchor_key_for_claim("espn", STALE_ESPN_ID),
+            expected_sport_id=MLB_SPORT_ID,
+        ) == ESPN_ROW_ID
+
+    @pytest.mark.asyncio
+    async def test_a_column_less_provider_is_never_corroborated(self):
+        """Kalshi has no column, so there is nothing to corroborate against.
+
+        Corroborating anyway would refuse every anchor the two providers that
+        NEEDED this channel have — they were 99.61% of `NO_ANCHOR_CHANNEL`. The
+        event row deliberately carries no ESPN or StatPal id at all: a check
+        that leaked past its own source map would read that as stale and this
+        would go red.
+        """
+        row = _row(event_id=ESPN_ROW_ID, espn_id=None, statpal_fixture_id=None)
+        session = _AnchorSession(
+            anchors={("kalshi", SHARED_GAME_ANCHOR, ANCHOR_KIND_GAME): ESPN_ROW_ID},
+            event_sports={ESPN_ROW_ID: MLB_SPORT_ID},
+            structured_candidates=[row],
+            sport_id=MLB_SPORT_ID,
+        )
+        assert await find_event_by_anchor(
+            session,
+            anchor_key_for_claim("kalshi", TICKER_BOS),
+            expected_sport_id=MLB_SPORT_ID,
+        ) == ESPN_ROW_ID
+        assert await anchor_is_current(
+            session, anchor_key_for_claim("kalshi", TICKER_BOS), ESPN_ROW_ID
+        ) is True
+
+    @pytest.mark.asyncio
+    async def test_a_missing_event_row_is_not_current(self):
+        """"The row I would corroborate against is gone" is not evidence of currency."""
+        session = _AnchorSession(sport_id=MLB_SPORT_ID)
+        assert await anchor_is_current(
+            session, anchor_key_for_claim("espn", STALE_ESPN_ID), 999_999
+        ) is False
+
+
+class TestCollisionTaggingSharesThePremise:
+    """A COLLISION is a *proof*. A disproven incumbent proves nothing."""
+
+    @pytest.mark.asyncio
+    async def test_a_stale_incumbent_is_not_a_duplicate(self):
+        """The second-order defect: a false duplicate tag on a live event.
+
+        Read-side corroboration makes a stale anchor harmless to absorption but
+        leaves it in the unique index. When the event that GENUINELY holds the
+        id then establishes its correspondence, the INSERT conflicts with the
+        lie — and the pre-fix path would brand the true holder a duplicate of a
+        row that no longer has any claim to the id.
+        """
+        stale_holder = _row(event_id=ESPN_ROW_ID, espn_id=REKEYED_ESPN_ID)
+        true_holder = _row(event_id=STATPAL_ROW_ID, espn_id=STALE_ESPN_ID)
+        session = _AnchorSession(
+            anchors={("espn", STALE_ESPN_ID, ANCHOR_KIND_GAME): ESPN_ROW_ID},
+            event_sports={
+                ESPN_ROW_ID: MLB_SPORT_ID, STATPAL_ROW_ID: MLB_SPORT_ID
+            },
+            structured_candidates=[stale_holder, true_holder],
+            sport_id=MLB_SPORT_ID,
+        )
+
+        result = await record_anchor(
+            session,
+            event_id=STATPAL_ROW_ID,
+            key=anchor_key_for_claim("espn", STALE_ESPN_ID),
+        )
+
+        assert result.outcome == STALE_INCUMBENT
+        assert result.canonical_event_id is None, (
+            "a disproven incumbent must not be reported as a canonical — a "
+            "caller that tags against it records a duplicate that is not one"
+        )
+        assert session.tagged == []
+
+    @pytest.mark.asyncio
+    async def test_a_live_incumbent_is_still_a_collision(self):
+        """The control: corroboration must not disarm the detector.
+
+        The unique index is the only proof of a duplicate this system has ever
+        had. Both events genuinely carry the id — `ix_events_espn_id` is not
+        unique, which is how #1204's NCAA collisions exist — so this IS the
+        real thing and must still be caught.
+        """
+        incumbent = _row(event_id=ESPN_ROW_ID, espn_id=STALE_ESPN_ID)
+        loser = _row(event_id=STATPAL_ROW_ID, espn_id=STALE_ESPN_ID)
+        session = _AnchorSession(
+            anchors={("espn", STALE_ESPN_ID, ANCHOR_KIND_GAME): ESPN_ROW_ID},
+            event_sports={
+                ESPN_ROW_ID: MLB_SPORT_ID, STATPAL_ROW_ID: MLB_SPORT_ID
+            },
+            structured_candidates=[incumbent, loser],
+            sport_id=MLB_SPORT_ID,
+        )
+
+        result = await record_anchor(
+            session,
+            event_id=STATPAL_ROW_ID,
+            key=anchor_key_for_claim("espn", STALE_ESPN_ID),
+        )
+        assert result.outcome == COLLISION
+        assert result.canonical_event_id == ESPN_ROW_ID
+
+    @pytest.mark.asyncio
+    async def test_the_stale_incumbent_is_not_repointed(self):
+        """Refusing to tag is not licence to move an identity.
+
+        The stale row is removed at the re-key site, where the transaction that
+        made it false can delete it atomically — not here, where this path
+        cannot distinguish a disproven incumbent from one whose column is
+        mid-repair.
+        """
+        session = _AnchorSession(
+            anchors={("espn", STALE_ESPN_ID, ANCHOR_KIND_GAME): ESPN_ROW_ID},
+            event_sports={
+                ESPN_ROW_ID: MLB_SPORT_ID, STATPAL_ROW_ID: MLB_SPORT_ID
+            },
+            structured_candidates=[
+                _row(event_id=ESPN_ROW_ID, espn_id=REKEYED_ESPN_ID),
+                _row(event_id=STATPAL_ROW_ID, espn_id=STALE_ESPN_ID),
+            ],
+            sport_id=MLB_SPORT_ID,
+        )
+        await record_anchor(
+            session,
+            event_id=STATPAL_ROW_ID,
+            key=anchor_key_for_claim("espn", STALE_ESPN_ID),
+        )
+        assert (
+            session.anchors[("espn", STALE_ESPN_ID, ANCHOR_KIND_GAME)] == ESPN_ROW_ID
+        )
+
+
+class TestInvalidationAtTheRekeySite:
+    """Harmless is not the same as gone — the stale row still holds an index slot."""
+
+    @pytest.mark.asyncio
+    async def test_a_rekey_deletes_only_this_events_claim(self):
+        """`ix_events_espn_id` is NOT unique, so another row may hold it legitimately."""
+        session = _AnchorSession(
+            anchors={("espn", STALE_ESPN_ID, ANCHOR_KIND_GAME): ESPN_ROW_ID},
+            sport_id=MLB_SPORT_ID,
+        )
+
+        assert await invalidate_scalar_anchor(
+            session, source="espn", source_id=STALE_ESPN_ID,
+            event_id=STATPAL_ROW_ID,
+        ) == 0, "another event's anchor is not ours to delete"
+        assert ("espn", STALE_ESPN_ID, ANCHOR_KIND_GAME) in session.anchors
+
+        assert await invalidate_scalar_anchor(
+            session, source="espn", source_id=STALE_ESPN_ID,
+            event_id=ESPN_ROW_ID,
+        ) == 1
+        assert ("espn", STALE_ESPN_ID, ANCHOR_KIND_GAME) not in session.anchors
+
+    @pytest.mark.asyncio
+    async def test_an_unscoped_clear_deletes_the_key(self):
+        """The NULL sweep leaves no holder, so there is nobody left to scope to."""
+        session = _AnchorSession(
+            anchors={("espn", STALE_ESPN_ID, ANCHOR_KIND_GAME): ESPN_ROW_ID},
+            sport_id=MLB_SPORT_ID,
+        )
+        assert await invalidate_scalar_anchor(
+            session, source="espn", source_id=STALE_ESPN_ID
+        ) == 1
+        assert session.anchors == {}
+
+    @pytest.mark.asyncio
+    async def test_invalidation_is_namespace_qualified_like_the_writer(self):
+        """A raw source_id would miss the row the writer actually wrote."""
+        session = _AnchorSession(
+            anchors={("statpal", f"s6:{STATPAL_ID_SHORT}", ANCHOR_KIND_GAME): STATPAL_ROW_ID},
+            sport_id=MLB_SPORT_ID,
+        )
+        assert await invalidate_scalar_anchor(
+            session, source="statpal", source_id=STATPAL_ID_SHORT
+        ) == 1
+        assert session.anchors == {}
+
+    @pytest.mark.asyncio
+    async def test_an_unanchorable_id_deletes_nothing(self):
+        session = _AnchorSession(sport_id=MLB_SPORT_ID)
+        assert await invalidate_scalar_anchor(
+            session, source="statpal", source_id="12345"
+        ) == 0
+        assert await invalidate_scalar_anchor(
+            session, source="espn", source_id=None
+        ) == 0
+        assert session.anchor_deletes == []
+
+    def test_both_rekey_paths_invalidate(self):
+        """Read the real call sites, not a copy of them.
+
+        The lifecycle obligation lives at exactly two writers of
+        `events.espn_id`. An assertion about a value this test constructs would
+        prove nothing about them — which is how the original defect survived
+        being written (see `test_the_prediction_market_call_site_passes_the_provider_id`).
+        A third writer of the column must add itself here.
+        """
+        import inspect
+
+        from app.routes import source_intelligence
+        from app.tasks import repair_event_espn_id
+
+        for module in (repair_event_espn_id, source_intelligence):
+            src = inspect.getsource(module)
+            assert "UPDATE events" in src and "espn_id" in src, (
+                f"{module.__name__} is no longer an espn_id writer — has the "
+                "call site moved?"
+            )
+            assert "invalidate_scalar_anchor" in src, (
+                f"{module.__name__} re-keys or clears events.espn_id without "
+                "invalidating the anchor copied from it (CERT-410 [P1])"
+            )

@@ -45,7 +45,7 @@ that work will write through; it is not that work.
 
 ## Absorption authority is not widened by a millimetre
 
-Three properties, each pinned by a test:
+Four properties, each pinned by a test:
 
 * Only `id_kind == 'game'` is ever returned by :func:`find_event_by_anchor`. A
   Kalshi player-prop ticker, a Polymarket `conditionId` and a Polymarket event
@@ -58,6 +58,22 @@ Three properties, each pinned by a test:
 * An anchor pointing at an event in a **different sport** is refused, logged,
   and treated as a miss. A cross-sport absorption is the worst outcome this
   table can produce, and the sport is free to check.
+* A **scalar-derived** anchor — ESPN, StatPal, Odds API, the three providers with
+  an id column on `events` — is authoritative only while it still agrees with the
+  column it was copied from (CERT-410 [P1]). Those columns are mutable and
+  non-unique, and two live paths change them: `repair_event_espn_id` re-keys
+  `espn_id`, and the source-intelligence collision sweep clears it to NULL.
+  Without corroboration the copy outlives its source and keeps absorbing, so an
+  incoming claim carrying the OLD id lands on a row that is now a *different
+  game*. Kalshi and Polymarket are exempt because no such column exists for them:
+  their anchor row is the only record there is, and nothing can disagree with it.
+
+  The same premise governs the write side. A `COLLISION` is this system's only
+  *proof* that two rows are one game, and the proof is the shared id — so an
+  incumbent that no longer holds the id yields `STALE_INCUMBENT` and tags
+  nothing. The stale row is deleted where it becomes false, by
+  :func:`invalidate_scalar_anchor` inside the re-keying transaction, rather than
+  being repointed here: an anchor a later writer can move is not an identity.
 
 ## Why writes are rare rather than per-poll
 
@@ -80,6 +96,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.provider_anchor_keys import (
     ANCHOR_KIND_GAME,
+    SCALAR_DERIVED_ID_COLUMNS,
     AnchorKey,
     espn_anchor_key,
     kalshi_anchor_key,
@@ -102,6 +119,11 @@ COLLISION = "COLLISION"
 #: The claim yields no anchorable key (unknown StatPal namespace, empty id, a
 #: provider this module does not key). Writing nothing is the correct answer.
 NO_KEY = "NO_KEY"
+#: The anchor already existed, points at a DIFFERENT event, and that event no
+#: longer carries the id in its own column. CERT-410 [P1]: this is NOT a
+#: collision, because a collision is *proof* that two rows are one game and a
+#: disproven incumbent proves nothing. Nothing is written and nothing is tagged.
+STALE_INCUMBENT = "STALE_INCUMBENT"
 
 #: Tag written onto the losing row of a COLLISION so the duplicate is queryable
 #: without re-deriving it. Mirrors the `provenance:` tag vocabulary the registry
@@ -158,6 +180,129 @@ def anchor_key_for_claim(
     return None
 
 
+#: One fixed statement for all three scalar columns rather than a column name
+#: interpolated per source. The name would come from a frozen module constant
+#: and be safe, but a SQL string that is assembled is a SQL string a later edit
+#: can make unsafe, and there is nothing to buy by assembling this one.
+_CURRENT_SCALAR_IDS_SQL = (
+    "SELECT espn_id, external_id, statpal_fixture_id FROM events WHERE id = :event_id"
+)
+#: Positional order of `_CURRENT_SCALAR_IDS_SQL`. Kept beside it deliberately —
+#: the two must change together.
+_SCALAR_COLUMN_ORDER = ("espn_id", "external_id", "statpal_fixture_id")
+
+
+async def anchor_is_current(
+    session: AsyncSession, key: AnchorKey, event_id: int
+) -> bool:
+    """Does ``event_id`` STILL carry the id this anchor was copied from?
+
+    CERT-410 [P1]. The anchor table's unique key is `(source, source_id,
+    id_kind)` and nothing in it records *when* the copy was taken, so an anchor
+    derived from `events.espn_id` survives every later change to that column.
+    Two live paths change it — `repair_event_espn_id` re-keys it and the
+    source-intelligence collision sweep clears it to NULL — and after either one
+    the anchor still resolves, still passes the sport check, and still absorbs.
+    The executed specimen was `espn:old-id -> event 200` while event 200 carried
+    `espn_id='new-id'`: an incoming `old-id` claim landed on event 200, which is
+    a *different game*. The stale copy had more authority than the live column.
+
+    ``True`` for any source not in :data:`SCALAR_DERIVED_ID_COLUMNS`. That is not
+    a gap. Kalshi and Polymarket have no id column on `events`, which is why they
+    were 99.61% of the `NO_ANCHOR_CHANNEL` population in the first place; for
+    them the anchor row is the only record of the correspondence and there is no
+    second value it could disagree with. Corroborating against a column that does
+    not exist would refuse every anchor those two providers have.
+
+    A missing event row is ``False``. The FK is `ON DELETE CASCADE` so it should
+    be unreachable, but "the row I was going to corroborate against is gone" is
+    not evidence that the anchor is current.
+    """
+    column = SCALAR_DERIVED_ID_COLUMNS.get(key.source)
+    if column is None:
+        return True
+
+    row = (
+        await session.execute(
+            text(_CURRENT_SCALAR_IDS_SQL), {"event_id": event_id}
+        )
+    ).first()
+    if row is None:
+        return False
+
+    current_value = dict(zip(_SCALAR_COLUMN_ORDER, row))[column]
+
+    # Re-derive through the SAME key function the writer used rather than
+    # comparing raw strings. StatPal's `source_id` is namespace-qualified
+    # (`s6:355372`) while the column holds the bare `355372`, so a raw compare
+    # would read every live StatPal anchor as stale — and an unrecognised
+    # namespace correctly yields `None` here, i.e. not current, which is the
+    # same refusal `statpal_anchor_key` already makes on the write side.
+    current_key = anchor_key_for_claim(key.source, current_value)
+    return (
+        current_key is not None
+        and current_key.source_id == key.source_id
+        and current_key.id_kind == key.id_kind
+    )
+
+
+async def invalidate_scalar_anchor(
+    session: AsyncSession,
+    *,
+    source: str,
+    source_id: Optional[str],
+    event_id: Optional[int] = None,
+) -> int:
+    """Delete the anchor that a scalar-column re-key or clear has just disproven.
+
+    CERT-410 [P1], the write half. Read-side corroboration in
+    :func:`anchor_is_current` makes a stale anchor harmless, but harmless is not
+    the same as gone: a stale row still occupies its slot in the
+    `(source, source_id, id_kind)` unique index, so the next event to genuinely
+    acquire that id conflicts with a lie and gets tagged a duplicate of a row it
+    has nothing to do with. Removing the assertion at the moment it becomes false
+    is the only version of this that keeps the index meaning what it says.
+
+    ``event_id`` scopes the delete to one row's claim, for a **re-key** — the id
+    moved off *this* event, and because `ix_events_espn_id` is not unique some
+    other event may legitimately hold it. Omit it for a **clear** that removed
+    the id from every holder, where no event is left to corroborate.
+
+    Returns the number of rows deleted, so a caller can report it rather than
+    assume it. Deleting nothing is the normal case and is not a failure: the
+    channel writes only on established correspondences, so most re-keyed rows
+    never had an anchor at all.
+    """
+    key = anchor_key_for_claim(source, source_id)
+    if key is None:
+        return 0
+
+    params = {
+        "source": key.source,
+        "source_id": key.source_id,
+        "id_kind": key.id_kind,
+    }
+    sql = (
+        "DELETE FROM event_provider_anchors "
+        "WHERE source = :source AND source_id = :source_id "
+        "AND id_kind = :id_kind"
+    )
+    if event_id is not None:
+        sql += " AND event_id = :event_id"
+        params["event_id"] = int(event_id)
+
+    result = await session.execute(text(sql), params)
+    deleted = int(result.rowcount or 0)
+    if deleted:
+        logger.info(
+            "Invalidated %d anchor row(s) for %s:%s (%s)%s — the column it was "
+            "copied from no longer holds this id (#2225)",
+            deleted, key.source, key.source_id, key.id_kind,
+            f" on event {event_id}" if event_id is not None else "",
+        )
+    return deleted
+
+
 async def find_event_by_anchor(
     session: AsyncSession,
     key: Optional[AnchorKey],
@@ -210,6 +355,20 @@ async def find_event_by_anchor(
             "sport %s — refusing the cross-sport absorption (#2213)",
             key.source, key.source_id, key.id_kind,
             event_id, sport_id, expected_sport_id,
+        )
+        return None
+
+    if not await anchor_is_current(session, key, event_id):
+        # CERT-410 [P1]. The column is the truth and the anchor is a copy of it.
+        # A copy that disagrees with its source has been disproven, and a
+        # disproven assertion may not absorb — this is the same refusal the
+        # cross-sport branch above makes, arrived at from the other direction.
+        logger.warning(
+            "STALE ANCHOR (#2225): %s:%s (%s) names event %s, but that event no "
+            "longer carries this id in events.%s. The column is the truth and "
+            "the anchor is a copy — refusing the absorption.",
+            key.source, key.source_id, key.id_kind, event_id,
+            SCALAR_DERIVED_ID_COLUMNS[key.source],
         )
         return None
 
@@ -296,6 +455,25 @@ async def record_anchor(
         return AnchorWriteResult(
             outcome=CONFIRMED, key=key, canonical_event_id=canonical
         )
+
+    if not await anchor_is_current(session, key, canonical):
+        # CERT-410 [P1], the same current-holder premise the read side applies.
+        # A COLLISION is the system's only *proof* that two rows are one game,
+        # and the proof is the shared id. If the incumbent no longer holds that
+        # id, nothing is shared and there is nothing to prove — tagging here
+        # would brand a live event a duplicate of a row it never matched. The
+        # stale row is left for `invalidate_scalar_anchor` at the re-key site
+        # rather than being repointed here: an anchor that a later writer can
+        # move is not an identity, and this path cannot tell a disproven
+        # incumbent from one whose column is mid-repair.
+        logger.warning(
+            "STALE INCUMBENT ANCHOR (#2225): %s id %r (%s) is held by event %s, "
+            "which no longer carries it in events.%s. Event %s is NOT tagged a "
+            "duplicate — a disproven anchor is not proof of anything.",
+            key.source, key.source_id, key.id_kind, canonical,
+            SCALAR_DERIVED_ID_COLUMNS[key.source], event_id,
+        )
+        return AnchorWriteResult(outcome=STALE_INCUMBENT, key=key)
 
     logger.warning(
         "ANCHOR COLLISION (#2213): %s id %r (%s) is claimed by event %s and "

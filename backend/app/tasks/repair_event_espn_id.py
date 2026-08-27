@@ -87,6 +87,7 @@ from typing import Any, Optional
 
 from sqlalchemy import text
 
+from app.services.anchor_channel import invalidate_scalar_anchor
 from app.utils.repair_apply_plan import (
     ESPN_ID_PLAN_SCHEMA,
     REASON_PLAN_CORRUPT,
@@ -435,6 +436,11 @@ async def _apply_reviewed_plan(
 
     corrected: list[dict[str, Any]] = []
     no_op: list[dict[str, Any]] = []
+    #: Anchors invalidated alongside the re-keys. Reported rather than assumed —
+    #: zero is the normal reading (the channel writes only on established
+    #: correspondences) and a silent zero is indistinguishable from a rail that
+    #: never ran.
+    anchors_cleared = 0
     for row in actionable:
         async with session.begin_nested():
             # Serialises the rail against ITSELF. Transaction-scoped, so it is
@@ -462,6 +468,29 @@ async def _apply_reviewed_plan(
                 },
             )
             if result.rowcount == 1:
+                # CERT-410 [P1]. `event_provider_anchors` may hold an
+                # `espn:<wrong_espn_id> -> this event` row copied from the column
+                # we have just re-keyed. Left behind it outlives its source and
+                # keeps absorbing: an incoming claim carrying the OLD id would
+                # still resolve to this event, which is now a different game.
+                # Deleted inside the same `begin_nested()` as the UPDATE, so the
+                # column and the copy of it can never disagree across a commit.
+                #
+                # Scoped to this event on purpose: `ix_events_espn_id` is not
+                # unique, so another row may legitimately hold the wrong id and
+                # its anchor is not ours to delete.
+                #
+                # This rail deletes a now-false assertion; it does not write the
+                # corrected one. Establishing `espn:<true_espn_id>` is a new
+                # correspondence and therefore a new mutation class for an
+                # attended, digest-gated rail — the registry establishes it on
+                # the ordinary path, and #1946 Item 8 backfills the rest.
+                anchors_cleared += await invalidate_scalar_anchor(
+                    session,
+                    source="espn",
+                    source_id=str(row.wrong_espn_id),
+                    event_id=int(row.event_id),
+                )
                 corrected.append(
                     {
                         "event_id": int(row.event_id),
@@ -511,6 +540,7 @@ async def _apply_reviewed_plan(
         "retired": retired,
         "retired_count": len(retired),
         "no_op": no_op,
+        "anchors_invalidated": anchors_cleared,
         "after_verification": {
             "by_event": {
                 str(k): (v or {}).get("espn_id") for k, v in sorted(after.items())

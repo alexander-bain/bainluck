@@ -101,6 +101,30 @@ CONFLICT = "CONFLICT"
 INCOMPARABLE = "INCOMPARABLE"
 
 
+#: Anchor sources whose `source_id` is a COPY of a mutable column on `events`,
+#: mapped to the column it was copied from. CERT-410 [P1].
+#:
+#: The distinction this table draws is the whole of that finding. For Kalshi and
+#: Polymarket there is no id column on `events` at all, so the anchor row IS the
+#: record — nothing exists that could drift out from under it. For these three
+#: the anchor is a *cache of a column*, and the column is mutable and
+#: non-unique: `repair_event_espn_id` re-keys `espn_id` and the source-intelligence
+#: collision sweep clears it to NULL. A cache that outlives its source and keeps
+#: its authority is not an identity; it is a stale assertion with the power to
+#: absorb a different game.
+#:
+#: So the rule these three obey and the other two do not: **a scalar-derived
+#: anchor is authoritative only while it still agrees with the column it was
+#: copied from.** Read-side corroboration and re-key invalidation both key off
+#: this map, so a fourth column-backed provider gets both behaviours by being
+#: added here once.
+SCALAR_DERIVED_ID_COLUMNS = {
+    SOURCE_ESPN: "espn_id",
+    SOURCE_ODDS_API: "external_id",
+    SOURCE_STATPAL: "statpal_fixture_id",
+}
+
+
 @dataclass(frozen=True)
 class AnchorKey:
     """One row's worth of `(source, source_id, id_kind)`, or a refusal.
