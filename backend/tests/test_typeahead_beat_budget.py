@@ -731,7 +731,7 @@ def test_the_background_queue_carries_103_beats_and_45_are_fall_through():
 
     🔴 **RE-DERIVED at queue 419 (2026-08-26, #2077): 102 -> 103, explicit
     57 -> 58.** This lane added `settlement-capture-sweep-nightly`
-    (`crontab(minute=10, hour=10)`, the nightly settlement-capture sweep) with an
+    (`crontab(minute=31, hour=10)`, the nightly settlement-capture sweep) with an
     explicit `options={"queue": "background"}`. RE-DERIVED by running the census
     below over the assembled schedule and printing all three numbers, never by
     adding one to the old number (#1910). The fall-through half is UNMOVED at

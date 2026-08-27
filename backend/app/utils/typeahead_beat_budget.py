@@ -1029,7 +1029,7 @@ def free_background_slots(
 #:
 #: 🔴 RE-DERIVED AGAIN at queue 419 (2026-08-26, #2077): 102 -> **103**, explicit
 #: 57 -> **58**. This lane added `settlement-capture-sweep-nightly`
-#: (`crontab(minute=10, hour=10)`) with an EXPLICIT
+#: (`crontab(minute=31, hour=10)`) with an EXPLICIT
 #: `options={"queue": "background"}`. RE-DERIVED by running the census over the
 #: assembled `beat_schedule` and printing all three numbers, never by adding one
 #: to the previous number (#1910).
@@ -1049,9 +1049,16 @@ def free_background_slots(
 #: ten-minute stretches and delays the hourly calibration warmer. So this task
 #: is DECLARED in `_HEAVY_KEEP_ON_BACKGROUND` alongside `kalshi_cliff_drain`,
 #: which is the same shape (a resumable sweep over an EXPIRING population).
-#: 10:10 UTC is likewise chosen, not defaulted: hour 10 already carries three
-#: daily beats at :00 and one at :05, and the sweep's 780 s deadline ends it by
-#: :23, clear of the hourly :25/:30/:35 crowd.
+#: 10:31 UTC is likewise chosen, not defaulted — and this file is why the first
+#: choice was wrong. :10 was picked by reading hour 10's DAILY beats (:00, :05)
+#: and calling the rest clear; CERT-418 BLOCKed it, because `*/2`, `*/5` and two
+#: `*/10` background beats fire at :10 and this queue has ~one effective slot.
+#: The correction is enumerative, not editorial: :31 is one of 22 minutes in the
+#: hour with zero other background crontab fires, and it has the lightest
+#: 13-minute run window of them. The three pure-interval background beats
+#: (10 s / 20 s / 180 s) fire during every minute and are unavoidable at any
+#: placement; they are named, not filtered. Enforced by
+#: `TestG8TheFireMinuteIsClearOnItsOwnQueue`.
 #:
 #: ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. The new beat named its
 #: queue rather than defaulting into it — the benign direction again.

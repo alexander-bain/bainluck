@@ -3924,12 +3924,25 @@ celery_app.conf.beat_schedule = {
     # NON-MONOTONIC age ordering, so there is no cliff to beat and no step
     # function to notice a miss by. A skipped week is simply rows gone.
     #
-    # 10:10 UTC = 03:10 PDT / 02:10 PST. Chosen, not defaulted:
-    #   * hour 10 has three other daily beats at :00 and one at :05 — starting
-    #     on the hour would put a multi-minute sweep behind them on a queue with
-    #     ~one effective slot;
-    #   * :10 is the only clear minute in that hour, and the sweep's own 780s
-    #     deadline ends it by :23, clear of the hourly :25/:30/:35 crowd;
+    # 10:31 UTC = 03:31 PDT / 02:31 PST. Chosen, not defaulted — and the choice
+    # is ENFORCED by `TestG8TheFireMinuteIsClearOnItsOwnQueue`, not by this
+    # comment. Read that gate, not this paragraph: the first attempt at this
+    # entry sat at :10 under a comment claiming :10 was "the only clear minute
+    # in that hour", and CERT-418 BLOCKed it. The claim was true of hour 10's
+    # DAILY beats and false of the schedule that runs — `*/2`, `*/5` and two
+    # `*/10` background beats all fire at :10. A minute is only clear if the
+    # FULL assembled schedule says so.
+    #   * :31 carries zero other background crontab fires. Every even minute is
+    #     spoken for by `precompute-discover-candidate-base` (*/2), so the
+    #     minute has to be odd; :05/:10/:15/... are taken by the */5 and */10
+    #     warmers and watchdogs.
+    #   * the sweep's own 780 s deadline ends it by :44, so its whole run window
+    #     is clear of the :45 and :00 crowds. Of the 22 collision-free minutes
+    #     in the hour, :31 has the lightest 13-minute window (12 fires, 7 of
+    #     them the */2 warmer that no minute avoids).
+    #   * three background beats are pure intervals (10 s, 20 s, 180 s) and fire
+    #     during every minute of the day. No choice of minute avoids them; they
+    #     are named and pinned in the G8 section rather than filtered away.
     #   * one fire a night, not an interval — the cohort re-cuts daily and a
     #     second fire inside the same day resumes the same date-derived sweep
     #     rather than re-probing, so an extra fire would be safe but pointless.
@@ -3941,7 +3954,7 @@ celery_app.conf.beat_schedule = {
     # budget has to be read through the reserve.
     "settlement-capture-sweep-nightly": {
         "task": "app.tasks.run_settlement_sweep",
-        "schedule": crontab(minute=10, hour=10),
+        "schedule": crontab(minute=31, hour=10),
         "kwargs": {"budget": 3000, "concurrency": 4},
         "options": {"queue": "background"},
     },

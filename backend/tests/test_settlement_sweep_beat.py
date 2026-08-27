@@ -24,6 +24,9 @@ obvious lazy wrapper fails it:
   ``task_time_limit`` kill runs no exit path at all).
 * **G7** it stays on ``background`` with the rest of the multi-minute backfill
   family, and is DECLARED there rather than left to the default.
+* **G8** the fire minute is CLEAR of same-queue co-fires, measured over the FULL
+  assembled schedule — interval and sub-hourly entries included, not the daily
+  ones alone. Added by CERT-418 [P1]; see the section header for the incident.
 """
 
 import inspect
@@ -416,3 +419,225 @@ class TestG7Routing:
 
         assert TASK_NAME not in HEAVY_TASKS
         assert app.conf.task_routes.get(TASK_NAME, {}).get("queue") != "heavy"
+
+
+# ---------------------------------------------------------------------------
+# G8 — the fire minute is clear ON ITS OWN QUEUE, measured over the FULL
+#      assembled schedule
+# ---------------------------------------------------------------------------
+#
+# 🔴 THIS SECTION EXISTS BECAUSE OF A BLOCK. CERT-418 [P1] rejected the first
+# choice of fire minute. The beat was placed at `crontab(minute=10, hour=10)`
+# under a comment that read ":10 is the only clear minute in that hour". That
+# sentence was true of the entries the author had read — hour 10's *daily*
+# beats, which sit at :00 and :05 — and false of the schedule that actually
+# runs. Four further background beats fire at :10 every hour of every day:
+# `precompute-discover-candidate-base` (every even minute), `warm-event-concepts`
+# (every 5), `run_freshness_watchdog` and `update_max_movement` (every 10). The
+# sweep was therefore timed to land on top of the exact cache and freshness work
+# the offset was chosen to protect.
+#
+# The defect is not the minute. The defect is that the enumeration was done by
+# reading a file for entries that *looked* daily, and nothing executable
+# checked it. So the remedy is an enumeration over `conf.beat_schedule` as
+# assembled, resolving each entry's queue the way Celery resolves it, and
+# admitting every cadence — daily, hourly, sub-hourly and interval.
+#
+# Two honesty constraints this section is written to respect:
+#
+#   1. **"Zero co-fires" is not achievable and must not be claimed.** Three
+#      background beats are pure intervals (10 s, 20 s, 180 s). They fire during
+#      every minute of every hour and no choice of minute avoids them. They are
+#      named in `BACKGROUND_INTERVAL_FLOOR` and asserted not to have grown,
+#      rather than quietly filtered out — a filter is how the next unavoidable
+#      thing becomes invisible.
+#   2. **The gate is clock-independent** (gotcha #44). It reads the crontab's
+#      own `hour`/`minute` sets. Nothing here constructs "now", so it cannot
+#      pass or fail depending on when CI runs.
+
+#: The three background beats that fire on a fixed period rather than a
+#: wall-clock minute. Every minute of the day carries all three; the sweep
+#: shares its slot with them wherever it is placed. Asserted as an exact set so
+#: that a FOURTH interval beat arriving on `background` goes red here and has to
+#: be argued about, instead of being absorbed into "unavoidable anyway".
+BACKGROUND_INTERVAL_FLOOR = frozenset(
+    {"refresh-open-commentary", "warm-search-head", "warm-typeahead"}
+)
+
+#: Discrete background crontab fires inside the sweep's own run window, measured
+#: over `[minute, minute + ceil(SWEEP_DEADLINE_S / 60)]`. RE-DERIVED by running
+#: the census below over the assembled schedule, never adjusted by a delta
+#: (#1910). At 10:31 the window is 10:31-10:44 and carries 12: seven
+#: `precompute-discover-candidate-base` fires (one per even minute, which the
+#: floor argument above already covers) and five others. Asserted as a CEILING
+#: rather than an equality — a reduction is not a regression, and hour 10 is
+#: shared with lanes that have no reason to know this constant exists.
+SWEEP_WINDOW_COFIRE_CEILING = 12
+
+
+def _effective_queue(entry):
+    """The queue this beat entry actually dispatches to.
+
+    Three layers in the order Celery applies them: the entry's own
+    ``options["queue"]``, then ``task_routes``, then ``task_default_queue``.
+    Reading only the first layer is how 45 beats came to sit on `background`
+    without anyone choosing it — see
+    `test_the_background_queue_carries_103_beats_and_45_are_fall_through`.
+    """
+    conf = celery_app.conf
+    return (
+        (entry.get("options") or {}).get("queue")
+        or (conf.task_routes.get(entry.get("task")) or {}).get("queue")
+        or conf.task_default_queue
+    )
+
+
+def _is_crontab(schedule):
+    return hasattr(schedule, "hour") and hasattr(schedule, "minute")
+
+
+def _interval_seconds(schedule):
+    """Period of a non-crontab schedule, in seconds.
+
+    Celery accepts a bare number, a ``timedelta``, or a ``schedule`` object
+    wrapping one; all three appear in this config's history.
+    """
+    run_every = getattr(schedule, "run_every", schedule)
+    total = getattr(run_every, "total_seconds", None)
+    return total() if callable(total) else float(run_every)
+
+
+def _background_crontab_beats():
+    """``(name, hours, minutes)`` for every crontab beat on `background`."""
+    out = []
+    for name, entry in celery_app.conf.beat_schedule.items():
+        schedule = entry.get("schedule")
+        if _effective_queue(entry) == "background" and _is_crontab(schedule):
+            out.append(
+                (name, {int(h) for h in schedule.hour}, {int(m) for m in schedule.minute})
+            )
+    return out
+
+
+def _background_interval_beats():
+    """``(name, period_s)`` for every non-crontab beat on `background`."""
+    return [
+        (name, _interval_seconds(entry.get("schedule")))
+        for name, entry in celery_app.conf.beat_schedule.items()
+        if _effective_queue(entry) == "background"
+        and not _is_crontab(entry.get("schedule"))
+    ]
+
+
+def _background_cofires_at(hour, minute):
+    """Background crontab beats — other than the sweep — that CAN fire at
+    ``hour:minute``.
+
+    Day-of-week and day-of-month are deliberately ignored: a beat that collides
+    only on Mondays is still a collision, and the conservative reading is the
+    one that keeps the gate honest.
+    """
+    return sorted(
+        name
+        for name, hours, minutes in _background_crontab_beats()
+        if name != BEAT_KEY and hour in hours and minute in minutes
+    )
+
+
+class TestG8TheFireMinuteIsClearOnItsOwnQueue:
+    def test_no_other_background_beat_fires_at_the_sweeps_minute(self):
+        """THE gate CERT-418 asked for. Enumerated, not read off a comment."""
+        schedule = _entry()["schedule"]
+        (hour,) = set(schedule.hour)
+        (minute,) = set(schedule.minute)
+
+        cofires = _background_cofires_at(hour, minute)
+        assert cofires == [], (
+            f"{hour:02d}:{minute:02d} UTC is not clear — {len(cofires)} other "
+            f"background beat(s) fire on it: {cofires}. `background` runs about "
+            "one effective slot and this sweep holds it for ~7 minutes (780 s "
+            "bounded), so a co-fire here queues behind the sweep. Pick a minute "
+            "with no entry in this list; the enumeration is over the assembled "
+            "schedule, so hourly and sub-hourly cadences count."
+        )
+
+    def test_a_daily_only_enumeration_would_have_called_1010_clear(self):
+        """The defect itself, kept executable.
+
+        This is the control that stops the gate above from being decorative. If
+        someone reimplements the enumeration and it silently reverts to reading
+        daily entries only, the first assertion here still passes — and the
+        second one fails, because a daily-only reading of 10:10 genuinely is
+        empty. That emptiness is exactly what the original comment saw.
+        """
+        daily_only_at_1010 = [
+            name
+            for name, hours, minutes in _background_crontab_beats()
+            if name != BEAT_KEY
+            and len(hours) == 1
+            and len(minutes) == 1
+            and hours == {10}
+            and minutes == {10}
+        ]
+        assert daily_only_at_1010 == [], (
+            "premise moved: a daily beat now sits at 10:10, so this test no "
+            "longer reproduces the reading that produced the BLOCK"
+        )
+
+        full = set(_background_cofires_at(10, 10))
+        assert full >= {
+            "precompute-discover-candidate-base",
+            "warm-event-concepts",
+            "run-freshness-watchdog",
+            "update-max-movement",
+        }, (
+            "the enumeration no longer sees sub-hourly cadences at 10:10 — it "
+            f"returned {sorted(full)}. That is the CERT-418 defect back: an "
+            "enumerator blind to */2, */5 and */10 entries reports any minute "
+            "as clear."
+        )
+
+    def test_the_unavoidable_background_floor_is_named_and_has_not_grown(self):
+        """No minute avoids an interval beat, so they are declared, not filtered.
+
+        A fourth interval beat on `background` means the floor the sweep shares
+        its slot with got heavier. That is a real cost and it should be argued
+        in a report, not discovered later inside a filter nobody re-reads.
+        """
+        floor = dict(_background_interval_beats())
+        assert set(floor) == BACKGROUND_INTERVAL_FLOOR, (
+            f"the background interval floor moved: {sorted(floor)} vs "
+            f"{sorted(BACKGROUND_INTERVAL_FLOOR)}"
+        )
+        assert all(period <= 180.0 for period in floor.values()), (
+            f"an interval beat slower than 180 s is no longer a continuous "
+            f"floor and should be reasoned about as a co-fire: {floor}"
+        )
+
+    def test_the_run_window_does_not_sit_under_a_growing_pile(self):
+        """The minute being clear is necessary, not sufficient.
+
+        The sweep holds its slot for the whole deadline, so what matters
+        operationally is the window, not the instant. Asserted as a ceiling: it
+        catches the pile growing, and stays quiet when it shrinks.
+        """
+        import math
+
+        from app.tasks.settlement_sweep import SWEEP_DEADLINE_S
+
+        schedule = _entry()["schedule"]
+        (hour,) = set(schedule.hour)
+        (minute,) = set(schedule.minute)
+        span = math.ceil(SWEEP_DEADLINE_S / 60)
+
+        total = 0
+        for offset in range(span + 1):
+            absolute = minute + offset
+            total += len(_background_cofires_at((hour + absolute // 60) % 24, absolute % 60))
+
+        assert total <= SWEEP_WINDOW_COFIRE_CEILING, (
+            f"{total} background crontab fires inside {hour:02d}:{minute:02d}"
+            f"+{span}m, over a declared ceiling of {SWEEP_WINDOW_COFIRE_CEILING}. "
+            "Re-derive the ceiling by running this census and stating the new "
+            "number — do not increment it (#1910) — or move the sweep."
+        )
