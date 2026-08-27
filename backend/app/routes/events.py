@@ -1274,6 +1274,49 @@ def _build_expanded_ilike(column, term: str, expansion: str | None):
     return base
 
 
+def _build_futures_name_filter(ilike_futures_filter, fts_q: str):
+    """The futures NAME arm: stemmed FTS **OR** substring ILIKE. ONE definition.
+
+    BOTH HALVES ARE LOAD-BEARING, and that is measured, not assumed. LAT-P096 ran
+    a recall census on production over ten terms, comparing the ILIKE half alone
+    against this full OR (open markets only):
+
+        champions   405 -> 598  (+193)      werder    28 ->  28  (0)
+        relegation   53 -> 116  (+63)       schalke   34 ->  34  (0)
+        chiefs       25 ->  30  (+5)        winner  3530 -> 3530 (0)
+        election   2365 -> 2370 (+5)        trump    784 ->  784 (0)
+                                            fed      264 ->  264 (0)
+                                            mvp       30 ->   30 (0)
+
+    The FTS half earns its place through STEMMING: `champions` reaches
+    "Champion", `relegation` reaches "relegated". Six of ten terms gain nothing,
+    which is exactly why deleting this half looks free — and it is not. Dropping
+    it silently loses 193 open markets for `champions`, a head query.
+
+    A fallback ("run FTS only when ILIKE returns nothing") does not work either
+    and was rejected on the same numbers: ILIKE already returns 405 rows for
+    `champions`, so the fallback would never fire and the 193 would still be
+    lost. The gap is not at zero results, it is inside a healthy result set.
+
+    ⚠️ THE COST, and why this docstring exists rather than a bare `or_`. There is
+    no FTS expression index on `futures_markets.name`, so this predicate computes
+    one tsvector per open market. Measured on production 2026-08-26 (`werder`):
+
+        ILIKE alone        27.8 ms   Bitmap Index Scan (ix_futures_name_trgm),    904 buffers
+        FTS alone         742.7 ms   Index Scan, 49,551 rows removed by filter, 27,483 buffers
+        this OR           870.4 ms   Index Scan, 49,557 rows removed,           27,483 buffers
+
+    So the OR costs 842.6 ms over the ILIKE half AND defeats `ix_futures_name_trgm`,
+    which already exists and would serve the ILIKE half in 27.8 ms. The fix is an
+    FTS expression index that lets the planner BitmapOr the two GINs — DDL, not
+    code. Spec + red-first gate: `docs/audits/latency/lat-p096-futures-name-fts-index-spec.md`
+    and `backend/scripts/gate_futures_name_fts_index.py`. Do not "optimise" this
+    by deleting the FTS arm; `test_futures_name_filter_arms.py` is red-first
+    against exactly that.
+    """
+    return or_(_fts_filter(FuturesMarket.name, fts_q), ilike_futures_filter)
+
+
 def _alias_futures_arms(terms: list[str]) -> list:
     """Futures NAME arms for each alias alternative (LAT-P029 Item 1), ready to UNION.
 
@@ -4370,10 +4413,7 @@ async def typeahead_search(
         fts_event_f = or_(fts_event_f, Sport.key.in_(sport_alias_keys))
     event_team_filter = or_(fts_event_f, ilike_event_filter)
 
-    futures_name_filter = or_(
-        _fts_filter(FuturesMarket.name, ta_fts_q),
-        ilike_futures_filter,
-    )
+    futures_name_filter = _build_futures_name_filter(ilike_futures_filter, ta_fts_q)
 
     # --- Collect candidates into separate pools (all 3 queries run) ---
     _TIER_LABELS = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
