@@ -722,3 +722,253 @@ class TestTheOffSwitchIsConfinedToThisRule:
         """
         off_here = _calibration_population_ctes(published_pair_coherence_enabled=False)
         assert pc._HALF_SPIKE_FLAG_SQL in off_here
+
+
+class TestTheEvidenceCanBeReadBack:
+    """CAL-P104. The instrument passed its own cert repairs and still could not
+    DELIVER a reading, which is the third defect in the same family as the two
+    C-PUBLISHED-PAIR-1 named.
+
+    ``--out`` writes to a one-off dyno's ephemeral filesystem and a detached
+    run's stdout is unavailable to the bus, so a successful fold and a fold that
+    never ran leave the same trace: nothing. That is not hypothetical — the
+    sibling census fold was polled four times at
+    ``artifacts/cal-p094/eligible_fold.json`` and read as "still in flight" when
+    it had never started, and what finally landed ``cohort-cell-census/v2`` was a
+    DURABLE ROW.
+
+    So the artifact goes to ``durable_state_snapshots``, and a failed publish is
+    its own exit code — a measurement nobody can read is not a success.
+    """
+
+    @staticmethod
+    def _fold_source() -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "fold_published_pair_coherence.py"
+        ).read_text()
+
+    def test_the_artifact_is_published_to_a_durable_row(self):
+        from scripts.fold_published_pair_coherence import (
+            DURABLE_IDENTITY,
+            DURABLE_SCHEMA_VERSION,
+        )
+
+        src = self._fold_source()
+        assert "publish_snapshot_standalone" in src
+        assert DURABLE_IDENTITY == "calibration:published_pair_coherence"
+        assert DURABLE_SCHEMA_VERSION == "published-pair-coherence/v1"
+
+    def test_a_failed_durable_write_is_not_a_success(self):
+        """Exit 4, and it OUTRANKS the verdict.
+
+        The ordering is the point. If the row did not land, a detached run has
+        produced no readable evidence at all, so returning 0 would publish a
+        conclusion that exists only inside a dead dyno.
+        """
+        src = self._fold_source()
+        assert "return 4" in src
+        four = src.index("return 4")
+        assert four < src.index('if not all_measured:\n        return 1')
+        assert four < src.index('locality_verdict"] == "local" else 3')
+
+    def test_superseded_counts_as_persisted_and_error_does_not(self):
+        """``superseded`` means a NEWER good copy is already there.
+
+        The durability requirement is satisfied by that row's existence, so it
+        is not a failure — but only those two statuses are, and the test says
+        which, rather than trusting a truthiness check.
+        """
+        src = self._fold_source()
+        assert 'not in ("ok", "superseded", "not_attempted")' in src
+
+    def test_the_durable_copy_is_bounded_but_still_identifies_its_sets(self):
+        """A row of a few hundred KB cannot carry five 20,000-id arrays.
+
+        The cap is only allowed because the COUNT and the DIGEST survive it: a
+        capped enumeration that still fingerprints the whole set is evidence; a
+        capped enumeration alone is a claim.
+        """
+        from scripts.fold_published_pair_coherence import (
+            DURABLE_ID_CAP,
+            _id_list,
+            durable_payload,
+        )
+
+        full = _id_list(range(DURABLE_ID_CAP * 3))
+        out = {"criterion_4": {"removed": full, "flagged_markets": 7}}
+        bounded = durable_payload(out)["criterion_4"]["removed"]
+
+        assert bounded["count"] == full["count"] == DURABLE_ID_CAP * 3
+        assert bounded["ids_digest"] == full["ids_digest"]
+        assert len(bounded["ids"]) == DURABLE_ID_CAP
+        assert bounded["ids_truncated"] is True
+        # And the non-dict members of criterion_4 are carried through untouched.
+        assert durable_payload(out)["criterion_4"]["flagged_markets"] == 7
+
+    def test_the_digest_separates_two_different_removed_sets(self):
+        """Red-first for the digest itself.
+
+        Two capped lists that share a prefix are indistinguishable by ``ids``
+        alone once truncated — which is exactly the failure the digest exists to
+        stop, and the same shape as the id-only bin digest this suite already
+        killed above.
+        """
+        from scripts.fold_published_pair_coherence import DURABLE_ID_CAP, _id_list
+
+        a = _id_list(range(DURABLE_ID_CAP * 2))
+        b = _id_list(list(range(DURABLE_ID_CAP * 2 - 1)) + [999_999])
+        assert a["ids"][:DURABLE_ID_CAP] == b["ids"][:DURABLE_ID_CAP]
+        assert a["ids_digest"] != b["ids_digest"]
+
+    def test_durable_payload_does_not_mutate_the_file_artifact(self):
+        """The file keeps the full lists; only the row is capped."""
+        from scripts.fold_published_pair_coherence import DURABLE_ID_CAP, _id_list, durable_payload
+
+        out = {"criterion_4": {"removed": _id_list(range(DURABLE_ID_CAP * 2))}}
+        durable_payload(out)
+        assert len(out["criterion_4"]["removed"]["ids"]) == DURABLE_ID_CAP * 2
+
+
+class TestASlugWithoutTheRuleRefusesByName:
+    """A one-off dyno runs the DEPLOYED slug, not the branch.
+
+    MEASURED 2026-08-27: production ``v3907`` is ``baae52c2`` = ``origin/master``
+    and the rule commit ``e40d9ca4`` is not an ancestor of it, so neither the
+    rule nor this script is on that slug. Unguarded, the fold would exit 1 with
+    an ``ImportError`` traceback — and exit 1 in its own table means "a reading
+    REFUSED". A deployment absence would be reported as a measurement failure.
+
+    Gotcha #54's amendment says it directly: 1 is a result, everything else is a
+    story about the harness. This is a story about the harness, so it is 2.
+    """
+
+    def test_the_import_of_the_rule_is_guarded(self):
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "fold_published_pair_coherence.py"
+        ).read_text()
+        assert "CHAIN_IMPORT_ERROR" in src
+        assert "except ImportError as exc:" in src
+
+    def test_a_present_chain_leaves_the_sentinel_none(self):
+        """The guard must not be permanently armed — in-repo, the rule IS here."""
+        from scripts.fold_published_pair_coherence import CHAIN_IMPORT_ERROR
+
+        assert CHAIN_IMPORT_ERROR is None
+
+    def test_the_refusal_is_exit_2_and_is_checked_before_the_database(self):
+        """Order matters: without a rule there is nothing to ask the database.
+
+        Checking ``DATABASE_URL`` first would report "no DATABASE_URL" on a dyno
+        that has one, sending the operator after the wrong absence.
+        """
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "fold_published_pair_coherence.py"
+        ).read_text()
+        guard = src.index("if CHAIN_IMPORT_ERROR is not None:")
+        assert guard < src.index('if not os.environ.get("DATABASE_URL"):')
+        assert "return 2" in src[guard : guard + 900]
+
+
+class TestTheDynoInvocationIsRunnableAsWritten:
+    """The path typo that cost the sibling fold four polls, pinned.
+
+    ``heroku config`` carries ``PROJECT_PATH: backend`` and the subdir buildpack
+    promotes ``backend/`` to the slug root, so ``backend/scripts/...`` is a
+    ``No such file or directory`` on the dyno — and a missing file and an
+    unfinished job are the same absence to a poller (gotcha #53).
+    """
+
+    def test_the_documented_invocation_has_no_backend_prefix(self):
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "fold_published_pair_coherence.py"
+        ).read_text()
+        doc = src.split('"""')[1]
+        assert "python3 scripts/fold_published_pair_coherence.py" in doc
+        assert "backend/scripts/fold_published_pair_coherence.py" not in doc
+
+
+class TestTheDurableRowSaysWhatItMeans:
+    """``complete`` on the durable row, exercised rather than read off source."""
+
+    def test_a_non_local_verdict_is_published_COMPLETE(self, monkeypatch):
+        """``complete`` tracks MEASURED, not the verdict — and that is the choice.
+
+        A reader of ``durable_state_snapshots`` is entitled to skip an
+        incomplete row. Marking a not-local run incomplete would therefore hide
+        exit 3 (the rule moved rows it should not have) behind the same flag
+        that means "this never finished" — gotcha #53 rebuilt inside the sink
+        that was added to prevent it.
+        """
+        import asyncio
+
+        from app.services import durable_snapshots
+        from scripts.fold_published_pair_coherence import publish_durable
+
+        captured = {}
+
+        async def _fake(envelope):
+            captured["envelope"] = envelope
+            return {"status": "ok", "identity": envelope.identity}
+
+        monkeypatch.setattr(durable_snapshots, "publish_snapshot_standalone", _fake)
+
+        out = {
+            "readings": {
+                "baseline": {"measured": True},
+                "proposed": {"measured": True},
+                "snapshot_probe": {"measured": True},
+            },
+            "criterion_4": {"locality_verdict": "not_local"},
+        }
+        stage = asyncio.run(publish_durable(out, identity="test:identity"))
+
+        assert stage["status"] == "ok"
+        assert stage["complete"] is True
+        assert captured["envelope"].complete is True
+        assert captured["envelope"].identity == "test:identity"
+        assert (
+            captured["envelope"].payload["criterion_4"]["locality_verdict"]
+            == "not_local"
+        )
+
+    def test_a_refused_reading_is_published_INCOMPLETE(self, monkeypatch):
+        """The other direction, so ``complete`` is not simply always True."""
+        import asyncio
+
+        from app.services import durable_snapshots
+        from scripts.fold_published_pair_coherence import publish_durable
+
+        async def _fake(envelope):
+            return {
+                "status": "ok",
+                "identity": envelope.identity,
+                "envelope_complete": envelope.complete,
+            }
+
+        monkeypatch.setattr(durable_snapshots, "publish_snapshot_standalone", _fake)
+
+        out = {
+            "readings": {
+                "baseline": {"measured": True},
+                "proposed": {"measured": False, "reason": "statement timeout"},
+            }
+        }
+        stage = asyncio.run(publish_durable(out, identity="test:identity"))
+        assert stage["complete"] is False
+        assert stage["envelope_complete"] is False

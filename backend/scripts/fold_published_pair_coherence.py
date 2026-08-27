@@ -82,6 +82,22 @@ Per-bin counts, sums, winners and identities are emitted for both readings and
 both truth classes, so the bin table is readable evidence rather than the proof
 itself.
 
+THE GATE THAT IS NOT TOOLING: THE RULE HAS TO BE ON THE SLUG
+-------------------------------------------------------------
+A one-off dyno runs the DEPLOYED slug, not your branch. Measured 2026-08-27:
+production is ``v3907`` = ``baae52c2`` = ``origin/master``, and the rule commit
+``e40d9ca4`` is **not an ancestor of master**, so neither
+``published_pair_coherence_enabled`` nor this file exists on that slug. The
+invocation below is therefore correct and still unrunnable until the subject
+branch is deployed — a *deployment* gate, not an instrument gate.
+
+That distinction is the whole reason for :data:`CHAIN_IMPORT_ERROR`. Left
+unguarded, running this on today's slug raises ``ImportError`` and exits 1 —
+which in this script's own table means "a reading REFUSED", i.e. it would report
+a *measurement* failure for a *deployment* absence. Gotcha #53's shape again, and
+gotcha #54's amendment: 1 is a result, everything else is a story about the
+harness. So a chain that does not carry the rule is exit **2**, by name.
+
 TWO THINGS THAT WILL COST YOU IF YOU SKIP THEM
 -----------------------------------------------
 1. **This is an ATTENDED-DYNO fold with no bisect, and it must not grow one.**
@@ -96,10 +112,28 @@ TWO THINGS THAT WILL COST YOU IF YOU SKIP THEM
    fold reading as "the exclusion removes nothing"** (gotcha #53). The two
    answers are the same response shape and opposite facts.
 
+WHERE THE EVIDENCE GOES, AND WHY A FILE IS NOT ENOUGH
+------------------------------------------------------
+``--out`` lands on the dyno's **ephemeral** filesystem, and a detached run's
+stdout is not available to the bus. A run whose only evidence was ``heroku logs``
+has no evidence — and the sibling census fold proved the cost: four polls of
+``artifacts/cal-p094/eligible_fold.json`` read a file that could never appear as
+"still in flight". What actually landed ``cohort-cell-census/v2`` was a **durable
+row**.
+
+So this fold publishes its artifact to ``durable_state_snapshots`` under
+:data:`DURABLE_IDENTITY` before it returns, and a failed publish is exit **4** —
+the measurement happened and nobody can read it, which is a different outcome
+from every other one in the table and must not hide inside a 0.
+
 Usage (one-off dyno — ``DATABASE_URL`` must be set; there is no HTTP fallback,
-because the rail that would provide one cannot answer this question):
-    heroku run:detached -a bainluck \\
-      "python3 backend/scripts/fold_published_pair_coherence.py --out artifacts/cal-p100"
+because the rail that would provide one cannot answer this question).
+**The path has no ``backend/`` in it:** ``heroku config`` carries
+``PROJECT_PATH: backend`` and the subdir buildpack promotes ``backend/`` to the
+slug root, so ``backend/scripts/...`` is a ``No such file or directory`` there::
+
+    heroku run:detached -a bainluck --size standard-1x -- \\
+      bash -lc 'python3 scripts/fold_published_pair_coherence.py --out artifacts/cal-p100'
 """
 
 from __future__ import annotations
@@ -115,15 +149,34 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.tasks.precompute_calibration import (  # noqa: E402
-    PUBLISHED_PAIR_CELL_CATEGORY,
-    PUBLISHED_PAIR_CELL_MARKET_TYPE,
-    PUBLISHED_PAIR_CELL_SOURCE,
-    PUBLISHED_PAIR_RULE_TEXT,
-    _calibration_population_ctes,
-    published_pair_incoherent_market_predicate,
-)
-from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE  # noqa: E402
+#: Why the shipped-chain import is guarded rather than allowed to raise: a
+#: one-off dyno runs the DEPLOYED slug. If the subject branch is not deployed,
+#: every name below is absent and an unguarded import exits 1 with a traceback —
+#: which this script's own exit table reads as "a reading REFUSED". A deployment
+#: absence would then be reported as a measurement failure. It is exit 2 instead,
+#: with the missing name in the reason, so the operator is told what to fix.
+CHAIN_IMPORT_ERROR: str | None = None
+
+try:
+    from app.tasks.precompute_calibration import (  # noqa: E402
+        PUBLISHED_PAIR_CELL_CATEGORY,
+        PUBLISHED_PAIR_CELL_MARKET_TYPE,
+        PUBLISHED_PAIR_CELL_SOURCE,
+        PUBLISHED_PAIR_RULE_TEXT,
+        _calibration_population_ctes,
+        published_pair_incoherent_market_predicate,
+    )
+    from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE  # noqa: E402
+except ImportError as exc:  # the slug does not carry the rule this fold measures
+    CHAIN_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+    PUBLISHED_PAIR_CELL_CATEGORY = None  # type: ignore[assignment]
+    PUBLISHED_PAIR_CELL_MARKET_TYPE = None  # type: ignore[assignment]
+    PUBLISHED_PAIR_CELL_SOURCE = None  # type: ignore[assignment]
+    PUBLISHED_PAIR_RULE_TEXT = None  # type: ignore[assignment]
+    PAIR_SUM_TOLERANCE = None  # type: ignore[assignment]
+    _calibration_population_ctes = None  # type: ignore[assignment]
+    published_pair_incoherent_market_predicate = None  # type: ignore[assignment]
+
 from app.utils.resolution_authority import (  # noqa: E402
     CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL,
 )
@@ -138,6 +191,21 @@ from fold_cohort_cell_eligible import (  # noqa: E402
 #: is always exact and always emitted; only the enumeration is bounded, and a
 #: capped list says so in its own key rather than looking complete.
 ID_LIST_CAP = 20_000
+
+#: The same lists, re-capped for the DURABLE copy. ``durable_state_snapshots``
+#: holds payloads of a few hundred KB (the calibration build is the largest), and
+#: five 20,000-element id arrays would be megabytes. The count and the digest are
+#: unchanged by this cap, so the durable row still identifies the exact sets — it
+#: just does not enumerate them. The file artifact keeps the full lists.
+DURABLE_ID_CAP = 500
+
+#: One row per identity, so a re-run replaces its predecessor rather than
+#: accumulating. Read it back with::
+#:
+#:     SELECT schema_version, complete, payload->'criterion_4'->>'locality_verdict'
+#:     FROM durable_state_snapshots WHERE identity = 'calibration:published_pair_coherence'
+DURABLE_IDENTITY = "calibration:published_pair_coherence"
+DURABLE_SCHEMA_VERSION = "published-pair-coherence/v1"
 
 #: Read once before and once after the two readings. ``pg_current_snapshot()``
 #: is the visibility snapshot itself and ``now()`` is the TRANSACTION timestamp,
@@ -274,13 +342,77 @@ def _bin_table(bins_by_truth: dict[str, dict[int, dict]], truth: str) -> dict:
 
 
 def _id_list(ids) -> dict:
-    """An exact count, and an enumeration that admits when it is capped."""
+    """An exact count, a digest of the WHOLE set, and a bounded enumeration.
+
+    The digest is what makes a capped list still evidence: two runs can be
+    compared, or a durable copy checked against the file artifact, without
+    either one carrying every id. Without it a truncated list is only a claim.
+    """
     ordered = sorted(ids)
     return {
         "count": len(ordered),
+        "ids_digest": hashlib.md5(
+            ",".join(str(i) for i in ordered).encode()
+        ).hexdigest(),
         "ids": ordered[:ID_LIST_CAP],
         "ids_truncated": len(ordered) > ID_LIST_CAP,
     }
+
+
+def durable_payload(out: dict, *, cap: int = DURABLE_ID_CAP) -> dict:
+    """``out``, with every enumeration re-capped for the durable row.
+
+    Pure, and separate from the write, so the bounding is testable without a
+    database. Counts, digests and the per-bin tables are untouched — only the
+    id arrays and the mutated-survivor rows shrink, and each one keeps saying
+    whether it was truncated.
+    """
+    import copy
+
+    payload = copy.deepcopy(out)
+    criterion = payload.get("criterion_4")
+    if not isinstance(criterion, dict):
+        return payload
+
+    for key, value in criterion.items():
+        if not isinstance(value, dict):
+            continue
+        if "ids" in value:
+            value["ids_truncated"] = value["ids_truncated"] or len(value["ids"]) > cap
+            value["ids"] = value["ids"][:cap]
+        if "rows" in value:
+            value["rows_truncated"] = value["rows_truncated"] or len(value["rows"]) > cap
+            value["rows"] = value["rows"][:cap]
+    return payload
+
+
+async def publish_durable(out: dict, *, identity: str) -> dict:
+    """Persist the artifact where a detached run's reader can actually reach it.
+
+    Returns a stage dict from :func:`publish_snapshot_standalone`; ``superseded``
+    counts as persisted (a newer good copy exists), every other non-``ok`` status
+    does not. ``complete`` is whether both readings were MEASURED — not whether
+    the verdict was ``local``, because a non-local verdict is a finding that must
+    be readable, not an incomplete row a reader is entitled to skip.
+    """
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.durable_state import DurableEnvelope
+
+    readings = out.get("readings") or {}
+    complete = bool(readings) and all(
+        r.get("measured") for r in readings.values() if isinstance(r, dict)
+    )
+    envelope = DurableEnvelope.build(
+        identity=identity,
+        schema_version=DURABLE_SCHEMA_VERSION,
+        payload=json.loads(json.dumps(durable_payload(out), default=str)),
+        complete=complete,
+        source="fold_published_pair_coherence",
+    )
+    stage = await publish_snapshot_standalone(envelope)
+    stage["complete"] = complete
+    stage["schema_version"] = DURABLE_SCHEMA_VERSION
+    return stage
 
 
 def _snapshot_proof(raw: dict) -> dict:
@@ -470,7 +602,28 @@ def main() -> int:
     parser.add_argument("--league", default=PUBLISHED_PAIR_CELL_CATEGORY)
     parser.add_argument("--market-type", default=PUBLISHED_PAIR_CELL_MARKET_TYPE)
     parser.add_argument("--timeout-ms", type=int, default=5_400_000)
+    parser.add_argument("--durable-identity", default=DURABLE_IDENTITY)
+    parser.add_argument(
+        "--no-durable",
+        action="store_true",
+        help=(
+            "skip the durable row. Only for a run whose stdout you can actually "
+            "read — a detached dyno run is not one of those."
+        ),
+    )
     args = parser.parse_args()
+
+    if CHAIN_IMPORT_ERROR is not None:
+        # A deployment absence, not a measurement failure. Named, so the operator
+        # is told to deploy the subject branch rather than to debug the fold.
+        print(
+            "ERROR: the chain on this slug does not carry the rule this fold "
+            f"measures ({CHAIN_IMPORT_ERROR}). A one-off dyno runs the DEPLOYED "
+            "slug — deploy the subject branch first. This is exit 2 (refused to "
+            "start), not exit 1 (a reading refused).",
+            file=sys.stderr,
+        )
+        return 2
 
     if not os.environ.get("DATABASE_URL"):
         print(
@@ -611,6 +764,16 @@ def main() -> int:
             **comparison,
         }
 
+    # The durable row goes in BEFORE the file, because it is the copy that
+    # survives the dyno. Its stage is recorded inside the artifact so the file
+    # and the row each say whether the other exists.
+    if not args.no_durable:
+        out["durable"] = asyncio.run(
+            publish_durable(out, identity=args.durable_identity)
+        )
+    else:
+        out["durable"] = {"status": "not_attempted", "identity": args.durable_identity}
+
     path = Path(args.out)
     path.mkdir(parents=True, exist_ok=True)
     dest = path / "published_pair_coherence.json"
@@ -622,6 +785,20 @@ def main() -> int:
     # "it worked" (``app/utils/task_verdict.py``'s whole reason to exist). And a
     # run whose exclusion was not LOCAL is a third outcome, not a success either:
     # the numbers are real, the attribution is not.
+    #
+    # Exit 4 outranks both, and deliberately: if the durable write failed, a
+    # detached run has produced no readable evidence at all, so there is no
+    # verdict for anyone to act on. Reporting the verdict's exit code in that
+    # state would be reporting a conclusion nobody can see.
+    if out["durable"]["status"] not in ("ok", "superseded", "not_attempted"):
+        print(
+            "ERROR: the measurement was taken and its evidence did NOT persist "
+            f"({out['durable'].get('error') or out['durable']['status']}). "
+            "A detached run's file and stdout are both unreachable, so this run "
+            "has no evidence — re-run it.",
+            file=sys.stderr,
+        )
+        return 4
     if not all_measured:
         return 1
     return 0 if out["criterion_4"]["locality_verdict"] == "local" else 3
