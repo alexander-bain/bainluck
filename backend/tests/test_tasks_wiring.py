@@ -317,6 +317,9 @@ class TestBeatScheduleCompleteness:
         "backfill-espn-win-prob-oldest",
         "backfill-polymarket-winners",
         "clob-resolve-drain",
+        # #2077 (queue 419) — the nightly settlement-capture sweep. Gotcha #12:
+        # this allowlist is the reason a new beat entry cannot land silently.
+        "settlement-capture-sweep-nightly",
         "snapshot-coverage-metrics-daily",
         # "resolve-winners",  # RETIRED 2026-07-06 (#991) — redundant with backfill_winners
         "digest-external-feature-requests-weekly",

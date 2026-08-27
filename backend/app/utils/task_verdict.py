@@ -307,6 +307,23 @@ ENFORCED_TASKS = frozenset({
     # stale was already attempted this window", which are opposite states and are
     # given different `reason`s rather than one shared silence.
     "futures_price_refresh",           # terminal + snapshots_written + remaining_stale
+    # #2077 (queue 419): the nightly settlement-capture sweep. Enrolled AT BIRTH
+    # per #1884, and — per the trap this file spends thirty lines on — in the
+    # same change that gives it a beat, because the terminal it needs already
+    # exists: `settlement_sweep_runner._verdict` was written to separate the
+    # FOUR zeros before there was anything to enforce them.
+    #
+    # Those four are why enrolment matters here rather than being paperwork. A
+    # sweep over an expiring population has two different zeros that look
+    # identical from outside and mean opposite things: `no_work/all_captured`
+    # ("every cohort row is already captured") and `failed/total_loss`
+    # ("selected 1,200, captured 0"). A third, `partial`, is the one that would
+    # otherwise rot quietly — a budget-capped run is BY DESIGN and returns
+    # successfully every night, so a lane reading invocations would see a
+    # healthy task while the backlog it exists to drain grew. `partial` is
+    # NOT-GREEN here, deliberately: the sweep's job is to finish, and a run that
+    # left rows behind has not.
+    "settlement_sweep",                # terminal + captured + skipped_by_bucket
 })
 
 
