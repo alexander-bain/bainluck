@@ -130,7 +130,27 @@ rejected on that ground even though they would be more tolerant.
 - **It does not lower the bar to closure.** Seven consecutive clean UTC dates, both arms, is
   unchanged. What changed is that seven is now reachable.
 
-Implemented in `backend/scripts/watch_2107_feed_500s.py`
-(`DEPLOY_BLAST_WINDOW_MINUTES`, `attribute_errors`, `fix_ancestry`, `sentry_events_since`),
-pinned by `backend/tests/test_watch_2107_blast_window.py`.
+Implemented in `backend/scripts/watch_2107_feed_500s.py` (`DEPLOY_BLAST_WINDOW_MINUTES`,
+`DEFAULT_WINDOW_MINUTES`, `deploy_boundaries`, `attribute_errors`, `check_fix_ancestry`,
+`sentry_events_since`, `streak_from_rows`), pinned by
+`backend/tests/test_watch_2107_blast_window.py` — 84 pass, proven RED at 67/68 against the retired
+criterion.
 Pre-registration record: `docs/audits/latency/lat-p098-2107-closure-gate-respec.md`.
+
+**Two implementation defects, found and fixed after the freeze commit and before day 1 banked.**
+Recorded here rather than quietly patched, because "we fixed it after freezing" is the sentence a
+pre-registration is supposed to make checkable. Neither changes a clause above; both make the code
+match clause 2/3 as written, which the cascade was already internally inconsistent about:
+
+- **A transport error was counted as a refutation.** `attribute_errors` split the whole failure
+  list, which carries `status: None` for a refused connection. A request that got no answer is not
+  evidence of a 500 — it may be the prober's own network — so it keeps the INCONCLUSIVE transport
+  branch it always had. Attribution now counts 5xx only.
+- **The 50-row failure cap could soften a FAILED into an INCONCLUSIVE.** `run_probe` records at
+  most 50 failures but counts all of them, so a flood whose first 50 happened to land near a deploy
+  would have graded with zero attributable. An error the cap hid is not thereby inside a blast
+  window, so the remainder is charged to `attributable`.
+
+Both move verdicts in the strict direction only. The first banking window was killed 17 minutes in
+and restarted on the corrected build rather than allowed to record a verdict a transport blip could
+have turned into a false FAILED.

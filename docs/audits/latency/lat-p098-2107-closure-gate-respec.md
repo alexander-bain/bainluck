@@ -217,7 +217,29 @@ new script restored:  82 passed          (shasum 75dd351c7ab7ba3480c2e9b5ed2d0c8
                                           identical to the pre-swap copy)
 ```
 
-Nothing was graded between the measurement and the freeze. The state file was untouched until §5.
+Nothing was graded between the measurement and the freeze. The freeze is commit `69c4a9a7`.
+
+### 4.1 Two implementation defects found AFTER the freeze, declared
+
+"We fixed it after freezing" is exactly the sentence a pre-registration exists to make checkable,
+so both are named rather than quietly patched. Neither changes a clause; both make the code match
+clause 2/3 as written, and the pre-fix cascade was already internally inconsistent about it —
+it carried a separate transport branch while feeding every failure into the 5xx count.
+
+1. **A transport error was counted as a refutation.** `status: None` means the request got no
+   answer at all, which may be the prober's own network. It is not a 500. Attribution now counts
+   5xx only, and transport errors keep the INCONCLUSIVE branch they always had.
+2. **The 50-row failure cap could soften a FAILED into an INCONCLUSIVE.** `run_probe` records at
+   most 50 failures but counts all of them, so a flood whose first 50 landed near a deploy would
+   have graded with zero attributable. The remainder is now charged to `attributable`.
+
+Both move verdicts in the **strict** direction only. Fixed in `c246f717`, guards 82 → 84 (2 added,
+1 corrected — the old `test_a_transport_error_is_attributed_the_same_way` asserted defect 1 as if
+it were the intended behaviour, which is how it survived review).
+
+**The first banking window was killed 17 minutes in and restarted on the corrected build**, by pid
+rather than by pattern, rather than letting it record a verdict a single transport blip could have
+turned into a false FAILED on day 1. No row was written by the killed run.
 
 ---
 
