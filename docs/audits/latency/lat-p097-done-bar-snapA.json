@@ -1,0 +1,78 @@
+{
+  "salt": "LAT-P097-A",
+  "requests_issued": 29,
+  "trending_votes_cast": 8,
+  "commit": "baae52c2",
+  "uptime_seconds": 265,
+  "warm_slug": false,
+  "feed_warm_ms": [
+    52.0,
+    77.0,
+    18.0,
+    24.0,
+    16.0,
+    17.0
+  ],
+  "feed_warm_p50": 21.0,
+  "feed_stats": {
+    "window": "1 hour",
+    "generated_at": "2026-08-27T00:19:16.888815+00:00",
+    "n": 21,
+    "oldest_sample_age_s": 0.4,
+    "span_s": 2361.9,
+    "buckets": {
+      "hit": 2,
+      "miss": 7,
+      "other": 4,
+      "stale_hit": 8
+    },
+    "miss_n": 7,
+    "miss_p50_ms": 3731.7,
+    "miss_max_ms": 6481.6,
+    "miss_share": 0.3333333333333333
+  },
+  "typeahead_warm_ms": [
+    26.0,
+    43.0,
+    28.0,
+    28.0,
+    25.0,
+    27.0
+  ],
+  "typeahead_warm_p50": 27.5,
+  "typeahead_cold": [
+    {
+      "term": "kaiserslautern LAT-P097-A",
+      "ms": 2685.0
+    },
+    {
+      "term": "sanfrecce LAT-P097-A",
+      "ms": 1442.0
+    },
+    {
+      "term": "vfl bochum LAT-P097-A",
+      "ms": 1474.0
+    },
+    {
+      "term": "empoli LAT-P097-A",
+      "ms": 1530.0
+    },
+    {
+      "term": "sparta prague LAT-P097-A",
+      "ms": 1158.0
+    },
+    {
+      "term": "randers LAT-P097-A",
+      "ms": 1495.0
+    },
+    {
+      "term": "cercle brugge LAT-P097-A",
+      "ms": 1199.0
+    },
+    {
+      "term": "shonan bellmare LAT-P097-A",
+      "ms": 1045.0
+    }
+  ],
+  "typeahead_cold_p50": 1458.0
+}

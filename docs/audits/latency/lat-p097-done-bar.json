@@ -1,0 +1,83 @@
+{
+  "salt": "LAT-P097",
+  "requests_issued": 28,
+  "trending_votes_cast": 0,
+  "commit": "baae52c2",
+  "uptime_seconds": 870,
+  "warm_slug": true,
+  "feed_warm_ms": [
+    20.0,
+    18.0,
+    17.0,
+    16.0,
+    18.0,
+    16.0
+  ],
+  "feed_warm_p50": 17.5,
+  "feed_stats": {
+    "window": "1 hour",
+    "generated_at": "2026-08-27T00:29:22.532103+00:00",
+    "n": 43,
+    "oldest_sample_age_s": 0.4,
+    "span_s": 2967.6,
+    "buckets": {
+      "hit": 11,
+      "miss": 8,
+      "other": 4,
+      "stale_hit": 20
+    },
+    "miss_n": 8,
+    "miss_p50_ms": 3201.7,
+    "miss_max_ms": 6481.6,
+    "miss_share": 0.18604651162790697
+  },
+  "typeahead_warm_ms": [
+    26.0,
+    28.0,
+    26.0,
+    30.0,
+    26.0,
+    26.0
+  ],
+  "typeahead_warm_p50": 26.0,
+  "term_set": "p095",
+  "typeahead_cold": [],
+  "typeahead_cold_discarded": [
+    {
+      "term": "ballon",
+      "ms": 25.0,
+      "queries": 0
+    },
+    {
+      "term": "wimbledon",
+      "ms": 30.0,
+      "queries": 0
+    },
+    {
+      "term": "nvidia earnings",
+      "ms": 27.0,
+      "queries": 0
+    },
+    {
+      "term": "tour de france",
+      "ms": 30.0,
+      "queries": 0
+    },
+    {
+      "term": "senate runoff",
+      "ms": 27.0,
+      "queries": 0
+    },
+    {
+      "term": "emmy",
+      "ms": 33.0,
+      "queries": 0
+    },
+    {
+      "term": "hurricane",
+      "ms": 27.0,
+      "queries": 0
+    }
+  ],
+  "typeahead_cold_p50": null
+}

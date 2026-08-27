@@ -1,0 +1,207 @@
+{
+  "taken_at": "2026-08-27 00:26:58.586094+00",
+  "pg_stat_statements_entries": 4770,
+  "families": {
+    "82_old": {
+      "label": "-82 OLD  count(DISTINCT source) GROUP BY canonical_market_key",
+      "calls": 45240,
+      "total_ms": 18728632.361603,
+      "blks": 1028684061,
+      "fingerprints": 19,
+      "first_seen": "2026-06-23 09:36:24.639833+00",
+      "last_new_fingerprint": "2026-08-27 00:21:15.867935+00",
+      "by_fingerprint": [
+        {
+          "queryid": 4688009476365447210,
+          "calls": 4352,
+          "stats_since": "2026-06-23 09:36:24.639833+00"
+        },
+        {
+          "queryid": -357585717211354433,
+          "calls": 1632,
+          "stats_since": "2026-06-24 19:49:12.506116+00"
+        },
+        {
+          "queryid": 4426642749121266426,
+          "calls": 6229,
+          "stats_since": "2026-06-26 09:23:34.224988+00"
+        },
+        {
+          "queryid": 1558186342983405110,
+          "calls": 4466,
+          "stats_since": "2026-06-26 23:05:01.429703+00"
+        },
+        {
+          "queryid": -4926445000963943384,
+          "calls": 2565,
+          "stats_since": "2026-06-28 23:01:22.522648+00"
+        },
+        {
+          "queryid": 1564496456352232494,
+          "calls": 4796,
+          "stats_since": "2026-07-11 04:10:46.469991+00"
+        },
+        {
+          "queryid": -5654009751162716279,
+          "calls": 2196,
+          "stats_since": "2026-08-10 03:59:53.954796+00"
+        },
+        {
+          "queryid": -5540850770660064654,
+          "calls": 4541,
+          "stats_since": "2026-08-10 03:59:55.872891+00"
+        },
+        {
+          "queryid": 2712753985567647906,
+          "calls": 3349,
+          "stats_since": "2026-08-10 12:19:19.888293+00"
+        },
+        {
+          "queryid": -7255229354016809685,
+          "calls": 2960,
+          "stats_since": "2026-08-10 16:18:24.664232+00"
+        },
+        {
+          "queryid": -3417008458997534128,
+          "calls": 1799,
+          "stats_since": "2026-08-16 00:00:28.0982+00"
+        },
+        {
+          "queryid": -368314623684015872,
+          "calls": 1232,
+          "stats_since": "2026-08-16 04:04:05.330804+00"
+        },
+        {
+          "queryid": 846335454697172478,
+          "calls": 784,
+          "stats_since": "2026-08-16 12:03:20.780983+00"
+        },
+        {
+          "queryid": 6845518242454022259,
+          "calls": 603,
+          "stats_since": "2026-08-16 21:32:12.582871+00"
+        },
+        {
+          "queryid": -1784513634330752743,
+          "calls": 929,
+          "stats_since": "2026-08-16 23:18:32.036238+00"
+        },
+        {
+          "queryid": -9149465195149605074,
+          "calls": 377,
+          "stats_since": "2026-08-17 14:20:16.310964+00"
+        },
+        {
+          "queryid": -182690981681889030,
+          "calls": 1023,
+          "stats_since": "2026-08-18 16:21:32.185106+00"
+        },
+        {
+          "queryid": 870232618407727016,
+          "calls": 1406,
+          "stats_since": "2026-08-19 04:30:16.802819+00"
+        },
+        {
+          "queryid": -436505585654823090,
+          "calls": 1,
+          "stats_since": "2026-08-27 00:21:15.867935+00"
+        }
+      ]
+    },
+    "82_new": {
+      "label": "-82 NEW  recursive source universe + EXISTS skip scan",
+      "calls": 251,
+      "total_ms": 6069.193863999999,
+      "blks": 216982,
+      "fingerprints": 3,
+      "first_seen": "2026-08-26 19:23:28.829766+00",
+      "last_new_fingerprint": "2026-08-26 20:34:08.404773+00",
+      "by_fingerprint": [
+        {
+          "queryid": 2193115147100778259,
+          "calls": 9,
+          "stats_since": "2026-08-26 19:23:28.829766+00"
+        },
+        {
+          "queryid": -6215577633756610741,
+          "calls": 137,
+          "stats_since": "2026-08-26 20:34:07.367926+00"
+        },
+        {
+          "queryid": -7841207379626136287,
+          "calls": 105,
+          "stats_since": "2026-08-26 20:34:08.404773+00"
+        },
+        {
+          "queryid": 6126768949128741998,
+          "calls": 1,
+          "stats_since": "2026-08-27 00:27:03.879025+00"
+        }
+      ]
+    },
+    "83_old_ufc": {
+      "label": "-83 OLD  ufc lister, llm_sport_category = $1",
+      "calls": 27991,
+      "total_ms": 13911865.123932945,
+      "blks": 864170443,
+      "fingerprints": 1,
+      "first_seen": "2026-07-12 04:10:07.837973+00",
+      "last_new_fingerprint": "2026-07-12 04:10:07.837973+00",
+      "by_fingerprint": [
+        {
+          "queryid": 3331183877106814550,
+          "calls": 27991,
+          "stats_since": "2026-07-12 04:10:07.837973+00"
+        }
+      ]
+    },
+    "83_old_f1": {
+      "label": "-83 OLD  f1 lister, llm_sport_category = $1",
+      "calls": 27897,
+      "total_ms": 5245325.470917947,
+      "blks": 879169020,
+      "fingerprints": 1,
+      "first_seen": "2026-07-12 05:29:18.089313+00",
+      "last_new_fingerprint": "2026-07-12 05:29:18.089313+00",
+      "by_fingerprint": [
+        {
+          "queryid": 776467820889790028,
+          "calls": 27897,
+          "stats_since": "2026-07-12 05:29:18.089313+00"
+        }
+      ]
+    },
+    "83_old_cycling": {
+      "label": "-83 OLD  cycling lister, llm_sport_category = $1",
+      "calls": 27337,
+      "total_ms": 4309972.5172299985,
+      "blks": 872156836,
+      "fingerprints": 1,
+      "first_seen": "2026-07-21 20:21:32.298536+00",
+      "last_new_fingerprint": "2026-07-21 20:21:32.298536+00",
+      "by_fingerprint": [
+        {
+          "queryid": 7799272642873005445,
+          "calls": 27337,
+          "stats_since": "2026-07-21 20:21:32.298536+00"
+        }
+      ]
+    },
+    "83_new": {
+      "label": "-83 NEW  prefetch_open_markets, llm_sport_category IN (...)",
+      "calls": 116,
+      "total_ms": 47377.79999499999,
+      "blks": 3083951,
+      "fingerprints": 1,
+      "first_seen": "2026-08-26 22:13:13.292275+00",
+      "last_new_fingerprint": "2026-08-26 22:13:13.292275+00",
+      "by_fingerprint": [
+        {
+          "queryid": -9109266379293819637,
+          "calls": 116,
+          "stats_since": "2026-08-26 22:13:13.292275+00"
+        }
+      ]
+    }
+  }
+}

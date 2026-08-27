@@ -14,6 +14,37 @@
 > **Not deleted, deliberately.** If the post-`-83` measurement lands ≥ 800 ms and back in the top
 > three, P1 passes and every bar below is live again, unchanged and still frozen before any DDL.
 > Working: `docs/audits/latency/lat-p095-done-bar-and-the-next-target.md` § 4.
+>
+> ---
+>
+> 🟡 **AMENDED 2026-08-27 (LAT-P097): P1 is UNCONFIRMED, and it is asking the wrong question.**
+>
+> **P1 still cannot be graded.** It reads the ring's `/api/feed` miss cohort, and four hours after
+> both deploys that cohort held **2** post-`-83` misses against 164 pre. The ring's `threshold_ms`
+> is 5,000, so a miss the fix drops below 5 s leaves the sample — the instrument thins in the same
+> direction as the claim. Status stays `RETIRED — PENDING CONFIRM`; nothing here un-retires it.
+>
+> **What IS now measured, from `pg_stat_statements` on v3906/v3907** (n=107 production calls of the
+> consolidated read this spec is about):
+>
+> ```
+> min 79.1   mean 411.5   sd 523.7   max 4,402.3 ms   26,626 buffers/call
+> ```
+>
+> The mean lands on §1's modelled 453.4 ms, so the premise holds. But **the standard deviation
+> exceeds the mean and the max is 10.7× it.** This is not a stable 411 ms cost; it is a cheap read
+> with a violent tail, and the tail is user-visible: the ring's 23:46:10Z miss took 6,481.6 ms of
+> which **4,494.0 ms was `concepts`**, worst query 4,428.8 ms — matching this statement's own
+> recorded max.
+>
+> ⇒ **§5 prices this index on the median and calls it "a third-order lever". On the median it is.
+> On the tail it is not** — it is 69 % of one measured 6.5-second feed build. P1's "≥ 800 ms p50 AND
+> top three" tests the half of the distribution that does not hurt anyone.
+>
+> **This amendment does not re-grade the bars in §4 and does not relax P1.** A lane does not rewrite
+> its own precondition after seeing production. It records that when P1 is next evaluated, a p50
+> clause alone will under-value the index, and that a successor spec should carry a tail clause.
+> Working: `docs/audits/latency/lat-p097-deploy-proofs-and-done-bar.md` § 3.2.
 
 **Cycle:** LAT-P094 · **Written:** 2026-08-26, **before any DDL exists**
 **Companion:** `docs/audits/latency/lat-p094-concepts-stage-single-scan.md`
