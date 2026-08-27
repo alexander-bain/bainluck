@@ -682,7 +682,10 @@ def build_playoff_grid(
         elif title_probability is None:
             cells["title"] = _cell(
                 CELL_NO_MARKET,
-                note="No title price on either winner field",
+                # UX-P146: user-visible via the cell tooltip. Was "No title
+                # price on either winner field" — Alex's product-wide ruling
+                # bans *price* as a noun in copy; the word is PROBABILITY.
+                note="Neither winner market has a number for this player yet",
             )
         else:
             title_state = board_row.get("price_state") or "dark"

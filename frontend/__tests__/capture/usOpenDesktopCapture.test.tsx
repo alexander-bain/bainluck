@@ -1,6 +1,22 @@
 /**
  * DESKTOP CAPTURE RIG — /tournaments/us-open at a desktop window, before and
- * after UX-P145.
+ * after.
+ *
+ * ═══ UX-P146 RE-POINTED THIS RIG ═══
+ *
+ * It was written for UX-P145, whose "after" was a 1280px column. Alex read that
+ * artifact and asked: *"Doesn't the rest of the desktop site just use as much
+ * width as the user gives it?"* It does. So BEFORE is now UX-P145's shell — the
+ * state he was actually looking at — and AFTER is the page with no shell at
+ * all, inside the site's own container.
+ *
+ * The other correction this queue made to the rig is bigger than it looks: both
+ * panels are now wrapped in `app/layout.tsx`'s container, `max-w-content mx-auto
+ * px-3 md:px-6 py-4`. The UX-P145 rig rendered the page's shell directly into
+ * `<body>`, so it drew a 1280px column in a bare window and showed neither the
+ * site's gutters nor the fact that a SECOND container was already there. An
+ * artifact that omits the wrapper cannot show a nested-container defect, which
+ * is precisely the defect being judged.
  *
  * Alex asked for "before/after desktop screenshots as artifacts". Chromium is
  * dead in this sandbox (Mach bootstrap denied; every flag combination fails),
@@ -84,13 +100,28 @@ const MOCKS = path.join(__dirname, "..", "..", "..", "docs", "mocks", "us-open")
 const PAYLOAD_PATH = path.join(MOCKS, "payload-2026-08-27.json");
 
 /**
- * THE SHELL AS IT WAS, quoted from the UX-P145 diff.
+ * THE SHELL AS IT WAS, quoted from the UX-P146 diff.
  *
  * Not imported from anywhere, because the point of this constant is that it no
  * longer exists in the codebase. Kept here so the "before" panel is the actual
- * defect Alex reported rather than an impression of it.
+ * state Alex reviewed rather than an impression of it.
+ *
+ * UX-P146 moved this back one generation: it used to hold UX-P144's
+ * `mx-auto max-w-[560px]`, and the state under review now is UX-P145's stepped
+ * column, which is the one that still drew grey down both sides.
  */
-const SHELL_BEFORE = "mx-auto max-w-[560px]";
+const SHELL_BEFORE =
+  "mx-auto w-full max-w-[560px] lg:max-w-[1024px] xl:max-w-[1280px]";
+
+/**
+ * The SITE's container, quoted from `app/layout.tsx`.
+ *
+ * Quoted rather than imported because the layout is a server component whose
+ * module cannot be pulled into this rig, and duplicated deliberately: the
+ * string is asserted against the real file below, so a drift fails here instead
+ * of producing an artifact of a page that does not exist.
+ */
+const SITE_CONTAINER = "max-w-content mx-auto px-3 md:px-6 py-4";
 
 /** The grid's pre-UX-P145 measurements, for the same reason. */
 const GRID_VARS_BEFORE = { "--grid-name-w": "118px", "--grid-col-w": "46px" } as React.CSSProperties;
@@ -149,9 +180,8 @@ describe("US Open DESKTOP capture rig", () => {
         </div>
       </div>
     );
-    expect(html).toContain("max-w-[560px]");
-    expect(html).toContain("lg:max-w-[1024px]");
-    expect(html).toContain("xl:max-w-[1280px]");
+    // UX-P146: the AFTER shell's defining property is that it has no width.
+    expect(html).not.toContain("max-w-");
     expect(html).toContain("lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]");
   });
 
@@ -159,8 +189,18 @@ describe("US Open DESKTOP capture rig", () => {
     // A before/after where both sides render the same thing is the most
     // convincing wrong artifact there is.
     expect(SHELL_BEFORE).not.toBe(TOURNAMENT_SHELL);
-    expect(SHELL_BEFORE).not.toContain("lg:");
-    expect(TOURNAMENT_SHELL).toContain("lg:");
+    expect(SHELL_BEFORE).toContain("max-w-");
+    expect(TOURNAMENT_SHELL).not.toContain("max-w-");
+  });
+
+  it("the site container in this rig is the one `app/layout.tsx` really uses", () => {
+    // The whole AFTER claim is "the page defers to the site's container". If
+    // this rig invents its own, the artifact is a drawing of an argument.
+    const layout = fs.readFileSync(
+      path.join(__dirname, "..", "..", "app", "layout.tsx"),
+      "utf8"
+    );
+    expect(layout).toContain(`className="${SITE_CONTAINER}"`);
   });
 
   it("the desktop grid fills its width instead of scrolling", () => {
@@ -214,6 +254,29 @@ describe("US Open DESKTOP capture rig", () => {
     const results = renderToStaticMarkup(
       <TournamentResults results={payload.results} draw={men.draw} />
     );
+    /* THE SAME SECTION WITH THE PRIORS STRIPPED — the results list as it was
+       before this queue. Reconstructed by emptying the field rather than by
+       rendering an older component, so the two panels differ in exactly the
+       one thing being judged. */
+    const resultsBefore = renderToStaticMarkup(
+      <TournamentResults
+        results={
+          payload.results
+            ? {
+                ...payload.results,
+                matches: payload.results.matches.map((match) => ({
+                  ...match,
+                  players: match.players.map((player) => ({
+                    ...player,
+                    prematch_probability: null,
+                  })),
+                })),
+              }
+            : payload.results
+        }
+        draw={men.draw}
+      />
+    );
     const board = renderToStaticMarkup(
       <TournamentBoard board={men} seriesColors={seriesColors} />
     );
@@ -263,6 +326,67 @@ describe("US Open DESKTOP capture rig", () => {
 </style></head>
 <body>`;
 
+    /**
+     * THE AXIS, BOTH WAYS — a captioned reconstruction, not a page render.
+     *
+     * The chart's scale lives in `lib/contenderChart.ts`, so the BEFORE panel's
+     * chart is drawn by TODAY's code and cannot show yesterday's spacing. Rather
+     * than pretend otherwise, the old scale is re-implemented here, in six
+     * lines, over the SAME real domain the chart uses, and the two are stacked
+     * so the difference is a thing you look at instead of a claim you read.
+     *
+     * Every tick below is a real observed date from the men's board.
+     */
+    const axisStrip = () => {
+      const domain = Array.from(
+        new Set(men.rows.flatMap((row) => (row.trend ?? []).map((point) => point.date)))
+      ).sort();
+      const day = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / 86_400_000;
+      const first = day(domain[0]);
+      const last = day(domain[domain.length - 1]);
+      const rule = (
+        label: string,
+        note: string,
+        at: (iso: string, index: number) => number
+      ) => `
+      <div style="margin:10px 0 0">
+        <div style="font:700 10.5px inherit;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF">${label}</div>
+        <div style="position:relative;height:34px;margin-top:6px;border-bottom:1px solid #D1D5DB">
+          ${domain
+            .map((iso, index) => {
+              const pct = at(iso, index) * 100;
+              const ends = index === 0 || index === domain.length - 1;
+              return `<span style="position:absolute;left:${pct.toFixed(
+                2
+              )}%;bottom:0;width:1px;height:${ends ? 16 : 9}px;background:${
+                ends ? "#6B7280" : "#D1D5DB"
+              }"></span>`;
+            })
+            .join("")}
+          <span style="position:absolute;left:0;top:0;font:600 10.5px inherit;color:#6B7280">${domain[0]}</span>
+          <span style="position:absolute;right:0;top:0;font:600 10.5px inherit;color:#6B7280">${
+            domain[domain.length - 1]
+          }</span>
+        </div>
+        <div style="margin-top:4px;font-size:11.5px;color:#6B7280">${note}</div>
+      </div>`;
+      return `
+    <div style="background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:14px 16px;margin:0 22px 18px">
+      <div style="font:700 12px inherit;color:#111827">The x-axis, both ways &mdash; ${domain.length} real reading days from this board</div>
+      <div style="margin-top:2px;font-size:11.5px;color:#6B7280">A reconstruction, drawn here rather than in the page: the scale lives in a shared module, so the &ldquo;before&rdquo; page above is already using the new one.</div>
+      ${rule(
+        "Before &mdash; spaced by position in the list",
+        "Every reading is one equal step, so the eight-day hole between 17 Aug and 26 Aug is drawn the width of one overnight move, and the last nine calendar days get 9% of the axis while the first eleven get 50%.",
+        (_iso, index) => index / (domain.length - 1)
+      )}
+      ${rule(
+        "After &mdash; spaced by the calendar",
+        "Every day is worth the same width. The hole is a hole, and the middle tick lands on the middle of the window instead of on the middle of the list.",
+        (iso) => (day(iso) - first) / (last - first)
+      )}
+    </div>`;
+    };
+
     /** The page's chrome, drawn the way `page.tsx` draws it. */
     const chrome = (activeTab: "tournament" | "bracket") => `
   <header class="hero"><h1>${payload.title}</h1><p>${payload.subtitle}</p></header>
@@ -273,64 +397,88 @@ describe("US Open DESKTOP capture rig", () => {
   ${pills}`;
 
     /* ── BEFORE ── */
-    const before = `${head("DESKTOP, BEFORE UX-P145")}
+    const before = `${head("DESKTOP, BEFORE UX-P146")}
 <div class="banner before">
   <span class="tag">Before</span>
-  <b>/tournaments/us-open as it renders today, in a desktop browser.</b>
-  Open this maximised. Everything on the page lives inside one <code>${SHELL_BEFORE}</code>
-  column, so the window's width is unused no matter how wide you make it &mdash; Alex, 2026-08-27:
-  <i>&ldquo;weirdly narrow, like we only made a mobile version.&rdquo;</i>
-  The props section is live in production (the flag folds to <code>true</code> in the shipped
-  bundle), and its empty state is the copy ruled forbidden: <b>&ldquo;3 curated questions have
-  gone dark and rotated out&hellip;&rdquo;</b>
+  <b>/tournaments/us-open as UX-P145 left it &mdash; the artifact you reviewed.</b>
+  Open this maximised. The page carries its OWN column,
+  <code>${SHELL_BEFORE}</code>, inside the site container every other page already
+  sits in. So the window's width past 1280px is unused no matter how wide you make it, and
+  between 1024 and 1280 it is unused twice over &mdash; Alex, 2026-08-27:
+  <i>&ldquo;Doesn't the rest of the desktop site just use as much width as the user gives
+  it?&rdquo;</i> The grey down both sides is the subject of this pair.
+  <br><br>
+  Also fixed opposite: the finished matches on the right carry a result with <b>no prior</b>
+  (that is real in this file &mdash; the priors are stripped out of it), and the copy still says
+  <i>price</i>. The chart's x-axis was spaced by each reading's position in the LIST rather than
+  by its date; that scale lives in a shared module, so this page's chart is already drawn with
+  the new one and the two scales are shown separately below instead of being faked.
 </div>
 <div class="surface">
+  ${axisStrip()}
   <div class="cap">Tournament tab</div>
-  <div class="${SHELL_BEFORE}">
-    ${chrome("tournament")}
-    <div class="px-4 pb-16">${chart}${matchList}${results}${board}${questions}</div>
+  <div class="${SITE_CONTAINER}">
+    <div class="${SHELL_BEFORE}">
+      ${chrome("tournament")}
+      <div class="px-4 pb-16 lg:px-6">
+        <div class="${TOURNAMENT_COLUMNS}">
+          <div class="lg:min-w-0">${chart}${matchList}</div>
+          <div class="lg:min-w-0">${resultsBefore}${board}${questions}</div>
+        </div>
+      </div>
+    </div>
   </div>
-  <div class="cap">Bracket tab &mdash; the playoff grid at phone measurements</div>
-  <div class="${SHELL_BEFORE}">
-    ${chrome("bracket")}
-    <div class="px-4 pb-16"><div class="mt-6">${bracketBefore}</div></div>
+  <div class="cap">Bracket tab</div>
+  <div class="${SITE_CONTAINER}">
+    <div class="${SHELL_BEFORE}">
+      ${chrome("bracket")}
+      <div class="px-4 pb-16 lg:px-6"><div class="mt-6">${bracketBefore}</div></div>
+    </div>
   </div>
 </div>
 </body></html>`;
 
     /* ── AFTER ── */
-    const after = `${head("DESKTOP, AFTER UX-P145")}
+    const after = `${head("DESKTOP, AFTER UX-P146")}
 <div class="banner after">
   <span class="tag">After</span>
-  <b>The same page, same data, same components &mdash; with a desktop presentation.</b>
+  <b>The same page, same data, same components &mdash; with no column of its own.</b>
   Open this maximised, in the same window you opened the &ldquo;before&rdquo; file in.
   <br><br>
-  <b>1. The shell widens</b> to 1024px at <code>lg</code> and 1280px at <code>xl</code>; the 560px
-  phone column is untouched below that, so every ruling from UX-P131 on still holds where it was
-  verdicted. <b>2. The Tournament tab is two columns:</b> the title race and the day's card on the
-  left, what just happened and the standings on the right &mdash; on a phone the board is thirty
-  rows below the chart, and here it is beside it. <b>3. The bracket fills the width</b> at
-  236/84px tracks instead of 118/46, and never scrolls sideways; P138's scroll ruling still governs
-  the phone it was measured on. <b>4. Prose is capped</b> at its own measure &mdash; the table
-  wants 1280px, a 12px paragraph does not. <b>5. No internal jargon:</b> no
-  <i>curated</i>, <i>gone dark</i>, <i>rotated out</i>, <i>priced</i>, <i>registered</i>,
-  <i>stale</i> or <i>blended</i> in anything a reader sees.
+  <b>1. No shell.</b> The page's own <code>max-w</code> is gone. The only container is
+  <code>${SITE_CONTAINER}</code> from <code>app/layout.tsx</code> &mdash;
+  <code>max-w-content</code> is 1600px &mdash; which is exactly what <i>/politics</i>,
+  <i>/entertainment</i>, <i>/economics</i> and <i>/hub</i> answer to. The phone is untouched:
+  390px was never bound by a 560px cap, so every ruling from UX-P131 on still holds where it was
+  verdicted. <b>2. The x-axis is a calendar.</b> It was spaced by each reading's place in the LIST
+  of observed days, so an eight-day hole in this board's history was drawn the width of one
+  overnight move, and the middle tick was labelled <i>8 Aug</i> in a window whose midpoint is
+  <i>12 Aug</i>. Every day is now worth the same width. <b>3. Finished matches carry their prior.</b>
+  Right-hand column: the grey figure beside a name is what the market gave that player before the
+  match. Shubladze went in at 65% and lost; Colton Smith went in at 40% and won.
+  <b>4. No <i>price</i>, anywhere a reader can see.</b> Alex's product-wide ruling &mdash; the
+  word is PROBABILITY. &ldquo;Prices paused&rdquo; is now &ldquo;Updates paused&rdquo;, and the
+  admission it carries is unchanged.
 </div>
 <div class="surface">
-  <div class="cap">Tournament tab &mdash; two columns above 1024px</div>
-  <div class="${TOURNAMENT_SHELL}">
-    ${chrome("tournament")}
-    <div class="px-4 pb-16 lg:px-6">
-      <div class="${TOURNAMENT_COLUMNS}">
-        <div class="lg:min-w-0">${chart}${matchList}</div>
-        <div class="lg:min-w-0">${results}${board}${questions}</div>
+  <div class="cap">Tournament tab &mdash; two columns above 1024px, full site width</div>
+  <div class="${SITE_CONTAINER}">
+    <div class="${TOURNAMENT_SHELL}">
+      ${chrome("tournament")}
+      <div class="px-4 pb-16 lg:px-6">
+        <div class="${TOURNAMENT_COLUMNS}">
+          <div class="lg:min-w-0">${chart}${matchList}</div>
+          <div class="lg:min-w-0">${results}${board}${questions}</div>
+        </div>
       </div>
     </div>
   </div>
   <div class="cap">Bracket tab &mdash; the playoff grid at desktop scale</div>
-  <div class="${TOURNAMENT_SHELL}">
-    ${chrome("bracket")}
-    <div class="px-4 pb-16 lg:px-6"><div class="mt-6">${bracket}</div></div>
+  <div class="${SITE_CONTAINER}">
+    <div class="${TOURNAMENT_SHELL}">
+      ${chrome("bracket")}
+      <div class="px-4 pb-16 lg:px-6"><div class="mt-6">${bracket}</div></div>
+    </div>
   </div>
 </div>
 </body></html>`;
@@ -361,16 +509,32 @@ describe("US Open DESKTOP capture rig", () => {
     }
 
     /* ── and the two files must actually DIFFER in the way claimed ── */
-    // The shell.
+    // The shell: BEFORE has a column of its own, AFTER has none.
     expect(before).toContain(`<div class="${SHELL_BEFORE}">`);
-    expect(before).not.toContain("lg:max-w-[1024px]");
-    expect(after).toContain("lg:max-w-[1024px]");
-    expect(after).toContain("xl:max-w-[1280px]");
-    // The column split, in the after only.
-    expect(before).not.toContain("lg:grid-cols-");
-    expect(after).toContain("lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]");
+    expect(before).toContain("xl:max-w-[1280px]");
+    expect(after).not.toContain("xl:max-w-[1280px]");
+    expect(after).not.toContain("lg:max-w-[1024px]");
+    // …and BOTH sit inside the real site container, or the pair is showing the
+    // wrong thing: a nested-container defect is invisible without the outer one.
+    expect(before).toContain(`<div class="${SITE_CONTAINER}">`);
+    expect(after).toContain(`<div class="${SITE_CONTAINER}">`);
     // The grid's desktop tracks, pinned back to the phone's in the before.
     expect(before).toContain("--grid-name-w:118px;--grid-col-w:46px");
+    // The three other rulings, each visible in the AFTER and not in the BEFORE.
+    // Both panels render the same components, so these are checked on the
+    // shared markup rather than by diffing the two files.
+    expect(after).toContain('data-testid="result-prematch"');
+    expect(after).toContain('data-testid="results-prematch-note"');
+    // …and the BEFORE really is without them, so the pair shows the change.
+    expect(before).not.toContain('data-testid="result-prematch"');
+    expect(before).not.toContain('data-testid="results-prematch-note"');
+    // The axis reconstruction is on the BEFORE file, where the comparison is.
+    expect(before).toContain("The x-axis, both ways");
+    expect(before).toContain("spaced by position in the list");
+    expect(before).toContain("spaced by the calendar");
+    // The retired copy is checked on the RENDERED SECTIONS below, not on the
+    // whole file: the AFTER banner quotes "Prices paused" on purpose, to say
+    // what it used to be.
 
     /* ── the language claim on the banner has to be true of the PAGE ── */
     // The banner says "no internal jargon in anything a reader sees". A caption
@@ -387,8 +551,8 @@ describe("US Open DESKTOP capture rig", () => {
       /\bregistered\b/i,
       /\bblended\b/i,
       /\bstale\b/i,
-      /\bare priced\b/i,
-      /\bunpriced\b/i,
+      // UX-P146: the whole `price` family, Alex's product-wide ruling.
+      /\b(un)?pric(e|es|ed|ing)\b/i,
     ]) {
       expect(text).not.toMatch(banned);
     }

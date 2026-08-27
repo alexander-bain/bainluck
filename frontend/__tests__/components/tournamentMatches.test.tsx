@@ -590,10 +590,10 @@ describe("honesty treatment", () => {
     const html = renderToStaticMarkup(
       <TournamentMatches
         entries={matchListFromSlate([match()])}
-        notice={{ tone: "stale", headline: "Prices paused", detail: "Last reading 9 hours ago." }}
+        notice={{ tone: "stale", headline: "Updates paused", detail: "Last reading 9 hours ago." }}
       />
     );
-    expect(html).toContain("Prices paused");
+    expect(html).toContain("Updates paused");
     expect(html).toContain('data-testid="matches-notice"');
   });
 

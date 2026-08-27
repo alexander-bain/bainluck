@@ -404,8 +404,8 @@ export function slateNotice(slate: SlateData): SlateNotice | null {
   if (slate.newest_observed_at === null) {
     return {
       tone: "dark",
-      headline: "No prices yet",
-      detail: "We have not recorded a price for today's matches.",
+      headline: "No numbers yet",
+      detail: "No market has put a probability on today's matches.",
     };
   }
   const hours = slate.age_hours;
@@ -420,9 +420,14 @@ export function slateNotice(slate: SlateData): SlateNotice | null {
     // list, so it is only ever live / stale / dark. `unpriced` is a per-ROW
     // state (UX-P142) and cannot reach here; narrowed explicitly rather than
     // cast, so the day a slate-wide unpriced state does exist this stops
-    // compiling instead of quietly labelling it "Prices paused".
+    // compiling instead of quietly labelling it "Updates paused".
     tone: slate.price_state === "unpriced" ? "dark" : slate.price_state,
-    headline: "Prices paused",
-    detail: `Last confirmed reading ${when}. These are the last prices we saw, not live prices.`,
+    // UX-P146: was "Prices paused" / "the last prices we saw, not live prices".
+    // Alex's product-wide ruling — the word is PROBABILITY. Kept identical to
+    // the board's wording, because the boards and the slate are two halves of
+    // one page and wording one admission two ways teaches a reader that one of
+    // them is decorative.
+    headline: "Updates paused",
+    detail: `Last confirmed reading ${when}. These are the last probabilities we saw, not live ones.`,
   };
 }

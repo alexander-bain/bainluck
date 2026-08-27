@@ -542,7 +542,9 @@ export default function TournamentMatches({
 
       {incoherent > 0 && (
         <p className="mt-2 text-[11px] text-text-muted" data-testid="match-incoherent-count">
-          {incoherent} {incoherent === 1 ? "match has" : "matches have"} prices that do not agree
+          {/* UX-P146: was "prices that do not agree". Alex's product-wide
+              ruling on the noun; "numbers" is what they are to a reader. */}
+          {incoherent} {incoherent === 1 ? "match has" : "matches have"} numbers that do not agree
           yet.
         </p>
       )}

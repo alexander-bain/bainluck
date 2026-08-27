@@ -20,6 +20,7 @@ Anchored to what the 2026-08-25 measurement actually found, not to hypotheticals
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -1212,4 +1213,160 @@ def test_no_results_at_all_is_an_empty_section_not_a_crash():
     payload = build_results(_results_register(), results={})
     assert payload["count"] == 0
     assert payload["source_competitions"] == 0
+
+
+# ---------------------------------------------------------------------------
+# UX-P146 — a finished match carries what the market said BEFORE it
+#
+# Alex, on the UX-P145 desktop artifact: "finished outcomes on the right must
+# show their PRE-MATCH probabilities alongside the result — a result without the
+# prior probability is half the story on a probability product."
+# ---------------------------------------------------------------------------
+
+def _results_register_with_matchup():
+    """The same two players, plus the matchup market the register still pins.
+
+    The 12-of-76 case on production: `build_slate` retires this matchup for
+    SCHEDULING reasons the moment it starts, but the register file still carries
+    it, and that is where the pre-match number comes from.
+    """
+    register = _results_register()
+    register["matchups"] = [{
+        "matchup_key": "mens-singles:jacob-fearnley-vs-roberto-carballes-baena:2026-08-24",
+        "draw": "mens-singles",
+        "round": "qualifying",
+        "scheduled_date": "2026-08-24T13:00:00+00:00",
+        "players": ["jacob-fearnley", "roberto-carballes-baena"],
+        "sources": [{
+            "source": "polymarket",
+            "kind": "match",
+            "market_id": 59481999,
+            "outcome_id": 910001,
+            "status": "live",
+            "terminal_result": None,
+            "evidence": {"kind": "match-market-census", "observed_at": NOW.isoformat()},
+            "sides": {
+                "jacob-fearnley": {"outcome_id": 910001, "source_label": "Jacob Fearnley"},
+                "roberto-carballes-baena": {
+                    "outcome_id": 910002, "source_label": "Roberto Carballes Baena"
+                },
+            },
+        }],
+    }]
+    return register
+
+
+def _matchup_prices(a_open=0.62, b_open=0.38, a_now=1.0, b_now=0.0):
+    return {
+        910001: {"probability": a_now, "opening_probability": a_open, "observed_at": NOW},
+        910002: {"probability": b_now, "opening_probability": b_open, "observed_at": NOW},
+    }
+
+
+def test_a_finished_match_carries_the_prior_when_we_held_the_market():
+    payload = build_results(
+        _results_register_with_matchup(), results=_espn(), prices=_matchup_prices()
+    )
+    [row] = payload["matches"]
+    by_key = {p["entity_key"]: p["prematch_probability"] for p in row["players"]}
+    assert by_key["jacob-fearnley"] == 0.62
+    assert by_key["roberto-carballes-baena"] == 0.38
+    assert payload["with_prematch"] == 1
+
+
+def test_the_prior_is_the_OPENING_number_and_never_the_last_one_we_saw():
+    """The whole reason this reads `opening_probability`.
+
+    A decided match's market drifts to the result: the fixture's current pair is
+    1.0 / 0.0. Print that as "what the market thought" and every winner is 100%
+    and every loser 0% — a perfectly confident number that is really just the
+    scoreline read back, which is worse than showing nothing.
+    """
+    prices = _matchup_prices(a_now=1.0, b_now=0.0)
+    payload = build_results(
+        _results_register_with_matchup(), results=_espn(), prices=prices
+    )
+    priors = {p["entity_key"]: p["prematch_probability"] for p in payload["matches"][0]["players"]}
+    assert 1.0 not in priors.values()
+    assert 0.0 not in priors.values()
+
+
+def test_the_prior_is_normalized_as_a_PAIR_like_every_other_number_here():
+    # 0.55 + 0.50 is one question with a 5-point overround, exactly as the slate
+    # treats a live pair — so the printed prior sums to 1 and is quoted on the
+    # same basis a live row is.
+    payload = build_results(
+        _results_register_with_matchup(),
+        results=_espn(),
+        prices=_matchup_prices(a_open=0.55, b_open=0.50),
+    )
+    priors = [p["prematch_probability"] for p in payload["matches"][0]["players"]]
+    assert sum(priors) == pytest.approx(1.0)
+    assert priors[0] != 0.55  # normalized, not passed through
+
+
+def test_an_INCOHERENT_opening_pair_yields_no_prior_at_all():
+    """Refusal 2 of this module, applied to history.
+
+    0.90 + 0.60 is two readings of different vintage, not a distribution.
+    Dividing by 1.5 gives 60/40 — a number with no referent that looks exactly
+    like a real one, printed under two real players' names, forever.
+    """
+    payload = build_results(
+        _results_register_with_matchup(),
+        results=_espn(),
+        prices=_matchup_prices(a_open=0.90, b_open=0.60),
+    )
+    assert all(p["prematch_probability"] is None for p in payload["matches"][0]["players"])
+    assert payload["with_prematch"] == 0
+
+
+def test_no_registered_matchup_means_no_prior_and_the_count_says_so():
+    """64 of 76 production results are this case, and it must stay silent.
+
+    We hold player-level markets for both of them and no MATCH market, so there
+    is no prior. Substituting the title board's number — a player's chance of
+    winning the tournament — would be a fabricated answer to a different
+    question wearing a real player's name.
+    """
+    payload = build_results(_results_register(), results=_espn(), prices=_matchup_prices())
+    [row] = payload["matches"]
+    assert all(p["prematch_probability"] is None for p in row["players"])
+    assert payload["with_prematch"] == 0
+    # …and the row is still built. A missing prior never costs a result.
+    assert row["score"] == "7-6, 6-3"
+
+
+def test_prices_is_optional_so_an_older_caller_cannot_crash_the_section():
+    payload = build_results(_results_register_with_matchup(), results=_espn())
+    assert payload["count"] == 1
+    assert payload["with_prematch"] == 0
+
+
+def test_the_route_hands_build_results_the_prices_it_already_loaded():
+    """The wiring, which is the half a unit test cannot see.
+
+    `_load_prices` is called once over the union of every pinned outcome id,
+    matchup ids included, so this feature costs no extra query. If the call site
+    ever drops the argument the section silently loses every prior and every
+    test above still passes.
+    """
+    source = (Path(__file__).resolve().parents[1] / "app" / "routes" / "tournaments.py").read_text()
+    start = source.index("build_results(", source.index('payload["results"]'))
+    # Balanced-paren scan rather than "up to the first `)`" — the call is
+    # multi-line and contains `_espn_results(slug)`, so the naive version reads
+    # a window that stops before the argument it is checking for and fails on a
+    # correct call site.
+    depth, end = 0, start
+    for index in range(start, len(source)):
+        if source[index] == "(":
+            depth += 1
+        elif source[index] == ")":
+            depth -= 1
+            if depth == 0:
+                end = index + 1
+                break
+    call = source[start:end]
+    assert call.endswith(")")
+    assert "prices=prices" in call
 

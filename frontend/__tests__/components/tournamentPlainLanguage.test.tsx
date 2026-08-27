@@ -21,21 +21,37 @@
  * see. So the guard is a BANNED-WORD sweep over rendered output, plus a small
  * number of positive assertions on the strings Alex quoted.
  *
- * ═══ THE LINE THIS DRAWS ON "PRICE", WHICH IS DELIBERATE ═══
+ * ═══ UX-P146: THE LINE ON "PRICE" MOVED, AND IT MOVED ALL THE WAY ═══
  *
- * *Priced* as a VERB done to a question or a player is jargon and is banned:
- * "nobody has priced it yet", "a priced round to reach", "they are priced
- * again". *Price* / *prices* as the NOUN a market publishes is plain English on
- * a prediction-market page, and it is the honesty vocabulary the boards, the
- * slate and the calibration page already share — "Prices paused", "the last
- * prices we saw". Ripping that out would not make the page clearer; it would
- * make three surfaces disagree about how to admit the same thing.
+ * UX-P145 drew a line down the middle of the word: *priced* as a verb was
+ * jargon and banned, *price* as the noun a market publishes was plain English
+ * and stayed — "Prices paused", "the last prices we saw", "cells carry a market
+ * price". The reasoning was that three surfaces already shared that vocabulary
+ * and splitting them would be worse.
  *
- * This is the same line ALEX HIMSELF drew in ruling 3 (see `GRID_SECTION_LABEL`
- * in `lib/playoffGrid.ts`), where "priced to get there" became "Chance of
- * reaching" while "cells carry a market price" stayed. The rule below encodes
- * it: `BANNED` matches the verb forms and the possessive-pipeline nouns, and
- * `price`/`prices` standing alone is allowed.
+ * Alex overruled it on 2026-08-27, as a PERMANENT, PRODUCT-WIDE ruling:
+ *
+ *   > "price" as a noun is banned in user-facing copy — the word is
+ *   > PROBABILITY.
+ *
+ * That is the right call and the half-line was the wrong one. A price is what
+ * you pay; a probability is what we sell. This product's entire premise is that
+ * a reader should never have to think in the trading layer — "60% vs 40%"
+ * instead of "-150 / +130" — and a page that then tells them their number is a
+ * *price* hands the trading layer straight back. Consistency across three
+ * surfaces is worth something; it is not worth being consistently in the wrong
+ * vocabulary.
+ *
+ * SCOPE OF THIS FILE. The ruling is product-wide and applies to all future
+ * copy. What is SWEPT here is the tournament surfaces, which is what the queue
+ * covered. `/calibration`, the Discover cards and the event pages still say
+ * *price* in places; they are named in the report as owed, not silently
+ * counted as done. This guard fails loudly for anything under
+ * `components/tournament/` so the tournament half cannot drift back.
+ *
+ * `BANNED` therefore matches the whole stem — noun, verb, participle and
+ * gerund — instead of the eleven hand-written variants UX-P145 needed to catch
+ * the verb without catching the noun.
  *
  * Likewise `dark`, `stale` and `register` survive as DATA — `data-price-state`,
  * `data-placeholder="register-hole"`, `data-dropped-dark`. Those are contracts
@@ -105,8 +121,8 @@ function visibleText(html: string): string {
  * The words a Bain Luck reader has no reason to know.
  *
  * Every entry is a word Alex named, in the grammatical form that makes it
- * jargon. `priced`/`prices`-as-a-verb is caught by requiring a subject-ish
- * context around it rather than by banning the stem; see the file header.
+ * jargon. Since UX-P146 the `price` family is banned at the STEM — see the file
+ * header for the ruling that replaced UX-P145's noun/verb split.
  */
 const BANNED: { pattern: RegExp; why: string }[] = [
   { pattern: /\bgone dark\b/i, why: '"gone dark" is our price_state enum' },
@@ -121,19 +137,13 @@ const BANNED: { pattern: RegExp; why: string }[] = [
   { pattern: /\bcensus(ed)?\b/i, why: '"census" is our data-collection step' },
   { pattern: /\bblend(ed|s)?\b/i, why: '"blend" is our aggregation step' },
   { pattern: /\bstale\b/i, why: '"stale" is our price_state enum' },
-  // *Priced* as a verb, in every shape the surfaces actually used it.
-  { pattern: /\bis priced\b/i, why: '"priced" as a verb is trading vocabulary' },
-  { pattern: /\bare priced\b/i, why: '"priced" as a verb is trading vocabulary' },
-  { pattern: /\bhas priced\b/i, why: '"priced" as a verb is trading vocabulary' },
-  { pattern: /\bthey are priced\b/i, why: '"priced" as a verb is trading vocabulary' },
-  { pattern: /\bnever priced\b/i, why: '"priced" as a verb is trading vocabulary' },
-  { pattern: /\bunpriced\b/i, why: '"unpriced" is trading vocabulary' },
-  { pattern: /\ba priced\b/i, why: '"priced" as an adjective is trading vocabulary' },
-  { pattern: /\bno priced\b/i, why: '"priced" as an adjective is trading vocabulary' },
-  { pattern: /\bsources priced\b/i, why: '"priced" as a verb is trading vocabulary' },
-  { pattern: /\bmarket prices how\b/i, why: '"prices" as a verb is trading vocabulary' },
-  { pattern: /\bsource prices this\b/i, why: '"prices" as a verb is trading vocabulary' },
-  { pattern: /\bis pricing\b/i, why: '"pricing" as a verb is trading vocabulary' },
+  // THE WHOLE `price` FAMILY — UX-P146, Alex's permanent product-wide ruling.
+  // One stem rule replaces the eleven variants UX-P145 needed to ban the verb
+  // while sparing the noun. The word is PROBABILITY.
+  {
+    pattern: /\b(un)?pric(e|es|ed|ing)\b/i,
+    why: '"price" is trading vocabulary — the word is PROBABILITY (Alex, product-wide, 2026-08-27)',
+  },
 ];
 
 function assertPlain(html: string, where: string) {
@@ -445,14 +455,11 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
     );
   });
 
-  /* ─────────── THE LINE ON "PRICE" IS DELIBERATE, SO IT IS PINNED ─────────── */
+  /* ─────────── UX-P146: THE WORD IS PROBABILITY, AND THE HONESTY SURVIVES ─────────── */
 
-  it('keeps "prices" as a NOUN — the honesty language is not collateral damage', () => {
-    // If a later sweep bans the stem outright, this fails, and it should: the
-    // boards, the slate and the calibration page all admit staleness with this
-    // exact word, and a page that words one admission three ways teaches the
-    // reader that two of them are decorative.
-    const dark = {
+  describe('Alex\'s product-wide ruling: "price" as a noun is banned', () => {
+    /** The board in the state that used to say "Prices paused". */
+    const darkBoard = () => ({
       ...payload.boards[0],
       price_state: "dark" as const,
       age_hours: 300,
@@ -462,11 +469,62 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
         price_state: "dark" as const,
         age_hours: 300,
       })),
-    };
-    const html = renderToStaticMarkup(<TournamentBoard board={dark} />);
-    expect(html).toContain("Prices paused");
-    expect(visibleText(html)).toContain("These are the last prices we saw, not live prices.");
-    assertPlain(html, "TournamentBoard (dark)");
+    });
+
+    it("the stale-board admission no longer says it in trading words", () => {
+      // UX-P145 pinned "Prices paused" and "the last prices we saw" as
+      // deliberately-kept language. Alex overruled it. Pinned in the negative
+      // AND in the positive, because the failure mode of a copy ruling is a
+      // rewrite that removes the banned word and the meaning with it.
+      const html = renderToStaticMarkup(<TournamentBoard board={darkBoard()} />);
+      expect(html).not.toContain("Prices paused");
+      assertPlain(html, "TournamentBoard (dark)");
+    });
+
+    it("…and still ADMITS the staleness, which was the point of that copy", () => {
+      // The honesty property UX-P145 was protecting is real and independent of
+      // the vocabulary. A reader looking at a three-hundred-hour-old board must
+      // be told that is what they are looking at.
+      const text = visibleText(renderToStaticMarkup(<TournamentBoard board={darkBoard()} />));
+      expect(text).toContain("Updates paused");
+      expect(text).toContain(
+        "These are the last probabilities we saw, not live ones."
+      );
+    });
+
+    it("the data contract is untouched — the words moved, the attributes did not", () => {
+      // `price_state` is an enum on a data attribute and CERT-411 and the
+      // sentinels read it. Our names belong there; the ruling is about copy.
+      const html = renderToStaticMarkup(<TournamentBoard board={darkBoard()} />);
+      expect(html).toContain('data-price-state="dark"');
+    });
+
+    it("no tournament component ships the word in a user-visible string", () => {
+      // The render sweep above covers the states these fixtures reach. This is
+      // the backstop for the ones they do not: a grep of the SOURCE for the
+      // stem outside comments, attribute names and identifiers.
+      //
+      // Deliberately crude and deliberately narrow — it reads JSX text nodes
+      // and nothing else — because a clever version of this test is one that
+      // gets disabled the first time it is wrong.
+      const dir = path.join(__dirname, "..", "..", "components", "tournament");
+      const offenders: string[] = [];
+      for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".tsx"))) {
+        const source = fs.readFileSync(path.join(dir, file), "utf8");
+        // Strip block comments, line comments and every attribute value, then
+        // look at what is left between tags.
+        const stripped = source
+          .replace(/\/\*[\s\S]*?\*\//g, " ")
+          .replace(/^\s*\/\/.*$/gm, " ")
+          .replace(/\w+(-\w+)*=(\{[^}]*\}|"[^"]*"|'[^']*')/g, " ");
+        for (const [, text] of stripped.matchAll(/>([^<>{}]{4,})</g)) {
+          if (/\b(un)?pric(e|es|ed|ing)\b/i.test(text)) {
+            offenders.push(`${file}: ${text.trim().slice(0, 90)}`);
+          }
+        }
+      }
+      expect(offenders).toEqual([]);
+    });
   });
 
   it("the sweep can actually fail — the guard is not vacuously green", () => {
@@ -480,6 +538,11 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
     expect(() => assertPlain("<p>it has gone dark</p>", "canary")).toThrow(/gone dark/i);
     expect(() => assertPlain("<p>two rotated out</p>", "canary")).toThrow(/rotated out/i);
     expect(() => assertPlain("<p>they are priced again</p>", "canary")).toThrow(/priced/i);
+    // UX-P146: the NOUN, which UX-P145 deliberately allowed and Alex overruled.
+    expect(() => assertPlain("<p>Prices paused</p>", "canary")).toThrow(/price/i);
+    expect(() => assertPlain("<p>the last prices we saw</p>", "canary")).toThrow(/price/i);
+    expect(() => assertPlain("<p>cells carry a market price</p>", "canary")).toThrow(/price/i);
+    expect(() => assertPlain("<p>12 players have no price yet</p>", "canary")).toThrow(/price/i);
     expect(() => assertPlain("<p>12 more registered players</p>", "canary")).toThrow(/registered/i);
     expect(() => assertPlain("<p>Probabilities blended across markets</p>", "canary")).toThrow(
       /blend/i

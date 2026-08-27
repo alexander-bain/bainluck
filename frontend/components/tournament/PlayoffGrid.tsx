@@ -87,12 +87,55 @@ const ALARM_STATES = new Set(["unlinked", "unregistered"]);
 export const GRID_SIZING =
   "[--grid-name-w:118px] [--grid-col-w:46px] lg:[--grid-name-w:236px] lg:[--grid-col-w:84px]";
 
+/**
+ * ═══ THE SPARK BARS — A MOCK SEAM, NOT A SHIPPED DEFAULT (UX-P146) ═══
+ *
+ * Alex, on the "Chance of reaching" table: he likes it, and asked whether
+ * "subtle spark bars would help scanning or make it busy". The charter rule for
+ * that question is visual mocks, never a written argument, so the capability
+ * lives here behind a prop that defaults to OFF and
+ * `__tests__/capture/usOpenReachTableMocks.test.tsx` renders the real component
+ * both ways for his eye.
+ *
+ * Built as a prop rather than as a second component on purpose: whichever way
+ * he rules, the change is this default and nothing else — there is no second
+ * implementation to keep in step with the first, and the mock he judged is the
+ * component that ships.
+ *
+ * What a bar is, when it is on: a single faint rule under the number, filled
+ * from the right to the cell's own probability. One colour for every column and
+ * every row — a bar is a length, and colour-coding it would add a second
+ * variable to a table whose whole claim is that each cell answers exactly its
+ * own column. No labels, no axis, no gridline: the number IS the label and it
+ * is already there. `aria-hidden`, because it says nothing the cell's own
+ * screen-reader sentence does not.
+ */
+function SparkBar({ probability }: { probability: number }) {
+  const pct = Math.max(0, Math.min(1, probability)) * 100;
+  return (
+    <span
+      aria-hidden="true"
+      className="mt-1 block h-[3px] w-full overflow-hidden rounded-full bg-surface-elevated"
+      data-testid="grid-spark-bar"
+      data-fill={pct.toFixed(1)}
+    >
+      <span
+        className="ml-auto block h-full rounded-full bg-text-muted/45"
+        style={{ width: `${pct}%` }}
+      />
+    </span>
+  );
+}
+
 function Cell({
   cell,
   column,
+  sparkBars = false,
 }: {
   cell: GridCell | undefined;
   column: GridColumn;
+  /** Mock seam — see `SparkBar`. Off in the shipped page. */
+  sparkBars?: boolean;
 }) {
   if (!cell) {
     // Structurally unreachable — the builder emits a cell for every column of
@@ -140,15 +183,20 @@ function Cell({
     );
   }
 
+  const barred = sparkBars && typeof cell.probability === "number";
+
   return (
     <span
       {...shared}
       className={`text-[13px] font-bold tabular-nums lg:text-[15px] ${
         cell.probability_is_live ? "text-text-primary" : "text-text-secondary"
-      }`}
+      } ${barred ? "block w-full" : ""}`}
     >
       <span className="sr-only">{explanation} </span>
-      <span aria-hidden="true">{text}</span>
+      <span aria-hidden="true" className={barred ? "block" : undefined}>
+        {text}
+      </span>
+      {barred && <SparkBar probability={cell.probability as number} />}
     </span>
   );
 }
@@ -219,11 +267,19 @@ export default function PlayoffGrid({
   grid,
   drawLabel,
   initialExpanded = false,
+  sparkBars = false,
 }: {
   grid: PlayoffGridModel;
   drawLabel?: string;
   /** Capture seam: render the full field rather than the collapsed five. */
   initialExpanded?: boolean;
+  /**
+   * Mock seam (UX-P146): draw a faint bar under each numeric cell. OFF in the
+   * shipped page — Alex asked to SEE the two options, and the two artifacts
+   * this renders are `reach-table-with-bars.html` and `reach-table-plain.html`.
+   * See `SparkBar` above.
+   */
+  sparkBars?: boolean;
 }) {
   const [expanded, setExpanded] = React.useState(initialExpanded);
 
@@ -377,7 +433,11 @@ export default function PlayoffGrid({
                 </span>
                 {grid.columns.map((column) => (
                   <span key={column.key} className="text-right">
-                    <Cell cell={row.cells[column.key]} column={column} />
+                    <Cell
+                      cell={row.cells[column.key]}
+                      column={column}
+                      sparkBars={sparkBars}
+                    />
                   </span>
                 ))}
               </li>
@@ -407,7 +467,9 @@ export default function PlayoffGrid({
         <b className="font-semibold text-text-secondary" data-testid="grid-coverage">
           {grid.pricedCells} of {grid.totalCells}
         </b>{" "}
-        cells carry a market price.{" "}
+        {/* UX-P146: was "cells carry a market price" / "every number is a price
+            somebody quoted". Alex's product-wide ruling on the noun. */}
+        cells carry a number from a real market.{" "}
         {grid.noMarketCells > 0 && (
           <span data-testid="grid-no-market">
             <b className="font-semibold text-text-secondary">{grid.noMarketCells}</b> say{" "}
@@ -415,7 +477,7 @@ export default function PlayoffGrid({
             neither runs that market.{" "}
           </span>
         )}
-        Nothing here is calculated from anything else: every number is a price somebody
+        Nothing here is calculated from anything else: every number is one a market
         quoted for exactly the question in its column.
       </p>
 

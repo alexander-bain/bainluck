@@ -380,10 +380,84 @@ def build_slate(
     }
 
 
+def _prematch_by_pair(
+    reg: TournamentRegister, prices: dict[int, dict[str, Any]]
+) -> dict[tuple, dict[str, float]]:
+    """``(draw, sorted entity keys) -> {entity_key: pre-match probability}``.
+
+    ═══ UX-P146: A RESULT WITHOUT ITS PRIOR IS HALF THE STORY ═══
+
+    Alex, on the UX-P145 desktop artifact: "finished outcomes on the right must
+    show their PRE-MATCH probabilities alongside the result — a result without
+    the prior probability is half the story on a probability product."  He is
+    describing the whole reason this site exists: *Kubka beat Penickova* is a
+    scoreline anyone can get; *Kubka beat Penickova, and the market had her at
+    38%* is the product.
+
+    THE NUMBER IS THE OPENING QUOTE, and that is a deliberate choice rather than
+    a convenience.  ``futures_outcomes`` carries exactly two prices per outcome:
+    ``current_probability`` and ``opening_probability``.  The current one is
+    poisoned for this purpose — a decided match's market settles, so "what the
+    market thought" would render as 100% for every winner and 0% for every
+    loser, a perfectly confident number that is really just the result read
+    back.  The opening quote is the only stored price that is guaranteed to
+    pre-date the match.  It is what the slate already calls THE SCRIPT.
+
+    NORMALIZED AS A PAIR, through the same ``normalize_pair`` the slate uses, so
+    a finished match and a live one on the same page are quoted on the same
+    basis — and so an incoherent pair yields nothing at all rather than a tidy
+    fabricated split (see refusal 2 in the module docstring).
+
+    WHY THIS IS NOT AVAILABLE FOR EVERY RESULT, stated here because the caller
+    has to report it honestly: a pre-match probability exists only where the
+    register pinned a MATCHUP market for that pair.  Measured against the
+    2026-08-27 production payload, 12 of 76 joined results have one.  The other
+    64 are qualifying matches we hold player-level markets for but for which no
+    match market was ever registered — there is no prior to show, and inventing
+    one from the title board (a player's chance of winning the tournament is not
+    their chance of winning a first-round match) would be a fabricated number
+    wearing a real player's name.
+    """
+    out: dict[tuple, dict[str, float]] = {}
+    for matchup in reg.matchups:
+        players = matchup.get("players")
+        if not isinstance(players, list) or len(players) != 2:
+            continue
+        block = next(
+            (
+                b for b in (matchup.get("sources") or [])
+                if isinstance(b, dict) and b.get("status") == "live"
+            ),
+            None,
+        )
+        if block is None:
+            continue
+        sides = block.get("sides")
+        if not isinstance(sides, dict) or set(sides) != set(players):
+            continue
+
+        raw: list[Optional[float]] = []
+        for entity_key in players:
+            side = sides.get(entity_key) or {}
+            outcome_id = side.get("outcome_id")
+            loaded = prices.get(outcome_id) if isinstance(outcome_id, int) else None
+            raw.append(_as_float((loaded or {}).get("opening_probability")))
+
+        a_open, b_open, _sum, coherent = normalize_pair(raw[0], raw[1])
+        if not coherent or a_open is None or b_open is None:
+            continue
+        out[(str(matchup.get("draw")), tuple(sorted(players)))] = {
+            players[0]: a_open,
+            players[1]: b_open,
+        }
+    return out
+
+
 def build_results(
     register: dict[str, Any],
     *,
     results: dict[str, Any],
+    prices: Optional[dict[int, dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Decided matches, with the score (UX-P139, Alex's item 9).
 
@@ -443,6 +517,12 @@ def build_results(
                 (str(matchup.get("draw")), tuple(sorted(players)))
             ] = str(matchup.get("matchup_key"))
 
+    # What the market said BEFORE the match (UX-P146). Same pair key as the
+    # matchup lookup above, so a result carries its prior exactly when the
+    # register still pins the market that published it.
+    prematch_by_pair = _prematch_by_pair(reg, prices or {})
+    with_prematch = 0
+
     for draw, found_by_pair in sorted(by_draw.items()):
         for found in found_by_pair.values():
             entries = [
@@ -463,6 +543,10 @@ def build_results(
                 winner_mismatch += 1
                 continue
 
+            prematch = prematch_by_pair.get((draw, tuple(sorted(keys))))
+            if prematch:
+                with_prematch += 1
+
             rows.append({
                 "matchup_key": matchup_by_pair.get(
                     (draw, tuple(sorted(keys))),
@@ -477,7 +561,13 @@ def build_results(
                 "round": found.get("espn_round") or "",
                 "players": [
                     {"entity_key": key, "display_name": entry.get("display_name"),
-                     "seed": entry.get("seed"), "is_winner": key == winner_key}
+                     "seed": entry.get("seed"), "is_winner": key == winner_key,
+                     # WHAT THE MARKET SAID BEFORE IT (UX-P146). `None` where no
+                     # match market was ever registered for this pair — an
+                     # absence the section states rather than fills in. See
+                     # `_prematch_by_pair` for why the opening quote and not the
+                     # current one.
+                     "prematch_probability": (prematch or {}).get(key)}
                     for key, entry in zip(keys, entries)
                 ],
                 "winner_entity_key": winner_key,
@@ -502,6 +592,10 @@ def build_results(
         # of the qualifying draw, by design.
         "unregistered_pairs": unregistered_pair,
         "winner_not_registered": winner_mismatch,
+        # How many of `matches` carry a pre-match probability (UX-P146). The
+        # section prints this ratio: a prior shown on 12 rows and absent on 64
+        # reads as a bug unless the page says which it is.
+        "with_prematch": with_prematch,
         "source_competitions": (results or {}).get("stats", {}).get("final", 0),
         "source_scored": (results or {}).get("stats", {}).get("scored", 0),
         "source_errors": (results or {}).get("errors") or [],

@@ -81,12 +81,13 @@
  *
  * What desktop is, here, and why it is not just a bigger number in the shell:
  *
- * 1. **The shell widens, the TEXT does not.** `SHELL` grows to 1280px at `xl`.
- *    Prose does not follow it — a 12px paragraph across 1200px is ~200
- *    characters a line and unreadable. Every prose block on these surfaces
- *    carries its own `max-w-[NNch]`, so the measure stays a measure while the
- *    page stops being a column. This is Alex's "sensible max-width for text
- *    sections only", applied where the text is rather than to the page.
+ * 1. **The shell widens, the TEXT does not.** ~~`SHELL` grows to 1280px at
+ *    `xl`.~~ **Superseded by UX-P146, below: the page has no shell.** The other
+ *    half of the rule stands and is what survived — prose does not follow the
+ *    window. A 12px paragraph across 1200px is ~200 characters a line and
+ *    unreadable, so every prose block on these surfaces carries its own
+ *    `max-w-[NNch]`. This is Alex's "sensible max-width for text sections
+ *    only", applied where the text is rather than to the page.
  *
  * 2. **The Tournament tab becomes two columns at `lg`.** Left, the things you
  *    read down: the title-race chart and the match list. Right, the things you
@@ -101,6 +102,30 @@
  *    variables now, so P138's ruling 5 (wide rounds scroll) keeps applying on
  *    the phone it was written for and stops applying in a 1400px window, where
  *    scrolling a five-column table is absurd.
+ *
+ * ═══ UX-P146: AND THEN THERE IS NO SHELL AT ALL ═══
+ *
+ * Alex, on the UX-P145 artifact: "Doesn't the rest of the desktop site just use
+ * as much width as the user gives it?" It does. `app/layout.tsx` is the site's
+ * one container — `max-w-content` (1600px) with `px-3 md:px-6` — and the
+ * category pages, the hub and search add nothing of their own inside it. This
+ * page was nesting a second, narrower column in there, so it drew grey down
+ * both sides at every window size; widening that column from 560 to 1280 moved
+ * the grey without removing it.
+ *
+ * `TOURNAMENT_SHELL` therefore carries no width. See that module for why the
+ * phone is untouched by this (a 390px viewport was never bound by a 560px cap)
+ * and for the measured list of pages this now matches.
+ *
+ * Three more things Alex ruled on the same artifact, and where each one lives:
+ *
+ * - The headline chart's x-axis was spaced by the ORDINAL position of each
+ *   reading rather than by its date. `lib/contenderChart.ts` — the fix and the
+ *   arithmetic that shows how wrong it was on real data.
+ * - A finished match now prints what the market said BEFORE it, beside the
+ *   result. `TournamentResults`, fed by `build_results`.
+ * - *Price* as a noun is out of user-facing copy product-wide; the word is
+ *   PROBABILITY. `__tests__/components/tournamentPlainLanguage.test.tsx`.
  */
 
 import { useEffect, useMemo, useState } from "react";

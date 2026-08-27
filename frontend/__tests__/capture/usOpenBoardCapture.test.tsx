@@ -310,7 +310,7 @@ describe("US Open board capture rig", () => {
     expect(allRows.filter((r) => r.probability_is_live).length).toBeGreaterThan(60);
   });
 
-  it("DARK PATH: a dark board still says prices are paused", () => {
+  it("DARK PATH: a dark board still says updates are paused", () => {
     // The renderer's other half, now that production is live. Built by muting
     // the real board rather than by a literal, so it cannot drift from the
     // shape the backend emits.
@@ -326,7 +326,7 @@ describe("US Open board capture rig", () => {
       })),
     };
     const html = renderToStaticMarkup(<TournamentBoard board={dark} />);
-    expect(html).toContain("Prices paused");
+    expect(html).toContain("Updates paused");
     expect(html).toContain('data-live="false"');
     expect(html).not.toContain('data-live="true"');
   });
@@ -336,7 +336,7 @@ describe("US Open board capture rig", () => {
     const html = renderToStaticMarkup(<TournamentBoard board={live} />);
     expect(html).toContain('data-live="true"');
     expect(html).not.toContain('data-live="false"');
-    expect(html).not.toContain("Prices paused");
+    expect(html).not.toContain("Updates paused");
     expect(html).not.toContain('data-testid="row-age"');
     const perRow = html.split('data-testid="board-row"').slice(1);
     expect(perRow.length).toBe(3);
@@ -942,7 +942,7 @@ number old enough to stop being a price is removed rather than shown quietly.
     expect(html).toContain("Round of 128");
     // ...and the unpriced fixture says the right thing about itself.
     expect(html).toContain("No market yet");
-    expect(html).not.toContain("The two prices for this match do not agree");
+    expect(html).not.toContain("The two numbers for this match do not agree");
     // The detail note only renders on a TAPPED-OPEN row, so it needs a panel
     // of its own or the sentence written for the page's most common state is
     // in the code and not in the artifact Alex looks at.

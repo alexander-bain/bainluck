@@ -35,11 +35,22 @@
  * section has something true to show before it has anything priced.
  */
 
+import { formatProbabilityPercent } from "./probabilityDisplay";
+
 export interface ResultPlayer {
   entity_key: string;
   display_name: string;
   seed: number | null;
   is_winner: boolean;
+  /**
+   * What the market gave this player BEFORE the match (UX-P146), 0-1, or
+   * `null` where no match market was ever registered for the pair.
+   *
+   * The opening quote, normalized against its own pair — see
+   * `_prematch_by_pair` in `tournament_slate.py` for why the opening and not
+   * the last one we saw.
+   */
+  prematch_probability: number | null;
 }
 
 export interface TournamentResult {
@@ -70,6 +81,8 @@ export interface TournamentResults {
   source_competitions: number;
   source_scored: number;
   source_errors: string[];
+  /** How many `matches` carry a pre-match probability (UX-P146). */
+  with_prematch?: number;
 }
 
 /**
@@ -148,6 +161,46 @@ export const ROUND_HEADINGS: Record<string, string> = {
   SF: "Semi-finals",
   F: "Final",
 };
+
+/**
+ * The prior, as a percentage — `0.495` -> `"50%"`, `null` -> `null`.
+ *
+ * ═══ UX-P146: WHY A FINISHED MATCH PRINTS A NUMBER AT ALL ═══
+ *
+ * Alex, on the UX-P145 artifact: "a result without the prior probability is
+ * half the story on a probability product." He is right, and the men's
+ * qualifying second round on 2026-08-26 is the argument: Alexandra Shubladze
+ * went in at 65% and lost; Colton Smith went in at 40% and won. Without the
+ * prior both rows read as "somebody beat somebody".
+ *
+ * WHOLE PERCENTAGES, no decimal. The board uses `formatBoardProbability` and
+ * carries a decimal on tight numbers because it is a LIVE figure a reader may
+ * watch move. This one is settled history; a tenth of a point on a number that
+ * will never change again is precision for its own sake.
+ *
+ * THROUGH `formatProbabilityPercent`, and not a local `Math.round(p * 100)`.
+ * UX-P046 made that boundary one module's job — a 0.4% prior printed as `0%`
+ * tells a reader the market called it impossible, which it never did — and the
+ * anti-drift guard in `probabilityDisplay.test.ts` fails on a seventh private
+ * copy. This is the ONLY thing this wrapper adds to it: `null` in, `null` out,
+ * so the caller can distinguish "no market" from "a market that said nothing".
+ */
+export function formatPrematch(probability: number | null | undefined): string | null {
+  if (typeof probability !== "number" || !Number.isFinite(probability)) return null;
+  return formatProbabilityPercent(probability);
+}
+
+/** How many of these results carry a prior — the ratio the section states. */
+export function prematchCoverage(
+  matches: TournamentResult[]
+): { withPrior: number; total: number } {
+  return {
+    withPrior: matches.filter((match) =>
+      match.players.some((player) => typeof player.prematch_probability === "number")
+    ).length,
+    total: matches.length,
+  };
+}
 
 /** Newest first — a results list is read from the top for what just happened. */
 export function sortedResults(matches: TournamentResult[]): TournamentResult[] {

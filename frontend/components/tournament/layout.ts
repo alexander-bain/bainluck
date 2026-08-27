@@ -23,20 +23,49 @@
  */
 
 /**
- * The page shell — one phone column, then a real desktop page.
+ * The page shell — and the point of it is that there is no longer a shell.
  *
- * Alex, on the live page in a desktop browser: "weirdly narrow, like we only
- * made a mobile version." The whole hub lived inside `max-w-[560px]`, so a
- * 1400px window rendered a 560px phone in the middle of 840px of grey.
+ * ═══ UX-P146: THE ARTIFICIAL CONTAINER IS GONE ═══
  *
- * 560 → 1024 → 1280 rather than a bare `max-w-screen-xl`: **560 is the measured
- * phone column every ruling from UX-P131 on was verdicted against and it must
- * not move**, `lg` (1024px) is where the two-column split turns on, and 1280 is
- * where the shell stops so a 21" monitor does not stretch the match list out to
- * the bezels.
+ * Alex, on the UX-P145 desktop artifact: *"Doesn't the rest of the desktop site
+ * just use as much width as the user gives it?"*
+ *
+ * It does, and it was the right question. UX-P145 answered "weirdly narrow" by
+ * making the tournament page's OWN column wider — 560 → 1024 → 1280 — which
+ * left the defect's shape intact and only moved its edges. The rest of the site
+ * has no page-level column at all. `app/layout.tsx` wraps every route in
+ *
+ *     <div className="max-w-content mx-auto px-3 md:px-6 py-4">
+ *
+ * — `max-w-content` is `1600px` in `tailwind.config.ts` — and `/politics`,
+ * `/weather`, `/economics`, `/entertainment`, `/search` and `/hub/[competition]`
+ * add nothing of their own. They fill it. The tournament hub was nesting a
+ * second, narrower container inside that one, so at a 1400px window it drew a
+ * 1280px column inside a 1304px box and at a 1200px window a 1024px column
+ * inside 1104px — grey down both sides at every size, which is exactly what
+ * Alex was looking at.
+ *
+ * So the shell holds no width. The site's container is the container, one level
+ * up, the same one every other page answers to. This is not "a wider number":
+ * it is the page no longer having an opinion about how wide the window is.
+ *
+ * ═══ WHAT THIS DOES NOT CHANGE ═══
+ *
+ * **The phone.** `max-w-[560px]` never bound a phone — a 390px viewport is
+ * narrower than 560, so the cap was inert there and removing it moves nothing.
+ * Every ruling from UX-P131 on was verdicted at 390px and every one of them
+ * still holds, unchanged and unre-opened. The cap only ever bound between
+ * 560px and 1600px of viewport, which is the range where the page looked like
+ * a phone in a window.
+ *
+ * **The padding.** The page keeps its own `px-4 lg:px-6` inside the site's
+ * `px-3 md:px-6`, untouched, because changing it WOULD move the phone.
+ *
+ * `w-full` rather than the empty string so the value is still a class the page
+ * renders and the capture rig can import — a constant that evaluates to `""`
+ * reads, in a diff, exactly like a constant somebody forgot to finish.
  */
-export const TOURNAMENT_SHELL =
-  "mx-auto w-full max-w-[560px] lg:max-w-[1024px] xl:max-w-[1280px]";
+export const TOURNAMENT_SHELL = "w-full";
 
 /**
  * The Tournament tab's two columns above `lg`, one column below it.
@@ -47,6 +76,11 @@ export const TOURNAMENT_SHELL =
  * one wide row pushes its track past its share and the right column falls off
  * the shell — the classic CSS-grid overflow, which does not appear until real
  * data carries a long enough name.
+ *
+ * UX-P146 note: with the page-level cap gone these tracks now divide up to
+ * 1504px (1600 − the site's and the page's gutters) instead of 1280 − 48. The
+ * ratio is unchanged and deliberately so — the left column holds the things
+ * you read down and wants the larger share at any width.
  */
 export const TOURNAMENT_COLUMNS =
   "lg:grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] lg:items-start lg:gap-x-8";

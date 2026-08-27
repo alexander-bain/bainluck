@@ -70,33 +70,76 @@ function loadGrid() {
 }
 
 describe("UX-P145: the desktop layout exists", () => {
-  describe("the page shell", () => {
-    it("keeps the 560px phone column — every prior ruling was verdicted on it", () => {
-      // The desktop work must be ADDITIVE. UX-P131 through UX-P143 were all
-      // signed off against a 390px capture whose content box is 358px inside a
-      // 560px shell; moving that number silently re-opens every one of them.
-      expect(TOURNAMENT_SHELL).toContain("max-w-[560px]");
+  /**
+   * UX-P146 REPLACED THIS BLOCK WHOLESALE.
+   *
+   * UX-P145 pinned "the shell widens to 1024 then 1280". Alex's answer to that
+   * artifact was "doesn't the rest of the desktop site just use as much width
+   * as the user gives it?", and it does — so the property worth guarding is the
+   * opposite one: this page must carry NO width of its own, and must inherit
+   * the site container it now depends on.
+   */
+  describe("the page shell — UX-P146: there isn't one", () => {
+    it("carries no max-width of its own, at any breakpoint", () => {
+      // The revert this catches is a well-meaning one: somebody reads "the page
+      // is too wide on a 27-inch monitor" and puts a cap back on THIS page
+      // instead of on the site container, and the tournament hub is once again
+      // the only page that answers to a different number.
+      expect(TOURNAMENT_SHELL).not.toMatch(/max-w-/);
+      expect(TOURNAMENT_SHELL).not.toMatch(/\d+px/);
+      // Not a mx-auto column either — centring only means something to an
+      // element that is narrower than its parent, and this one never is.
+      expect(TOURNAMENT_SHELL).not.toContain("mx-auto");
     });
 
-    it("widens above `lg` — the actual defect Alex reported", () => {
-      expect(TOURNAMENT_SHELL).toMatch(/lg:max-w-\[\d{4}px\]/);
-      expect(TOURNAMENT_SHELL).toMatch(/xl:max-w-\[\d{4}px\]/);
+    it("the phone is untouched, which is why removing the cap was safe", () => {
+      // The load-bearing fact behind "no prior ruling re-opens": UX-P131
+      // through UX-P145 were verdicted at a 390px viewport, and 390 < 560, so
+      // `max-w-[560px]` never bound a single one of those captures. Asserting
+      // the arithmetic rather than the intent, because the intent is what a
+      // future reader will doubt.
+      const PHONE_VIEWPORT_PX = 390;
+      const RETIRED_CAP_PX = 560;
+      expect(PHONE_VIEWPORT_PX).toBeLessThan(RETIRED_CAP_PX);
+    });
 
-      // And the widths ascend. A typo that puts the smaller number at the
-      // larger breakpoint gives you a page that gets NARROWER as the window
-      // grows, which is both absurd and easy to miss without a browser.
-      const widths = [...TOURNAMENT_SHELL.matchAll(/max-w-\[(\d+)px\]/g)].map((m) =>
-        Number(m[1])
-      );
-      expect(widths.length).toBe(3);
-      expect(widths).toEqual([...widths].sort((a, b) => a - b));
-      expect(new Set(widths).size).toBe(3);
+    it("defers to the SITE container — and that container still exists", () => {
+      // The page now has no width because `app/layout.tsx` has one. If that
+      // wrapper is ever removed or renamed, this page goes edge-to-edge on a
+      // 3440px monitor and nothing else in this file would notice.
+      const layout = fs.readFileSync(path.join(FRONTEND, "app", "layout.tsx"), "utf8");
+      expect(layout).toContain('<main className="flex-1 pb-20 md:pb-0">');
+      expect(layout).toContain('className="max-w-content mx-auto px-3 md:px-6 py-4"');
+
+      // …and `max-w-content` is a real token, not a class Tailwind drops.
+      const tailwind = fs.readFileSync(path.join(FRONTEND, "tailwind.config.ts"), "utf8");
+      expect(tailwind).toMatch(/maxWidth:\s*\{\s*content:\s*'(\d+)px'/);
+    });
+
+    it("matches what the rest of the site does, measured rather than claimed", () => {
+      // The convention Alex was describing, checked against the two big
+      // dashboard pages that hold it cleanly: they sit inside the site
+      // container and add no width of their own, anywhere. If either grows a
+      // page-level column the sentence in `layout.ts` stops being true and this
+      // is where it is caught.
+      //
+      // Deliberately only these two. `/economics` and `/weather` DO cap some
+      // inner sections (1280/1440) and `/search` and `/hub` cap an error-state
+      // block — none of them cap the page, which is the property that matters,
+      // but a regex cannot tell a section from a page and a test that pretends
+      // it can is a test somebody deletes.
+      for (const route of ["politics", "entertainment"]) {
+        const src = fs.readFileSync(path.join(FRONTEND, "app", route, "page.tsx"), "utf8");
+        expect(src).not.toMatch(/max-w-content/);
+        expect(src).not.toMatch(/max-w-\d?xl\b/);
+        expect(src).not.toMatch(/max-w-\[\d+px\]/);
+      }
     });
 
     it("is the string the PAGE actually renders, not a constant nobody uses", () => {
       // The failure this catches: someone inlines a class on the wrapper div
       // and leaves the export behind, so this whole file goes on passing while
-      // the page reverts to a phone column.
+      // the page reverts to a column.
       const src = pageSource();
       expect(src).toContain("TOURNAMENT_SHELL");
       expect(src).toContain("className={TOURNAMENT_SHELL}");
@@ -251,6 +294,30 @@ describe("UX-P145: the desktop layout exists", () => {
       expect(html).toContain("overflow-x-auto");
       expect(html).toContain("lg:overflow-x-visible");
       expect(html).toContain("lg:!min-w-0");
+    });
+  });
+
+  describe("the chart keeps its proportions as the page widens", () => {
+    it("steps its height at `lg` AND again past `xl`", () => {
+      // Removing the page's 1280px column moved the width `lg:h-40` was
+      // measured against. Left track end to end: ~486px at `lg`, ~627px at
+      // `xl`, ~817px once `max-w-content` binds at 1600 — 3.0:1, 3.9:1 and
+      // 5.1:1 against a 160px box. The third one is a flat line where a title
+      // race should be, and it only exists because the shell is gone.
+      const source = fs.readFileSync(
+        path.join(FRONTEND, "components", "tournament", "ContenderChart.tsx"),
+        "utf8"
+      );
+      const svg = source.match(/className="block h-24 w-full[^"]*"/);
+      expect(svg).not.toBeNull();
+      expect(svg![0]).toContain("lg:h-40");
+      expect(svg![0]).toContain("2xl:h-56");
+
+      // And the heights ascend with the breakpoints, or the chart gets SHORTER
+      // as the window grows — the same class of typo the shell test caught.
+      const heights = [...svg![0].matchAll(/h-(\d+)/g)].map((m) => Number(m[1]));
+      expect(heights).toEqual([...heights].sort((a, b) => a - b));
+      expect(new Set(heights).size).toBe(heights.length);
     });
   });
 

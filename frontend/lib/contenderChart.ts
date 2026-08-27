@@ -311,11 +311,73 @@ export function chartGeometry(
 }
 
 /**
+ * `2026-08-12` -> whole days since the epoch, UTC. `null` for anything that is
+ * not a `YYYY-MM-DD`.
+ *
+ * Whole days rather than milliseconds because the domain IS days — the server
+ * means each outcome-day — and integer day numbers make the axis arithmetic
+ * exact instead of almost-exact.
+ */
+function dayNumber(iso: string): number | null {
+  const parsed = Date.parse(`${iso}T00:00:00Z`);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed / 86_400_000);
+}
+
+/**
+ * THE X-SCALE: a date's position on the drawn axis, 0 at the first reading and
+ * `geometry.width` at the last.
+ *
+ * ═══ UX-P146: THIS USED TO BE AN ORDINAL SCALE, AND THAT WAS THE BUG ═══
+ *
+ * Alex, on the UX-P145 desktop artifact: the headline chart's x-axis has weird
+ * spacing. It did, and here is the arithmetic on the real men's board
+ * (`docs/mocks/us-open/payload-2026-08-27.json`), which carries 23 observed
+ * dates: 2026-07-28 through 2026-08-17 daily, then an EIGHT-DAY HOLE, then
+ * 08-26 and 08-27.
+ *
+ * The old scale placed a point at `index / (dates.length - 1)` — its position
+ * in the LIST of observed dates, not its position in time. So:
+ *
+ *   - 08-08 sat at exactly 50%, and was labelled as the middle of the window.
+ *     The true midpoint of 28 Jul → 27 Aug is 12 Aug. The axis was four days
+ *     out and said so with a date.
+ *   - The last nine calendar days (18 Aug → 27 Aug) got 2 of 22 steps — 9% of
+ *     the width — while the eleven days 28 Jul → 08 Aug got 50% of it. Two
+ *     stretches of comparable length, drawn at a 5:1 difference in scale.
+ *   - The eight-day hole was drawn as one ordinary step, indistinguishable
+ *     from a single overnight move.
+ *
+ * The old note defended this: "gaps stay gaps, and the axis agrees with the
+ * line about where they are." The axis did agree with the line — they were
+ * wrong together. And it is the exact inverse of what this module means by
+ * gaps staying gaps (no interpolated point, ever): an ordinal scale does not
+ * preserve a gap, it DELETES it, by drawing eight missing days at the width of
+ * one observed one.
+ *
+ * So x is calendar time. A month-long window and a day-long window are now
+ * different shapes rather than the same shape with different labels.
+ */
+export function dateX(iso: string, geometry: ChartGeometry): number | null {
+  const dates = geometry.dates;
+  if (dates.length < 2) return null;
+  const at = dayNumber(iso);
+  const first = dayNumber(dates[0]);
+  const last = dayNumber(dates[dates.length - 1]);
+  if (at === null || first === null || last === null) return null;
+  // `dates` is a sorted set, so two or more entries means last > first and the
+  // divide-by-zero this would otherwise need a guard for cannot happen.
+  if (last === first) return null;
+  return ((at - first) * geometry.width) / (last - first);
+}
+
+/**
  * One series as SVG polyline points on a FIXED 0-100 y-axis.
  *
- * Returns "" for fewer than two points. x is positioned by the point's place in
- * the SHARED date domain, so a series that started late begins part-way across
- * instead of being stretched to fill the width.
+ * Returns "" for fewer than two points. x is the point's position in CALENDAR
+ * TIME across the shared domain (see `dateX`), so a series that started late
+ * begins part-way across instead of being stretched to fill the width, and two
+ * readings a fortnight apart are drawn a fortnight apart.
  */
 export function seriesPoints(
   entry: ChartSeries,
@@ -324,14 +386,16 @@ export function seriesPoints(
 ): string {
   const points = pointsInTimeframe(entry.points, timeframe);
   if (points.length < 2 || geometry.dates.length < 2) return "";
-  const span = geometry.dates.length - 1;
 
   return points
     .map((point) => {
-      const index = geometry.dates.indexOf(point.date);
-      if (index < 0) return null;
+      // Still gated on membership of the shared domain: a reading the domain
+      // does not carry is a reading outside the drawn window, and placing it by
+      // date alone would draw it off the end of the plot.
+      if (!geometry.dates.includes(point.date)) return null;
+      const x = dateX(point.date, geometry);
+      if (x === null) return null;
       const clamped = Math.max(0, Math.min(1, point.probability));
-      const x = (index * geometry.width) / span;
       const y = geometry.height - clamped * geometry.height;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
@@ -361,31 +425,75 @@ export interface AxisTick {
  * THREE TICKS, and the count is the whole design. The axis is 320 viewBox
  * units wide inside a 358px content box; a `26 Aug` label is ~34px, so four
  * labels collide at the ends and two leave the middle unanchored. First, last
- * and the median date: first and last because they bound the window, the
- * median because it is the only interior date guaranteed to exist in the
- * domain (a fixed 50% x-offset can land between readings and would label a day
- * nothing was observed).
+ * and one interior date: first and last because they bound the window.
  *
- * The ticks are DOMAIN INDICES, not calendar positions. `seriesPoints` spaces
- * points by their index in the shared date list, so a domain with a gap draws
- * its two sides adjacent; a tick placed by calendar arithmetic would sit
- * somewhere the line is not. Gaps stay gaps, and the axis agrees with the line
- * about where they are.
+ * ═══ UX-P146: THE INTERIOR TICK IS CHOSEN BY THE CALENDAR NOW ═══
+ *
+ * It used to be the MEDIAN OBSERVATION — `dates[floor(n/2)]`, drawn at exactly
+ * 50% — which on the real men's board put "8 Aug" at the midpoint of a window
+ * running 28 Jul → 27 Aug, whose true midpoint is 12 Aug. Four days of error,
+ * stated as a fact, in the one place on the chart a reader goes to orient
+ * themselves. See `dateX` for the full arithmetic and why the whole scale was
+ * wrong, not just this label.
+ *
+ * Now: take the calendar midpoint of the window, then SNAP to the observed date
+ * nearest it, and place that date at its own true x. Snapping keeps the old
+ * design's one real virtue — an axis tick labels a day something was actually
+ * read — while the position is honest about where that day falls.
+ *
+ * A snapped tick can land near an edge (a domain of one old reading and a
+ * recent clump), where its label would collide with the first or last one. In
+ * that case the interior tick is DROPPED rather than nudged: two accurate
+ * labels beat three where one is in the wrong place, and moving a tick off its
+ * date is the defect this whole change exists to remove.
  */
+/** How close to an edge an interior tick may sit before its label collides. */
+const INTERIOR_TICK_EDGE_MARGIN = 0.18;
+
 export function axisTicks(geometry: ChartGeometry, timeframe?: Timeframe): AxisTick[] {
   void timeframe;
   const dates = geometry.dates;
   if (dates.length < 2) return [];
 
-  const span = dates.length - 1;
-  const indices =
-    dates.length >= 3 ? [0, Math.floor(span / 2), span] : [0, span];
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  const firstX = dateX(first, geometry);
+  const lastX = dateX(last, geometry);
+  if (firstX === null || lastX === null) return [];
 
-  return indices.map((index) => ({
-    date: dates[index],
-    x: (index * geometry.width) / span,
-    label: shortDateLabel(dates[index]),
-  }));
+  const tick = (date: string, x: number): AxisTick => ({
+    date,
+    x,
+    label: shortDateLabel(date),
+  });
+  const ends = [tick(first, firstX), tick(last, lastX)];
+  if (dates.length < 3) return ends;
+
+  const firstDay = dayNumber(first);
+  const lastDay = dayNumber(last);
+  if (firstDay === null || lastDay === null) return ends;
+
+  const midDay = (firstDay + lastDay) / 2;
+  let nearest = dates[1];
+  let bestGap = Infinity;
+  for (const date of dates.slice(1, -1)) {
+    const day = dayNumber(date);
+    if (day === null) continue;
+    const gap = Math.abs(day - midDay);
+    if (gap < bestGap) {
+      bestGap = gap;
+      nearest = date;
+    }
+  }
+
+  const midX = dateX(nearest, geometry);
+  if (midX === null) return ends;
+  const fraction = midX / geometry.width;
+  if (fraction < INTERIOR_TICK_EDGE_MARGIN || fraction > 1 - INTERIOR_TICK_EDGE_MARGIN) {
+    return ends;
+  }
+
+  return [ends[0], tick(nearest, midX), ends[1]];
 }
 
 /** `2026-08-26` -> `26 Aug`. Day-first, because the month repeats and the day does not. */

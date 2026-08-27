@@ -863,7 +863,10 @@ def test_ruling_numbers_are_unique() -> None:
 #: count-equals-highest is true again here — still a property of this tree, not an invariant.
 #: LAT-P099 banks 137 (the headline is the cold path a user walks). Raised by
 #: COUNTING THIS TREE — 137 files, 137 index lines — never by adding a delta.
-MINIMUM_BANKED_RULINGS = 137
+#: UX-P146 banks 138 ("price" is not a word we say to readers; the word is
+#: PROBABILITY). Raised by COUNTING THIS TREE — 138 files, 138 index lines —
+#: never by adding a delta.
+MINIMUM_BANKED_RULINGS = 138
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
