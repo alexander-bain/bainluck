@@ -5,8 +5,6 @@ import React from "react";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
-  GRID_COLUMN_WIDTH_PX,
-  GRID_NAME_WIDTH_PX,
   GRID_SECTION_LABEL,
   columnSumSentence,
   formatAge,
@@ -66,6 +64,29 @@ import {
 
 const ALARM_STATES = new Set(["unlinked", "unregistered"]);
 
+/**
+ * The grid's two column widths, as CSS variables with a `lg` override.
+ *
+ * Tailwind arbitrary properties, so the desktop measurements answer to the same
+ * breakpoint as everything else on the page and no JS ever has to know how wide
+ * the window is.
+ *
+ * ⚠️ WRITTEN OUT AS A LITERAL ON PURPOSE, and it must stay one. Tailwind's JIT
+ * finds classes by scanning source text for candidates; it does not execute the
+ * file. Composing this out of `GRID_NAME_WIDTH_PX` and friends — which is what
+ * the first draft of this did, to avoid typing a number twice — means the
+ * string `[--grid-name-w:118px]` never literally appears anywhere, so Tailwind
+ * emits no rule for it, `var(--grid-name-w)` resolves to nothing, and every
+ * grid track collapses. It fails at RUNTIME with a green build and a green
+ * typecheck, which is the worst way for a layout to break.
+ *
+ * The duplication that buys is real, so it is guarded rather than tolerated:
+ * `playoffGridDesktop.test.tsx` parses these four values back out of the string
+ * and asserts they equal the exported constants.
+ */
+export const GRID_SIZING =
+  "[--grid-name-w:118px] [--grid-col-w:46px] lg:[--grid-name-w:236px] lg:[--grid-col-w:84px]";
+
 function Cell({
   cell,
   column,
@@ -109,7 +130,7 @@ function Cell({
     return (
       <span
         {...shared}
-        className={`text-[9.5px] font-semibold uppercase tracking-tight ${
+        className={`text-[9.5px] font-semibold uppercase tracking-tight lg:text-[11px] ${
           isAlarm ? "text-accent-danger" : "text-text-muted/70"
         }`}
       >
@@ -122,7 +143,7 @@ function Cell({
   return (
     <span
       {...shared}
-      className={`text-[13px] font-bold tabular-nums ${
+      className={`text-[13px] font-bold tabular-nums lg:text-[15px] ${
         cell.probability_is_live ? "text-text-primary" : "text-text-secondary"
       }`}
     >
@@ -136,7 +157,7 @@ function SumCheck({ grid }: { grid: PlayoffGridModel }) {
   const failing = grid.columnSums.filter((check) => check.verdict !== "pass");
   return (
     <details
-      className="mt-2 rounded-xl border border-surface-border bg-surface-card px-3 py-2"
+      className="mt-2 max-w-[80ch] rounded-xl border border-surface-border bg-surface-card px-3 py-2"
       data-testid="grid-sum-check"
       data-failing={failing.length}
     >
@@ -172,7 +193,7 @@ function SumCheck({ grid }: { grid: PlayoffGridModel }) {
       </ul>
       {grid.monotonicityViolations.length > 0 && (
         <p
-          className="mt-2 border-t border-surface-border pt-1.5 text-[11px] leading-snug text-text-muted"
+          className="mt-2 max-w-[80ch] border-t border-surface-border pt-1.5 text-[11px] leading-snug text-text-muted"
           data-testid="grid-monotonicity"
           data-count={grid.monotonicityViolations.length}
         >
@@ -180,14 +201,14 @@ function SumCheck({ grid }: { grid: PlayoffGridModel }) {
               than the semis; where the market says otherwise we show the
               market and say that we noticed. */}
           {grid.monotonicityViolations.length} player
-          {grid.monotonicityViolations.length === 1 ? " is" : "s are"} priced higher for a
+          {grid.monotonicityViolations.length === 1 ? " has" : "s have"} a higher chance for a
           later round than an earlier one —{" "}
           {grid.monotonicityViolations
             .slice(0, 3)
             .map((v) => `${v.display_name} (${v.earlier} → ${v.later})`)
             .join(", ")}
           {grid.monotonicityViolations.length > 3 ? " and others" : ""}. That is the
-          market disagreeing with itself in thin books, shown as quoted.
+          market disagreeing with itself where trading is thin, shown exactly as quoted.
         </p>
       )}
     </details>
@@ -214,14 +235,30 @@ export default function PlayoffGrid({
       >
         <div className="text-[15px] font-semibold text-text-primary">Nothing to chart yet</div>
         <p className="mt-1 text-[13px] text-text-secondary">
-          Nobody in this draw has a priced round to reach.
+          {/* UX-P145: "a priced round to reach" — *priced* as a verb. */}
+          No market has a number yet for how far anyone in this draw gets.
         </p>
       </div>
     );
   }
 
   const visible = expanded ? grid.rows : grid.rows.slice(0, COLLAPSED_LIST_COUNT);
-  const template = `${GRID_NAME_WIDTH_PX}px repeat(${grid.columns.length}, ${GRID_COLUMN_WIDTH_PX}px)`;
+  /**
+   * ONE template, two sets of measurements (UX-P145).
+   *
+   * The widths are CSS variables set by `GRID_SIZING` below, so the phone keeps
+   * the 118/46 every prior ruling was verdicted against and a `lg` window gets
+   * 236/84. `minmax(var(--grid-col-w), 1fr)` rather than a bare `var()` is what
+   * makes the desktop grid FILL its column instead of huddling at the left
+   * edge — and it is also why ruling 5's horizontal scroll simply never
+   * triggers up there: a track that grows to the space available cannot
+   * overflow it.
+   *
+   * On the phone `1fr` is a no-op in the scrolling case (the inline `minWidth`
+   * pins the row to exactly the sum of the minimums) and worth ~2px per column
+   * in the non-scrolling one.
+   */
+  const template = `var(--grid-name-w) repeat(${grid.columns.length}, minmax(var(--grid-col-w), 1fr))`;
   const scrolls = gridScrolls(grid.columns.length);
 
   return (
@@ -245,7 +282,7 @@ export default function PlayoffGrid({
           and hoping. */}
       {grid.alarmCells > 0 && (
         <div
-          className="mb-2 rounded-xl border border-accent-danger/40 bg-accent-danger/5 px-3 py-2 text-[11.5px] leading-snug text-accent-danger"
+          className="mb-2 max-w-[80ch] rounded-xl border border-accent-danger/40 bg-accent-danger/5 px-3 py-2 text-[11.5px] leading-snug text-accent-danger"
           data-testid="grid-alarm-banner"
           data-count={grid.alarmCells}
         >
@@ -262,14 +299,21 @@ export default function PlayoffGrid({
           scrolling body under a fixed header, is how a column header ends up
           over the wrong column. */}
       <div
-        className={`overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${
-          scrolls ? "overflow-x-auto" : ""
+        className={`overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${GRID_SIZING} ${
+          scrolls ? "overflow-x-auto lg:overflow-x-visible" : ""
         }`}
         data-testid="grid-scroller"
       >
-        <div style={scrolls ? { minWidth: `${gridWidthPx(grid.columns.length)}px` } : undefined}>
+        {/* The phone's scroll floor. `lg:min-w-0` retires it in a desktop
+            window, where the grid is already wider than this and pinning it to
+            a phone measurement would be the only thing keeping the columns
+            narrow. Ruling 5 applies where ruling 5 was measured. */}
+        <div
+          className={scrolls ? "lg:!min-w-0" : undefined}
+          style={scrolls ? { minWidth: `${gridWidthPx(grid.columns.length)}px` } : undefined}
+        >
           <div
-            className="grid items-center gap-1.5 border-b border-surface-border px-3.5 py-2 text-[9.5px] font-bold uppercase tracking-[0.05em] text-text-muted"
+            className="grid items-center gap-1.5 border-b border-surface-border px-3.5 py-2 text-[9.5px] font-bold uppercase tracking-[0.05em] text-text-muted lg:px-5 lg:py-2.5 lg:text-[10.5px]"
             style={{ gridTemplateColumns: template }}
             data-testid="grid-header"
           >
@@ -298,7 +342,7 @@ export default function PlayoffGrid({
             {visible.map((row) => (
               <li
                 key={row.entityKey}
-                className="grid items-center gap-1.5 border-t border-surface-border px-3.5 py-2 first:border-t-0"
+                className="grid items-center gap-1.5 border-t border-surface-border px-3.5 py-2 first:border-t-0 lg:px-5 lg:py-2.5"
                 style={{ gridTemplateColumns: template }}
                 data-testid="grid-row"
                 data-entity={row.entityKey}
@@ -317,8 +361,12 @@ export default function PlayoffGrid({
                       the last column. 18 + 4 leaves 96px, which fits "Carlos
                       Alcaraz" whole and truncates "Auger-Aliassime [11]"
                       slightly earlier than before. */}
+                  {/* The 18px stays. A responsive avatar means a second render
+                      path for an <img> whose intrinsic size is a prop, and the
+                      desktop name box is 236px — the crop was never the reason
+                      names truncated up there, the 118px box was. */}
                   <PlayerAvatar name={row.displayName} image={row.image} size={18} />
-                  <span className="ml-1 self-center truncate text-[13.5px] font-semibold text-text-primary">
+                  <span className="ml-1 self-center truncate text-[13.5px] font-semibold text-text-primary lg:text-[15px]">
                     {row.displayName}
                   </span>
                   {row.seed !== null && (
@@ -349,7 +397,13 @@ export default function PlayoffGrid({
       {/* THE LEGEND, AND THE COUNTERS. Every cell is in exactly one bucket and
           the buckets add to the total — a grid that cannot account for its own
           cells is not one anybody should trust. */}
-      <p className="mt-2 text-[11px] leading-snug text-text-muted" data-testid="grid-legend">
+      {/* max-w on the PROSE, not on the grid (Alex: "sensible max-width for
+          text sections only"). The table above wants every pixel of a 1280px
+          shell; this paragraph at that width is ~200 characters a line. */}
+      <p
+        className="mt-2 max-w-[80ch] text-[11px] leading-snug text-text-muted"
+        data-testid="grid-legend"
+      >
         <b className="font-semibold text-text-secondary" data-testid="grid-coverage">
           {grid.pricedCells} of {grid.totalCells}
         </b>{" "}

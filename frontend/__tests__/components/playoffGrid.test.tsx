@@ -407,7 +407,12 @@ describe("ruling 4 — the semifinal column and the sum check", () => {
     const html = renderToStaticMarkup(<PlayoffGrid grid={model} />);
     expect(html).toContain('data-testid="grid-monotonicity"');
     expect(html).toContain("Cameron Norrie (SF → F)");
-    expect(html).toContain("shown as quoted");
+    // UX-P145 reworded the sentence around this ("are priced higher" → "have a
+    // higher chance"). What the assertion is FOR is unchanged: the page says it
+    // noticed and still shows the market's own numbers rather than correcting
+    // them. `tournamentPlainLanguage.test.tsx` guards the vocabulary.
+    expect(html).toContain("shown exactly as quoted");
+    expect(html).toContain("higher chance for a later round");
   });
 });
 

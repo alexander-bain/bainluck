@@ -68,7 +68,39 @@
  * `lib/playoffGrid.ts` for why that constraint is the whole design.
  *
  * The page is therefore: pills -> chart -> the match list -> championship
- * board -> curated questions, with the playoff grid one tab away.
+ * board -> more predictions, with the playoff grid one tab away.
+ *
+ * ═══ UX-P145: THERE IS A DESKTOP NOW ═══
+ *
+ * Alex, on the live page in a desktop browser: "weirdly narrow, like we only
+ * made a mobile version." He was reading the code correctly. Every element
+ * above lived inside one `max-w-[560px]` column, so a 1400px window rendered a
+ * 560px phone in the middle of 840px of grey. Nothing was broken; there simply
+ * was no desktop presentation, because every ruling from UX-P131 on was
+ * verdicted off a 390px capture.
+ *
+ * What desktop is, here, and why it is not just a bigger number in the shell:
+ *
+ * 1. **The shell widens, the TEXT does not.** `SHELL` grows to 1280px at `xl`.
+ *    Prose does not follow it — a 12px paragraph across 1200px is ~200
+ *    characters a line and unreadable. Every prose block on these surfaces
+ *    carries its own `max-w-[NNch]`, so the measure stays a measure while the
+ *    page stops being a column. This is Alex's "sensible max-width for text
+ *    sections only", applied where the text is rather than to the page.
+ *
+ * 2. **The Tournament tab becomes two columns at `lg`.** Left, the things you
+ *    read down: the title-race chart and the match list. Right, the things you
+ *    refer across to: results, the championship board, more predictions. This
+ *    is what the vertical space buys — on a phone the board is thirty rows
+ *    below the chart, and on a desktop it is beside it. The DOM order is
+ *    unchanged from the mobile order, so the single-column stack below `lg` is
+ *    exactly the page UX-P138 shipped and every prior ruling still holds.
+ *
+ * 3. **The Bracket tab takes the whole shell.** It is a grid; grids are what
+ *    width is for. See `PlayoffGrid` for the sizing — the columns are CSS
+ *    variables now, so P138's ruling 5 (wide rounds scroll) keeps applying on
+ *    the phone it was written for and stops applying in a 1400px window, where
+ *    scrolling a five-column table is absurd.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -78,6 +110,7 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ContenderChart from "@/components/tournament/ContenderChart";
 import DrawToggle from "@/components/tournament/DrawToggle";
+import { TOURNAMENT_COLUMNS, TOURNAMENT_SHELL } from "@/components/tournament/layout";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
 import { buildBracket, prematchFromSlate } from "@/lib/bracket";
@@ -103,6 +136,14 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "tournament", label: "Tournament" },
   { id: "bracket", label: "Bracket" },
 ];
+
+/**
+ * `TOURNAMENT_SHELL` / `TOURNAMENT_COLUMNS` live in
+ * `components/tournament/layout.ts`, not here — a route file may not carry
+ * named exports (Next's generated page types fail the typecheck gate on them),
+ * and Tailwind only scans `app/` and `components/` for class text. The reasons
+ * are written out in full at the top of that module.
+ */
 
 export default function TournamentPage() {
   const params = useParams();
@@ -251,12 +292,14 @@ export default function TournamentPage() {
         </div>
       }
     >
-      <div className="mx-auto max-w-[560px]">
-        <header className="border-b border-surface-border bg-surface-card px-4 pb-3 pt-4">
-          <h1 className="text-2xl font-bold leading-tight tracking-tight text-text-primary">
+      <div className={TOURNAMENT_SHELL} data-testid="tournament-shell">
+        <header className="border-b border-surface-border bg-surface-card px-4 pb-3 pt-4 lg:px-6 lg:pb-4 lg:pt-6">
+          <h1 className="text-2xl font-bold leading-tight tracking-tight text-text-primary lg:text-[32px]">
             {data.title}
           </h1>
-          <p className="mt-0.5 text-[13px] text-text-secondary">{data.subtitle}</p>
+          <p className="mt-0.5 max-w-[70ch] text-[13px] text-text-secondary lg:text-[14.5px]">
+            {data.subtitle}
+          </p>
         </header>
 
         <div className="flex border-b border-surface-border bg-surface-card" role="tablist">
@@ -292,51 +335,86 @@ export default function TournamentPage() {
           />
         )}
 
-        <div className="px-4 pb-16">
+        <div className="px-4 pb-16 lg:px-6">
           {tab === "tournament" && (
-            <>
-              {/* THE CHART LEADS (ruling 6). The title race is what this page
-                  is about; it was previously below thirty match rows. */}
-              {board && (
-                <ContenderChart
-                  rows={board.rows}
-                  draw={board.draw}
-                  selection={selectionKeys}
-                  onToggle={(key) =>
-                    setSelection(toggleSelection(selectionKeys, key))
+            /**
+             * TWO COLUMNS AT `lg`, ONE BELOW IT (UX-P145).
+             *
+             * The DOM order is the mobile order, unchanged: chart, matches,
+             * results, board, more predictions. Below `lg` the wrappers are
+             * inert `div`s and the page stacks exactly as UX-P138 shipped it,
+             * so no ruling verdicted on a 390px capture is disturbed.
+             */
+            <div className={TOURNAMENT_COLUMNS} data-testid="tournament-columns">
+              {/* READ-DOWN COLUMN: the title race, then the day's card. */}
+              <div className="lg:min-w-0">
+                {/* THE CHART LEADS (ruling 6). The title race is what this page
+                    is about; it was previously below thirty match rows. */}
+                {board && (
+                  <ContenderChart
+                    rows={board.rows}
+                    draw={board.draw}
+                    selection={selectionKeys}
+                    onToggle={(key) =>
+                      setSelection(toggleSelection(selectionKeys, key))
+                    }
+                    onReset={() => setSelection(null)}
+                  />
+                )}
+
+                {/* THEN THE MATCH LIST (ruling 4), with round pills. Alex took
+                    direction B's ordering at UX-P132 — matches are the half with
+                    live prices and the reason to open the page on a match day —
+                    and ruling 4 promotes this from "today's matches" to the
+                    tournament's matches. The championship board follows. */}
+                <TournamentMatches
+                  entries={matches}
+                  notice={data.slate ? slateNotice(data.slate) : null}
+                  /**
+                   * UX-P145: this used to end "…and the draw fills them in on
+                   * Thursday." A weekday hard-coded in a component is true for
+                   * one week a year; the draw was made on 2026-08-27 and the
+                   * sentence was live and wrong the same afternoon. It reads
+                   * the payload's own label now, so being right is a data
+                   * property rather than a deploy.
+                   */
+                  emptyHint={
+                    data.draw_released || !data.main_draw_label
+                      ? "Nothing is on right now. Matches appear here as they are scheduled."
+                      : `Nothing is on right now. Matches appear here as they are scheduled, and the draw fills them in ${data.main_draw_label}.`
                   }
-                  onReset={() => setSelection(null)}
                 />
-              )}
+              </div>
 
-              {/* THEN THE MATCH LIST (ruling 4), with round pills. Alex took
-                  direction B's ordering at UX-P132 — matches are the half with
-                  live prices and the reason to open the page on a match day —
-                  and ruling 4 promotes this from "today's matches" to the
-                  tournament's matches. The championship board follows. */}
-              <TournamentMatches
-                entries={matches}
-                notice={data.slate ? slateNotice(data.slate) : null}
-                emptyHint="Nothing is on right now. Matches appear here as they are scheduled, and the draw fills them in on Thursday."
-              />
+              {/* REFER-ACROSS COLUMN: what just happened, the standings, the
+                  extras. On a phone these are thirty rows below the chart; the
+                  whole point of a desktop is that they are beside it. */}
+              <div className="lg:min-w-0">
+                {/* FINISHED MATCHES, WITH THE SCORE (UX-P139, item 9). Below the
+                    day's card and above the board: what just happened is worth
+                    less than what is on now and more than the season-long title
+                    race. Its data is ESPN's, which is stated on the section. */}
+                <TournamentResults results={data.results} draw={draw} />
 
-              {/* FINISHED MATCHES, WITH THE SCORE (UX-P139, item 9). Below the
-                  day's card and above the board: what just happened is worth
-                  less than what is on now and more than the season-long title
-                  race. Its data is ESPN's, which is stated on the section. */}
-              <TournamentResults results={data.results} draw={draw} />
+                {board && <TournamentBoard board={board} seriesColors={seriesColors} />}
 
-              {board && <TournamentBoard board={board} seriesColors={seriesColors} />}
+                {/* Gated by INT-131 (Alex product call 2026-08-26): CERT-411
+                    BLOCK is scoped to TournamentProps — a fresh leader beside a
+                    stale runner renders data-live=true against a server
+                    data-price-state=dark. Boards passed. See
+                    lib/tournamentFlags.ts.
 
-              {/* OFF since INT-131 (Alex product call 2026-08-26): CERT-411
-                  BLOCK is scoped to TournamentProps — a fresh leader beside a
-                  stale runner renders data-live=true against a server
-                  data-price-state=dark. Boards passed; props re-enable when its
-                  fix certs. See lib/tournamentFlags.ts. */}
-              {TOURNAMENT_PROPS_ENABLED && (
-                <TournamentProps markets={data.props ?? []} draw={draw} />
-              )}
-            </>
+                    MEASURED 2026-08-27 (UX-P145): the flag is ON in production.
+                    The shipped bundle folds the guard away and renders this
+                    section unconditionally, which is how Alex read its copy on
+                    the live page. The finding is therefore reachable by users
+                    today. Flipping a production env var is not this lane's
+                    call, so it is an Alex-ask, not a commit. */}
+                {TOURNAMENT_PROPS_ENABLED && (
+                  <TournamentProps markets={data.props ?? []} draw={draw} />
+                )}
+              </div>
+            </div>
           )}
 
           {tab === "bracket" && (
@@ -359,9 +437,15 @@ export default function TournamentPage() {
           )}
         </div>
 
-        <footer className="border-t border-surface-border px-4 py-5 text-[11.5px] leading-relaxed text-text-muted">
-          Probabilities blended across prediction markets. Trend lines are unsmoothed daily
-          readings on a fixed 0&ndash;100 scale.
+        {/* UX-P145: "Probabilities blended across prediction markets" — *blend*
+            is our word for our own aggregation step, and a reader has no reason
+            to know it. The `max-w-[74ch]` is the other half of the desktop
+            work: at 1280px this line would otherwise run the full shell. */}
+        <footer className="border-t border-surface-border px-4 py-5 text-[11.5px] leading-relaxed text-text-muted lg:px-6">
+          <span className="block max-w-[74ch]">
+            Each probability combines what several prediction markets are saying. Trend
+            lines are daily readings on a fixed 0&ndash;100 scale, with no smoothing.
+          </span>
         </footer>
       </div>
     </ErrorBoundary>

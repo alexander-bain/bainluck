@@ -171,6 +171,26 @@ export const GRID_NAME_WIDTH_PX = 118;
 export const GRID_COLUMN_WIDTH_PX = 46;
 
 /**
+ * The same two measurements taken again for a desktop window (UX-P145).
+ *
+ * Alex: the bracket looked "like we only made a mobile version", and it did,
+ * because 118/46 are the widths a 390px phone can spare and nothing above ever
+ * asked for different ones. In a 1024px+ window they are not thrifty, they are
+ * wrong: a five-column table using 348 of 1100 available pixels reads as broken
+ * rather than as compact, and it truncates "Auger-Aliassime" to buy space that
+ * is already there.
+ *
+ * 236 is the widest real name plus a seed badge at the desktop type size with
+ * nothing clipped; 84 fits "100%" in the larger tabular figures with the same
+ * breathing room 46 gives the small ones. They are applied as CSS variables and
+ * a `lg:` override rather than by measuring the viewport in JS — a hook would
+ * make the first client render disagree with the server's and the capture rig
+ * renders through `renderToStaticMarkup`, where no viewport exists at all.
+ */
+export const GRID_NAME_WIDTH_DESKTOP_PX = 236;
+export const GRID_COLUMN_WIDTH_DESKTOP_PX = 84;
+
+/**
  * ALEX'S RULING 5: "Wide rounds may scroll horizontally — sparingly, better
  * than excluding data."
  *
@@ -184,6 +204,21 @@ export const GRID_COLUMN_WIDTH_PX = 46;
  * columns (R16, QF, SF, Final, Title) the grid is 118 + 5×46 = 348px inside a
  * 358px content box, so today's grid does NOT scroll. Scrolling begins at six,
  * which is a draw whose sources price more rounds than this one's do.
+ *
+ * ═══ UX-P145: THIS IS A RULE ABOUT PHONES, AND IT SAYS SO NOW ═══
+ *
+ * Alex: "P138's horizontal-scroll ruling applies to mobile, not a 1400px
+ * window." The `358` default is the 390px phone's content box and always was —
+ * the ruling was verdicted on that capture. What was missing is that nothing
+ * stopped it applying at 1400px too, where a five-column table has a thousand
+ * spare pixels and scrolling it is absurd.
+ *
+ * The fix is not to weaken this function; it stays exactly as measured and its
+ * verdict is still what the phone gets. Desktop simply never reaches the
+ * question: `PlayoffGrid` sizes its columns with `minmax(var(--grid-col-w),
+ * 1fr)`, so above `lg` the grid fills whatever width it is given and there is
+ * nothing to scroll. Scroll survives where it was written for and expires where
+ * it was not, with no second source of truth about widths.
  */
 export function gridScrolls(columnCount: number, contentWidthPx = 358): boolean {
   return gridWidthPx(columnCount) > contentWidthPx;
@@ -261,7 +296,9 @@ export function gridCellExplanation(cell: GridCell, columnLabel: string): string
     case "settled":
       return `${columnLabel}. Settled: ${cell.note ?? "decided"}.`;
     case "no_market":
-      return `${columnLabel}. ${cell.note ?? "Neither source prices this question."}`;
+      // UX-P145: the fallback said "Neither source prices this question" —
+      // *prices* as a verb, and *source* is our word for Kalshi/Polymarket.
+      return `${columnLabel}. ${cell.note ?? "Neither Kalshi nor Polymarket runs this market."}`;
     case "unlinked":
     case "unregistered":
       return `${columnLabel}. ${cell.note ?? "Market not linked."} This is a fault on our side.`;
@@ -300,9 +337,9 @@ export function columnSumSentence(check: GridColumnSum): string {
         check.total_rows - check.priced_rows
       } of ${check.total_rows} players have no market for it.`;
     case "over":
-      return `${check.short_label} adds to ${total} against ${places}. The market is pricing more than can happen; we show what it quotes rather than scaling it down.`;
+      return `${check.short_label} adds to ${total} against ${places}. The market is giving out more chances than can happen; we show what it quotes rather than scaling it down.`;
     default:
-      return `${check.short_label} has no priced rows to check.`;
+      return `${check.short_label} has no numbers to check yet.`;
   }
 }
 

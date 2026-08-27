@@ -427,7 +427,11 @@ describe("US Open board capture rig", () => {
       expect(html).toContain('data-testid="props-empty"');
     }
     const men = renderToStaticMarkup(<TournamentProps markets={props} draw="mens-singles" />);
-    expect(men).toContain("gone dark and rotated out");
+    // UX-P145: the sentence Alex ruled forbidden ("N curated questions have
+    // gone dark and rotated out…") is gone. Ruling 8's requirement is not: the
+    // empty section still states the count and the reason.
+    expect(men).toContain("have not seen a new number on");
+    expect(men).not.toContain("gone dark and rotated out");
   });
 
   it("ITEM 10: the empty section is a CARD, not a dashed whisper", () => {
@@ -921,7 +925,8 @@ number old enough to stop being a price is removed rather than shown quietly.
     expect(openDetails).toBe(2);
     expect((html.match(/ESPN, ESPN2, ESPN\+/g) ?? []).length).toBe(openDetails);
     // 8. The rotation: empty-with-a-reason on real data, populated on panel 9.
-    expect(html).toContain("gone dark and rotated out");
+    //    UX-P145 changed the words, not the requirement.
+    expect(html).toContain("have not seen a new number on");
     expect(html).toContain('data-testid="props-moved-to-grid"');
     expect(html).toContain('data-testid="prop-market"');
     // Collapsed everywhere.

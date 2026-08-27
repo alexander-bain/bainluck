@@ -713,7 +713,8 @@ describe("curated props", () => {
   it("renders an honest empty section rather than vanishing", () => {
     const html = render(<TournamentProps markets={[]} draw="mens-singles" />);
     expect(html).toContain('data-testid="tournament-props"');
-    expect(html).toContain("Nothing curated yet");
+    // UX-P145: "Nothing curated yet" → "Nothing to ask yet".
+    expect(html).toContain("Nothing to ask yet");
     expect(html).not.toMatch(/\d+%/);
   });
 
@@ -820,7 +821,9 @@ describe("curated props", () => {
     expect(propIsDark(ancient)).toBe(true);
     const html = render(<TournamentProps markets={[ancient]} draw="mens-singles" />);
     expect(html).toContain('data-testid="props-empty"');
-    expect(html).toContain("gone dark and rotated out");
+    // UX-P145 wording. The property under test is CERT-411's, not the copy's:
+    // a card whose runner-up is twenty days old is dropped, never shown live.
+    expect(html).toContain("have not seen a new number on 1 question");
   });
 
   it("an outcome the card does not PRINT cannot demote it", () => {

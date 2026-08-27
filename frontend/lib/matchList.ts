@@ -431,8 +431,12 @@ export function matchListFromBracket(
         if (slot === null) {
           return {
             entityKey: null,
+            // UX-P145: was "No registered player". The reader does not have a
+            // register; they have a draw with a slot nobody has filled in.
+            // `placeholder: "register-hole"` keeps our name for it where our
+            // names belong — on a data attribute, not in the sentence.
             displayName:
-              from === null ? "No registered player" : `Winner of ${from.replace("-", " #")}`,
+              from === null ? "Player to be confirmed" : `Winner of ${from.replace("-", " #")}`,
             seed: null,
             image: null,
             matchProbability: null,

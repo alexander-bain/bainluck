@@ -256,7 +256,9 @@ export function slateRowFreshnessLabel(match: SlateMatch): string | null {
 
 /** Human age, rounded DOWN — "8 days ago" must never flatter to "7". */
 export function slateStalenessLabel(ageHours: number | null): string {
-  if (ageHours === null || !Number.isFinite(ageHours)) return "never priced";
+  // UX-P145: was "never priced". *Priced* is a trading verb; "no reading yet"
+  // is the same fact in the page's own honesty vocabulary.
+  if (ageHours === null || !Number.isFinite(ageHours)) return "no reading yet";
   if (ageHours < 1) {
     const minutes = Math.max(1, Math.floor(ageHours * 60));
     return `${minutes} min ago`;
