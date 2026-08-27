@@ -888,8 +888,11 @@ def background_slot_occupancy(
     about the beat changed: it was 10 s then and it is 10 s now. What changed is
     the pass wall, 32.0 s -> 45.7 s median, against a period that barely moved.
 
-    `worker-background` runs `--concurrency=2`. **102 beat entries route to that
-    queue** and one of them is this warmer. At LAT-P062's numbers the warmer held
+    `worker-background` runs `--concurrency=2`. **103 beat entries route to that
+    queue** (58 explicit + 45 fall-through, re-derived 2026-08-26 — the running
+    count and every re-derivation live on `BACKGROUND_BEAT_COUNT` below; the
+    numbered corrections that follow are dated history and keep the counts they
+    were written with) and one of them is this warmer. At LAT-P062's numbers the warmer held
     32.0/50 = 64 % of one of the two slots; at today's it holds **91 %** —
     effectively a permanent resident of one slot.
 
@@ -1023,7 +1026,36 @@ def free_background_slots(
 #: ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. The new beat named its
 #: queue rather than defaulting into it — the benign direction the guard's own
 #: docstring reserves.
-BACKGROUND_BEAT_COUNT = 102
+#:
+#: 🔴 RE-DERIVED AGAIN at queue 419 (2026-08-26, #2077): 102 -> **103**, explicit
+#: 57 -> **58**. This lane added `settlement-capture-sweep-nightly`
+#: (`crontab(minute=10, hour=10)`) with an EXPLICIT
+#: `options={"queue": "background"}`. RE-DERIVED by running the census over the
+#: assembled `beat_schedule` and printing all three numbers, never by adding one
+#: to the previous number (#1910).
+#:
+#: 🔴 THIS ONE IS ALSO THIS LANE'S OWN, SO IT IS DECLARED, and the cost shape is
+#: the OPPOSITE of LAT-P090's above — that was a 20 s warmer, this is one fire a
+#: night. Worst case is the task's own 780 s deadline once per 24 h = **~0.9 %
+#: of one slot-day**; observed is ~420 s (both production runs covered 3,000
+#: markets at concurrency 4 in ~7 minutes) = ~0.5 %. Against the 4,538-7,546 s/h
+#: bracket below that is under a third of one percent on the mean estimate.
+#:
+#: The placement is argued rather than defaulted, because this file is the
+#: reason `background` gets argued about: the alternative was `heavy`, and
+#: `heavy` is where a multi-minute network sweep does the most damage — the
+#: routing block in `app/tasks/__init__.py` keeps the whole 600-960 s backfill
+#: family off it precisely because that class fills both heavy slots for
+#: ten-minute stretches and delays the hourly calibration warmer. So this task
+#: is DECLARED in `_HEAVY_KEEP_ON_BACKGROUND` alongside `kalshi_cliff_drain`,
+#: which is the same shape (a resumable sweep over an EXPIRING population).
+#: 10:10 UTC is likewise chosen, not defaulted: hour 10 already carries three
+#: daily beats at :00 and one at :05, and the sweep's 780 s deadline ends it by
+#: :23, clear of the hourly :25/:30/:35 crowd.
+#:
+#: ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. The new beat named its
+#: queue rather than defaulting into it — the benign direction again.
+BACKGROUND_BEAT_COUNT = 103
 
 #: Demand on `background` in slot-seconds per hour, EXCLUDING `warm_typeahead`
 #: (which is self-gated by its run lock, so its 360 fires/h are not 360 passes).
