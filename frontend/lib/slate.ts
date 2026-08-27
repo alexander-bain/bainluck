@@ -21,13 +21,41 @@
  *   "today" is a claim about the person reading, not about UTC.
  */
 
-export type PriceState = "live" | "stale" | "dark";
+/**
+ * `unpriced` is NOT a fourth flavour of stale (UX-P142).
+ *
+ * `dark` means a price we once had has aged out. `unpriced` means no market
+ * was ever pinned for this question — the state of all 96 released main-draw
+ * fixtures, four days out, because nobody quotes a first round before
+ * qualifying finishes. Collapsing them would tell a reader "the market stopped
+ * quoting this" when the truth is "no market exists", and only one of those is
+ * a fault of ours.
+ */
+export type PriceState = "live" | "stale" | "dark" | "unpriced";
+
+/**
+ * The two pinned URLs a surface may render for a player (Alex's ruling 8).
+ *
+ * REGISTER-OWNED, never resolved in the browser. The repo's other person
+ * avatar (`FighterAvatar`) fires a bare-name Wikipedia lookup at render time;
+ * for tennis that returns a Serbian footballer for Aleksandar Kovacevic and a
+ * US president for Andrew Johnson, both with a photo and a 200. So the subject
+ * check happens once, offline, in `scripts/census_player_images.py`, and what
+ * reaches here is the answer rather than the question.
+ */
+export interface PlayerImage {
+  /** A verified photograph of THIS person, or `null`. */
+  url: string | null;
+  /** Their country's flag — 100% coverage, so no row is ever blank. */
+  flag_url: string | null;
+}
 
 export interface SlateSide {
   entity_key: string;
   display_name: string;
   seed: number | null;
   country: string | null;
+  image?: PlayerImage | null;
   role: string;
   probability: number | null;
   opening_probability: number | null;
@@ -41,6 +69,16 @@ export interface SlateSide {
 
 export interface SlateMatch {
   matchup_key: string;
+  /**
+   * Is ANY market pinned for this fixture (UX-P142)?
+   *
+   * `false` is the released main draw: a real fixture, from a real draw, that
+   * nobody has quoted yet. Distinct from `coherent: false`, which is two
+   * quotes that disagree. Optional so a payload written before this field
+   * existed still parses — absent reads as priced, which is what every
+   * pre-ceremony row was.
+   */
+  priced?: boolean;
   /**
    * OUR `events.id` for this fixture, when one exists (UX-P139, Alex's item 7).
    *
@@ -194,6 +232,12 @@ export interface SlateData {
  */
 export function slateRowFreshnessLabel(match: SlateMatch): string | null {
   if (slateRowIsPresentedAsLive(match)) return null;
+  if (match.priced === false) {
+    // Not an age. "Never priced" would be technically true and read as a
+    // complaint about staleness; the fixture is four days away and nobody has
+    // opened a book on it, which is ordinary and worth one plain sentence.
+    return "No market yet";
+  }
   if (!match.coherent && match.price_state === "live") {
     // Muted for disagreement, not for age. The incoherent block already says
     // so in words; repeating an age here would name the wrong problem.
@@ -370,7 +414,12 @@ export function slateNotice(slate: SlateData): SlateNotice | null {
         ? `${Math.floor(hours)} hour${Math.floor(hours) === 1 ? "" : "s"} ago`
         : `${Math.floor(hours / 24)} days ago`;
   return {
-    tone: slate.price_state,
+    // The SLATE-level state is computed from the newest observation across the
+    // list, so it is only ever live / stale / dark. `unpriced` is a per-ROW
+    // state (UX-P142) and cannot reach here; narrowed explicitly rather than
+    // cast, so the day a slate-wide unpriced state does exist this stops
+    // compiling instead of quietly labelling it "Prices paused".
+    tone: slate.price_state === "unpriced" ? "dark" : slate.price_state,
     headline: "Prices paused",
     detail: `Last confirmed reading ${when}. These are the last prices we saw, not live prices.`,
   };

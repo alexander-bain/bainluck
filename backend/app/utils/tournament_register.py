@@ -47,7 +47,7 @@ import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from app.utils.grid_register import (
     AMBIGUOUS_FINDINGS as GRID_AMBIGUOUS_FINDINGS,
@@ -309,7 +309,27 @@ STRUCTURAL_FINDINGS = frozenset({
     # mistaken for one that was cleared.
     "REACH_NO_SOURCES",
     "REACH_BLOCK_MISSING_QUESTION",
+    # ── THE PLAYER IMAGE (UX-P142, Alex's ruling 8) ─────────────────────────
+    # A face is an identity claim, and it is the one claim a reader checks
+    # instantly and trusts absolutely. The bare-name Wikipedia lookup this repo
+    # already uses for fighters returned a SERBIAN FOOTBALLER for the tennis
+    # player Aleksandar Kovacevic (measured 2026-08-27), with a photo, at 200.
+    # So an image is pinned like every other identity here — decided once,
+    # offline, against evidence — and a block that cannot show its work is
+    # refused rather than rendered.
+    "PLAYER_IMAGE_WRONG_SHAPE",
+    "PLAYER_IMAGE_NOT_VERIFIED",
+    "PLAYER_IMAGE_BAD_URL",
 })
+
+#: Image URL prefixes a register may pin.  An allowlist rather than a scheme
+#: check: the page renders these into an ``<img src>``, and "https" is not a
+#: provenance claim.  Both hosts are already reached by the app elsewhere
+#: (``lib/images.ts`` for Wikipedia thumbnails, ESPN's CDN for every team logo).
+ALLOWED_IMAGE_PREFIXES = (
+    "https://upload.wikimedia.org/",
+    "https://a.espncdn.com/",
+)
 
 #: Findings from ``validate_transition`` only.  These never reach ``classify``:
 #: they gate publication through its ``transition_ok`` argument, because they
@@ -440,6 +460,8 @@ def validate_player(player: Any, *, draw_released: bool, sources: set[str]) -> l
         elif not isinstance(slot, int) or isinstance(slot, bool) or not 1 <= slot <= 128:
             findings.append("INVALID_DRAW_SLOT")
 
+    findings.extend(validate_player_image(player.get("image")))
+
     source_blocks = player.get("sources")
     if not isinstance(source_blocks, list):
         findings.append("REGISTER_PLAYER_NO_SOURCES")
@@ -472,6 +494,78 @@ def validate_player(player: Any, *, draw_released: bool, sources: set[str]) -> l
                 # tournament). Different questions, one number, silently wrong.
                 findings.append("INVALID_MATCH_SOURCE_ON_PLAYER")
 
+    return findings
+
+
+def player_image(player: Any) -> Optional[dict[str, Any]]:
+    """The two URLs a surface may render for one player, or ``None``.
+
+    Lives here rather than on either consumer because BOTH the board and the
+    slate render a player and neither may import the other (the slate already
+    imports the board).  It also keeps one answer to "what does a page get to
+    see": the register's ``image`` block carries its evidence and its
+    verification flag, and neither is shipped — a client handed the evidence is
+    a client invited to re-decide whether the picture is of the right person,
+    and that decision was made offline precisely so it is not made at render
+    time.
+    """
+    if not isinstance(player, dict):
+        return None
+    image = player.get("image")
+    if not isinstance(image, dict):
+        return None
+    url = image.get("url")
+    flag_url = image.get("flag_url")
+    if not url and not flag_url:
+        return None
+    return {"url": url or None, "flag_url": flag_url or None}
+
+
+def validate_player_image(image: Any) -> list[str]:
+    """Validate a player's pinned image block (UX-P142, Alex's ruling 8).
+
+    Three things are checked, and the middle one is the reason this exists.
+
+    1. **Shape.** A dict with a URL string, or nothing.
+    2. **VERIFICATION.** ``verified_subject`` must be true.  The census that
+       fills this field reads the source's own description of who the picture
+       is OF and refuses anything that is not a tennis player — because a
+       bare-name lookup that returns the wrong person returns it with a photo
+       and a 200, which is indistinguishable from success at the render.  A
+       block that does not carry the check is not a block that passed it.
+    3. **Host.** ``ALLOWED_IMAGE_PREFIXES`` — see the note there.
+
+    A flag is NOT held to (2): a country flag is a claim about a country, the
+    country comes from the same ESPN record as the name, and there is no
+    wrong-person failure mode to guard against.
+    """
+    if image is None:
+        return []
+    if not isinstance(image, dict):
+        return ["PLAYER_IMAGE_WRONG_SHAPE"]
+
+    findings: list[str] = []
+    url = image.get("url")
+    flag_url = image.get("flag_url")
+    if url is None and flag_url is None:
+        # An empty block is a census result — "we looked and found nothing" —
+        # and it must carry its evidence like every other censused absence.
+        if not isinstance(image.get("evidence"), dict):
+            findings.append("PLAYER_IMAGE_WRONG_SHAPE")
+        return findings
+
+    for candidate in (url, flag_url):
+        if candidate is None:
+            continue
+        if not isinstance(candidate, str) or not candidate.startswith(
+            ALLOWED_IMAGE_PREFIXES
+        ):
+            findings.append("PLAYER_IMAGE_BAD_URL")
+
+    if url is not None and image.get("verified_subject") is not True:
+        findings.append("PLAYER_IMAGE_NOT_VERIFIED")
+    if not isinstance(image.get("evidence"), dict):
+        findings.append("PLAYER_IMAGE_WRONG_SHAPE")
     return findings
 
 
@@ -1158,6 +1252,54 @@ class TournamentRegister:
             p for p in self.players
             if p.get("draw") == draw and player_role(p) == "contender"
         ]
+
+    def image_for(self, entity_key: str) -> Optional[dict[str, Any]]:
+        """The pinned image a surface may render for one player, or ``None``.
+
+        Returns the two URLs and nothing else — the evidence and the
+        verification flag are the *register's* business, checked at load, and
+        shipping them to a browser would invite a client to re-decide something
+        that was already decided offline.
+        """
+        player = self.by_entity.get(entity_key)
+        image = (player or {}).get("image")
+        if not isinstance(image, dict):
+            return None
+        url = image.get("url")
+        flag_url = image.get("flag_url")
+        if url is None and flag_url is None:
+            return None
+        return {"url": url, "flag_url": flag_url, "country": image.get("country")}
+
+    def image_coverage(self, draw: str) -> dict[str, int]:
+        """Per-draw image counts — Alex's ruling 8 gate, as a number.
+
+        "Enable ONLY if coverage is ~complete per draw — half-covered looks
+        worse than none."  The gate is a measurement, so it is measurable from
+        the register itself rather than from a report somebody wrote once.
+        """
+        players = self.draw_players(draw)
+        faces = 0
+        flags = 0
+        for player in players:
+            image = player.get("image")
+            if not isinstance(image, dict):
+                continue
+            if image.get("url"):
+                faces += 1
+            if image.get("flag_url"):
+                flags += 1
+        return {
+            "players": len(players),
+            "faces": faces,
+            "flags": flags,
+            "any": sum(
+                1
+                for p in players
+                if isinstance(p.get("image"), dict)
+                and (p["image"].get("url") or p["image"].get("flag_url"))
+            ),
+        }
 
     def market_ids(self, source: str | None = None) -> list[int]:
         """Distinct market ids the register pins, for a bounded targeted load."""

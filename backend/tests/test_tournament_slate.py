@@ -409,7 +409,7 @@ def test_the_committed_register_produces_a_real_slate():
         side["outcome_id"]
         for matchup in register["matchups"]
         for block in matchup["sources"]
-        for side in block["sides"].values()
+        for side in (block.get("sides") or {}).values()
     }
     prices = {
         oid: {"probability": 0.5, "opening_probability": 0.5, "observed_at": generated}
@@ -417,9 +417,23 @@ def test_the_committed_register_produces_a_real_slate():
     }
     slate = build_slate(register, prices=prices, now=generated)
 
+    # EVERY registered matchup renders, priced or not (UX-P142). It used to be
+    # every matchup because every matchup was priced; the released main draw
+    # added 96 that are not, and the count holding is the ship — a fixture is a
+    # fact even when nobody has quoted it.
     assert slate["count"] == len(register["matchups"]) > 0
     assert slate["dropped"] == {}
-    assert slate["incoherent"] == 0
+
+    unpriced = [row for row in slate["matches"] if row["priced"] is False]
+    assert len(unpriced) >= 90
+    # `incoherent` counts rows with no trustworthy split. Every one of them is
+    # an unpriced fixture and none is a disagreement between two quotes — which
+    # is the invariant the old `== 0` was standing in for.
+    assert slate["incoherent"] == len(unpriced)
+    for row in unpriced:
+        assert row["price_state"] == "unpriced"
+        assert all(side["probability"] is None for side in row["sides"])
+
     for row in slate["matches"]:
         assert len(row["sides"]) == 2
         for side in row["sides"]:
@@ -1011,10 +1025,27 @@ def test_the_latch_cannot_be_un_latched_by_a_later_ingest(tmp_path):
 class TestTheFixtureSwap:
     """The bracket must come from the register, so 08-28 is a data change."""
 
-    def test_the_bracket_is_empty_before_the_ceremony(self):
+    def test_the_bracket_is_empty_because_we_hold_NO_SLOTS(self):
+        """⬅️ UX-P142 changed this test's REASON, not its expectation.
+
+        It read "empty before the ceremony" and asserted the latch was down.
+        The ceremony happened on 2026-08-27 and the latch is up; the bracket is
+        still `[]`, and now for the reason that matters:
+
+        ESPN publishes the pairings and NOT the draw-sheet position, so
+        `ingest_espn_draw.py` writes matchups and refuses to write `draw_slot`.
+        Inventing positions from ESPN's list order would fabricate the whole
+        second round while rendering exactly like the first. The fixtures reach
+        the page through the match list instead.
+
+        The sibling test below is the one that guards the LATCH, by handing
+        this function slots with the latch down.
+        """
         register = load_register("us-open", "2026")
-        assert register["draw_released"] is False
-        assert build_bracket(register, prices={}, draw="mens-singles") == []
+        assert register["draw_released"] is True
+        assert all(p.get("draw_slot") is None for p in register["players"])
+        for draw in ("mens-singles", "womens-singles"):
+            assert build_bracket(register, prices={}, draw=draw) == []
 
     def test_the_latch_alone_suppresses_the_bracket_even_with_slots_present(self):
         """The guard above passes trivially — the committed register carries no

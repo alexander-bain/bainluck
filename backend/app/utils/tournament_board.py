@@ -59,6 +59,7 @@ from app.utils.tournament_register import (
     STALE_PRICE_HOURS,
     TournamentRegister,
     check_rendered_rows,
+    player_image,
     player_role,
 )
 
@@ -331,6 +332,7 @@ def build_boards(
                         "display_name": player.get("display_name"),
                         "seed": player.get("seed"),
                         "country": player.get("country"),
+                        "image": player_image(player),
                         "state": settled_result,
                         "probability": None,
                         "probability_is_live": False,
@@ -385,6 +387,7 @@ def build_boards(
                     "display_name": player.get("display_name"),
                     "seed": player.get("seed"),
                     "country": player.get("country"),
+                    "image": player_image(player),
                     "state": "live",
                     "probability": round(blend, 6),
                     # The field the client cannot round past. See module docstring.

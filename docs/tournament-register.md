@@ -304,6 +304,104 @@ is a close time, not a start).
 `tournament_slate.build_slate` re-applies the same 6h bound at serve time. The register is a
 committed file; the clock is not.
 
+### `image` — the player's face, pinned (UX-P142, Alex's ruling 8)
+
+Ruling 8: *"census ESPN (or other) headshot coverage for both draws first. Enable ONLY if
+coverage is ~complete per draw — half-covered looks worse than none."*
+
+```jsonc
+"image": {
+  "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/.../330px-....jpg",
+  "flag_url": "https://a.espncdn.com/i/teamlogos/countries/500/esp.png",
+  "country": "Spain",
+  // THE VERIFICATION. Without it the register is REFUSED, because a bare-name
+  // lookup that returns the wrong person returns it with a photo and a 200.
+  "verified_subject": true,
+  "subject_title": "Aleksandar Kovacevic (tennis)",
+  "subject_description": "American tennis player (born 1998)",
+  "evidence": {"kind": "player-image-census", "observed_at": "…",
+               "face_source": "wikipedia", "flag_source": "espn",
+               "espn_athlete_id": 4383091, "lookup": {"attempts": [...]}}
+}
+```
+
+| finding | the failure it names |
+|---|---|
+| `PLAYER_IMAGE_NOT_VERIFIED` | **a face nobody checked the subject of** — the wrong-person defect |
+| `PLAYER_IMAGE_BAD_URL` | a host outside `ALLOWED_IMAGE_PREFIXES` reaching an `<img src>` |
+| `PLAYER_IMAGE_WRONG_SHAPE` | a block, or a censused absence, with no evidence |
+
+**The census (2026-08-27), over the 222 named main-draw players.** ESPN headshots
+**FAIL Alex's gate** — 44/110 (40%) men, 31/112 (28%) women, and the 404s are real absences
+(ESPN's athlete endpoint returns `headshot: null` for each). They are not used. Wikipedia
+thumbnails clear it at 90%/95% bare-name and 94%/96% once `(tennis)` disambiguation is tried,
+and ESPN's country flag is 100%/100% as the fallback, so no row is blank.
+
+**Why it is a committed file and not `FighterAvatar`.** That component resolves
+`getWikipediaImage(name)` in the browser. Pointed at this draw it returns a **Serbian footballer**
+for `Aleksandar Kovacevic`, the **17th President of the United States** for `Andrew Johnson`, a
+**beach volleyball player** for `Yue Yuan`, and 14 disambiguation pages — 17 of 378, all HTTP 200,
+all with a photograph. `census_player_images.py` requires the article's own description to say
+*tennis* and rejects everything else, so the decision is made once, offline, against evidence.
+
+A **flag is exempt** from the subject check: it is a claim about a country, read off the same ESPN
+record as the name, with no wrong-person failure mode.
+
+```bash
+cd backend && python3 scripts/census_player_images.py \
+  --register data/tournament_registers/us-open-2026.json \
+  --version 9 --supersedes-version 8 \
+  --observed-at 2026-08-27T18:30:00+00:00 \
+  --payload /tmp/espn_atp.json --payload /tmp/espn_wta.json
+```
+
+---
+
+## DRAW DAY, WHAT ACTUALLY HAPPENED (UX-P142, 2026-08-27)
+
+The runbook below is written for a **draw sheet** — 128 numbered slots a side. We did not get one.
+
+**`usopen.org` is unreachable from the agent sandbox**: measured 2026-08-27, every request times
+out at the egress layer with zero bytes, while `site.api.espn.com` answers in under a second. So
+the draw came from ESPN, and ESPN publishes something different:
+
+| ESPN gives us | ESPN does not give us |
+|---|---|
+| **who plays whom** — 64 first-round competitions a side, both players named | the **draw-sheet position** of any of them |
+
+Its competition list is ingest order, not bracket order — the men's list opens on a qualifier slot
+and Alcaraz is 37th. Position is exactly the fact that says which first-round winner meets which,
+so writing `draw_slot` from that order would **fabricate the entire second round while looking
+identical to the first**: a real value under a question it does not answer, which is the class
+Alex's own grid amendment names.
+
+**So `scripts/ingest_espn_draw.py` writes pairings and refuses to write slots.** `build_bracket`
+still returns `[]`; the fixtures reach the page as register `matchups` at their real round, and the
+match list renders them. Run it exactly like the sheet ingest — `--out` for a dry pass first:
+
+```bash
+cd backend && python3 scripts/ingest_espn_draw.py \
+  --register data/tournament_registers/us-open-2026.json \
+  --version 8 --supersedes-version 7 --register-from-draw \
+  --observed-at 2026-08-27T18:00:00+00:00 \
+  --out /tmp/proposed-v8.json
+```
+
+Measured on the real ceremony: **96 fixtures written** (48 a side), 224 qualifying competitions
+deliberately out of scope, **30 `Qualifier v <named player>` fixtures NOT written** because a
+matchup is a pair of registered players — those close themselves when qualifying finishes 08-28 and
+the same command is re-run — 126 players admitted as participants, 96 `country` fields filled.
+
+**A fixture nobody prices is still a fixture.** `build_slate` used to `drop("NO_LIVE_SOURCE")`, and
+on ceremony day that one line hid the entire draw: four days out, not one main-draw fixture has a
+match market at either source. An unpriced registered fixture now renders with `priced: false` and
+`price_state: "unpriced"` and no numbers. **`SIDES_UNMAPPED` keeps its drop** — a live quote we
+cannot attribute to a player is a linkage defect, not an absence, and rendering it would hide it.
+
+**If a real draw sheet arrives**, the runbook below is unchanged and `ingest_tournament_draw.py`
+writes the slots; the two ingests are compatible (`ingest_espn_draw` never sets `draw_slot`, so
+there is nothing to undo).
+
 ---
 
 ## DRAW CEREMONY RUNBOOK — the exact sequence for the day (UX-P136)

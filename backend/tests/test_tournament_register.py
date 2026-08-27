@@ -414,8 +414,23 @@ def test_committed_register_carries_no_aggregate_bucket(committed):
         assert not is_non_player(player["display_name"]), player
 
 
-def test_committed_register_has_no_draw_slots_yet(committed):
-    assert committed["draw_released"] is False
+def test_committed_register_has_no_draw_slots(committed):
+    """The ceremony happened and there are STILL no slots — deliberately.
+
+    ⬅️ UX-P142 flipped the first half of this assertion. It read
+    ``draw_released is False`` until the 2026-08-27 ceremony, and the latch is
+    up now.
+
+    The second half is unchanged and means MORE than it used to. ESPN publishes
+    who plays whom; it does not publish the draw-sheet POSITION, and its
+    competition list is ingest order (the men's list opens on a qualifier slot
+    and Alcaraz is 37th). Writing ``draw_slot`` from that order would fabricate
+    the entire second round while looking identical to the first. So the
+    register carries the pairings as matchups and no positions at all — see
+    ``scripts/ingest_espn_draw.py``. A slot appearing here means somebody
+    ingested a real draw sheet, which is fine, or invented one, which is not.
+    """
+    assert committed["draw_released"] is True
     assert all(p["draw_slot"] is None for p in committed["players"])
 
 
@@ -475,11 +490,27 @@ def test_committed_register_market_ids_are_a_bounded_load(committed):
         for block in reach["sources"]
         if block.get("market_id") is not None
     }
+    # ⬅️ UX-P142: `len(matchups)` became `len(PRICED matchups)`. The released
+    # main draw added 96 fixtures that pin NO market at either source — nobody
+    # quotes a first round four days out — and each carries two censused-absence
+    # blocks instead. A `missing` block pins no market by construction, so the
+    # draw costs this bounded load exactly nothing, which is the same property
+    # the reach cells rely on one paragraph up.
+    linked_matchup_markets = {
+        block["market_id"]
+        for matchup in committed["matchups"]
+        for block in matchup["sources"]
+        if block.get("market_id") is not None
+    }
     assert len(view.market_ids()) == (
-        4 + len(committed["matchups"]) + len(linked_reach_markets)
+        4 + len(linked_matchup_markets) + len(linked_reach_markets)
     )
-    # Two priceable sides per slate row, all distinct.
-    assert len(view.matchup_outcome_ids()) == 2 * len(committed["matchups"])
+    # Two priceable sides per PRICED slate row, all distinct.
+    priced_matchups = [
+        m for m in committed["matchups"]
+        if any(b.get("sides") for b in m["sources"])
+    ]
+    assert len(view.matchup_outcome_ids()) == 2 * len(priced_matchups)
     # One priced outcome per linked reach cell — the YES side and nothing else.
     assert len(view.reach_outcome_ids()) == len(linked_reach_markets)
 
@@ -681,8 +712,16 @@ def test_committed_matchup_sides_map_to_distinct_named_players(committed):
     """The load-bearing field: entity_key -> outcome_id, so the slate prints names."""
     assert committed["matchups"], "the second population pass produced no matchups"
     by_key = {p["entity_key"]: p for p in committed["players"]}
+    checked = 0
     for matchup in committed["matchups"]:
         for block in matchup["sources"]:
+            # ⬅️ UX-P142: a `missing` block is a censused absence and has no
+            # sides to map. The rule this test enforces is about blocks that
+            # DO carry a quote, and it still applies to every one of them.
+            if block.get("status") == "missing":
+                assert block.get("outcome_id") is None
+                continue
+            checked += 1
             sides = block["sides"]
             assert set(sides) == set(matchup["players"])
             ids = [side["outcome_id"] for side in sides.values()]
@@ -690,6 +729,7 @@ def test_committed_matchup_sides_map_to_distinct_named_players(committed):
             for key in sides:
                 # A side must resolve to a real display name, never "Yes"/"No".
                 assert by_key[key]["display_name"] not in {"Yes", "No"}
+    assert checked >= 28, "no priced matchup was actually checked"
 
 
 def test_committed_matchups_pin_the_source_own_labels(committed):
@@ -702,6 +742,12 @@ def test_committed_matchups_pin_the_source_own_labels(committed):
     """
     for matchup in committed["matchups"]:
         for block in matchup["sources"]:
+            if block.get("status") == "missing":
+                # UX-P142: a draw fixture nobody quotes has no labels to pin;
+                # what it must carry instead is the date we looked.
+                assert block["evidence"]["kind"].endswith("-absent")
+                assert block["evidence"]["observed_at"]
+                continue
             labels = block["evidence"]["source_labels"]
             assert len(labels) == 2 and all(labels), matchup["matchup_key"]
             registered = {

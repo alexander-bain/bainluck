@@ -43,6 +43,8 @@ export type GridCellState =
   /** ALARM: no cell registered for this player × round. Nobody censused it. */
   | "unregistered";
 
+import type { PlayerImage } from "./slate";
+
 export interface GridCellSource {
   source: string;
   probability?: number | null;
@@ -86,6 +88,8 @@ export interface GridRow {
   entityKey: string;
   displayName: string;
   seed: number | null;
+  /** Register-pinned face + flag (Alex's ruling 8). Read, never resolved. */
+  image: PlayerImage | null;
   rank: number | null;
   /** On the championship board, so the title column is answerable for them. */
   onBoard: boolean;
@@ -121,6 +125,7 @@ export interface PlayoffGridPayload {
     entity_key: string;
     display_name: string;
     seed: number | null;
+    image?: PlayerImage | null;
     rank: number | null;
     on_board: boolean;
     cells: Record<string, GridCell>;
@@ -199,6 +204,7 @@ export function readPlayoffGrid(payload: PlayoffGridPayload | null | undefined):
       entityKey: row.entity_key,
       displayName: row.display_name,
       seed: row.seed ?? null,
+      image: row.image ?? null,
       rank: row.rank ?? null,
       onBoard: row.on_board !== false,
       cells: row.cells ?? {},

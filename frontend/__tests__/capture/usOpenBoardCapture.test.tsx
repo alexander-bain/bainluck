@@ -38,6 +38,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import ContenderChart from "@/components/tournament/ContenderChart";
+import DrawToggle from "@/components/tournament/DrawToggle";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
 import TournamentMatches from "@/components/tournament/TournamentMatches";
@@ -62,8 +63,27 @@ const PAYLOAD_PATH = path.join(MOCKS, "payload-2026-08-27.json");
 function loadPayload(): TournamentPayload {
   return JSON.parse(fs.readFileSync(PAYLOAD_PATH, "utf8")) as TournamentPayload;
 }
+/**
+ * THE SLATE, FROM THE PAYLOAD — not from `slate-2026-08-25.json` (UX-P142).
+ *
+ * This rig had two frozen files: a payload re-captured by
+ * `capture_tournament_payload.py` minutes before each render, and a slate
+ * frozen on 2026-08-25 and never touched since. The whole reason the capture
+ * script exists is Alex's item 2 — "was that the real current state or a mock
+ * artifact?" — and the answer stayed ambiguous for the half of the page the
+ * script did not feed.
+ *
+ * It showed on ceremony day: the payload carried 96 real main-draw fixtures
+ * and this rig rendered none of them, because it was reading a slate captured
+ * two days before the draw existed. The payload's slate is the SAME
+ * `build_slate` output, produced by the same script, at the same moment as the
+ * boards beside it. `SLATE_PATH` is kept only as the two-days-ago control the
+ * test below compares against.
+ */
 function loadSlate(): SlateData {
-  return JSON.parse(fs.readFileSync(SLATE_PATH, "utf8")) as SlateData;
+  const fromPayload = loadPayload().slate;
+  if (fromPayload && Array.isArray(fromPayload.matches)) return fromPayload as SlateData;
+  throw new Error("payload carries no slate — re-run capture_tournament_payload.py");
 }
 function loadProps(): PropMarket[] {
   // The route's own `build_props` over register v7, which no longer carries
@@ -336,11 +356,41 @@ describe("US Open board capture rig", () => {
   it("the slate payload is real production data, not a fixture", () => {
     const slate = loadSlate();
     expect(slate.matches.length).toBeGreaterThan(30);
-    expect(slate.incoherent).toBe(0);
+    // NOT `incoherent === 0` any more, and the change is the ship (UX-P142).
+    // `incoherent` counts rows with no trustworthy split, and 96 of them are
+    // now the released main draw — real fixtures nobody has quoted yet. The
+    // meaningful invariant is the one underneath it: a row is incoherent ONLY
+    // because it is unpriced or because two quotes disagree, never silently.
+    const unpriced = slate.matches.filter((m) => m.priced === false);
+    expect(unpriced.length).toBeGreaterThanOrEqual(90);
+    expect(slate.incoherent).toBe(unpriced.length);
     for (const match of slate.matches) {
       expect(match.sides).toHaveLength(2);
       for (const side of match.sides) {
         expect(["Yes", "No", ""]).not.toContain(side.display_name);
+      }
+      if (match.priced === false) {
+        for (const side of match.sides) expect(side.probability).toBeNull();
+      }
+    }
+  });
+
+  it("THE DRAW IS IN IT — 96 real main-draw fixtures, both sides", () => {
+    // Alex, 2026-08-27: "the draw exists but the page shows none." This is the
+    // measurement that says it does now, taken off the same payload the rig
+    // renders rather than off the register it came from.
+    const slate = loadSlate();
+    const r128 = slate.matches.filter((m) => m.round === "R128");
+    expect(r128.length).toBeGreaterThanOrEqual(90);
+    for (const draw of ["mens-singles", "womens-singles"]) {
+      expect(r128.filter((m) => m.draw === draw).length).toBeGreaterThanOrEqual(45);
+    }
+    // Real names on both sides of every one, and the pair is never the same
+    // player twice — the shape a bad join produces.
+    for (const match of r128) {
+      expect(match.sides[0].entity_key).not.toBe(match.sides[1].entity_key);
+      for (const side of match.sides) {
+        expect(side.display_name).toMatch(/[A-Za-z]/);
       }
     }
   });
@@ -450,32 +500,31 @@ describe("US Open board capture rig", () => {
   });
 
   it("RULING 1 ON REAL DATA: match rows carry the title chip when the board prices it", () => {
-    // Today's slate is all qualifiers and NONE of them is a board contender,
-    // so no real row can carry a chip. Stated here as a measurement rather
-    // than discovered as a blank in the artifact.
+    // ⬅️ UX-P142 SUPERSEDES THIS TEST'S PREMISE, and that IS the ship.
+    //
+    // It used to assert `overlap === 0`: today's slate was all qualifiers, not
+    // one of them was a board contender, and so no REAL row could carry a
+    // title chip — a limitation stated as a measurement rather than discovered
+    // as a blank in the artifact, and demonstrated with a synthetic probe row.
+    //
+    // The released draw ends that. 26 of the men's board's contenders are now
+    // in a real, registered, main-draw fixture, so ruling 1's two-number
+    // treatment is on real data for the first time.
     const slate = loadSlate();
     const board = payload.boards[0];
     const keys = new Set(board.rows.map((r) => r.entity_key));
     const overlap = slate.matches
       .flatMap((m) => m.sides.map((s) => s.entity_key))
       .filter((key) => keys.has(key));
-    expect(overlap).toHaveLength(0);
-    // And the chip appears the moment one of them IS a contender.
-    const contender = board.rows[0];
-    const synthetic: SlateMatch = {
-      ...slate.matches[0],
-      matchup_key: "chip-probe",
-      draw: board.draw,
-      sides: [
-        { ...slate.matches[0].sides[0], entity_key: contender.entity_key, display_name: contender.display_name },
-        slate.matches[0].sides[1],
-      ],
-    };
-    // Expanded, because the probe row sorts to the end of 31 qualifiers and
-    // the list collapses to five — a chip assertion against a collapsed list
-    // would be asserting about rows that are not on screen.
+    expect(overlap.length).toBeGreaterThanOrEqual(20);
+
+    // The chip renders on a REAL row now. No probe.
     const html = renderToStaticMarkup(
-      <TournamentMatches entries={matchesFor(slate, board, [synthetic])} initialExpanded />
+      <TournamentMatches
+        entries={matchesFor(slate, board)}
+        initialRound="R128"
+        initialExpanded
+      />
     );
     expect(html).toContain('data-testid="match-title-chip"');
   });
@@ -558,15 +607,28 @@ describe("US Open board capture rig", () => {
       </div>`;
     };
 
+    // ALEX'S FINDING (d), 2026-08-27: "the Men's/Women's pills sit too close to
+    // the line above." The rig used to draw its own `.pills` div, which is why
+    // the artifact could never have shown him the defect OR the fix. It renders
+    // the shipped component now, so the spacing in the capture is the spacing
+    // on the phone.
     const phone = (title: string, sub: string, body: string, women_ = false) => `
   <div class="phone">
     <header class="hero"><h1>${title}</h1><p>${sub}</p></header>
     <div class="tabs"><span class="on">Tournament</span><span>Bracket</span></div>
-    <div class="pills"><span${women_ ? "" : ' class="on"'}>Men's</span><span${
-      women_ ? ' class="on"' : ""
-    }>Women's</span></div>
+    ${renderToStaticMarkup(
+      <DrawToggle
+        draw={women_ ? "womens-singles" : "mens-singles"}
+        onSelect={() => {}}
+      />
+    )}
     ${body}
   </div>`;
+
+    // UX-P142: the released main draw, counted off the payload so the caption
+    // cannot claim a number the panel does not render.
+    const menR128 = menMatches.filter((entry) => entry.round === "R128");
+    const womenR128 = womenMatches.filter((entry) => entry.round === "R128");
 
     // A fourth line added by the picker — shows the added colour AND the reset.
     const withFourth = toggleSelection(
@@ -779,6 +841,32 @@ number old enough to stop being a price is removed rather than shown quietly.
   )}
 </div>
 
+<div class="cap">UX-P142 &mdash; THE REAL DRAW, released at today's ceremony (R128 pill selected)</div>
+<div class="rail">
+  ${phone(
+    payload.title,
+    `Men's Round of 128 — ${menR128.length} real fixtures from ESPN`,
+    panel(men, menMatches, { matchExtra: { initialRound: "R128", initialExpanded: true } })
+  )}
+  ${phone(
+    payload.title,
+    `Women's Round of 128 — ${womenR128.length} real fixtures`,
+    panel(women, womenMatches, { matchExtra: { initialRound: "R128", initialExpanded: true } }),
+    true
+  )}
+  ${phone(
+    payload.title,
+    "An unpriced fixture, tapped open — what it says instead of a number",
+    panel(men, menMatches, {
+      matchExtra: {
+        initialRound: "R128",
+        initialExpanded: true,
+        initialOpenMatchId: menR128[0]?.id,
+      },
+    })
+  )}
+</div>
+
 <div class="cap">Bracket tab &mdash; before the draw and after it (full states: us-open-bracket.html)</div>
 <div class="rail">
   <div class="phone"><div class="pad">${preDraw}</div></div>
@@ -824,7 +912,14 @@ number old enough to stop being a price is removed rather than shown quietly.
     // 7. Where to watch: present, and ONLY in a detail view.
     expect(html).toContain('data-testid="match-detail-broadcast"');
     expect(html).not.toContain('data-testid="slate-row-broadcast"');
-    expect((html.match(/ESPN, ESPN2, ESPN\+/g) ?? []).length).toBe(1);
+    // ONE channel line PER OPEN DETAIL VIEW and nowhere else — the real form of
+    // ruling 7's rule. It was hard-coded to 1 when the artifact had exactly one
+    // tapped-open row; UX-P142 opens a second (an unpriced main-draw fixture),
+    // so the constant is now the count of detail views rather than a literal,
+    // and the "and nowhere else" half is what the equality actually asserts.
+    const openDetails = (html.match(/data-testid="match-detail-broadcast"/g) ?? []).length;
+    expect(openDetails).toBe(2);
+    expect((html.match(/ESPN, ESPN2, ESPN\+/g) ?? []).length).toBe(openDetails);
     // 8. The rotation: empty-with-a-reason on real data, populated on panel 9.
     expect(html).toContain("gone dark and rotated out");
     expect(html).toContain('data-testid="props-moved-to-grid"');
@@ -833,6 +928,34 @@ number old enough to stop being a price is removed rather than shown quietly.
     expect((html.match(/data-testid="show-more"/g) ?? []).length).toBeGreaterThan(4);
     // The pre-draw bracket panel still carries both boards.
     expect(html).toContain('data-testid="bracket-unreleased"');
+
+    // ═══ UX-P142 — ALEX'S FOUR FINDINGS, EACH IN THIS ARTIFACT ═══
+    // (a) The real draw. Both sides of it, from the register, on real names.
+    expect(menR128.length).toBeGreaterThanOrEqual(45);
+    expect(womenR128.length).toBeGreaterThanOrEqual(45);
+    expect((html.match(/data-round="R128"/g) ?? []).length).toBeGreaterThan(45);
+    expect(html).toContain("Round of 128");
+    // ...and the unpriced fixture says the right thing about itself.
+    expect(html).toContain("No market yet");
+    expect(html).not.toContain("The two prices for this match do not agree");
+    // The detail note only renders on a TAPPED-OPEN row, so it needs a panel
+    // of its own or the sentence written for the page's most common state is
+    // in the code and not in the artifact Alex looks at.
+    expect(html).toContain("Nobody is quoting this match yet");
+    // (b) The x-axis, in the rendered chart rather than in a unit test.
+    expect(html).toContain('data-testid="chart-axis"');
+    expect((html.match(/data-testid="chart-axis-label"/g) ?? []).length).toBeGreaterThan(3);
+    // (c) Player images, on every surface, and NEVER a mixed column of faces
+    // and holes on a board.
+    expect((html.match(/data-testid="player-avatar"/g) ?? []).length).toBeGreaterThan(100);
+    expect(html).toContain('data-kind="face"');
+    expect(html).toContain('data-kind="flag"');
+    expect(html).toMatch(/src="https:\/\/upload\.wikimedia\.org\//);
+    expect(html).toMatch(/src="https:\/\/a\.espncdn\.com\//);
+    // (d) The pills, from the shipped component, with the top padding on.
+    expect((html.match(/data-testid="draw-toggle"/g) ?? []).length).toBeGreaterThan(4);
+    expect(html).toMatch(/data-testid="draw-toggle"/);
+    expect(html).toContain("pb-3 pt-3");
     // And the stylesheet actually loaded — an unstyled capture is not a verdict.
     expect(appStylesheet().length).toBeGreaterThan(1000);
   });

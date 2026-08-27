@@ -64,7 +64,7 @@ from app.utils.tournament_board import (
     governing_age_hours,
     price_state,
 )
-from app.utils.tournament_register import TournamentRegister
+from app.utils.tournament_register import TournamentRegister, player_image
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +146,7 @@ def _side_view(
         "display_name": player.get("display_name") or entity_key,
         "seed": player.get("seed"),
         "country": player.get("country"),
+        "image": player_image(player),
         "role": player.get("role", "contender"),
         "probability": None,
         "opening_probability": None,
@@ -213,14 +214,32 @@ def build_slate(
             ),
             None,
         )
-        if block is None:
-            drop("NO_LIVE_SOURCE")
-            continue
-
-        sides_map = block.get("sides")
-        if not isinstance(sides_map, dict) or set(sides_map) != set(players):
-            drop("SIDES_UNMAPPED")
-            continue
+        # A REGISTERED FIXTURE NOBODY PRICES IS STILL A FIXTURE (UX-P142).
+        #
+        # This used to `drop("NO_LIVE_SOURCE")`, and on ceremony day that one
+        # line was the reason the page showed none of the released draw. The
+        # main draw is 96 registered fixtures four days out and NOT ONE of them
+        # has a match market at either source yet — nobody quotes a first round
+        # before qualifying finishes — so every one of them was dropped by a
+        # price rule and the reader was shown an empty list.
+        #
+        # A price is a fact ABOUT a fixture. Its absence is not evidence the
+        # fixture does not exist, and the page's own standing rule is that no
+        # state renders blank. So the row is built with no numbers on it and
+        # `priced: False` saying why, exactly as the grid's `no_market` cell
+        # does one tab over. `probability` stays None on both sides, which is
+        # the same None every downstream honesty gate already handles.
+        #
+        # `SIDES_UNMAPPED` keeps its drop: that is a live quote we cannot
+        # attribute to a player, which is a linkage DEFECT and not an absence,
+        # and rendering it unpriced would hide it.
+        sides_map: dict[str, Any] = {}
+        if block is not None:
+            candidate = block.get("sides")
+            if not isinstance(candidate, dict) or set(candidate) != set(players):
+                drop("SIDES_UNMAPPED")
+                continue
+            sides_map = candidate
 
         views: list[dict[str, Any]] = []
         # Both sides' own times, kept as a list. The verdict needs the oldest
@@ -283,6 +302,7 @@ def build_slate(
 
         moves = [v["move"] for v in views if v["move"] is not None]
         rows.append({
+            "priced": block is not None,
             "matchup_key": matchup.get("matchup_key"),
             # OUR `events.id` for this fixture, when the register carries one
             # (UX-P139, Alex's item 7). Register-owned so a click-through is an
@@ -303,7 +323,12 @@ def build_slate(
             "raw_sum": raw_sum,
             "opening_raw_sum": open_sum,
             "probability_is_live": state == "live" and coherent,
-            "price_state": state,
+            # `unpriced` is its own word, distinct from `dark`. Dark means a
+            # price we HAVE gone stale; unpriced means no market was ever
+            # pinned. Collapsing them would make "the market stopped quoting
+            # this" and "no market exists" the same sentence to a reader, and
+            # only one of those is our problem to fix.
+            "price_state": "unpriced" if block is None else state,
             # GOVERNING, not newest — see doctrine 4 in the module docstring.
             "observed_at": (
                 min(t for t in side_times if t is not None).isoformat()

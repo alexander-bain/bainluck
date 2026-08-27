@@ -2,6 +2,7 @@
 
 import React from "react";
 
+import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   GRID_COLUMN_WIDTH_PX,
@@ -305,7 +306,19 @@ export default function PlayoffGrid({
                 data-on-board={row.onBoard ? "true" : "false"}
               >
                 <span className="flex min-w-0 items-baseline">
-                  <span className="truncate text-[13.5px] font-semibold text-text-primary">
+                  {/* RULING 8, at 18px and NOT at the 26/28 the other two
+                      surfaces use. The name box is GRID_NAME_WIDTH_PX = 118 by
+                      measurement, and widening it by an avatar would push the
+                      five-column grid from 348px to 376px inside a 358px
+                      box — i.e. it would make ruling 5's horizontal scroll
+                      start at FIVE columns instead of six, on today's grid,
+                      and put the title column off-screen by default. A face is
+                      worth three characters of a long surname; it is not worth
+                      the last column. 18 + 4 leaves 96px, which fits "Carlos
+                      Alcaraz" whole and truncates "Auger-Aliassime [11]"
+                      slightly earlier than before. */}
+                  <PlayerAvatar name={row.displayName} image={row.image} size={18} />
+                  <span className="ml-1 self-center truncate text-[13.5px] font-semibold text-text-primary">
                     {row.displayName}
                   </span>
                   {row.seed !== null && (

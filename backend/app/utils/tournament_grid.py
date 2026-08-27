@@ -115,7 +115,7 @@ from app.utils.tournament_board import (
     governing_age_hours,
     price_state,
 )
-from app.utils.tournament_register import TournamentRegister, ROUNDS
+from app.utils.tournament_register import TournamentRegister, ROUNDS, player_image
 
 logger = logging.getLogger(__name__)
 
@@ -619,6 +619,11 @@ def build_playoff_grid(
             "entity_key": entity_key,
             "display_name": board_row.get("display_name"),
             "seed": board_row.get("seed"),
+            # Alex's ruling 8, on the surface with the most rows: the grid was
+            # 84 lines of text. Read from the register like every other cell in
+            # this file — `player_image` returns the two pinned URLs and
+            # nothing else, so the grid still reads only the register.
+            "image": player_image(reg.by_entity.get(str(entity_key)) or {}),
             "rank": board_row.get("rank"),
             # Whether this row is on the championship board. The UI uses it to
             # explain the empty title cell in a word rather than leaving the

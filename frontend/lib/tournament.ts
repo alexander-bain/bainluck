@@ -22,7 +22,7 @@
 
 import type { BracketSlot } from "./bracket";
 import type { PlayoffGridPayload } from "./playoffGrid";
-import type { Broadcast, SlateData } from "./slate";
+import type { Broadcast, PlayerImage, SlateData } from "./slate";
 import type { PropMarket } from "./tournamentProps";
 import type { TournamentResults } from "./tournamentResults";
 
@@ -47,6 +47,8 @@ export interface TournamentRow {
   display_name: string;
   seed: number | null;
   country: string | null;
+  /** Register-pinned face + flag (Alex's ruling 8). Never resolved client-side. */
+  image?: PlayerImage | null;
   rank: number;
   state: string;
   probability: number | null;

@@ -78,6 +78,197 @@ DRAW_SLUGS: dict[str, str] = {
 #: rule broken in the one direction that matters.
 FINAL_STATES = ("post",)
 
+#: The register's round vocabulary for a knockout draw, LARGEST FIRST.  Indexed
+#: by draw size rather than hard-coded to a 128 field: a 64-slot doubles draw's
+#: "Round 1" is `R64`, and reading it as `R128` would file every doubles fixture
+#: one round too early for the rest of its life.
+_KNOCKOUT_ROUNDS = ("R128", "R64", "R32", "R16", "QF", "SF", "F")
+
+#: ESPN's own names for the rounds that are not "Round N".
+_NAMED_ROUNDS: dict[str, str] = {
+    "quarterfinal": "QF",
+    "quarterfinals": "QF",
+    "semifinal": "SF",
+    "semifinals": "SF",
+    "final": "F",
+}
+
+#: A competitor slot ESPN has filled with a placeholder rather than a person.
+#: ``Bye`` is the core API's word and ``TBD`` the site API's for the same thing:
+#: a main-draw slot reserved for a qualifier who has not qualified yet.  Both
+#: also come back with a non-positive athlete id, which is the check that
+#: actually runs — the names are here so the reason is legible.
+PLACEHOLDER_NAMES = frozenset({"tbd", "bye", "qualifier", "lucky loser", ""})
+
+
+def round_names_for_size(size: int) -> list[str]:
+    """Register round keys for a knockout draw of ``size`` slots, largest first.
+
+    ``256`` and anything not a power of two return ``[]`` rather than a
+    best-effort guess: a draw whose size we cannot name is a draw whose rounds
+    we cannot name, and filing a fixture under the wrong round is exactly the
+    wrong-question defect the register exists to refuse.
+    """
+    if size < 2 or size & (size - 1):
+        return []
+    try:
+        start = _KNOCKOUT_ROUNDS.index(f"R{size}")
+    except ValueError:
+        # 8, 4 and 2 are QF / SF / F, which have no `R` name.
+        tail = {8: 4, 4: 5, 2: 6}.get(size)
+        if tail is None:
+            return []
+        start = tail
+    return list(_KNOCKOUT_ROUNDS[start:])
+
+
+def espn_round_key(display_name: Any, *, draw_size: int) -> Optional[str]:
+    """ESPN's ``round.displayName`` -> a register round key, or ``None``.
+
+    Qualifying collapses to one bucket because the register has one: ESPN
+    distinguishes three qualifying rounds and our draw does not, and inventing
+    `Q1`/`Q2`/`Q3` keys to preserve a distinction nothing renders would be
+    schema churn bought with nothing.
+    """
+    raw = str(display_name or "").strip().lower()
+    if not raw:
+        return None
+    if raw.startswith("qual"):
+        return "qualifying"
+    if raw in _NAMED_ROUNDS:
+        return _NAMED_ROUNDS[raw]
+    if raw.startswith("round "):
+        try:
+            index = int(raw.split()[1]) - 1
+        except (IndexError, ValueError):
+            return None
+        names = round_names_for_size(draw_size)
+        if 0 <= index < len(names):
+            return names[index]
+    return None
+
+
+def _competitor_view(competitor: dict[str, Any]) -> dict[str, Any]:
+    """One side of an ESPN competition, as the draw ingest wants it.
+
+    ``determined`` is the load-bearing field.  A main draw released before
+    qualifying finishes carries real placeholder slots — measured 18 of 128 on
+    the men's side and 16 on the women's, 2026-08-27 — and a placeholder is a
+    FACT about the draw, not a gap in our read of it.  It is carried through
+    rather than dropped so the fixture still says "somebody plays Jack Kennedy",
+    which is true, instead of vanishing because half of it is unknown.
+    """
+    athlete = competitor.get("athlete") or {}
+    name = str(athlete.get("displayName") or competitor.get("name") or "").strip()
+    raw_id = str(competitor.get("id") or "")
+    espn_id = int(raw_id) if raw_id.lstrip("-").isdigit() else None
+    determined = (
+        espn_id is not None
+        and espn_id > 0
+        and name.lower() not in PLACEHOLDER_NAMES
+    )
+    flag = athlete.get("flag") or {}
+    return {
+        "name": name,
+        "espn_athlete_id": espn_id if determined else None,
+        "flag_url": flag.get("href") if determined else None,
+        "country": flag.get("alt") if determined else None,
+        "determined": determined,
+        "order": competitor.get("order"),
+    }
+
+
+def parse_draw(
+    payloads: Iterable[dict[str, Any]],
+    *,
+    event_name: str,
+    draws: Iterable[str] = ("mens-singles", "womens-singles"),
+) -> dict[str, Any]:
+    """Decoded ESPN scoreboards -> the tournament's real fixtures, by draw.
+
+    THE DRAW IS A FIXTURE LIST, NOT A DRAW SHEET, and the distinction is the
+    whole reason this function exists instead of a slot writer.
+
+    ESPN publishes **who plays whom** — 64 first-round competitions a side,
+    every one of them a fact about today's ceremony.  It does not publish the
+    draw-sheet POSITION of those competitions, and the competition ids are
+    ingest order, not bracket order (measured 2026-08-27: the men's list opens
+    on an unseeded qualifier slot and Alcaraz is 37th, so it is demonstrably not
+    the sheet).  Position is what says which first-round winner meets which, so
+    writing ``draw_slot`` from this order would fabricate the second round while
+    looking exactly like the first.
+
+    So the ingest writes the pairings and leaves ``draw_slot`` null.  A pairing
+    is checkable against any published draw; an invented position is not.
+    """
+    wanted = set(draws)
+    by_draw: dict[str, list[dict[str, Any]]] = {}
+    seen: set[str] = set()
+    stats = {"events": 0, "competitions": 0, "fixtures": 0, "placeholder_slots": 0}
+
+    for payload in payloads:
+        for event in (payload or {}).get("events") or []:
+            if event_name not in str(event.get("name") or ""):
+                continue
+            stats["events"] += 1
+            for grouping in event.get("groupings") or []:
+                slug = ((grouping.get("grouping") or {}).get("slug")) or ""
+                draw = DRAW_SLUGS.get(slug)
+                if draw is None or draw not in wanted:
+                    continue
+                competitions = grouping.get("competitions") or []
+                # The draw's size, read off its own first round rather than
+                # assumed. `Round 1` is `R128` only because there are 64 of it.
+                first_round = [
+                    c
+                    for c in competitions
+                    if str(((c.get("round") or {}).get("displayName")) or "").strip().lower()
+                    == "round 1"
+                ]
+                draw_size = 2 * len(first_round)
+
+                for competition in competitions:
+                    comp_id = str(competition.get("id") or "")
+                    # Both tours carry this event with the same competition ids.
+                    if not comp_id or comp_id in seen:
+                        continue
+                    seen.add(comp_id)
+                    stats["competitions"] += 1
+
+                    round_key = espn_round_key(
+                        (competition.get("round") or {}).get("displayName"),
+                        draw_size=draw_size,
+                    )
+                    if round_key is None:
+                        continue
+
+                    competitors = sorted(
+                        (competition.get("competitors") or []),
+                        key=lambda c: c.get("order") or 0,
+                    )
+                    if len(competitors) != 2:
+                        continue
+                    sides = [_competitor_view(c) for c in competitors]
+                    if not any(side["determined"] for side in sides):
+                        # Both sides placeholders: a slot pair reserved for two
+                        # qualifiers. Nothing to say and nobody to name.
+                        continue
+                    stats["placeholder_slots"] += sum(
+                        1 for side in sides if not side["determined"]
+                    )
+                    stats["fixtures"] += 1
+                    by_draw.setdefault(draw, []).append({
+                        "espn_competition_id": comp_id,
+                        "round": round_key,
+                        "espn_round": (competition.get("round") or {}).get("displayName"),
+                        "scheduled_at": competition.get("date"),
+                        "state": ((competition.get("status") or {}).get("type") or {}).get("state"),
+                        "draw_size": draw_size,
+                        "players": sides,
+                    })
+
+    return {"draws": by_draw, "stats": stats}
+
 
 def normalize_name(name: Any) -> str:
     """NFD-fold to a comparison key — the register's own rule, restated.
@@ -234,3 +425,29 @@ async def fetch_tournament_results(
     result["errors"] = errors
     result["tours_fetched"] = len(payloads)
     return result
+
+
+def fetch_scoreboards(dates: Optional[str] = None) -> tuple[list[dict[str, Any]], list[str]]:
+    """Both tours' scoreboards, synchronously — for the offline ingest scripts.
+
+    ``fetch_tournament_results`` is the async path the Celery task uses.  The
+    draw ingest is a one-shot command run by an agent on ceremony day, and an
+    event loop bought nothing there but a way to get the error handling subtly
+    different.  Returns ``(payloads, errors)`` so a caller can tell "no
+    tournament today" from "both requests failed" — gotcha #53.
+    """
+    import httpx
+
+    payloads: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for tour in TOURS:
+        url = f"{ESPN_TENNIS_BASE}/{tour}/scoreboard"
+        try:
+            response = httpx.get(
+                url, params={"dates": dates} if dates else None, timeout=30.0
+            )
+            response.raise_for_status()
+            payloads.append(response.json())
+        except Exception as exc:  # noqa: BLE001 — reported, never silent
+            errors.append(f"{tour}: {exc}")
+    return payloads, errors
