@@ -181,3 +181,83 @@ class TestOneDefinition:
         sql = _sql(_build_futures_name_filter(combined, "us recession"))
         assert "%us%" in sql and "%recession%" in sql
         assert "to_tsvector" in sql
+
+
+class TestStemSubstringIsNotASubstituteForFTS:
+    """The code-only lever, pinned as REJECTED with the census that rejected it.
+
+    LAT-P097 tested "DDL, not code" instead of asserting it. The candidate was to
+    drop the FTS half and add a second ILIKE over the query term's Postgres stem
+    — same stemmer, no DDL, no new dependency, and measurably fast (the arm went
+    6,293.9 -> 259.0 ms on `champions` and 3,423.7 -> 24.8 ms on `werder` across
+    three interleaved production rounds, 26,106 -> 4,315 buffers).
+
+    It passes the ten-term LAT-P096 census with zero rows lost. Widened to the
+    36-term census — the 30-day `/search` head plus stemming hazards — it loses
+    recall on four terms including a head query:
+
+        grammys      15 ->   5   (-10)   head rank 7   stem `grammi`
+        cities      744 ->   4  (-740)                 stem `citi`
+        qualifying 1074 -> 237  (-837)                 stem `qualifi`
+        trophies     15 ->   8    (-7)                 stem `trophi`
+
+    Porter maps a trailing `y` to `i`, so `grammys` stems to `grammi`, which is
+    not a substring of "Grammy". FTS matches it because FTS stems BOTH sides. A
+    substring cannot express stem equivalence, and every `-y`/`-ies` word is in
+    the class.
+
+    These tests exist because the substitute would pass the older guards above:
+    it contains the token `to_tsvector` (it uses it to compute the stem) and it
+    contains `ILIKE`. The shape assertions here are the ones that can tell the
+    two apart.
+    """
+
+    def test_the_match_operator_vectorises_the_NAME_COLUMN(self):
+        """`@@`'s left side must be a tsvector over `futures_markets.name`.
+
+        The rejected lever also emits `to_tsvector`, but over the query STRING,
+        to derive a stem — never over the column. Asserting merely that the
+        token appears cannot distinguish "we search stemmed names" from "we
+        stemmed the search box".
+        """
+        sql = _sql(_arm("champions"))
+        assert re.search(
+            r"to_tsvector\(\s*'[^']+'\s*,\s*coalesce\(\s*futures_markets\.name",
+            sql,
+            re.IGNORECASE,
+        ), (
+            "No tsvector is built over futures_markets.name. If this became a "
+            "stem-substring arm, read the census in this class's docstring: it "
+            "loses 10 of 15 open markets on `grammys`, a head query."
+        )
+        assert "@@" in sql
+
+    def test_no_tsvector_is_built_over_a_string_literal(self):
+        """`to_tsvector('english', 'champions')` is the rejected lever's tell."""
+        sql = _sql(_arm("champions"))
+        assert not re.search(
+            r"to_tsvector\(\s*'[^']+'\s*,\s*'", sql, re.IGNORECASE
+        ), (
+            "A tsvector is being computed over a literal, which is how a stem is "
+            "derived in SQL. That lever is REJECTED on measurement (LAT-P097) — "
+            "it cannot express stem equivalence for `-y`/`-ies` words."
+        )
+
+    @pytest.mark.parametrize(
+        "term,stem", [("grammys", "grammi"), ("cities", "citi"),
+                      ("qualifying", "qualifi"), ("trophies", "trophi")]
+    )
+    def test_the_four_census_losses_are_not_matched_by_their_stems(self, term, stem):
+        """The arm must not have quietly become `ILIKE '%<stem>%'`.
+
+        Parametrised on the four terms the 36-term production census measured a
+        recall LOSS on, so the failure message names the term that broke rather
+        than a generic shape complaint.
+        """
+        sql = _sql(_arm(term))
+        assert f"%{stem}%" not in sql, (
+            f"`{term}` is being matched by its stem substring `%{stem}%`. The "
+            "production census measured that as a recall loss on this exact "
+            "term — see this class's docstring."
+        )
+        assert "to_tsvector" in sql and "websearch_to_tsquery" in sql

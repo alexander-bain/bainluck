@@ -1313,6 +1313,40 @@ def _build_futures_name_filter(ilike_futures_filter, fts_q: str):
     and `backend/scripts/gate_futures_name_fts_index.py`. Do not "optimise" this
     by deleting the FTS arm; `test_futures_name_filter_arms.py` is red-first
     against exactly that.
+
+    ⚠️ THE CODE-ONLY LEVER WAS TRIED AND IT FAILS ITS OWN CENSUS (LAT-P097).
+    "DDL, not code" is a conclusion, so it was tested rather than asserted. The
+    candidate: replace the FTS half with a second ILIKE over the query term's
+    POSTGRES STEM, computed in SQL so the stemmer is the same one FTS uses —
+    ``name ILIKE '%champions%' OR name ILIKE '%champion%'``. It needs no DDL, no
+    new dependency, and it is fast: production plans are index-identical whether
+    the pattern is a literal or a runtime expression, and three interleaved
+    rounds measured the arm at **6,293.9 -> 259.0 ms for `champions` (24.3x)** and
+    **3,423.7 -> 24.8 ms for `werder` (137.8x)**, 26,106 -> 4,315 buffers, with an
+    unindexed-column control moving 594 -> 2,101 ms in the same rounds to absorb
+    the host contention.
+
+    On the ten-term LAT-P096 census it looked perfect: **zero rows lost on all
+    ten.** Widened to 36 terms — the 30-day `/search` head plus deliberate
+    stemming hazards — it loses recall on four, and one of them is a head query:
+
+        grammys      15 ->   5   (-10)   head rank 7   stem `grammi`
+        cities      744 ->   4  (-740)                 stem `citi`
+        qualifying 1074 -> 237  (-837)                 stem `qualifi`
+        trophies     15 ->   8    (-7)                 stem `trophi`
+
+    One cause, and it is structural: Porter maps a trailing ``y`` to ``i``, so the
+    stem of `grammys` is `grammi`, which is **not a substring of "Grammy"** —
+    while FTS matches it, because FTS compares stems on both sides. A substring
+    cannot express stem equivalence, and every ``-y``/``-ies`` word in English is
+    in this class. Truncating the trailing ``i`` repairs recall and costs
+    precision on a ranked list that is cut at 20 (`qualifying` also gained 473
+    rows the FTS half never admitted), so it trades a measured loss for an
+    unmeasured one.
+
+    The lever is therefore REJECTED on measurement, and the DDL is not merely the
+    convenient fix — it is the only one that preserves the recall the census
+    pins. Full working: `docs/audits/latency/lat-p097-*`.
     """
     return or_(_fts_filter(FuturesMarket.name, fts_q), ilike_futures_filter)
 
