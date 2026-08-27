@@ -293,11 +293,17 @@ Recorded because either would have manufactured a win:
    comparison pass found all seven terms still warm and refused to grade them, printing
    `UNMEASURED` rather than a 26 ms p50.
 
-⚠️ **That second event is itself a finding: the typeahead cache TTL is documented as 45 s in
-`routes/events.py`, and seven terms were still serving `q=0` more than 14 minutes after their last
-touch.** This cycle did not chase it — it is off-directive and the instrument handles it correctly
-— but "the TTL is 45 s" is load-bearing in #1916's own repeat-gap arithmetic, and it does not match
-what the route was observed doing. **Parked**, not dropped.
+⚠️ **That second event looked like a TTL discrepancy and was not — it was §5's contamination,
+seen from the other side, and chasing it as a cache bug would have missed the real defect.**
+Seven terms were still serving `q=0` more than 14 minutes after their last touch, against a
+documented 45–65 s TTL. The tempting reading is "the TTL is wrong". The actual cause: those terms
+had been **elected into the typeahead warmer's head by this cycle's own probes** and were being
+rebuilt every ~37 s. `emmy` was still warm five hours later.
+
+Recorded because the misreading was one step away and the two have opposite remedies: a TTL bug is
+fixed in a config constant, and this is fixed by not letting an eval call vote. **Nothing is parked
+here** — the finding is discharged in §5 and in
+`backend/tests/test_typeahead_eval_calls_do_not_vote.py`.
 
 ---
 
@@ -312,7 +318,8 @@ what the route was observed doing. **Parked**, not dropped.
 3. **Re-run both instruments after that batch.** `deploy_proof_stage_statements.py --diff` grades
    the statement; `done_bar_snapshot.py` grades the bar, against the same term set, so the delta is
    a delta.
-4. **The TTL discrepancy in §3.4** goes to `PARKED-MEASUREMENTS.md`.
+4. **Nothing from §3.4 is parked** — what looked like a TTL discrepancy was this cycle's own
+   head contamination and is discharged in §5.
 
 ---
 
