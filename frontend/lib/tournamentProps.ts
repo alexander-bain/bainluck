@@ -257,7 +257,7 @@ export function propStaleOutcomes(market: PropMarket): PropOutcome[] {
  * non-advance markets we curate, `sinner-competes` was last priced 188 hours
  * ago and both `*-second-major` cards 810 hours — 34 days. Every one is dark.
  * The report states it and the empty state says it in words; showing a
- * month-old number in a section headed "questions worth asking" would be the
+ * month-old number under a heading that calls it a prediction would be the
  * page arguing with its own freshness doctrine.
  */
 

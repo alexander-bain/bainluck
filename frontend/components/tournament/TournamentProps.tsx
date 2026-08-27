@@ -36,6 +36,11 @@ import { stalenessLabel } from "@/lib/tournament";
  * on his next pass and it should be a one-line change, not a search. The
  * alternatives, and why the rendered default won, are in the UX-P137 report.
  *
+ * ALEX RULED (UX-P140): the name is **"More predictions"**. It is the last
+ * section on the page, and what it holds is more of exactly what the page has
+ * already been printing — predictions. Naming it by its content rather than by
+ * its rhetoric means the reader never has to work out what a new noun means.
+ *
  * WHAT THIS SECTION IS NOW (UX-P138, Alex's ruling 8). It used to hold eleven
  * questions, eight of which were "Does <player> reach the <round>?". Those are
  * not props — they are the playoff grid, and they render there. What is left
@@ -51,8 +56,8 @@ import { stalenessLabel } from "@/lib/tournament";
  * eleven markets and a curation gap nobody would ever be told about.
  */
 
-/** Alex's pick lands here. See the report for the three candidates. */
-export const SECTION_HEADING = "Questions worth asking";
+/** Alex's pick, ruled UX-P140. Every surface reads it from here. */
+export const SECTION_HEADING = "More predictions";
 
 function PropCard({ market }: { market: PropMarket }) {
   // The headline number is the CURATED answer, never the biggest number in the
