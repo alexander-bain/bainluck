@@ -57,10 +57,50 @@ PLANTS: list[tuple[str, Path, str, str, list[str], Path]] = [
     (
         "an unlinked cell silently becomes a censused absence",
         ROOT / "app/utils/tournament_grid.py",
-        'return _cell(\n            CELL_UNLINKED,\n            note=f"Registered but unpriced: {\'; \'.join(unlinked)}",',
-        'return _cell(\n            CELL_NO_MARKET,\n            note=f"Registered but unpriced: {\'; \'.join(unlinked)}",',
+        "        cell = _cell(\n            CELL_UNLINKED,\n            note=priced_note,",
+        "        cell = _cell(\n            CELL_NO_MARKET,\n            note=priced_note,",
         ["python3", "-m", "pytest", "tests/test_tournament_grid.py", "-q"],
         ROOT,
+    ),
+    # ── CERT C-UX-P139-GRID-REGISTER-1 [P1]: partial-link laundering ────────
+    #
+    # The first plant restores the shipped defect EXACTLY — `if unlinked:` back
+    # to `if not blend_rows:`, which is the one-character-class change that let a
+    # one-good-leg cell fall through to the blend path and publish as live. The
+    # second and third prove the two halves of the remedy separately, and the
+    # fourth proves it at the RENDER, because a backend-only plant stays green
+    # the day the component starts reading `cell.sources[0].probability`.
+    (
+        "P1: one missing leg falls through to the blend again (the shipped defect)",
+        ROOT / "app/utils/tournament_grid.py",
+        "    if unlinked:\n        # ── PARTIAL IS STILL BROKEN",
+        "    if not blend_rows:\n        # ── PARTIAL IS STILL BROKEN",
+        ["python3", "-m", "pytest", "tests/test_tournament_grid.py", "-q"],
+        ROOT,
+    ),
+    (
+        "P1: the alarm is raised but the surviving leg's number is published anyway",
+        ROOT / "app/utils/tournament_grid.py",
+        "        cell = _cell(\n            CELL_UNLINKED,\n            note=priced_note,\n            censused_at=censused_at,\n            sources=source_views + unlinked_views,\n        )",
+        "        cell = _cell(\n            CELL_UNLINKED,\n            probability=blend_rows[0][\"probability\"] if blend_rows else None,\n            note=priced_note,\n            censused_at=censused_at,\n            sources=source_views + unlinked_views,\n        )",
+        ["python3", "-m", "pytest", "tests/test_tournament_grid.py", "-q"],
+        ROOT,
+    ),
+    (
+        "P1: a partial failure stops being distinguishable from a total one",
+        ROOT / "app/utils/tournament_grid.py",
+        'cell["partially_unlinked"] = bool(source_views)',
+        'cell["partially_unlinked"] = False',
+        ["python3", "-m", "pytest", "tests/test_tournament_grid.py", "-q"],
+        ROOT,
+    ),
+    (
+        "P1 RENDER: the grid prints the surviving leg's price on a broken cell",
+        FRONTEND / "lib/playoffGrid.ts",
+        "export function formatGridCell(cell: GridCell): string | null {\n  if (cell.probability === null || !Number.isFinite(cell.probability)) return null;",
+        "export function formatGridCell(cell: GridCell): string | null {\n  const leg = cell.sources.find((s) => typeof s.probability === \"number\");\n  if (cell.probability === null && leg) return `${Math.round((leg.probability as number) * 100)}%`;\n  if (cell.probability === null || !Number.isFinite(cell.probability)) return null;",
+        ["npx", "jest", "--testPathPatterns=playoffGrid", "--silent"],
+        FRONTEND,
     ),
     (
         "a player with no cell for a column renders nothing instead of an alarm",
@@ -108,8 +148,12 @@ PLANTS: list[tuple[str, Path, str, str, list[str], Path]] = [
     (
         "the committed register gets a reach cell wired to the wrong player",
         ROOT / "data/tournament_registers/us-open-2026.json",
-        '"question_round": "R16",\n     "question_draw": "mens-singles",\n     "question_subject": "Alejandro Tabilo",\n     "question": "Will Alejandro Tabilo advance to the Round of 16 in Men\'s Singles at the 2026 US Open?",',
-        '"question_round": "R16",\n     "question_draw": "mens-singles",\n     "question_subject": "Somebody Else",\n     "question": "Will Alejandro Tabilo advance to the Round of 16 in Men\'s Singles at the 2026 US Open?",',
+        # The register was re-serialised in UX-P142 (v7 -> v9, 5-space indent to
+        # 10), which silently broke this anchor — the harness reports a
+        # 0x-anchor as a FAILURE rather than skipping it, which is why it was
+        # caught rather than quietly stopping being a plant.
+        '"question_round": "R16",\n          "question_draw": "mens-singles",\n          "question_subject": "Alejandro Tabilo",',
+        '"question_round": "R16",\n          "question_draw": "mens-singles",\n          "question_subject": "Somebody Else",',
         ["python3", "-m", "pytest", "tests/test_tournament_grid.py", "-q"],
         ROOT,
     ),
@@ -119,6 +163,45 @@ PLANTS: list[tuple[str, Path, str, str, list[str], Path]] = [
         ROOT / "app/tasks/tournament_price_refresh.py",
         'for reach in register.get("reaches") or []:\n        if isinstance(reach, dict):\n            for block in reach.get("sources") or []:\n                add(block)',
         "for reach in []:\n        pass",
+        ["python3", "-m", "pytest", "tests/test_tournament_price_refresh.py", "-q"],
+        ROOT,
+    ),
+    # ── CERT C-UX-P139-GRID-REGISTER-1 [P2]: the terminal contract ──────────
+    #
+    # Three plants for three separable ways to restore the false GREEN: drop the
+    # enrolment (a perfect terminal nothing consults), drop the terminal (an
+    # enrolment with nothing to read — the no-op documented in task_verdict.py),
+    # and call a zero-yield run complete (the terminal itself lying).
+    (
+        "P2: the price rail is un-enrolled, so its terminal stops being read",
+        ROOT / "app/utils/task_verdict.py",
+        '    "tournament_price_refresh",        # terminal + reason + snapshots_written',
+        "",
+        ["python3", "-m", "pytest", "tests/test_tournament_price_refresh.py",
+         "tests/test_task_verdict.py", "-q"],
+        ROOT,
+    ),
+    (
+        "P2: the results rail stops emitting a terminal, so enrolment is a no-op",
+        ROOT / "app/tasks/tournament_price_refresh.py",
+        'def _results_terminal(stats: dict[str, Any], terminal: str, reason: str) -> dict[str, Any]:\n    """Stamp the contract fields and log once. Every return goes through here."""\n    stats["terminal"] = terminal',
+        'def _results_terminal(stats: dict[str, Any], terminal: str, reason: str) -> dict[str, Any]:\n    """Stamp the contract fields and log once. Every return goes through here."""\n    stats["verdict"] = terminal',
+        ["python3", "-m", "pytest", "tests/test_tournament_price_refresh.py", "-q"],
+        ROOT,
+    ),
+    (
+        "P2: a refresh that wrote no prices calls itself complete",
+        ROOT / "app/tasks/tournament_price_refresh.py",
+        'return _refresh_terminal(stats, "failed", "no_prices_written")',
+        'return _refresh_terminal(stats, "complete", "no_prices_written")',
+        ["python3", "-m", "pytest", "tests/test_tournament_price_refresh.py", "-q"],
+        ROOT,
+    ),
+    (
+        "P2: an explicit empty target list becomes a full run again",
+        ROOT / "app/tasks/tournament_price_refresh.py",
+        "    targets = DEFAULT_PRICE_TARGETS if tournaments is None else tournaments",
+        "    targets = tournaments or DEFAULT_PRICE_TARGETS",
         ["python3", "-m", "pytest", "tests/test_tournament_price_refresh.py", "-q"],
         ROOT,
     ),
