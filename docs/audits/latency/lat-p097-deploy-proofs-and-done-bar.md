@@ -320,10 +320,39 @@ what the route was observed doing. **Parked**, not dropped.
 
 Ruling 127's general form: an instrument that writes to what it reads must say so.
 
-- **`/api/events/typeahead`: 30 cold misses issued**, each casting one vote into
-  `search:trending:24h` — the head source #1916 measures as ~89 % warmer echo. The head cut sits
-  near 65 votes and no term received more than 4, so no head membership can have moved; the votes
-  are nonetheless real and counted.
+- 🔴 **`/api/events/typeahead`: 30 cold misses issued, and the budget this section originally
+  quoted for them was WRONG. They displaced real user terms from the warmer's head.**
+
+  The original text read: *"the head cut sits near 65 votes and no term received more than 4, so no
+  head membership can have moved."* That priced the vote against `search_query_logs`, a 30-day
+  table. The probes write to **`search:trending:24h`**, a 24-hour zset. Read two hours later on
+  `GET /api/events/search/trending`:
+
+  | query | count | what it is |
+  |---|---:|---|
+  | `celtics` | 62 | the only real user traffic in the top five |
+  | `emmy` | 9 | **this cycle's probe** |
+  | `wimbledon` | 8 | **this cycle's probe** |
+  | `hurricane` | 8 | **this cycle's probe** |
+  | `tour de france` | 6 | **this cycle's probe** |
+
+  **Four of the top five.** `resolve_head` blends both sources at ~20 slots each, so a probe needed
+  single-digit votes — not 65 — to buy a warm slot. The head is a fixed 40 slots, so each probe term
+  held one a real user's term did not, and the displaced term paid the full ~4 s cold build. `emmy`
+  was still serving `q=0` five hours after its last touch against a 65 s TTL, the signature of a
+  term the warmer had adopted and was rebuilding every ~37 s.
+
+  **The general form, and it is the most transferable thing in this report:**
+  *a contamination budget priced against a distribution you READ instead of the one you WRITE to is
+  not a budget.* Name the exact key the instrument mutates and read that key's rank-2 score.
+
+  Fixed, not just described: `?debug_timing=1` / `?debug_evidence=1` now set
+  `_suppress_trending_write` (guard: `tests/test_typeahead_eval_calls_do_not_vote.py`, 5 passed),
+  and `done_bar_snapshot.py` uses debug mode for cold probes by default — **0 votes**, rather than a
+  small number argued to be safe. That trade costs comparability and the script refuses to hide it:
+  debug mode reads **2.2× low** (1,597 ms vs 3,530 ms, same slug, same seven terms, same session),
+  so the delta-vs-baseline line is **withheld** unless the run is in voting mode. The headline in
+  §3.3 is the voting-mode number and is unaffected.
 - **`/api/feed`: 18 warm requests.** They are cache hits and they sit inside the `latency-stats`
   denominator quoted in §3.3, which inflates the `hit` bucket and therefore *deflates* the miss
   share — the number is reported here as favourable-biased for that reason.

@@ -25,14 +25,57 @@ FOUR MEASUREMENTS, and why each is taken the way it is:
    fails the bar, and it is 147× the warm number, so reporting a blended
    typeahead p50 would hide the entire finding behind the cache hit rate.
 
-⚠️ CONTAMINATION THIS SCRIPT CAUSES, and it is not optional — it is the price of
-the measurement, so it is printed with the result rather than buried:
-`/api/events/typeahead` `zincrby`s `search:trending:24h` on the cache-MISS path,
-which is the head source #1916 measures as ~89 % warmer echo. Every cold probe
-below therefore casts one vote into that distribution. The default term list is
-chosen to be unreachable from the head — the head cut sits near 65 votes over 30
-days and these terms get one each — but the votes are real and are counted in the
-output. Do not raise `--n-cold` casually.
+🔴 THIS SCRIPT'S FIRST CONTAMINATION BUDGET WAS WRONG, AND IT DID REAL HARM.
+Kept in full, because the arithmetic is the lesson.
+
+The original claim was: `/api/events/typeahead` votes into `search:trending:24h`
+on the cache-miss path, "the head cut sits near 65 votes over 30 days and these
+terms get one each", therefore no head membership can move. **That budget was
+priced against the wrong distribution.** 65 is the cut in `search_query_logs`,
+a 30-day table. This script writes to `search:trending:24h`, a 24-HOUR zset whose
+rank 2 sat at **9**. `resolve_head` blends both at ~20 slots each, so a probe
+needs SINGLE-DIGIT votes to buy a warm slot.
+
+Measured two hours after the first run, on `GET /api/events/search/trending`:
+
+    celtics         62   <- the only real user traffic in the top five
+    emmy             9   <- this script's probe
+    wimbledon        8   <- this script's probe
+    hurricane        8   <- this script's probe
+    tour de france   6   <- this script's probe
+
+**Four of the top five.** The head is a fixed 40 slots, so each probe term held
+a slot a real user's term did not, and the displaced term paid the full ~4 s cold
+build. `emmy` was still serving `q=0` five hours after its last touch against a
+65 s TTL — the signature of a term the warmer had adopted and was rebuilding
+every ~37 s.
+
+⇒ **A contamination budget priced against a distribution you READ instead of the
+one you WRITE to is not a budget.** Generalised: name the exact key your
+instrument mutates, and read that key's rank-2 score, not a related table's.
+
+THE FIX, and why cold probes now default to `?debug_timing=1`. The route sets
+`_suppress_trending_write` for debug calls (LAT-P097/P098, #1866), so a debug
+probe casts no vote at all. That is a strictly better trade than a budget:
+0 votes rather than a small number argued to be safe.
+⚠️ IT IS NOT FREE, AND THE OFFSET IS LARGE — 2.2x, MEASURED, NOT "SLIGHTLY".
+`debug_timing` bypasses the response cache in BOTH directions, so it returns the
+cold BUILD without the cache write the real first touch also pays. Same slug,
+same seven `p095` terms, same session:
+
+    voting mode (true first touch)   p50 3,530 ms   7/7 graded
+    debug mode  (cold build)         p50 1,597 ms   7/7 graded
+
+That is the SALT MISTAKE IN A NEW COSTUME — a methodology change that
+manufactures a 2.2x improvement — and it is why the delta-vs-baseline line below
+is printed ONLY in voting mode. LAT-P095's published 3,816 ms was a true first
+touch; subtracting a debug-mode number from it would report a 2,219 ms win that
+is entirely the flag. The two modes are separate series and are never mixed.
+
+Use debug mode for: routine cycle tracking, any run with a large n, anything
+where the harm of voting outweighs the need for the headline number.
+Use `--voting-probes` for: the published headline, at the smallest n that will
+carry it.
 
 WHY THE COLD TERMS ARE NOT SALTED, and how a cache hit is caught instead.
 The typeahead response cache TTL is 45 s, so a term anything touched in the last
@@ -97,13 +140,15 @@ FEED_MISS_P50_BAR_MS = 1000.0
 #: `obscure` below returns 1,725 ms on the same slug in the same session, a 2.0x
 #: "improvement" that is entirely the term list.
 #:
-#: `obscure` exists for the case where the contamination matters more than the
-#: continuity: `/typeahead` votes into `search:trending:24h` on the miss path
-#: (#1916), and several `p095` terms (`emmy`, `wimbledon`, `hurricane`) sit much
-#: closer to the head than a second-tier football club does. One vote per cycle
-#: cannot move a head cut that sits near 65 votes over 30 days — LAT-P091 settled
-#: that for 4 votes — but the low-contamination option is kept for a run that
-#: needs a bigger n.
+#: `obscure` exists for `--voting-probes` runs, where contamination is real
+#: again. It is NOT a safe-because-obscure list: `emmy`, `wimbledon`, `hurricane`
+#: and `tour de france` from the `p095` set took ranks 2–5 of
+#: `search:trending:24h` on 8 votes or fewer, and a second-tier football club
+#: would have done the same — rank 2 sat at 9. The earlier version of this
+#: comment claimed "a head cut near 65 votes over 30 days" made one vote per
+#: cycle unreachable; that was the wrong distribution and it is corrected in the
+#: module docstring. `obscure` buys terms whose displacement costs a real user
+#: less, not terms that cannot displace.
 TERM_SETS: dict[str, list[str]] = {
     "p095": [
         "ballon",
@@ -199,7 +244,7 @@ def _fmt(v: float | None, nd: int = 1) -> str:
 
 
 def measure(n_feed: int, n_warm: int, n_cold: int, salt: str, offset: int,
-            term_set: str) -> dict:
+            term_set: str, voting_probes: bool) -> dict:
     token = os.environ["ADMIN_TOKEN"]
     out: dict = {"salt": salt, "requests_issued": 0, "trending_votes_cast": 0}
 
@@ -272,8 +317,14 @@ def measure(n_feed: int, n_warm: int, n_cold: int, salt: str, offset: int,
     discarded: list[dict] = []
     terms = TERM_SETS[term_set]
     out["term_set"] = term_set
+    # `debug_timing=1` suppresses the trending vote (see the module docstring's
+    # contamination section). It is the default because 0 votes beats a budget.
+    suffix = "" if voting_probes else "&debug_timing=1"
+    out["voting_probes"] = voting_probes
     for term in terms[offset : offset + n_cold]:
-        _, h, _ = _get(f"/api/events/typeahead?q={urllib.request.quote(term)}")
+        _, h, _ = _get(
+            f"/api/events/typeahead?q={urllib.request.quote(term)}{suffix}"
+        )
         ms = _server_ms(h)
         nq = _split_queries(h)
         out["requests_issued"] += 1
@@ -287,7 +338,8 @@ def measure(n_feed: int, n_warm: int, n_cold: int, salt: str, offset: int,
             discarded.append(sample)
         else:
             cold.append(sample)
-            out["trending_votes_cast"] += 1
+            if voting_probes:
+                out["trending_votes_cast"] += 1
     out["typeahead_cold"] = cold
     out["typeahead_cold_discarded"] = discarded
     out["typeahead_cold_p50"] = _p50([c["ms"] for c in cold])
@@ -359,16 +411,31 @@ def report(snap: dict, prev: dict | None) -> int:
         print(f"   DISCARDED (cache hit, not a cold build): {c['term']} "
               f"{c['ms']:,.1f} ms q={c['queries']}")
 
-    if snap.get("term_set") == "p095" and snap.get("typeahead_cold_p50") is not None:
+    if (
+        snap.get("term_set") == "p095"
+        and snap.get("typeahead_cold_p50") is not None
+        and snap.get("voting_probes")
+    ):
         d = snap["typeahead_cold_p50"] - P095_BASELINE_COLD_P50_MS
         print()
-        print(f"## delta vs the published baseline (LAT-P095, same term set): "
+        print(f"## delta vs the published baseline (LAT-P095, same term set, "
+              f"same voting mode): "
               f"{d:+,.1f} ms  ({snap['typeahead_cold_p50']:,.1f} vs "
               f"{P095_BASELINE_COLD_P50_MS:,.1f})")
+
+    elif snap.get("term_set") == "p095" and not snap.get("voting_probes"):
+        print()
+        print("## delta vs the published baseline: WITHHELD — this run is in "
+              "debug (non-voting) mode and LAT-P095's 3,816 ms is a true first "
+              "touch. The two series are 2.2x apart and must not be subtracted.")
 
     print()
     print(f"## VERDICT: THE DONE BAR IS {'MET' if met else 'NOT MET'}")
     print()
+    mode = ("TRUE FIRST TOUCH (voting)" if snap.get("voting_probes")
+            else "cold build via debug_timing — NON-VOTING, and reads ~2.2x LOW "
+            "vs a true first touch. Not comparable to a voting-mode series.")
+    print(f"Cold-probe mode: {mode}")
     print(f"Contamination declared: {snap['requests_issued']} requests issued by this "
           f"run, of which {snap['trending_votes_cast']} were cold `/typeahead` misses "
           "that each cast one vote into `search:trending:24h` (#1916's head source). "
@@ -384,6 +451,10 @@ def main() -> int:
     ap.add_argument("--n-feed", type=int, default=6)
     ap.add_argument("--n-warm", type=int, default=6)
     ap.add_argument("--n-cold", type=int, default=8)
+    ap.add_argument("--voting-probes", action="store_true",
+                    help="measure the TRUE first touch instead of the cold "
+                         "build — costs one trending vote per probe; read the "
+                         "module docstring before using it")
     ap.add_argument("--term-set", choices=sorted(TERM_SETS), default="p095",
                     help="p095 = the continuity set the program has published "
                          "against; obscure = lower head contamination")
@@ -399,7 +470,7 @@ def main() -> int:
         return 2
 
     snap = measure(args.n_feed, args.n_warm, args.n_cold, args.label,
-                   args.term_offset, args.term_set)
+                   args.term_offset, args.term_set, args.voting_probes)
     if args.out:
         with open(args.out, "w") as fh:
             json.dump(snap, fh, indent=2)

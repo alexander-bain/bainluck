@@ -1,84 +1,83 @@
 {
-  "salt": "LAT-P097",
+  "salt": "LAT-P097-final",
   "requests_issued": 28,
-  "trending_votes_cast": 3,
-  "commit": "baae52c2",
-  "uptime_seconds": 1565,
+  "trending_votes_cast": 0,
+  "commit": "06fdad74",
+  "uptime_seconds": 316,
   "warm_slug": true,
   "feed_warm_ms": [
-    42.0,
+    24.0,
     19.0,
-    49.0,
-    22.0,
+    17.0,
     20.0,
-    18.0
+    18.0,
+    17.0
   ],
-  "feed_warm_p50": 21.0,
+  "feed_warm_p50": 18.5,
   "feed_stats": {
     "window": "1 hour",
-    "generated_at": "2026-08-27T00:40:56.694707+00:00",
-    "n": 48,
+    "generated_at": "2026-08-27T00:51:41.557793+00:00",
+    "n": 52,
     "oldest_sample_age_s": 0.4,
-    "span_s": 3591.2,
+    "span_s": 1947.0,
     "buckets": {
-      "hit": 11,
-      "miss": 8,
-      "other": 3,
-      "stale_hit": 26
+      "hit": 20,
+      "miss": 2,
+      "stale_hit": 30
     },
-    "miss_n": 8,
-    "miss_p50_ms": 3201.7,
-    "miss_max_ms": 6481.6,
-    "miss_share": 0.16666666666666666
+    "miss_n": 2,
+    "miss_p50_ms": 2108.8,
+    "miss_max_ms": 2475.3,
+    "miss_share": 0.038461538461538464
   },
   "typeahead_warm_ms": [
-    32.0,
-    28.0,
+    29.0,
+    29.0,
     26.0,
     27.0,
-    29.0,
-    28.0
+    28.0,
+    32.0
   ],
-  "typeahead_warm_p50": 28.0,
+  "typeahead_warm_p50": 28.5,
   "term_set": "p095",
+  "voting_probes": false,
   "typeahead_cold": [
     {
       "term": "ballon",
-      "ms": 4425.0,
+      "ms": 1002.0,
       "queries": 5
     },
     {
       "term": "wimbledon",
-      "ms": 4222.0,
+      "ms": 1077.0,
       "queries": 8
     },
     {
       "term": "nvidia earnings",
-      "ms": 4225.0,
+      "ms": 1092.0,
       "queries": 6
-    }
-  ],
-  "typeahead_cold_discarded": [
+    },
     {
       "term": "tour de france",
-      "ms": 31.0,
-      "queries": 0
+      "ms": 1333.0,
+      "queries": 8
     },
     {
       "term": "senate runoff",
-      "ms": 31.0,
-      "queries": 0
+      "ms": 1075.0,
+      "queries": 5
     },
     {
       "term": "emmy",
-      "ms": 30.0,
-      "queries": 0
+      "ms": 1084.0,
+      "queries": 5
     },
     {
       "term": "hurricane",
-      "ms": 26.0,
-      "queries": 0
+      "ms": 1015.0,
+      "queries": 5
     }
   ],
-  "typeahead_cold_p50": 4225.0
+  "typeahead_cold_discarded": [],
+  "typeahead_cold_p50": 1077.0
 }
