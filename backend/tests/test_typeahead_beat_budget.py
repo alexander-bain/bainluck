@@ -726,8 +726,19 @@ def test_rebuild_typeahead_index_is_on_heavy_and_cannot_starve_the_warmer():
     )
 
 
-def test_the_background_queue_carries_102_beats_and_45_are_fall_through():
-    """57 beats NAME `background`. The queue carries 102.
+def test_the_background_queue_carries_103_beats_and_45_are_fall_through():
+    """58 beats NAME `background`. The queue carries 103.
+
+    🔴 **RE-DERIVED at queue 419 (2026-08-26, #2077): 102 -> 103, explicit
+    57 -> 58.** This lane added `settlement-capture-sweep-nightly`
+    (`crontab(minute=10, hour=10)`, the nightly settlement-capture sweep) with an
+    explicit `options={"queue": "background"}`. RE-DERIVED by running the census
+    below over the assembled schedule and printing all three numbers, never by
+    adding one to the old number (#1910). The fall-through half is UNMOVED at
+    **45** — the new beat named its queue rather than defaulting into it, which is
+    the benign direction this docstring reserves. The cost declaration (one fire a
+    night, 780 s worst case = ~0.9 % of a slot-day, and why `background` rather
+    than `heavy`) is on `BACKGROUND_BEAT_COUNT`.
 
     🔴 **RE-DERIVED at LAT-P090 (2026-08-25): 101 -> 102, explicit 56 -> 57.**
     This lane added `warm-search-head`, the `/search` response-cache head warmer,
@@ -781,9 +792,9 @@ def test_the_background_queue_carries_102_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 57, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 58, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 102
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 103
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
