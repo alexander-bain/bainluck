@@ -328,6 +328,30 @@ PRECOMPUTE_STATUS_TTL = 6 * 3600
 # entry (the queue forbids a beat-schedule edit) — and 2min is comfortably inside
 # the 300s stale window, so the mirror never decays and the worst case a visitor
 # can see becomes a stale_hit, not a cold build.
+#
+# 🔴 **#2236 AMENDMENT — the sentence above is true of exactly the payloads it
+# was written about, and false of the ones that matter most.** "2 min is
+# comfortably inside the 300s stale window" stopped covering live-containing
+# payloads the day #2216 gave them a 60s stale ceiling: their mirror is gone at
+# 60s, a full minute before this beat's next tick can republish it. Measured on
+# production v3911 as a clean repeating sawtooth — miss → hit → stale_hit →
+# stale_hit → miss, every 60s, on `limit=50&mode=sports` and `limit=20&
+# mode=sports` alike.
+#
+# The correction is NOT to loosen the ceiling and it is NOT to speed this pass
+# up: this pass costs p50 9.8s / p95 14.2s (`measure_beat_cost.py`, 233 runs/24h,
+# 2026-08-27) and running all of it three times as often to cover the shapes
+# that happen to be live is paying for six warm targets to keep one warm. Live
+# republication is its own, much narrower pass — `_prewarm_live_feed_shapes`
+# below — firing at `FEED_LIVE_REPUBLISH_PERIOD_S` over ONLY the shapes this
+# pass observed to be live, and skipping to near-zero cost when none are.
+#
+# The general clause, because this is the second time a period and a TTL have
+# been set in different files: **a warm rail's period is part of the cache's
+# freshness contract, not an implementation detail of the beat.** Whoever
+# shortens a TTL is changing the period requirement of every warmer that feeds
+# it, and will not know it. That is why `FEED_LIVE_REPUBLISH_PERIOD_S` is
+# declared in `feed_cache.py` beside the ceiling instead of here beside the beat.
 FEED_PREWARM_ENABLED_KEY = "discover_feed_prewarm:enabled"
 # LAT-P099: 25.0 -> 20.0, because the worst case is a SUM and the fourth shape
 # put it exactly on the task's soft limit — `test_prewarm_is_bounded` computes
@@ -394,6 +418,72 @@ def _prewarm_target_deadline(
     return max(0.0, remaining_budget_s) / remaining_targets
 FEED_PREWARM_STATUS_KEY = "bainluck:precompute:feed_prewarm:last"
 FEED_PREWARM_STATUS_TTL = 6 * 3600
+
+# --- #2236: the live republish pass ------------------------------------------
+#: Its own kill switch, separate from `FEED_PREWARM_ENABLED_KEY` on purpose. The
+#: two passes have different costs and different blast radii: turning the main
+#: warm off makes every first paint cold, turning this one off restores exactly
+#: the pre-#2236 behaviour (a 60s sawtooth) and nothing worse. An operator who
+#: needs to shed the 40s beat must not have to take the 120s one down with it.
+#: This pass ALSO honours the main switch — "the warm rail is off" must mean the
+#: whole rail, or the switch is a lie.
+FEED_LIVE_PREWARM_ENABLED_KEY = "discover_feed_live_prewarm:enabled"
+FEED_LIVE_PREWARM_STATUS_KEY = "bainluck:precompute:feed_live_prewarm:last"
+
+#: Redis hash: shape label -> "1" for every shape whose last warm produced a
+#: payload containing a live card. Written by `_prewarm_feed_shape`, i.e. by the
+#: SAME function for both passes, so the live set can never describe a warmer
+#: other than the one that ran.
+#:
+#: A hash and not a per-key marker because the reader needs the whole set in one
+#: round trip, and because a per-key marker would have to re-derive the response
+#: cache key outside the route — the LAT-P001 two-writers-one-key trap, re-entered
+#: for no gain. A label is what this pass actually selects on.
+FEED_PREWARM_LIVE_SHAPES_KEY = "bainluck:precompute:feed_prewarm:live_shapes"
+
+#: TTL on that hash, refreshed on every main pass. Deliberately > the 120s host
+#: beat period and only just: if the main warm rail dies, this pass must stop
+#: believing a stale liveness picture within a couple of its own periods rather
+#: than republishing shapes that stopped being live an hour ago. It is a
+#: dead-man's switch, not a cache.
+FEED_PREWARM_LIVE_SHAPES_TTL_S = 300
+
+
+def _record_shape_liveness(rc, label: str, live: bool) -> None:
+    """Record (or clear) one shape's liveness in the shared live set. Never raises.
+
+    Clearing matters as much as setting. A shape that goes not-live must LEAVE
+    the set, or the 40s pass keeps rebuilding a payload whose own TTL is 60/300
+    and which the 120s pass already covers — paying three times over for nothing.
+    The set is therefore always written, in both directions, on every warm.
+    """
+    try:
+        if live:
+            rc.hset(FEED_PREWARM_LIVE_SHAPES_KEY, label, "1")
+            rc.expire(FEED_PREWARM_LIVE_SHAPES_KEY, FEED_PREWARM_LIVE_SHAPES_TTL_S)
+        else:
+            rc.hdel(FEED_PREWARM_LIVE_SHAPES_KEY, label)
+    except Exception:
+        logger.debug("live-shape marker write failed for %s", label, exc_info=True)
+
+
+def _live_prewarm_labels(rc) -> set[str]:
+    """Labels the last warm observed to be live. Empty on any failure.
+
+    Empty means "republish nothing", which is the correct direction: the cost of
+    being wrong here is one 60s sawtooth (the pre-#2236 status quo), where the
+    cost of failing the other way is a 40s beat rebuilding every feed shape on
+    the site off a Redis error.
+    """
+    try:
+        raw = rc.hgetall(FEED_PREWARM_LIVE_SHAPES_KEY) or {}
+    except Exception:
+        logger.debug("live-shape marker read failed", exc_info=True)
+        return set()
+    labels = set()
+    for key in raw:
+        labels.add(key.decode() if isinstance(key, (bytes, bytearray)) else str(key))
+    return labels
 
 # The exact anonymous first-paint requests the clients issue:
 #   Discover  frontend/app/discover/page.tsx -> initialFeedRequest() + event_pct 0.15
@@ -687,6 +777,11 @@ async def _prewarm_feed_shape(
     body = json.dumps(payload, default=str)
     rc.setex(cache_key, ttl, body)
     rc.setex(f"{cache_key}:stale", stale_ttl, body)
+    # #2236: the shape's liveness is recorded by the writer that just measured
+    # it. Whichever pass called this — the 120s one or the 40s one — the live set
+    # now describes the payload actually on the key, so the republish pass can
+    # never be selecting on a belief no warmer holds.
+    _record_shape_liveness(rc, label, live)
     logger.info(
         "Pre-warmed %s feed in %.1fs (%d items, ttl=%ds, stale=%ds, live=%s)",
         label,
@@ -696,7 +791,12 @@ async def _prewarm_feed_shape(
         stale_ttl,
         live,
     )
-    return {"outcome": "ok", "duration_s": duration_s, "items": len(items)}
+    return {
+        "outcome": "ok",
+        "duration_s": duration_s,
+        "items": len(items),
+        "live": live,
+    }
 
 
 async def _prewarm_grouped_feed_shape(
@@ -850,6 +950,125 @@ async def _prewarm_discover_feed_responses():
     except Exception:
         logger.debug("feed pre-warm status write failed", exc_info=True)
 
+    return sum(1 for s in shapes.values() if s.get("outcome") == "ok")
+
+
+async def _prewarm_live_feed_shapes():
+    """Republish the live-containing feed shapes inside their own 60s ceiling (#2236).
+
+    The narrow half of the warm rail. Where `_prewarm_discover_feed_responses`
+    warms every first-paint shape every 120s, this fires every
+    `FEED_LIVE_REPUBLISH_PERIOD_S` over ONLY the shapes the last warm observed to
+    be live — because those are the only ones whose cache entry dies at 60s and
+    therefore the only ones the 120s pass structurally cannot keep warm.
+
+    Three properties, each of which is the reason a line of this is shaped the
+    way it is:
+
+    * **It usually does nothing.** Off-hours the live set is empty and the pass
+      is one `HGETALL` — this is what makes a 40s beat affordable next to a
+      120s pass that costs p50 9.8s. The cost scales with the number of shapes
+      that are actually live, which is the only thing it should scale with.
+    * **It builds through the same function as the main pass.**
+      `_prewarm_feed_shape` resolves the key by scope readback, applies the live
+      ceiling, refuses degraded and empty payloads, and records liveness. A
+      second, faster republisher that reimplemented any of that would be the
+      LAT-P001 two-writers defect with a new period attached.
+    * **A shape that stops being live leaves on its own.** The warm it just ran
+      rewrites the live set, so the set converges within one pass in both
+      directions and no separate expiry logic exists to get wrong.
+
+    COST, stated rather than left to be discovered — `worker-background` runs
+    `--concurrency=2` against ~57 beats and this makes 58:
+      * Idle (the overnight case): one `HGETALL` + one `SETEX`, ~2,160 passes/day,
+        well under a minute of slot time across the whole day.
+      * Live, taking 8h/day with two live shapes as the working figure: ~720
+        passes x 2 builds x ~1.2s ~= 29 min/day, about 1% of the two-slot pool.
+      * Worst case for a SINGLE pass — 20s budget, 35s hard limit — is strictly
+        smaller than the pass it sits beside, which may hold a slot for 80s of
+        budget under a 120s soft limit.
+
+    NOT DONE, and named so it is a decision rather than an oversight: this does
+    not skip a shape whose current publication would survive to the next pass.
+    With zero headroom in the #2236 invariant (40 + 20 == 60) such a skip can
+    never fire, so it would be a Redis `TTL` read per shape buying nothing. If
+    the period is ever shortened, the skip becomes real and worth adding — and
+    the duplicate it would remove is the one this pass performs when its tick
+    happens to coincide with the 120s pass's.
+
+    Never raises; the caller wraps it too.
+    """
+    import time as _time
+    from datetime import datetime, timezone
+
+    from app.tasks.redis_state import get_redis_client
+    from app.utils.feed_cache import (
+        FEED_LIVE_REPUBLISH_BUDGET_S,
+        FEED_LIVE_REPUBLISH_PERIOD_S,
+    )
+
+    rc = get_redis_client()
+
+    for switch, name in (
+        (FEED_PREWARM_ENABLED_KEY, "the warm rail"),
+        (FEED_LIVE_PREWARM_ENABLED_KEY, "the live republish"),
+    ):
+        try:
+            raw_enabled = rc.get(switch)
+        except Exception:
+            logger.debug("live pre-warm kill-switch read failed", exc_info=True)
+            continue
+        if raw_enabled is None:
+            continue
+        value = (
+            raw_enabled.decode()
+            if isinstance(raw_enabled, (bytes, bytearray))
+            else raw_enabled
+        )
+        if str(value).strip() == "0":
+            logger.info("Live feed republish skipped — %s kill switch is off", name)
+            return "disabled"
+
+    live_labels = _live_prewarm_labels(rc)
+    targets = [
+        (s["label"], s) for s in FEED_PREWARM_SHAPES if s["label"] in live_labels
+    ]
+
+    budget_left = float(FEED_LIVE_REPUBLISH_BUDGET_S)
+    shapes: dict[str, dict] = {}
+    for index, (label, shape) in enumerate(targets):
+        deadline_s = _prewarm_target_deadline(budget_left, len(targets) - index)
+        started = _time.monotonic()
+        shapes[label] = await _prewarm_feed_shape(
+            dict(shape), rc, deadline_s=deadline_s
+        )
+        budget_left = max(0.0, budget_left - (_time.monotonic() - started))
+
+    # The idle pass reports too, and that is deliberate (gotcha #53). "Nothing was
+    # live" and "this beat has not run since the deploy" are different facts with
+    # opposite remedies, and an absent status key states both. One `setex` per
+    # 40 s is not a cost worth buying that ambiguity with.
+    report = {
+        "ran_at": datetime.now(timezone.utc).isoformat(),
+        "period_s": FEED_LIVE_REPUBLISH_PERIOD_S,
+        "live_labels": sorted(live_labels),
+        "shapes": shapes,
+        "pass_budget_s": FEED_LIVE_REPUBLISH_BUDGET_S,
+        "budget_left_s": round(budget_left, 1),
+    }
+    try:
+        rc.setex(
+            FEED_LIVE_PREWARM_STATUS_KEY,
+            FEED_PREWARM_STATUS_TTL,
+            json.dumps(report, default=str),
+        )
+    except Exception:
+        logger.debug("live feed pre-warm status write failed", exc_info=True)
+
+    if not targets:
+        # The common case, and it must stay cheap enough to be uninteresting:
+        # one HGETALL, one SETEX, no build.
+        return "no_live_shapes"
     return sum(1 for s in shapes.values() if s.get("outcome") == "ok")
 
 

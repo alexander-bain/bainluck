@@ -282,6 +282,9 @@ class TestBeatScheduleCompleteness:
         # silently.
         "warm-search-head",
         "precompute-discover-candidate-base",
+        # #2236 — the narrow republisher for live-containing feed shapes, whose
+        # 60 s stale ceiling the 120 s beat above structurally cannot cover.
+        "prewarm-live-feed-shapes",
         "precompute-admin-audit-all",
         "precompute-admin-link-rate",
         "precompute-admin-matured-linkage",
