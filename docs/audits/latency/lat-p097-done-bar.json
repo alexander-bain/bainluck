@@ -1,83 +1,84 @@
 {
   "salt": "LAT-P097",
   "requests_issued": 28,
-  "trending_votes_cast": 0,
+  "trending_votes_cast": 3,
   "commit": "baae52c2",
-  "uptime_seconds": 870,
+  "uptime_seconds": 1565,
   "warm_slug": true,
   "feed_warm_ms": [
+    42.0,
+    19.0,
+    49.0,
+    22.0,
     20.0,
-    18.0,
-    17.0,
-    16.0,
-    18.0,
-    16.0
+    18.0
   ],
-  "feed_warm_p50": 17.5,
+  "feed_warm_p50": 21.0,
   "feed_stats": {
     "window": "1 hour",
-    "generated_at": "2026-08-27T00:29:22.532103+00:00",
-    "n": 43,
+    "generated_at": "2026-08-27T00:40:56.694707+00:00",
+    "n": 48,
     "oldest_sample_age_s": 0.4,
-    "span_s": 2967.6,
+    "span_s": 3591.2,
     "buckets": {
       "hit": 11,
       "miss": 8,
-      "other": 4,
-      "stale_hit": 20
+      "other": 3,
+      "stale_hit": 26
     },
     "miss_n": 8,
     "miss_p50_ms": 3201.7,
     "miss_max_ms": 6481.6,
-    "miss_share": 0.18604651162790697
+    "miss_share": 0.16666666666666666
   },
   "typeahead_warm_ms": [
-    26.0,
+    32.0,
     28.0,
     26.0,
-    30.0,
-    26.0,
-    26.0
+    27.0,
+    29.0,
+    28.0
   ],
-  "typeahead_warm_p50": 26.0,
+  "typeahead_warm_p50": 28.0,
   "term_set": "p095",
-  "typeahead_cold": [],
-  "typeahead_cold_discarded": [
+  "typeahead_cold": [
     {
       "term": "ballon",
-      "ms": 25.0,
-      "queries": 0
+      "ms": 4425.0,
+      "queries": 5
     },
     {
       "term": "wimbledon",
-      "ms": 30.0,
-      "queries": 0
+      "ms": 4222.0,
+      "queries": 8
     },
     {
       "term": "nvidia earnings",
-      "ms": 27.0,
-      "queries": 0
-    },
+      "ms": 4225.0,
+      "queries": 6
+    }
+  ],
+  "typeahead_cold_discarded": [
     {
       "term": "tour de france",
-      "ms": 30.0,
+      "ms": 31.0,
       "queries": 0
     },
     {
       "term": "senate runoff",
-      "ms": 27.0,
+      "ms": 31.0,
       "queries": 0
     },
     {
       "term": "emmy",
-      "ms": 33.0,
+      "ms": 30.0,
       "queries": 0
     },
     {
       "term": "hurricane",
-      "ms": 27.0,
+      "ms": 26.0,
       "queries": 0
     }
   ],
-  "typeahead_cold_p50": null
+  "typeahead_cold_p50": 4225.0
 }

@@ -1,9 +1,9 @@
 {
-  "taken_at": "2026-08-27 00:14:55.961417+00",
-  "pg_stat_statements_entries": 4968,
+  "taken_at": "2026-08-27 00:40:28.84437+00",
+  "pg_stat_statements_entries": 4827,
   "families": {
     "82_old": {
-      "label": "-82 OLD  count(DISTINCT source) GROUP BY canonical_market_key",
+      "label": "-82 OLD  count(DISTINCT source) GROUP BY key  [feed path]",
       "calls": 45239,
       "total_ms": 18728027.761496,
       "blks": 1028680552,
@@ -103,11 +103,27 @@
         }
       ]
     },
+    "82_sibling_task": {
+      "label": "-82 SIBLING  same shape in precompute_interestingness [task]",
+      "calls": 1,
+      "total_ms": 604.600107,
+      "blks": 3509,
+      "fingerprints": 1,
+      "first_seen": "2026-08-27 00:21:15.867935+00",
+      "last_new_fingerprint": "2026-08-27 00:21:15.867935+00",
+      "by_fingerprint": [
+        {
+          "queryid": -436505585654823090,
+          "calls": 1,
+          "stats_since": "2026-08-27 00:21:15.867935+00"
+        }
+      ]
+    },
     "82_new": {
       "label": "-82 NEW  recursive source universe + EXISTS skip scan",
-      "calls": 238,
-      "total_ms": 5859.624525999999,
-      "blks": 208138,
+      "calls": 255,
+      "total_ms": 6165.006868999999,
+      "blks": 219708,
       "fingerprints": 3,
       "first_seen": "2026-08-26 19:23:28.829766+00",
       "last_new_fingerprint": "2026-08-26 20:34:08.404773+00",
@@ -119,12 +135,12 @@
         },
         {
           "queryid": -6215577633756610741,
-          "calls": 130,
+          "calls": 139,
           "stats_since": "2026-08-26 20:34:07.367926+00"
         },
         {
           "queryid": -7841207379626136287,
-          "calls": 99,
+          "calls": 107,
           "stats_since": "2026-08-26 20:34:08.404773+00"
         }
       ]
@@ -179,16 +195,16 @@
     },
     "83_new": {
       "label": "-83 NEW  prefetch_open_markets, llm_sport_category IN (...)",
-      "calls": 107,
-      "total_ms": 44031.45255699999,
-      "blks": 2849006,
+      "calls": 120,
+      "total_ms": 49274.336117999985,
+      "blks": 3188516,
       "fingerprints": 1,
       "first_seen": "2026-08-26 22:13:13.292275+00",
       "last_new_fingerprint": "2026-08-26 22:13:13.292275+00",
       "by_fingerprint": [
         {
           "queryid": -9109266379293819637,
-          "calls": 107,
+          "calls": 120,
           "stats_since": "2026-08-26 22:13:13.292275+00"
         }
       ]

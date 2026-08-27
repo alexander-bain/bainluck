@@ -4316,6 +4316,50 @@ async def typeahead_search(
     """
     import json as _json
     from app.tasks.redis_state import get_redis_client
+
+    # LAT-P098/#1866: AN EVAL CALL IS NOT A USER'S INTENT, AND MUST NOT VOTE.
+    #
+    # The debug flags already mean "this answer is not interchangeable with a
+    # user's" on BOTH cache directions (read and write, below). The trending
+    # zset is the third direction and it was missed, so every measurement probe
+    # cast a real vote into the distribution that decides what the warmer warms.
+    #
+    # MEASURED 2026-08-27, LAT-P098, `GET /api/events/search/trending`:
+    #
+    #     celtics         62   <- the only real user traffic in the top five
+    #     emmy             9   <- LAT-P097 done-bar probe
+    #     wimbledon        8   <- LAT-P097 done-bar probe
+    #     hurricane        8   <- LAT-P097 done-bar probe
+    #     tour de france   6   <- LAT-P097 done-bar probe
+    #
+    # Four of the top five were one lane's own cold probes, and `emmy` was still
+    # being served warm FIVE HOURS after its last touch against a 65 s TTL —
+    # i.e. it had been elected into the warmer's 40-term head and was being
+    # rebuilt every ~37 s. The head is a fixed 40 slots, so those are slots a
+    # real user's term is not holding, and the displaced term pays ~4 s.
+    #
+    # 🔴 THIS IS #1866's CLOSED LOOP THROUGH AN UNGUARDED DOOR, and it had
+    # already been SEEN: `test_typeahead_trending_cache_hit_2117.py`'s header
+    # records `zzq obscure probe lat82` and `qqx another probe` doing the same
+    # thing on 2026-08-23 — "THEY ARE THE DISTRIBUTION and the warmer will spend
+    # 2 of 40 slots on them" — and it was written down as a transient footnote
+    # rather than fixed. It recurred four days later and took ranks 2-5.
+    #
+    # WHY THE INSTRUMENTS' OWN ARITHMETIC DID NOT CATCH IT: they priced the
+    # contamination against `search_query_logs`' 30-day head (a cut near 65
+    # votes) while writing to the `search:trending:24h` zset, whose rank 2 sits
+    # at 9. `resolve_head` blends BOTH sources, ~20 slots each, so a probe needs
+    # single-digit votes to buy a warm slot, not 65. A contamination budget
+    # priced against the wrong distribution is not a budget.
+    #
+    # ⚠️ SET-ONLY, NEVER AN `else`. `typeahead_warmer` sets this same ContextVar
+    # to True before calling this route in-process; assigning `bool(debug_*)`
+    # here would clobber the warmer's own suppression and re-open #1866 proper.
+    # `test_the_warmer_suppression_is_never_clobbered_by_a_non_debug_call` pins
+    # exactly that, and it is the load-bearing half of this fix.
+    if debug_evidence or debug_timing:
+        _suppress_trending_write.set(True)
+
     _cache_key = f"bainluck:typeahead:{q.lower().strip()}"
     # A debug-evidence answer NEVER touches the cache, in either direction. It
     # must not read a normal entry (it would return without `_evidence` and the

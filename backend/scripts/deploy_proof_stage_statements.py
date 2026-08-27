@@ -276,7 +276,7 @@ def _fmt(v: float | None, nd: int = 1) -> str:
 
 
 def diff(a: dict, b: dict) -> int:
-    print(f"# Deploy proof — pg_stat_statements window")
+    print("# Deploy proof — pg_stat_statements window")
     print(f"snapshot A : {a['taken_at']}   ({a['pg_stat_statements_entries']} entries)")
     print(f"snapshot B : {b['taken_at']}   ({b['pg_stat_statements_entries']} entries)")
     print()

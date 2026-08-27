@@ -150,6 +150,25 @@ Snapshots are taken by `backend/scripts/deploy_proof_stage_statements.py`, which
 length, so `-82`'s retired aggregate alone is spread over 18 `queryid`s and grading one of them
 reads a slice of the truth.
 
+The corrected window, `A2 00:30:45Z → B2 00:40:28Z` (9.7 minutes), **exit code 0**:
+
+| family | Δcalls | window mean | buffers/call |
+|---|---:|---:|---:|
+| `-82` OLD, feed path | **0** | — | — |
+| `-82` SIBLING, `precompute_interestingness` task *(ungraded)* | 0 | — | — |
+| **`-82` NEW** | **2** | 45.1 ms | 661 |
+| `-83` OLD ufc / f1 / cycling | **0 / 0 / 0** | — | — |
+| **`-83` NEW** | **3** | 589.8 ms | 26,143 |
+
+> **`-82` — PROVEN.** The retired path ran 0 times while the new path ran 2.
+> **`-83` — PROVEN.** The retired path ran 0 times across all three listers while the new path ran 3.
+
+⚠️ **The window is 9.7 minutes and carries n=2 and n=3.** The *zeros* are the load-bearing half and
+they are robust — three retired statements with ~83,000 lifetime calls between them going silent is
+not a small-sample artefact. The window **means** are not: `-83`'s 589.8 ms here against a
+cumulative 411.5 ms over 107 calls is three draws from a distribution whose sd is 523.7. Read the
+cumulative table in §2.3 for the cost and this table for the switchover.
+
 The first window exposed two defects in the instrument, both verified against production before
 being fixed, and both recorded because the class matters more than the case:
 
@@ -241,9 +260,16 @@ First-touch detail, all seven confirmed genuine cold builds by `x-timing-split` 
 | `senate runoff` | 3,656 ms | 5 |
 | `emmy` | 3,853 ms | 5 |
 
-**Delta vs LAT-P095's published 3,816 ms on the same term set: −286 ms — flat.** Which is the
-expected result and worth saying plainly: nothing shipped for typeahead this week. LAT-P096's index
-is specced and gated, not deployed.
+A second pass through the instrument 19 minutes later, same slug, same term set, graded **3 of 7**
+(the other four were still cache-warm from the first pass and were discarded, not averaged):
+`wimbledon` 4,222 · `nvidia earnings` 4,225 · `ballon` 4,425 → **p50 4,225 ms**.
+
+**Delta vs LAT-P095's published 3,816 ms on the same term set: −286 ms (n=7) and +409 ms (n=3).**
+The two passes straddle the baseline and the per-term spread within a single pass is
+1,178 → 3,853 ms, which is larger than either delta. **The honest read is flat**, and that is the
+expected result worth saying plainly: nothing shipped for typeahead this week. LAT-P096's index is
+specced and gated, not deployed. The headline row above uses the n=7 pass because every one of its
+samples was graded.
 
 The **feed miss share fell from the charter's 37.5 % baseline to 18.6 %**, and the miss p50 from
 ~4.1 s to 3.2 s. Both are moves in the right direction and both are on thin windows (n=43, 49
