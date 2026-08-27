@@ -843,7 +843,9 @@ def test_ruling_numbers_are_unique() -> None:
 #: this one, which is the exact failure mode ruling 088 was written for. THE GAP IS CLOSED:
 #: this merge is the one that fills 132, 133 and 134 underneath the already-banked 135, so
 #: count-equals-highest is true again here — still a property of this tree, not an invariant.
-MINIMUM_BANKED_RULINGS = 136
+#: LAT-P099 banks 137 (the headline is the cold path a user walks). Raised by
+#: COUNTING THIS TREE — 137 files, 137 index lines — never by adding a delta.
+MINIMUM_BANKED_RULINGS = 137
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
