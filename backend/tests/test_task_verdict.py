@@ -349,6 +349,14 @@ class TestEnforcementScope:
             # snapshots returns `failed`. Terminal comes from
             # `futures_price_refresh._terminal`.
             "futures_price_refresh",
+            # #2077 (queue 419): the nightly settlement-capture sweep, enrolled
+            # at BIRTH in the same change that gives it a beat. Terminal comes
+            # from `settlement_sweep_runner._verdict`, which already separated
+            # the four zeros before there was anything to enforce them — the
+            # one this enrolment is really for is `partial`: a budget-capped
+            # sweep is BY DESIGN and returns cleanly every night, so without
+            # enforcement a growing backlog would read as a healthy task.
+            "settlement_sweep",
         }
 
     def test_enforced_task_partial_blocks_success(self):
