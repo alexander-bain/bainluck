@@ -631,10 +631,61 @@ def test_the_route_stamps_build_provenance_and_carries_it_across_tiers():
     )
 
 
+_SETEX = "setex"
+
+
+def _setex_reference_kind(node) -> str | None:
+    """Classify an expression that *names* a ``setex`` writer.
+
+    ``"static"``  — ``client.setex`` / ``getattr(client, "setex")``: readable.
+    ``"dynamic"`` — ``getattr(client, <computed>)``: the writer's name is not
+    knowable from the source, so nothing downstream may be assumed about it.
+    ``None``      — not a writer reference at all.
+    """
+    import ast
+
+    if isinstance(node, ast.Attribute):
+        return "static" if node.attr == _SETEX else None
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+    ):
+        name_arg = node.args[1]
+        if isinstance(name_arg, ast.Constant) and isinstance(name_arg.value, str):
+            return "static" if name_arg.value == _SETEX else None
+        return "dynamic"
+    return None
+
+
+def _setex_ttl_expr(node):
+    """The AST node for a ``setex`` call's ``time`` argument, or ``None``.
+
+    ``redis.Redis.setex(name, time, value)`` binds by keyword as readily as by
+    position, so ``time=`` is checked FIRST and the positional index second.
+    ``None`` means the TTL is not readable from the source — a ``*args`` or
+    ``**kwargs`` splat — which the caller must treat as a refusal, never as a
+    pass.
+    """
+    import ast
+
+    for kw in node.keywords:
+        if kw.arg == "time":
+            return kw.value
+        if kw.arg is None:  # `**kwargs` — the TTL may be inside it
+            return None
+    if any(isinstance(arg, ast.Starred) for arg in node.args):
+        return None  # `*args` — position 1 is not pinnable
+    if len(node.args) >= 2:
+        return node.args[1]
+    return None
+
+
 def _setex_ttls_not_derived_from_live_helper(source: str) -> list[str]:
     """Every ``setex`` TTL in ``source`` that is NOT bound to ``_live_ttls``.
 
-    CERT-409 [P2]. The previous version of this guard asserted
+    CERT-409 [P2]. The first version of this guard asserted
     ``src.count("_live_ttls(") >= 5`` and that a constant name was absent.
     Neither statement is about the ``setex`` calls, so appending a fifth writer
     with an unconditional TTL left both true and the guard green — the guard
@@ -645,6 +696,22 @@ def _setex_ttls_not_derived_from_live_helper(source: str) -> list[str]:
     whose DEFAULT is a live-derived name inherits that (the closure-capture
     idiom every publisher here uses). Any ``setex`` whose TTL argument is not
     such a name is returned.
+
+    CERT-412 [P2]. The second version enumerated writers, but only writers
+    spelled ``client.setex(key, ttl, body)`` — it required an ``Attribute``
+    func and two POSITIONAL args. So the keyword form ``setex(name=…, time=…,
+    value=…)``, which the Redis client explicitly supports, and
+    ``getattr(client, "setex")(…)``, whose func is a ``Call``, both published
+    an unconditional TTL and both read back clean. Same self-oracular failure,
+    two more ordinary call shapes. A guard that claims *every* ``setex`` may
+    not be a guard over the subset it happens to recognize, so:
+
+    * the ``time`` KEYWORD is read as well as positional argument 2;
+    * ``getattr(client, "setex")`` is recognized as the writer it is; and
+    * anything whose writer name or TTL is **unreadable** — computed
+      ``getattr``, ``*args``, ``**kwargs`` — is REFUSED rather than skipped.
+      This source may not dispatch its Redis writers dynamically; unreadable
+      is not the same as derived (gotcha #53).
     """
     import ast
     import textwrap
@@ -680,13 +747,36 @@ def _setex_ttls_not_derived_from_live_helper(source: str) -> list[str]:
             if isinstance(default, ast.Name) and default.id in live_derived:
                 live_derived.add(arg.arg)
 
+    # A writer bound to a name before it is called: `_w = getattr(c, "setex")`.
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        kind = _setex_reference_kind(node.value)
+        if kind is None:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                aliases[target.id] = kind
+
     offenders: list[str] = []
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        if not isinstance(node, ast.Call):
             continue
-        if node.func.attr != "setex" or len(node.args) < 2:
+        func = node.func
+        if isinstance(func, ast.Name):
+            kind = aliases.get(func.id)
+        else:
+            kind = _setex_reference_kind(func)
+        if kind is None:
             continue
-        ttl = node.args[1]
+        if kind == "dynamic":
+            offenders.append(f"<dynamic writer dispatch: {ast.unparse(func)}>")
+            continue
+        ttl = _setex_ttl_expr(node)
+        if ttl is None:
+            offenders.append(f"<unreadable TTL: {ast.unparse(node)}>")
+            continue
         if isinstance(ttl, ast.Name) and ttl.id in live_derived:
             continue
         offenders.append(ast.unparse(ttl))
@@ -734,4 +824,93 @@ def test_the_fifth_writer_guard_actually_fails_on_a_fifth_writer():
     assert _setex_ttls_not_derived_from_live_helper(mutant) == ["_cache_ttl"], (
         "the fifth-writer guard did not catch a fifth unconditional writer — "
         "it is self-oracular again"
+    )
+
+
+def _clean_get_feed_source() -> str:
+    """`get_feed`'s source, asserted clean, as the base for a mutant."""
+    import inspect
+
+    import app.routes.feed as feed_module
+
+    clean = inspect.getsource(feed_module.get_feed)
+    assert _setex_ttls_not_derived_from_live_helper(clean) == [], "premise"
+    return clean
+
+
+def test_the_fifth_writer_guard_catches_the_keyword_time_form():
+    """Retained mutant, CERT-412 [P2] finding 1.
+
+    `redis.Redis.setex(name, time, value)` binds by keyword just as happily as
+    by position, so a writer spelled `setex(name=…, time=…, value=…)` is an
+    ordinary call shape, not a contrivance. The first version of this guard
+    required two POSITIONAL arguments and therefore skipped it silently — the
+    same self-oracular failure as CERT-409 [P2], in a second call shape.
+    """
+    mutant = _clean_get_feed_source() + (
+        "\n"
+        "    async def _publish_fifth_writer(_client=None, _key='k', _json='{}'):\n"
+        "        await _client.setex(name=_key, time=_cache_ttl, value=_json)\n"
+    )
+    assert _setex_ttls_not_derived_from_live_helper(mutant) == ["_cache_ttl"], (
+        "a keyword-form `setex(time=…)` writer escaped the guard — the ceiling "
+        "is asserted only over writers that happen to be spelled positionally"
+    )
+
+
+def test_the_fifth_writer_guard_catches_getattr_dispatch():
+    """Retained mutant, CERT-412 [P2] finding 2.
+
+    `getattr(client, "setex")(…)` is the same write through a literal dynamic
+    lookup. The call's `func` is a `Call`, not an `Attribute`, so an
+    attribute-only visitor never sees a `setex` at all.
+    """
+    mutant = _clean_get_feed_source() + (
+        "\n"
+        "    async def _publish_fifth_writer(_client=None, _key='k', _json='{}'):\n"
+        "        await getattr(_client, 'setex')(_key, _cache_ttl, _json)\n"
+    )
+    assert _setex_ttls_not_derived_from_live_helper(mutant) == ["_cache_ttl"], (
+        "a `getattr(client, 'setex')` writer escaped the guard — dynamic "
+        "dispatch is an unguarded door into the same unconditional TTL"
+    )
+
+
+def test_the_fifth_writer_guard_refuses_unanalyzable_dispatch_and_splats():
+    """The escape hatches the two repairs above would otherwise leave open.
+
+    Recognizing `getattr(client, "setex")` only helps while the attribute name
+    is a literal; a computed name, a `*args` splat or a `**kwargs` splat all
+    publish a TTL this visitor cannot read. Per the CERT-412 fix paragraph the
+    source may not dispatch its Redis writers dynamically — unreadable is
+    refused, never assumed clean.
+    """
+    clean = _clean_get_feed_source()
+
+    dynamic = clean + (
+        "\n"
+        "    async def _publish_fifth_writer(_client=None, _w='setex'):\n"
+        "        await getattr(_client, _w)('k', _cache_ttl, '{}')\n"
+    )
+    assert _setex_ttls_not_derived_from_live_helper(dynamic), (
+        "a computed-name `getattr(client, name)(…)` writer read as clean"
+    )
+
+    kwargs_splat = clean + (
+        "\n"
+        "    async def _publish_fifth_writer(_client=None, _kw=None):\n"
+        "        await _client.setex(**_kw)\n"
+    )
+    assert _setex_ttls_not_derived_from_live_helper(kwargs_splat), (
+        "a `setex(**kwargs)` writer read as clean — its TTL is unreadable, "
+        "which is not the same as derived"
+    )
+
+    args_splat = clean + (
+        "\n"
+        "    async def _publish_fifth_writer(_client=None, _a=()):\n"
+        "        await _client.setex(*_a)\n"
+    )
+    assert _setex_ttls_not_derived_from_live_helper(args_splat), (
+        "a `setex(*args)` writer read as clean — its TTL is unreadable"
     )
