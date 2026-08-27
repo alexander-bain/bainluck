@@ -189,19 +189,36 @@ _last_good: dict[str, tuple[float, Any]] = {}
 _LAST_GOOD_MAX = _env_int("REQUEST_LAST_GOOD_MAX", 512)
 
 
-def remember_last_good(key: Optional[str], payload: Any) -> None:
-    """Record the last successfully served payload for ``key`` (in-process)."""
+def remember_last_good(
+    key: Optional[str], payload: Any, *, built_at: Optional[float] = None
+) -> None:
+    """Record the last successfully served payload for ``key`` (in-process).
+
+    ``built_at`` (CERT-409 [P1]) is when the payload's CONTENT was computed. It
+    defaults to now, which is correct only for a payload this process just
+    built. A payload that arrived from Redis — a fresh hit, a stale-mirror hit,
+    or an inert-principal share — is already some unknown age, and stamping it
+    with the read time hands it a brand-new full-length age window. With a 60s
+    ceiling that turned a 59-second-old score into one served at 118 seconds,
+    under a branch that declares 60 as the maximum. Callers that copy a payload
+    between cache tiers MUST pass the original.
+    """
     if not key or payload is None:
         return
     if key not in _last_good and len(_last_good) >= _LAST_GOOD_MAX:
         # Evict the oldest entry to bound memory (rare; keys are stable-ish).
         oldest = min(_last_good.items(), key=lambda kv: kv[1][0])[0]
         _last_good.pop(oldest, None)
-    _last_good[key] = (time.time(), payload)
+    _last_good[key] = (time.time() if built_at is None else float(built_at), payload)
 
 
 def recall_last_good(key: Optional[str], *, max_age_s: Optional[float] = None) -> Any:
-    """Return the last-good payload for ``key`` (optionally age-bounded)."""
+    """Return the last-good payload for ``key`` (optionally age-bounded).
+
+    The age is measured from the payload's BUILD time (see
+    ``remember_last_good``), so ``max_age_s`` bounds the age of the content, not
+    the age of the most recent copy of it.
+    """
     if not key:
         return None
     hit = _last_good.get(key)
