@@ -792,8 +792,24 @@ def grade_window(
     Note what is NOT in this list: "a release landed". Ruling 136 retired it.
     """
     reasons = []
-    blasted = errors["blast_window_count"]
-    attributable = errors["attributable_count"]
+
+    # Clause 2/3 are about 5xx. A transport error is a request that got NO
+    # answer, which is not evidence of a 500 — it keeps its own INCONCLUSIVE
+    # branch further down, and it must not be counted as a refutation here.
+    def _is_5xx(f):
+        return f.get("status") is not None
+
+    blasted = sum(1 for f in errors["blast_window"] if _is_5xx(f))
+    attributable = sum(1 for f in errors["attributable"] if _is_5xx(f))
+
+    # `run_probe` caps the recorded `failures` list at 50 so one bad hour cannot
+    # write an unbounded row. The COUNT is uncapped, so the two can disagree —
+    # and an error the cap hid is not thereby inside a blast window. Charging the
+    # remainder to `attributable` keeps clause 3 true in the one case where the
+    # truncation could otherwise soften a FAILED into an INCONCLUSIVE.
+    unrecorded = max(0, probe["server_errors"] - (attributable + blasted))
+    attributable += unrecorded
+
     served_total = probe["samples"] - probe.get("transport_errors", 0)
     bands = blast_bands(boundaries)
     served_clean = sum(

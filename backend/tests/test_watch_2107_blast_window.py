@@ -200,13 +200,35 @@ class TestTheBlastWindowAttributesErrors:
         probe = _probe(server_errors=1, failures=[_failure(DEPLOY + timedelta(minutes=2))])
         assert _grade(probe=probe, boundaries=[])["verdict"] == "FAILED"
 
-    def test_a_transport_error_is_attributed_the_same_way(self):
-        # `failures` carries status None for a refused connection; it must not
-        # crash the attribution split, and it must not be silently dropped.
+    def test_a_transport_error_is_NOT_counted_as_a_5xx(self):
+        # `failures` carries status None for a refused connection. Clauses 2 and
+        # 3 are about 500s, and a request that got no answer at all is not
+        # evidence of one — it could be the prober's own network. It keeps the
+        # transport branch (INCONCLUSIVE) and must never read as a refutation.
         probe = _probe(transport_errors=1,
                        failures=[_failure(NOW - timedelta(minutes=60), status=None)])
         grade = _grade(probe=probe, boundaries=[_boundary()])
-        assert grade["errors_attributable"] == 1
+        assert grade["errors_attributable"] == 0
+        assert grade["verdict"] == "INCONCLUSIVE"
+        assert "transport" in " ".join(grade["reasons"])
+
+    def test_errors_the_fifty_row_cap_hid_are_charged_as_attributable(self):
+        # `run_probe` records at most 50 failures but counts all of them. An
+        # error the cap hid is not thereby inside a blast window, so the
+        # remainder must land on the FAILED side — otherwise a flood of >50
+        # errors that happened to start near a deploy would grade INCONCLUSIVE.
+        probe = _probe(
+            server_errors=60,
+            failures=[_failure(DEPLOY + timedelta(minutes=m % 10)) for m in range(50)])
+        grade = _grade(probe=probe, boundaries=[_boundary()])
+        assert grade["errors_in_blast_window"] == 50
+        assert grade["errors_attributable"] == 10
+        assert grade["verdict"] == "FAILED"
+
+    def test_the_cap_correction_does_not_invent_errors_in_a_clean_window(self):
+        grade = _grade(boundaries=[_boundary()])
+        assert grade["errors_attributable"] == 0
+        assert grade["verdict"] == "CLEAN"
 
     def test_multiple_boundaries_each_carry_their_own_band(self):
         second = DEPLOY - timedelta(minutes=40)
