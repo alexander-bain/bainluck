@@ -91,6 +91,32 @@ Two things in that table are worth naming rather than averaging away:
   this queue's scope, but the most important thing this census turned up. Note the denominator:
   **four of the 13 attested rows in 30 days are that one incident.**
 
+## 3b. Two corrections to this lane's own prior readings
+
+**LAT-P094 Item 1 point 3 is superseded.** It excluded the gold sentinel, found the head changed
+6-of-8, and named **`fed` and `chiefs`** as real head terms the block was leaving cold — "the same
+two terms #1916 itself named". Both are **probe traffic**: `fed` is 68 rows across 5 days, `chiefs`
+65 rows across 5 days, and **every row of both is session-less.** Neither appears anywhere in the
+attested distribution.
+
+The mechanism of that error is the point, and it is not carelessness — it is the shape of the
+problem. Each measurement removed the contamination it knew about and then trusted the residue.
+#1916 removed nothing and reported 23.6 %. LAT-P094 removed the sentinel and trusted what was left.
+This queue removes everything that cannot prove it came from a client, which is the only cut that
+does not depend on knowing the list of polluters in advance. **That is the argument for attestation
+over exclusion, and it is worth more than this queue's ship.**
+
+**The recommendation LAT-P094 made was still right, and its cost estimate was wrong in the safe
+direction.** It projected "2 wasted slots of 8, 6 right". The true count was 8 wasted of 8.
+
+**And the honest limitation, stated because it cuts against the ship.** LAT-P094 measured the
+*expensive* cold terms: `winner` 11.9 s and 18.5 s, `champion` 13.98 s. The term the attested head
+actually elects is `red sox` at **1.73 s** — a cheap one. So this warmer does not touch the
+20-second common-word head that #2211 was written about. **The expensive terms are precisely the
+ones with no attested demand**, and warming them would mean warming our own probes, which is what
+the whole apparatus above exists to refuse. If common-word cold cost is the target, the lever is
+the query, not the warmer — and LAT-P088 already showed no string index reaches it.
+
 ## 4. What shipped
 
 `backend/app/tasks/search_head_warmer.py`
