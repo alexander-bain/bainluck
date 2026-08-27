@@ -3655,20 +3655,23 @@ celery_app.conf.beat_schedule = {
         # alone is how `/typeahead` sat at a 47% duty cycle for two cycles while
         # reporting 40/40 every pass.
         #
-        # 🔴 IT SHIPS DISABLED. `SEARCH_HEAD_WARM_ENABLED` is unset and unset
-        # means OFF, because #1916 blocks sourcing a warmer head from
-        # `search_query_logs` (measured 23.6% gold-sentinel traffic) until a
-        # clean distribution exists. The beat is wired anyway, on purpose: a
-        # fire takes the `disabled` skip path at ~1ms and reports
-        # `terminal: skipped, skip_reason: disabled`, so "deliberately off" is
-        # READABLE in task-metrics. An unwired task is one nobody remembers to
-        # wire; a task reporting that it is off is a state you can see.
+        # ✅ IT SHIPS ENABLED SINCE LAT-P102. It shipped DISABLED under LAT-P090
+        # because #1916 blocks sourcing a warmer head from `search_query_logs`
+        # until a clean distribution exists. That distribution turned out to be
+        # readable without a migration — `session_id` is a write-time flag every
+        # real client attaches and no probe does — so the block moved out of the
+        # env var and into the head QUERY, which filters to attested rows and
+        # floors on distinct sessions. See `search_head_warmer`'s docstring for
+        # the census (the table is 99.66% session-less automation).
         #
-        # COST, STATED, because a warmer is not free and this lane's own doctrine
-        # says to say so. ENABLED: a steady-state pass rebuilds 8 `/search`
-        # answers at concurrency 2, ~4-8s of database time per 45s against
-        # `background`'s roughly one effective slot (#1609). DISABLED, the
-        # shipping state: negligible. Every knob is set below its
+        # COST, RE-STATED FOR THE ENABLED STATE, and it is far below the estimate
+        # this comment used to carry. The bound is `min(8, terms two different
+        # sessions asked in 30 days)`, and at the 2026-08-27 census that is
+        # exactly ONE term. So a steady-state pass rebuilds 1 `/search` answer,
+        # not 8: ~1-2s of database time per 45s against `background`'s roughly
+        # one effective slot (#1609). The 8-at-~4-8s figure is the CEILING the
+        # head would have to grow into, and it can only get there by real people
+        # asking the same questions. Every knob is set below its
         # `warm-typeahead` sibling's (8 terms not 40, width 2 not 4, floor 45s
         # not 30s) precisely because a `/search` call is the heavier one.
         #
