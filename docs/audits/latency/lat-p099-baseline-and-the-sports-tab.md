@@ -164,7 +164,7 @@ consumed in loop order starves whatever is last.
     beat_cost: none
       precompute_discover_candidate_base  BEFORE p50 9.8s · p95 14.2s · 233 runs/24h
                                           · slot_s/day 2272 · %soft — (no soft limit hit)
-      measured 2026-08-27T04:0xZ via backend/scripts/measure_beat_cost.py --task
+      measured 2026-08-27 (UTC) via backend/scripts/measure_beat_cost.py --task
                precompute_discover_candidate_base
 
 `none` is the declaration, and here is the check a reader can redo. The added shape's build cost
