@@ -26,21 +26,40 @@ import { renderToStaticMarkup } from "react-dom/server";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import ContenderChart from "@/components/tournament/ContenderChart";
 import TournamentProps from "@/components/tournament/TournamentProps";
+import TournamentMatches from "@/components/tournament/TournamentMatches";
+import { matchListFromSlate } from "@/lib/matchList";
 import {
   CHART_SERIES_COUNT,
   COLLAPSED_ROW_COUNT,
+  MAX_SERIES_COUNT,
   SERIES_COLORS,
   chartGeometry,
   chartSeries,
+  chartSeriesFor,
+  defaultSelection,
   legendName,
   pointsInTimeframe,
+  seriesColorByEntity,
   seriesEndpoint,
   seriesPoints,
   timeframeIsDrawable,
+  toggleSelection,
 } from "@/lib/contenderChart";
-import { broadcastFor } from "@/lib/slate";
+import { TITLE_COLUMN_LABEL } from "@/lib/bracket";
+import { SECTION_HEADING } from "@/components/tournament/TournamentProps";
+import {
+  broadcastFor,
+  matchBroadcast,
+  type SlateData,
+  type SlateMatch,
+} from "@/lib/slate";
 import {
   answerOutcome,
+  printedOutcomes,
+  propGoverningAgeHours,
+  propIsDark,
+  propIsPresentedAsLive,
+  propStaleOutcomes,
   propsForDraw,
   rankedOutcomes,
   type PropMarket,
@@ -102,6 +121,22 @@ const render = (node: React.ReactElement) => renderToStaticMarkup(node);
 const count = (html: string, needle: string) =>
   (html.match(new RegExp(needle, "g")) ?? []).length;
 
+/**
+ * The chart's props at their DEFAULT selection (UX-P137, ruling 6).
+ *
+ * Selection moved out of the component and up to the page, because the board's
+ * colour tie-in has to follow the same choice. Every pre-existing assertion in
+ * this file is about the default, so they all render through here and stay
+ * assertions about "the top three" rather than about "whatever is selected".
+ */
+const chartProps = (rows: TournamentRow[], extra: Record<string, unknown> = {}) => ({
+  rows,
+  draw: "womens-singles",
+  selection: defaultSelection(rows),
+  onToggle: () => {},
+  ...extra,
+});
+
 // ---------------------------------------------------------------------------
 // 1. Collapse — Alex's P1
 // ---------------------------------------------------------------------------
@@ -140,24 +175,26 @@ describe("contender chart", () => {
   const rows = Array.from({ length: 20 }, (_, i) => row(i + 1));
 
   it("names exactly three contenders in the legend", () => {
-    const html = render(<ContenderChart rows={rows} draw="womens-singles" />);
+    const html = render(<ContenderChart {...chartProps(rows)} />);
     expect(count(html, 'data-testid="chart-legend-item"')).toBe(3);
   });
 
   it("draws exactly three lines however long the field is", () => {
-    const html = render(<ContenderChart rows={rows} draw="womens-singles" />);
+    const html = render(<ContenderChart {...chartProps(rows)} />);
     expect(count(html, 'data-testid="chart-series"')).toBe(3);
     expect(count(html, "<polyline")).toBe(3);
   });
 
   it("gives each line an endpoint dot, as the reference does", () => {
-    const html = render(<ContenderChart rows={rows} draw="womens-singles" />);
+    const html = render(<ContenderChart {...chartProps(rows)} />);
     expect(count(html, 'data-testid="chart-endpoint"')).toBe(3);
   });
 
   it("legend colours match the line colours", () => {
     const series = chartSeries(rows);
-    expect(series.map((s) => s.color)).toEqual([...SERIES_COLORS]);
+    expect(series.map((s) => s.color)).toEqual(
+      SERIES_COLORS.slice(0, CHART_SERIES_COUNT)
+    );
   });
 
   it("plots on a FIXED 0-100 axis, never auto-scaled to the data", () => {
@@ -228,20 +265,20 @@ describe("contender chart", () => {
     const series = chartSeries(rows);
     expect(timeframeIsDrawable(series, "ALL")).toBe(true);
     expect(timeframeIsDrawable(series, "1D")).toBe(false);
-    const html = render(<ContenderChart rows={rows} draw="womens-singles" />);
+    const html = render(<ContenderChart {...chartProps(rows)} />);
     expect(html).toContain('data-option="1D"');
     expect(html).toContain("disabled");
   });
 
   it("mutes the whole chart when the prices are not live", () => {
     const dark = rows.map((r) => ({ ...r, probability_is_live: false }));
-    const html = render(<ContenderChart rows={dark} draw="womens-singles" />);
+    const html = render(<ContenderChart {...chartProps(dark)} />);
     expect(html).toContain('data-live="false"');
     expect(html).toContain('opacity="0.45"');
   });
 
   it("renders nothing at all rather than an empty frame with no contenders", () => {
-    expect(render(<ContenderChart rows={[]} draw="womens-singles" />)).toBe("");
+    expect(render(<ContenderChart {...chartProps([])} />)).toBe("");
   });
 
   it("shortens legend names without losing the surname", () => {
@@ -297,6 +334,293 @@ describe("where to watch", () => {
   it("is null when the register carries no mapping", () => {
     expect(broadcastFor(undefined)).toBeNull();
     expect(broadcastFor([])).toBeNull();
+  });
+
+  // UX-P137, ruling 8: the answer moved to the row.
+  it("resolves per match, and SAYS when it is only the region-wide answer", () => {
+    // The honest half of this ruling. Today the register holds rights per
+    // region only, so every row gets the same string — and it is tagged
+    // `tournament` so nobody can mistake a fallback for a per-match fact.
+    const resolved = matchBroadcast({ broadcast: null }, broadcasts, "US");
+    expect(resolved?.scope).toBe("tournament");
+    expect(resolved?.channels).toEqual(["ESPN", "ESPN2"]);
+  });
+
+  it("prefers a match's OWN broadcast when the register names one", () => {
+    // The seam. Nothing fills it today; a session feed will, as a data change.
+    const resolved = matchBroadcast(
+      { broadcast: { region: "US", channels: ["ESPN+"], note: null } },
+      broadcasts,
+      "US"
+    );
+    expect(resolved?.scope).toBe("match");
+    expect(resolved?.channels).toEqual(["ESPN+"]);
+  });
+
+  it("never invents a channel", () => {
+    expect(matchBroadcast({ broadcast: null }, undefined)).toBeNull();
+    expect(matchBroadcast({ broadcast: { region: "US", channels: [], note: null } }, [])).toBeNull();
+  });
+
+  // The rendered half. Testing only `matchBroadcast` left the component free
+  // to stop printing it entirely — a planted removal of the row markup stayed
+  // GREEN against the pure tests above, which is the whole reason this block
+  // exists rather than only the ones above it.
+  const slateMatch = (n: number, overrides: Partial<SlateMatch> = {}): SlateMatch => ({
+    matchup_key: `m-${n}`,
+    draw: "mens-singles",
+    draw_label: "Men's Singles",
+    round: "R128",
+    scheduled_date: "2026-08-31T17:00:00Z",
+    sides: [
+      { entity_key: `a-${n}`, display_name: `A${n}`, seed: null, country: null, role: "contender", probability: 0.6, opening_probability: 0.58, move: 0.02, raw_probability: 0.6, raw_opening_probability: 0.58, age_hours: 0.2, price_state: "live" },
+      { entity_key: `b-${n}`, display_name: `B${n}`, seed: null, country: null, role: "contender", probability: 0.4, opening_probability: 0.42, move: -0.02, raw_probability: 0.4, raw_opening_probability: 0.42, age_hours: 0.2, price_state: "live" },
+    ],
+    coherent: true,
+    raw_sum: 1,
+    opening_raw_sum: 1,
+    probability_is_live: true,
+    price_state: "live",
+    observed_at: "2026-08-26T20:00:00+00:00",
+    age_hours: 0.2,
+    freshest_observed_at: "2026-08-26T20:00:00+00:00",
+    freshest_age_hours: 0.2,
+    stale_sides: [],
+    mixed_freshness: false,
+    favourite: `a-${n}`,
+    has_moved: true,
+    source_count: 1,
+    ...overrides,
+  });
+
+  const slateOf = (matches: SlateMatch[]): SlateData => ({
+    matches,
+    count: matches.length,
+    incoherent: 0,
+    dropped: {},
+    price_state: "live",
+    newest_observed_at: "2026-08-26T20:00:00+00:00",
+    age_hours: 0.2,
+    dark_after_hours: 48,
+  });
+
+  // ⚠️ UX-P138's RULING 7 OVERRULED UX-P137's RULING 8 ON PLACEMENT, and these
+  // assertions were inverted rather than deleted. Alex's clarification: "on
+  // the event card's DETAIL view (tap), not on every row". The MATCH-LEVEL
+  // resolution he ruled for at UX-P137 is unchanged and still tested — what
+  // moved is where the answer is printed, and the strongest guard is now that
+  // it is NOT on the closed row.
+  const matchesOf = (matches: SlateMatch[], extra: Record<string, unknown> = {}) =>
+    render(
+      <TournamentMatches
+        entries={matchListFromSlate(matches, { broadcasts })}
+        {...extra}
+      />
+    );
+
+  it("prints NO channel on the closed rows — ruling 7 moved it behind the tap", () => {
+    const html = matchesOf([slateMatch(1), slateMatch(2), slateMatch(3)]);
+    expect(html).not.toContain('data-testid="match-detail-broadcast"');
+    expect(html).not.toContain("Sky Sports");
+    // And the UX-P137 per-row line is gone with it, as is the single line
+    // above the list that UX-P137 replaced.
+    expect(html).not.toContain('data-testid="slate-row-broadcast"');
+    expect(html).not.toContain('data-testid="slate-broadcast"');
+  });
+
+  it("prints the channel once the row is opened", () => {
+    const entries = matchListFromSlate([slateMatch(1)], { broadcasts });
+    const html = render(
+      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
+    );
+    expect(count(html, 'data-testid="match-detail-broadcast"')).toBe(1);
+    expect(count(html, 'data-broadcast-scope="tournament"')).toBe(0);
+    expect(html).toContain('data-scope="tournament"');
+  });
+
+  it("a match with its own channel overrides the region-wide one", () => {
+    const entries = matchListFromSlate(
+      [slateMatch(1, { broadcast: { region: "US", channels: ["ESPN+"], note: null } })],
+      { broadcasts }
+    );
+    const html = render(
+      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
+    );
+    expect(html).toContain('data-scope="match"');
+    expect(html).toContain("ESPN+");
+  });
+
+  it("prints no channel line at all when the register has no mapping", () => {
+    const entries = matchListFromSlate([slateMatch(1)]);
+    const html = render(
+      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
+    );
+    expect(html).not.toContain('data-testid="match-detail-broadcast"');
+  });
+
+  it("a long round collapses to five matches with an expander (ruling 5)", () => {
+    const many = Array.from({ length: 12 }, (_, i) => slateMatch(i + 1));
+    const html = matchesOf(many);
+    expect(count(html, 'data-testid="match-row"')).toBe(5);
+    expect(html).toContain("Show all 12");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UX-P137 — every number says what it means, every list says how long it is
+// ---------------------------------------------------------------------------
+
+describe("ruling 2 — no unlabelled percentage column", () => {
+  it("the board names what its number means", () => {
+    const html = render(<TournamentBoard board={board(10)} />);
+    expect(html).toContain('data-testid="board-column-label"');
+    expect(html).toContain(TITLE_COLUMN_LABEL);
+  });
+
+  it("the chart names what its number means", () => {
+    const rows = Array.from({ length: 8 }, (_, i) => row(i + 1));
+    const html = render(<ContenderChart {...chartProps(rows)} />);
+    expect(html).toContain('data-testid="chart-column-label"');
+    expect(html).toContain(TITLE_COLUMN_LABEL);
+  });
+
+  it("the label is the TITLE question, because that is what the number is", () => {
+    // Traced in `lib/bracket.ts`: the figure comes from the register player's
+    // `kind: "outright"` sources — the champion market — on all three surfaces.
+    // A label saying anything about a match would be a confident lie.
+    expect(TITLE_COLUMN_LABEL.toLowerCase()).toContain("title");
+    expect(TITLE_COLUMN_LABEL.toLowerCase()).not.toContain("match");
+  });
+});
+
+describe("ruling 6 — the chart's player picker", () => {
+  const rows = Array.from({ length: 20 }, (_, i) => row(i + 1));
+
+  it("defaults to the top three, and the default is the board's order", () => {
+    expect(defaultSelection(rows)).toEqual(["player-1", "player-2", "player-3"]);
+    expect(defaultSelection(rows)).toHaveLength(CHART_SERIES_COUNT);
+  });
+
+  it("adds a fourth line with its OWN colour", () => {
+    const added = toggleSelection(defaultSelection(rows), "player-9");
+    expect(added).toHaveLength(4);
+    const colours = chartSeriesFor(rows, added).map((s) => s.color);
+    expect(new Set(colours).size).toBe(4);
+    expect(colours[3]).toBe(SERIES_COLORS[3]);
+  });
+
+  it("removes exactly the line tapped, and no other", () => {
+    const after = chartSeriesFor(rows, toggleSelection(defaultSelection(rows), "player-1"));
+    expect(after.map((s) => s.entityKey)).toEqual(["player-2", "player-3"]);
+    // Colours stay distinct after a removal. They are NOT pinned per entity —
+    // the survivors shift up — and `chartSeriesFor` says why that is the
+    // accepted trade. What must never happen is two lines sharing a colour.
+    expect(new Set(after.map((s) => s.color)).size).toBe(2);
+  });
+
+  it("the legend dot and the line can never disagree about a colour", () => {
+    // Both read the same `entry.color`, and this is the assertion that keeps
+    // it that way if either half is ever rewritten.
+    const html = render(<ContenderChart {...chartProps(rows)} />);
+    for (const colour of SERIES_COLORS.slice(0, CHART_SERIES_COUNT)) {
+      expect(html).toContain(`background-color:${colour}`);
+      expect(html).toContain(`stroke="${colour}"`);
+    }
+  });
+
+  it("refuses to empty the chart", () => {
+    expect(toggleSelection(["player-1"], "player-1")).toEqual(["player-1"]);
+  });
+
+  it("refuses to draw more lines than it can render", () => {
+    const full = rows.slice(0, MAX_SERIES_COUNT).map((r) => r.entity_key);
+    expect(toggleSelection(full, "player-20")).toEqual(full);
+    expect(chartSeriesFor(rows, rows.map((r) => r.entity_key))).toHaveLength(
+      MAX_SERIES_COUNT
+    );
+  });
+
+  it("offers the rest of the field, collapsed to five", () => {
+    const html = render(<ContenderChart {...chartProps(rows, { initialPickerOpen: true })} />);
+    expect(count(html, 'data-testid="chart-picker-option"')).toBe(5);
+    expect(html).toContain('data-testid="show-more"');
+    // ...and does not offer someone already drawn.
+    expect(html).not.toContain('data-testid="chart-picker-option" data-entity="player-1"');
+  });
+
+  it("the picker is closed by default — the chart is not a form", () => {
+    const html = render(<ContenderChart {...chartProps(rows)} />);
+    expect(html).toContain('data-open="false"');
+    expect(html).not.toContain('data-testid="chart-picker-list"');
+  });
+
+  it("the board's underline follows the chart's selection, not the board's rank", () => {
+    const selection = toggleSelection(defaultSelection(rows), "player-9");
+    const colours = seriesColorByEntity(chartSeriesFor(rows, selection));
+    expect(Object.keys(colours)).toContain("player-9");
+    const html = render(<TournamentBoard board={board(20)} seriesColors={colours} />);
+    expect(html).toContain('data-testid="board-row-series-tie"');
+  });
+});
+
+describe("rulings 5 and 9 — every long list collapses", () => {
+  it("the props section shows five then expands", () => {
+    const many = Array.from({ length: 11 }, (_, i) => ({
+      key: `p-${i}`,
+      title: `Question ${i}?`,
+      hook: null,
+      draw: null,
+      source: "polymarket",
+      outcomes: [
+        {
+          entity_key: `p-${i}:yes`,
+          display_name: "Yes",
+          probability: 0.4,
+          probability_is_live: true,
+          observed_at: "2026-08-25T11:00:00+00:00",
+          age_hours: 1,
+          price_state: "live" as const,
+          is_answer: true,
+        },
+      ],
+      answer_entity_key: `p-${i}:yes`,
+      price_state: "live" as const,
+      observed_at: "2026-08-25T11:00:00+00:00",
+      age_hours: 1,
+      freshest_observed_at: "2026-08-25T11:00:00+00:00",
+      freshest_age_hours: 1,
+      stale_outcomes: [],
+      mixed_freshness: false,
+    }));
+    const html = render(<TournamentProps markets={many} draw="mens-singles" />);
+    expect(count(html, 'data-testid="prop-market"')).toBe(5);
+    expect(html).toContain("Show all 11");
+  });
+
+  it("a SHORT list gets no expander — the control is not decoration", () => {
+    // The other direction. A rule that always rendered the button would pass
+    // every "shows five" assertion and put "Show all 1" under a single card.
+    const html = render(<TournamentProps markets={[]} draw="mens-singles" />);
+    expect(html).not.toContain('data-testid="show-more"');
+  });
+
+  it("the expander names the FULL length, which is the whole point", () => {
+    const html = render(<TournamentBoard board={board(44)} />);
+    expect(html).toContain("Show all 44");
+  });
+});
+
+describe("ruling 7 — the section is not named in gambling vocabulary", () => {
+  it("says neither props nor futures where a reader can see it", () => {
+    // Visible TEXT only — `data-testid="tournament-props"` is a selector other
+    // suites and the capture rigs depend on, and renaming it would be churn
+    // dressed as a fix. What Alex read is the heading.
+    const visible = render(<TournamentProps markets={[]} draw="mens-singles" />)
+      .replace(/<[^>]*>/g, " ")
+      .toLowerCase();
+    expect(visible).not.toContain("props");
+    expect(visible).not.toContain("futures");
+    expect(visible).toContain(SECTION_HEADING.toLowerCase());
   });
 });
 
@@ -398,5 +722,172 @@ describe("curated props", () => {
     expect(html).toContain("Can Sinner win a second major this year?");
     expect(html).toContain("He already has one in 2026.");
     expect(html).toContain("22%");
+  });
+
+  // -------------------------------------------------------------------------
+  // CERT-411 round 2 — a card is as fresh as its OLDEST PRINTED outcome
+  // -------------------------------------------------------------------------
+  //
+  // THE SPECIMEN, and the reason it is a specimen and not a hypothetical: the
+  // old rule was `ranked[0].probability_is_live` — the leader's flag, standing
+  // in for the whole card. Every existing test above used all-live or all-dark
+  // outcomes, so the mixed state, which is the one a real market spends most
+  // of its life in, was never rendered once.
+  //
+  // Same defect the boards had before UX-P135 (a row is as fresh as its oldest
+  // leg) and the slate had before it (a pair is live only when both sides
+  // are). It survived here because this component read an outcome flag
+  // directly instead of going through the pure layer.
+
+  const outcome = (
+    key: string,
+    probability: number,
+    live: boolean,
+    ageHours: number
+  ) => ({
+    entity_key: key,
+    display_name: key.toUpperCase(),
+    probability,
+    probability_is_live: live,
+    observed_at: "2026-08-25T11:00:00+00:00",
+    age_hours: ageHours,
+    price_state: (live ? "live" : "stale") as PropMarket["price_state"],
+    is_answer: false,
+  });
+
+  /**
+   * Fresh leader, stale runner-up — the card the old rule called live.
+   *
+   * ⚠️ THE RUNNER-UP'S AGE IS A PARAMETER SINCE UX-P138, and the default moved
+   * from 480 hours to 30. Ruling 8's rotation drops a card whose governing age
+   * is past `PROP_DARK_AFTER_HOURS`, so a 480-hour specimen no longer RENDERS
+   * at all — it rotates out before `PropCard` sees it. Left at 480 these
+   * render assertions would have been asserting against an empty section and
+   * passing for the wrong reason, which is how a fixed defect quietly comes
+   * back. The pure-layer assertions below still use 480, because the rule they
+   * test does not care, and the interaction between the two rulings has its
+   * own test at the end of this block.
+   */
+  const freshLeaderStaleRunner = (runnerAgeHours = 30) =>
+    market({
+      title: "Who will win a Grand Slam in 2026?",
+      answer_entity_key: null,
+      price_state: "stale",
+      outcomes: [
+        outcome("leader", 0.5, true, 1),
+        outcome("runner", 0.3, false, runnerAgeHours),
+        outcome("third", 0.2, true, 1),
+      ],
+    });
+
+  it("SPECIMEN: a fresh leader does NOT make a stale runner-up live", () => {
+    const card = freshLeaderStaleRunner();
+    // The leader alone still looks live — that is exactly what the old rule read.
+    expect(rankedOutcomes(card)[0].probability_is_live).toBe(true);
+    // The card must not.
+    expect(propIsPresentedAsLive(card)).toBe(false);
+
+    const html = render(<TournamentProps markets={[card]} draw="mens-singles" />);
+    expect(html).toContain('data-live="false"');
+    expect(html).not.toContain('data-live="true"');
+  });
+
+  it("SPECIMEN: the muted card says WHICH outcome is old, and how old", () => {
+    const html = render(
+      <TournamentProps markets={[freshLeaderStaleRunner()]} draw="mens-singles" />
+    );
+    // A muted number with no stated reason reads as a bug, or is not noticed.
+    expect(html).toContain('data-testid="prop-age"');
+    expect(html).toContain("30 hours ago");
+    expect(html).toContain("RUNNER");
+  });
+
+  it("the card is as old as its OLDEST printed outcome, not its newest", () => {
+    expect(propGoverningAgeHours(freshLeaderStaleRunner(480))).toBe(480);
+    expect(propGoverningAgeHours(freshLeaderStaleRunner())).toBe(30);
+  });
+
+  it("RULING 8 MEETS CERT-411: the twenty-day card rotates out, still not live", () => {
+    // The two rules compose rather than replace each other, and this is the
+    // test that says which does what. `propIsPresentedAsLive` is still false
+    // for the 480-hour specimen — the CERT-411 fix is untouched — and ruling
+    // 8's rotation then removes the card from the section entirely, because a
+    // three-week-old number is not a question worth asking. If rotation were
+    // ever loosened, the muted-with-a-reason rendering above is what catches
+    // the card instead.
+    const ancient = freshLeaderStaleRunner(480);
+    expect(propIsPresentedAsLive(ancient)).toBe(false);
+    expect(propIsDark(ancient)).toBe(true);
+    const html = render(<TournamentProps markets={[ancient]} draw="mens-singles" />);
+    expect(html).toContain('data-testid="props-empty"');
+    expect(html).toContain("gone dark and rotated out");
+  });
+
+  it("an outcome the card does not PRINT cannot demote it", () => {
+    // Only the top three are printed, so a stale fourth is not a contributor.
+    // Getting this wrong in the other direction would mute a card whose every
+    // visible number is current.
+    const card = market({
+      answer_entity_key: null,
+      outcomes: [
+        outcome("a", 0.4, true, 1),
+        outcome("b", 0.3, true, 1),
+        outcome("c", 0.2, true, 1),
+        outcome("d", 0.1, false, 480),
+      ],
+    });
+    expect(printedOutcomes(card).map((o) => o.entity_key)).toEqual(["a", "b", "c"]);
+    expect(propIsPresentedAsLive(card)).toBe(true);
+    expect(propStaleOutcomes(card)).toEqual([]);
+  });
+
+  it("an ANSWER card follows its answer, not the ladder's freshest rung", () => {
+    // The mirror of the headline bug: a fresh 99% "1+" rung must not certify a
+    // twenty-day-old "2+" answer as live.
+    const ladder = market({
+      answer_entity_key: "two-plus",
+      price_state: "stale",
+      outcomes: [
+        { ...outcome("one-plus", 0.99, true, 1), display_name: "1+ Grand Slam wins" },
+        {
+          // 30h, not 480h — see the note on `freshLeaderStaleRunner`: past
+          // ruling 8's rotation bound the card never reaches the renderer and
+          // this assertion would pass against an empty section.
+          ...outcome("two-plus", 0.555, false, 30),
+          display_name: "2+ Grand Slam wins",
+          is_answer: true,
+        },
+      ],
+    });
+    expect(propIsPresentedAsLive(ladder)).toBe(false);
+    const html = render(<TournamentProps markets={[ladder]} draw="mens-singles" />);
+    expect(html).toContain('data-live="false"');
+  });
+
+  it("a live card stays live, and says nothing about its age", () => {
+    // The other direction. A rule that muted everything would pass every
+    // assertion above and destroy the page.
+    const card = market();
+    expect(propIsPresentedAsLive(card)).toBe(true);
+    const html = render(<TournamentProps markets={[card]} draw="mens-singles" />);
+    expect(html).toContain('data-live="true"');
+    expect(html).not.toContain('data-testid="prop-age"');
+  });
+
+  it("an unpriced card is not live — there is no reading to be fresh", () => {
+    const unpriced = market({
+      answer_entity_key: null,
+      price_state: "dark",
+      outcomes: [
+        {
+          ...outcome("a", 0, false, 0),
+          probability: null,
+          age_hours: null,
+          price_state: "dark",
+        },
+      ],
+    });
+    expect(printedOutcomes(unpriced)).toEqual([]);
+    expect(propIsPresentedAsLive(unpriced)).toBe(false);
   });
 });

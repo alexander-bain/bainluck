@@ -2,8 +2,9 @@
 
 import React, { useState } from "react";
 import TrendSparkline from "./TrendSparkline";
-import ContenderChart from "./ContenderChart";
-import { COLLAPSED_ROW_COUNT, SERIES_COLORS } from "@/lib/contenderChart";
+import ShowMore from "./ShowMore";
+import { COLLAPSED_ROW_COUNT } from "@/lib/contenderChart";
+import { TITLE_COLUMN_LABEL } from "@/lib/bracket";
 import {
   boardNotice,
   formatBoardProbability,
@@ -28,6 +29,15 @@ import {
  * — but the number is muted, it is followed by the age of the reading, and the
  * board carries a banner above it saying so in words. #2199 has these fields
  * dark for 8-32 days, so this is the live path this weekend, not an edge case.
+ *
+ * UX-P137: the chart LEFT this component (Alex's ruling 6 — it moved to the
+ * top of the page, above the day's matches, where the title race belongs). The
+ * board keeps the colour tie-in, but the colours now arrive as a prop from
+ * whoever owns the chart's selection, because the reader can change it.
+ *
+ * And the number column has a header now (ruling 2). It is the same number the
+ * bracket prints and it meant the same thing in both places — the chance of
+ * winning the whole tournament — and neither of them said so.
  */
 
 function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: string }) {
@@ -116,7 +126,19 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
   );
 }
 
-export default function TournamentBoard({ board }: { board: TournamentBoardData }) {
+export default function TournamentBoard({
+  board,
+  seriesColors,
+}: {
+  board: TournamentBoardData;
+  /**
+   * Chart colour per entity key, for the name-underline tie-in. Supplied by
+   * whoever owns the chart's selection (UX-P137) — omitted, the board simply
+   * renders no underlines, which is the right answer on the pre-draw bracket
+   * view where there is no chart on screen to tie back to.
+   */
+  seriesColors?: Record<string, string>;
+}) {
   const notice = boardNotice(board);
 
   // COLLAPSED BY DEFAULT — Alex called the uncollapsed list a P1 on this page,
@@ -137,8 +159,6 @@ export default function TournamentBoard({ board }: { board: TournamentBoardData 
           </span>
         )}
       </h2>
-
-      <ContenderChart rows={board.rows} draw={board.draw} />
 
       <div className="mt-3 overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
         {notice && (
@@ -166,31 +186,37 @@ export default function TournamentBoard({ board }: { board: TournamentBoardData 
           </div>
         ) : (
           <>
+            {/* THE COLUMN HEADER (ruling 2). "A number whose meaning needs
+                asking fails the page" — and this column had no header at all
+                while printing the same figure the bracket prints. */}
+            <div
+              className="flex items-center justify-between gap-2 border-b border-surface-border px-3.5 py-1.5 text-[9.5px] font-bold uppercase tracking-[0.06em] text-text-muted"
+              data-testid="board-column-header"
+            >
+              <span>Contender</span>
+              <span data-testid="board-column-label">{TITLE_COLUMN_LABEL}</span>
+            </div>
+
             <ol>
-              {visible.map((row, index) => (
+              {visible.map((row) => (
                 <BoardRow
                   key={row.entity_key}
                   row={row}
                   seriesColor={
-                    index < SERIES_COLORS.length && row.probability !== null
-                      ? SERIES_COLORS[index]
-                      : undefined
+                    row.probability !== null ? seriesColors?.[row.entity_key] : undefined
                   }
                 />
               ))}
             </ol>
 
             {(hidden > 0 || expanded) && (
-              <button
-                type="button"
-                onClick={() => setExpanded((value) => !value)}
-                aria-expanded={expanded}
-                className="w-full border-t border-surface-border py-3 text-[13.5px] font-semibold text-text-primary"
-                data-testid="board-expander"
-                data-expanded={expanded ? "true" : "false"}
-              >
-                {expanded ? "Show fewer" : `Show all ${board.rows.length}`}
-              </button>
+              <div data-testid="board-expander" data-expanded={expanded ? "true" : "false"}>
+                <ShowMore
+                  expanded={expanded}
+                  total={board.rows.length}
+                  onToggle={() => setExpanded((value) => !value)}
+                />
+              </div>
             )}
           </>
         )}

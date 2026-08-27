@@ -11,10 +11,11 @@
  *   SERVER decides liveness; this file only decides how loudly to say so, and
  *   it may never upgrade a row the server did not call live.
  *
- * - `matchNarrative` is "the script vs the divergence" in one sentence. The
- *   script is the opening price, the divergence is where it went. A row with no
- *   movement says so plainly rather than manufacturing a story out of noise —
- *   the dead band is the server's, not a second opinion.
+ * - "The script vs the divergence" is the opening price and the move. It used
+ *   to be rendered a THIRD time as a sentence; UX-P138's ruling 6 deleted that
+ *   generator (see the note where `matchNarrative` used to be) and left the
+ *   two numbers to do the job. The dead band on the move is still the
+ *   server's, not a second opinion.
  *
  * - `slateGroups` buckets by calendar day in the VIEWER's timezone, because
  *   "today" is a claim about the person reading, not about UTC.
@@ -65,6 +66,32 @@ export interface SlateMatch {
   favourite: string | null;
   has_moved: boolean;
   source_count: number;
+  /**
+   * This match's OWN broadcast, when the register names one (UX-P137, ruling
+   * 8). Absent today for every match — see `matchBroadcast` for why the field
+   * exists anyway and what refuses to fill it with a guess.
+   */
+  broadcast?: Broadcast | null;
+  /**
+   * WHO WON, and BY WHAT (UX-P138, Alex's ruling 2: "decided matches show the
+   * SCORE with the outcome — 6-1, 6-4").
+   *
+   * Both are optional and both are **absent from every row we have ever
+   * served**. This is not a gap in the renderer, it is the state of the
+   * pipeline: `build_slate` emits matchups, prices and freshness, and nothing
+   * in the backend — not the register, not the slate builder, not
+   * `build_bracket` — has ever held the result of a tennis match, let alone
+   * its score. There is no field to read and no feed behind one.
+   *
+   * They are declared here anyway, for the same reason `broadcast` is: the
+   * seam is the thing that makes the arrival of a result feed an INGEST change
+   * rather than another layout pass. Nothing fabricates either one. A decided
+   * match with no score prints the outcome alone, which is what UX-P137
+   * already shipped and is strictly better than a blank row.
+   */
+  winner_entity_key?: string | null;
+  /** "6-1, 6-4" — the set scores as the provider writes them. Never assembled here. */
+  score?: string | null;
 }
 
 export interface Broadcast {
@@ -76,13 +103,9 @@ export interface Broadcast {
 /**
  * Where to watch, for the reader's own region (Alex's item 4).
  *
- * A static per-tournament mapping is the sanctioned v1. It is looked up by
- * region rather than joined per match because these rights are tournament-wide
- * — pretending otherwise by stamping a channel on each row would imply we know
- * something per-match that we do not.
- *
- * Falls back to the US entry, which is where the rights holder for this
- * tournament is, rather than to nothing.
+ * A static per-tournament mapping is the sanctioned v1. Falls back to the US
+ * entry, which is where the rights holder for this tournament is, rather than
+ * to nothing.
  */
 export function broadcastFor(
   broadcasts: Broadcast[] | undefined,
@@ -94,6 +117,52 @@ export function broadcastFor(
     broadcasts.find((entry) => entry.region === "US") ??
     broadcasts[0]
   );
+}
+
+export interface ResolvedBroadcast {
+  channels: string[];
+  region: string;
+  /**
+   * `match` when the register named a channel for THIS match; `tournament`
+   * when it is the region-wide answer standing in. The distinction is not
+   * cosmetic — see the note on `matchBroadcast`.
+   */
+  scope: "match" | "tournament";
+}
+
+/**
+ * Where to watch THIS match (UX-P137, Alex's ruling 8).
+ *
+ * The ruling: "WHERE-TO-WATCH moves to match level — the answer differs match
+ * to match; a single line at the top of a long list is wrong." That is true of
+ * the world and this file used to argue the opposite, so the argument is gone
+ * and the line moved.
+ *
+ * IT IS ALSO, TODAY, TRUE OF NOTHING WE HOLD, and the code says so rather than
+ * hiding it. The register carries rights per REGION only — US: ESPN/ESPN2/
+ * ESPN+, UK: Sky Sports Tennis, AU: Stan Sport — and there is no court, no
+ * session and no per-match channel anywhere in the pipeline. So every row
+ * resolves to the same string until a session feed lands, and the row is
+ * tagged `scope: "tournament"` so a test can prove that is what happened
+ * rather than a per-match answer that coincidentally matched.
+ *
+ * `match.broadcast` is the seam that day arrives through: a data change, not
+ * another layout pass. Nothing fabricates one in the meantime — a plausible
+ * per-match channel is worse than an honest tournament-wide one, because the
+ * reader would act on it.
+ */
+export function matchBroadcast(
+  match: Pick<SlateMatch, "broadcast">,
+  broadcasts: Broadcast[] | undefined,
+  region = "US"
+): ResolvedBroadcast | null {
+  const own = match.broadcast;
+  if (own && Array.isArray(own.channels) && own.channels.length > 0) {
+    return { channels: own.channels, region: own.region, scope: "match" };
+  }
+  const wide = broadcastFor(broadcasts, region);
+  if (!wide || !Array.isArray(wide.channels) || wide.channels.length === 0) return null;
+  return { channels: wide.channels, region: wide.region, scope: "tournament" };
 }
 
 export interface SlateData {
@@ -243,34 +312,30 @@ export function slateGroups(matches: SlateMatch[], now: Date = new Date()): Slat
 }
 
 /**
- * The script vs the divergence, as one readable sentence.
+ * `matchNarrative` WAS HERE, and was DELETED by UX-P138 (Alex's ruling 6).
  *
- * Deterministic and computed from the same numbers on the row — never an LLM
- * hook, and never a claim the row's own figures do not support. A match that
- * has not moved says so; that is information, not a gap to fill.
+ * The ruling, verbatim: "probability + movement delta + a sentence restating
+ * both is three renderings of one fact. Pick one primary treatment (number +
+ * delta chip); a sentence appears only when it adds something the numbers
+ * don't."
+ *
+ * It is deleted rather than left unused, and that is the whole point of doing
+ * it here instead of at the call site. What it produced —
+ *
+ *     "Clara Burel opened at 65%, up to 72%."
+ *
+ * — sat directly beneath a row already printing `72%` and `+7`. Every token in
+ * it except `65%` was a third rendering of a number six pixels away. Removing
+ * only the JSX would have left a tested, exported, documented sentence
+ * generator in the tree for the next component to reach for, and the tests
+ * asserting its exact wording would have kept it alive and looking healthy.
+ * The redundancy has to die in the layer that manufactures it.
+ *
+ * Its one genuinely additive token, the OPENING price, survives in
+ * `matchList.matchDetailNote`, which returns `null` for the flat and
+ * unremarkable majority of rows and is rendered only in the tapped detail view
+ * (ruling 7's home for demoted content).
  */
-export function matchNarrative(match: SlateMatch): string {
-  const ordered = orderedSides(match);
-  if (ordered === null) return "Prices for this match do not agree yet.";
-
-  const [favourite] = ordered;
-  const opened = favourite.opening_probability;
-  const now = favourite.probability;
-  if (opened === null || now === null) {
-    return `${favourite.display_name} is favoured at ${formatSlateProbability(now)}.`;
-  }
-
-  const direction = moveDirection(favourite.move);
-  if (direction === "flat") {
-    return `${favourite.display_name} opened at ${formatSlateProbability(
-      opened
-    )} and has not moved.`;
-  }
-  const verb = direction === "up" ? "up to" : "down to";
-  return `${favourite.display_name} opened at ${formatSlateProbability(
-    opened
-  )}, ${verb} ${formatSlateProbability(now)}.`;
-}
 
 export interface SlateNotice {
   tone: "stale" | "dark";

@@ -1,5 +1,14 @@
 /**
- * THE SLATE GUARD — /tournaments/us-open Today tab (UX-P132).
+ * THE SLATE RULES — `lib/slate.ts` and the rows it produces (UX-P132).
+ *
+ * ⚠️ THE COMPONENT UNDER TEST CHANGED AT UX-P138 (Alex's ruling 4), and the
+ * file kept its name deliberately. `TournamentSlate` is gone: the slate and
+ * the draw are one `TournamentMatches` list now. But every RULE below is
+ * `lib/slate.ts`'s and every one of them still governs — the server decides
+ * liveness and the UI may never upgrade a row, an incoherent pair shows no
+ * split, the move has the server's dead band, a muted row says which side is
+ * old. Those are the assertions worth keeping pinned to this file; the
+ * ruling-4 structure has its own suite in `tournamentMatches.test.tsx`.
  *
  * The slate is the half of this page that has live prices: the outright fields
  * have been dark for 8-32 days (#2199) while the match markets were captured
@@ -28,13 +37,13 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import TournamentSlate from "@/components/tournament/TournamentSlate";
+import TournamentMatches from "@/components/tournament/TournamentMatches";
+import { matchListFromSlate } from "@/lib/matchList";
 import {
   dayHeading,
   formatMove,
   formatSlateProbability,
   localDayKey,
-  matchNarrative,
   moveDirection,
   orderedSides,
   slateGroups,
@@ -114,8 +123,20 @@ function slate(overrides: Partial<SlateData> = {}): SlateData {
   };
 }
 
+/**
+ * UX-P138 (ruling 4) merged the slate into ONE match list, so the component
+ * these assertions run against is `TournamentMatches` now. The pure
+ * `lib/slate` rules below are unchanged and still own the vocabulary — the
+ * server decides liveness, an incoherent pair shows no split, the dead band on
+ * a move is the server's. What moved is only which component prints them.
+ */
 const render = (data: SlateData) =>
-  renderToStaticMarkup(<TournamentSlate slate={data} />);
+  renderToStaticMarkup(
+    <TournamentMatches
+      entries={matchListFromSlate(data.matches)}
+      notice={slateNotice(data)}
+    />
+  );
 
 // ---------------------------------------------------------------------------
 // The slate prints players, never Yes/No
@@ -213,13 +234,19 @@ describe("script vs divergence", () => {
     expect(html).toContain("28%");
   });
 
-  it("narrates the opening price and where it went", () => {
-    expect(matchNarrative(match())).toBe(
-      "Clara Burel opened at 65%, up to 72%."
-    );
+  it("does NOT restate the two numbers as a sentence (UX-P138, ruling 6)", () => {
+    // `matchNarrative` printed "Clara Burel opened at 65%, up to 72%" directly
+    // beneath a row already showing `72%` and `+7`. Every token in it except
+    // the opening price was a third rendering of a number six pixels away.
+    // Deleted at the source; the surviving fact lives in `matchDetailNote` and
+    // renders only behind the tap. The full ruling-6 coverage is in
+    // `tournamentMatches.test.tsx`.
+    const html = render(slate());
+    expect(html).not.toContain("opened at");
+    expect(html).not.toContain("up to");
   });
 
-  it("says a flat match is flat rather than inventing a story", () => {
+  it("says nothing at all about a flat match, rather than saying it three ways", () => {
     const flat = match({
       has_moved: false,
       sides: [
@@ -233,14 +260,10 @@ describe("script vs divergence", () => {
         }),
       ],
     });
-    expect(matchNarrative(flat)).toBe("Clara Burel opened at 65% and has not moved.");
-    expect(render(slate({ matches: [flat] }))).not.toContain("Moved");
-  });
-
-  it("refuses to narrate an incoherent pair", () => {
-    expect(matchNarrative(match({ coherent: false }))).toBe(
-      "Prices for this match do not agree yet."
-    );
+    const html = render(slate({ matches: [flat] }));
+    expect(html).not.toContain("has not moved");
+    expect(html).not.toContain("Moved");
+    expect(html).not.toContain('data-testid="match-move"');
   });
 
   it("suppresses a sub-half-point move rather than printing +0", () => {
@@ -331,14 +354,14 @@ describe("honesty treatment", () => {
     // No banner — slate-level freshness is deliberately the NEWEST reading, so
     // the per-row admission is the only thing standing between the reader and
     // a silently greyed row.
-    expect(html).not.toContain('data-testid="slate-notice"');
-    expect(html).toContain('data-testid="slate-row-age"');
+    expect(html).not.toContain('data-testid="matches-notice"');
+    expect(html).toContain('data-testid="match-age"');
     expect(html).toContain("Yexin Ma 20 days ago");
   });
 
   it("does not label a live row at all", () => {
     const html = render(slate());
-    expect(html).not.toContain('data-testid="slate-row-age"');
+    expect(html).not.toContain('data-testid="match-age"');
   });
 
   it("does not put an age on a row muted for DISAGREEMENT rather than age", () => {
@@ -367,8 +390,8 @@ describe("honesty treatment", () => {
         ],
       })
     );
-    expect(html).toContain('data-testid="slate-incoherent"');
-    expect(html).not.toContain('data-testid="slate-row-age"');
+    expect(html).toContain('data-testid="match-incoherent"');
+    expect(html).not.toContain('data-testid="match-age"');
   });
 
   it("says so in words when the slate is not live", () => {
