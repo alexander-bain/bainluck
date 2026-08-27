@@ -406,16 +406,23 @@ describe("ruling 8 — curated by interestingness", () => {
 });
 
 describe("ruling 8 — an empty section says WHY, with a number", () => {
-  it("names the dark rotation, not 'nothing curated yet'", () => {
+  it("names the count and the reason, not the generic 'nothing yet'", () => {
+    // UX-P145 rewrote the sentence into the reader's vocabulary — Alex quoted
+    // the old one as forbidden language. What ruling 8 requires is unchanged
+    // and is what this asserts: the empty section must give the NUMBER and the
+    // REASON, and must not fall back to the generic branch. The exact wording
+    // is pinned in `tournamentPlainLanguage.test.tsx`.
     const result = curatedProps([dark("a"), dark("b"), dark("c")], "mens-singles");
     expect(result.markets).toHaveLength(0);
-    expect(curatedPropsEmptyReason(result)).toContain("3 curated questions have gone dark");
+    const reason = curatedPropsEmptyReason(result);
+    expect(reason).toContain("3 questions");
+    expect(reason).toContain("have not seen a new number");
     const html = renderToStaticMarkup(
       <TournamentProps markets={[dark("a"), dark("b"), dark("c")]} draw="mens-singles" />
     );
     expect(html).toContain('data-testid="props-empty-reason"');
-    expect(html).toContain("gone dark and rotated out");
-    expect(html).not.toContain("Nothing curated yet");
+    expect(html).toContain("have not seen a new number on 3 questions");
+    expect(html).not.toContain("Nothing to ask yet");
   });
 
   it("says so when every question for a draw is a reach market", () => {
@@ -426,11 +433,13 @@ describe("ruling 8 — an empty section says WHY, with a number", () => {
     expect(curatedPropsEmptyReason(result)).toContain("Bracket tab");
   });
 
-  it("keeps the genuinely-empty sentence when the register really holds nothing", () => {
+  it("keeps the genuinely-empty sentence when there is truly nothing on file", () => {
     const result = curatedProps([], "mens-singles");
     expect(curatedPropsEmptyReason(result)).toBeNull();
     const html = renderToStaticMarkup(<TournamentProps markets={[]} draw="mens-singles" />);
-    expect(html).toContain("Nothing curated yet");
+    // UX-P145: "Nothing curated yet" → "Nothing to ask yet". Same branch, same
+    // job — distinguishing "we have nothing" from "we had some and they aged".
+    expect(html).toContain("Nothing to ask yet");
   });
 
   it("counts what it considered, so the drop is auditable from the markup", () => {

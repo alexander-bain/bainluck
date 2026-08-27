@@ -251,20 +251,23 @@ export default function TournamentProps({
           data-dropped-advance={curated.dropped.advance}
         >
           <div className="text-[14px] font-semibold text-text-primary">
-            {reason === null ? "Nothing curated yet" : "Nothing worth asking right now"}
+            {reason === null ? "Nothing to ask yet" : "Nothing worth asking right now"}
           </div>
-          <p className="mt-1 text-[12.5px] leading-snug text-text-secondary" data-testid="props-empty-reason">
+          <p
+            className="mt-1 max-w-[62ch] text-[12.5px] leading-snug text-text-secondary"
+            data-testid="props-empty-reason"
+          >
             {reason ??
-              "Beyond the title race and today’s matches, we only show questions we think are worth asking. None are registered for this draw yet."}
+              "Beyond the title race and today’s matches, we only show questions worth asking, and there are none for this draw yet. New questions are coming — check back soon."}
           </p>
           {/* WHAT WILL BE HERE. A section that only apologises reads as a dead
               feature; naming the next thing reads as one between deliveries.
               Deliberately a statement about the SOURCES, not a promise about a
               date — we do not control when they list. */}
-          <p className="mt-2 border-t border-surface-border pt-2 text-[11.5px] leading-snug text-text-muted">
+          <p className="mt-2 max-w-[62ch] border-t border-surface-border pt-2 text-[11.5px] leading-snug text-text-muted">
             Questions like <i>Will Sinner actually play?</i> live here. Once the main
-            draw starts, Kalshi and Polymarket list more of them beyond who-reaches-what,
-            and the ones worth asking appear here as they are priced.
+            draw starts, Kalshi and Polymarket open more of them beyond who-reaches-what,
+            and the ones worth asking show up here as soon as they have a number.
           </p>
         </div>
         <MovedToGrid dropped={curated.dropped.advance} />
@@ -303,15 +306,22 @@ export default function TournamentProps({
         )}
       </div>
 
-      {/* NO SILENT ROTATION. A section that quietly shrank from eleven cards to
+      {/* NO SILENT SHRINKING. A section that quietly went from eleven cards to
           one reads as "not much is happening"; the truth may be that ten
-          questions went dark, which is a different problem for a different
-          person. Advance-to-round drops are NOT counted here — they did not
-          rotate out, they moved, and the sentence says where. */}
+          questions stopped updating, which is a different problem for a
+          different person. Advance-to-round drops are NOT counted here — they
+          did not drop out, they moved, and the sentence says where.
+
+          UX-P145: the count stays, the vocabulary goes. It used to read "N
+          other questions rotated out — answered, gone dark, or a near-duplicate"
+          and all three of those are our words for our own pipeline. */}
       {rotatedOut > 0 && (
-        <p className="mt-2 text-[11px] text-text-muted" data-testid="props-rotated-out">
-          {rotatedOut} other question{rotatedOut === 1 ? "" : "s"} rotated out — answered,
-          gone dark, or a near-duplicate of one above.
+        <p
+          className="mt-2 max-w-[62ch] text-[11px] text-text-muted"
+          data-testid="props-rotated-out"
+        >
+          {rotatedOut} other question{rotatedOut === 1 ? " is" : "s are"} hidden — already
+          answered, waiting on a new number, or a near-duplicate of one above.
         </p>
       )}
       <MovedToGrid dropped={curated.dropped.advance} />

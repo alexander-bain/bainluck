@@ -189,7 +189,10 @@ export default function TournamentBoard({
             <div className="mb-1 text-[15px] font-semibold text-text-primary">
               No prices to show
             </div>
-            We know who is in this draw, but nobody has priced it yet.
+            {/* UX-P145: "nobody has priced it yet" used *priced* as a trading
+                verb. The noun stays — "prices" is what a prediction market
+                publishes and every reader of this page knows it. */}
+            We know who is in this draw, but no market has put a number on it yet.
           </div>
         ) : (
           <>
@@ -233,8 +236,10 @@ export default function TournamentBoard({
             className="border-t border-surface-border px-3.5 py-2 text-[11px] text-text-muted"
             data-testid="board-unpriced"
           >
-            {board.unpriced} more registered {board.unpriced === 1 ? "player has" : "players have"} no
-            price.
+            {/* UX-P145: was "N more registered players" — *registered* is the
+                name of our JSON file, not a fact about the draw. */}
+            {board.unpriced} more {board.unpriced === 1 ? "player in" : "players in"} this draw{" "}
+            {board.unpriced === 1 ? "has" : "have"} no price yet.
           </div>
         )}
       </div>

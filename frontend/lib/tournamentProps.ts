@@ -401,25 +401,52 @@ export function curatedProps(markets: PropMarket[], draw: string): CuratedProps 
  * The sentence an empty section owes the reader, or `null` when it has cards.
  *
  * A section that vanishes teaches the reader it does not exist; a section that
- * says "nothing curated yet" when eleven markets are registered and three of
- * them rotated out for age is simply wrong. So the empty state names the
- * actual reason, which is also the only way the curation gap ever reaches
- * anybody who can fix it.
+ * says "nothing here yet" when eleven markets are on file and three of them
+ * dropped out for age is simply wrong. So the empty state names the actual
+ * reason, which is also the only way the curation gap ever reaches anybody who
+ * can fix it.
+ *
+ * ═══ UX-P145: IT HAS TO SAY IT IN THE READER'S WORDS ═══
+ *
+ * Alex, on the live page: this sentence read **"3 curated questions have gone
+ * dark and rotated out. They come back when they are priced again."** Every
+ * load-bearing word in it is ours, not the reader's. *Curated* is our editorial
+ * process, *gone dark* is our price-state enum, *rotated out* is our render
+ * rule, and *priced* is a trading verb — the reader is told four things about
+ * our pipeline and nothing about their tournament.
+ *
+ * The rewrite keeps the two properties the old sentence had and the vocabulary
+ * it did not: it still gives the COUNT (a section that quietly shrinks reads as
+ * "not much is happening" when the truth is that three questions aged out), and
+ * it still says the state is temporary. `propsCopy.test.tsx` pins the result
+ * against the banned list so this cannot regress by a well-meaning edit.
+ *
+ * *Price* as a NOUN survives the sweep on purpose — "the last prices we saw" is
+ * plain English on a prediction-market page and is the honesty language the
+ * boards, the slate and the calibration page already share. It is *priced* as a
+ * VERB done to a question that is jargon, which is the same line Alex's own
+ * ruling 3 drew on "priced to get there" (`lib/playoffGrid.ts`).
  */
 export function curatedPropsEmptyReason(result: CuratedProps): string | null {
   if (result.markets.length > 0) return null;
   const { dark, resolved, template, advance } = result.dropped;
   if (dark > 0) {
-    return `${dark} curated question${dark === 1 ? " has" : "s have"} gone dark and rotated out. They come back when they are priced again.`;
+    const one = dark === 1;
+    return `We have not seen a new number on ${dark} question${one ? "" : "s"} in a while, so ${
+      one ? "it is" : "they are"
+    } hidden for now. New questions are coming — check back soon.`;
   }
   if (resolved > 0) {
-    return `${resolved} curated question${resolved === 1 ? " has" : "s have"} been answered and rotated out.`;
+    const one = resolved === 1;
+    return `${resolved} question${one ? " has" : "s have"} been answered and ${
+      one ? "is" : "are"
+    } no longer up for debate. New questions are coming — check back soon.`;
   }
   if (template > 0) {
-    return "Only near-duplicate questions are registered for this draw.";
+    return "The only questions left for this draw ask the same thing as one we already show.";
   }
   if (advance > 0) {
-    return "Every question registered for this draw is about reaching a round — those live on the Bracket tab now.";
+    return "Every question for this draw is about how far a player gets — those are on the Bracket tab.";
   }
   return null;
 }

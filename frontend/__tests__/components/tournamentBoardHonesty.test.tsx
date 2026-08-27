@@ -497,12 +497,15 @@ describe("board rendering", () => {
     expect(html).not.toContain("52.0%");
   });
 
-  it("declares unpriced registered players instead of hiding them", () => {
+  it("declares players with no price instead of hiding them", () => {
     const html = renderToStaticMarkup(
       <TournamentBoard board={board({ unpriced: 12 })} />
     );
     expect(html).toContain('data-testid="board-unpriced"');
-    expect(html).toContain("12 more registered players have no price");
+    // UX-P145: was "12 more registered players have no price". *Registered* is
+    // the name of our JSON file. The COUNT is the point of the line and it is
+    // still here — the reader must not be shown a board that looks complete.
+    expect(html).toContain("12 more players in this draw have no price yet");
   });
 
   it("renders an honest empty board", () => {

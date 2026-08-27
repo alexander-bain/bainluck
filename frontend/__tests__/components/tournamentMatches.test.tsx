@@ -386,8 +386,11 @@ describe("nothing renders blank", () => {
     const html = renderToStaticMarkup(
       <TournamentMatches entries={buildMatchList({ rounds: holed })} initialRound="R128" />
     );
+    // UX-P145: OUR name for the gap stays on the data attribute, where our
+    // names belong; the reader gets a sentence about their draw instead of
+    // about our JSON file ("No registered player" → "Player to be confirmed").
     expect(html).toContain('data-placeholder="register-hole"');
-    expect(html).toContain("No registered player");
+    expect(html).toContain("Player to be confirmed");
   });
 
   it("an incoherent pair shows both names and no split", () => {

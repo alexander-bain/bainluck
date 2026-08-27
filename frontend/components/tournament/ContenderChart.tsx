@@ -199,7 +199,18 @@ export default function ContenderChart({
         <>
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-          className="block h-24 w-full"
+          /**
+           * UX-P145: `h-24` (96px) is the phone's height, and on a phone the
+           * plot is ~358px wide, so the drawn aspect is roughly 3.7:1. In the
+           * desktop left column the same 96px sits under ~690px of width —
+           * nearly 7:1 — and a title race flattens into a set of horizontal
+           * lines that no longer show the thing the section exists to show.
+           * `lg:h-40` (160px) restores the phone's proportions at desktop
+           * width. Nothing else changes: `preserveAspectRatio="none"` means the
+           * viewBox never needed to match the rendered box, and the axis labels
+           * are HTML positioned by percentage for exactly that reason.
+           */
+          className="block h-24 w-full lg:h-40"
           preserveAspectRatio="none"
           role="img"
           aria-label={

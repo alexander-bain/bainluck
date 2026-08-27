@@ -299,7 +299,9 @@ def _price_cell(
         # register was loaded past validation — loud, and never a blank.
         return _cell(
             CELL_UNREGISTERED,
-            note="Cell registered with no source blocks — census incomplete",
+            # UX-P145: user-visible via the cell tooltip. Was "Cell registered
+            # with no source blocks — census incomplete".
+            note="We have not found a market for this question yet",
             censused_at=censused_at,
         )
 
@@ -360,11 +362,23 @@ def _price_cell(
         # number with a footnote.  So the number is WITHHELD, not muted: a price
         # the reader can see is a price the reader will believe, and one leg of
         # a two-leg blend is not the number this cell promised.
+        # UX-P145 — THIS STRING IS READ BY USERS, which is easy to miss from
+        # here.  It rides `note` into `gridCellExplanation()` and comes out as
+        # the cell's `title=` tooltip AND its screen-reader text
+        # (`frontend/lib/playoffGrid.ts`).  It used to say "N of M registered
+        # sources priced; unpriced: ..." — *registered* is the name of our JSON
+        # file, *priced* is a trading verb, and *sources* is our word for Kalshi
+        # and Polymarket.  Three pieces of pipeline vocabulary in a sentence
+        # aimed at somebody who wanted to know why a cell is blank.
+        #
+        # The market ids STAY.  They are the diagnostic half and Alex's
+        # amendment requires an alarm to name the market that did not resolve;
+        # a name is not jargon.  Only the framing changed.
         priced_note = (
-            f"{len(source_views)} of {len(live_blocks)} registered sources priced; "
-            f"unpriced: {'; '.join(unlinked)}"
+            f"We have a number from {len(source_views)} of {len(live_blocks)} markets; "
+            f"still missing: {'; '.join(unlinked)}"
             if source_views
-            else f"Registered but unpriced: {'; '.join(unlinked)}"
+            else f"We could not read a number from: {'; '.join(unlinked)}"
         )
         cell = _cell(
             CELL_UNLINKED,
@@ -381,7 +395,9 @@ def _price_cell(
     if blend is None:
         return _cell(
             CELL_UNLINKED,
-            note="Registered and priced, but the blend refused both legs",
+            # UX-P145: user-visible via the cell tooltip. Was "Registered and
+            # priced, but the blend refused both legs" — every noun in it ours.
+            note="Both markets quoted a number, but we could not combine them into one",
             censused_at=censused_at,
             sources=source_views,
         )
@@ -614,7 +630,9 @@ def build_playoff_grid(
                 # neighbours, and counted so the page cannot look complete.
                 cells[name] = _cell(
                     CELL_UNREGISTERED,
-                    note=f"No {SHORT_LABELS.get(name, name)} cell registered for this player",
+                    # UX-P145: user-visible via the cell tooltip. Was "No {X}
+                    # cell registered for this player".
+                    note=f"We have not found a {SHORT_LABELS.get(name, name)} market for this player",
                 )
             else:
                 blocks = [b for b in (reach.get("sources") or []) if isinstance(b, dict)]
