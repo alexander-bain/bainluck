@@ -346,7 +346,52 @@ FEED_PREWARM_ENABLED_KEY = "discover_feed_prewarm:enabled"
 # deadline multiplied by an item count is a budget that silently tightens every
 # time someone adds an item, and it fails at the moment of the addition rather
 # than at the moment of the mistake.
-FEED_PREWARM_DEADLINE_S = 20.0
+#
+# LAT-P100 builds that general form. The pass now has ONE wall budget instead of
+# a per-item deadline, so adding a target costs coverage inside a fixed bound
+# rather than pushing the bound up until it hits `soft_time_limit`.
+#
+# 80.0 s is not a new number: it is EXACTLY the worst case the per-item form
+# already permitted (`FEED_PREWARM_DEADLINE_S 20.0` x 4 shapes). The pass gains
+# three targets at no increase in its own bound, which is the whole point of the
+# change — the previous shape had to buy its room by cutting everyone's deadline.
+FEED_PREWARM_PASS_BUDGET_S = 80.0
+
+
+def _prewarm_target_deadline(
+    remaining_budget_s: float, remaining_targets: int
+) -> float:
+    """Fair share of what is LEFT, over what is LEFT to do.
+
+    🔴 **Gotcha #34, as an invariant rather than a caution.** A shared budget
+    consumed in loop order starves whatever is last: give the pass 80 s and let
+    each target take what it wants, and one slow first shape spends the lot while
+    the shapes behind it get nothing — and the failure is invisible, because a
+    starved warmer reports the same "the beat ran" as a healthy one.
+
+    Dividing the REMAINING budget by the REMAINING targets fixes it with an
+    arithmetic guarantee, not with care:
+
+        deadline_i >= PASS_BUDGET / N   for EVERY i, in EVERY order.
+
+    Proof (the test executes it; this is why it is true). Let B_i be the budget
+    left before target i of N. B_0 = B. Target i is given B_i / (N - i) and
+    cannot use more, so
+
+        B_{i+1} >= B_i - B_i/(N-i) = B_i * (N-i-1)/(N-i).
+
+    With B_i >= B * (N-i)/N by induction, B_{i+1} >= B * (N-i-1)/N — which is the
+    hypothesis at i+1. Therefore every target's share B_i/(N-i) >= B/N.
+
+    The upside is free and is the reason to divide the remainder rather than hand
+    out fixed slices: a target that finishes early returns its unspent time to
+    everyone behind it, so the common case (every shape warm in ~1 s) leaves the
+    LAST target with almost the whole budget, while the pathological case still
+    cannot push any target below its floor.
+    """
+    if remaining_targets <= 0:
+        return 0.0
+    return max(0.0, remaining_budget_s) / remaining_targets
 FEED_PREWARM_STATUS_KEY = "bainluck:precompute:feed_prewarm:last"
 FEED_PREWARM_STATUS_TTL = 6 * 3600
 
@@ -395,15 +440,41 @@ FEED_PREWARM_STATUS_TTL = 6 * 3600
 # ("the anonymous Discover + Sports first-paint response cache") and left
 # warming the wrong key. A fix scoped to the surface that surfaced the bug is
 # how a class survives its own repair.
+# LAT-P100: every shape now declares `include_events` and `include_futures`
+# EXPLICITLY, because `_prewarm_feed_shape` used to hardcode both to True and
+# both are part of the cache key (`feed_cache.feed_response_cache_key`). That
+# hardcoding did not merely omit a shape — it made an entire class of shape
+# UNWARMABLE, silently, and the Sports tab's events backfill was in that class
+# from the day the warmer was written. A default here would rebuild the same
+# trap one indirection deeper, so `test_feed_prewarm.py` asserts the declaration
+# rather than trusting a default.
 FEED_PREWARM_SHAPES: tuple[dict, ...] = (
-    {"label": "discover", "limit": 20, "offset": 0, "event_pct": 0.15, "mode": None},
-    {"label": "sports", "limit": 20, "offset": 0, "event_pct": None, "mode": "sports"},
+    {
+        "label": "discover",
+        "limit": 20,
+        "offset": 0,
+        "event_pct": 0.15,
+        "mode": None,
+        "include_events": True,
+        "include_futures": True,
+    },
+    {
+        "label": "sports",
+        "limit": 20,
+        "offset": 0,
+        "event_pct": None,
+        "mode": "sports",
+        "include_events": True,
+        "include_futures": True,
+    },
     {
         "label": "discover_native",
         "limit": 50,
         "offset": 0,
         "event_pct": 0.15,
         "mode": None,
+        "include_events": True,
+        "include_futures": True,
     },
     {
         "label": "sports_native",
@@ -411,6 +482,55 @@ FEED_PREWARM_SHAPES: tuple[dict, ...] = (
         "offset": 0,
         "event_pct": None,
         "mode": "sports",
+        "include_events": True,
+        "include_futures": True,
+    },
+    # LAT-P100: the native Sports tab's events-only backfill — the second of its
+    # three requests, and the one that fills Live Now / Upcoming after the board
+    # paints. `FeedViewModel.supplementalEventLimit = 200` via
+    # `APIClient.fetchSportsEventBackfill` -> `fetchFeed(limit:, includeFutures:
+    # false)`, which sends NO mode and NO event_pct. The Discover-default guard
+    # at `routes/feed.py:1822` requires `include_futures` to be true, so it skips
+    # this request and both stay None — and `{mode or 'discover'}` in the key
+    # builder is what makes the warmer's None land on the route's None.
+    #
+    # Measured cold on production 2026-08-27 (slug 7833da68, fresh session per
+    # sample): 151.5 ms p50, `X-Feed-Cache: miss` 8 of 8, max 721 ms.
+    {
+        "label": "sports_native_events",
+        "limit": 200,
+        "offset": 0,
+        "event_pct": None,
+        "mode": None,
+        "include_events": True,
+        "include_futures": False,
+    },
+)
+
+#: The two real shapes of `GET /api/futures/grouped-feed` — the Sports tab's
+#: THIRD request, on both surfaces. Enrolled by LAT-P100 together with that
+#: route's first response cache; before it, the route had none at all and both
+#: shapes were rebuilt from scratch on every open by every person.
+#:
+#: The native tab does NOT send `sports_only`; the web page does
+#: (`app/sports/page.tsx:109`). That is a different key and therefore a different
+#: entry — the same "one row below the line being edited" shape difference that
+#: cost the Sports tab 872 ms for two days in LAT-P099, written down here rather
+#: than rediscovered.
+GROUPED_FEED_PREWARM_SHAPES: tuple[dict, ...] = (
+    {
+        "label": "grouped_native",
+        "category": None,
+        "sport": None,
+        "sports_only": False,
+        "limit": 20,
+    },
+    {
+        "label": "grouped_web",
+        "category": None,
+        "sport": None,
+        "sports_only": True,
+        "limit": 20,
     },
 )
 
@@ -446,8 +566,17 @@ def _build_prewarm_request(scope_key: str):
     )
 
 
-async def _prewarm_feed_shape(shape: dict, rc) -> dict:
-    """Rebuild and publish ONE anonymous feed shape. Never raises."""
+async def _prewarm_feed_shape(
+    shape: dict, rc, *, deadline_s: float = FEED_PREWARM_PASS_BUDGET_S
+) -> dict:
+    """Rebuild and publish ONE anonymous feed shape. Never raises.
+
+    ``deadline_s`` is this target's slice of the pass budget, allocated by
+    ``_prewarm_target_deadline``. The default is the WHOLE budget on purpose: it
+    exists so a direct call in a test is not a ``TypeError``, and making it the
+    full pass budget rather than a plausible per-shape number means nobody can
+    mistake it for a second, quieter definition of a per-shape allowance.
+    """
     import asyncio
     import time as _time
 
@@ -474,8 +603,8 @@ async def _prewarm_feed_shape(shape: dict, rc) -> dict:
                     limit=shape["limit"],
                     offset=shape["offset"],
                     sport=None,
-                    include_events=True,
-                    include_futures=True,
+                    include_events=shape["include_events"],
+                    include_futures=shape["include_futures"],
                     my_teams_only=False,
                     mode=shape["mode"],
                     tags=None,
@@ -490,14 +619,14 @@ async def _prewarm_feed_shape(shape: dict, rc) -> dict:
                     db=db,
                     user=None,
                 ),
-                timeout=FEED_PREWARM_DEADLINE_S,
+                timeout=deadline_s,
             )
     except asyncio.TimeoutError:
         logger.error(
-            "Feed pre-warm TIMEOUT for %s after %.0fs — the request path will "
+            "Feed pre-warm TIMEOUT for %s after %.1fs — the request path will "
             "rebuild cold (LAT-P001)",
             label,
-            FEED_PREWARM_DEADLINE_S,
+            deadline_s,
         )
         return {"outcome": "timeout", "duration_s": round(_time.monotonic() - started, 1)}
     except Exception as exc:
@@ -559,13 +688,113 @@ async def _prewarm_feed_shape(shape: dict, rc) -> dict:
     return {"outcome": "ok", "duration_s": duration_s, "items": len(items)}
 
 
+async def _prewarm_grouped_feed_shape(
+    shape: dict, rc, *, deadline_s: float = FEED_PREWARM_PASS_BUDGET_S
+) -> dict:
+    """Rebuild and publish ONE ``/api/futures/grouped-feed`` shape. Never raises.
+
+    Unlike the feed warmer this one does NOT publish anything itself — it calls
+    the route with the pre-warm scope marker set, and the ROUTE writes its own
+    cache on the way out. That is deliberate and it is the stronger arrangement:
+    with exactly one writer, the warmed key cannot drift from the read key, which
+    is the defect class LAT-P001 closed for the feed and LAT-P099 then hit anyway
+    from the other direction. The marker only suppresses the READ, so the warmer
+    always rebuilds instead of re-publishing an ageing payload forever.
+    """
+    import asyncio
+    import time as _time
+
+    from fastapi import Response
+
+    from app.tasks.base import get_task_session
+    from app.routes.futures import grouped_feed
+    from app.utils.grouped_feed_cache import GROUPED_FEED_PREWARM_SCOPE_KEY
+
+    label = shape["label"]
+    started = _time.monotonic()
+    request = _build_prewarm_request(GROUPED_FEED_PREWARM_SCOPE_KEY)
+    try:
+        async with get_task_session() as db:
+            payload = await asyncio.wait_for(
+                grouped_feed(
+                    request=request,
+                    response=Response(),
+                    category=shape["category"],
+                    sport=shape["sport"],
+                    sports_only=shape["sports_only"],
+                    limit=shape["limit"],
+                    db=db,
+                ),
+                timeout=deadline_s,
+            )
+    except asyncio.TimeoutError:
+        logger.error(
+            "Grouped-feed pre-warm TIMEOUT for %s after %.1fs — the request path "
+            "will rebuild cold (LAT-P100)",
+            label,
+            deadline_s,
+        )
+        return {
+            "outcome": "timeout",
+            "duration_s": round(_time.monotonic() - started, 1),
+        }
+    except Exception as exc:
+        logger.exception("Grouped-feed pre-warm failed for %s", label)
+        return {
+            "outcome": "error",
+            "duration_s": round(_time.monotonic() - started, 1),
+            "error": str(exc)[:200],
+        }
+
+    duration_s = round(_time.monotonic() - started, 1)
+    items = (payload or {}).get("feed") or [] if isinstance(payload, dict) else []
+    if not items:
+        # The route refuses to publish an empty feed for the same reason: an empty
+        # read must not become shared truth for three minutes.
+        logger.warning(
+            "Grouped-feed pre-warm produced an EMPTY feed for %s — keeping "
+            "last-good",
+            label,
+        )
+        return {"outcome": "empty", "duration_s": duration_s}
+
+    logger.info(
+        "Pre-warmed grouped-feed %s in %.1fs (%d items)", label, duration_s, len(items)
+    )
+    return {"outcome": "ok", "duration_s": duration_s, "items": len(items)}
+
+
+def _prewarm_targets() -> list[tuple[str, object]]:
+    """Every warm target in the pass, as ``(label, callable)`` pairs.
+
+    One list so ONE budget covers all of them. Feed shapes and grouped-feed
+    shapes warm different routes and publish through different writers, but they
+    compete for the same two minutes, and a budget that only knows about some of
+    the work it is bounding is not a budget.
+    """
+    import functools
+
+    targets: list[tuple[str, object]] = [
+        (s["label"], functools.partial(_prewarm_feed_shape, dict(s)))
+        for s in FEED_PREWARM_SHAPES
+    ]
+    targets += [
+        (s["label"], functools.partial(_prewarm_grouped_feed_shape, dict(s)))
+        for s in GROUPED_FEED_PREWARM_SHAPES
+    ]
+    return targets
+
+
 async def _prewarm_discover_feed_responses():
     """Keep the anonymous Discover + Sports first-paint responses warm.
 
-    Bounded (per-shape deadline), kill-switchable, and it never replaces a good
-    cached payload with a degraded or empty one. Each shape is independent: one
-    shape failing must not stop the other from being warmed.
+    Bounded by ONE pass wall budget (LAT-P100), kill-switchable, and it never
+    replaces a good cached payload with a degraded or empty one. Each target is
+    independent: one failing must not stop the others from being warmed, and a
+    slow one must not be able to eat the budget of the ones behind it — see
+    `_prewarm_target_deadline`.
     """
+    import time as _time
     from datetime import datetime, timezone
 
     from app.tasks.redis_state import get_redis_client
@@ -586,14 +815,20 @@ async def _prewarm_discover_feed_responses():
     except Exception:
         logger.debug("feed pre-warm kill-switch read failed", exc_info=True)
 
+    targets = _prewarm_targets()
+    budget_left = FEED_PREWARM_PASS_BUDGET_S
     shapes: dict[str, dict] = {}
-    for shape in FEED_PREWARM_SHAPES:
-        shapes[shape["label"]] = await _prewarm_feed_shape(shape, rc)
+    for index, (label, warm) in enumerate(targets):
+        deadline_s = _prewarm_target_deadline(budget_left, len(targets) - index)
+        started = _time.monotonic()
+        shapes[label] = await warm(rc, deadline_s=deadline_s)
+        budget_left = max(0.0, budget_left - (_time.monotonic() - started))
 
     report = {
         "ran_at": datetime.now(timezone.utc).isoformat(),
         "shapes": shapes,
-        "deadline_s": FEED_PREWARM_DEADLINE_S,
+        "pass_budget_s": FEED_PREWARM_PASS_BUDGET_S,
+        "budget_left_s": round(budget_left, 1),
     }
     try:
         rc.setex(

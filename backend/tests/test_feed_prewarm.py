@@ -150,6 +150,7 @@ def test_warm_shapes_match_the_first_paint_requests():
         "sports",
         "discover_native",
         "sports_native",
+        "sports_native_events",
     }
 
     assert shapes["discover"]["limit"] == 20
@@ -177,6 +178,65 @@ def test_warm_shapes_match_the_first_paint_requests():
     assert shapes["sports_native"]["offset"] == 0
     assert shapes["sports_native"]["event_pct"] is None
     assert shapes["sports_native"]["mode"] == "sports"
+
+    # LAT-P100: the native Sports tab's events-only backfill. Not the request
+    # that gates first paint — the one that fills Live Now / Upcoming behind it —
+    # and it was UNWARMABLE rather than merely unwarmed: `include_futures` is in
+    # the cache key and `_prewarm_feed_shape` hardcoded it to True, so no entry
+    # in this tuple could have expressed the shape.
+    assert shapes["sports_native_events"]["limit"] == 200
+    assert shapes["sports_native_events"]["offset"] == 0
+    assert shapes["sports_native_events"]["include_futures"] is False
+    assert shapes["sports_native_events"]["include_events"] is True
+    # No mode and no event_pct: the Discover-default guard (`routes/feed.py:1822`)
+    # requires include_futures to be true, so it SKIPS this request and leaves
+    # both as sent. A warmer that supplied either would key differently.
+    assert shapes["sports_native_events"]["mode"] is None
+    assert shapes["sports_native_events"]["event_pct"] is None
+
+
+def test_every_shape_declares_its_include_flags_explicitly():
+    """LAT-P100 / bar C3. A default here would rebuild the trap one level down.
+
+    `_prewarm_feed_shape` used to hardcode `include_events=True,
+    include_futures=True` in its `get_feed` call. Both are part of the response
+    cache key, so that single pair of literals did not just omit a shape — it
+    made an entire CLASS of shape unwarmable, and the Sports tab's backfill sat
+    in that class from the day the warmer was written. Nothing failed, because
+    nothing asked.
+
+    Replacing the literals with `shape.get(..., True)` would move the same defect
+    one indirection deeper: the next author to add a shape and forget the key
+    would warm `True` silently, exactly as before. So the flags are REQUIRED, and
+    this is the test that makes them required.
+    """
+    for shape in pcp.FEED_PREWARM_SHAPES:
+        for flag in ("include_events", "include_futures"):
+            assert flag in shape, (
+                f"warm shape {shape['label']!r} does not declare {flag!r} — it is "
+                "part of the cache key, so an undeclared value warms a key the "
+                "client never asks for and the failure is silent"
+            )
+            assert isinstance(shape[flag], bool)
+
+    # And the warmer must READ them rather than re-hardcoding them. The AST check
+    # is the point: an assertion on the shapes cannot see a literal in the call.
+    source = textwrap.dedent(inspect.getsource(pcp._prewarm_feed_shape))
+    tree = ast.parse(source)
+    call = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "get_feed"
+    )
+    for kw in call.keywords:
+        if kw.arg in ("include_events", "include_futures"):
+            assert not isinstance(kw.value, ast.Constant), (
+                f"the warmer passes a literal {kw.arg}={ast.dump(kw.value)} to "
+                "get_feed — every shape that needs the other value is "
+                "unwarmable, which is the LAT-P100 defect exactly"
+            )
 
 
 def test_every_native_first_paint_shape_is_warmed():
@@ -233,6 +293,24 @@ NATIVE_CLIENT_REQUEST_SHAPES: dict[str, dict] = {
         my_teams_only=False,
         mode="sports",
     ),
+    # LAT-P100. `APIClient.fetchSportsEventBackfill` -> `fetchFeed(limit: 200,
+    # includeFutures: false)`, which sends no mode and no event_pct. The
+    # Discover-default guard requires `include_futures` to be TRUE, so it does
+    # not fire and neither value is rewritten — unlike `discover_native` above,
+    # where the same absent mode IS rewritten to "discover". Both end up keying
+    # through `{mode or 'discover'}`, which is why the two rows look
+    # inconsistent and are not.
+    "sports_native_events": dict(
+        sport=None,
+        limit=200,
+        offset=0,
+        include_events=True,
+        include_futures=False,
+        tags=None,
+        event_pct=None,
+        my_teams_only=False,
+        mode=None,
+    ),
 }
 
 
@@ -261,16 +339,17 @@ def test_the_warmed_anon_key_is_the_key_the_inert_share_reads(label):
         s for s in pcp.FEED_PREWARM_SHAPES if s["label"] == label
     )
     # What the warmer publishes: `_prewarm_feed_shape` calls the route with an
-    # anonymous synthetic request, `include_events`/`include_futures` both True,
-    # and no sport/tags/my_teams — and the route derives the key from that.
+    # anonymous synthetic request and no sport/tags/my_teams, passing the
+    # shape's OWN include flags (LAT-P100 — they used to be literals here and in
+    # the warmer, which is what made a whole class of shape unwarmable).
     warmed_key = feed_response_cache_key(
         user_id=None,
         session_id=None,
         sport=None,
         limit=shape["limit"],
         offset=shape["offset"],
-        include_events=True,
-        include_futures=True,
+        include_events=shape["include_events"],
+        include_futures=shape["include_futures"],
         tags=None,
         event_pct=shape["event_pct"],
         my_teams_only=False,
@@ -575,22 +654,93 @@ def test_warm_cadence_stays_inside_the_stale_window():
 
 
 def test_prewarm_is_bounded():
-    """The warm must never run unbounded inside the 2-minute beat."""
-    assert pcp.FEED_PREWARM_DEADLINE_S <= 30
-    # Worst case: base deadline (20s) + one deadline per shape, under the task's
-    # soft_time_limit of 120s.
-    #
-    # 🔴 THIS BUDGET TIGHTENS EVERY TIME A SHAPE IS ADDED, and it fires at the
-    # addition rather than at the mistake. LAT-P099's fourth shape landed the
-    # product exactly ON the limit (20 + 25*4 = 120) and the deadline came down
-    # to 20 s to make room — which is fine, because the deadline bounds the beat
-    # and is not a licence for a slow build: the native client gives up at 6 s,
-    # so a shape still building at 20 s is warming a payload nobody waited for.
-    # A FIFTH shape will need more than another constant nudge. Give the pass a
-    # single wall budget rather than a per-shape one, and read gotcha #34 first —
-    # a shared budget consumed in loop order starves whatever is last.
-    worst_case = 20 + pcp.FEED_PREWARM_DEADLINE_S * len(pcp.FEED_PREWARM_SHAPES)
-    assert worst_case < 120, f"worst-case warm pass {worst_case}s exceeds soft_time_limit"
+    """The warm must never run unbounded inside the 2-minute beat.
+
+    LAT-P100 replaced the per-shape deadline with ONE pass budget, so this is no
+    longer a product that grows with the target count: the worst case is now a
+    CONSTANT, and adding a target costs coverage inside the bound instead of
+    pushing the bound toward `soft_time_limit`. The previous form fired at the
+    moment of the addition rather than at the moment of the mistake, and each new
+    shape had to buy its room by cutting everyone else's deadline.
+    """
+    worst_case = 20 + pcp.FEED_PREWARM_PASS_BUDGET_S
+    assert worst_case < 120, (
+        f"worst-case warm pass {worst_case}s exceeds soft_time_limit — this is "
+        "now a constant, so if it fails someone raised the pass budget"
+    )
+    # And it must stay a constant. A budget re-derived from the target count is
+    # the old defect wearing the new name.
+    source = textwrap.dedent(inspect.getsource(pcp._prewarm_discover_feed_responses))
+    assert "FEED_PREWARM_PASS_BUDGET_S" in source
+    assert "* len(" not in source, (
+        "the pass budget must not be multiplied by a target count — that is the "
+        "per-item form this replaced"
+    )
+
+
+def test_no_target_can_be_starved_by_the_ones_ahead_of_it():
+    """LAT-P100 / bar B8 — gotcha #34, executed rather than commented.
+
+    A shared budget consumed in loop order starves whatever is last: give the
+    pass 80 s and let each target take what it wants, and one slow first target
+    spends the lot while the ones behind it get nothing. The failure is
+    invisible — a starved warmer logs exactly what a healthy one logs, and the
+    only symptom is users paying cold builds on the tabs that happen to sort
+    late.
+
+    `_prewarm_target_deadline` divides the REMAINING budget by the REMAINING
+    targets, which makes the floor arithmetic instead of aspirational. This test
+    runs the adversarial case: every target consumes its entire allowance, which
+    is the exact scenario that starves a naive shared budget.
+    """
+    budget = pcp.FEED_PREWARM_PASS_BUDGET_S
+    n = len(pcp._prewarm_targets())
+    assert n >= 2
+
+    floor = budget / n
+    left = budget
+    spent = 0.0
+    for index in range(n):
+        deadline = pcp._prewarm_target_deadline(left, n - index)
+        assert deadline >= floor - 1e-9, (
+            f"target {index} of {n} is allowed only {deadline:.3f}s against a "
+            f"floor of {floor:.3f}s — the targets ahead of it starved it"
+        )
+        # The adversarial case: this target burns everything it was given.
+        left = max(0.0, left - deadline)
+        spent += deadline
+
+    assert spent <= budget + 1e-9, (
+        f"the pass can spend {spent:.3f}s against a budget of {budget}s"
+    )
+
+    # The upside the division buys: a target that finishes early hands its
+    # unspent time to everyone behind it, so the common case (fast shapes) leaves
+    # the LAST target with far more than its floor rather than exactly its floor.
+    left = budget
+    for index in range(n - 1):
+        left = max(0.0, left - 0.5)  # every earlier target warms in 0.5s
+    assert pcp._prewarm_target_deadline(left, 1) > floor
+
+    # Degenerate inputs must not produce a negative or infinite deadline.
+    assert pcp._prewarm_target_deadline(-5.0, 3) == 0.0
+    assert pcp._prewarm_target_deadline(10.0, 0) == 0.0
+
+
+def test_every_warm_target_is_in_the_budgeted_pass():
+    """A budget that only bounds SOME of the work it shares a beat with is not one.
+
+    Both shape families warm different routes through different writers, but they
+    compete for the same two minutes. Enumerating them into one list is what lets
+    a single budget cover them; this asserts nobody adds a family that quietly
+    runs outside it.
+    """
+    labels = [label for label, _ in pcp._prewarm_targets()]
+    assert len(labels) == len(set(labels)), f"duplicate warm target labels: {labels}"
+    expected = {s["label"] for s in pcp.FEED_PREWARM_SHAPES} | {
+        s["label"] for s in pcp.GROUPED_FEED_PREWARM_SHAPES
+    }
+    assert set(labels) == expected
 
 
 # --- The internal rebuild marker must be unreachable from HTTP ----------------
