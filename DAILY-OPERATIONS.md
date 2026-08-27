@@ -1,7 +1,56 @@
-# Bain Luck — Daily Operations Runbook (Operating Model v4)
+# Bain Luck — Daily Operations Runbook (Operating Model v5)
 
-Your entire job: fire windows in the morning, answer questions when nudged,
-eyeball ship-gates in the evening. Everything else runs itself.
+Your entire job: check ONE file — `~/bainluck/YOUR-TURN.md` — and answer Fable
+when it nudges you. Everything else runs itself.
+
+## Operating Model v5 — the runner era (added 2026-08-26, Alex-ruled)
+
+v5 replaces the *paste a directive into a window* half of v4 — under v4 the line
+above read "fire windows in the morning, answer questions when nudged, eyeball
+ship-gates in the evening". Every rule further down about **what a lane may do**
+still holds unchanged; what v5 changes is **who STARTS sessions**. Where a v4
+section below is superseded, it says so inline.
+
+### How work flows now (plain words)
+
+Fable stages each lane's next directive as a file in `.claude/handoff/runner-inbox/<lane>/`.
+A RUNNER per worktree (started once by Alex, `lane-runner.sh`) watches that inbox, runs each
+directive as a fresh headless session, streams output live in its terminal tab AND to
+`.claude/handoff/runner-logs/`, marks the file consumed, and waits for the next. Alex no longer
+pastes directives into Claude lanes. The two non-Claude windows (lane4/codex, cert window) still
+take hand-pastes from Alex.
+
+Nothing else changed: session-sized queues, locks, certs, append-then-prove, the mission bus,
+and the attended exceptions (production DDL/DELETE, anything Alex runs by hand) are all exactly
+as before. The runner changes who STARTS sessions, never what sessions may do.
+
+### Alex's entire job
+
+Check ONE file: `~/bainluck/YOUR-TURN.md`. Every question, attended command, eyeball request,
+and phone-build moment lands THERE — with exact steps — and nowhere else. Standing rule for all
+lanes and Fable: anything that needs Alex goes into YOUR-TURN.md; burying an Alex-ask in a
+report body is a process bug. Plus: launch/kill runners (Ctrl-C a runner tab stops that lane;
+state lives in files, so it is always safe), and talk to Fable for rulings.
+
+### Reading the machine
+
+- Runner tab: live session output; "taking <queue>" and "done" lines bracket each session.
+- `runner-logs/<lane>-<ts>.log`: the durable copy of everything a session printed.
+- Reports: unchanged — each lane appends to its report file, append-then-prove.
+- Idle runner tab printing nothing = inbox empty = that lane has no staged work (a signal for
+  Fable, never a failure).
+
+### The one command (added by the fold, 2026-08-26 — the staged note said "started once by Alex")
+
+```bash
+~/bainluck/start-lanes.sh      # after a reboot, or any time a lane's window is gone
+```
+
+It reaps orphaned headless sessions first, then opens four Terminal windows, each running
+`lane-runner.sh <worktree> <lane…>`: `~/bainluck` (serving BOTH the `lane1` and `integrator`
+inboxes), and one each for `~/bainluck-dev/ux`, `latency`, `calibration`. Ctrl-C in a window
+stops that lane; runners take queues atomically, so a duplicate window wastes a window and
+nothing else.
 
 ## One-time migration (do once, ~30 min, mostly automated)
 
@@ -14,6 +63,12 @@ eyeball ship-gates in the evening. Everything else runs itself.
    the single ~/bainluck-dev/ folder.
 
 ## Morning (about 5 minutes)
+
+> **Superseded in part by v5.** Steps 1 and 2 are now the runners' job: the digest is
+> `~/bainluck/YOUR-TURN.md` (check it any time, not just at 6:45am), and the Claude windows
+> come up from `~/bainluck/start-lanes.sh` instead of five hand-typed lines. The launch lines
+> and the cross-root write grant below are still the record of **what** each window is and
+> **what** lets it write — the runner types them for you, it does not change them.
 
 1. Read the "needs-you" digest (arrives ~6:45am PT weekdays, push + here).
    Do what it lists: usually a couple of one-word decisions or one command.
@@ -86,6 +141,10 @@ Three standing rules the bus enforces:
 - When in doubt about anything, ask here first.
 
 ## How you know when YOU are the blocker
+
+> **Superseded by v5's single file.** All three guarantees below now land in ONE place:
+> `~/bainluck/YOUR-TURN.md`. Empty file = nothing needs you. An Alex-ask that exists only in
+> a report body is a process bug, not a to-do you were supposed to find.
 
 Three guarantees, so you never have to wonder:
 1. Any session blocked on a human action files a needs-user issue and ENDS —

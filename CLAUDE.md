@@ -198,6 +198,8 @@ There is a queue-based execution system in `.claude/handoff/` (protocol: `.claud
 
 A queue-file `status:` line describes execution ("done" = finished running), NEVER a verdict — verdicts live in reports and `CODEX-CERT-LOG.md`.
 
+**Anything that needs Alex — a decision, an attended command, an eyeball — goes into `~/bainluck/YOUR-TURN.md` with exact steps; burying an Alex-ask in a report is a process bug.**
+
 ### Non-Claude window mission bus (added 2026-08-24)
 
 Lane4 (codex) and the independent cert window take missions from `.claude/handoff/CODEX-QUEUE.md` and `.claude/handoff/CERT-QUEUE.md` — Fable/triage stage missions by writing those files; the windows poll them, execute, and append results to `CODEX-REPORT.md` (+ a row in `CODEX-CERT-LOG.md` for certs). Alex pastes into those windows only for out-of-band overrides. Two standing rules: the fix's author never runs its cert, and the cert window never audits its own prior cert subjects.
