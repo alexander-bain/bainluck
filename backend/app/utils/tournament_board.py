@@ -78,6 +78,11 @@ TREND_DAYS = 30
 DRAW_LABELS: dict[str, str] = {
     "mens-singles": "Men's Singles",
     "womens-singles": "Women's Singles",
+    # Ready and unused (UX-P139, item 12). No doubles market exists at either
+    # source; ESPN already carries all three draws' results under these slugs.
+    "mens-doubles": "Men's Doubles",
+    "womens-doubles": "Women's Doubles",
+    "mixed-doubles": "Mixed Doubles",
 }
 
 

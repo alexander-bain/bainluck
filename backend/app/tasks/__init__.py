@@ -1031,6 +1031,47 @@ def poll_polymarket_markets(self):
     return _tracked_run("poll_polymarket", _poll_polymarket_markets())
 
 
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=300,
+                 name="app.tasks.refresh_registered_tournament_prices")
+def refresh_registered_tournament_prices(self):
+    """Re-price exactly the Polymarket markets a tournament register pins (UX-P139).
+
+    The scanning poll rotates a 20-page window under Gamma's offset-2000 cap,
+    so a given event is re-priced only when the cursor reaches it. Measured
+    2026-08-26 that left all 336 US Open round-advancement markets — the entire
+    content of the bracket grid — 27 hours old while Polymarket snapshots
+    overall were current to the minute. The register names those markets
+    exactly, so this asks for them by condition id (a Gamma read that does not
+    paginate and is therefore not capped) rather than waiting to be scanned.
+
+    Prices only: never creates a market, never touches identity. ~11 batched
+    Gamma calls per run.
+    """
+    from app.tasks.tournament_price_refresh import _refresh_registered_tournament_prices
+    return _tracked_run(
+        "tournament_price_refresh", _refresh_registered_tournament_prices()
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=180,
+                 name="app.tasks.sync_tournament_results")
+def sync_tournament_results(self):
+    """Fetch ESPN's tennis results into Redis for the tournament hub (UX-P139).
+
+    Alex's item 9: "Decided-match scores come from the ESPN API we already use
+    for other scores — wire it." ESPN's tennis scoreboard carries the US Open
+    with per-set line scores and a winner flag, grouped by slugs that ARE the
+    register's own draw names. Nothing in our own tables holds a tennis result:
+    checked 2026-08-26, zero `events` rows exist for any registered matchup.
+
+    The fetch lives in a task rather than in the route because a third-party
+    call inside a GET is the shape the feed's standing rule forbids by name.
+    Two requests every three minutes.
+    """
+    from app.tasks.tournament_price_refresh import _sync_tournament_results
+    return _tracked_run("tournament_results_sync", _sync_tournament_results())
+
+
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_polymarket_history")
 def backfill_polymarket_history(self, limit: int = 500, fidelity: int = 60, interval: str = "max", mode: str = "resolved_zero"):
     """Backfill historical prices from Polymarket CLOB API for outcomes with sparse data."""
@@ -3224,6 +3265,22 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.refresh_stale_futures_prices",
         "schedule": crontab(minute=50),
         "options": {"queue": "heavy"},
+    },
+    # UX-P139. Every 10 minutes, and it is cheap because the register bounds
+    # it: ~11 Gamma calls for the whole US Open. The hourly scan above cannot
+    # reach these markets reliably (offset-2000 cap + rotating cursor), and the
+    # bracket grid is 336 of them.
+    "refresh-registered-tournament-prices": {
+        "task": "app.tasks.refresh_registered_tournament_prices",
+        "schedule": crontab(minute="*/10"),
+        "options": {"queue": "background"},
+    },
+    # UX-P139 item 9. Two ESPN scoreboard requests; the route only ever reads
+    # what this writes, so no request pays a third-party round trip.
+    "sync-tournament-results": {
+        "task": "app.tasks.sync_tournament_results",
+        "schedule": 180.0,
+        "options": {"queue": "background"},
     },
     "enrich-events-hourly": {
         "task": "app.tasks.enrich_events_metadata",

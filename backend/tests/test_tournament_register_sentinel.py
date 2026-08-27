@@ -15,6 +15,7 @@ import pytest
 from app.tasks.tournament_register_sentinel import (
     WATCHED,
     _terminal,
+    build_candidates,
     build_drift_issue_body,
     drift_fingerprint,
     register_age_hours,
@@ -33,22 +34,28 @@ def _register():
 
 
 def _candidates_matching(register):
-    """The inventory a perfectly-undrifted source would return."""
-    rows = []
-    for player in register["players"]:
-        for block in player.get("sources") or []:
-            if block.get("status") == "missing":
-                continue
-            rows.append({
-                "source": block["source"],
-                "market_id": block["market_id"],
-                "outcome_id": block["outcome_id"],
-                "outcome_name": block["source_name"],
-                "status": "live",
-                "terminal_result": None,
-                "season": register["season"],
-            })
-    return rows
+    """The inventory a perfectly-undrifted source would return.
+
+    Built through `priced_source_blocks`, the same walk the comparator uses, so
+    this helper cannot fall behind the register's collections. It did once:
+    UX-P139 added 336 reach identities and a players-only helper made an
+    undrifted register report `REGISTERED_IDENTITY_NOT_OBSERVED` 336 times.
+    """
+    from app.utils.tournament_register import priced_source_blocks
+
+    return [
+        {
+            "source": block["source"],
+            "market_id": block["market_id"],
+            "outcome_id": block["outcome_id"],
+            "outcome_name": block.get("source_name"),
+            "status": "live",
+            "terminal_result": None,
+            "season": register["season"],
+        }
+        for block in priced_source_blocks(register)
+        if block.get("status") != "missing"
+    ]
 
 
 class TestItActuallyLooked:
@@ -169,3 +176,64 @@ class TestRegisterAge:
         """Zero would read as "generated just now", which is the opposite."""
         assert register_age_hours({"generated_at": "not a date"}) is None
         assert register_age_hours({}) is None
+
+
+class TestTheObserverSeesEverythingTheComparatorChecks:
+    """The hole plant 12 found, closed.
+
+    `diff_against_inventory` reports `REGISTERED_IDENTITY_NOT_OBSERVED` for any
+    pinned identity the candidate list does not contain. So if `build_candidates`
+    looks at FEWER identities than the comparator checks, an undrifted register
+    reports drift for every one it missed — a sentinel crying wolf about its own
+    blind spot, and it would fire 336 times the day the grid shipped.
+
+    The existing drift tests cannot catch that: they build candidates through the
+    same helper the comparator uses, so the two move together. This asserts the
+    OBSERVER's query directly, against the register rather than against the
+    helper.
+    """
+
+    class _RecordingSession:
+        """Captures the `IN (...)` id set and returns nothing."""
+
+        def __init__(self):
+            self.wanted: set = set()
+
+        async def execute(self, statement):
+            for parameter in statement.compile().params.values():
+                if isinstance(parameter, (list, tuple, set)):
+                    self.wanted.update(parameter)
+            class _Empty:
+                def all(self_inner):
+                    return []
+            return _Empty()
+
+    async def test_build_candidates_asks_for_every_reach_identity(self):
+        register = _register()
+        session = self._RecordingSession()
+        await build_candidates(session, register)
+
+        pinned = {
+            block["outcome_id"]
+            for reach in register.get("reaches", [])
+            for block in reach["sources"]
+            if block.get("outcome_id") is not None
+        }
+        assert pinned, "the committed register carries no reach identities"
+        missing = pinned - session.wanted
+        assert not missing, f"{len(missing)} reach identities are unwatched"
+
+    async def test_build_candidates_asks_for_every_player_identity(self):
+        register = _register()
+        session = self._RecordingSession()
+        await build_candidates(session, register)
+
+        pinned = {
+            block["outcome_id"]
+            for player in register["players"]
+            for block in (player.get("sources") or [])
+            if block.get("outcome_id") is not None
+        }
+        assert pinned
+        assert not pinned - session.wanted
+

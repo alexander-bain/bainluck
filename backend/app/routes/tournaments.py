@@ -33,8 +33,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.tournament_board import TREND_DAYS, build_boards
+from app.utils.tournament_grid import build_grids
 from app.utils.tournament_register import TournamentRegister, load_register
-from app.utils.tournament_slate import build_bracket, build_props, build_slate
+from app.utils.tournament_slate import (
+    build_bracket,
+    build_props,
+    build_results,
+    build_slate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +53,28 @@ REGISTERED_TOURNAMENTS: dict[str, dict[str, str]] = {
         "season": "2026",
         "title": "US Open 2026",
         "subtitle": "Flushing Meadows",
+        # ESPN's own name for this tournament on the tennis scoreboard, used to
+        # select it out of a day that also carries Winston-Salem and Monterrey.
+        # Named here rather than matched: same posture as the slug itself.
+        "espn_event_name": "US Open",
+        # The main-draw ceremony, in the tournament's own local time. Alex's
+        # item 1: the pre-draw panel must say WHEN, not just that it has not
+        # happened. Register-adjacent rather than register-owned because it is
+        # a fact about the calendar, not about a market identity.
+        "draw_release_at": "2026-08-27T12:00:00-04:00",
+        "draw_release_label": "Thursday 27 August, 12:00 ET",
+        "main_draw_starts_at": "2026-08-30T11:00:00-04:00",
+        "main_draw_label": "Sunday 30 August",
     },
 }
+
+# Where `sync_tournament_results` writes and this route reads. The TTL is
+# generous relative to the 3-minute refresh so a single missed task run does not
+# blank the section; a genuinely dead task lets it expire, which is the honest
+# outcome (an empty section with a stated reason beats an hour-old result
+# presented as current).
+RESULTS_TTL_SECONDS = 900
+RESULTS_PREFIX = "bainluck:tournament-results:"
 
 # Short, and deliberately not a 24h mirror. #1767 shipped a league route that
 # rebuilt once per 24h and served the stale copy for the other 23h55m; a page
@@ -88,6 +114,37 @@ async def _cache_set(slug: str, payload: dict[str, Any]) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("tournament cache write failed for %s: %s", slug, exc)
+
+
+async def _espn_results(slug: str) -> dict[str, Any]:
+    """ESPN tennis results for one tournament — READ FROM CACHE, never fetched.
+
+    THE SHAPE MATTERS MORE THAN THE FEATURE.  Everything else on this page comes
+    out of our own database; results do not, because nothing in our database
+    holds the result of a tennis match (checked 2026-08-26: zero ``events`` rows
+    for any of the register's matchups).  So there is a fetch — and it does not
+    live here.
+
+    The first draft fetched inside the request, with a Redis cache in front of
+    it.  That is the same shape the feed's standing rule forbids by name
+    ("never run LLM calls inside ``GET /api/feed``"), and for the same reasons:
+    the first request after every TTL expiry pays a third-party round trip, a
+    slow ESPN makes a slow page for somebody, and a route contract test starts
+    making live network calls.  ``sync_tournament_results`` (every 3 minutes,
+    background queue) does the fetching; this only reads.
+
+    A cold or empty cache yields an empty results section and the rest of the
+    page.  Never a partial page, never a 503, and never a fabricated score.
+    """
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        raw = await get_async_redis_client().get(f"{RESULTS_PREFIX}{slug}")
+        if raw:
+            return json.loads(raw)
+    except Exception as exc:  # noqa: BLE001 — a results section is not a gate
+        logger.warning("tournament results cache read failed for %s: %s", slug, exc)
+    return {"draws": {}, "stats": {}, "errors": []}
 
 
 async def _load_prices(
@@ -225,11 +282,20 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
     # than becoming a scan.
     slate_outcome_ids = reg.matchup_outcome_ids()
     prop_outcome_ids = reg.prop_outcome_ids()
+    # The playoff grid's 336 pinned reach identities (UX-P139). Bounded by the
+    # register like every other set here, so adding a whole grid to this page
+    # adds one more id list to an `IN (...)` and never a scan.
+    reach_outcome_ids = reg.reach_outcome_ids()
 
     now = datetime.now(timezone.utc)
     prices = await _load_prices(
         db,
-        sorted(set(board_outcome_ids) | set(slate_outcome_ids) | set(prop_outcome_ids)),
+        sorted(
+            set(board_outcome_ids)
+            | set(slate_outcome_ids)
+            | set(prop_outcome_ids)
+            | set(reach_outcome_ids)
+        ),
     )
     # Trend lines are a board feature. Loading series for the slate's ~130
     # outcomes would triple the per-request scan to draw nothing.
@@ -255,6 +321,15 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
     )
     payload["slate"] = build_slate(register, prices=prices, now=now)
     payload["props"] = build_props(register, prices=prices, now=now)
+    # THE PLAYOFF GRID (UX-P139). Built server-side, from `reaches` and the
+    # boards, because the amendment makes cell provenance a correctness
+    # property: the grid must read the register and only the register, and a
+    # client assembling cells from three payload sections cannot be held to
+    # that. It also puts the two evals — column sums and monotonicity — next to
+    # the data they judge instead of in a component.
+    payload["grids"] = build_grids(
+        register, boards=payload.get("boards") or [], prices=prices, now=now
+    )
     # THE FIXTURE SWAP (UX-P134). Empty until the draw ceremony latches
     # `draw_released`; populated by the same `ingest_tournament_draw.py` run, so
     # Thursday is a data change and not a deploy.
@@ -265,10 +340,20 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
     # Where to watch — a static per-tournament mapping, register-owned so it can
     # be corrected without a deploy. Served verbatim; there is nothing to
     # compute and nothing to get wrong at request time.
+    # DECIDED MATCHES, WITH THE SCORE (UX-P139, Alex's item 9). A separate
+    # section rather than a field on the slate, because a slate structurally
+    # cannot hold a finished match — see `build_results`.
+    payload["results"] = build_results(register, results=await _espn_results(slug))
     payload["broadcasts"] = reg.broadcasts
     payload["slug"] = slug
     payload["title"] = spec["title"]
     payload["subtitle"] = spec["subtitle"]
+    # WHEN THE DRAW HAPPENS (Alex's item 1). The pre-draw panel says the date
+    # and the time, not just that it has not happened yet.
+    payload["draw_release_at"] = spec["draw_release_at"]
+    payload["draw_release_label"] = spec["draw_release_label"]
+    payload["main_draw_starts_at"] = spec["main_draw_starts_at"]
+    payload["main_draw_label"] = spec["main_draw_label"]
 
     await _cache_set(slug, payload)
     return payload

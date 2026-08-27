@@ -49,11 +49,37 @@ import { stalenessLabel } from "@/lib/tournament";
  * `lib/tournamentProps.curatedProps` so a question that resolves, goes dark, or
  * is the second copy of a template drops out rather than sitting here forever.
  *
- * ⚠️ APPLIED TO TODAY'S REGISTER THAT RULE EMPTIES THIS SECTION. All three
- * non-advance markets we curate are dark — 188 hours for `sinner-competes`,
- * 810 for both `*-second-major`. The empty state below says so, with the
- * count, because "nothing curated yet" would be a lie about a register holding
- * eleven markets and a curation gap nobody would ever be told about.
+ * ═══ UX-P139, ALEX'S ITEM 10: "THE SECTION WAS INVISIBLE" ═══
+ *
+ * "The questions/props section was INVISIBLE in the artifact Alex viewed —
+ * find why and make the demo state obvious."
+ *
+ * WHY, measured. The section rendered, in all nine panels of the UX-P138
+ * artifact; it rendered its EMPTY state, and the empty state was a small
+ * dashed box in muted 12.5px type with no heading weight and no border colour.
+ * Between two bordered white cards it reads as a divider. That is the finding:
+ * not a missing section, a section that had been styled down to invisibility
+ * on the assumption it would rarely be empty. It is empty every time, because
+ * every card it holds is dark:
+ *
+ *     sinner-competes        Yes .63    last observed 2026-08-19  (~188h)
+ *     sinner-second-major    2+ .555    last observed 2026-07-24  (~810h)
+ *
+ * Two changes, and neither of them is "show a stale number":
+ *
+ * 1. **The empty state now has the same visual weight as a populated one** —
+ *    the same card border, the same heading treatment, and the reason in
+ *    readable type rather than in a caption. A section the reader cannot see
+ *    cannot tell them anything, including that something is wrong.
+ * 2. **It says what WILL be here**, because during the tournament there will
+ *    be real Kalshi and Polymarket props beyond round-advancement (Alex's item
+ *    10). An empty section that only apologises reads as a dead feature; one
+ *    that names the next thing reads as a section between deliveries.
+ *
+ * The eight "does X reach the Y" cards are gone from the register entirely as
+ * of v7 — they are grid cells, `reaches` pins all 336, and a market in two
+ * collections is a divergence waiting to happen. The runtime rotation rule
+ * that used to drop them stays, as the guard it always was.
  */
 
 /** Alex's pick, ruled UX-P140. Every surface reads it from here. */
@@ -154,6 +180,38 @@ function PropCard({ market }: { market: PropMarket }) {
   );
 }
 
+/**
+ * WHERE THE ROUND QUESTIONS WENT — and why this sentence is unconditional.
+ *
+ * UX-P138 printed it only when `curated.dropped.advance > 0`, i.e. only when a
+ * reach question was in the payload and got rotated out at render. UX-P139
+ * removed those eight from the register itself (`props_declined`), which is the
+ * more correct fix — one market in two collections is a divergence waiting to
+ * happen — and the side effect was that the pointer disappeared with them.
+ *
+ * That made the sentence a fact about our BUILD PIPELINE rather than about the
+ * page: it appeared when the rotation happened to fire and vanished once the
+ * same decision was made one layer earlier, even though what it tells the
+ * reader ("reach-a-round questions live on the Bracket tab") became MORE true,
+ * not less. On a page whose ship is "a hub that orients at a glance", an
+ * orientation line that blinks out when the underlying structure hardens is
+ * backwards. So it is structural now, and the count rides it only while a
+ * rotation is genuinely what happened.
+ */
+function MovedToGrid({ dropped }: { dropped: number }) {
+  return (
+    <p
+      className="mt-2 text-[11px] text-text-muted"
+      data-testid="props-moved-to-grid"
+      data-dropped={dropped}
+    >
+      {dropped > 0
+        ? `${dropped} question${dropped === 1 ? " about reaching a round is" : "s about reaching a round are"} on the Bracket tab.`
+        : "Questions about reaching a round — the quarters, the semis, the final — are on the Bracket tab."}
+    </p>
+  );
+}
+
 export default function TournamentProps({
   markets,
   draw,
@@ -182,8 +240,12 @@ export default function TournamentProps({
         >
           {SECTION_HEADING}
         </h2>
+        {/* ITEM 10. Same border, same background, same padding as a populated
+            card. The old dashed 12.5px whisper between two solid cards read as
+            a divider, which is how a section that renders in every panel can
+            still be invisible. */}
         <div
-          className="rounded-2xl border border-dashed border-surface-border bg-surface-card px-4 py-5 text-center"
+          className="overflow-hidden rounded-2xl border border-surface-border bg-surface-card px-3.5 py-3.5"
           data-testid="props-empty"
           data-dropped-dark={curated.dropped.dark}
           data-dropped-advance={curated.dropped.advance}
@@ -191,20 +253,21 @@ export default function TournamentProps({
           <div className="text-[14px] font-semibold text-text-primary">
             {reason === null ? "Nothing curated yet" : "Nothing worth asking right now"}
           </div>
-          <p className="mt-1 text-[12.5px] text-text-secondary" data-testid="props-empty-reason">
+          <p className="mt-1 text-[12.5px] leading-snug text-text-secondary" data-testid="props-empty-reason">
             {reason ??
               "Beyond the title race and today’s matches, we only show questions we think are worth asking. None are registered for this draw yet."}
           </p>
-        </div>
-        {curated.dropped.advance > 0 && (
-          <p className="mt-2 text-[11px] text-text-muted" data-testid="props-moved-to-grid">
-            {curated.dropped.advance} question
-            {curated.dropped.advance === 1
-              ? " about reaching a round is"
-              : "s about reaching a round are"}{" "}
-            on the Bracket tab.
+          {/* WHAT WILL BE HERE. A section that only apologises reads as a dead
+              feature; naming the next thing reads as one between deliveries.
+              Deliberately a statement about the SOURCES, not a promise about a
+              date — we do not control when they list. */}
+          <p className="mt-2 border-t border-surface-border pt-2 text-[11.5px] leading-snug text-text-muted">
+            Questions like <i>Will Sinner actually play?</i> live here. Once the main
+            draw starts, Kalshi and Polymarket list more of them beyond who-reaches-what,
+            and the ones worth asking appear here as they are priced.
           </p>
-        )}
+        </div>
+        <MovedToGrid dropped={curated.dropped.advance} />
       </section>
     );
   }
@@ -251,13 +314,7 @@ export default function TournamentProps({
           gone dark, or a near-duplicate of one above.
         </p>
       )}
-      {curated.dropped.advance > 0 && (
-        <p className="mt-1 text-[11px] text-text-muted" data-testid="props-moved-to-grid">
-          {curated.dropped.advance} question
-          {curated.dropped.advance === 1 ? " about reaching a round is" : "s about reaching a round are"}{" "}
-          on the Bracket tab.
-        </p>
-      )}
+      <MovedToGrid dropped={curated.dropped.advance} />
     </section>
   );
 }

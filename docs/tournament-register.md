@@ -90,6 +90,63 @@ what makes the slate print player names instead of "Yes 54% / No 47%".
 | `LIVE_PRICE_STALE` / `LIVE_PRICE_NEVER_OBSERVED` | month-old prices presented as today's |
 | `UNREGISTERED_RENDER_ROW` | *a market not in the register does not render* — enforced at the render boundary, not just documented |
 
+### `reaches` — the playoff grid's cell (UX-P139)
+
+Alex's amendment to ruling 3: *"a blank cell, an improperly blended cell, or a cell populated from
+the WRONG future is a linkage defect — no excuse, no interpolation ... The register carries
+per-player per-round market IDs from BOTH sources; the grid reads only the register."*
+
+```jsonc
+"reaches": [{
+  "draw": "mens-singles",
+  "entity_key": "carlos-alcaraz",
+  "round": "SF",                       // one of ROUNDS
+  "sources": [{
+    "source": "polymarket", "kind": "reach",
+    "market_id": 59556735, "outcome_id": 221650932,
+    "market_external_id": "0x0d62…", "outcome_external_id": "0x0d62…_yes",
+    "source_name": "Yes",
+    // THE THREE RESTATEMENTS. Validation asserts each against the cell, so a
+    // reach-QF market wired into the SF cell REFUSES THE REGISTER rather than
+    // rendering a plausible number in the wrong column.
+    "question_round": "SF", "question_draw": "mens-singles",
+    "question_subject": "Carlos Alcaraz",
+    "question": "Will Carlos Alcaraz advance to the Semifinals in Men's Singles at the 2026 US Open?",
+    "status": "live", "price_observed_at": "…",
+    "evidence": {"kind": "advance-ladder-census", "observed_at": "…", "polymarket_event_id": "910171"}
+  }, {
+    // A CENSUSED ABSENCE, not an omission. Both sources get a block; the one
+    // that carries nothing says so, with the date we looked.
+    "source": "kalshi", "kind": "reach", "market_id": null, "outcome_id": null,
+    "status": "missing",
+    "evidence": {"kind": "advance-ladder-census-absent", "observed_at": "…", "note": "…"}
+  }]
+}]
+```
+
+| finding | the failure it names |
+|---|---|
+| `REACH_ROUND_MISMATCH` / `REACH_DRAW_MISMATCH` / `REACH_SUBJECT_MISMATCH` | **wrong-future placement** — a real price, from a real market, under the wrong question |
+| `DUPLICATE_REACH_CELL` / `REACH_IDENTITY_REUSED` | two markets for one cell, or one quote printed under two questions |
+| `REACH_SOURCE_WRONG_KIND` | P(wins the title) rendered in the "reaches the semis" column |
+| `REACH_PLAYER_NOT_REGISTERED` / `REACH_PLAYER_WRONG_DRAW` | a cell for somebody the register does not carry |
+| `REACH_NO_SOURCES` / `REACH_BLOCK_MISSING_QUESTION` | a cell nobody censused, or a block that cannot be checked |
+
+All of them are `STRUCTURAL_FINDINGS`: the register is **rejected**, not served with a warning.
+
+**The census behind it (2026-08-26).** Kalshi publishes **zero** round-advancement futures for this
+tournament — its whole US Open inventory is five markets. Polymarket publishes **336**, in eight
+`To Reach {R16, QF, SF, Final} × {Men's, Women's}` events, covering 44 of 128 men and 40 of 128
+women; verified against Gamma directly, so that is their inventory and not an ingest shortfall.
+Within it, coverage is total: all 84 players carry all four rounds, so **no player has a
+quarter-final number, a title number and a blank between them.** 28 board contenders have no
+ladder at either source; their cells are `no_market`, which is a census result and not an alarm.
+
+**Freshness.** `refresh_registered_tournament_prices` (every 10 min, `background`) asks Gamma for
+exactly the condition ids pinned here — `/markets?condition_ids=…`, which does not paginate and is
+therefore not subject to the offset-2000 cap that leaves the scanning poll reaching a given event
+about once a day. Prices only; it never creates a market and never touches identity.
+
 `classify()` maps findings to `(classification, action, publish)` in strict severity order:
 **invalid → needs_ruling → render_contract_failure → unambiguous_drift → clean**. Structural
 severity is decided by an explicit `STRUCTURAL_FINDINGS` set as well as name prefixes, because

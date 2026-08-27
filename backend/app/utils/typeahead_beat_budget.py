@@ -943,7 +943,7 @@ def free_background_slots(
     wall_s: float = RING_WALL_MEDIAN_S,
     period_s: float = 50.072,
 ) -> float:
-    """Slots left for the other 101 background beats once the warmer has its share.
+    """Slots left for the other 102 background beats once the warmer has its share.
 
     Below 1.0 means a single long co-tenant can starve the warmer completely.
     **This function answers the weaker question**, and LAT-P076 kept it only so
@@ -973,9 +973,9 @@ def free_background_slots(
 # inside the beat loop, where a fault freezes every beat in the system.
 # ---------------------------------------------------------------------------
 
-#: Beat entries whose EFFECTIVE queue is `background`. **55** name it
+#: Beat entries whose EFFECTIVE queue is `background`. **58** name it
 #: explicitly; **45** more fall through `task_default_queue`. Pinned by
-#: `test_the_background_queue_carries_101_beats_and_45_are_fall_through`.
+#: `test_the_background_queue_carries_103_beats_and_45_are_fall_through`.
 #:
 #: 🔴 WAS 102 (57 explicit) UNTIL RULING 110, LAT-P077. Two explicitly-routed
 #: beats — `backfill_market_shapes` and `precompute_backfill_progress` — moved
@@ -1023,7 +1023,26 @@ def free_background_slots(
 #: ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. The new beat named its
 #: queue rather than defaulting into it — the benign direction the guard's own
 #: docstring reserves.
-BACKGROUND_BEAT_COUNT = 102
+#:
+#: 🔴 MERGE RE-DERIVATION (Integrator, ux-121 x LAT-P090): both lanes re-derived
+#: from the same base of 101 and neither knew about the other — LAT-P090 got 102
+#: (+`warm-search-head`), UX-P139 got 103 (+`refresh-registered-tournament-prices`,
+#: +`sync-tournament-results`). The merged schedule carries all three, so the
+#: number is **104 / explicit 59 / fall-through still 45**, and it was obtained
+#: by RUNNING the census over the merged `beat_schedule` — not by adding 1 and 2,
+#: which is the arithmetic #1910 forbids and which would have been right only by
+#: luck here.
+BACKGROUND_BEAT_COUNT = 104
+#: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
+#: Two beats added, both naming `background` explicitly:
+#: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
+#: — the register's 336 reach markets are the whole bracket grid and the
+#: scanning poll cannot reach them under Gamma's offset-2000 cap) and
+#: `sync-tournament-results` (every 180 s, two ESPN scoreboard reads, so the hub
+#: route never makes a third-party call inside a GET). Again the benign
+#: direction: the fall-through half is untouched at 45, which is the half this
+#: guard exists to watch. Re-derived by running the census over the merged
+#: `beat_schedule`, not by adding two to the old number.
 
 #: Demand on `background` in slot-seconds per hour, EXCLUDING `warm_typeahead`
 #: (which is self-gated by its run lock, so its 360 fires/h are not 360 passes).
@@ -1031,8 +1050,21 @@ BACKGROUND_BEAT_COUNT = 102
 #: bound and a mean-weighted sum is the lower one. **Both are reported and
 #: neither is presented as the number** — the conclusion below survives the
 #: whole bracket, which is the only reason it is safe to act on.
+#:
+#: 🔵 **UX-P139 added ~170 s/h to this, and these constants do NOT include it.**
+#: They are a measured census, not a running total, and quietly incrementing a
+#: measurement is how a number stops meaning what its name says. The addition,
+#: stated so the next re-census starts from the right place:
+#: `refresh_registered_tournament_prices` at 6 fires/h x ~15 s (11 batched Gamma
+#: reads plus a bounded write) ~= 90 s/h, and `sync_tournament_results` at
+#: 20 fires/h x ~4 s (two ESPN scoreboard reads) ~= 80 s/h. Against a two-slot
+#: 7,200 s/h capacity that is **~2.4 %**, inside the gap between the mean and
+#: p95 estimators and well inside the 90 %-busy census the docstring below says
+#: to believe over the model. Neither beat is self-gated, so both are priced at
+#: a full run — which is the direction that overstates.
 BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H = 4538.0
 BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H = 7546.0
+UX_P139_ADDED_DEMAND_S_PER_H = 170.0
 
 #: The warmer's own measured draw: 91 % of one slot, continuously.
 WARMER_DEMAND_S_PER_H = 3276.0
@@ -1070,7 +1102,7 @@ def background_utilisation(
     So the model **overstates**, and the likely reason is structural: it prices
     every scheduled fire at a full run, while many background beats no-op or
     self-gate cheaply. `warm_typeahead` is corrected for that by hand; the other
-    101 are not.
+    102 are not.
 
     **Believe the census.** It is a direct count of what happened; the model is a
     product of two estimates. The honest load is **~0.90 measured, with a model

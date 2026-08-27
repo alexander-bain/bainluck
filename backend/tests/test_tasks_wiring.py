@@ -295,6 +295,13 @@ class TestBeatScheduleCompleteness:
         "grid-sentinel-daily",
         "grid-register-sentinel-daily",
         "tournament-register-sentinel-daily",
+        # UX-P139 — targeted re-price of register-pinned tournament markets.
+        # The scanning poll cannot reach them reliably under Gamma's
+        # offset-2000 cap, and they are the whole bracket grid.
+        "refresh-registered-tournament-prices",
+        # UX-P139 item 9 — ESPN tennis results into Redis, so the hub route
+        # never makes a third-party call inside a GET.
+        "sync-tournament-results",
         "horizon-sentinel-daily",
         "settled-concept-sentinel-daily",
         "board-sentinel-daily",

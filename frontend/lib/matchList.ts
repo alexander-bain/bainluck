@@ -171,6 +171,29 @@ export interface MatchListEntry {
    * See `matchDetailNote` — most rows get `null`, on purpose.
    */
   detailNote: string | null;
+  /**
+   * OUR event id, when this match has an `events` row — Alex's item 7,
+   * "matches click through to the standard event page".
+   *
+   * `null` on every US Open match today, and that is a data fact rather than a
+   * missing feature: checked 2026-08-26, **zero** of the register's matchups
+   * have an `events` row. The US Open qualifying draw was never ingested as
+   * events at all, so there is no page to click through to.
+   *
+   * The seam is here, typed and rendered, because the fix is an ingest change
+   * and the link should not be a second layout pass on the day it lands. It is
+   * REGISTER-OWNED (`matchup.event_id`), never derived from a name match at
+   * render time — a link to the wrong match is worse than no link, and a name
+   * join across two systems that disagree about `Auger-Aliassime` is exactly
+   * how you get one.
+   *
+   * The report's honest assessment of the DESTINATION is separate and less
+   * comfortable: today's tennis event pages carry surname-only participants, no
+   * blended win probability (`win_probability_sources` is null on every tennis
+   * event checked), no player images and no props. Linking to one before that
+   * is fixed would send a reader from a rich page to a bare one.
+   */
+  eventId: number | null;
   source: "slate" | "bracket";
 }
 
@@ -313,6 +336,7 @@ export function matchListFromSlate(
       freshnessLabel: slateRowFreshnessLabel(match),
       broadcast: matchBroadcast(match, options.broadcasts, options.region),
       detailNote: null,
+      eventId: match.event_id ?? null,
       source: "slate",
     };
     entry.detailNote = matchDetailNote(entry);
@@ -441,6 +465,9 @@ export function matchListFromBracket(
           ? matchBroadcast(joined, options.broadcasts, options.region)
           : null,
         detailNote: null,
+        // A positioned draw slot has no event of its own; the link, like the
+        // price, comes from the slate row it absorbed.
+        eventId: joined?.event_id ?? null,
         source: "bracket",
       };
       entry.detailNote = matchDetailNote(entry);

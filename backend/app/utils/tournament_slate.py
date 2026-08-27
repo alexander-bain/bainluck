@@ -284,6 +284,13 @@ def build_slate(
         moves = [v["move"] for v in views if v["move"] is not None]
         rows.append({
             "matchup_key": matchup.get("matchup_key"),
+            # OUR `events.id` for this fixture, when the register carries one
+            # (UX-P139, Alex's item 7). Register-owned so a click-through is an
+            # identity decision made once against the evidence, never a
+            # request-time name match across two systems that disagree about
+            # `Auger-Aliassime`. `None` on every US Open matchup today: the
+            # qualifying draw has no `events` rows at all.
+            "event_id": matchup.get("event_id"),
             "draw": matchup.get("draw"),
             "draw_label": draw_label(str(matchup.get("draw") or "")),
             "round": matchup.get("round"),
@@ -345,6 +352,134 @@ def build_slate(
         "newest_observed_at": newest_overall.isoformat() if newest_overall else None,
         "age_hours": round(slate_age, 2) if slate_age is not None else None,
         "dark_after_hours": DARK_PRICE_HOURS,
+    }
+
+
+def build_results(
+    register: dict[str, Any],
+    *,
+    results: dict[str, Any],
+) -> dict[str, Any]:
+    """Decided matches, with the score (UX-P139, Alex's item 9).
+
+    "Decided-match scores come from the ESPN API we already use for other
+    scores — wire it; 'no data behind it' is not accepted."
+
+    UX-P138 declared ``winner_entity_key`` and ``score``, rendered them when
+    filled, and had nothing to fill them with.  This is the fill.  ``results``
+    is ``app.services.espn_tennis.parse_results``' output: per draw, an
+    unordered normalized name pair -> ``{score, winner_normalized, ...}``.
+
+    WHY THIS IS A SEPARATE BUILDER AND NOT A FIELD ON THE SLATE.  ``build_slate``
+    drops a matchup the moment it starts (``ALREADY_PLAYED``) — deliberately,
+    because the register is a committed file and the clock keeps moving, and a
+    slate still showing this morning's matches at midnight is the defect that
+    rule exists to prevent.  A decided match is therefore not a slate row and
+    never was, which is the real reason UX-P138's seam rendered nothing: it was
+    attached to a list that structurally cannot contain a finished match.
+
+    THE JOIN IS THE PLAYER PAIR, and NOT the matchup.  That is a correction of
+    this function's first draft, and the reason is the same rule stated above:
+    ``build_slate`` drops a matchup the moment it starts, so by the time a
+    match has a result the register no longer carries it.  Joining results to
+    matchups produced, measured, **0 results against 199 finished ESPN
+    competitions** — a section that was structurally guaranteed to be empty.
+
+    So a result is attached when BOTH of its players are registered in the same
+    draw.  Player identity is the anchor everything else on this page already
+    uses, it survives a matchup being retired, and it is strict in the way that
+    matters: both names, in one draw, or the result is counted and dropped.  A
+    result whose winner does not normalize to one of the two is dropped
+    separately — a score under the wrong names is exactly the class of defect
+    the register exists to make impossible, and it would look plausible.
+    """
+    reg = TournamentRegister(register)
+    by_draw = (results or {}).get("draws") or {}
+
+    from app.services.espn_tennis import normalize_name
+
+    # (draw, normalized name) -> player. Built once; the join is a lookup.
+    by_name: dict[tuple[str, str], dict[str, Any]] = {}
+    for player in reg.players:
+        key = (str(player.get("draw") or ""), normalize_name(player.get("display_name")))
+        by_name.setdefault(key, player)
+
+    rows: list[dict[str, Any]] = []
+    unregistered_pair = 0
+    winner_mismatch = 0
+
+    # A matchup key when we still hold one, so a result and its former slate row
+    # agree on identity. Absent, the ESPN competition id is the stable key.
+    matchup_by_pair: dict[tuple, str] = {}
+    for matchup in reg.matchups:
+        players = matchup.get("players")
+        if isinstance(players, list) and len(players) == 2:
+            matchup_by_pair[
+                (str(matchup.get("draw")), tuple(sorted(players)))
+            ] = str(matchup.get("matchup_key"))
+
+    for draw, found_by_pair in sorted(by_draw.items()):
+        for found in found_by_pair.values():
+            entries = [
+                by_name.get((draw, normalize_name(name)))
+                for name in (found.get("players") or [])
+            ]
+            if len(entries) != 2 or any(entry is None for entry in entries):
+                unregistered_pair += 1
+                continue
+
+            keys = [str(entry.get("entity_key")) for entry in entries]
+            winner_key: Optional[str] = None
+            for key, entry in zip(keys, entries):
+                if normalize_name(entry.get("display_name")) == found.get("winner_normalized"):
+                    winner_key = key
+                    break
+            if winner_key is None:
+                winner_mismatch += 1
+                continue
+
+            rows.append({
+                "matchup_key": matchup_by_pair.get(
+                    (draw, tuple(sorted(keys))),
+                    f"espn:{found.get('espn_competition_id')}",
+                ),
+                "draw": draw,
+                "draw_label": draw_label(draw),
+                # OUR round when the register still holds the matchup, ESPN's
+                # otherwise — and `source_round` carries ESPN's either way,
+                # because it is finer than ours (three qualifying rounds where
+                # the register has one bucket).
+                "round": found.get("espn_round") or "",
+                "players": [
+                    {"entity_key": key, "display_name": entry.get("display_name"),
+                     "seed": entry.get("seed"), "is_winner": key == winner_key}
+                    for key, entry in zip(keys, entries)
+                ],
+                "winner_entity_key": winner_key,
+                # Winner's games first, set by set. `None` for a retirement or a
+                # partial read — see `format_score`, which refuses rather than
+                # printing half a result as a whole one.
+                "score": found.get("score"),
+                "completed_at": found.get("completed_at"),
+                "source_round": found.get("espn_round"),
+                "source": "espn",
+            })
+
+    rows.sort(key=lambda r: (str(r.get("completed_at") or ""), r["matchup_key"] or ""))
+
+    return {
+        "matches": rows,
+        "count": len(rows),
+        # NEVER SILENT. A results list shorter than the day's play is either a
+        # coverage fact or a join problem, and those need different people.
+        # `unregistered_pairs` is the coverage one: a finished match at this
+        # tournament whose two players the register does not both carry — most
+        # of the qualifying draw, by design.
+        "unregistered_pairs": unregistered_pair,
+        "winner_not_registered": winner_mismatch,
+        "source_competitions": (results or {}).get("stats", {}).get("final", 0),
+        "source_scored": (results or {}).get("stats", {}).get("scored", 0),
+        "source_errors": (results or {}).get("errors") or [],
     }
 
 

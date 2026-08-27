@@ -26,7 +26,9 @@ import pytest
 
 import app.utils.tournament_register as _tr
 from app.utils.tournament_register import (
+    DOUBLES_DRAWS,
     DRAWS,
+    SINGLES_DRAWS,
     TRANSITION_ONLY_FINDINGS,
     REGISTER_DIR,
     SCHEMA_VERSION,
@@ -380,10 +382,30 @@ def test_committed_register_validates(committed):
     assert validate_register(committed, CONTRACT) == []
 
 
-def test_committed_register_has_both_draws_populated(committed):
+def test_committed_register_has_both_singles_draws_populated(committed):
+    """SINGLES, not every draw in the vocabulary.
+
+    UX-P139 added the three doubles draws to ``DRAWS`` so a doubles catalog can
+    be populated without a code change (Alex's item 12). They carry no players
+    today, and asserting they do would make an empty-by-design collection look
+    like a regression the day somebody read this test.
+    """
     view = TournamentRegister(committed)
-    for draw in DRAWS:
+    for draw in SINGLES_DRAWS:
         assert len(view.draw_players(draw)) >= 20, draw
+
+
+def test_the_doubles_draws_are_declared_and_empty(committed):
+    """Item 12: the section ACCEPTS the class, and holds none of it yet.
+
+    Censused 2026-08-26: zero US Open doubles markets at either source. If one
+    of these ever gains a player without a market to price them, that is a
+    population bug and this catches it.
+    """
+    view = TournamentRegister(committed)
+    for draw in DOUBLES_DRAWS:
+        assert view.draw_players(draw) == [], draw
+        assert view.reach_rounds(draw) == [], draw
 
 
 def test_committed_register_carries_no_aggregate_bucket(committed):
@@ -433,17 +455,33 @@ def test_committed_register_blend_coverage_is_reported(committed):
 def test_committed_register_market_ids_are_a_bounded_load(committed):
     """Both loads stay id-lists, not scans.
 
-    Widened by UX-P132's second population pass: ``market_ids()`` now spans the
-    four outright fields AND one condition market per slate row. The bound that
-    matters is that it tracks the register's own contents — if this ever grows
-    without the matchup count growing, something is pinning markets nobody asked
-    for.
+    Widened twice. UX-P132's second population pass added one condition market
+    per slate row; UX-P139's reach cells add one per LINKED (player, round).
+    The bound that matters is unchanged and is the point of the assertion: the
+    total tracks the register's own contents exactly, so a number that grows
+    without one of the three collections growing means something is pinning
+    markets nobody asked for.
     """
     view = TournamentRegister(committed)
     assert len(view.market_ids("kalshi")) == 2
-    assert len(view.market_ids()) == 4 + len(committed["matchups"])
+
+    # One market per reach cell that actually links to one. A `missing` block
+    # pins no market by construction (`MISSING_ENTRY_HAS_IDENTITY`), so the
+    # censused absences cost nothing here — which is the property that lets the
+    # grid carry an honest empty cell without widening the load.
+    linked_reach_markets = {
+        block["market_id"]
+        for reach in committed.get("reaches", [])
+        for block in reach["sources"]
+        if block.get("market_id") is not None
+    }
+    assert len(view.market_ids()) == (
+        4 + len(committed["matchups"]) + len(linked_reach_markets)
+    )
     # Two priceable sides per slate row, all distinct.
     assert len(view.matchup_outcome_ids()) == 2 * len(committed["matchups"])
+    # One priced outcome per linked reach cell — the YES side and nothing else.
+    assert len(view.reach_outcome_ids()) == len(linked_reach_markets)
 
 
 def test_committed_register_file_is_stable_json():

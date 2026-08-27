@@ -339,6 +339,84 @@ export function seriesPoints(
     .join(" ");
 }
 
+export interface AxisTick {
+  /** ISO date, `YYYY-MM-DD` — the domain value. */
+  date: string;
+  /** Where it sits on the drawn x-axis, in viewBox units. */
+  x: number;
+  /** `26 Aug` — short enough for a 320-unit axis at three ticks. */
+  label: string;
+}
+
+/**
+ * X-AXIS TICKS (UX-P139, Alex's item 6: "The chart needs x-axis orientation —
+ * dates/ticks").
+ *
+ * The chart has always had a fixed, labelled 0–100 y-axis and an ENTIRELY
+ * unlabelled x. A reader could see a line fall and not know whether that
+ * happened over a day or a month — which matters most on exactly this page,
+ * where "the fields have been dark for weeks" and "the price moved this
+ * morning" are both live possibilities and look identical without a date.
+ *
+ * THREE TICKS, and the count is the whole design. The axis is 320 viewBox
+ * units wide inside a 358px content box; a `26 Aug` label is ~34px, so four
+ * labels collide at the ends and two leave the middle unanchored. First, last
+ * and the median date: first and last because they bound the window, the
+ * median because it is the only interior date guaranteed to exist in the
+ * domain (a fixed 50% x-offset can land between readings and would label a day
+ * nothing was observed).
+ *
+ * The ticks are DOMAIN INDICES, not calendar positions. `seriesPoints` spaces
+ * points by their index in the shared date list, so a domain with a gap draws
+ * its two sides adjacent; a tick placed by calendar arithmetic would sit
+ * somewhere the line is not. Gaps stay gaps, and the axis agrees with the line
+ * about where they are.
+ */
+export function axisTicks(geometry: ChartGeometry, timeframe?: Timeframe): AxisTick[] {
+  void timeframe;
+  const dates = geometry.dates;
+  if (dates.length < 2) return [];
+
+  const span = dates.length - 1;
+  const indices =
+    dates.length >= 3 ? [0, Math.floor(span / 2), span] : [0, span];
+
+  return indices.map((index) => ({
+    date: dates[index],
+    x: (index * geometry.width) / span,
+    label: shortDateLabel(dates[index]),
+  }));
+}
+
+/** `2026-08-26` -> `26 Aug`. Day-first, because the month repeats and the day does not. */
+export function shortDateLabel(iso: string): string {
+  const [year, month, day] = (iso || "").split("-").map(Number);
+  if (!year || !month || !day) return iso;
+  const months = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+  return `${day} ${months[month - 1] ?? ""}`.trim();
+}
+
+/**
+ * How long the drawn window actually is, in days — the sentence beside the
+ * ticks.
+ *
+ * Three dates on an axis tell a reader WHERE they are; "30 days" tells them how
+ * much of the story they are looking at, which is the question the timeframe
+ * buttons are answering and which the buttons alone cannot confirm (`ALL` on a
+ * field with four readings is four days, not all of history).
+ */
+export function axisSpanDays(geometry: ChartGeometry): number | null {
+  const dates = geometry.dates;
+  if (dates.length < 2) return null;
+  const first = Date.parse(`${dates[0]}T00:00:00Z`);
+  const last = Date.parse(`${dates[dates.length - 1]}T00:00:00Z`);
+  if (!Number.isFinite(first) || !Number.isFinite(last)) return null;
+  return Math.max(0, Math.round((last - first) / 86_400_000));
+}
+
 /** The last plotted coordinate — the reference's endpoint dot. */
 export function seriesEndpoint(
   entry: ChartSeries,

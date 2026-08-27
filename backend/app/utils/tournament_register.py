@@ -66,8 +66,26 @@ SCHEMA_VERSION = "tournament-register/v1"
 #: blend on this page has exactly two contributors and no sportsbook column.
 ALLOWED_SOURCES = ("kalshi", "polymarket")
 
-#: The two singles draws.  Register-owned because ``llm_gender`` is dead.
-DRAWS = ("mens-singles", "womens-singles")
+#: The draws a tournament may have.  Register-owned because ``llm_gender`` is
+#: dead (NULL on all 861,809 rows of ``futures_markets``).
+#:
+#: THE THREE DOUBLES DRAWS ARE HERE AND EMPTY (UX-P139, Alex's item 12):
+#: "the measurement lane is cataloging what Polymarket carried for US Open
+#: 2025 — build the section to accept those market classes when the catalog
+#: lands."  Censused 2026-08-26: **zero** US Open doubles markets exist at
+#: either source (3,581 markets platform-wide match "doubles"; none of them
+#: this tournament), so nothing in the committed register uses them today.
+#:
+#: They are listed anyway rather than added later, because the alternative is
+#: that the catalog lands and a doubles entry fails ``UNKNOWN_DRAW`` — a
+#: population pass blocked on a one-line code change, which is exactly the
+#: "deploy on the day" this whole register pattern exists to avoid.  ESPN
+#: already carries all three draws' RESULTS under these exact slugs (63 men's,
+#: 63 women's, 21 mixed competitions on 2026-08-26), so the results half is
+#: live the moment anybody asks for it.
+SINGLES_DRAWS = ("mens-singles", "womens-singles")
+DOUBLES_DRAWS = ("mens-doubles", "womens-doubles", "mixed-doubles")
+DRAWS = (*SINGLES_DRAWS, *DOUBLES_DRAWS)
 
 #: Rounds, qualifying through the final.  ``qualifying`` is one bucket rather
 #: than Q1/Q2/Q3 because the sources do not distinguish them by name.
@@ -97,16 +115,49 @@ PLAYER_ROLES = ("contender", "participant")
 DEFAULT_PLAYER_ROLE = "contender"
 
 #: What KIND of question a pinned identity answers.  ``outright`` is "wins the
-#: tournament"; ``match`` is "wins this match".  The two must never be blended
-#: or ranked against each other — they are different questions that happen to
-#: share a unit.
-SOURCE_KINDS = ("outright", "match")
+#: tournament"; ``match`` is "wins this match"; ``reach`` is "gets as far as
+#: round R".  The three must never be blended or ranked against each other —
+#: they are different questions that happen to share a unit.
+SOURCE_KINDS = ("outright", "match", "reach")
 DEFAULT_SOURCE_KIND = "outright"
 
 REQUIRED_REGISTER_FIELDS = frozenset(
     {"schema_version", "tournament", "season", "version", "generated_at",
      "draw_released", "players", "matchups"}
 )
+
+#: THE REACH CELL (UX-P139, Alex's amendment to ruling 3).
+#:
+#: "A blank cell, an improperly blended cell, or a cell populated from the WRONG
+#: future is a linkage defect — no excuse, no interpolation. The derived-value
+#: fallback is retired: a cell whose direct markets are not linked renders as an
+#: ALARM STATE naming the missing linkage ... The register carries per-player
+#: per-round market IDs from BOTH sources; the grid reads only the register."
+#:
+#: So the playoff grid's unit gets its own collection, keyed
+#: ``(draw, entity_key, round)``, with one source block per source exactly like
+#: a player entry.  Three consequences follow structurally rather than by
+#: convention:
+#:
+#: 1. **The grid cannot read anything else.**  ``build_playoff_grid`` walks
+#:    ``reaches`` and nothing else, so there is no path by which a match price,
+#:    a chained product, or a curated prop could land in a reach cell.
+#: 2. **Wrong-future placement is caught in the FILE**, not at render time.  A
+#:    block restates the question it was pinned from — ``question_round``,
+#:    ``question_draw``, ``question_subject`` — and validation asserts all three
+#:    agree with the cell.  A reach-QF market wired into the SF cell is
+#:    ``REACH_ROUND_MISMATCH``, a structural finding that refuses the register.
+#: 3. **"No market" is a written-down census result, not an absence.**  A cell
+#:    both sources were censused for and neither carries gets a ``missing``
+#:    block per source with its own evidence timestamp.  That is materially
+#:    different from a cell nobody looked at, which the grid renders as an
+#:    alarm — see ``tournament_grid.CELL_UNREGISTERED``.
+REQUIRED_REACH_FIELDS = frozenset({"draw", "entity_key", "round", "sources"})
+
+#: A reach block must restate the question its identity was pinned from. These
+#: are what make ruling-3's "wrong future" a validation failure instead of a
+#: thing a reader might notice.
+REQUIRED_REACH_QUESTION_FIELDS = ("question_round", "question_draw", "question_subject")
 
 #: Curated props and futures (UX-P132, Alex's item 5): "beyond the two winner
 #: markets and today's matches, surface a section of interesting tournament
@@ -209,6 +260,9 @@ STRUCTURAL_FINDINGS = frozenset({
     # then "fix" into a plausible 50/50. Structural, so it is rejected before
     # any display rule gets a chance to launder it.
     "MATCHUP_SIDES_SHARE_OUTCOME",
+    # A matchup pointing at something that is not an events row id. Structural
+    # because the consequence is a link to a 404, which reads as a broken page.
+    "INVALID_MATCHUP_EVENT_ID",
     # One outcome feeding two different matchups: the same quote presented as
     # two separate matches. Registry-level, so validate_matchup cannot see it.
     "MATCHUP_IDENTITY_REUSED",
@@ -226,6 +280,35 @@ STRUCTURAL_FINDINGS = frozenset({
     # "Where to watch:" with nothing after it. Small, and still a promise the
     # page cannot keep.
     "BROADCAST_NO_CHANNELS",
+    # ── THE REACH CELL (UX-P139) ────────────────────────────────────────────
+    # Alex: "wrong-future placement (a reach-QF market feeding the SF cell) is
+    # a named eval failure, not a data quirk." Named here, structurally, so the
+    # register is REFUSED rather than served with a plausible number in the
+    # wrong column. All three mismatches are the same class — the identity
+    # answers a different question than the cell asks — and the class is
+    # exactly the one the grid register was built to kill (83% of golf cells
+    # fed by the wrong tournament's market, 2026-08-01 baseline census).
+    "REACH_ROUND_MISMATCH",
+    "REACH_DRAW_MISMATCH",
+    "REACH_SUBJECT_MISMATCH",
+    # A cell naming a player the register does not carry, or two cells for one
+    # (draw, player, round), or one outcome backing two cells. Same reasoning
+    # as their matchup counterparts.
+    "REACH_PLAYER_NOT_REGISTERED",
+    "REACH_PLAYER_WRONG_DRAW",
+    "DUPLICATE_REACH_CELL",
+    "REACH_IDENTITY_REUSED",
+    "DUPLICATE_SOURCE_FOR_REACH",
+    # A reach block pinned as an outright or a match quote. P(wins the title)
+    # rendered in the "reaches the semis" column is the ruling-3 defect with a
+    # different label on it.
+    "REACH_SOURCE_WRONG_KIND",
+    # A reach cell with no source blocks at all is not a census result. The
+    # honest "neither source carries this" is TWO `missing` blocks with
+    # evidence; an empty list is a cell nobody looked at, and it must not be
+    # mistaken for one that was cleared.
+    "REACH_NO_SOURCES",
+    "REACH_BLOCK_MISSING_QUESTION",
 })
 
 #: Findings from ``validate_transition`` only.  These never reach ``classify``:
@@ -404,6 +487,15 @@ def validate_matchup(matchup: Any, *, entity_keys: set[str], sources: set[str]) 
         findings.append("UNKNOWN_DRAW")
     if matchup["round"] not in ROUNDS:
         findings.append("UNKNOWN_ROUND")
+    # OUR `events.id`, optional (UX-P139, Alex's item 7). Register-owned so the
+    # click-through is pinned rather than name-matched at render time. Typed
+    # here because a string id would render `/events/undefined`, which is a
+    # 404 the reader reads as a broken page rather than as a missing link.
+    event_id = matchup.get("event_id")
+    if event_id is not None and (
+        not isinstance(event_id, int) or isinstance(event_id, bool) or event_id <= 0
+    ):
+        findings.append("INVALID_MATCHUP_EVENT_ID")
     if not is_iso8601(matchup.get("scheduled_date")):
         findings.append("INVALID_SCHEDULED_DATE")
 
@@ -504,6 +596,94 @@ def validate_prop(prop: Any, *, sources: set[str]) -> list[str]:
     # and the renderer shows a ranked list instead of a headline number.
     if len(answers) > 1:
         findings.append("PROP_MULTIPLE_ANSWERS")
+
+    return findings
+
+
+def validate_reach(
+    reach: Any,
+    *,
+    players_by_key: dict[str, dict[str, Any]],
+    sources: set[str],
+) -> list[str]:
+    """Validate one player x round reach cell (UX-P139).
+
+    The three ``question_*`` assertions are the whole point of this function.
+    Every other register entry is validated for *shape*; a reach block is
+    validated for **agreement with its own subject matter**, because the defect
+    Alex's amendment names — a reach-QF market feeding the SF cell — is
+    perfectly well-shaped.  It renders a real price, from a real market, under
+    the wrong question, and nothing downstream can tell.
+
+    So the block carries the question it came from, in the source's own terms,
+    and this function asserts the cell and the question describe the same
+    (player, round, draw).  Restating is not redundancy: it is the only way the
+    disagreement has somewhere to show up.
+    """
+    if not isinstance(reach, dict):
+        return ["REGISTER_REACH_WRONG_SHAPE"]
+    if REQUIRED_REACH_FIELDS - reach.keys():
+        return ["REGISTER_REACH_MISSING_FIELDS"]
+
+    findings: list[str] = []
+    draw = reach["draw"]
+    entity_key = reach["entity_key"]
+    round_name = reach["round"]
+
+    if draw not in DRAWS:
+        findings.append("UNKNOWN_DRAW")
+    if round_name not in ROUNDS:
+        findings.append("UNKNOWN_ROUND")
+
+    player = players_by_key.get(entity_key)
+    if player is None:
+        # Same rule as a matchup's: a cell may only name a player the register
+        # already carries. It is what keeps a market for some other event's
+        # "Alcaraz" from becoming a row on this grid.
+        findings.append("REACH_PLAYER_NOT_REGISTERED")
+    elif player.get("draw") != draw:
+        findings.append("REACH_PLAYER_WRONG_DRAW")
+
+    blocks = reach.get("sources")
+    if not isinstance(blocks, list) or not blocks:
+        findings.append("REACH_NO_SOURCES")
+        return findings
+
+    seen_sources: set[Any] = set()
+    for block in blocks:
+        if not isinstance(block, dict):
+            findings.append("REGISTER_SOURCE_WRONG_SHAPE")
+            continue
+        findings.extend(validate_source_entry(block, sources=sources))
+
+        name = block.get("source")
+        if name in seen_sources:
+            findings.append("DUPLICATE_SOURCE_FOR_REACH")
+        seen_sources.add(name)
+
+        if source_kind(block) != "reach":
+            findings.append("REACH_SOURCE_WRONG_KIND")
+
+        if block.get("status") == "missing":
+            # A censused absence carries no question to agree with — there is
+            # no market. Its `evidence.observed_at` (checked by
+            # `validate_source_entry`) is what makes it a RESULT rather than a
+            # gap, and that is all this cell can honestly claim.
+            continue
+
+        if any(block.get(field) in (None, "") for field in REQUIRED_REACH_QUESTION_FIELDS):
+            findings.append("REACH_BLOCK_MISSING_QUESTION")
+            continue
+
+        # ── THE WRONG-FUTURE EVAL ──────────────────────────────────────────
+        if block.get("question_round") != round_name:
+            findings.append("REACH_ROUND_MISMATCH")
+        if block.get("question_draw") != draw:
+            findings.append("REACH_DRAW_MISMATCH")
+        if player is not None:
+            subject = normalize_player_name(block.get("question_subject"))
+            if subject != normalize_player_name(player.get("display_name")):
+                findings.append("REACH_SUBJECT_MISMATCH")
 
     return findings
 
@@ -625,6 +805,44 @@ def validate_register(register: Any, contract: dict[str, Any]) -> list[str]:
                     findings.append("MATCHUP_IDENTITY_REUSED")
                 matchup_identities[identity] = matchup["matchup_key"]
 
+    # ── REACH CELLS (UX-P139) ───────────────────────────────────────────────
+    # `players_by_key` is built from the loop above rather than re-scanned, so
+    # a cell can only name a player that survived player validation.
+    players_by_key = {
+        p["entity_key"]: p
+        for p in players
+        if isinstance(p, dict) and isinstance(p.get("entity_key"), str)
+    }
+    reach_cells: set[tuple] = set()
+    reach_identities: dict[tuple, tuple] = {}
+    for reach in register.get("reaches") or []:
+        findings.extend(
+            validate_reach(reach, players_by_key=players_by_key, sources=sources)
+        )
+        if not isinstance(reach, dict) or REQUIRED_REACH_FIELDS - reach.keys():
+            continue
+
+        cell = (reach["draw"], reach["entity_key"], reach["round"])
+        if cell in reach_cells:
+            # Two rows for one cell means the generator could not decide which
+            # market backs it — and whichever the grid read first would be
+            # arbitrary. Exactly the ambiguity the register exists to remove.
+            findings.append("DUPLICATE_REACH_CELL")
+        reach_cells.add(cell)
+
+        for block in reach.get("sources") or []:
+            if not isinstance(block, dict) or block.get("status") == "missing":
+                continue
+            identity = (block.get("source"), block.get("market_id"), block.get("outcome_id"))
+            if None in identity:
+                continue
+            owner = reach_identities.get(identity)
+            if owner is not None and owner != cell:
+                # One quote feeding two cells: the same number printed twice
+                # under two different questions, both individually plausible.
+                findings.append("REACH_IDENTITY_REUSED")
+            reach_identities[identity] = cell
+
     prop_keys: set[str] = set()
     for prop in register.get("props") or []:
         findings.extend(validate_prop(prop, sources=sources))
@@ -699,6 +917,30 @@ def validate_transition(register: dict[str, Any], proposed: Any, contract: dict[
 # Drift detection (the daily sentinel's comparison core)
 # ---------------------------------------------------------------------------
 
+def priced_source_blocks(register: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every source block on the register that a page could print a number from.
+
+    Players AND reach cells (UX-P139).  The two drift and freshness checks used
+    to walk ``players`` alone, which was correct when the players' outright
+    prices were the only thing rendered.  A grid of 336 reach prices that the
+    sentinel does not look at is 336 numbers with no drift detection and no
+    staleness gate — the exact hole the register pattern exists to close, and
+    it would have opened silently the day the grid shipped.
+
+    Matchup blocks are deliberately NOT here: their identities live under
+    ``sides`` rather than on the block, so they need their own walk and the
+    slate already has one.
+    """
+    blocks: list[dict[str, Any]] = []
+    for player in register.get("players", []) or []:
+        if isinstance(player, dict):
+            blocks.extend(b for b in (player.get("sources") or []) if isinstance(b, dict))
+    for reach in register.get("reaches", []) or []:
+        if isinstance(reach, dict):
+            blocks.extend(b for b in (reach.get("sources") or []) if isinstance(b, dict))
+    return blocks
+
+
 def _observed_index(candidates: list[dict[str, Any]]) -> dict[tuple, list[dict[str, Any]]]:
     index: dict[tuple, list[dict[str, Any]]] = {}
     for row in candidates:
@@ -728,33 +970,30 @@ def diff_against_inventory(register: dict[str, Any], candidates: Any) -> list[st
     season = register.get("season")
     index = _observed_index(candidates)
 
-    for player in register.get("players", []):
-        if not isinstance(player, dict):
+    for block in priced_source_blocks(register):
+        if block.get("status") == "missing":
             continue
-        for block in player.get("sources") or []:
-            if not isinstance(block, dict) or block.get("status") == "missing":
-                continue
-            key = (block.get("source"), block.get("market_id"), block.get("outcome_id"))
-            matches = index.get(key, [])
-            if len(matches) > 1:
-                findings.append("AMBIGUOUS_CANDIDATES")
-                continue
-            if not matches:
-                findings.append("REGISTERED_IDENTITY_NOT_OBSERVED")
-                continue
+        key = (block.get("source"), block.get("market_id"), block.get("outcome_id"))
+        matches = index.get(key, [])
+        if len(matches) > 1:
+            findings.append("AMBIGUOUS_CANDIDATES")
+            continue
+        if not matches:
+            findings.append("REGISTERED_IDENTITY_NOT_OBSERVED")
+            continue
 
-            row = matches[0]
-            if row.get("status") == "settled" and block.get("status") == "live":
-                if row.get("terminal_result") not in TERMINAL_RESULTS:
-                    findings.append("SETTLEMENT_WITHOUT_RESULT")
-                else:
-                    findings.append("UNAMBIGUOUS_SETTLEMENT_DRIFT")
-            elif (
-                row.get("outcome_name") is not None
-                and normalize_player_name(row.get("outcome_name"))
-                != normalize_player_name(block.get("source_name"))
-            ):
-                findings.append("UNAMBIGUOUS_RENAME_DRIFT")
+        row = matches[0]
+        if row.get("status") == "settled" and block.get("status") == "live":
+            if row.get("terminal_result") not in TERMINAL_RESULTS:
+                findings.append("SETTLEMENT_WITHOUT_RESULT")
+            else:
+                findings.append("UNAMBIGUOUS_SETTLEMENT_DRIFT")
+        elif (
+            row.get("outcome_name") is not None
+            and normalize_player_name(row.get("outcome_name"))
+            != normalize_player_name(block.get("source_name"))
+        ):
+            findings.append("UNAMBIGUOUS_RENAME_DRIFT")
 
     if any(row.get("season") not in (None, season) for row in candidates):
         findings.append("NEXT_OR_OTHER_SEASON_CANDIDATE")
@@ -774,18 +1013,15 @@ def check_freshness(register: dict[str, Any], now: datetime, *, max_age_hours: f
     """
     findings: list[str] = []
     cutoff = now - timedelta(hours=max_age_hours)
-    for player in register.get("players", []):
-        if not isinstance(player, dict):
+    for block in priced_source_blocks(register):
+        if block.get("status") != "live":
             continue
-        for block in player.get("sources") or []:
-            if not isinstance(block, dict) or block.get("status") != "live":
-                continue
-            observed = block.get("price_observed_at")
-            if not is_iso8601(observed):
-                findings.append("LIVE_PRICE_NEVER_OBSERVED")
-                continue
-            if datetime.fromisoformat(str(observed).replace("Z", "+00:00")) < cutoff:
-                findings.append("LIVE_PRICE_STALE")
+        observed = block.get("price_observed_at")
+        if not is_iso8601(observed):
+            findings.append("LIVE_PRICE_NEVER_OBSERVED")
+            continue
+        if datetime.fromisoformat(str(observed).replace("Z", "+00:00")) < cutoff:
+            findings.append("LIVE_PRICE_STALE")
     return sorted(set(findings))
 
 
@@ -934,8 +1170,8 @@ class TournamentRegister:
                     continue
                 if isinstance(block.get("market_id"), int):
                     ids.add(block["market_id"])
-        for matchup in self.matchups:
-            for block in matchup.get("sources") or []:
+        for holder in (*self.matchups, *self.reaches):
+            for block in holder.get("sources") or []:
                 if not isinstance(block, dict):
                     continue
                 if source is not None and block.get("source") != source:
@@ -960,6 +1196,45 @@ class TournamentRegister:
             ]
             counts[f"{len(live)}_source"] += 1
         return dict(sorted(counts.items()))
+
+    @property
+    def reaches(self) -> list[dict[str, Any]]:
+        """Every player x round cell the register carries (UX-P139)."""
+        return [r for r in (self.data.get("reaches") or []) if isinstance(r, dict)]
+
+    def reach_cells(self, draw: str) -> dict[tuple[str, str], dict[str, Any]]:
+        """``(entity_key, round) -> cell`` for one draw.
+
+        A dict, because the grid's only question of this collection is "what
+        backs THIS cell" and the answer has to be a lookup.  The moment it
+        became a scan-and-match the register would have stopped being the
+        register.
+        """
+        return {
+            (str(r.get("entity_key")), str(r.get("round"))): r
+            for r in self.reaches
+            if r.get("draw") == draw
+        }
+
+    def reach_rounds(self, draw: str) -> list[str]:
+        """The rounds this draw has cells for, in draw order — the grid's columns.
+
+        Read off the register rather than from a constant so a tournament whose
+        sources publish a different ladder gets a different grid with no code
+        change.  Ordered by ``ROUNDS`` so a register listing them out of order
+        still renders left-to-right in the order they are played.
+        """
+        present = {str(r.get("round")) for r in self.reaches if r.get("draw") == draw}
+        return [name for name in ROUNDS if name in present]
+
+    def reach_outcome_ids(self) -> list[int]:
+        """Every outcome id a reach cell would price — the bounded grid load."""
+        ids: set[int] = set()
+        for reach in self.reaches:
+            for block in reach.get("sources") or []:
+                if isinstance(block, dict) and isinstance(block.get("outcome_id"), int):
+                    ids.add(block["outcome_id"])
+        return sorted(ids)
 
     @property
     def props(self) -> list[dict[str, Any]]:
@@ -999,6 +1274,11 @@ class TournamentRegister:
                 if isinstance(block, dict):
                     counts[f"source_{block.get('status', 'invalid')}"] += 1
         counts["matchups"] = len(self.matchups)
+        counts["reach_cells"] = len(self.reaches)
+        for reach in self.reaches:
+            for block in reach.get("sources") or []:
+                if isinstance(block, dict):
+                    counts[f"reach_{block.get('status', 'invalid')}"] += 1
         counts["seeded"] = sum(1 for p in self.players if p.get("seed") is not None)
         counts["draw_slotted"] = sum(1 for p in self.players if p.get("draw_slot") is not None)
         return dict(sorted(counts.items()))

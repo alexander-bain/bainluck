@@ -41,6 +41,15 @@ export interface SlateSide {
 
 export interface SlateMatch {
   matchup_key: string;
+  /**
+   * OUR `events.id` for this fixture, when one exists (UX-P139, Alex's item 7).
+   *
+   * Register-owned (`matchup.event_id`), so the link is an identity decision
+   * made once against the evidence rather than a name match at render time.
+   * Optional and `null` on every US Open match today: checked 2026-08-26, none
+   * of the 66 registered matchups has an `events` row.
+   */
+  event_id?: number | null;
   draw: string;
   draw_label: string;
   round: string;

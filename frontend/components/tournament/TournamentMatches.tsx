@@ -202,7 +202,10 @@ function MatchRow({
 }) {
   const time = entry.scheduledDate ? formatMatchTime(entry.scheduledDate) : null;
   const hasDetail =
-    entry.broadcast !== null || entry.detailNote !== null || entry.score !== null;
+    entry.broadcast !== null ||
+    entry.detailNote !== null ||
+    entry.score !== null ||
+    entry.eventId !== null;
 
   return (
     <li
@@ -303,6 +306,25 @@ function MatchRow({
             <div className="mt-1" data-testid="match-detail-note">
               {entry.detailNote}
             </div>
+          )}
+          {/* ITEM 7 — the click-through to the standard event page.
+              REGISTER-OWNED: `entry.eventId` comes from `matchup.event_id`, so
+              a link is an identity decision made once against the evidence and
+              never a name match at render time. A link to the wrong match is
+              worse than no link.
+              It renders on NO US Open match today — checked 2026-08-26, none
+              of the 66 registered matchups has an `events` row, because the
+              qualifying draw was never ingested as events. The report says so
+              rather than this shipping as a silently-dead affordance. */}
+          {entry.eventId !== null && (
+            <a
+              href={`/events/${entry.eventId}`}
+              className="mt-1.5 inline-block font-semibold text-text-primary underline decoration-dotted underline-offset-2"
+              data-testid="match-event-link"
+              data-event={entry.eventId}
+            >
+              Open the match page
+            </a>
           )}
         </div>
       )}

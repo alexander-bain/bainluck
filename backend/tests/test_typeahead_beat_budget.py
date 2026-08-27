@@ -726,17 +726,20 @@ def test_rebuild_typeahead_index_is_on_heavy_and_cannot_starve_the_warmer():
     )
 
 
-def test_the_background_queue_carries_102_beats_and_45_are_fall_through():
-    """57 beats NAME `background`. The queue carries 102.
+def test_the_background_queue_carries_104_beats_and_45_are_fall_through():
+    """59 beats NAME `background`. The queue carries 104.
 
-    🔴 **RE-DERIVED at LAT-P090 (2026-08-25): 101 -> 102, explicit 56 -> 57.**
-    This lane added `warm-search-head`, the `/search` response-cache head warmer,
-    with an explicit `options={"queue": "background"}`. Re-derived by running the
-    census below over the assembled schedule, never by adding one to the old
-    number (#1910). The fall-through half is UNMOVED at 45, which is the half
-    this test exists to watch. The full cost declaration — and the argument for
-    putting another warmer on a queue this same file calls oversubscribed —
-    is on `BACKGROUND_BEAT_COUNT` in `app/utils/typeahead_beat_budget.py`.
+    🔴 **RE-DERIVED AT THE MERGE (ux-121 x LAT-P090).** Two lanes re-derived
+    this from the same base of 101 without knowing about each other: LAT-P090
+    added `warm-search-head` and got 102; UX-P139 added
+    `refresh-registered-tournament-prices` and `sync-tournament-results` and got
+    103. The merged schedule carries all three. The number here was obtained by
+    RUNNING the census below over the merged schedule — not by adding 1 and 2,
+    which is the arithmetic #1910 forbids and which would have been right only
+    by luck. The fall-through half is UNMOVED at 45, which is the half this test
+    exists to watch: all three new beats named their queue explicitly. The cost
+    declaration is on `BACKGROUND_BEAT_COUNT` in
+    `app/utils/typeahead_beat_budget.py`.
 
     🔴 **RE-DERIVED at ruling 110 (LAT-P077): was 57 explicit / 102 total.**
     `backfill_market_shapes` and `precompute_backfill_progress` moved to
@@ -781,9 +784,9 @@ def test_the_background_queue_carries_102_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 57, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 59, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 102
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 104
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

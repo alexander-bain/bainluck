@@ -120,14 +120,20 @@ async def build_candidates(session, register: dict[str, Any]) -> list[dict[str, 
 
     from app.models.models import FuturesMarket, FuturesOutcome
 
-    view = TournamentRegister(register)
-    wanted: set[int] = set()
-    for player in view.data.get("players", []) or []:
-        if not isinstance(player, dict):
-            continue
-        for block in player.get("sources") or []:
-            if isinstance(block, dict) and block.get("outcome_id") is not None:
-                wanted.add(block["outcome_id"])
+    from app.utils.tournament_register import priced_source_blocks
+
+    # Players AND reach cells (UX-P139). `priced_source_blocks` is the same
+    # walk `diff_against_inventory` and `check_freshness` use, imported rather
+    # than repeated: an observer that looks at fewer identities than the
+    # comparator checks reports `REGISTERED_IDENTITY_NOT_OBSERVED` for every
+    # one it missed — a sentinel crying wolf about its own blind spot. The
+    # register pins 336 reach identities and they are the entire bracket grid,
+    # so they are exactly the ones that must not be unwatched.
+    wanted: set[int] = {
+        block["outcome_id"]
+        for block in priced_source_blocks(register)
+        if block.get("outcome_id") is not None
+    }
 
     if not wanted:
         return []
@@ -212,6 +218,9 @@ async def _run_tournament(session, tournament: str, season: str, *, directory: P
         "version": view.version,
         "age_hours": register_age_hours(register),
         "registered_count": len(register.get("players") or []),
+        # Reported separately from the player count so a grid-shaped drift is
+        # attributable at a glance (UX-P139).
+        "reach_cell_count": len(register.get("reaches") or []),
     })
 
     if base_findings:

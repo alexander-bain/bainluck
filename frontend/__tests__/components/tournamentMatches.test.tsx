@@ -630,3 +630,55 @@ describe("collapse — five, then an expander that says how many", () => {
     expect(html).not.toContain('data-testid="show-more"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// ITEM 7 (UX-P139) — the click-through to the standard event page
+// ---------------------------------------------------------------------------
+
+describe("item 7 — matches click through to the event page", () => {
+  it("renders NO link when the register pins no event", () => {
+    // The honest state today: checked 2026-08-26, none of the 66 registered US
+    // Open matchups has an `events` row, because the qualifying draw was never
+    // ingested as events. A dead affordance is worse than an absent one.
+    const entries = matchListFromSlate([match()]);
+    expect(entries[0].eventId).toBeNull();
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
+    );
+    expect(html).not.toContain('data-testid="match-event-link"');
+  });
+
+  it("renders the link to /events/{id} the moment the register pins one", () => {
+    const entries = matchListFromSlate([match({ event_id: 15201771 })]);
+    expect(entries[0].eventId).toBe(15201771);
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
+    );
+    expect(html).toContain('data-testid="match-event-link"');
+    expect(html).toContain('href="/events/15201771"');
+  });
+
+  it("carries the link through the bracket join, from the slate row it absorbed", () => {
+    // A positioned draw slot has no event of its own; the link travels with the
+    // price, from the slate row the position absorbed.
+    const slate = match({ event_id: 42 });
+    const entries = buildMatchList({
+      rounds: buildBracket(SYNTHETIC_MENS_DRAW.slice(0, 2)),
+      slate: [
+        {
+          ...slate,
+          sides: [
+            { ...slate.sides[0], entity_key: SYNTHETIC_MENS_DRAW[0]!.entity_key,
+              display_name: SYNTHETIC_MENS_DRAW[0]!.display_name },
+            { ...slate.sides[1], entity_key: SYNTHETIC_MENS_DRAW[1]!.entity_key,
+              display_name: SYNTHETIC_MENS_DRAW[1]!.display_name },
+          ],
+        },
+      ],
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe("bracket");
+    expect(entries[0].eventId).toBe(42);
+  });
+});
+
