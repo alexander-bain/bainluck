@@ -268,6 +268,46 @@ decision. **So neither contrast (§5a) nor dominance is a sufficient admission g
 > table above falsifies, and a threshold that cannot separate 94.0 from 91.4 is not a threshold
 > (ruling 124).
 
+### 5c. `polymarket/esports` — CAL-P112's banked design is CONFIRMED on a rail that reproduces
+
+Worth running because CAL-P112 designed that cell on the same census that misled this one. It
+holds. Exact rail **14,169 / 7.17 / +5.79** against the payload's **14,053 / 7.59 / +6.02**
+(+0.83% on n).
+
+| policy | n | ECE | gap | excess-outcomes |
+|---|--:|--:|--:|--:|
+| A_today (control) | 14,169 | 7.17 | +5.79 | 59,085 |
+| **E — drop `field1` with published sum > 1.15** | 11,624 | **3.29** | +0.57 | **3,371** |
+| E + E2 | 11,405 | 3.70 | +1.36 | 7,984 |
+
+**CAL-P112 predicted "8.08 → 3.0–4.3 pp, 66,832 → 0–11,400 excess-outcomes". Measured on the
+published population: 3.29 (E) and 3.70 (E+E2), 3,371 and 7,984. Both inside the predicted
+band.** The census got this cell's *number* right even though it got `kalshi/economics`'s sign
+wrong — which is the argument for running the exact rail on every cell rather than for
+distrusting CAL-P112.
+
+Two things the exact rail adds that the census could not see:
+
+1. **There is no `bundle` class in published esports at all — zero rows.**
+   `esports_multi_bundle_filter` has been live since 2026-07-11 and already removes it. The
+   entire residual error is the **1-winner tail** the filter cannot reach, which is exactly what
+   CAL-P112 said RULE E is for. Confirmed, not assumed.
+2. 🔴 **E2 makes this cell WORSE (3.29 → 3.70), and it should still ship.** The
+   `single|a_sum_le_1.15` class is 219 rows at gap **−40.35** — under-prediction that was
+   *cancelling* the residual +0.57 over-prediction. Removing 219 rows that were never forecasts
+   un-cancels an error that was always there. **§2 of the scorecard is the whole argument: an
+   ECE that rises because two real errors stopped hiding each other is a more honest number, not
+   a regression.** Named here so nobody reads the +0.41 pp as a reason to drop E2.
+
+Holdout is **weak on this cell and says so**: `polymarket/esports` is recent, so OLD holds only
+764 of 14,169 rows (5.4%). OLD 764 @ 24.48 → 213 @ 6.87; NEW 13,405 @ 6.34 → 11,192 @ 3.69. The
+NEW half carries the result and the OLD half is too small to corroborate it.
+
+*Not a rule, but recorded because it is half the cell:* `binary` markets whose two published
+sides sum to 1.15–2 are **50.2%** of published esports (7,116 rows @ 4.01) — the population
+CAL-P100's published-pair coherence rule targets. Excluding them takes the cell to 3,873 @
+**4.58**, i.e. **worse**. CAL-P100 is not an esports fix.
+
 ---
 
 ## 6. Holdout — split on `market_id` 12,000,000, rule never re-fitted

@@ -816,6 +816,19 @@ Two further corrections, both from the same rail:
   but for the measured reason (it falls below the floor), and the old reason should not be
   quoted again.
 
+### `polymarket/esports` re-checked on the exact rail — CAL-P112's design is CONFIRMED
+
+Run because that cell was designed on the same census that misled this one. It holds. Exact rail
+**14,169 / 7.17 / +5.79** vs payload **14,053 / 7.59 / +6.02**. CAL-P112 predicted
+*"8.08 → 3.0–4.3 pp, 66,832 → 0–11,400 excess-outcomes"*; measured on the published population,
+**RULE E alone gives 3.29 pp and 3,371** — inside the band. Two additions the census could not
+see: there is **no `bundle` class in published esports at all** (the live filter since 2026-07-11
+already removes it, so the whole residual is the 1-winner tail RULE E targets — confirmed rather
+than assumed); and **E2 makes the cell worse, 3.29 → 3.70, and should still ship**, because the
+219 rows it removes had gap **−40.35** and were *cancelling* a real +0.57 over-prediction. Per §2,
+an ECE that rises because two real errors stopped hiding each other is the more honest number.
+Holdout on this cell is weak and says so — `polymarket/esports` is recent, so OLD holds 5.4% of it.
+
 ### Also parked, not dropped
 
 `backfill_winners.py:7495-7506` — Part B names its subquery `settled` and orders
