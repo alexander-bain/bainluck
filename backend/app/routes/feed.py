@@ -421,6 +421,7 @@ def _emit_feed_stage_observability(
     started_at: float,
     golf_provenance: str | None = None,
     shared_reuse: list[str] | None = None,
+    shared_tiers: list[str] | None = None,
 ) -> None:
     """Attach identity-free stage headers and emit a sampled structured log line.
 
@@ -454,12 +455,21 @@ def _emit_feed_stage_observability(
         # source, because this is the byte that leaves the process: a share is
         # only worth having if it can be confirmed still working in production,
         # and a diagnostic header is only safe if its vocabulary is closed.
-        if shared_reuse:
-            from app.utils.principal_independent_cache import SHARED_ARTIFACT_NAMES
+        if shared_reuse or shared_tiers:
+            from app.utils.principal_independent_cache import (
+                SHARED_ARTIFACT_NAMES,
+                SHARED_TIER_NAMES,
+            )
 
-            names = [n for n in shared_reuse if n in SHARED_ARTIFACT_NAMES]
+            names = [n for n in (shared_reuse or ()) if n in SHARED_ARTIFACT_NAMES]
             if names:
                 response.headers["X-Feed-Shared"] = ",".join(sorted(set(names)))[:200]
+            # LAT-P103: a second closed vocabulary, `local` / `cross_worker`.
+            # Filtered here as well as at the source for the same reason the
+            # names are: this is the byte that leaves the process.
+            tiers = [t for t in (shared_tiers or ()) if t in SHARED_TIER_NAMES]
+            if tiers:
+                response.headers["X-Feed-Shared-Tier"] = ",".join(sorted(set(tiers)))
         if total_ms >= FEED_STAGE_ALWAYS_LOG_MS or (
             random.random() < _feed_stage_sample_rate()
         ):
@@ -533,6 +543,7 @@ def _finalize_feed_response(
     counts: dict[str, int],
     golf_provenance: str | None = None,
     shared_reuse: list[str] | None = None,
+    shared_tiers: list[str] | None = None,
 ) -> None:
     """Single truthful finalizer for EVERY successful /api/feed return path.
 
@@ -562,6 +573,7 @@ def _finalize_feed_response(
         started_at=started_at,
         golf_provenance=golf_provenance,
         shared_reuse=shared_reuse,
+        shared_tiers=shared_tiers,
     )
 
 
@@ -1795,6 +1807,12 @@ async def get_feed(
     # X-Feed-Shared so the share can be confirmed still working in production
     # without a timing argument.
     _shared_reuse: list[str] = []
+    # LAT-P103 (#2143 residual): WHICH tier served the reuse — `local` (this
+    # worker built it earlier) or `cross_worker` (another worker built it and
+    # this one read it out of Redis). Two different claims: the first was true
+    # before this change, only the second closes the residual, and only a header
+    # can tell them apart in production without a timing argument.
+    _shared_tiers: list[str] = []
     # Bind it as this request's ambient sink. The second shared artifact
     # (`canonical_counts`) is resolved three frames down inside `_score_futures`;
     # a contextvar avoids threading a diagnostic through a scoring signature,
@@ -1802,7 +1820,7 @@ async def get_feed(
     # had to be re-centralized in Queue 275. Each request runs in its own task
     # and therefore its own context copy, so the binding does not need an
     # explicit reset to stay request-scoped.
-    _bind_shared_reuse_sink(_shared_reuse)
+    _bind_shared_reuse_sink(_shared_reuse, _shared_tiers)
 
     if (debug or exclude_reviewed) and not await _check_admin_auth(secret, request, db):
         _set_feed_timing_header(response, _started_at)
@@ -3042,6 +3060,7 @@ async def get_feed(
             ),
             golf_provenance=_golf_provenance,
             shared_reuse=_shared_reuse,
+            shared_tiers=_shared_tiers,
         )
         return payload
     except BaseException:
