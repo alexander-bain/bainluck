@@ -163,10 +163,23 @@ def _make_event_detail_session(event=None, snapshots=None, futures=None, outcome
 
     async def mock_execute(stmt, *args, **kwargs):
         stmt_str = str(stmt).lower() if hasattr(stmt, "__str__") else ""
-        if "events" in stmt_str and event:
-            return make_scalar_result(event)
+        # LAT-P107/#1605: `odds_snapshots` is tested BEFORE `events`, and the order
+        # is load-bearing. The odds-enrichment query is now the shared
+        # `latest_odds_per_bookmaker_query`, whose recursive bookmaker walk SEEDS
+        # FROM `events` — so its SQL names both tables. Under the old order it
+        # matched the `events` arm and this double handed the route the Event
+        # object where it expected snapshots, which surfaced 30 rows away as
+        # `TypeError: '>=' not supported between MagicMock and datetime` inside the
+        # staleness filter. The old `row_number()` query named only
+        # `odds_snapshots`, which is the only reason the old order worked.
+        #
+        # `odds_snapshots` first is also strictly the more specific test: the
+        # event-fetch statement (`SELECT events ... WHERE events.id = :id`) does not
+        # mention `odds_snapshots`, so it still falls through to the arm below.
         if "odds_snapshots" in stmt_str:
             return make_list_result(snapshots or [])
+        if "events" in stmt_str and event:
+            return make_scalar_result(event)
         if "futures_outcomes" in stmt_str:
             return make_list_result(outcomes or [])
         if "futures_markets" in stmt_str:
@@ -183,9 +196,17 @@ def _make_event_detail_session(event=None, snapshots=None, futures=None, outcome
 async def event_detail_client():
     """Client with a seeded live event for detail page tests."""
     from app.main import app
-    from app.routes.events import _game_markets_cache
+    from app.routes.events import _event_detail_cache, _game_markets_cache
 
     _game_markets_cache.clear()
+    # `/api/events/{id}` also has an in-process payload cache keyed by event id, and
+    # this fixture's event is id=1 — the same id `test_event_detail_duel_percents_2085`
+    # uses for every one of its specimens. Without this clear the two files are
+    # order-dependent: run duel-percents first and these tests read a 0.505 hero
+    # probability out of that file's last specimen and fail asserting 0.65. They pass
+    # in CI only because `integration/` sorts before `test_e…`, which is luck, not
+    # isolation. Found by LAT-P107 running the two files together.
+    _event_detail_cache.clear()
 
     event = _make_event(id=1, home_team="Celtics", away_team="76ers", status="live")
     mock_session = _make_event_detail_session(event=event)
