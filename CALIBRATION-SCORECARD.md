@@ -27,6 +27,17 @@ actually serves. There is not a single holdout, sample, or parallel-rail number 
 > 22/24 rather than 21/24: the amendment in `docs/rulings/009-precompute-calibration-freeze.md`
 > and §5b below.
 
+> **CAL-P112, 2026-08-28 — the countdown started, and the two cancelling cells have designs.**
+> `program/calibration-110` + `-111` merged and deployed as **Heroku v3921 (`9ae282a7`) at
+> `2026-08-28T18:55:19Z`**, which is the ruling-009 baseline: read it with
+> `calibration_freeze_score.py --baseline-at 2026-08-28T18:55:19Z` (right now **0/24,
+> WINDOW_NOT_FULL** — the ring holds 168 observations and every one of them is pre-baseline).
+> Three things banked, none of them touching the frozen file: the **per-cohort threshold table**
+> for Alex's ratification (§1b), and **ready-to-land rule designs for `polymarket/esports` and
+> `kalshi/tech`** (§6a) — the ±cancellation pair from §2, which turn out to be **one structural
+> defect pointing in two directions**. Published number **1.90 pp, unmoved**; a fifth datapoint was
+> banked because the curve genuinely regenerated (`17:33:03Z`), not because anything was fixed.
+
 ---
 
 ## 0. Why this page exists, and what it replaces
@@ -81,6 +92,37 @@ implementation — got **34 of 34 cells wrong, every one high** (soccer 2.80 →
 
 **Today: NOT DONE. 19 material cells are over bar and established.**
 
+## 1b. The per-cohort bar — PROPOSED, awaiting Alex's MC (CAL-P112)
+
+Criterion 1 above declares **one** bar for every cell. CAL-P112 is the ratification instrument for
+the question that leaves open — *should the bar be the same number in every cohort?* Full argument,
+derivation and side-by-side: **`artifacts/cal-p112/THRESHOLD-TABLE-PROPOSAL.md`**. Re-render with
+`python3 backend/scripts/calibration_threshold_table.py --live --markdown`. **Nothing below is
+live** — `calibration_scorecard.py` still renders the flat 3.0 pp bar until Alex rules.
+
+| class | what a cell in it is | **bar** | derivation |
+|---|---|--:|---|
+| **A** `A_multibook_consensus` | every `odds_api*` cell | **2.5 pp** | the price is a devigged consensus of MANY bookmakers — an average of independent estimates, so its idiosyncratic quoting error is structurally smaller than one thin order book's. Structural, fixed in advance, does not move as cells improve. These cells also carry the game cards. |
+| **B** `B_exchange_contest` | Kalshi/Polymarket on a scheduled contest | **3.0 pp** | reader actionability: 3 pp means a 60% market lands 57–63%. A property of what a person does with the number, not of the venue. |
+| **C** `C_exchange_standalone` | Kalshi/Polymarket, standalone / long-horizon | **3.0 pp** | **no loosening.** Thin books and distant settlement raise the VARIANCE the σ gate already prices; they do not license a larger BIAS — and the class's own cells prove 3.0 reachable (`polymarket/weather` **1.63**, `kalshi/politics` **2.08**). |
+
+| table | bar A / B / C | **cells at bar** | queued | queued excess-outcomes |
+|---|---|--:|--:|--:|
+| incumbent (flat) | 3.0 / 3.0 / 3.0 | **30/49** | 19 | 480,342 |
+| **proposed** | **2.5 / 3.0 / 3.0** | **29/49** | 20 | 503,236 |
+
+One cell moves — `odds_api_bookmaker/icehockey_nhl` (3.89 pp on 8,658) goes from
+over-bar-unestablished at 1.65σ to queued at 2.59σ. **The finish line barely moves, and that is the
+point:** this closes a hole where the most-averaged, most-read class was held to the same bar as a
+thin exchange book. The proposal explicitly REFUSES the quantile derivation ("the bar is the class's
+p25") because a bar that moves whenever a cell improves is not a finish line.
+
+> **Criterion 6, proposed with it.** A cell whose published population is dominated by
+> non-partition bundle rows is queued for a **population** fix, not scored as a calibration
+> failure — evidence-gated per cohort on the census the payload already publishes. Without it the
+> two worst cells on the board (§6a) get worked as calibration problems, which is a cycle each and
+> moves nothing.
+
 ---
 
 ## 2. The headline is not the problem — dispersion is
@@ -129,7 +171,8 @@ per-cell for that reason.
 | 2026-08-20 | **1.88 pp** | `q268` | 17 | 436,754 | banked payload `artifacts/cal-p080/samples/cal-20260820T174018Z.json`, re-folded by this script |
 | 2026-08-27 | **1.90 pp** | `q268` | 19 | 477,794 | live |
 | 2026-08-28 `13:35Z` | **1.90 pp** | `q268` | **19** | **480,342** | live |
-| **2026-08-28 `15:34Z`** | **1.90 pp** | `q268` | **19** | **480,342** | live (CAL-P110) |
+| 2026-08-28 `15:34Z` | **1.90 pp** | `q268` | **19** | **480,342** | live (CAL-P110) |
+| **2026-08-28 `17:33Z`** | **1.90 pp** | `q268` | **19** | **480,342** | live (CAL-P112) — banked, the curve really did regenerate |
 
 **Five points is the entire published-curve history this repo holds, and that is itself a
 finding.** Nobody ever banked the served payload on a schedule, so "did the last three months
@@ -340,7 +383,8 @@ this diagnosis is wrong and §5a should be struck.
 
 ### 5a.1 — CAL-P110: the fix is re-cut so it does not need the freeze lifted
 
-**`program/calibration-110` @ `a611347d`, `ready_for_integration`.** CAL-P109 was unshippable for a
+**`program/calibration-110` @ `a611347d` — MERGED as `3200b840` and DEPLOYED in Heroku v3921,
+2026-08-28T18:55:19Z (CAL-P112 records the baseline in §5b).** CAL-P109 was unshippable for a
 reason that had nothing to do with the repair: it sat on `program/calibration-99`, behind 842 lines
 of CAL-P099/P100 in the frozen file. **The repair itself does not live there** — this page said so
 above, and CAL-P110 acts on it. Two files, one under `backend/app/`, and
@@ -500,6 +544,32 @@ CAL-P109/P110 deploy, by construction — and the score above is pre-baseline, i
 the broken producer, not a verdict. Whoever integrates `program/calibration-110` records the release
 SHA and version here; that is the instant the window starts filling.
 
+### 🟢 THE BASELINE IS RECORDED — the countdown is running (CAL-P112, 2026-08-28)
+
+| | |
+|---|---|
+| release | **Heroku v3921**, `Deploy 9ae282a7` |
+| deployed at | **2026-08-28T18:55:19Z** (11:55:19 PT) — this is the baseline instant |
+| what it carries | `program/calibration-110` (`a611347d`, the phase-budget repair) **and** `program/calibration-111` (`5ad6f851`, this scorecard rail + the amendment), merged as `3200b840` then `9ae282a7` |
+| read it with | `python3 backend/scripts/calibration_freeze_score.py --baseline-at 2026-08-28T18:55:19Z` |
+
+```
+RULING 009 FREEZE SCORE — 22 of the last 24
+  0/0 clean so far (window 24)   (0 misses; 2 allowed)
+  ring     168 observations, 168 excluded as pre-baseline
+  VERDICT  WINDOW_NOT_FULL
+```
+
+**Earliest possible lift is ~2026-08-29T19:00Z (12:00 PT)**, and only if at least 22 of the first 24
+post-baseline beats publish. The pre-baseline ring stands at 10/24 clean, which is a measurement of
+the producer CAL-P110 was built to fix and carries no weight against the condition.
+
+**The falsifier is now live and must be read before anything is claimed** (§5a.2): the 72 h per-beat
+publish rate has to rise from **0.472**, and the `sports` cancellation signature
+(`BAINLUCK-132`, `QueryCanceledError` on the `FROM events WHERE status IN ('completed','closed')`
+scan) has to leave Sentry. `BAINLUCK-Y8`'s title will keep saying `phase group ['futures']` because
+the log-wording fix went with the frozen file — **judge it by count, not by wording.**
+
 ---
 
 ## 6. The inventory — every queued cell, ordered by excess
@@ -509,7 +579,7 @@ SHA and version here; that is the instant the window starts filling.
 | # | published cell | ECE | n | gap | excess | σ | excess-outcomes | mechanism known? | status |
 |--:|---|--:|--:|--:|--:|--:|--:|---|---|
 | 1 | `polymarket/baseball` | 4.99 | 41,587 | +3.25 | +1.99 | 8.1 | 82,758 | ✅ two named (0.5000 placeholder pair; published-pair incoherence) | **ZERO** — both branch-only |
-| 2 | `polymarket/esports` | 8.08 | 13,156 | +6.50 | +5.08 | 11.7 | 66,832 | ⚠️ partial — `esports_multi_bundle_filter` **live since 07-11** and the cell is still 8.08 | **shipped, insufficient** |
+| 2 | `polymarket/esports` | 8.08 | 13,156 | +6.50 | +5.08 | 11.7 | 66,832 | ✅ **named and designed (CAL-P112, §6a)** — the 1-winner tail of the shape `esports_multi_bundle_filter` already excludes | **ZERO** — designed, unbuilt |
 | 3 | `kalshi/economics` | 5.29 | 28,582 | −0.47 | +2.29 | 7.7 | 65,453 | ❌ none | **not started** |
 | 4 | `polymarket/soccer` | 3.53 | 102,491 | +2.34 | +0.53 | 3.4 | 54,320 | ✅ O/U ladder coherence (CAL-P106/107) | **ZERO** — branch-only, unwired |
 | 5 | `odds_api_bookmaker/basketball_nba` | 5.18 | 10,186 | +1.03 | +2.18 | 4.4 | 22,205 | ❌ none | **not started** |
@@ -523,15 +593,15 @@ SHA and version here; that is the instant the window starts filling.
 | 13 | `polymarket/golf` | 5.53 | 6,366 | +3.98 | +2.53 | 4.0 | 16,106 | ⚠️ as #10 | **shipped, insufficient** |
 | 14 | `odds_api_bookmaker/basketball_wncaab` | 6.05 | 3,382 | −0.35 | +3.05 | 3.5 | 10,315 | ❌ none | **not started** |
 | 15 | `polymarket/hockey` | 7.36 | 2,281 | +0.66 | +4.36 | 4.2 | 9,945 | ❌ none | **not started** |
-| 16 | `kalshi/tech` | 11.10 | 1,193 | −9.49 | +8.10 | 5.6 | 9,663 | ❌ none — **worst ECE on the board** | **not started** |
+| 16 | `kalshi/tech` | 11.10 | 1,193 | −9.49 | +8.10 | 5.6 | 9,663 | ✅ **named and designed (CAL-P112, §6a)** — 79% cumulative-threshold ladder rows | **ZERO** — designed, unbuilt |
 | 17 | `polymarket/tech` | 5.28 | 2,634 | −1.31 | +2.28 | 2.3 | 6,006 | ❌ none | **not started** |
 | 18 | `odds_api_bookmaker/basketball_wnba` | 4.81 | 3,135 | −0.07 | +1.81 | 2.0 | 5,674 | ❌ none | **not started** |
 | 19 | `odds_api_bookmaker/basketball_euroleague` | 5.39 | 1,762 | −4.53 | +2.39 | 2.0 | 4,211 | ❌ none | **not started** |
 
 By source: **polymarket 8 cells / 268,536** · **kalshi 6 / 149,807** · **odds_api_bookmaker 5 / 59,451**.
 
-**Scoreboard: 0 of 19 cells crossed off. 2 have a built rule (both worth 0.00 pp today). 3 have a
-shipped rule that did not clear the cell. 14 have no rule at all.**
+**Scoreboard: 0 of 19 cells crossed off. 2 have a built rule and 2 more a designed one (all worth
+0.00 pp today). 3 have a shipped rule that did not clear the cell. 12 have no rule at all.**
 
 ### 11 material cells are over bar but NOT established — do not work these
 
@@ -543,6 +613,70 @@ shipped rule that did not clear the cell. 14 have no rule at all.**
 
 They are over the bar on the point estimate and none is distinguishable from it. They want another
 few thousand outcomes, not a mechanism.
+
+---
+
+## 6a. The next two cells, pre-built — CAL-P112 (rank 2 and rank 16)
+
+Designed, benched against a replica that reproduces the payload, and **holdout-validated on data
+the rule was not designed on**. Not built, not merged, **worth 0.00 pp today** — banked so that
+freeze-lift day is a merge, not a cold start. Full documents:
+`artifacts/cal-p112/RULE-DESIGN-polymarket-esports.md` and
+`artifacts/cal-p112/RULE-DESIGN-kalshi-tech.md`.
+
+### They are ONE defect. §2's cancellation pair, mechanised.
+
+`polymarket/esports` over-predicts by **+6.50** and `kalshi/tech` under-predicts by **−9.49**, and
+the pooled headline reads 1.90 as though both were fine. Measured, they are the same structure:
+
+**A non-partition bundle — independent binaries packed into one market** (a 40-rung cumulative
+"Price of NVIDIA H200 compute" ladder; a whole esports match flattened into one market). The rungs
+are published at their own one-sided prices, so the market's price sum is 3–33 rather than 1.
+
+- realize **many** winners → winners exceed published mass → **under-prediction** (`kalshi/tech`,
+  where the class is 79% of the cell by n and reads gap **−11.32**)
+- realize **one** winner → published mass exceeds winners → **over-prediction**
+  (`polymarket/esports`, where the class reads gap **+27.04**)
+
+`esports_multi_bundle_filter` already excludes this shape — but only in **esports**, and only when
+the market **happened** to resolve with ≥2 winners. Both limits are why the cells survive it.
+
+### The rules, and their measured effect
+
+| cell | rule | instrument, before *(payload for the same cell)* | after | published prediction |
+|---|---|---|---|---|
+| `kalshi/tech` | **T** — the bundle exclusion's category scope becomes an evidence-gated allowlist (`{esports, tech}`), gated on `nonexclusive_bundle_census` (tech: bundle 8.27 vs remainder 6.08) | full-predicate **replica** 1,218 / **10.75** / −8.97 *(payload 1,193 / 11.10 / −9.49)* | 260 / **3.80** / −0.30 | 11.10 → ~3.8, **9,663 → 0 excess-outcomes**; the cell then falls under the 1,000-row floor |
+| `polymarket/esports` | **E** — the bundle test becomes STRUCTURAL: `≥2 winners` **OR** published price sum > 1.15, and never a proved-exclusive field. Plus **E2** (winner-only single capture: 453 rows, **453/453 winners**) and **E3** (`malformed_binaries` stops requiring the default-true `mutually_exclusive` column: 116 rows, both sides graded winners) | pre-dedup **shape census** 14,121 / **6.81** / +5.57 *(payload 13,156 / 8.08 / +6.50)* | 9,522 / **3.02** / −0.85 | 8.08 → **3.0–4.3 pp**, **66,832 → 0–11,400 excess-outcomes** |
+
+*Two instruments, both new-file-only and both banked:
+`backend/scripts/calibration_cell_replica.py` runs the published predicate through `deduped` for a
+cell small enough to page out at outcome granularity; `backend/scripts/calibration_cell_shape_fold.py`
+is a pre-dedup shape census that scales to a 100,000-row cell and therefore runs high on n. Each
+prints its own number beside the payload's, every run.*
+
+Holdout (split on `market_id`, monotone with creation, rule never re-fitted):
+
+| cell | target class, OLD half | target class, NEW half | surviving core, OLD → NEW |
+|---|---|---|---|
+| `kalshi/tech` | 596 rows @ ECE **13.55** | 362 rows @ ECE **13.57** | gap −0.91 → +0.54 |
+| `polymarket/esports` | 2,818 rows @ ECE **27.95** / gap +27.87 | 1,212 rows @ ECE **25.10** / gap +25.10 | ECE 2.97 → **3.23**, gap −0.90 → −0.80 |
+
+### Three things a reader must not skip
+
+1. 🔴 **T and E ship TOGETHER or a cell gets worked twice.** T is a *category* allowlist, so it also
+   acts on `polymarket/tech`, where the bundle class is the *better* half: stripping only the
+   ≥2-winner realizations leaves the 1-winner tail at **14.73 pp** and the census-level fold moves
+   **8.04 → 12.62, i.e. worse**. Symmetrically, shipping **E alone** on `polymarket/esports` takes
+   the gap from +5.57 to **−3.01** — it reverses the sign rather than halving the error, because E2
+   and E3 were partially cancelling E's class.
+2. ⚠️ **`polymarket/tech` is UNMEASURED, not estimated.** Neither instrument reproduces that cell —
+   the shape census reads 2,080 / 8.04 / **+5.10** against the payload's 2,657 / 5.40 / **−1.78**,
+   22% short on n and the **wrong sign** on the gap. Landing T owes one measurement first. Parked,
+   not dropped.
+3. **Neither rule "fixes" its cell in the sense a reader would assume.** `kalshi/tech` leaves the
+   queue with 260 rows — below the materiality floor — and `polymarket/esports` lands at ~3.0 pp,
+   *at* the bar rather than under it (0.04σ). Both are the correct outcome for rows that were never
+   scoreable forecasts of one question, and both are said here rather than discovered after deploy.
 
 ---
 
@@ -604,12 +738,17 @@ Unstalling the producer and clearing the freeze is worth more to this date than 
 diagnosis combined. Until then the "current trajectory" row is the operative one, and it says
 **never**.
 
-> **CAL-P111 update — the deadlock is now a countdown, and the dates above still stand.** Blocker 3
-> is ruled (§5b) and Blocker 1's repair is cut and ready (§5a.1). Neither has *deployed*, and this
-> page's own rule is that an undeployed fix is worth zero — so **"current trajectory" remains the
-> operative row.** What changed is the shape of the wait: the finish date now turns on one deploy
-> plus a 24-beat window, rather than on a condition nobody could reach. The first honest re-estimate
-> is owed after `program/calibration-110` is deployed and the freeze score is read against it.
+> **CAL-P112 update — the deploy has happened; the RE-MEASUREMENT has not.** Blocker 3 is ruled
+> (§5b) and Blocker 1's repair is now DEPLOYED (v3921, 2026-08-28T18:55:19Z). This page's own rule
+> is that a fix is worth zero until it is re-measured, and the falsifier cannot be read for ~24 h,
+> so **"current trajectory" remains the operative row today.** What changed is that the wait is now
+> a clock rather than a condition nobody could reach. The first honest re-estimate is owed once the
+> freeze score has 24 post-baseline beats — from ~2026-08-29T19:00Z — and it turns on one number:
+> whether the 72 h publish rate has risen from 0.472.
+>
+> **What is no longer a variable:** diagnosis for the next two cells. CAL-P112 banked designs for
+> rank 2 and rank 16 (§6a), so the queue's conversion bottleneck on freeze-lift day is merge and
+> deploy capacity, not analysis.
 
 ---
 
@@ -626,13 +765,12 @@ delta goes on the scorecard. A cell is crossed off only when the published numbe
 **Immediate next actions, in order. Note that the first three are all unblocking work, not
 diagnosis — that is the point.**
 
-1. ~~**Unstall the producer** (Blocker 1).~~ **DONE as far as a lane can take it — CAL-P110
-   (`program/calibration-110` @ `a611347d`) is `ready_for_integration` and needs no ruling.**
-   Merge and deploy it, then read the falsifier in §5a.2: the 72 h publish rate must rise from
-   **0.472** and the `sports` cancellation must leave Sentry. Not deployed = worth zero, so this
-   stays 🛑 until the rate is re-measured.
-   **1b. Merge `program/calibration-111`** — the scorecard rail itself, new files only, zero
-   `backend/app/` lines. Without it, §9 step 1 above cannot be run by anyone off master.
+1. ~~**Unstall the producer** (Blocker 1).~~ ~~Merge and deploy CAL-P110.~~ **DEPLOYED —
+   Heroku v3921 (`9ae282a7`), 2026-08-28T18:55:19Z, carrying `program/calibration-110` AND
+   `-111`.** Blocker 1 stays 🛑 until the falsifier in §5a.2 is *read*: the 72 h per-beat publish
+   rate must rise from **0.472** and the `sports` cancellation (`BAINLUCK-132`) must leave Sentry.
+   Not re-measured = worth zero. **First honest read is due ~2026-08-29T19:00Z**, when the first
+   24 post-baseline beats exist — the same instant the freeze window can first be scored (§5b).
 2. ~~**Get an Alex ruling on the ruling-009 freeze** (Blocker 3) — filed as #2248 (`needs-user`).~~
    **ANSWERED — CAL-P111, 2026-08-28. Alex ruled option 1 by MC; #2248 is CLOSED.** Clause 2 is now
    **22 of the last 24 beats publish cleanly**, baseline = the CAL-P109/P110 deploy. Option 3 was
@@ -649,7 +787,13 @@ diagnosis — that is the point.**
    probability 5.4 × 10⁻⁵ (~2 years of waiting). CAL-P110 raises that rate but does not by itself
    make 13-consecutive reachable, which is why the ruling is owed either way.
 3. **Merge `program/calibration-99`** — 11 commits, three built-and-certed rules currently worth
-   0.00 pp — once (2) is answered.
+   0.00 pp — once the amended condition is MET and the lift is recorded. (2) is answered; the
+   blocker is now the countdown, not a decision.
+   **3b. Land the CAL-P112 designs (§6a) in the same window** — `polymarket/esports` (rank 2,
+   66,832 excess-outcomes) and `kalshi/tech` (rank 16, worst ECE) are diagnosed, benched and
+   holdout-validated, and their rules edit the same frozen file. Landing them with `-99` is one
+   deploy for five rules instead of two deploys for two. Read RULE T's §6 first: **T and E must
+   ship together**, and T owes a `polymarket/tech` measurement before merge.
 4. **Wire `ladder_coherence` into `_calibration_population_ctes`.** It is the only one of the three
    that nothing calls, so merging alone still yields 0.00 pp for `polymarket/soccer`.
 5. Deploy, re-measure, and record the `polymarket/soccer` delta against the −0.28 pp prediction
