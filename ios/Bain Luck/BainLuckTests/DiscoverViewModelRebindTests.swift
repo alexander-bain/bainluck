@@ -123,7 +123,7 @@ final class DiscoverViewModelRebindTests: XCTestCase {
                                       storedAt: ISO8601DateFormatter().date(from: "2026-07-28T12:00:00Z")!,
                                       ttlSeconds: 5, identity: "user:1")
         let vm = DiscoverViewModel(client: fake, lastGood: FakeLastGood(seed),
-                                   telemetry: nil, retryBudget: 0)
+                                   telemetry: nil, retryBudget: 0, seededRetryBudget: 0)
 
         await vm.load()
         XCTAssertTrue(vm.refreshFailedShowingCache, "identity 1 ended on a kept-cache banner")

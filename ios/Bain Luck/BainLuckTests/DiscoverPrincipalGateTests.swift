@@ -239,7 +239,7 @@ final class DiscoverPrincipalGateTests: XCTestCase {
             seedContext: .init(signedInNamespace: true, credentialEligibleForRestore: false))
         let vm = DiscoverViewModel(
             client: client, lastGood: FakeLastGood(try cached([7, 8, 9], identity: "user:a")),
-            telemetry: nil, retryBudget: 0.05, retryBackoff: 0.01)
+            telemetry: nil, retryBudget: 0.05, seededRetryBudget: 0.05, retryBackoff: 0.01)
 
         await vm.load()
 
@@ -258,7 +258,7 @@ final class DiscoverPrincipalGateTests: XCTestCase {
             seedContext: .init(signedInNamespace: true, credentialEligibleForRestore: true))
         let vm = DiscoverViewModel(
             client: client, lastGood: FakeLastGood(try cached([7, 8, 9], identity: "user:a")),
-            telemetry: nil, retryBudget: 5, retryBackoff: 0.01)
+            telemetry: nil, retryBudget: 5, seededRetryBudget: 5, retryBackoff: 0.01)
 
         await vm.load()
 
@@ -309,7 +309,7 @@ final class DiscoverPrincipalGateTests: XCTestCase {
         let sink = TelemetrySink()
         let vm = DiscoverViewModel(
             client: client, lastGood: FakeLastGood(try cached([7, 8, 9], identity: "user:a")),
-            telemetry: { sink.record($0) }, retryBudget: 5, retryBackoff: 0.01)
+            telemetry: { sink.record($0) }, retryBudget: 5, seededRetryBudget: 5, retryBackoff: 0.01)
 
         await vm.load()
 
@@ -372,7 +372,7 @@ final class DiscoverPrincipalGateTests: XCTestCase {
             seedContext: .init(signedInNamespace: true, credentialEligibleForRestore: true))
         let vm = DiscoverViewModel(
             client: client, lastGood: FakeLastGood(try cached([7, 8, 9], identity: "user:a")),
-            telemetry: nil, retryBudget: 0.05, retryBackoff: 0.01)
+            telemetry: nil, retryBudget: 0.05, seededRetryBudget: 0.05, retryBackoff: 0.01)
 
         await vm.load()
 
@@ -395,7 +395,7 @@ final class DiscoverPrincipalGateTests: XCTestCase {
             seedContext: .init(signedInNamespace: true, credentialEligibleForRestore: true))
         let vm = DiscoverViewModel(
             client: client, lastGood: FakeLastGood(try cached([1, 2, 3], identity: "user:a")),
-            telemetry: nil, retryBudget: 5, retryBackoff: 0.01)
+            telemetry: nil, retryBudget: 5, seededRetryBudget: 5, retryBackoff: 0.01)
 
         await vm.load()
 

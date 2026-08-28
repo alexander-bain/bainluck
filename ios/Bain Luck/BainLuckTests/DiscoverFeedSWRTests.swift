@@ -159,7 +159,7 @@ final class DiscoverFeedSWRTests: XCTestCase {
         // state (L2-201 / #1472).
         let vm = DiscoverViewModel(client: FakeClient(.fail(URLError(.notConnectedToInternet))),
                                    lastGood: cache, telemetry: { sink.record($0) },
-                                   retryBudget: 0)
+                                   retryBudget: 0, seededRetryBudget: 0)
 
         await vm.load()
 
