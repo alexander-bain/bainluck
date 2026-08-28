@@ -53,8 +53,8 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
     (
         "R3-graded-filter-loosened",
         SNAPSHOT,
-        '        if r.get("server_ms") is not None and r.get("class") != REJECTED\n',
-        '        if r.get("server_ms") is not None\n',
+        '        r for r in rows if r.get("server_ms") is not None and r.get("class") != REJECTED\n',
+        '        r for r in rows if r.get("server_ms") is not None\n',
         "the classifier is right but the summary lets the 429s back into n_graded",
     ),
     (

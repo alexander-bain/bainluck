@@ -211,8 +211,145 @@ def _graded(rows: list[dict]) -> list[float]:
     ]
 
 
+#: 🔴 THE SERIES BREAK, AND ALEX'S RULING THAT CAUSED IT (2026-08-28, option c).
+#:
+#: The warmer landed and won. Five of the seven member paths could no longer be
+#: driven cold at all, so the cold-only statistic refused seven reads running —
+#: correctly, because a median over one surviving 12 ms member is not a needle.
+#: But a metric that refuses because the product got FASTER is measuring the
+#: wrong thing. Alex ruled a strict division:
+#:
+#:   NEEDLE  — what a brand-new install actually waits, per ruling 137's
+#:             definition of a first load, WHATEVER CACHE SERVES IT. One number,
+#:             his dial, the one-number-per-lane guardrail.
+#:   DIAG    — the build cost, cold. It continues as a diagnostic in lane
+#:             reports ONLY, so a build regression cannot hide behind the
+#:             warmer. It never appears on the dial.
+#:
+#: Both lines are emitted with distinct names. **The old cold series
+#: 882 -> 873 -> 940 -> 1273 ENDS HERE** and belongs to DIAG from now on; the
+#: NEEDLE series starts fresh. Ruling 127 says a delta must not be a delta of
+#: instruments — so this break is declared in the output of every run rather
+#: than left for a reader to notice.
+#:
+#: The statistic is otherwise UNCHANGED: still the median of per-member p50s,
+#: still each member path weighted once (option b's lesson — a raw pool moved
+#: 25% on identical code from sample mix alone). Only the sample filter moves,
+#: from "cold samples" to "every served sample".
+MIN_WAIT_MEMBERS = 6
+MIN_WAIT_SURFACES = 3
+
+
+def _served(rows: list[dict]) -> list[float]:
+    """Every sample the server actually answered — any cache state.
+
+    This is the NEEDLE's filter. A fresh principal takes whatever the cache has
+    for it, and that IS the wait; discarding the warm ones would report the bad
+    half as though it were the whole (which is what the cold-only form did once
+    the warmer made the bad half rare).
+
+    `_graded` already excludes REJECTED, so a 429 cannot be counted as a fast
+    wait here either — #2260.
+    """
+    return _graded(rows)
+
+
+def user_wait(snap: dict) -> dict:
+    """THE NEEDLE. What a brand-new install waits, per member, equal-weighted.
+
+    Same shape as `needle()` below, same equal weighting, different filter.
+    """
+    by_key = {p.key: p for p in PATHS}
+    members: list[dict] = []
+    for surface, keys in POOL.items():
+        for key in keys:
+            rows = snap["tab_samples"][key]
+            members.append(
+                {
+                    "surface": surface,
+                    "key": key,
+                    "path": by_key[key].path,
+                    "served": _served(rows),
+                    "n_cold": len(_cold(rows)),
+                    "rejections": rejection_counts(rows),
+                }
+            )
+    rows = snap["search_cold_samples"]
+    members.append(
+        {
+            "surface": "cold search",
+            "key": "search_cold",
+            "path": "/api/events/search?q=",
+            "served": _served(rows),
+            "n_cold": len(_cold(rows)),
+            "rejections": rejection_counts(rows),
+        }
+    )
+
+    per_member_p50 = [_p50(m["served"]) for m in members if m["served"]]
+    surfaces = sorted({m["surface"] for m in members if m["served"]})
+    return {
+        "schema": "latency-needle-user-wait/1",
+        "taken_at": snap.get("taken_at"),
+        "commit": snap.get("commit"),
+        "uptime_seconds": snap.get("uptime_seconds"),
+        "warm_slug": snap.get("warm_slug"),
+        "canonical": snap.get("canonical"),
+        "members": members,
+        "needle_ms": _p50(per_member_p50),
+        "n_members": len(per_member_p50),
+        "n_total_members": len(members),
+        "surfaces": surfaces,
+        "pool_n": sum(len(m["served"]) for m in members),
+    }
+
+
+def wait_refusals(uw: dict) -> list[str]:
+    """Why this run cannot publish a NEEDLE, in the statistic's own terms.
+
+    The floors are LOOSER than DIAG's on purpose: every member should produce
+    served samples on a healthy run, because "served" no longer depends on
+    catching a cache miss. A member missing here means the harness could not
+    reach it, not that the product was fast — so the bar is 6 of 7 rather than
+    a bare majority.
+    """
+    out: list[str] = []
+    if uw["n_members"] < MIN_WAIT_MEMBERS:
+        out.append(
+            f"only {uw['n_members']} of {uw['n_total_members']} member paths "
+            f"were SERVED (floor {MIN_WAIT_MEMBERS}) — the median would describe "
+            f"a subset of what a person opens"
+        )
+    if len(uw["surfaces"]) < MIN_WAIT_SURFACES:
+        # parenthesised: `-` binds TIGHTER than `|` on sets, so the
+        # unparenthesised form computed `POOL | (X - served)` and listed
+        # every surface as missing including the ones that were served.
+        missing = sorted((set(POOL) | {"cold search"}) - set(uw["surfaces"]))
+        out.append(
+            f"only {len(uw['surfaces'])} of {MIN_WAIT_SURFACES} graded surfaces "
+            f"were served (missing: {', '.join(missing)}) — the line would claim "
+            f"three and describe fewer"
+        )
+    throttled = sorted(
+        m["key"] for m in uw["members"] if (m.get("rejections") or {}).get("429")
+    )
+    if throttled:
+        out.append(
+            f"RATE LIMITED: {', '.join(throttled)} — the server refused these, "
+            f"so they are unmeasured, not fast (#2260)"
+        )
+    return out
+
+
 def needle(snap: dict) -> dict:
-    """Fold a cold-path snapshot into the one number and its provenance."""
+    """Fold a cold-path snapshot into the BUILD-COST number and its provenance.
+
+    🔴 This is the DIAG line now, not the needle — Alex's option-c ruling. It
+    keeps the cold-only filter and the old floors, because its job is unchanged:
+    catch a build regression that the warmer would otherwise hide. What changed
+    is where it appears (lane reports) and what it is called
+    (`DIAG: latency-build`). The 882 -> 873 -> 940 -> 1273 series is ITS series.
+    """
     by_key = {p.key: p for p in PATHS}
     members: list[dict] = []
 
@@ -274,19 +411,24 @@ def needle(snap: dict) -> dict:
     }
 
 
-def report(snap: dict, nd: dict) -> int:
+def report(snap: dict, nd: dict, uw: dict | None = None) -> int:
     print(
-        "# THE LATENCY NEEDLE — equal-weighted cold p50 across the three "
-        "graded surfaces"
+        "# THE LATENCY NEEDLE — what a brand-new install waits — and the "
+        "BUILD-COST diagnostic beneath it"
     )
-    print("spec   : .claude/handoff/NEEDLE-SPEC.md (Alex, 2026-08-28, option b)")
+    print("spec   : .claude/handoff/NEEDLE-SPEC.md (Alex, 2026-08-28, option c)")
     print(
-        "stat   : median of the per-path cold medians — each member path "
-        "weighted ONCE."
+        "stat   : NEEDLE = median of the per-path p50s over EVERY SERVED sample, "
+        "each member path weighted ONCE, whatever cache answered."
     )
     print(
-        "series : comparable back to LAT-P106's equal-weighted 882 -> 873 only. "
-        "The raw-pool 711/536 readings are a DIFFERENT statistic."
+        "       : DIAG   = the same statistic over COLD samples only. Report-only; "
+        "it exists so a build regression cannot hide behind the warmer."
+    )
+    print(
+        "series : 🔴 BROKEN BY RULING, 2026-08-28. The cold series "
+        "882 -> 873 -> 940 -> 1273 belongs to DIAG from here; the NEEDLE series "
+        "starts fresh. Never plot a point from one against the other."
     )
     print(
         f"slug   : {nd['commit']}  uptime {nd['uptime_seconds']}s  "
@@ -311,7 +453,42 @@ def report(snap: dict, nd: dict) -> int:
         )
     print()
 
-    print("## the pool — cold samples only, one row per member path")
+    if uw is not None:
+        print("## THE NEEDLE — every served sample, one row per member path")
+        print(
+            f"{'surface':14s} {'path key':17s} {'served':>6s} {'cold':>5s} "
+            f"{'p50 wait':>9s}"
+        )
+        last_s = None
+        for m in uw["members"]:
+            label = m["surface"] if m["surface"] != last_s else ""
+            last_s = m["surface"]
+            print(
+                f"{label:14s} {m['key']:17s} {len(m['served']):>6d} "
+                f"{m['n_cold']:>5d} {_fmt(_p50(m['served'])):>9s}"
+            )
+        for m in uw["members"]:
+            rej = m.get("rejections") or {}
+            if rej and not m["served"]:
+                detail = ", ".join(f"{n}x HTTP {k}" for k, n in sorted(rej.items()))
+                print(
+                    f"   🔴 {m['key']} was REFUSED BY THE SERVER — {detail}. "
+                    f"UNMEASURED, which is not the same as fast."
+                )
+        wr = wait_refusals(uw)
+        if wr:
+            print("   🔴 NEEDLE REFUSED:")
+            for why in wr:
+                print(f"      - {why}")
+        else:
+            print(
+                f"   ➡️  NEEDLE = {uw['needle_ms']:,.1f} ms   (median of "
+                f"{uw['n_members']} per-path p50s, all "
+                f"{len(uw['surfaces'])} graded surfaces served)"
+            )
+        print()
+
+    print("## DIAG (build cost) — cold samples only, one row per member path")
     print(
         f"{'surface':14s} {'path key':17s} {'graded':>6s} {'cold':>5s} "
         f"{'cold%':>6s} {'p50 cold':>9s}"
@@ -400,17 +577,19 @@ def report(snap: dict, nd: dict) -> int:
         )
 
     if refusals:
-        print("## 🔴 POOL TOO THIN TO PUBLISH — a null is not a fast number. Re-run.")
+        print(
+            "## 🔴 DIAG POOL TOO THIN — no build-cost number. A null is not a "
+            "fast number. (This does NOT block the NEEDLE above.)"
+        )
         for why in refusals:
             print(f"   - {why}")
-        return 1
-
-    print(
-        f"## EQUAL-WEIGHTED COLD p50 = {nd['needle_ms']:,.1f} ms   "
-        f"(median of {nd['n_cold_members']} per-path cold medians, "
-        f"{nd['n_surfaces_cold']}/{nd['n_surfaces']} member paths, "
-        f"all {MIN_SURFACES} graded surfaces represented)"
-    )
+    else:
+        print(
+            f"## DIAG build cost, EQUAL-WEIGHTED COLD p50 = {nd['needle_ms']:,.1f} ms   "
+            f"(median of {nd['n_cold_members']} per-path cold medians, "
+            f"{nd['n_surfaces_cold']}/{nd['n_surfaces']} member paths, "
+            f"all {MIN_SURFACES} graded surfaces represented)"
+        )
 
     print()
     r = snap["requests"]
@@ -440,8 +619,33 @@ def report(snap: dict, nd: dict) -> int:
             "protocol)."
         )
 
+    # 🔴 TWO LINES, DISTINCT NAMES, AND THE NEEDLE GOES LAST.
+    #
+    # Alex's option-c ruling. `DIAG` is report-only and its refusal must NOT
+    # suppress the needle — that coupling is what let seven consecutive reads
+    # publish nothing while the product was, in fact, fast. The exit code
+    # follows the NEEDLE alone, because the needle is the deliverable
+    # (gotcha #54: 1 is a result — here, "no needle").
     print()
-    print(f"NEEDLE: latency {nd['needle_ms']:.0f} ms @ {nd['taken_at']}")
+    if refusals:
+        print(
+            f"DIAG: latency-build REFUSED @ {nd['taken_at']} — "
+            f"{'; '.join(refusals)}"
+        )
+    else:
+        print(f"DIAG: latency-build {nd['needle_ms']:.0f} ms @ {nd['taken_at']}")
+
+    if uw is None:
+        print(
+            "NEEDLE: latency NOT COMPUTED — this caller did not pass the "
+            "user-wait fold. That is a harness fault, not a reading."
+        )
+        return 2
+    wr = wait_refusals(uw)
+    if wr:
+        print(f"NEEDLE: latency REFUSED @ {uw['taken_at']} — {'; '.join(wr)}")
+        return 1
+    print(f"NEEDLE: latency {uw['needle_ms']:.0f} ms @ {uw['taken_at']}")
     return 0
 
 
@@ -475,10 +679,11 @@ def main() -> int:
     )
 
     nd = needle(snap)
+    uw = user_wait(snap)
     if args.out:
         with open(args.out, "w") as fh:
-            json.dump({"needle": nd, "snapshot": snap}, fh, indent=2)
-    return report(snap, nd)
+            json.dump({"needle": uw, "build_diag": nd, "snapshot": snap}, fh, indent=2)
+    return report(snap, nd, uw)
 
 
 if __name__ == "__main__":

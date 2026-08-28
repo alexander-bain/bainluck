@@ -331,6 +331,43 @@ PATHS: tuple[ColdPath, ...] = (
 TABS: tuple[str, ...] = ("Discover", "Sports", "Browse", "Search", "My Stuff")
 
 
+#: 🔴 THE HARNESS THROTTLES ITSELF, AND PACING IS THE FIX. #2260, LAT-P110.
+#:
+#: The API allows 60 requests/minute per IP. An unpaced canonical run issues
+#: ~68 in about twenty seconds — three times the budget — and because the six
+#: cold searches go LAST, the searches are exactly what gets refused. Every
+#: cold-search sample in three consecutive needle reads was an HTTP 429. Worse,
+#: a latency lane spends its session issuing `db-query` EXPLAINs and route
+#: probes from this same IP, so the harness is throttled *because the lane is
+#: working*.
+#:
+#: WHY THIS IS SAFE TO CHANGE NOW, AND WOULD NOT HAVE BEEN LAST WEEK. Ruling 127
+#: forbids a delta that is a delta of instruments, so re-pacing a live series is
+#: not a patch a lane may make on its own. Alex's 2026-08-28 option-c ruling
+#: BREAKS the series deliberately — the cold series ends, the user-wait series
+#: begins — so the break is the moment at which an instrument change costs
+#: nothing. Doing it at any other time would have needed its own ruling.
+#:
+#: 1.05 s rather than 1.0 s: the limiter's window is not aligned to ours, and a
+#: run that lands exactly on the boundary spends its whole budget arguing about
+#: rounding. A canonical run therefore takes ~75 s instead of ~20 s. That is the
+#: price of measuring the surface Alex named as the most important one.
+MIN_REQUEST_INTERVAL_S = 1.05
+
+_last_request_at: float | None = None
+
+
+def _pace() -> None:
+    """Sleep just long enough to stay inside the 60/min budget."""
+    global _last_request_at
+    now = time.monotonic()
+    if _last_request_at is not None:
+        wait = MIN_REQUEST_INTERVAL_S - (now - _last_request_at)
+        if wait > 0:
+            time.sleep(wait)
+    _last_request_at = time.monotonic()
+
+
 def _get(
     path: str,
     *,
@@ -338,7 +375,12 @@ def _get(
     token: str | None = None,
     timeout: int = 60,
 ) -> dict:
-    """One GET. Returns a sample dict; never raises on an HTTP error."""
+    """One GET. Returns a sample dict; never raises on an HTTP error.
+
+    Paced (see `MIN_REQUEST_INTERVAL_S`). The sleep happens BEFORE the clock
+    starts, so it cannot leak into `wall_ms`.
+    """
+    _pace()
     api = os.environ["BAINLUCK_API"]
     headers: dict[str, str] = {}
     if session_id:
