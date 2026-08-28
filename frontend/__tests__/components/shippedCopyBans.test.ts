@@ -56,11 +56,14 @@ import path from "node:path";
 
 import {
   ALL_COPY_BANS,
+  ATTRIBUTION_LITERALS,
   FUTURE_PROMISE_BANS,
   VENUE_BANS,
+  clauseAround,
   extractBundleStrings,
   findBannedCopy,
   isProse,
+  isSourceAttribution,
   scanBundleSource,
   surfaceOf,
   type BundleCopyHit,
@@ -149,9 +152,94 @@ describe("the rules reject the copy Alex read on production", () => {
     // `kalshi` and `polymarket` are enum values on `source`, `group_id` and
     // `stale_sources`, and they are read by the sentinels and CERT-411. The
     // ruling is about a NAME in a sentence, so the pattern is capitalised.
-    expect(findBannedCopy("Kalshi", VENUE_BANS).length).toBe(1);
+    expect(findBannedCopy("Kalshi is where we read that.", VENUE_BANS).length).toBe(1);
     expect(findBannedCopy('source: "kalshi"', VENUE_BANS)).toEqual([]);
     expect(findBannedCopy('group_id: "polymarket:12345"', VENUE_BANS)).toEqual([]);
+  });
+
+  /**
+   * ═══ RULING 141 AS AMENDED — THE HALF UX-P150 DID NOT HAVE ═══
+   *
+   * Queue 013 ran under the ruling as first written ("banned in user-facing
+   * copy, everywhere") and Alex narrowed it the same day: banned when the copy
+   * is ABOUT our sourcing, allowed — "and often good" — when it attributes a
+   * number or line the reader is looking at.
+   *
+   * A blanket name ban and the amended rule disagree about real strings, so
+   * this block pins both sides of the line. The narrative half repeats what
+   * UX-P150 removed, because the amendment explicitly KEEPS those two removals
+   * and the risk now runs the other way: a rule loosened to admit captions
+   * could quietly re-admit the empty state Alex was reading.
+   */
+  describe("a venue name attributing a number is allowed; talking about our suppliers is not", () => {
+    const ATTRIBUTION = [
+      // Chart series names — Alex's own example of the allowed class.
+      "Kalshi Implied",
+      "Polymarket Implied",
+      // Source chips beside a figure, from /weather and /politics.
+      "Polymarket & Kalshi ·",
+      "Kalshi · 10 cities",
+      "Both Kalshi and Polymarket",
+      // A provenance caption fenced by the design system's separators.
+      "Polymarket · atp-alcaraz-zverev-2026-01-30 · real price series",
+      // Two venues attributing two numbers on one row.
+      "Polymarket 27% · Kalshi 22%",
+      // The descriptive caption that needs ATTRIBUTION_LITERALS to be seen.
+      "DataGolf win-probability model + Kalshi futures",
+    ];
+
+    it.each(ATTRIBUTION)("attribution passes: %j", (label) => {
+      expect(findBannedCopy(label, VENUE_BANS)).toEqual([]);
+    });
+
+    const NARRATIVE = [
+      // The two removals ruling 141 pins. Both must stay rejected.
+      "we asked Kalshi and Polymarket and neither runs that market.",
+      "Polymarket 20 days ago",
+      // Promotional and coverage claims — the class the ruling was issued at.
+      "Kalshi + Polymarket, unified",
+      "Tournament odds from Polymarket, Kalshi, sportsbooks & DataGolf",
+      "Sportsbooks, ESPN, Kalshi, Polymarket, and live stat models each have a guess.",
+      "Daily rain markets from Kalshi",
+      // An apposition is a sentence, not a label — the em dash must not fence
+      // the venue names off into a label-shaped middle.
+      "Our sources — Kalshi and Polymarket — each have a guess.",
+    ];
+
+    it.each(NARRATIVE)("narrative is rejected: %j", (sentence) => {
+      expect(findBannedCopy(sentence, VENUE_BANS).length).toBeGreaterThan(0);
+    });
+
+    it("judges each occurrence, so a caption cannot shelter a sentence", () => {
+      // One string, both uses. Matching only the first occurrence — which is
+      // what the pre-amendment `text.match()` did — would return the caption,
+      // find it allowed, and report the page clean.
+      const both = "Kalshi Implied. We read every number from Kalshi and Polymarket.";
+      const hits = findBannedCopy(both, VENUE_BANS);
+      expect(hits.map((h) => h.ban.id).sort()).toEqual(["venue-kalshi", "venue-polymarket"]);
+    });
+
+    it("the clause, not the whole page, is the unit of judgment", () => {
+      // The render sweep hands this function a whole component's visible text.
+      // A legitimate chip must survive being next to prose, and prose must not
+      // be excused by a chip three sentences away.
+      const page =
+        "Alcaraz 62%. Kalshi Implied. Nobody is answering that question, so we have nothing to show.";
+      expect(findBannedCopy(page, VENUE_BANS)).toEqual([]);
+      expect(clauseAround(page, page.indexOf("Kalshi"))).toBe(" Kalshi Implied");
+    });
+
+    it("every ATTRIBUTION_LITERALS entry is still doing work", () => {
+      // Same discipline as OWED: an entry that the shape rule now handles on
+      // its own is a hand-written exception nobody needs, and leaving it makes
+      // the next reader think the shape rule is weaker than it is.
+      for (const entry of ATTRIBUTION_LITERALS) {
+        expect(entry.why).not.toEqual("");
+        expect(findBannedCopy(entry.literal, VENUE_BANS)).toEqual([]);
+        // Strip the literal to its shape and it must NOT pass on shape alone.
+        expect(isSourceAttribution(entry.literal.replace(/Kalshi|Polymarket/g, "X"))).toBe(false);
+      }
+    });
   });
 
   it("the future-promise rules do not fire on a market question", () => {
@@ -260,6 +348,32 @@ const EXEMPT_SURFACES = new Set(["app/admin"]);
 const THIRD_PARTY_CHUNKS = [/polyfills-/, /\bframework-/, /\bfd9d1056-/, /\b463d092a-/, /\bb3bee427-/];
 
 /**
+ * ═══ EXEMPT — the ruling says these are ALLOWED here, so they are not debt ═══
+ *
+ * Distinct from `OWED` below, and the distinction is the point. OWED means *we
+ * owe a fix*; a line in it is a promise. EXEMPT means *the ruling carves this
+ * out*, and filing a carve-out as debt is how a debt list stops being read: it
+ * grows a permanent floor nobody can pay, and the entries that COULD be paid
+ * get lost against it.
+ *
+ * UX-P150 put both of these in OWED because it was running the unamended
+ * ruling, under which every venue name was a violation somewhere on the
+ * spectrum. Ruling 141 names them as exempt on its face.
+ */
+const EXEMPT: Record<string, string[]> = {
+  // "Deliberate comparison surfaces only" — the standing carve-out, which
+  // ruling 141 restates: `/calibration` exists to publish how well each source
+  // predicts, and "a source-accuracy table with the sources anonymised is not
+  // a stronger version of itself". The methodology prose is the table's
+  // argument, so it names them too. Ruling 138's `price` debt on this surface
+  // is NOT exempt and stays in OWED.
+  "app/calibration": ["venue-kalshi", "venue-polymarket"],
+  // "A legal disclosure of who we read data from has to name who we read data
+  // from. `/privacy` is exempt on its face." — ruling 141.
+  "app/privacy": ["venue-kalshi", "venue-polymarket"],
+};
+
+/**
  * ═══ THE DEBT, ENUMERATED — ruling 138's "owed, not done", made executable ═══
  *
  * Rulings 138, 141 and 142 are product-wide and permanent. This queue swept
@@ -282,18 +396,35 @@ const THIRD_PARTY_CHUNKS = [/polyfills-/, /\bframework-/, /\bfd9d1056-/, /\b463d
  * TRADING, and "did trading move the number" has to keep meaning what "did
  * trading move the price" meant. That is a rewrite with judgment in it, not a
  * find-and-replace, and doing it badly would cost the page its meaning.
+ *
+ * ═══ THE VENUE ENTRIES, RE-READ AGAINST THE AMENDMENT (UX-P152) ═══
+ *
+ * Ruling 141 as amended requires each venue line here to be classified rather
+ * than paid down as written, because several were never debt. Measured against
+ * this build, with the attribution/narrative test applied:
+ *
+ *   • `app/politics` — the only venue prose was `title="Both Kalshi and
+ *     Polymarket"` on a source chip. Attribution. Entries REMOVED, not fixed.
+ *   • `app/weather` — the chips ("Polymarket & Kalshi ·", "Kalshi · 10
+ *     cities") are attribution; the sub-theme subtitle "Daily 'Will it rain?'
+ *     markets from Kalshi" is a coverage claim. `venue-polymarket` removed,
+ *     `venue-kalshi` still owed for that one sentence.
+ *   • `app/calibration`, `app/privacy` — moved to EXEMPT above.
+ *   • `app/about`, `app/categories`, `shared` — still narrative, still owed.
+ *
+ * The chart series names ("Kalshi Implied"), the case-study provenance
+ * captions and the cross-source legends on Discover cards never appear below
+ * because the rule no longer fires on them. That is the amendment working:
+ * they were listed as the next thing to sweep and the call reversed.
  */
 const OWED: Record<string, string[]> = {
-  // The methodology page. Names its sources because comparing them IS the
-  // subject (the standing "deliberate comparison surfaces only" carve-out),
-  // and says "price" throughout for the reason in ruling 138.
-  "app/calibration": ["price-family", "venue-kalshi", "venue-polymarket", "blend"],
-  // Legal disclosure. Naming the third parties we read is the POINT of the
-  // section; a privacy policy that will not say who is involved is not one.
-  "app/privacy": ["price-family", "venue-kalshi", "venue-polymarket"],
-  // Category dashboards — venue names in section subtitles and source chips.
-  "app/weather": ["venue-kalshi", "venue-polymarket", "appear-here"],
-  "app/politics": ["price-family", "venue-kalshi", "venue-polymarket"],
+  // The methodology page still says "price" throughout, for the reason in
+  // ruling 138. Its venue names are EXEMPT, not owed.
+  "app/calibration": ["price-family", "blend"],
+  "app/privacy": ["price-family"],
+  // Category dashboards — a coverage claim in a sub-theme subtitle.
+  "app/weather": ["venue-kalshi", "appear-here"],
+  "app/politics": ["price-family"],
   "app/categories": ["check-back", "venue-kalshi", "venue-polymarket"],
   // "the price at the pump", "Gas price", "Inflation & Consumer Prices" —
   // ruling 138 explicitly SPARES these: they are prices of goods in the world,
@@ -324,11 +455,12 @@ const OWED: Record<string, string[]> = {
   ],
 };
 
-/** Hits that the debt list does not already account for. */
+/** Hits that neither the ruling's carve-outs nor the debt list account for. */
 function unowned(hits: BundleCopyHit[]): BundleCopyHit[] {
   return hits.filter((h) => {
     if (THIRD_PARTY_CHUNKS.some((p) => p.test(h.file))) return false;
     if (EXEMPT_SURFACES.has(h.surface)) return false;
+    if ((EXEMPT[h.surface] ?? []).includes(h.ban.id)) return false;
     return !(OWED[h.surface] ?? []).includes(h.ban.id);
   });
 }
@@ -372,6 +504,10 @@ describe("the built bundle — the bytes Vercel uploads", () => {
   (present ? it : it.skip)("the debt list has no dead entries — it can only be paid down", () => {
     // A surface that was fixed but left on the list makes the debt look bigger
     // than it is, and makes the next reader distrust the whole map.
+    //
+    // OWED only. `EXEMPT` is a statement about what the ruling ALLOWS on a
+    // surface, not a measurement of what it currently says, so an exemption
+    // that stops firing is not stale — it is a page that happened to reword.
     const live = new Set(scanDir(dir).map((h) => `${h.surface} ${h.ban.id}`));
     const dead: string[] = [];
     for (const [surface, ids] of Object.entries(OWED)) {
