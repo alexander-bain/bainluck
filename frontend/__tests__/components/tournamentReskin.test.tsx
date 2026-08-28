@@ -57,6 +57,7 @@ import {
   answerOutcome,
   printedOutcomes,
   propGoverningAgeHours,
+  propIncompleteComparison,
   propIsQuiet,
   propIsPresentedAsLive,
   propStaleOutcomes,
@@ -912,5 +913,122 @@ describe("curated props", () => {
     });
     expect(printedOutcomes(unpriced)).toEqual([]);
     expect(propIsPresentedAsLive(unpriced)).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // CERT-430 finding 1 — A COMPARISON IS COMPLETE OR IT IS NOT PRESENTED
+  // -------------------------------------------------------------------------
+  //
+  // THE SPECIMEN, executed by the cert on this branch and retained here as a
+  // permanent red: the register declares `second-major` across TWO markets;
+  // Alcaraz's leg had no reading and Sinner's was fresh at .555. The card came
+  // back `price_state='live'`, `rankedOutcomes` dropped the unpriced row for
+  // having nothing to rank it by, and the section rendered ONE player, in the
+  // confident type, under **"Who wins a second major this year?"**
+  //
+  // Every step of that was locally reasonable, which is why it needs a test
+  // rather than a rule of thumb. The fix is not "hide the card" — Alex, item 4:
+  // illiquid questions render, never hidden — it is that a card built from
+  // several declared markets prints every declared subject, is never live while
+  // one of them is missing, and SAYS which one is missing.
+
+  const comparison = (alcarazProbability: number | null) =>
+    market({
+      key: "second-major",
+      title: "Who wins a second major this year?",
+      hook: null,
+      answer_entity_key: null,
+      legs: 2,
+      unpriced_legs: alcarazProbability === null ? ["KXGRANDSLAM-CALC26"] : [],
+      price_state: alcarazProbability === null ? "dark" : "live",
+      outcomes: [
+        {
+          ...outcome("second-major:carlos-alcaraz", 0.25, true, 1),
+          display_name: "Carlos Alcaraz",
+          probability: alcarazProbability,
+          probability_is_live: alcarazProbability !== null,
+          observed_at: alcarazProbability === null ? null : "2026-08-25T11:00:00+00:00",
+          age_hours: alcarazProbability === null ? null : 1,
+          price_state: alcarazProbability === null ? "dark" : "live",
+        },
+        {
+          ...outcome("second-major:jannik-sinner", 0.555, true, 1),
+          display_name: "Jannik Sinner",
+        },
+      ],
+    });
+
+  it("SPECIMEN: one fresh leg cannot publish a live one-player comparison", () => {
+    const card = comparison(null);
+    // The fresh leg still looks live on its own — that is what the old rule saw.
+    expect(rankedOutcomes(card).map((o) => o.display_name)).toEqual(["Jannik Sinner"]);
+    expect(rankedOutcomes(card)[0].probability_is_live).toBe(true);
+    // The card must not be, and it must not be one row long.
+    expect(propIsPresentedAsLive(card)).toBe(false);
+    expect(printedOutcomes(card).map((o) => o.display_name)).toEqual([
+      "Jannik Sinner",
+      "Carlos Alcaraz",
+    ]);
+    expect(propIncompleteComparison(card)?.subjects.map((o) => o.display_name)).toEqual([
+      "Carlos Alcaraz",
+    ]);
+
+    const html = render(<TournamentProps markets={[card]} draw="mens-singles" />);
+    expect(html).toContain('data-live="false"');
+    expect(html).not.toContain('data-live="true"');
+    expect(html).toContain('data-incomplete="true"');
+    // BOTH men are on the card. The missing one is named, in words, and the
+    // sentence says the comparison is not complete — the alarm, on the page.
+    expect(count(html, 'data-testid="prop-field-row"')).toBe(2);
+    expect(html).toContain("Carlos Alcaraz");
+    expect(html).toContain("Jannik Sinner");
+    expect(html).toContain("No number yet");
+    expect(html).toContain(
+      "No number has reached us for Carlos Alcaraz yet, so this comparison is not complete."
+    );
+  });
+
+  it("the same card with BOTH legs quoted is live and says nothing", () => {
+    // The other direction, and the reason the rule above is not just "mute
+    // comparisons": a rule that darkened every multi-market card would pass
+    // every assertion in the specimen and take the section's best card with it.
+    const card = comparison(0.25);
+    expect(propIncompleteComparison(card)).toBeNull();
+    expect(propIsPresentedAsLive(card)).toBe(true);
+
+    const html = render(<TournamentProps markets={[card]} draw="mens-singles" />);
+    expect(html).toContain('data-live="true"');
+    expect(html).toContain('data-incomplete="false"');
+    expect(html).not.toContain('data-testid="prop-incomplete"');
+    expect(html).not.toContain("No number yet");
+    expect(count(html, 'data-testid="prop-field-row"')).toBe(2);
+  });
+
+  it("a card the register declared MORE legs for than it delivered rows says so", () => {
+    // The other hole with the same consequence: not an unpriced leg, an absent
+    // one. From the reader's seat it is the same missing subject, so it gets
+    // the same treatment rather than rendering as a complete two-man card.
+    const card = comparison(0.25);
+    const short = { ...card, legs: 3 };
+    expect(propIncompleteComparison(short)?.undeclared).toBe(1);
+    const html = render(<TournamentProps markets={[short]} draw="mens-singles" />);
+    expect(html).toContain('data-incomplete="true"');
+    expect(html).toContain("one of the names in it");
+  });
+
+  it("an ordinary partly-quoted FIELD is untouched by the comparison rule", () => {
+    // A single-market field with unpriced rows is a field with unpriced rows —
+    // eighty names of which sixty are unquoted is normal, and printing sixty
+    // "No number yet" rows would be the cure killing the patient.
+    const field = market({
+      answer_entity_key: null,
+      outcomes: [
+        outcome("a", 0.4, true, 1),
+        { ...outcome("b", 0, true, 1), probability: null, age_hours: null },
+      ],
+    });
+    expect(propIncompleteComparison(field)).toBeNull();
+    expect(printedOutcomes(field).map((o) => o.entity_key)).toEqual(["a"]);
+    expect(propIsPresentedAsLive(field)).toBe(true);
   });
 });

@@ -671,15 +671,60 @@ def build_props(
     A prop whose outcomes are all unpriced still renders: knowing the question
     is being asked is worth something, and an empty probability is honest where
     an invented one is not.
+
+    ═══ A COMPARISON IS COMPLETE OR IT IS NOT LIVE (CERT-430, finding 1) ═══
+
+    A card built from ONE market may be partially quoted and still current: an
+    eighty-name field with sixty unpriced rows is a field with sixty unpriced
+    rows, and the ones that are quoted are the card.
+
+    A card built from SEVERAL DECLARED MARKETS is a different object.  Its whole
+    reason to exist is the comparison — "Who wins a second major this year?" is
+    two questions printed side by side — and a leg with no reading does not
+    make the comparison thinner, it makes it *false*.  The measured specimen:
+    Alcaraz unpriced, Sinner fresh at .555, and this function returned the card
+    as ``price_state='live'`` because only PRICED outcomes voted on freshness.
+    Rendered, that is one man's number under a two-man question, in the
+    confident type.  Gotcha #53's shape exactly — an absence read as a good
+    answer.
+
+    So a declared leg that produced no reading is a contributor that was never
+    seen, and ``governing_age_hours`` already knows what those are worth.  The
+    card still RENDERS (Alex, 2026-08-28: illiquid questions are never hidden);
+    it renders muted, with every declared subject on it, and ``unpriced_legs``
+    names the ones we have nothing for so the page can say so out loud.
     """
     out: list[dict[str, Any]] = []
     for prop in TournamentRegister(register).props:
         views: list[dict[str, Any]] = []
         priced_times: list[Optional[datetime]] = []
+        # WHAT THE REGISTER DECLARED, not what happened to arrive.  A leg is
+        # identified by its external id where it has one, because our own
+        # `market_id` is a local surrogate a re-ingest can move.
+        declared = [
+            str(entry.get("market_external_id") or entry.get("market_id"))
+            for entry in (prop.get("markets") or [])
+            if isinstance(entry, dict)
+        ]
+        if not declared:
+            # A pre-`markets` register entry: one card, one market, by shape.
+            declared = [
+                str(
+                    prop.get("market_external_id")
+                    or prop.get("market_id")
+                    or prop.get("key")
+                )
+            ]
+        legs_with_a_reading: set[str] = set()
 
         for outcome in prop.get("outcomes") or []:
             if not isinstance(outcome, dict):
                 continue
+            leg = str(
+                outcome.get("market_external_id")
+                or outcome.get("market_id")
+                or declared[0]
+            )
             loaded = prices.get(outcome.get("outcome_id")) or {}
             probability = _as_float(loaded.get("probability"))
             observed = loaded.get("observed_at")
@@ -693,6 +738,7 @@ def build_props(
                 # unpriced one has no reading to be stale, and counting it as
                 # dark would paint every partially-quoted card dark.
                 priced_times.append(observed)
+                legs_with_a_reading.add(leg)
             views.append({
                 "entity_key": outcome.get("entity_key"),
                 "display_name": outcome.get("display_name"),
@@ -716,7 +762,16 @@ def build_props(
         # The card's own state is the AND over its priced outcomes: a ranked
         # field is a published artifact too, and a stale member can outrank
         # fresh ones inside it.
-        age = governing_age_hours(priced_times, now)
+        #
+        # AND over its DECLARED LEGS too, when there is more than one of them.
+        # A leg that produced nothing is a contributor older than any
+        # timestamp, which is what `governing_age_hours` reads `None` as; see
+        # the comparison note in this function's docstring.
+        unpriced_legs = [leg for leg in declared if leg not in legs_with_a_reading]
+        contributors: list[Optional[datetime]] = list(priced_times)
+        if len(declared) > 1 and unpriced_legs:
+            contributors.append(None)
+        age = governing_age_hours(contributors, now)
         state = price_state(age)
         newest = freshest_observation(priced_times)
         freshest_age = (now - newest).total_seconds() / 3600.0 if newest else None
@@ -735,6 +790,13 @@ def build_props(
             "draw": prop.get("draw"),
             "source": prop.get("source"),
             "outcomes": views,
+            # HOW MANY MARKETS THE REGISTER DECLARED for this card, and which of
+            # them we have nothing for. `legs > 1` is what makes a card a
+            # comparison, and the renderer needs both facts: to print every
+            # declared subject rather than only the quoted ones, and to name the
+            # missing one instead of leaving a two-name question one name short.
+            "legs": len(declared),
+            "unpriced_legs": unpriced_legs,
             # `None` is a real, supported state and NOT a defect: it means this
             # question has no single answering outcome (a field market), so the
             # card must show a ranked list rather than one headline number.

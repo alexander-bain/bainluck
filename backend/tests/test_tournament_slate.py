@@ -551,6 +551,108 @@ def test_an_unpriced_outcome_does_not_darken_a_fresh_card():
     assert by_key["no"]["probability_is_live"] is False
 
 
+# ---------------------------------------------------------------------------
+# THE COMPARISON CARD — CERT-430, finding 1
+#
+# The card above is one market with several outcomes; this one is several
+# MARKETS printed side by side as one question, which the register declares in
+# `markets`. The difference matters exactly once, and it is the finding: an
+# unpriced outcome of a field is a field row nobody has quoted, while an
+# unpriced LEG of a comparison is half the comparison missing.
+#
+# The executed specimen: Alcaraz unpriced, Sinner fresh at .555, and the card
+# came back `live` because only priced outcomes voted. One man's number, in the
+# confident type, under a two-man question.
+# ---------------------------------------------------------------------------
+
+def _comparison_prop():
+    return _prop(
+        key="second-major",
+        title="Who wins a second major this year?",
+        markets=[
+            {"market_id": 53796, "market_external_id": "KXGRANDSLAM-CALC26"},
+            {"market_id": 53795, "market_external_id": "KXGRANDSLAM-JSIN26"},
+        ],
+        outcomes=[
+            {
+                "entity_key": "second-major:carlos-alcaraz",
+                "display_name": "Carlos Alcaraz",
+                "outcome_id": 848773,
+                "market_external_id": "KXGRANDSLAM-CALC26",
+            },
+            {
+                "entity_key": "second-major:jannik-sinner",
+                "display_name": "Jannik Sinner",
+                "outcome_id": 848769,
+                "market_external_id": "KXGRANDSLAM-JSIN26",
+            },
+        ],
+    )
+
+
+def test_a_comparison_card_reports_its_declared_legs():
+    prices = {
+        848773: {"probability": 0.25, "observed_at": NOW - timedelta(minutes=5)},
+        848769: {"probability": 0.555, "observed_at": NOW - timedelta(minutes=5)},
+    }
+    card = build_props(_register(props=[_comparison_prop()]), prices=prices, now=NOW)[0]
+    # The renderer needs both facts, so both are published rather than inferred
+    # from the outcome list — a leg that produced NO outcome row is invisible in
+    # the outcomes and is exactly the case worth reporting.
+    assert card["legs"] == 2
+    assert card["unpriced_legs"] == []
+    assert card["price_state"] == "live"
+
+
+def test_SPECIMEN_one_fresh_leg_cannot_make_a_comparison_live():
+    """Alcaraz unpriced, Sinner fresh at .555 — the card the cert executed."""
+    prices = {848769: {"probability": 0.555, "observed_at": NOW - timedelta(minutes=5)}}
+    card = build_props(_register(props=[_comparison_prop()]), prices=prices, now=NOW)[0]
+
+    assert card["price_state"] == "dark"
+    assert card["age_hours"] is None
+    assert card["unpriced_legs"] == ["KXGRANDSLAM-CALC26"]
+    # NOT HIDDEN, and not thinned: both subjects are still on the card, and the
+    # one we have nothing for carries a null rather than being dropped.
+    by_key = {o["entity_key"]: o for o in card["outcomes"]}
+    assert by_key["second-major:carlos-alcaraz"]["probability"] is None
+    assert by_key["second-major:jannik-sinner"]["probability"] == pytest.approx(0.555)
+    # The fresh leg keeps its own true flag — it is the CARD that may not claim
+    # to be current. Reporting the live leg as stale would be a second lie.
+    assert by_key["second-major:jannik-sinner"]["probability_is_live"] is True
+    assert card["freshest_age_hours"] == pytest.approx(0.083, abs=1e-2)
+
+
+def test_a_comparison_leg_that_produced_no_outcome_at_all_is_reported():
+    """A declared leg with no row is the same hole, one layer earlier."""
+    prop = _comparison_prop()
+    prop["markets"].append(
+        {"market_id": 53794, "market_external_id": "KXGRANDSLAM-NDJO26"}
+    )
+    prices = {
+        848773: {"probability": 0.25, "observed_at": NOW - timedelta(minutes=5)},
+        848769: {"probability": 0.555, "observed_at": NOW - timedelta(minutes=5)},
+    }
+    card = build_props(_register(props=[prop]), prices=prices, now=NOW)[0]
+    assert card["legs"] == 3
+    assert card["unpriced_legs"] == ["KXGRANDSLAM-NDJO26"]
+    assert card["price_state"] == "dark"
+
+
+def test_the_committed_register_publishes_its_comparison_as_two_legs():
+    """The real card, from the real file — a rule nothing exercises is a wish."""
+    register = load_register("us-open", "2026")
+    props = {p["key"]: p for p in build_props(register, prices={}, now=NOW)}
+    assert props["second-major"]["legs"] == 2
+    assert props["second-major"]["unpriced_legs"] == [
+        "KXGRANDSLAM-CALC26",
+        "KXGRANDSLAM-JSIN26",
+    ]
+    # And an ordinary one-market card still says one, so `legs > 1` means what
+    # the renderer thinks it means.
+    assert props["sinner-competes"]["legs"] == 1
+
+
 def test_a_register_with_no_props_yields_an_empty_section():
     assert build_props(_register(), prices={}, now=NOW) == []
 
@@ -841,6 +943,90 @@ def test_a_member_whose_outcome_was_renamed_refuses_the_write(tmp_path):
     assert result.returncode == 1
     assert "are not present in this dump" in result.stderr
     assert out is None
+
+
+# ── CERT-430, finding 3: a CLOSED leg is not a quiet one ─────────────────────
+#
+# The documented dump query filters `fm.status = 'open'` and nothing verified
+# that it had. The cert executed the gap: flipping the Alcaraz leg's status to
+# `closed` returned exit 0 and wrote the combined card, while the neighbouring
+# missing-leg and renamed-outcome controls both refused and wrote nothing.
+#
+# A settled leg is the worst member a comparison can have. A stale number is old
+# and says so; a settled one is FINISHED, and no freshness treatment downstream
+# can tell those apart — the page would print a resolved market beside a live
+# one as though the two were comparable.
+
+
+def test_SPECIMEN_a_closed_leg_refuses_the_whole_write(tmp_path):
+    rows = [list(row) for row in COMBINED_LEG_ROWS]
+    rows[0][4] = "closed"
+    result, out = _run_props_script(tmp_path, rows, with_combined_legs=False)
+    assert result.returncode == 1
+    assert "KXGRANDSLAM-CALC26" in result.stderr
+    assert "closed" in result.stderr
+    assert out is None, "a refused population pass must write nothing"
+
+
+def test_a_settled_market_that_is_not_even_curated_still_stops_the_pass(tmp_path):
+    """The dump is a contract, not a suggestion.
+
+    A non-open row means the dump did not come from the documented query, and
+    the pass cannot then claim any of its OTHER rows are open either. Refusing
+    only the rows we happened to curate would leave that hole open for the next
+    market that gets curated.
+    """
+    result, out = _run_props_script(tmp_path, [
+        [999, "KXSOMETHING-DULL", "kalshi", "Dull", "settled", 5099, "Yes", "1.00"],
+    ])
+    assert result.returncode == 1
+    assert "KXSOMETHING-DULL" in result.stderr
+    assert out is None
+
+
+def test_a_dump_with_no_status_column_refuses_rather_than_assuming(tmp_path):
+    """Fail-safe in the direction the guard can be defeated from.
+
+    A dump written by a different query has no `status` to check, and a check
+    that passes when its evidence is absent is gotcha #53's shape — it would
+    read exactly like a clean run.
+    """
+    import json as _json
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    dump = {
+        "columns": ["market_id", "market_ext", "source", "market_name",
+                    "outcome_id", "outcome_name", "current_probability"],
+        "rows": [[row[0], row[1], row[2], row[3], row[5], row[6], row[7]]
+                 for row in COMBINED_LEG_ROWS],
+        "truncated": False,
+    }
+    (tmp_path / "dump.json").write_text(_json.dumps(dump))
+    register = _json.loads(
+        (root / "data/tournament_registers/us-open-2026.json").read_text()
+    )
+    (tmp_path / "reg.json").write_text(_json.dumps(register))
+    result = subprocess.run(
+        [_sys.executable, str(root / "scripts/populate_tournament_props.py"),
+         "--register", str(tmp_path / "reg.json"), "--dump", str(tmp_path / "dump.json"),
+         "--observed-at", "2026-08-26T00:00:00+00:00",
+         "--version", "3", "--supersedes-version", "2",
+         "--out", str(tmp_path / "out.json")],
+        capture_output=True, text=True, cwd=str(root),
+    )
+    assert result.returncode == 1
+    assert "no `status` column" in result.stderr
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_an_all_open_dump_still_writes(tmp_path):
+    """The control. A refusal that fires on the healthy case is not a guard."""
+    result, out = _run_props_script(tmp_path, [])
+    assert result.returncode == 0, result.stderr
+    assert [p["key"] for p in out["props"]] == ["second-major"]
 
 
 def test_a_market_cannot_be_both_a_card_and_a_family_member(tmp_path):
