@@ -12,8 +12,8 @@ import {
   propIsPresentedAsLive,
   propsProvenance,
   visibleProps,
-  type MatchDetailPayload,
   type MatchProp,
+  type MatchPropsSource,
 } from "@/lib/matchDetail";
 
 /**
@@ -137,7 +137,7 @@ function PropCard({ prop, decided }: { prop: MatchProp; decided: boolean }) {
   );
 }
 
-export default function MatchProps({ payload }: { payload: MatchDetailPayload }) {
+export default function MatchProps({ payload }: { payload: MatchPropsSource }) {
   const cards = visibleProps(payload);
   const hidden = hiddenPropCount(payload);
   const decided = payload.decided === true;

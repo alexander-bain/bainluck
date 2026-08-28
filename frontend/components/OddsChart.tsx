@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   ComposedChart,
   Line,
@@ -143,6 +143,66 @@ interface ResolvedSource {
   dashPattern: string | null;
   type: "model" | "market";
   snapshotCount: number;
+}
+
+/**
+ * ═══ THE FAINT LINES SAY WHO THEY ARE (UX-P152) ═══
+ *
+ * Alex, 2026-08-28, on the format he wants for this chart: the aggregated Bain
+ * Luck line bold and prominent, *"a faint gray line per source behind it,
+ * LABELED (Kalshi / Polymarket / ESPN / sportsbook), barely-there but readable
+ * — so a glance shows WHICH source is moving the blend."*
+ *
+ * The chart already had the first half: the blend at width 3 on top, the source
+ * lines at width 1 / opacity 0.28 behind it (L2-131, UX-P022). What it did not
+ * have is the second half. The source names lived in a legend behind a
+ * `+ N sources` press, so a reader looking at a line peeling away from the
+ * blend could see THAT something diverged and had no way to see WHAT. The whole
+ * value of keeping the faint lines is naming them.
+ *
+ * So each source line ends in its own name, in its own colour, at its own last
+ * point. That also handles the case Alex called out by name — sportsbooks
+ * dropping out of a blowout — for free: the line stops, and its label stops
+ * with it, at the moment it stopped being quoted. A legend cannot show that; an
+ * end-of-line label is the only annotation that carries WHEN.
+ *
+ * The label tracks the line's weight (`legendExpanded`) so expanding still
+ * means "make the comparison legible" and collapsing still means blend-dominant
+ * — the reader is never shouted at by five names over a chart whose subject is
+ * one number.
+ */
+function SourceEndLabel(props: {
+  x?: number;
+  y?: number;
+  index?: number;
+  value?: unknown;
+  text: string;
+  color: string;
+  faint: boolean;
+  lastIndex: number;
+}) {
+  const { x, y, index, text, color, faint, lastIndex } = props;
+  // Recharts calls the label renderer once per point. Only the series' final
+  // point gets the name — anything else writes the source name over its own
+  // line at every sample.
+  if (index !== lastIndex) return null;
+  if (typeof x !== "number" || typeof y !== "number") return null;
+  return (
+    <text
+      x={x + 4}
+      y={y}
+      dy={3}
+      fill={color}
+      fillOpacity={faint ? 0.55 : 0.95}
+      fontSize={9}
+      fontWeight={600}
+      textAnchor="start"
+      data-testid="chart-source-label"
+      data-source={text}
+    >
+      {text}
+    </text>
+  );
 }
 
 /**
@@ -769,6 +829,46 @@ export default function OddsChart({
   // now decides whether `bainLuckDelta` is written at all. (`timeRange` is also
   // unread here, but it predates this change and is left alone.)
   }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, showBlendLine, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries]);
+
+  // ── WHERE EACH SOURCE'S NAME GOES (UX-P152, see `SourceEndLabel`) ──
+  // The index of each series' LAST point that actually has a reading, which is
+  // where the name is written. Not `chartData.length - 1`: a source that
+  // stopped being quoted — a sportsbook dropping out of a blowout, the case
+  // Alex named — has nulls out to the end of the domain, and labelling the
+  // domain's end would draw its name at a time it was not quoting.
+  const lastPointBySource = useMemo(() => {
+    const last: Record<string, number> = {};
+    for (const source of resolvedSources) {
+      for (let i = chartData.length - 1; i >= 0; i--) {
+        const value = (chartData[i] as unknown as Record<string, unknown>)[source.dataKey];
+        if (value !== null && value !== undefined) {
+          last[source.dataKey] = i;
+          break;
+        }
+      }
+    }
+    return last;
+  }, [chartData, resolvedSources]);
+
+  const endLabelProps = useCallback(
+    (source: ResolvedSource) => {
+      const lastIndex = lastPointBySource[source.dataKey];
+      if (lastIndex === undefined) return {};
+      return {
+        label: (labelProps: { x?: number; y?: number; index?: number }) => (
+          <SourceEndLabel
+            {...labelProps}
+            key={`${source.dataKey}-end-label`}
+            text={source.displayName}
+            color={source.color}
+            faint={!legendExpanded}
+            lastIndex={lastIndex}
+          />
+        ),
+      };
+    },
+    [lastPointBySource, legendExpanded],
+  );
 
   // Report the chart's actual rendered time domain to parent so
   // ScoreDifferentialChart can match its x-axis exactly.
@@ -1397,6 +1497,7 @@ export default function OddsChart({
                 dot={false}
                 activeDot={{ r: 3, fill: source.color }}
                 connectNulls
+                {...endLabelProps(source)}
               />
             ))}
 

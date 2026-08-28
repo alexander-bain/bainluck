@@ -32,7 +32,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
+from app.utils.tournament_advancement import build_advancement
 from app.utils.tournament_board import TREND_DAYS, build_boards
+from app.utils.tournament_event_link import resolve_matchup_events
 from app.utils.tournament_grid import build_grids
 from app.tasks.tournament_matchup_linker import apply_resolved_links, read_links
 from app.utils.tournament_match import build_match_detail
@@ -50,7 +52,7 @@ router = APIRouter()
 
 # Explicit, not derived. A tournament is servable because someone committed a
 # register for it and wrote the season down here — never because a slug parsed.
-REGISTERED_TOURNAMENTS: dict[str, dict[str, str]] = {
+REGISTERED_TOURNAMENTS: dict[str, dict[str, Any]] = {
     "us-open": {
         "season": "2026",
         "title": "US Open 2026",
@@ -59,6 +61,14 @@ REGISTERED_TOURNAMENTS: dict[str, dict[str, str]] = {
         # select it out of a day that also carries Winston-Salem and Monterrey.
         # Named here rather than matched: same posture as the slug itself.
         "espn_event_name": "US Open",
+        # WHICH `events` ROWS BELONG TO THIS CONTAINER (UX-P152). Named, never
+        # inferred from the slug — same posture as `espn_event_name` above.
+        # This is what makes the "is this event in a tournament" question cost
+        # one indexed read for the ~99.99% of events whose answer is no; an
+        # event page for a Lakers game must not pay for the US Open being on.
+        # Measured 2026-08-28: 47 + 47 main-draw singles events under these two
+        # keys, created by the Odds API ingest on 2026-08-27.
+        "sport_keys": ("tennis_atp_us_open", "tennis_wta_us_open"),
         # The main-draw ceremony, in the tournament's own local time. Alex's
         # item 1: the pre-draw panel must say WHEN, not just that it has not
         # happened. Register-adjacent rather than register-owned because it is
@@ -372,42 +382,83 @@ async def _load_match_group(
     return group_id, list(markets.values())
 
 
-@router.get("/{slug}/matches/{matchup_key:path}")
-async def get_tournament_match(
-    slug: str, matchup_key: str, db: AsyncSession = Depends(get_db)
+@router.get("/by-event/{event_id}")
+async def get_event_tournament(
+    event_id: int, db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
-    """One match's own page — the match-winner market, and its props under it.
+    """A standard event's tournament extensions — advancement, and the props.
 
-    ``GET /api/tournaments/us-open/matches/{matchup_key}``
+    ``GET /api/tournaments/by-event/{event_id}``
 
-    THE SURFACE LANE1'S Q426 NOTE ASKED FOR (UX-P149).  Their routing call was
-    that match props belong on the match's own surface grouped under the
-    match-winner market, and their blocker was that no such surface existed —
-    tennis matches have no ``events`` row.  This is it, keyed on the register's
-    ``matchup_key`` rather than on an ``events.id``, so it needs no new identity
-    decision anywhere.
+    ═══ WHY THIS REPLACED A MATCH-PAGE ROUTE ═══
 
-    ``matchup_key:path`` because a key is
-    ``mens-singles:aziz-dougaz-vs-andrea-guerrieri:2026-08-27`` — colons are
-    legal in a path segment and survive both encoded and bare, and the ``:path``
-    converter means neither form has to be the one the client happened to pick.
+    Alex, 2026-08-28, on the UX-P149 artifact: *"It seems like we're reinventing
+    the event page here"*, and then the architecture note: *"I thought that
+    tournaments were containers for related events."*
 
-    A key the register does not hold is a 404.  Never a nearest match: the slug
-    does not infer (ruling 031, #1793) and a matchup key does not infer either.
+    That is the ruled model and it is what the database holds.  UX-P149 built a
+    bespoke match surface on the premise that a tennis matchup has no ``events``
+    row; that premise expired at **2026-08-27 21:05 UTC**, when the Odds API
+    began carrying US Open main-draw singles and 94 standard events appeared for
+    the 96 registered R128 fixtures.  So there is no match page: a match is an
+    event, it renders on ``/events/{id}`` with the probability-over-time graph
+    and every other thing an event page does, and the tournament adds two
+    sections **to** that page.  This endpoint is those two sections.
+
+    ═══ THE CHEAP NO ═══
+
+    The event page asks this about every event it renders, so the ``no`` has to
+    cost almost nothing.  One indexed read of the event's sport key answers it:
+    a sport key no registered tournament claims returns ``{"tournament": null}``
+    without loading a register, building a hub payload, or touching Redis.  A
+    Lakers game must not pay for the US Open being on.
+
+    ``{"tournament": null}`` and not a 404: "this event is not part of a
+    tournament" is the ordinary answer for almost every event on the site, and
+    an error status for the ordinary answer is how a health check learns to
+    ignore a real one.
     """
-    spec = REGISTERED_TOURNAMENTS.get(slug)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"No registered tournament '{slug}'")
+    from app.models.models import Event, Sport  # noqa: PLC0415
 
-    cached = await _cache_get(f"{slug}/match/{matchup_key}")
-    if cached is not None:
-        return cached
+    row = (
+        await db.execute(
+            select(Sport.key, Event.home_team_name, Event.away_team_name)
+            .join(Event, Event.sport_id == Sport.id)
+            .where(Event.id == event_id)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    sport_key, home_team_name, away_team_name = row
+
+    slug = next(
+        (
+            s for s, spec in REGISTERED_TOURNAMENTS.items()
+            if sport_key in spec.get("sport_keys", ())
+        ),
+        None,
+    )
+    if slug is None:
+        return {"event_id": event_id, "tournament": None}
+
+    spec = REGISTERED_TOURNAMENTS[slug]
+    hub = await _hub_payload(slug, spec, db)
+
+    matchup_key = ((hub.get("event_links") or {}).get("by_event") or {}).get(
+        str(event_id)
+    )
+    if not matchup_key:
+        # The tournament is on and this event is one of its sport keys, but no
+        # registered fixture dereferences to it. An honest null: the register
+        # pins identity and this event is not one of the things it pins. Never
+        # a name match on the two player names sitting right there — that is
+        # precisely the shortcut `tournament_event_link` exists to refuse.
+        return {"event_id": event_id, "tournament": None, "reason": "NOT_IN_REGISTER"}
 
     register = load_register(slug, spec["season"])
     if register is None:
         logger.error("registered tournament %s has no readable register", slug)
         raise HTTPException(status_code=503, detail="Tournament register unavailable")
-
     register, _linked = await _with_link_overlay(slug, register)
 
     reg = TournamentRegister(register)
@@ -415,8 +466,32 @@ async def get_tournament_match(
         (m for m in reg.matchups if str(m.get("matchup_key")) == matchup_key), None
     )
     if matchup is None:
-        raise HTTPException(status_code=404, detail="No such match")
+        # The cached hub and the freshly loaded register disagree — the register
+        # was replaced between the two reads. Not an error and not a guess.
+        logger.warning(
+            "event %s maps to matchup %s which the register no longer holds",
+            event_id, matchup_key,
+        )
+        return {"event_id": event_id, "tournament": None, "reason": "REGISTER_MOVED"}
 
+    # ── EACH PLAYER'S CHANCE OF REACHING EACH LATER ROUND (Alex's item 2) ──
+    # A slice of the hub's own `grids`, so this strip and the tournament page's
+    # playoff grid cannot print different numbers for one cell.
+    advancement = build_advancement(
+        hub.get("grids") or {},
+        matchup=matchup,
+        event_id=event_id,
+        home_team_name=home_team_name,
+        away_team_name=away_team_name,
+        tournament_title=spec["title"],
+        tournament_slug=slug,
+    )
+
+    # ── THE MATCH'S OTHER QUESTIONS (Alex's item 3) ──
+    # UX-P149's grouping, kept whole: the register pins the match-winner
+    # market's id, the source has already put every prop for the match in the
+    # same `group_id`, and one indexed lookup returns them. No name comparison,
+    # no time window, no category test.
     block = next(
         (
             b for b in (matchup.get("sources") or [])
@@ -432,8 +507,6 @@ async def get_tournament_match(
             db, winner_market_id=winner_market_id
         )
 
-    # The hero's own outcomes plus every sibling's. One `IN (...)`, bounded by
-    # the group — the same shape the hub uses, at one match's scale.
     outcome_ids = sorted(
         {
             side.get("outcome_id")
@@ -450,11 +523,6 @@ async def get_tournament_match(
     now = datetime.now(timezone.utc)
     prices = await _load_prices(db, outcome_ids)
 
-    # WHAT HAPPENED, when it has. Built through the hub's own `build_results`
-    # rather than a second join, so a finished match reads the same on its own
-    # page as it does in the list — including the walkover and retirement
-    # marking UX-P147 shipped. The partial `prices` is deliberate: the prior it
-    # can resolve is this match's, which is the only one this page prints.
     decided = build_results(
         register, results=await _espn_results(slug), prices=prices
     )
@@ -462,7 +530,7 @@ async def get_tournament_match(
         (r for r in decided["matches"] if r.get("matchup_key") == matchup_key), None
     )
 
-    payload = build_match_detail(
+    detail = build_match_detail(
         register,
         matchup_key,
         prop_markets=prop_markets,
@@ -470,24 +538,47 @@ async def get_tournament_match(
         result=result,
         now=now,
     )
-    if payload is None:
-        raise HTTPException(status_code=404, detail="No such match")
 
-    payload["slug"] = slug
-    payload["title"] = spec["title"]
-    payload["subtitle"] = spec["subtitle"]
-    payload["broadcasts"] = reg.broadcasts
+    return {
+        "event_id": event_id,
+        "tournament": {
+            "slug": slug,
+            "title": spec["title"],
+            "url": f"/tournaments/{slug}",
+        },
+        "matchup_key": matchup_key,
+        "round": matchup.get("round"),
+        "draw_label": (hub.get("grids") or {}).get(matchup.get("draw"), {}).get("label"),
+        "advancement": advancement,
+        # `detail` is None only when the register holds the matchup but cannot
+        # render it as a row (an unmapped side). The extensions then carry the
+        # advancement alone rather than 404-ing a page that is otherwise fine —
+        # this is a SECTION of an event page, not the page.
+        "props": (detail or {}).get("props") or [],
+        "props_count": (detail or {}).get("props_count") or 0,
+        "props_dropped": (detail or {}).get("props_dropped") or {},
+        "decided": bool((detail or {}).get("decided")),
+        "result": (detail or {}).get("result"),
+        "broadcasts": reg.broadcasts,
+        "generated_at": now.isoformat(),
+    }
 
-    await _cache_set(f"{slug}/match/{matchup_key}", payload)
-    return payload
 
+async def _hub_payload(
+    slug: str, spec: dict[str, Any], db: AsyncSession
+) -> dict[str, Any]:
+    """The tournament hub payload — built once, read by every tournament surface.
 
-@router.get("/{slug}")
-async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    spec = REGISTERED_TOURNAMENTS.get(slug)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"No registered tournament '{slug}'")
+    Extracted from ``get_tournament`` by UX-P152 so the event page's tournament
+    extensions come out of **the same object** the hub renders, rather than out
+    of a second assembly that agrees today.  The advancement strip on
+    ``/events/{id}`` is a slice of ``payload["grids"]``; if it were built from a
+    second read of the register, one surface could print a cell the other did
+    not, which is the divergence the standing ruling exists to prevent.
 
+    It also means the extensions endpoint costs a dict lookup on a warm cache
+    instead of a second full build.
+    """
     cached = await _cache_get(slug)
     if cached is not None:
         return cached
@@ -576,10 +667,20 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
                 (block.get("source"), block.get("market_id"), block.get("outcome_id"))
             ] = loaded
 
+    # WHICH `events` ROW EACH FIXTURE IS (UX-P152, Alex's architecture note:
+    # "I thought that tournaments were containers for related events"). One
+    # id-anchored query, resolved BEFORE the slate is built so a match row
+    # carries its event id and the card can route to the standard event page
+    # like any other game card. Never a name match — see
+    # `utils/tournament_event_link`.
+    event_links = await resolve_matchup_events(db, register)
+
     payload = build_boards(
         register, prices=by_identity, series_by_outcome=series, now=now
     )
-    payload["slate"] = build_slate(register, prices=prices, now=now)
+    payload["slate"] = build_slate(
+        register, prices=prices, now=now, event_ids=event_links["by_matchup"]
+    )
     payload["props"] = build_props(register, prices=prices, now=now)
     # THE PLAYOFF GRID (UX-P139). Built server-side, from `reaches` and the
     # boards, because the amendment makes cell provenance a correctness
@@ -626,6 +727,25 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
     payload["draw_release_label"] = spec["draw_release_label"]
     payload["main_draw_starts_at"] = spec["main_draw_starts_at"]
     payload["main_draw_label"] = spec["main_draw_label"]
+    # NO SILENT CAPS. `by_event` is what `/by-event/{id}` reads; the reason
+    # counts are what makes a fixture with no click-through a named gap rather
+    # than a row that quietly stopped being a link.
+    payload["event_links"] = {
+        # JSON has no integer keys and this payload round-trips through Redis,
+        # so the id side is stringified HERE rather than at each reader.
+        "by_event": {str(k): v for k, v in event_links["by_event"].items()},
+        "by_matchup": event_links["by_matchup"],
+        "linked": len(event_links["by_matchup"]),
+        "unresolved": event_links["reason_counts"],
+    }
 
     await _cache_set(slug, payload)
     return payload
+
+
+@router.get("/{slug}")
+async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    spec = REGISTERED_TOURNAMENTS.get(slug)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"No registered tournament '{slug}'")
+    return await _hub_payload(slug, spec, db)
