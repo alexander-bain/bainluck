@@ -1,21 +1,35 @@
 #!/usr/bin/env python3
 """CAL-P112 — the per-cohort finish-line threshold table, scored on the served payload.
 
-``calibration_scorecard.py`` (CAL-P108) declares ONE bar for every published
-cell: ``BAR_PP = 3.0``. This script is the ratification instrument for the
-question that bar leaves open — *should the bar be the same number in every
-cohort?* — and it deliberately does NOT change the scorecard's live thresholds.
-Until Alex ratifies, the scorecard keeps rendering the flat bar and this script
-renders the proposal beside it, on the same payload, in the same run.
+**RATIFIED by Alex, MC, 2026-08-28 ~1:15pm PT: A 2.5 pp / B 3.0 pp / C 3.0 pp,
+as proposed.** CAL-P115 wired it: the classes, the bars and :func:`classify` now
+live in ``calibration_scorecard.py`` and this file IMPORTS them, so the live
+scorecard and this table are scoring the same cells against the same numbers by
+construction and cannot be made to disagree by editing one of them.
 
-WHY A SEPARATE FILE AND NOT A FLAG ON THE SCORECARD
-----------------------------------------------------
+WHAT THIS FILE IS FOR, NOW THAT THE QUESTION IS ANSWERED
+----------------------------------------------------------
+Two jobs, both of which outlive the ratification:
+
+1. **The per-class breakdown and its rationale**, rendered against the live
+   payload — the cohort view the scorecard's flat cell list cannot show.
+2. **The incumbent side-by-side.** It keeps rendering the pre-ratification flat
+   3.0 pp bar beside the ratified one, so the measured COST of the decision (one
+   cell, ``odds_api_bookmaker/icehockey_nhl``) stays reproducible on today's
+   curve instead of decaying into a claim about a constant nobody can run
+   anymore. A ratification whose effect can no longer be measured is a prose
+   threshold, which is the failure this whole program keeps paying for.
+
+It also cross-checks itself against the scorecard on every run: scoring the
+ratified bars here must return exactly what ``score()`` returned there, and the
+run FAILS if it does not. See :func:`agreement`.
+
+WHY THE FILES ARE STILL SEPARATE
+----------------------------------
 A finish line that moves when a lane edits a constant is not a finish line. The
-scorecard's ``BAR_PP`` is the ratified number; a proposal that overwrites it
-before ratification would make the published page report a bar nobody approved,
-and the next reader could not tell which one they were looking at. So the
-proposal lives here, is labelled PRE-RATIFICATION in its own output, and the
-day it is ratified the change to ``calibration_scorecard.py`` is three lines.
+bars live in the scorecard — the instrument that publishes the page — precisely
+so that no side-by-side renderer can quietly become the source of truth for
+them. This file may propose; it may not declare.
 
 THE DERIVATION RULE, AND THE ONE IT REJECTS
 ---------------------------------------------
@@ -77,73 +91,40 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from calibration_scorecard import (  # noqa: E402
     BAR_PP,
+    CLASS_A,
+    CLASS_B,
+    CLASS_BARS_PP,
+    CLASS_C,
+    CLASS_RATIONALE,
+    GAME_CATEGORIES,  # noqa: F401  — re-exported so the guard suite can pin it
     HEADLINE_TARGET_PP,
     MIN_CELL_N,
     SIGMA_GATE,
     VERDICT_EXEMPT,
+    VERDICT_QUEUED,
     cell_se_pp,
+    classify,
+    needle,  # noqa: F401  — re-exported; the NEEDLE contract is pinned here
     score,
     self_check,
 )
 
 # --------------------------------------------------------------------------
-# The cohort classes. Assignment is STRUCTURAL — how the price is formed — and
-# is decided by (source, category) alone, so a cell can never drift between
-# classes as its numbers move.
+# The bars are IMPORTED, never re-declared. Before CAL-P115 this module owned
+# the class map and the scorecard owned a flat bar, which is how the two
+# instruments spent a day disagreeing by design. Now there is one declaration
+# and it lives with the instrument that publishes the page.
 # --------------------------------------------------------------------------
 
-#: Categories that are a scheduled contest with a fixed, near-term settlement.
-#: Used only to split exchange cells into B and C; ``odds_api*`` is class A
-#: whatever its category, because the class is about the PRICE, not the sport.
-GAME_CATEGORIES: frozenset[str] = frozenset({
-    "baseball", "basketball", "soccer", "hockey", "football", "tennis", "golf",
-    "cricket", "esports", "mma", "motorsports", "table_tennis", "boxing",
-    "cycling", "horse_racing", "lacrosse", "rugby", "chess",
-})
+#: The RATIFIED bars (Alex, MC, 2026-08-28). A local alias for readability —
+#: the same object the scorecard scores with, so the two cannot drift.
+RATIFIED_BARS: dict[str, float] = CLASS_BARS_PP
 
-CLASS_A = "A_multibook_consensus"
-CLASS_B = "B_exchange_contest"
-CLASS_C = "C_exchange_standalone"
-
-#: PROPOSED per-cohort bars, pp. Pre-ratification — see the module docstring
-#: for the derivation of each, and why only class A departs from 3.0.
-PROPOSED_BARS: dict[str, float] = {
-    CLASS_A: 2.5,
-    CLASS_B: 3.0,
-    CLASS_C: 3.0,
-}
-
-#: The incumbent, for the side-by-side. ``calibration_scorecard.BAR_PP``.
-INCUMBENT_BARS: dict[str, float] = {k: BAR_PP for k in PROPOSED_BARS}
-
-CLASS_RATIONALE: dict[str, str] = {
-    CLASS_A: (
-        "Devigged consensus of many bookmakers. The published price is an "
-        "average of independent estimates, so its idiosyncratic quoting error "
-        "is structurally smaller than a single order book's — the one external "
-        "reason to hold a class tighter than reader-actionability requires. "
-        "These cells also carry the game cards, the most-read surface."
-    ),
-    CLASS_B: (
-        "Single-venue exchange price on a scheduled contest. Real order book, "
-        "near-term settlement, no averaging across venues. Reader "
-        "actionability sets the bar and nothing about the class earns a "
-        "departure from it."
-    ),
-    CLASS_C: (
-        "Single-venue exchange price on a standalone or long-horizon question. "
-        "Thin books and distant settlement raise the VARIANCE of a cell's "
-        "estimate, which the sigma gate already prices; they do not license a "
-        "larger BIAS. The class's own cells prove 3.0 pp reachable — "
-        "polymarket/weather 1.63 pp, kalshi/politics 2.08 pp."
-    ),
-}
-
-
-def classify(source: str, category: str) -> str:
-    if (source or "").startswith("odds_api"):
-        return CLASS_A
-    return CLASS_B if category in GAME_CATEGORIES else CLASS_C
+#: The pre-ratification incumbent, kept for the side-by-side: one flat
+#: ``calibration_scorecard.BAR_PP`` for every class. This is history now, and it
+#: is still rendered so the measured COST of the ratification — one cell — stays
+#: checkable on today's curve rather than decaying into a prose claim.
+INCUMBENT_BARS: dict[str, float] = {k: BAR_PP for k in CLASS_BARS_PP}
 
 
 def evaluate(result: dict, bars: dict[str, float], sigma_gate: float = SIGMA_GATE) -> dict:
@@ -194,17 +175,47 @@ def evaluate(result: dict, bars: dict[str, float], sigma_gate: float = SIGMA_GAT
     }
 
 
-def needle(evaluation: dict, generated_at: str) -> str:
-    """The lane's ONE number, per ``.claude/handoff/NEEDLE-SPEC.md``."""
-    return (
-        f"NEEDLE: calibration {evaluation['cells_at_bar']}/"
-        f"{evaluation['cells_material']} cells-at-bar @ {generated_at}"
-    )
+def agreement(result: dict, ratified: dict) -> dict:
+    """Does this table, at the ratified bars, say what the scorecard said?
+
+    It must, because the scorecard now applies the SAME bars through the SAME
+    ``classify``. That makes this a tautology on a good day and a tripwire on a
+    bad one: the day someone re-declares a bar in one file, or ``evaluate``'s
+    queue predicate drifts from ``score``'s verdict ladder, this is the line
+    that reds. It is checked on every run rather than only in the guard suite,
+    because the number this file prints ends up in YOUR-TURN.
+    """
+    c = result["counts"]
+    mismatches = [
+        {"field": field, "scorecard": got, "table": want}
+        for field, got, want in (
+            ("cells_material", c["cells_material"], ratified["cells_material"]),
+            ("cells_at_bar", c["cells_at_bar"], ratified["cells_at_bar"]),
+            ("cells_queued", c["cells_queued"], ratified["cells_queued"]),
+            (
+                "queued_excess_outcomes",
+                c["queued_excess_outcomes"],
+                ratified["queued_excess_outcomes"],
+            ),
+        )
+        if got != want
+    ]
+    queued_here = {r["cell"] for r in ratified["rows"] if r["queued"]}
+    queued_there = {
+        cell["cell"] for cell in result["cells"] if cell["verdict"] == VERDICT_QUEUED
+    }
+    if queued_here != queued_there:
+        mismatches.append({
+            "field": "queued_cells",
+            "only_scorecard": sorted(queued_there - queued_here),
+            "only_table": sorted(queued_here - queued_there),
+        })
+    return {"ok": not mismatches, "mismatches": mismatches}
 
 
-def render_markdown(result: dict, incumbent: dict, proposed: dict) -> str:
+def render_markdown(result: dict, incumbent: dict, ratified: dict) -> str:
     L: list[str] = []
-    L.append("### Cells at bar — incumbent vs proposed (PRE-RATIFICATION)")
+    L.append("### Cells at bar — RATIFIED per-cohort bars, and the incumbent they replaced")
     L.append("")
     L.append(f"payload `{result['generated_at']}`, population "
              f"`{result['population_version']}`, headline "
@@ -212,7 +223,10 @@ def render_markdown(result: dict, incumbent: dict, proposed: dict) -> str:
     L.append("")
     L.append("| table | bar A / B / C | cells at bar | queued | queued excess-outcomes |")
     L.append("|---|---|--:|--:|--:|")
-    for name, ev in (("incumbent (flat)", incumbent), ("**proposed**", proposed)):
+    for name, ev in (
+        ("incumbent (flat, pre-2026-08-28)", incumbent),
+        ("**RATIFIED — live**", ratified),
+    ):
         b = ev["bars"]
         L.append(
             f"| {name} | {b[CLASS_A]} / {b[CLASS_B]} / {b[CLASS_C]} | "
@@ -223,7 +237,7 @@ def render_markdown(result: dict, incumbent: dict, proposed: dict) -> str:
     L.append("| class | bar pp | cells | at bar | queued | outcomes | rationale |")
     L.append("|---|--:|--:|--:|--:|--:|---|")
     for klass in (CLASS_A, CLASS_B, CLASS_C):
-        p = proposed["per_class"][klass]
+        p = ratified["per_class"][klass]
         L.append(
             f"| `{klass}` | **{p['bar_pp']}** | {p['cells']} | {p['at_bar']} | "
             f"{p['queued']} | {p['outcomes']:,} | {CLASS_RATIONALE[klass]} |"
@@ -231,7 +245,7 @@ def render_markdown(result: dict, incumbent: dict, proposed: dict) -> str:
     L.append("")
     L.append("| # | cell | class | ECE | n | gap | bar | excess | sigma | excess-outcomes |")
     L.append("|--:|---|---|--:|--:|--:|--:|--:|--:|--:|")
-    for i, r in enumerate([x for x in proposed["rows"] if x["queued"]], 1):
+    for i, r in enumerate([x for x in ratified["rows"] if x["queued"]], 1):
         L.append(
             f"| {i} | `{r['cell']}` | {r['class'][0]} | {r['ece']:.2f} | {r['n']:,} | "
             f"{r['gap']:+.2f} | {r['bar_pp']} | {r['excess_pp']:+.2f} | "
@@ -269,7 +283,9 @@ def main() -> int:
 
     result = score(payload)
     incumbent = evaluate(result, INCUMBENT_BARS)
-    proposed = evaluate(result, PROPOSED_BARS)
+    ratified = evaluate(result, RATIFIED_BARS)
+
+    agree = agreement(result, ratified)
 
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -279,22 +295,32 @@ def main() -> int:
              "headline_mce_closing_line": result["headline_mce_closing_line"],
              "min_cell_n": MIN_CELL_N, "sigma_gate": SIGMA_GATE,
              "headline_target_pp": HEADLINE_TARGET_PP,
-             "incumbent": incumbent, "proposed": proposed,
-             "status": "PRE-RATIFICATION"},
+             "incumbent": incumbent, "ratified": ratified,
+             "scorecard_agreement": agree,
+             "status": "RATIFIED 2026-08-28 (Alex, MC)"},
             indent=2, sort_keys=True))
 
     if args.markdown:
-        print(render_markdown(result, incumbent, proposed))
+        print(render_markdown(result, incumbent, ratified))
     else:
         print(f"payload {result['generated_at']}  population {result['population_version']}")
-        for name, ev in (("incumbent flat 3.0", incumbent), ("PROPOSED  2.5/3.0/3.0", proposed)):
+        for name, ev in (
+            ("incumbent flat 3.0", incumbent),
+            ("RATIFIED  2.5/3.0/3.0", ratified),
+        ):
             print(f"  {name:22s} cells at bar {ev['cells_at_bar']}/{ev['cells_material']}"
                   f"  queued {ev['cells_queued']}"
                   f"  excess-outcomes {ev['queued_excess_outcomes']:,}")
     print()
-    print("PRE-RATIFICATION — Alex ratifies by MC; until then the scorecard's flat "
-          f"{BAR_PP} pp bar is the live one.")
-    print(needle(proposed, result["generated_at"]))
+    if not agree["ok"]:
+        print("SCORECARD DISAGREEMENT — the two instruments do not match at the "
+              "ratified bars. NOTHING HERE IS PUBLISHABLE.", file=sys.stderr)
+        print(json.dumps(agree["mismatches"], indent=2)[:4000], file=sys.stderr)
+        return 1
+    print(f"RATIFIED (Alex, MC, 2026-08-28): A {RATIFIED_BARS[CLASS_A]} / "
+          f"B {RATIFIED_BARS[CLASS_B]} / C {RATIFIED_BARS[CLASS_C]} pp — LIVE in "
+          "calibration_scorecard.py, and reproduced by this table cell-for-cell.")
+    print(needle(result))
     return 0
 
 

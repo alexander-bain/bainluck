@@ -1,10 +1,17 @@
 # CALIBRATION SCORECARD
 
+## 🎯 THE NEEDLE: **29 / 49 cells at bar** — `2026-08-28T20:37:41Z`
+
+*Cells at bar = material cells (n ≥ 1,000) NOT queued, scored against the bars Alex ratified on
+2026-08-28: **A 2.5 pp / B 3.0 pp / C 3.0 pp** (§1b). **FIXED = 49/49 AND Alex's eyeball on the
+calibration page confirming it is up to standard.** His sign-off is the final gate, not the number
+alone. Series starts here.*
+
 **Published curve: 1.89 pp** (`mce_closing_line`, CI [0.87, 1.98]) — **🟡 → FLAT-TO-WORSE over 30 days.**
 1.23 pp (2026-07-24) → 1.88 pp (2026-08-20) → 1.90 pp (2026-08-27) → 1.90 pp (2026-08-28 `17:33Z`)
 → **1.89 pp (2026-08-28 `20:37Z`)**. The last point is the first DOWN move this page has recorded
-— queued excess-outcomes 480,342 → **455,783** — and it is **drift, not progress**: nothing has
-shipped into the producer since 2026-08-13. See §3.
+— queued excess-outcomes 480,342 → **455,783** on the old flat bar — and it is **drift, not
+progress**: nothing has shipped into the producer since 2026-08-13. See §3.
 
 *Re-run: `python3 backend/scripts/calibration_scorecard.py --live --record --markdown`.
 Everything on this page is folded from the payload `https://api.bainluck.com/api/calibration`
@@ -57,6 +64,24 @@ actually serves. There is not a single holdout, sample, or parallel-rail number 
 > discharged in passing (and its predicted direction was wrong). Published number **1.89 pp**,
 > down 0.01 on population drift with nothing shipped — recorded as drift, in §3.
 
+> **CAL-P115, 2026-08-28 — the ratified bar is WIRED, and the two instruments now agree by
+> construction.** CAL-P114 closed with the ratification on the page and the flat 3.0 pp still in
+> the code, and said so out loud: *"ratified-but-still-rendering-the-old-bar is the
+> prose-thresholds-rot failure this program keeps paying for."* It is closed. `GAME_CATEGORIES`,
+> the three classes, `CLASS_BARS_PP` and `classify()` moved **down into
+> `calibration_scorecard.py`** — the instrument that publishes this page — and
+> `calibration_threshold_table.py` now IMPORTS them instead of owning them. **§1, §3 and §6 below
+> are re-rendered at the ratified bars on the same `20:37Z` curve**, so the change is a threshold
+> change and nothing else: 30/49 → **29/49**, 19 → **20** queued, 455,783 → **478,677**
+> excess-outcomes, and the single cell that moves is `odds_api_bookmaker/icehockey_nhl`, exactly as
+> CAL-P112 predicted and CAL-P114 restated. Three properties are now pinned by tests rather than by
+> prose: the bars are **imported, not re-declared** (`is`, not `==` — an equal copy drifts on the
+> next edit); the table **cross-checks itself against the scorecard on every run** and exits 1 on
+> disagreement; and the **NEEDLE is emitted from the scorecard's own counts**, so the line Fable
+> copies and this page's DONE verdict cannot come apart. Mutation-checked: reverting one line to
+> the flat bar reds **6 tests across both suites**. Nothing in `backend/app/` was touched, so
+> ruling 009 is not engaged and no number here is a deploy claim.
+
 ---
 
 ## 0. Why this page exists, and what it replaces
@@ -95,25 +120,29 @@ implementation — got **34 of 34 cells wrong, every one high** (soccer 2.80 →
 
 ## 1. DONE — the finish line, in one table
 
-*Proposed with rationale; **Alex ratifies by MC**. Each threshold is one line in
-`backend/scripts/calibration_scorecard.py`; changing one re-renders this page.*
+*Each threshold is one line in `backend/scripts/calibration_scorecard.py`; changing one re-renders
+this page. **Criterion 1 was ratified by Alex, MC, 2026-08-28** — the rest still stand as proposed.*
 
 | # | criterion | threshold | rationale |
 |---|---|---|---|
-| 1 | **Per-cell bar** | published cell ECE ≤ **3.0 pp** | The bar the program has already ranked against for four weeks (`n × (ece − 3)`), so every banked mechanism stays comparable to its own history. Independently defensible: 3 pp means a market published at 60% lands 57–63%, inside what a reader can act on. |
+| 1 | **Per-cell bar** ✅ RATIFIED | published cell ECE ≤ its **cohort's** bar — **A 2.5 / B 3.0 / C 3.0 pp** (§1b) | 3.0 pp is reader actionability: a market published at 60% lands 57–63%, inside what a person can act on. It is also the bar the program already ranked against for four weeks (`n × (ece − 3)`), so banked mechanisms stay comparable to their own history. Class A is held tighter for the one *structural* reason available — an `odds_api*` price is a devigged consensus of many books, so its idiosyncratic quoting error is smaller by construction. |
 | 2 | **Materiality floor** | cells with **n ≥ 1,000** outcomes | The payload's **own** floor — `min_category_outcomes: 1000` is what the curve already uses to decide a category is big enough to publish. Scorecard scope and page scope are then the same set. Cost: 49 of 287 cells clear it and they carry **95.6% of all published outcomes**. |
-| 3 | **Significance gate** | excess over bar ≥ **2.0σ**, σ = `50/√n` pp | The program's own board found the defect this prevents: *"15 of the 21 are under 3σ, and three are under 1σ."* On today's payload this cuts the material over-bar list from 30 cells to **19**, so it is doing real work. |
+| 3 | **Significance gate** | excess over bar ≥ **2.0σ**, σ = `50/√n` pp | The program's own board found the defect this prevents: *"15 of the 21 are under 3σ, and three are under 1σ."* On today's payload it cuts the material over-bar list from 32 cells to **20**, so it is doing real work. |
 | 4 | **Overall headline** | `mce_closing_line` ≤ **2.0 pp** | **A regression guard, not a goal.** Set where the curve already sits, because the honest finding is that the headline was never the problem — see §2. |
 | 5 | **The curve must be live** | `availability: "ok"`, `producer.stalled: false` | A number nobody can refresh is not a published number. **Currently RED** — see §5. |
 
-> **FIXED** = criteria 1–3 satisfied on **every material cell**, with 4 and 5 green, **on the
-> published curve**, holding across two consecutive producer beats — **and, since Alex's
-> 2026-08-28 ratification (§1b), his own eyeball on the page at 49/49.** Criterion 1's flat 3.0 pp
-> is superseded by the per-cohort table in §1b; this row is kept because the amendment is an
-> argument about its shape.
+> **FIXED** is a **conjunction of a measurement and a human**:
+>
+> 1. criteria 1–3 satisfied on **every material cell**, with 4 and 5 green, **on the published
+>    curve**, holding across two consecutive producer beats — i.e. **49/49 cells at bar**; AND
+> 2. **Alex eyeballs the calibration PAGE and confirms it is up to standard.** *(Added with the
+>    2026-08-28 ratification, §1b.)* **His sign-off is the final gate, not the number alone.**
+>
+> The scorecard reports clause 1 and calls it `done`, never `fixed`, because no script can
+> evaluate clause 2. Clause 2 also puts **the page's presentability in scope as cells land** — it
+> is not a thing to start caring about at 48/49.
 
-**Today: NOT DONE. 19 material cells are over bar and established on the incumbent flat bar —
-20 on the ratified per-cohort bars (§1b).**
+**Today: NOT DONE. 20 material cells are over bar and established. 29/49 cells at bar.**
 
 ## 1b. The per-cohort bar — ✅ RATIFIED (Alex, MC, 2026-08-28 ~1:15pm PT)
 
@@ -127,65 +156,84 @@ implementation — got **34 of 34 cells wrong, every one high** (soccer 2.80 →
 > looking at the page. Two consequences the lane has to carry from here: **the needle series
 > starts at 29/49**, and **the page's presentability is in scope as cells land** — source
 > attribution by venue name is ALLOWED there, per amended ruling 141.
+>
+> ⚠️ *Bookkeeping, recorded rather than assumed: **`docs/rulings/141-*.md` does not exist** — the
+> ledger tops out at 137 on this branch and on `origin/master` (checked 2026-08-28). The
+> permission itself is not in doubt; it is in Alex's ratification text above, which is the
+> operative wording. What is missing is the filed ruling the text cites, so anyone following the
+> citation lands on nothing. Not blocking — no cells have landed and the calibration page is a
+> deliberate comparison surface either way — but it should be filed before the first venue name
+> is put on the page on its authority.*
 
 Criterion 1 above declares **one** bar for every cell; this table replaces it per cohort. Full
 argument, derivation and side-by-side: **`artifacts/cal-p112/THRESHOLD-TABLE-PROPOSAL.md`**.
 Re-render with `python3 backend/scripts/calibration_threshold_table.py --live --markdown`.
 
-> ⚠️ **RATIFIED IS NOT YET WIRED — and the gap is the exact failure this program has hit before.**
-> `calibration_scorecard.py` still renders the flat 3.0 pp bar (`BAR_PP`), so **§1, §3 and §6 on
-> this page are still the incumbent's numbers.** The ratified table lives in
-> `calibration_threshold_table.py`, which imports `BAR_PP` from the scorecard — so wiring it is a
-> small refactor across two scripts plus its guard test, not a one-line edit, and CAL-P114
-> declined to do it at the end of a long session rather than do it hastily to a live instrument.
-> **It is item 0 of the next queue.** Until then, read the ratified numbers from the threshold
-> table and the incumbent's from this page, and do not mix them:
+> ✅ **WIRED — CAL-P115, 2026-08-28.** CAL-P114 shipped the ratification as prose with the flat
+> 3.0 pp still in the code, and flagged the gap in the section it affected rather than leaving it
+> latent. It is now closed. The classes, `CLASS_BARS_PP` and `classify()` live in
+> **`calibration_scorecard.py`** — the instrument that publishes this page — and
+> `calibration_threshold_table.py` imports them. **§1, §3 and §6 are the ratified numbers.**
 >
 > | | cells at bar | queued | queued excess-outcomes |
 > |---|--:|--:|--:|
-> | incumbent flat 3.0 — what this page renders | **30/49** | 19 | 455,783 |
-> | **RATIFIED 2.5 / 3.0 / 3.0 — the live definition of DONE** | **29/49** | **20** | **478,677** |
+> | incumbent flat 3.0 — retired 2026-08-28 | 30/49 | 19 | 455,783 |
+> | **RATIFIED 2.5 / 3.0 / 3.0 — live, and what this page renders** | **29/49** | **20** | **478,677** |
 >
-> The one cell that moves is `odds_api_bookmaker/icehockey_nhl`, exactly as the proposal
-> predicted. **`kalshi/economics` is class C, so its bar stays 3.0 and CAL-P114's design (§6b) is
-> unaffected by the ratification.**
+> Same `20:37Z` curve on both rows, so the delta is a threshold change and nothing else. The one
+> cell that moves is `odds_api_bookmaker/icehockey_nhl` (3.89 pp on 8,658 — 1.65σ over the flat
+> bar, **2.6σ over class A's**), exactly as CAL-P112 predicted. **`kalshi/economics` is class C, so
+> its bar stays 3.0 and CAL-P114's design (§6b) is unaffected.**
+>
+> Three properties are held by tests now, not by prose. The bars are **imported, never
+> re-declared** — pinned with `is` rather than `==`, because an equal copy passes an equality check
+> and drifts on the next edit. The threshold table **cross-checks itself against the scorecard on
+> every run** (counts *and* the queued cell SET) and exits 1 on disagreement. And the **NEEDLE is
+> emitted from the scorecard's own counts**, so the line Fable copies into YOUR-TURN cannot come
+> apart from this page's DONE verdict. Reverting one line to the flat bar reds 6 tests across both
+> suites — checked, not assumed.
 
 | class | what a cell in it is | **bar** | derivation |
 |---|---|--:|---|
 | **A** `A_multibook_consensus` | every `odds_api*` cell | **2.5 pp** | the price is a devigged consensus of MANY bookmakers — an average of independent estimates, so its idiosyncratic quoting error is structurally smaller than one thin order book's. Structural, fixed in advance, does not move as cells improve. These cells also carry the game cards. |
 | **B** `B_exchange_contest` | Kalshi/Polymarket on a scheduled contest | **3.0 pp** | reader actionability: 3 pp means a 60% market lands 57–63%. A property of what a person does with the number, not of the venue. |
-| **C** `C_exchange_standalone` | Kalshi/Polymarket, standalone / long-horizon | **3.0 pp** | **no loosening.** Thin books and distant settlement raise the VARIANCE the σ gate already prices; they do not license a larger BIAS — and the class's own cells prove 3.0 reachable (`polymarket/weather` **1.63**, `kalshi/politics` **2.08**). |
+| **C** `C_exchange_standalone` | Kalshi/Polymarket, standalone / long-horizon | **3.0 pp** | **no loosening.** Thin books and distant settlement raise the VARIANCE the σ gate already prices; they do not license a larger BIAS — and the class's own cells prove 3.0 reachable (`polymarket/weather` **1.64** on 24,333, `kalshi/politics` **2.12** on 7,302 — `20:37Z` curve). |
 
-| table | bar A / B / C | **cells at bar** | queued | queued excess-outcomes |
-|---|---|--:|--:|--:|
-| incumbent (flat) | 3.0 / 3.0 / 3.0 | **30/49** | 19 | 480,342 |
-| **proposed** | **2.5 / 3.0 / 3.0** | **29/49** | 20 | 503,236 |
+**Per class, on the `20:37Z` curve** — `python3 backend/scripts/calibration_threshold_table.py --live --markdown`:
 
-One cell moves — `odds_api_bookmaker/icehockey_nhl` (3.89 pp on 8,658) goes from
-over-bar-unestablished at 1.65σ to queued at 2.59σ. **The finish line barely moves, and that is the
-point:** this closes a hole where the most-averaged, most-read class was held to the same bar as a
-thin exchange book. The proposal explicitly REFUSES the quantile derivation ("the bar is the class's
-p25") because a bar that moves whenever a cell improves is not a finish line.
+| class | bar pp | material cells | at bar | queued | outcomes |
+|---|--:|--:|--:|--:|--:|
+| `A_multibook_consensus` | **2.5** | 18 | 12 | **6** | 104,984 |
+| `B_exchange_contest` | **3.0** | 20 | 12 | **8** | 653,418 |
+| `C_exchange_standalone` | **3.0** | 11 | 5 | **6** | 115,734 |
 
-> **Criterion 6, proposed with it.** A cell whose published population is dominated by
-> non-partition bundle rows is queued for a **population** fix, not scored as a calibration
+**The finish line barely moves, and that is the point:** the ratification closes a hole where the
+most-averaged, most-read class was held to the same bar as a thin exchange book. It explicitly
+REFUSES the quantile derivation ("the bar is the class's p25") because a bar that moves whenever a
+cell improves is not a finish line — the derivation has to come from outside today's measurement,
+and only two such quantities were available (reader actionability, estimator averaging).
+
+> **Criterion 6, proposed with it — NOT ratified.** A cell whose published population is dominated
+> by non-partition bundle rows is queued for a **population** fix, not scored as a calibration
 > failure — evidence-gated per cohort on the census the payload already publishes. Without it the
 > two worst cells on the board (§6a) get worked as calibration problems, which is a cycle each and
-> moves nothing.
+> moves nothing. Alex's 2026-08-28 MC ruled the *bars*; this clause is still awaiting one.
 
 ---
 
 ## 2. The headline is not the problem — dispersion is
 
-`mce_closing_line` is **1.90 pp**, already inside criterion 4. It is also close to meaningless as a
+`mce_closing_line` is **1.89 pp**, already inside criterion 4. It is also close to meaningless as a
 progress measure, and this is the single most important thing on this page:
 
 **it is a pooled average over 287 cells whose errors point in opposite directions and cancel.**
 
-- `polymarket/esports` over-predicts by **+6.50 pp**
-- `kalshi/tech` under-predicts by **−9.49 pp**
-- `kalshi/football` under-predicts by **−5.16 pp**
-- pooled, the page reports **1.90 pp**, as though all three were fine
+*(`2026-08-28T20:37Z` curve, same reading as §3 and §6.)*
+
+- `polymarket/esports` over-predicts by **+6.02 pp**
+- `kalshi/tech` under-predicts by **−9.35 pp**
+- `kalshi/football` under-predicts by **−3.97 pp**
+- pooled, the page reports **1.89 pp**, as though all three were fine
 
 A program steered by the headline can move cells in both directions forever and report a flat
 number. **Publishing one headline as the definition of done is the exact move that let this
@@ -196,34 +244,47 @@ per-cell for that reason.
 
 ## 3. The scorecard — today
 
+*Scored at the **ratified** bars — A 2.5 / B 3.0 / C 3.0 pp (§1b), live in the code since CAL-P115.*
+
 | | |
 |---|---|
-| curve generated | `2026-08-28T13:35:35Z`, population `q268` |
-| published outcomes | **895,226** across **288** cells |
-| headline `mce_closing_line` | **1.90 pp** (CI 0.87–1.97) — criterion 4 **PASS** |
-| material cells (n ≥ 1,000) | **49**, carrying 855,612 outcomes (95.6%) |
-| **over bar AND established (QUEUED)** | **19** cells, **480,342 excess-outcomes** |
-| over bar, not established | 11 cells |
-| under bar (pass) | 19 cells |
-| exempt (n < 1,000) | 239 cells |
+| curve generated | `2026-08-28T20:37:41Z`, population `q268` |
+| published outcomes | **913,849** across **287** cells |
+| headline `mce_closing_line` | **1.89 pp** (CI 0.87–1.98) — criterion 4 **PASS** |
+| material cells (n ≥ 1,000) | **49**, carrying 874,136 outcomes (95.7%) |
+| **🎯 CELLS AT BAR** | **29 / 49** |
+| **over bar AND established (QUEUED)** | **20** cells, **478,677 excess-outcomes** |
+| over bar, not established | 12 cells |
+| under bar (pass) | 17 cells |
+| exempt (n < 1,000) | 238 cells |
 | `availability` | **stale**, but `producer_stalled: false`, `beats_missed: 0` — see the §5 amendment: this reading is a coin flip on when you look, not a verdict |
 | self-check | `by_category: 34/34` and `by_source: 7/7` cells reproduced exactly |
-| **DONE** | **NO** |
+| **DONE (measured half)** | **NO** — and FIXED additionally needs Alex's eyeball at 49/49 (§1) |
 
-`excess-outcomes` = `(ECE − 3.0) × n`. It ranks the queue, because a 22 pp cell over 118 rows and a
-0.5 pp cell over 100,000 are not the same repair job.
+`excess-outcomes` = `(ECE − the cell's own class bar) × n`. It ranks the queue, because a 22 pp
+cell over 118 rows and a 0.5 pp cell over 100,000 are not the same repair job. **Since the
+ratification the multiplier is not one constant** — a class-A cell's excess is measured from 2.5,
+so the queue's ranking mixes two bars and every row in §6 prints the bar that judged it.
 
 ### Time series — the whole history that exists
 
-| date | headline | population | queued cells | queued excess-outcomes | source |
-|---|---:|---|---:|---:|---|
-| 2026-07-24 | **1.23 pp** | pre-`q268` | — | — | `docs/audits/calibration-robustness-2026-07.md`, live reading, headline only |
-| 2026-08-20 | **1.88 pp** | `q268` | 17 | 436,754 | banked payload `artifacts/cal-p080/samples/cal-20260820T174018Z.json`, re-folded by this script |
-| 2026-08-27 | **1.90 pp** | `q268` | 19 | 477,794 | live |
-| 2026-08-28 `13:35Z` | **1.90 pp** | `q268` | **19** | **480,342** | live |
-| 2026-08-28 `15:34Z` | **1.90 pp** | `q268` | **19** | **480,342** | live (CAL-P110) |
-| 2026-08-28 `17:33Z` | **1.90 pp** | `q268` | **19** | **480,342** | live (CAL-P112) — banked, the curve really did regenerate |
-| **2026-08-28 `20:37Z`** | **1.89 pp** | `q268` | **19** | **455,783** | live (CAL-P114) — **the first DOWN move in the series** |
+> ⚠️ **The bar column is load-bearing: this series changes UNITS on 2026-08-28.** Every point up to
+> and including `20:37Z (P114)` was scored against a flat 3.0 pp; from the ratification onward the
+> bar is per-cohort (§1b). **Queued counts are not comparable across that line** — the last two
+> rows are the SAME curve measured twice, once under each definition, which is the only honest way
+> to carry the discontinuity. `--record` banks the thresholds with every datapoint from now on, so
+> a future reader cannot mistake a threshold change for a movement.
+
+| date | bar | headline | population | queued cells | queued excess-outcomes | cells at bar | source |
+|---|---|---:|---|---:|---:|---:|---|
+| 2026-07-24 | flat 3.0 | **1.23 pp** | pre-`q268` | — | — | — | `docs/audits/calibration-robustness-2026-07.md`, live reading, headline only |
+| 2026-08-20 | flat 3.0 | **1.88 pp** | `q268` | 17 | 436,754 | 32/49 | banked payload `artifacts/cal-p080/samples/cal-20260820T174018Z.json`, re-folded by this script |
+| 2026-08-27 | flat 3.0 | **1.90 pp** | `q268` | 19 | 477,794 | 30/49 | live |
+| 2026-08-28 `13:35Z` | flat 3.0 | **1.90 pp** | `q268` | **19** | **480,342** | 30/49 | live |
+| 2026-08-28 `15:34Z` | flat 3.0 | **1.90 pp** | `q268` | **19** | **480,342** | 30/49 | live (CAL-P110) |
+| 2026-08-28 `17:33Z` | flat 3.0 | **1.90 pp** | `q268` | **19** | **480,342** | 30/49 | live (CAL-P112) — banked, the curve really did regenerate |
+| 2026-08-28 `20:37Z` | flat 3.0 | **1.89 pp** | `q268` | **19** | **455,783** | 30/49 | live (CAL-P114) — **the first DOWN move in the series** |
+| **2026-08-28 `20:37Z`** | **A2.5/B3.0/C3.0** | **1.89 pp** | `q268` | **20** | **478,677** | **29/49** | **live (CAL-P115) — same curve, ratified bars. THE NEEDLE SERIES STARTS HERE.** |
 
 > **The 20:37Z point is the first improvement this page has ever recorded, and it is not a win.**
 > Headline 1.90 → **1.89**, queued excess-outcomes 480,342 → **455,783 (−24,559, −5.1%)**, queued
@@ -234,7 +295,9 @@ per-cell for that reason.
 > regenerated, and it is labelled drift because **a page that banks drift as progress is the
 > thing this page was built to stop.** The board also reshuffled: `kalshi/economics` passed
 > `polymarket/esports` into rank 2, `kalshi/football` left the queue, and
-> `polymarket/economics` entered it at rank 13.
+> `polymarket/economics` entered it at rank 13. *(Those ranks are the flat-bar board; on the
+> ratified bars — §6 — the same reading orders `polymarket/economics` at 15 and adds
+> `odds_api_bookmaker/icehockey_nhl` at 13.)*
 
 **Five points is the entire published-curve history this repo holds, and that is itself a
 finding.** Nobody ever banked the served payload on a schedule, so "did the last three months
@@ -636,65 +699,78 @@ the log-wording fix went with the frozen file — **judge it by count, not by wo
 
 ## 6. The inventory — every queued cell, ordered by excess
 
-19 cells. Status uses the directive's rule: **not deployed and re-measured = ZERO.**
+**20 cells**, on the `2026-08-28T20:37:41Z` curve at the **ratified per-cohort bars** (§1b). Status
+uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render with
+`python3 backend/scripts/calibration_scorecard.py --live --markdown`.
 
-> *Values below are the `2026-08-28T13:35Z` reading. Re-measured at `17:33Z` (CAL-P112) the cell
-> COUNT and the total are identical — 19 cells, 480,342 excess-outcomes — and two rows drifted
-> within it: `kalshi/football` 5.26 → **5.51** (gap −5.16 → −5.46, excess-outcomes 17,124 →
-> 19,357) and `polymarket/tech` 5.28 → **5.40** (6,006 → 6,377). Nothing shipped into the producer
-> between the two readings; this is population drift. §2's `kalshi/football` figure carries the
-> same 13:35Z vintage.*
+> **What the ratification changed here, and what it did not.** The board grew by exactly one row —
+> `odds_api_bookmaker/icehockey_nhl`, which was over the flat bar but unestablished at 1.65σ and is
+> **2.6σ over class A's 2.5**. Every other row is the same cell it was; the class-A rows' *excess*
+> and *rank* moved because their excess is now measured from 2.5, which is why five of the six A
+> cells rose in the order. **No cell got worse and none was newly discovered** — the board is
+> counting the same errors against a bar that finally distinguishes a devigged twelve-book
+> consensus from a thin single-venue book. The `bar` column is printed on every row for that
+> reason: at two different bars, a bare "excess" is not checkable.
 >
-> ⚠️ **RE-MEASURED AGAIN at `20:37Z` (CAL-P114) — the ORDER below is now stale, though the count
-> is not.** Still 19 cells; total 480,342 → **455,783**. The rows that moved enough to matter:
-> **`kalshi/economics` is now rank 2** (65,524, ahead of `polymarket/esports` at 64,503) and is
-> the cell CAL-P114 designs against; `polymarket/baseball` 4.99 → **4.80** on 43,768 (82,758 →
-> 78,782); `polymarket/soccer` 3.53 → **3.42** on 106,803 (54,320 → 44,857); `kalshi/football`
-> **left the queue**; `polymarket/economics` **entered it** at rank 13 (3.90 on 12,882, 11,594).
-> Live ordering: `python3 backend/scripts/calibration_scorecard.py --live`. Nothing shipped into
-> the producer between any of these readings.*
+> *Vintage: the whole table is one reading. Previous editions of this section carried a `13:35Z`
+> body under a `20:37Z` header with the drift described in prose; it is re-rendered rather than
+> annotated. Nothing has shipped into the producer since 2026-08-13, so every movement between
+> readings on this page is population drift.*
 
-| # | published cell | ECE | n | gap | excess | σ | excess-outcomes | mechanism known? | status |
-|--:|---|--:|--:|--:|--:|--:|--:|---|---|
-| 1 | `polymarket/baseball` | 4.99 | 41,587 | +3.25 | +1.99 | 8.1 | 82,758 | ✅ two named (0.5000 placeholder pair; published-pair incoherence) | **ZERO** — both branch-only |
-| 2 | `polymarket/esports` | 8.08 | 13,156 | +6.50 | +5.08 | 11.7 | 66,832 | ✅ **named and designed (CAL-P112, §6a)** — the 1-winner tail of the shape `esports_multi_bundle_filter` already excludes | **ZERO** — designed, unbuilt |
-| 3 | `kalshi/economics` | 5.29 | 28,582 | −0.47 | +2.29 | 7.7 | 65,453 | ❌ none | **not started** |
-| 4 | `polymarket/soccer` | 3.53 | 102,491 | +2.34 | +0.53 | 3.4 | 54,320 | ✅ O/U ladder coherence (CAL-P106/107) | **ZERO** — branch-only, unwired |
-| 5 | `odds_api_bookmaker/basketball_nba` | 5.18 | 10,186 | +1.03 | +2.18 | 4.4 | 22,205 | ❌ none | **not started** |
-| 6 | `kalshi/crypto` | 7.85 | 4,541 | +2.12 | +4.85 | 6.5 | 22,024 | ❌ none | **not started** |
-| 7 | `kalshi/entertainment` | 5.23 | 8,331 | +1.03 | +2.23 | 4.1 | 18,578 | ⚠️ partial (exit-exam item 3: settlement-timing rival UNKNOWN) | **not started** |
-| 8 | `kalshi/football` | 5.26 | 7,577 | −5.16 | +2.26 | 3.9 | 17,124 | ❌ none | **not started** |
-| 9 | `odds_api_bookmaker/baseball_mlb_preseason` | 8.24 | 3,253 | −7.67 | +5.24 | 6.0 | 17,046 | ❌ none | **not started** |
-| 10 | `kalshi/golf` | 3.83 | 20,440 | +3.66 | +0.83 | 2.4 | 16,965 | ⚠️ `golf_placeholder_filter` live since 07-09 | **shipped, insufficient** |
-| 11 | `polymarket/basketball` | 4.25 | 13,132 | +2.97 | +1.25 | 2.9 | 16,415 | ❌ none | **not started** |
-| 12 | `polymarket/cricket` | 8.02 | 3,218 | −4.47 | +5.02 | 5.7 | 16,154 | ✅ diagnosed 2026-08-09 (exit-exam item 3) | **diagnosed, no rule built** |
-| 13 | `polymarket/golf` | 5.53 | 6,366 | +3.98 | +2.53 | 4.0 | 16,106 | ⚠️ as #10 | **shipped, insufficient** |
-| 14 | `odds_api_bookmaker/basketball_wncaab` | 6.05 | 3,382 | −0.35 | +3.05 | 3.5 | 10,315 | ❌ none | **not started** |
-| 15 | `polymarket/hockey` | 7.36 | 2,281 | +0.66 | +4.36 | 4.2 | 9,945 | ❌ none | **not started** |
-| 16 | `kalshi/tech` | 11.10 | 1,193 | −9.49 | +8.10 | 5.6 | 9,663 | ✅ **named and designed (CAL-P112, §6a)** — 79% cumulative-threshold ladder rows | **ZERO** — designed, unbuilt |
-| 17 | `polymarket/tech` | 5.28 | 2,634 | −1.31 | +2.28 | 2.3 | 6,006 | ❌ none | **not started** |
-| 18 | `odds_api_bookmaker/basketball_wnba` | 4.81 | 3,135 | −0.07 | +1.81 | 2.0 | 5,674 | ❌ none | **not started** |
-| 19 | `odds_api_bookmaker/basketball_euroleague` | 5.39 | 1,762 | −4.53 | +2.39 | 2.0 | 4,211 | ❌ none | **not started** |
+| # | published cell | cls | ECE | n | gap | bar | excess | σ | excess-outcomes | mechanism known? | status |
+|--:|---|:-:|--:|--:|--:|--:|--:|--:|--:|---|---|
+| 1 | `polymarket/baseball` | B | 4.80 | 43,768 | +3.03 | 3.0 | +1.80 | 7.5 | 78,782 | ✅ two named (0.5000 placeholder pair; published-pair incoherence) | **ZERO** — both branch-only |
+| 2 | `kalshi/economics` | C | 5.29 | 28,613 | −0.47 | 3.0 | +2.29 | 7.8 | 65,524 | ✅ **named and designed (CAL-P114, §6b)** — 99.7% cumulative index ladders; rules E+E2+E3 → 2.61 pp PASS | **ZERO** — designed, unbuilt |
+| 3 | `polymarket/esports` | B | 7.59 | 14,053 | +6.02 | 3.0 | +4.59 | 10.9 | 64,503 | ✅ **named and designed (CAL-P112, §6a; re-checked on the exact rail, CAL-P114)** — the 1-winner tail `esports_multi_bundle_filter` cannot reach | **ZERO** — designed, unbuilt |
+| 4 | `polymarket/soccer` | B | 3.42 | 106,803 | +2.16 | 3.0 | +0.42 | 2.8 | 44,857 | ✅ O/U ladder coherence (CAL-P106/107) | **ZERO** — branch-only, unwired |
+| 5 | `odds_api_bookmaker/basketball_nba` | A | 5.18 | 10,186 | +1.03 | **2.5** | +2.68 | 5.4 | 27,298 | ❌ none | **not started** |
+| 6 | `kalshi/crypto` | C | 7.60 | 4,565 | +1.84 | 3.0 | +4.60 | 6.2 | 20,999 | ❌ none | **not started** |
+| 7 | `odds_api_bookmaker/baseball_mlb_preseason` | A | 8.24 | 3,253 | −7.67 | **2.5** | +5.74 | 6.5 | 18,672 | ❌ none | **not started** |
+| 8 | `kalshi/entertainment` | C | 5.21 | 8,355 | +1.07 | 3.0 | +2.21 | 4.0 | 18,465 | ⚠️ partial (exit-exam item 3: settlement-timing rival UNKNOWN) | **not started** |
+| 9 | `kalshi/golf` | B | 3.88 | 20,500 | +3.72 | 3.0 | +0.88 | 2.5 | 18,040 | ⚠️ `golf_placeholder_filter` live since 07-09 | **shipped, insufficient** |
+| 10 | `polymarket/cricket` | B | 8.11 | 3,252 | −4.61 | 3.0 | +5.11 | 5.8 | 16,618 | ✅ diagnosed 2026-08-09 (exit-exam item 3) | **diagnosed, no rule built** |
+| 11 | `polymarket/basketball` | B | 4.24 | 13,135 | +2.96 | 3.0 | +1.24 | 2.8 | 16,287 | ❌ none | **not started** |
+| 12 | `polymarket/golf` | B | 5.45 | 6,463 | +3.92 | 3.0 | +2.45 | 3.9 | 15,834 | ⚠️ as #9 | **shipped, insufficient** |
+| 13 | `odds_api_bookmaker/icehockey_nhl` | A | 3.89 | 8,658 | +3.04 | **2.5** | +1.39 | 2.6 | 12,035 | ❌ none | **NEW — entered on the ratified class-A bar** |
+| 14 | `odds_api_bookmaker/basketball_wncaab` | A | 6.05 | 3,382 | −0.35 | **2.5** | +3.55 | 4.1 | 12,006 | ❌ none | **not started** |
+| 15 | `polymarket/economics` | C | 3.90 | 12,882 | +0.14 | 3.0 | +0.90 | 2.0 | 11,594 | ⚠️ CAL-P114 measured it as the cell RULE T breaks if the bundle allowlist is keyed on category alone (3.91 → 17.75) | **not started** |
+| 16 | `polymarket/hockey` | B | 7.36 | 2,281 | +0.66 | 3.0 | +4.36 | 4.2 | 9,945 | ❌ none | **not started** |
+| 17 | `kalshi/tech` | C | 10.96 | 1,203 | −9.35 | 3.0 | +7.96 | 5.5 | 9,576 | ✅ **named and designed (CAL-P112, §6a)** — 79% cumulative-threshold ladder rows | **ZERO** — designed, unbuilt |
+| 18 | `odds_api_bookmaker/basketball_wnba` | A | 4.81 | 3,135 | −0.07 | **2.5** | +2.31 | 2.6 | 7,242 | ❌ none | **not started** |
+| 19 | `polymarket/tech` | C | 4.91 | 2,779 | −0.85 | 3.0 | +1.91 | 2.0 | 5,308 | ✅ measured on the exact rail (CAL-P114) — RULE T moves it 5.04 → 4.80, **refused**: 707 rows, below the materiality floor | **measured, rule refused** |
+| 20 | `odds_api_bookmaker/basketball_euroleague` | A | 5.39 | 1,762 | −4.53 | **2.5** | +2.89 | 2.4 | 5,092 | ❌ none | **not started** |
 
-By source: **polymarket 8 cells / 268,536** · **kalshi 6 / 149,807** · **odds_api_bookmaker 5 / 59,451**.
+By source: **polymarket 9 cells / 263,728** · **odds_api_bookmaker 6 / 82,345** · **kalshi 5 / 132,604**.
 
-**Scoreboard: 0 of 19 cells crossed off. 2 have a built rule and 2 more a designed one (all worth
-0.00 pp today). 3 have a shipped rule that did not clear the cell. 12 have no rule at all.**
+**Scoreboard: 0 of 20 cells crossed off. 2 have a built rule and 3 more a designed one (all worth
+0.00 pp today). 3 have a shipped rule that did not clear the cell. 1 has a measured rule that was
+refused. 11 have no rule at all.**
 
-### 11 material cells are over bar but NOT established — do not work these
+### 12 material cells are over bar but NOT established — do not work these
 
-`polymarket/economics` 3.84 (1.9σ) · `odds_api_bookmaker/icehockey_nhl` 3.89 (1.7σ) ·
-`polymarket/entertainment` 4.48 (1.9σ) · `polymarket/politics` 3.75 (1.2σ) ·
-`kalshi/motorsports` 3.84 (1.2σ) · `odds_api_bookmaker/baseball_ncaa` 3.32 (0.6σ) ·
-`kalshi/weather` 3.17 (0.4σ) · `odds_api/basketball_nba` 4.16 (0.8σ) · `kalshi/mma` 3.13 (0.1σ) ·
-`odds_api_totals/baseball_mlb` 3.16 (0.1σ) · `odds_api_spreads/baseball_mlb` 3.01 (0.0σ).
+At the ratified bars, with each cell's own bar in brackets:
+
+`odds_api_bookmaker/basketball_ncaab` 2.55 [2.5] (0.2σ, n=26,365) · `kalshi/weather` 3.17 [3.0]
+(0.4σ) · `kalshi/football` 3.97 [3.0] (1.9σ) · `odds_api_bookmaker/baseball_ncaa` 3.32 [2.5]
+(1.5σ) · `polymarket/politics` 3.74 [3.0] (1.2σ) · `kalshi/motorsports` 3.82 [3.0] (1.1σ) ·
+`polymarket/entertainment` 4.44 [3.0] (1.9σ) · `odds_api/basketball_ncaab` 2.84 [2.5] (0.4σ) ·
+`kalshi/mma` 3.13 [3.0] (0.1σ) · `odds_api/basketball_nba` 4.16 [2.5] (1.1σ) ·
+`odds_api_spreads/baseball_mlb` 3.01 [2.5] (0.3σ) · `odds_api_totals/baseball_mlb` 3.16 [2.5] (0.4σ).
 
 They are over the bar on the point estimate and none is distinguishable from it. They want another
 few thousand outcomes, not a mechanism.
 
+**The ratification moved exactly three cells across this list, measured on the same curve:**
+`odds_api_bookmaker/icehockey_nhl` left it for the queue, and
+`odds_api_bookmaker/basketball_ncaab` (2.55) and `odds_api/basketball_ncaab` (2.84) entered it from
+PASS — class-A cells sitting between 2.5 and 3.0 that the flat bar could not see at all. That is
+the whole delta: **19 → 17 pass, 11 → 12 unestablished, 19 → 20 queued.** The first of those two is
+the largest cell on this list (n=26,365) and, at 0.2σ over its bar, the one most likely to
+graduate to the queue on volume alone. Watch it; do not work it.
+
 ---
 
-## 6a. The next two cells, pre-built — CAL-P112 (rank 2 and rank 16)
+## 6a. Two cells, pre-built — CAL-P112 (ranks 3 and 17 on the ratified board)
 
 Designed, benched against a replica that reproduces the payload, and **holdout-validated on data
 the rule was not designed on**. Not built, not merged, **worth 0.00 pp today** — banked so that
@@ -830,7 +906,8 @@ shape. Measured, category-only scoping is wrong:
 | `polymarket/tech` | 5.04 | 4.80 | 4.48 | 3.90 (707) | **REFUSE** |
 
 **The allowlist must be keyed on `(source, category)`.** One extra column in a tuple is the
-difference between crossing rank 2 off and silently deleting rank 13.
+difference between crossing `kalshi/economics` (rank 2) off and silently deleting
+`polymarket/economics` (rank 15).
 
 Two further corrections, both from the same rail:
 
@@ -877,6 +954,10 @@ established either way. It is recorded because criterion 3 overstates significan
 bundle-dominated cells criterion 6 was proposed for. **Flagged for Alex with the threshold table
 — this page does not get to redefine its own finish line.**
 
+> **Still open after the 2026-08-28 MC.** Alex's ratification ruled the *bars* (criterion 1). It
+> said nothing about criterion 3's denominator or about criterion 6, and neither was silently
+> carried by it. Both are still awaiting a ruling and neither is wired.
+
 ---
 
 ## 7. The first test of the loop: `polymarket/soccer` — and it does not clear its cell
@@ -912,17 +993,22 @@ instead of arithmetic. Record the measured delta here when it lands.*
 
 ## 8. Finish date — plainly
 
-**Basis.** 19 queued cells. Historical rate at which a rule actually changed the published
-population: **13 filters between 2026-06-25 and 2026-08-13 = one per 3.8 days.** Recent rate: **two
-publish-changing events in 26 days.** Last 14 days: **zero.** Conversion assumption: **~1.5 rules
-per cell**, evidenced by §7 (the soccer rule falls short of its own cell) and by three cells that
-already have a shipped rule and remain over bar.
+**Basis.** **20 queued cells** (was 19; the ratified class-A bar added one — §1b). Historical rate
+at which a rule actually changed the published population: **13 filters between 2026-06-25 and
+2026-08-13 = one per 3.8 days.** Recent rate: **two publish-changing events in 26 days.** Last 14
+days: **zero.** Conversion assumption: **~1.5 rules per cell**, evidenced by §7 (the soccer rule
+falls short of its own cell) and by three cells that already have a shipped rule and remain over
+bar.
 
 | scenario | assumption | finish |
 |---|---|---|
 | **Current trajectory** | last-14-day rate (0 published changes) continues | **Never.** The queue does not converge. |
-| **Realistic** | June–July cadence restored this week (3.8 d/rule), 1.5 rules/cell | 19 × 1.5 × 3.8 ≈ **108 days → mid-December 2026** |
-| **Optimistic** | cadence restored *and* 1 rule clears 1 cell | 19 × 3.8 ≈ **72 days → early November 2026** |
+| **Realistic** | June–July cadence restored this week (3.8 d/rule), 1.5 rules/cell | 20 × 1.5 × 3.8 ≈ **114 days → late December 2026** |
+| **Optimistic** | cadence restored *and* 1 rule clears 1 cell | 20 × 3.8 ≈ **76 days → mid-November 2026** |
+
+> **The ratification pushed the date out by ~6 days, and that is the correct behaviour.** A finish
+> line that gets nearer when you tighten it would not be a finish line. This is also the cheapest
+> possible demonstration that the bar is load-bearing rather than decorative.
 
 > **Stated plainly: mid-December 2026, and only if the merge-to-publish conversion is restored this
 > week. On the rate actually demonstrated over the last fortnight, the finish line is not reachable
@@ -946,7 +1032,8 @@ diagnosis combined. Until then the "current trajectory" row is the operative one
 > whether the 72 h publish rate has risen from 0.472.
 >
 > **What is no longer a variable:** diagnosis for the next two cells. CAL-P112 banked designs for
-> rank 2 and rank 16 (§6a), so the queue's conversion bottleneck on freeze-lift day is merge and
+> `polymarket/esports` and `kalshi/tech` (§6a), so the queue's conversion bottleneck on
+> freeze-lift day is merge and
 > deploy capacity, not analysis.
 
 ---
@@ -957,13 +1044,25 @@ Per the directive, per cell: **rule → cert → MERGE → DEPLOY → re-measure
 delta goes on the scorecard. A cell is crossed off only when the published number moved.**
 
 1. Re-run `calibration_scorecard.py --live --record` **after every calibration deploy**. It banks a
-   datapoint keyed on the curve's own `generated_at`, so the trend cannot be faked by re-running.
+   datapoint keyed on `(the curve's own generated_at, the class bars it was scored at)`, so the
+   trend cannot be faked by re-running — and a threshold change cannot be mistaken for a movement.
 2. A queue that ends without a published delta reports **ZERO**, and says so in its own headline.
-3. Every calibration report opens with the §0 line: the published number and its trend arrow.
+3. Every calibration report opens with the §0 line: the published number and its trend arrow, and
+   **ends with the NEEDLE line** — `NEEDLE: calibration <at-bar>/49 cells-at-bar @ <ISO>` — printed
+   by the scorecard itself, never hand-typed. Fable copies it; it is not re-derived.
+4. **Page presentability is in scope from now on, not from 48/49.** Alex's sign-off on the
+   calibration page is half of FIXED (§1), so a cell landing is not finished when the number moves
+   — it is finished when the page still reads well with it moved.
 
 **Immediate next actions, in order. Note that the first three are all unblocking work, not
 diagnosis — that is the point.**
 
+0. ~~**Wire the ratified per-cohort bar** (CAL-P114's item 0 for the next queue).~~ **DONE —
+   CAL-P115, 2026-08-28.** The bars, the classes and `classify()` moved into
+   `calibration_scorecard.py`; the threshold table imports them and cross-checks itself against the
+   scorecard on every run; the NEEDLE comes off the scorecard's counts; the history key now
+   includes the bars. §1, §3, §6 and §8 are re-rendered. New-files-and-scripts only — no
+   `backend/app/` lines, so ruling 009 is untouched and nothing here is a deploy claim.
 1. ~~**Unstall the producer** (Blocker 1).~~ ~~Merge and deploy CAL-P110.~~ **DEPLOYED —
    Heroku v3921 (`9ae282a7`), 2026-08-28T18:55:19Z, carrying `program/calibration-110` AND
    `-111`.** Blocker 1 stays 🛑 until the falsifier in §5a.2 is *read*: the 72 h per-beat publish
@@ -988,8 +1087,8 @@ diagnosis — that is the point.**
 3. **Merge `program/calibration-99`** — 11 commits, three built-and-certed rules currently worth
    0.00 pp — once the amended condition is MET and the lift is recorded. (2) is answered; the
    blocker is now the countdown, not a decision.
-   **3b. Land the CAL-P112 designs (§6a) in the same window** — `polymarket/esports` (rank 2,
-   66,832 excess-outcomes) and `kalshi/tech` (rank 16, worst ECE) are diagnosed, benched and
+   **3b. Land the CAL-P112 designs (§6a) in the same window** — `polymarket/esports` (rank 3,
+   64,503 excess-outcomes) and `kalshi/tech` (rank 17, worst ECE) are diagnosed, benched and
    holdout-validated, and their rules edit the same frozen file. Landing them with `-99` is one
    deploy for five rules instead of two deploys for two. Read RULE T's §6 first: **T and E must
    ship together**, and T owes a `polymarket/tech` measurement before merge.
