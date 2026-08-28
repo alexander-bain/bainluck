@@ -41,7 +41,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select, true
+from sqlalchemy import and_, func, select, true
 from sqlalchemy.orm import aliased
 
 from app.models.models import Event, OddsSnapshot, Sport
@@ -297,3 +297,169 @@ async def test_the_walk_covers_every_bookmaker_present(seeded_db):
     }
 
     assert returned == present, f"bookmakers dropped by the walk: {present - returned}"
+
+
+# ---------------------------------------------------------------------------
+# LAT-P107 / #1605 — the OTHER two call sites, against the shape THEY replaced
+# ---------------------------------------------------------------------------
+#
+# The oracle above (`_replaced_shape_query`) is the DISTINCT ON form, which is what
+# LAT-P030 replaced on the search route. `GET /api/events` and `GET /api/events/{id}`
+# never had that intermediate form — they still carried the ORIGINAL `row_number()`
+# window, and the two windows are not even the same window: the page one partitions
+# by `(event_id, bookmaker)` and joins back by id, the detail one partitions by
+# `bookmaker` alone under a `WHERE event_id = :id` and projects ids for a second
+# round trip.
+#
+# So diffing against the DISTINCT ON oracle would prove the new query agrees with a
+# shape those routes never ran. Both originals are reconstructed here instead.
+
+
+def _row_number_page_shape_query(event_ids):
+    """`list_events` as it stood before LAT-P107.
+
+    `id DESC` is added to the ordering, which production did NOT have. That is
+    deliberate and it is the ONE accepted behavioural difference of the rewrite,
+    already ratified: `row_number()` left the choice among equal `captured_at`
+    arbitrary, so an oracle without the tiebreak would make a coin flip look like a
+    disagreement and this test would be asking a question that has no answer. The
+    tie is asserted on its own terms in
+    `test_both_replaced_windows_agree_on_cardinality_even_where_the_tie_was_arbitrary`.
+    """
+    ranked = (
+        select(
+            OddsSnapshot.id,
+            OddsSnapshot.event_id,
+            func.row_number()
+            .over(
+                partition_by=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
+                order_by=[OddsSnapshot.captured_at.desc(), OddsSnapshot.id.desc()],
+            )
+            .label("rn"),
+        )
+        .where(OddsSnapshot.event_id.in_(event_ids))
+        .subquery()
+    )
+    return select(OddsSnapshot).join(
+        ranked,
+        and_(OddsSnapshot.id == ranked.c.id, ranked.c.rn == 1),
+    )
+
+
+def _row_number_detail_shape_query(event_id):
+    """`get_event` as it stood before LAT-P107: partition by bookmaker alone, one
+    event, ids projected for a second fetch. Same `id DESC` note as above."""
+    ranked = (
+        select(
+            OddsSnapshot.id,
+            func.row_number()
+            .over(
+                partition_by=OddsSnapshot.bookmaker,
+                order_by=[OddsSnapshot.captured_at.desc(), OddsSnapshot.id.desc()],
+            )
+            .label("rn"),
+        )
+        .where(OddsSnapshot.event_id == event_id)
+        .subquery()
+    )
+    return select(OddsSnapshot).join(
+        ranked,
+        and_(OddsSnapshot.id == ranked.c.id, ranked.c.rn == 1),
+    )
+
+
+async def test_the_page_rewrite_matches_the_window_shape_list_events_replaced(seeded_db):
+    """`GET /api/events`. Set identity across all four seeded events at once."""
+    session, event_ids = seeded_db
+
+    new_rows = (
+        await session.execute(latest_odds_per_bookmaker_query(event_ids))
+    ).scalars().all()
+    old_rows = (
+        await session.execute(_row_number_page_shape_query(event_ids))
+    ).scalars().all()
+
+    assert _key(new_rows) == _key(old_rows), (
+        "list_events' rewrite returned different rows than the row_number() window "
+        "it replaced — a correctness regression, not a latency change"
+    )
+    assert len(new_rows) == 5, (
+        f"expected 3 bookmakers + 1 + 1 = 5 latest snapshots, got {len(new_rows)}"
+    )
+
+
+async def test_the_detail_rewrite_matches_the_window_shape_get_event_replaced(seeded_db):
+    """`GET /api/events/{event_id}`. Driven on the DEEP event — 120 snapshots over 3
+    bookmakers — because a single-event call is the case where the old window read
+    the most and the new walk reads the least, and it is the one a reader waits on."""
+    session, event_ids = seeded_db
+    deep = event_ids[0]
+
+    new_rows = (
+        await session.execute(latest_odds_per_bookmaker_query([deep]))
+    ).scalars().all()
+    old_rows = (
+        await session.execute(_row_number_detail_shape_query(deep))
+    ).scalars().all()
+
+    assert _key(new_rows) == _key(old_rows)
+    assert len(new_rows) == len(_DEEP_BOOKMAKERS) == 3, (
+        f"one row per bookmaker, not per snapshot: got {len(new_rows)} from "
+        f"{_DEEP_HISTORY_STEPS * len(_DEEP_BOOKMAKERS)} seeded rows"
+    )
+
+
+async def test_the_detail_rewrite_returns_nothing_for_an_event_with_no_snapshots(
+    seeded_db,
+):
+    """Event 3 has no snapshots. The old detail path produced an empty id list and
+    skipped its second query entirely; the walk's first `min()` is NULL immediately.
+    Both must yield zero rows — NOT one NULL-bookmaker terminator row, which would
+    reach `_format_event` as a snapshot that does not exist."""
+    session, event_ids = seeded_db
+
+    rows = (
+        await session.execute(latest_odds_per_bookmaker_query([event_ids[3]]))
+    ).scalars().all()
+
+    assert rows == []
+
+
+async def test_both_replaced_windows_agree_on_cardinality_even_where_the_tie_was_arbitrary(
+    seeded_db,
+):
+    """Event 2 holds two rows tied on `captured_at`. Production's `row_number()` had
+    no tiebreak, so WHICH row it returned was arbitrary — that is precisely the
+    behaviour the rewrite makes deterministic, and it is why the oracles above are
+    given an `id DESC` they never had.
+
+    What must hold regardless of the coin flip is that exactly ONE row comes back for
+    that bookmaker. A rewrite that returned two would double a book's odds in the
+    aggregate; one that returned zero would drop it. Asserted against the untiebroken
+    window, which is what production actually ran."""
+    session, event_ids = seeded_db
+    tied_event = event_ids[2]
+
+    untiebroken = (
+        select(
+            OddsSnapshot.id,
+            func.row_number()
+            .over(
+                partition_by=OddsSnapshot.bookmaker,
+                order_by=OddsSnapshot.captured_at.desc(),
+            )
+            .label("rn"),
+        )
+        .where(OddsSnapshot.event_id == tied_event)
+        .subquery()
+    )
+    old_n = len(
+        (
+            await session.execute(select(untiebroken.c.id).where(untiebroken.c.rn == 1))
+        ).scalars().all()
+    )
+    new_rows = (
+        await session.execute(latest_odds_per_bookmaker_query([tied_event]))
+    ).scalars().all()
+
+    assert old_n == len(new_rows) == 1
