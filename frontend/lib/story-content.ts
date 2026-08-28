@@ -40,7 +40,7 @@ export const STORY_ANTI_THESIS = {
 export const STORY_BLEND = {
   heading: "Six sources. One number.",
   body:
-    "Sportsbooks, ESPN, Kalshi, Polymarket, and live stat models each have a guess. We weight them by track record and blend them into a single probability — the whole market's honest opinion, not one book's.",
+    "Sportsbooks, ESPN, prediction markets, and live stat models each have a guess. We weight them by track record and blend them into a single probability — the whole market's honest opinion, not one book's.",
   // Proof line is written to survive without live stats; the page fills in the
   // exact figure when the calibration API responds.
   proofLead: "And we grade ourselves in public:",

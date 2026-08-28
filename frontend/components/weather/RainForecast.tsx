@@ -131,7 +131,7 @@ export default function RainForecast() {
                   NYC · 7-day rain probability
                 </h3>
                 <p className="text-text-secondary text-sm mt-0.5">
-                  Daily &ldquo;Will it rain?&rdquo; markets from Kalshi
+                  Daily &ldquo;Will it rain?&rdquo; questions, one per day
                 </p>
               </div>
               <SourceBadge src="kalshi" />

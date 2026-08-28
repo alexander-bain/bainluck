@@ -316,7 +316,7 @@ export default function GolfPage() {
             Golf Odds &amp; Futures
           </h1>
           <p className="text-text-secondary mt-2 text-lg">
-            Tournament odds from Polymarket, Kalshi, sportsbooks &amp; DataGolf
+            Who wins each tournament, one number per golfer
           </p>
 
           {nextMajor && nextMajorTeeOff && (

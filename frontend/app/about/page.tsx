@@ -103,7 +103,7 @@ export default function AboutPage() {
 
   const categories = [
     { emoji: "\u{1F3C0}", label: "Sports", desc: "NBA, NFL, MLB, NHL, Soccer, Golf, MMA" },
-    { emoji: "\u{1F4C8}", label: "Prediction Markets", desc: "Kalshi + Polymarket, unified" },
+    { emoji: "\u{1F4C8}", label: "Prediction Markets", desc: "Open questions, merged into one number" },
     { emoji: "\u{1F326}\u{FE0F}", label: "Weather", desc: "Rain, temperature, storms" },
     { emoji: "\u{1F4B0}", label: "Economics", desc: "Fed rates, GDP, inflation" },
     { emoji: "\u{1F5F3}\u{FE0F}", label: "Politics", desc: "Elections, policy, geopolitics" },

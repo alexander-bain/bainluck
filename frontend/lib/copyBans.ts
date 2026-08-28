@@ -169,6 +169,10 @@ export const ATTRIBUTION_LITERALS: { literal: string; why: string }[] = [
     literal: "DataGolf win-probability model + Kalshi futures",
     why: "provenance caption under the McIlroy case-study bars in lib/story-content.ts — it names what produced the three numbers on screen",
   },
+  {
+    literal: "Alcaraz win probability through the match (Polymarket)",
+    why: "caption on the /about trust exhibit — it names the source of the line being plotted, which is the amendment's own example of the allowed class. Lives in lib/data/alcaraz-ao-2026-series.json and was invisible to the bundle scan until `expandJsonPayload` (UX-P155)",
+  },
 ];
 
 /** Words a source LABEL may carry without becoming a sentence about sourcing. */
@@ -414,6 +418,51 @@ export function extractBundleStrings(source: string): string[] {
 }
 
 /**
+ * ═══ COPY THAT ARRIVED THROUGH AN IMPORTED `.json` FILE ═══
+ *
+ * webpack inlines `import data from "./series.json"` as ONE literal:
+ *
+ *   var n = JSON.parse('{"caption":"Alcaraz win probability … (Polymarket)", …}')
+ *
+ * `extractBundleStrings` returns that whole document as a single string, and
+ * `isProse` then rejects it on the braces — correctly, because as a string it
+ * IS code-shaped. The consequence was a hole with the same shape as the one
+ * this whole file exists to close: every sentence inside a JSON fixture was
+ * invisible to the shipped-copy scan, so a page could serve banned copy from
+ * a fixture and the gate would report clean.
+ *
+ * Found 2026-08-28 by UX-P155. Its render rig read a venue name off the
+ * `/about` markup that this scanner had just passed as clean — the caption on
+ * the Alcaraz chart, which lives in `lib/data/alcaraz-ao-2026-series.json`.
+ * The caption itself turned out to be legitimate attribution; the blind spot
+ * was not.
+ *
+ * So: a literal that parses as a JSON object or array is expanded into the
+ * strings inside it, each judged on its own. Keys are skipped — they are
+ * identifiers, and `Object.values` is what drops them.
+ */
+export function expandJsonPayload(literal: string): string[] | null {
+  const s = literal.trim();
+  const looksJson =
+    (s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"));
+  if (!looksJson) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(s);
+  } catch {
+    return null;
+  }
+  const out: string[] = [];
+  const walk = (value: unknown) => {
+    if (typeof value === "string") out.push(value);
+    else if (Array.isArray(value)) value.forEach(walk);
+    else if (value && typeof value === "object") Object.values(value).forEach(walk);
+  };
+  walk(parsed);
+  return out;
+}
+
+/**
  * Does this literal look like a sentence somebody wrote for a reader?
  *
  * Deliberately conservative in the direction of MISSING code rather than
@@ -474,10 +523,14 @@ export function scanBundleSource(
   bans: CopyBan[] = ALL_COPY_BANS
 ): BundleCopyHit[] {
   const hits: BundleCopyHit[] = [];
-  for (const literal of extractBundleStrings(source)) {
-    if (!isProse(literal)) continue;
-    for (const hit of findBannedCopy(literal, bans)) {
-      hits.push({ ...hit, file, surface: surfaceOf(file), literal: literal.trim().slice(0, 200) });
+  for (const raw of extractBundleStrings(source)) {
+    // An inlined `.json` import is one code-shaped literal holding many real
+    // sentences — see `expandJsonPayload`. Everything else is itself.
+    for (const literal of expandJsonPayload(raw) ?? [raw]) {
+      if (!isProse(literal)) continue;
+      for (const hit of findBannedCopy(literal, bans)) {
+        hits.push({ ...hit, file, surface: surfaceOf(file), literal: literal.trim().slice(0, 200) });
+      }
     }
   }
   return hits;

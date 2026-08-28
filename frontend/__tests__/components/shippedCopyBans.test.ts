@@ -60,6 +60,7 @@ import {
   FUTURE_PROMISE_BANS,
   VENUE_BANS,
   clauseAround,
+  expandJsonPayload,
   extractBundleStrings,
   findBannedCopy,
   isProse,
@@ -130,6 +131,14 @@ describe("the rules reject the copy Alex read on production", () => {
     "Nothing is on right now. This is where the day's matches sit.",
     "one reading 20 days ago",
     "This draw has none with a probability against them.",
+    // UX-P155 — the four replacements for ruling 141's last narrative debt.
+    // The failure mode of a copy fix is a replacement that trips a different
+    // rule and gets reverted, so each new sentence is pinned as passing next
+    // to the sentence it replaced (which is pinned as rejected, below).
+    "Open questions, merged into one number",
+    "Who wins each tournament, one number per golfer",
+    "Daily “Will it rain?” questions, one per day",
+    "Sportsbooks, ESPN, prediction markets, and live stat models each have a guess.",
   ];
 
   it.each(ALLOWED)("leaves legitimate copy alone: %j", (sentence) => {
@@ -200,7 +209,11 @@ describe("the rules reject the copy Alex read on production", () => {
       "Kalshi + Polymarket, unified",
       "Tournament odds from Polymarket, Kalshi, sportsbooks & DataGolf",
       "Sportsbooks, ESPN, Kalshi, Polymarket, and live stat models each have a guess.",
-      "Daily rain markets from Kalshi",
+      // Verbatim as it shipped, curly quotes and all. It was paraphrased here
+      // while it was live; now that it is retired the pin has to be the real
+      // string, because `?` is a clause boundary and the paraphrase never
+      // exercised the split.
+      "Daily “Will it rain?” markets from Kalshi",
       // An apposition is a sentence, not a label — the em dash must not fence
       // the venue names off into a label-shaped middle.
       "Our sources — Kalshi and Polymarket — each have a guess.",
@@ -291,6 +304,38 @@ describe("reading copy back out of minified JavaScript", () => {
     expect(isProse("priced_cells")).toBe(false);
     expect(isProse("mt-2 max-w-[62ch] text-[11.5px] leading-snug")).toBe(false);
     expect(isProse("===e.price_state)return null;if(")).toBe(false);
+  });
+
+  /**
+   * ═══ THE JSON HOLE — UX-P155, 2026-08-28 ═══
+   *
+   * The scan reported `/about` clean while the page rendered a venue name.
+   * Both were true: `lib/data/alcaraz-ao-2026-series.json` reaches the bundle
+   * as `JSON.parse('{…}')`, one code-shaped literal that `isProse` rejects on
+   * its braces, so every sentence inside it was invisible here.
+   *
+   * That is the same failure this whole file was built for — a guard reporting
+   * green about bytes it never read — so it gets the same treatment: a planted
+   * violation in the exact emitted shape, which must be found.
+   */
+  it("sees copy inside an inlined JSON import, not just bare literals", () => {
+    const planted =
+      'var n=JSON.parse(\'{"caption":"We asked Kalshi and Polymarket and neither runs that market.","pts":[1,2]}\');';
+    const hits = scanBundleSource("chunk.js", planted);
+    expect(hits.map((h) => h.ban.id).sort()).toEqual(["venue-kalshi", "venue-polymarket"]);
+  });
+
+  it("expandJsonPayload leaves ordinary literals alone", () => {
+    // If it treated every string as maybe-JSON the scan would double-report,
+    // and a `{` in real copy would start swallowing sentences.
+    expect(expandJsonPayload("No probability yet")).toBeNull();
+    expect(expandJsonPayload("{not json}")).toBeNull();
+    // Keys are identifiers, not copy — only values come back.
+    expect(expandJsonPayload('{"headline":"Two words here","n":4}')).toEqual(["Two words here"]);
+    expect(expandJsonPayload('["a sentence here","and another"]')).toEqual([
+      "a sentence here",
+      "and another",
+    ]);
   });
 
   it("finds a planted violation in a bundle-shaped source", () => {
@@ -416,25 +461,50 @@ const EXEMPT: Record<string, string[]> = {
  * captions and the cross-source legends on Discover cards never appear below
  * because the rule no longer fires on them. That is the amendment working:
  * they were listed as the next thing to sweep and the call reversed.
+ *
+ * ═══ THE VENUE DEBT IS PAID — UX-P155, 2026-08-28 ═══
+ *
+ * The re-read above left exactly four narrative sentences standing, and this
+ * queue rewrote all four. Measured against this build, every `venue-*` entry
+ * in the map below went dead at once, so there are now NO venue entries in
+ * OWED — not fewer, none:
+ *
+ *   • `app/about` — "Kalshi + Polymarket, unified" → "Open questions, merged
+ *     into one number". The key is gone from the map entirely; it held nothing
+ *     else. The reader who wants the names still gets them fifty lines down
+ *     the same page, in the source table that attributes 63% and 59% to them —
+ *     which is the amendment's allowed class, and is why removing the blurb
+ *     costs the page nothing.
+ *   • `app/categories` — "Tournament odds from Polymarket, Kalshi, sportsbooks
+ *     & DataGolf" → "Who wins each tournament, one number per golfer". The
+ *     `SourceLegend` further down the page carries the attribution.
+ *   • `app/weather` — "Daily 'Will it rain?' markets from Kalshi" → "…
+ *     questions, one per day". The `<SourceBadge src="kalshi" />` sits on the
+ *     same row and renders the name; the sentence was saying it twice.
+ *   • `shared` — the landing blurb's "Sportsbooks, ESPN, Kalshi, Polymarket,
+ *     and live stat models" → "Sportsbooks, ESPN, prediction markets, and live
+ *     stat models". The KINDS survive, which is the fact the sentence carried:
+ *     four different ways of guessing, weighted by track record.
+ *
+ * What remains in the map is rulings 138 and 142 only. Ruling 141 is closed on
+ * the branch — and, per ruling 142, not closed at all until the production
+ * layer below has been run against a post-deploy fetch.
  */
 const OWED: Record<string, string[]> = {
   // The methodology page still says "price" throughout, for the reason in
   // ruling 138. Its venue names are EXEMPT, not owed.
   "app/calibration": ["price-family", "blend"],
   "app/privacy": ["price-family"],
-  // Category dashboards — a coverage claim in a sub-theme subtitle.
-  "app/weather": ["venue-kalshi", "appear-here"],
+  "app/weather": ["appear-here"],
   "app/politics": ["price-family"],
-  "app/categories": ["check-back", "venue-kalshi", "venue-polymarket"],
+  "app/categories": ["check-back"],
   // "the price at the pump", "Gas price", "Inflation & Consumer Prices" —
   // ruling 138 explicitly SPARES these: they are prices of goods in the world,
   // which is what those markets are about. Listed so the exemption is visible.
   "app/economics": ["price-family"],
-  // The explainer page. "Kalshi + Polymarket, unified" is a claim ABOUT the
-  // unification, which is the one place naming them is arguably the subject —
-  // and exactly the judgment call ruling 141 leaves to Alex rather than to a
-  // sweep. Listed, not silently exempted.
-  "app/about": ["venue-kalshi", "venue-polymarket"],
+  // `app/about` sat here until UX-P155. It held only the two venue names in
+  // "Kalshi + Polymarket, unified"; with that line rewritten the surface ships
+  // clean, so the key is deleted rather than left as an empty array.
   "app/futures": ["price-family"],
   "app/events": ["price-family", "blend"],
   "app/search": ["check-back"],
@@ -444,16 +514,14 @@ const OWED: Record<string, string[]> = {
   "app/playoffs": ["will-populate"],
   // Components shared across routes: the marketing blurbs on the landing
   // shell, `lib/priceCadenceCopy.ts`, and the live-game chart caption.
-  shared: [
-    "blend",
-    "price-family",
-    "venue-kalshi",
-    "venue-polymarket",
-    "check-back",
-    "once-the",
-    "will-populate",
-  ],
+  shared: ["blend", "price-family", "check-back", "once-the", "will-populate"],
 };
+
+/**
+ * The venue rule ids, read off `VENUE_BANS` rather than spelled out — a third
+ * venue added to the ruling is covered without touching this file.
+ */
+const ATTRIBUTION_AWARE_IDS = new Set(VENUE_BANS.map((b) => b.id));
 
 /** Hits that neither the ruling's carve-outs nor the debt list account for. */
 function unowned(hits: BundleCopyHit[]): BundleCopyHit[] {
@@ -499,6 +567,22 @@ describe("the built bundle — the bytes Vercel uploads", () => {
           report(hits)
       );
     }
+  });
+
+  it("ruling 141 is closed: no venue rule may be carried as debt again", () => {
+    // The other rulings' entries are debt — a promise to pay. This one has
+    // been paid in full, and the difference should be structural rather than
+    // an empty space in a list. Re-listing a venue name as OWED would be a
+    // one-line diff that reads like housekeeping; this makes it a diff that
+    // has to delete a test with a ruling number on it.
+    //
+    // Not "there are no venue hits" — the bundle scan above already says that,
+    // and only for the surfaces it can see. This says the DEBT LIST may never
+    // absorb one, which is the failure the OWED map exists to prevent.
+    const venueDebt = Object.entries(OWED).flatMap(([surface, ids]) =>
+      ids.filter((id) => ATTRIBUTION_AWARE_IDS.has(id)).map((id) => `${surface} → ${id}`)
+    );
+    expect(venueDebt).toEqual([]);
   });
 
   (present ? it : it.skip)("the debt list has no dead entries — it can only be paid down", () => {
