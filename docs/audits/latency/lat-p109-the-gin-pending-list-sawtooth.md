@@ -183,6 +183,19 @@ Why this is safe to leave on:
 
 ## 5. Gates
 
+- **Full suite: `20,818 passed / 0 failed / 112 skipped / 61 xfailed`, ONE run (847.17 s),
+  EXIT CODE 0 read BY VALUE**, on the final code tree `f4e1fd60` (HEAD `87f18201`).
+- 🔴 **An earlier run was genuinely RED — 2 failed — and both were the gate working.**
+  `20,816 passed + 2 failed = 20,818`; the two runs reconcile exactly. Both failures were
+  the declared beat ledgers refusing a new `background` interval beat, which is precisely
+  what they exist to do; they are argued and re-derived in §5a below.
+- ⚠️ **A run between those two exited 1 with FOUR failures that were not verdicts.**
+  `test_alembic` (×3) and `test_discover_provenance` (×1) went red under
+  `pytest <abs-path>/tests --rootdir …`, an invocation forced by a `cd` that the harness
+  had reset. All four pass from `backend/` (`38 passed`, re-run to confirm) — they resolve
+  migration paths relative to the working directory. A story about the harness, not the
+  tree (gotcha #124), and the reason the authoritative run above was re-taken rather than
+  explained away.
 - **New guards:** `backend/tests/test_gin_pending_lists.py`, 26 tests.
 - **RED-proven ten ways.** Each mutation applied alone from a `cp` backup, restored
   and **sha256-verified** before the next; the harness refuses any pattern matching
@@ -212,6 +225,26 @@ Why this is safe to leave on:
   through black — master's copy is not black-clean and reformatting it would turn a
   30-line change into a whole-file diff.
 - **Backend only.** No frontend, iOS, route, model, migration or DDL change.
+
+### 5a. Two declared ledgers moved, and both are argued rather than absorbed
+
+`BACKGROUND_INTERVAL_FLOOR` **4 → 5**. Its own comment demands that a new interval beat on
+`background` "should be argued in a report, not discovered later inside a filter nobody
+re-reads". So: the pass is seven `gin_clean_pending_list()` calls with no table scan and no
+third-party call; `expires: 110`, under its own 120 s period, means the ~7 minutes the
+settlement sweep holds the slot **drop** their stale fires instead of queueing four flushes
+to run back to back the moment it releases; and 120 s is inside the floor's own
+`<= 180 s` rule rather than an exception to it. `background` and not `realtime` (the
+2-minute live price poll, which maintenance must not contend with) or `heavy` (25-minute
+calibration passes, behind which a 2-minute beat is meaningless).
+
+`BACKGROUND_BEAT_COUNT` **106 → 107**, explicit **61 → 62**, fall-through **unmoved at 45**
+— RE-DERIVED by running the census over the assembled schedule and printing it, never
+incremented (#1910). That constant's own standing note warns it has conflicted on three
+consecutive integration cycles; **the note's premise was checked rather than inherited** —
+Q426's `link-tournament-matchups` is present in `origin/master` @ `0e2414cd`, so its
+"unmerged" caveat is stale, while the four unmerged branches that genuinely touch this file
+are named in the READY token.
 
 ---
 
