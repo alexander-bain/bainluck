@@ -218,8 +218,24 @@ def build_payload(slug: str, *, now: datetime) -> dict[str, Any]:
         draw: build_bracket(register, prices=prices, draw=draw)
         for draw in ("mens-singles", "womens-singles")
     }
+    # `prices=` — WITHOUT IT THIS RIG CANNOT DRAW THE THING IT IS FOR (UX-P147).
+    #
+    # UX-P146 gave `build_results` a second leg: the pre-match probability
+    # beside each name, read from `opening_probability` on the matchup outcomes.
+    # The ROUTE passes `prices` (`routes/tournaments.py`); this rig did not, and
+    # `_prematch_by_pair` degrades silently to an empty map when it cannot look
+    # a price up — an absent prior is a legitimate state on 64 of 76 rows, so
+    # nothing anywhere reported that the column had gone.
+    #
+    # Alex is being asked to judge that exact column tonight (item 4: the pair
+    # summing to 101). A rig that renders the page WITHOUT the feature under
+    # review is worse than no rig: it produces a real-looking artifact that
+    # proves the opposite of what it appears to.
+    #
+    # It costs no query. `reg.matchup_outcome_ids()` is already in the one
+    # `IN (...)` above, exactly as the route's own comment says of its version.
     payload["results"] = build_results(
-        register, results=asyncio.run(_espn(spec["espn_event_name"]))
+        register, results=asyncio.run(_espn(spec["espn_event_name"])), prices=prices
     )
     payload["broadcasts"] = reg.broadcasts
     payload["slug"] = slug

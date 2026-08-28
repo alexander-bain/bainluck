@@ -5,9 +5,12 @@ import React from "react";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   DRAW_LABELS,
+  completionNote,
   drawIsPriced,
   formatPrematch,
   prematchCoverage,
+  prematchPercents,
+  resultScoreLine,
   resultsEmptyReason,
   resultsForDraw,
   roundHeading,
@@ -73,99 +76,156 @@ import {
  * being re-litigated in a later lane.
  */
 
+/**
+ * ═══ UX-P147, ALEX'S ITEM 3: THE COLUMNS HAVE TO BE COLUMNS ═══
+ *
+ * On the UX-P146 artifact: the two probabilities and the score column are
+ * *"raggedly aligned"*. They were, and the reason is worth writing down because
+ * it looks correct in the source.
+ *
+ * The row was `flex justify-between`: a `flex-1` block holding the two player
+ * lines, then the score as a sibling. Inside the block each prior was pushed
+ * right with `ml-auto`, which does align the two priors **to each other** — but
+ * only to the right edge of a block whose width is `row − score − gap`. The
+ * score is text, so its width is the score: `6-3, 6-4` is 56px and
+ * `7-6 (7-4), 3-6, 6-4` is 128px. Every row therefore put its prior column at a
+ * different x, and the score column's LEFT edge moved with it too. Two
+ * quantities that mean the same thing on every row, drawn in a different place
+ * on every row — which is precisely what a reader scanning a list cannot do.
+ *
+ * A flexbox cannot fix this: flex items are sized per line, and there are as
+ * many lines as there are matches. Columns that line up across rows need ONE
+ * grid whose tracks are shared by every row, which is what this is. The grid is
+ * on the `<ul>`, not on the row, and each row is `display: contents` so its
+ * three cells land in the parent's tracks.
+ *
+ * Three tracks:
+ *   - **name** `minmax(0,1fr)` — takes the slack and truncates last.
+ *   - **prior** `max-content` — as wide as the widest percentage in the whole
+ *     list and not one pixel more, right-aligned, `tabular-nums` so `100%` and
+ *     `49%` occupy the same box.
+ *   - **score** `max-content` — as wide as the LONGEST score in the list, so
+ *     the column has one left edge for every row.
+ *
+ * `max-content` and not a hard `w-[Npx]`: a hard width is a guess about the
+ * longest three-set score with two tiebreaks, and the failure mode of guessing
+ * low is a truncated result. The grid measures instead.
+ *
+ * The score spans BOTH player rows and centres against them, because a score
+ * describes the match and not the winner — baseline-aligning it to the top line
+ * (which is what the old markup did) reads as a property of the player it sits
+ * beside.
+ */
+const RESULT_GRID =
+  "grid grid-cols-[minmax(0,1fr)_max-content_max-content] items-center gap-x-3 lg:gap-x-4";
+
 function ResultRow({ result }: { result: TournamentResult }) {
   const winner = result.players.find((player) => player.is_winner);
   const loser = result.players.find((player) => !player.is_winner);
   if (!winner || !loser) return null;
 
+  /* ITEM 4: the pair is rounded ONCE, together — see `prematchPercents`. */
+  const percents = prematchPercents(result);
+  const line = resultScoreLine(result);
+
   return (
     <li
-      className="border-t border-surface-border px-3.5 py-2.5 first:border-t-0"
+      className="contents"
       data-testid="result-row"
       data-matchup={result.matchup_key}
       data-winner={result.winner_entity_key}
       data-has-score={result.score ? "true" : "false"}
+      data-completion={result.completion ?? undefined}
+      data-score-kind={line.kind}
     >
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          {[winner, loser].map((player) => {
-            /* THE PRIOR (UX-P146, Alex on the UX-P145 artifact): "a result
-               without the prior probability is half the story on a probability
-               product." Rendered on the player's OWN line and right-aligned in
-               its own column, so the two numbers stack and a reader can see at
-               a glance which way round the market had it. */
-            const prior = formatPrematch(player.prematch_probability);
-            return (
-              <div
-                key={player.entity_key}
-                className="flex min-w-0 items-baseline"
-                data-testid="result-player"
-                data-entity={player.entity_key}
-                data-outcome={player.is_winner ? "won" : "lost"}
-                data-prematch={player.prematch_probability ?? undefined}
+      {[winner, loser].map((player, index) => {
+        /* THE PRIOR (UX-P146, Alex on the UX-P145 artifact): "a result
+           without the prior probability is half the story on a probability
+           product." In its own grid track, so the two numbers stack and a
+           reader can see at a glance which way round the market had it. */
+        const prior = formatPrematch(
+          player.prematch_probability,
+          percents[player.entity_key]
+        );
+        const edge = index === 0 ? "border-t border-surface-border pt-2.5" : "pb-2.5";
+        return (
+          <React.Fragment key={player.entity_key}>
+            <span
+              className={`flex min-w-0 items-baseline pl-3.5 ${edge}`}
+              data-testid="result-player"
+              data-entity={player.entity_key}
+              data-outcome={player.is_winner ? "won" : "lost"}
+              data-prematch={player.prematch_probability ?? undefined}
+              data-prematch-percent={percents[player.entity_key] ?? undefined}
+            >
+              <span
+                className={`truncate text-[13.5px] ${
+                  player.is_winner
+                    ? "font-semibold text-text-primary"
+                    : "font-normal text-text-muted"
+                }`}
               >
-                <span
-                  className={`truncate text-[13.5px] ${
-                    player.is_winner
-                      ? "font-semibold text-text-primary"
-                      : "font-normal text-text-muted"
-                  }`}
-                >
-                  {player.display_name}
+                {player.display_name}
+              </span>
+              {player.seed !== null && (
+                <span className="ml-1.5 shrink-0 text-[11px] text-text-muted">
+                  [{player.seed}]
                 </span>
-                {player.seed !== null && (
-                  <span className="ml-1.5 shrink-0 text-[11px] text-text-muted">
-                    [{player.seed}]
-                  </span>
-                )}
-                {player.is_winner && (
-                  <span className="ml-1.5 shrink-0 text-[10px] font-bold uppercase tracking-[0.05em] text-accent-live">
-                    won
-                  </span>
-                )}
-                {prior && (
-                  <span
-                    className="ml-auto shrink-0 pl-3 text-[12px] tabular-nums text-text-secondary"
-                    data-testid="result-prematch"
-                  >
-                    {/* Ruling 2 again: a number names its own question. The
-                        column has no header — there is no room for one beside a
-                        score — so the sentence travels with each number for a
-                        screen reader, and the section's footnote carries it for
-                        everyone else. */}
-                    <span className="sr-only">
-                      Before the match, the market gave {player.display_name}{" "}
-                    </span>
-                    {prior}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-        </div>
+              )}
+              {player.is_winner && (
+                <span className="ml-1.5 shrink-0 text-[10px] font-bold uppercase tracking-[0.05em] text-accent-live">
+                  won
+                </span>
+              )}
+            </span>
 
-        {/* THE SCORE, on the card and beside the outcome (UX-P137 ruling 2).
-            Winner's games first, set by set, so the reader never reverses it.
-            Absent for a retirement, where a partial score printed as a final
-            one would be the same class of defect as a stale price printed as
-            live. */}
-        {result.score ? (
-          <span
-            className="shrink-0 text-[13px] font-semibold tabular-nums text-text-secondary"
-            data-testid="result-score"
-          >
-            {result.score}
-          </span>
-        ) : (
-          <span
-            className="shrink-0 text-[11px] text-text-muted"
-            data-testid="result-no-score"
-            title="The source reported a winner but no completed set scores — usually a retirement."
-          >
-            no score
-          </span>
-        )}
-      </div>
+            {/* The prior's TRACK is always here — an empty grid cell is what
+                keeps the score column in the same place on a row that has no
+                prior, which is 64 of the 76 production rows. The `data-testid`
+                is not, because "this row has a prior" must stay a queryable
+                fact and an empty span carrying the name of a number would
+                make every row look like it had one. */}
+            <span
+              className={`text-right text-[12px] tabular-nums text-text-secondary ${edge}`}
+              data-testid={prior ? "result-prematch" : undefined}
+            >
+              {/* Ruling 2 again: a number names its own question. The column
+                  has no header — there is no room for one beside a score — so
+                  the sentence travels with each number for a screen reader,
+                  and the section's footnote carries it for everyone else. */}
+              {prior && (
+                <>
+                  <span className="sr-only">
+                    Before the match, the market gave {player.display_name}{" "}
+                  </span>
+                  {prior}
+                </>
+              )}
+            </span>
+
+            {/* THE SCORE (UX-P137 ruling 2), drawn once and spanning both
+                player rows. Winner's games first, set by set, so the reader
+                never reverses it. UX-P147 gives it the completion: a walkover
+                says walkover, and a retirement's real-but-partial score is
+                marked rather than passed off as a finished one. */}
+            {index === 0 && (
+              <span
+                className={`row-span-2 py-2.5 pr-3.5 text-right tabular-nums ${
+                  line.kind === "score" || line.kind === "retired"
+                    ? "text-[13px] font-semibold text-text-secondary"
+                    : "text-[11px] font-medium text-text-muted"
+                } border-t border-surface-border`}
+                data-testid={line.kind === "absent" ? "result-no-score" : "result-score"}
+                data-kind={line.kind}
+                title={line.explanation}
+              >
+                <span className="sr-only">{line.explanation}</span>
+                <span aria-hidden="true">{line.text}</span>
+              </span>
+            )}
+          </React.Fragment>
+        );
+      })}
     </li>
   );
 }
@@ -209,7 +269,7 @@ export default function TournamentResults({
   }
 
   const shown = expanded ? matches : matches.slice(0, COLLAPSED_LIST_COUNT);
-  const scored = matches.filter((match) => match.score).length;
+  const completion = completionNote(matches);
   /* Counted over THIS draw's rendered rows rather than read off the payload's
      `with_prematch`, which is the all-draws total. A footnote that says "12 of
      76" under a list of 24 is a footnote about a different list. */
@@ -224,11 +284,16 @@ export default function TournamentResults({
         </span>
       </h2>
       <div className="overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
-        <ul>
+        {/* ONE grid for the whole list, so a column is a column across every
+            row — see `RESULT_GRID`. The round headings are `col-span-3` bands
+            inside it rather than siblings of it, because a heading outside the
+            grid would reset the tracks below it and put the second round's
+            score column somewhere else again. */}
+        <ul className={RESULT_GRID}>
           {shown.map((result) => (
             <React.Fragment key={result.matchup_key}>
               <li
-                className="border-t border-surface-border bg-surface-elevated px-3.5 py-1 text-[10px] font-bold uppercase tracking-[0.05em] text-text-muted first:border-t-0"
+                className="col-span-3 border-t border-surface-border bg-surface-elevated px-3.5 py-1 text-[10px] font-bold uppercase tracking-[0.05em] text-text-muted first:border-t-0"
                 data-testid="result-round"
               >
                 {roundHeading(result)}
@@ -276,8 +341,12 @@ export default function TournamentResults({
       )}
       <p className="mt-2 text-[11px] leading-snug text-text-muted" data-testid="results-provenance">
         Scores from ESPN.{" "}
-        {scored < matches.length &&
-          `${matches.length - scored} finished without a completed set score (retirement or walkover). `}
+        {/* UX-P147: this used to read "N finished without a completed set
+            score (retirement or walkover)" — a hedge between two things the
+            source distinguishes, whose count was the walkovers only while the
+            retirements it named printed above as ordinary results. Both are
+            named now, and both are counted. */}
+        {completion && <span data-testid="results-completion-note">{completion} </span>}
         {(results?.unregistered_pairs ?? 0) > 0 &&
           `${results?.unregistered_pairs} other finished match${
             results?.unregistered_pairs === 1 ? "" : "es"

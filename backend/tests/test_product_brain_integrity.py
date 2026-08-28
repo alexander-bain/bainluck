@@ -848,7 +848,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: UX-P146 banks 138 ("price" is not a word we say to readers; the word is
 #: PROBABILITY). Raised by COUNTING THIS TREE — 138 files, 138 index lines —
 #: never by adding a delta.
-MINIMUM_BANKED_RULINGS = 138
+MINIMUM_BANKED_RULINGS = 139
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

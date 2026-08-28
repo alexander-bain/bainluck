@@ -78,6 +78,71 @@ DRAW_SLUGS: dict[str, str] = {
 #: rule broken in the one direction that matters.
 FINAL_STATES = ("post",)
 
+#: HOW a match ended, from ESPN's own status name (UX-P147, Alex's item 5).
+#:
+#: ═══ WHY THIS EXISTS: "no score" ON THE DIMITROV QUALIFYING FINAL ═══
+#:
+#: Alex, on the UX-P146 artifact: one row in the finished list printed **no
+#: score**, and he asked whether that was an ingest gap or a render fallback.
+#: Measured against the live ESPN scoreboard 2026-08-28T00:4xZ, it is NEITHER —
+#: the fixture is a **walkover**, and ESPN says so in as many words::
+#:
+#:     competition 184769  round "Qualifying Final"
+#:     status.type.name  = "STATUS_WALKOVER"
+#:     notes[0].text     = "Grigor Dimitrov (BUL) bt Otto Virtanen (FIN) w/o"
+#:     competitors[*]    — winner flag present, `linescores` ABSENT on both
+#:
+#: Virtanen withdrew before a ball was struck, so there is no score to have
+#: ingested and ``format_score`` correctly returned ``None``.  The defect was
+#: entirely in what we then SAID about it: the page printed the words "no
+#: score" under a tooltip guessing "usually a retirement", when the source had
+#: already told us exactly what happened and we threw it away.
+#:
+#: ═══ AND THE NEIGHBOUR THE MEASUREMENT FOUND ═══
+#:
+#: The same census over all 1,250 US Open competitions on that scoreboard::
+#:
+#:     STATUS_FINAL      434   line scores on both sides
+#:     STATUS_RETIRED      8   line scores on both sides, EQUAL LENGTH
+#:     STATUS_WALKOVER     2   no line scores at all
+#:     STATUS_SCHEDULED  806   (792 unplayed + 14 in progress; `state` filters them)
+#:
+#: ``format_score``'s docstring claims it returns ``None`` for a retirement
+#: because "a partial score printed as a final one is the same class of defect
+#: as a stale price printed as live".  It does not, and cannot: its test is
+#: *unequal set counts*, and a retirement reports EQUAL ones — the abandoned
+#: set is filled in on both sides.  So all eight retirements printed a partial
+#: score with nothing marking it, e.g. Lajovic beating Kwon at ``4-6, 7-5,
+#: 3-1`` — a scoreline no completed tennis match can have, presented as one.
+#:
+#: The fix is not to suppress those eight.  ``4-6, 7-5, 3-1`` is TRUE and it is
+#: most of what happened; what was missing is the two letters that make it
+#: honest.  So the completion travels with the row and the renderer says it.
+COMPLETION_BY_STATUS: dict[str, str] = {
+    "STATUS_FINAL": "final",
+    "STATUS_RETIRED": "retired",
+    "STATUS_WALKOVER": "walkover",
+    "STATUS_ABANDONED": "abandoned",
+    "STATUS_FORFEIT": "walkover",
+}
+
+#: What an unrecognised final-state status becomes.  A new ESPN status name
+#: must degrade to "we know it finished and not how", never to a confident
+#: "final" — inventing a completion is the same defect in the other direction.
+COMPLETION_UNKNOWN = "unknown"
+
+
+def completion_of(status: dict[str, Any]) -> str:
+    """ESPN ``status.type`` -> one of ``COMPLETION_BY_STATUS``' values.
+
+    Keyed on ``name`` (``STATUS_WALKOVER``), which is ESPN's enum, and not on
+    ``description`` (``"Walkover"``), which is display text and can be
+    localised or reworded without notice.
+    """
+    return COMPLETION_BY_STATUS.get(
+        str((status or {}).get("name") or ""), COMPLETION_UNKNOWN
+    )
+
 #: The register's round vocabulary for a knockout draw, LARGEST FIRST.  Indexed
 #: by draw size rather than hard-coded to a 128 field: a 64-slot doubles draw's
 #: "Round 1" is `R64`, and reading it as `R128` would file every doubles fixture
@@ -296,9 +361,17 @@ def format_score(competitors: list[dict[str, Any]]) -> Optional[str]:
     card that says "Fearnley won" over "3-6, 6-7" is asking the reader to
     reverse it in their head, and half of them will not.
 
-    ``None`` when the two competitors report different numbers of sets, which
-    is a retirement or a mid-match read.  A partial score printed as a final one
-    is the same class of defect as a stale price printed as live.
+    ``None`` when a competitor carries no line scores at all — a WALKOVER, in
+    which no set was played and there is nothing to print — or when the two
+    report different numbers of sets, which is a mid-match read.
+
+    ⚠️ IT DOES NOT SUPPRESS A RETIREMENT, and an earlier version of this
+    docstring said it did.  A retired match reports EQUAL set counts (the
+    abandoned set is filled in on both sides), so the length test never fires
+    for one; measured 2026-08-28, all 8 retirements on the US Open scoreboard
+    returned a score here.  That score is true and worth printing — what it
+    needs is the marker, which travels beside it as ``completion``.  See
+    ``COMPLETION_BY_STATUS``.
     """
     scored = [
         (c, [ls.get("value") for ls in (c.get("linescores") or [])])
@@ -330,7 +403,18 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
     """
     by_draw: dict[str, dict[str, Any]] = {}
     seen_competitions: set[str] = set()
-    stats = {"events": 0, "competitions": 0, "final": 0, "scored": 0, "unpaired": 0}
+    stats = {
+        "events": 0,
+        "competitions": 0,
+        "final": 0,
+        "scored": 0,
+        "unpaired": 0,
+        # UX-P147: counted at the SOURCE, so "22 finished without a score" can
+        # be said as "2 walkovers" instead of "retirement or walkover" — the
+        # shrug the page printed before anybody measured which it was.
+        "walkovers": 0,
+        "retirements": 0,
+    }
 
     for payload in payloads:
         for event in (payload or {}).get("events") or []:
@@ -387,9 +471,18 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                         "espn_round": (competition.get("round") or {}).get("displayName"),
                         "completed_at": competition.get("date"),
                         "status_detail": status.get("detail"),
+                        # HOW it ended (UX-P147). `status_detail` was already
+                        # here and is display text; this is the enum a renderer
+                        # can branch on without matching on English.
+                        "completion": completion_of(status),
                     }
                     if by_draw[draw][pair_key(names)]["score"]:
                         stats["scored"] += 1
+                    completion = by_draw[draw][pair_key(names)]["completion"]
+                    if completion == "walkover":
+                        stats["walkovers"] += 1
+                    elif completion == "retired":
+                        stats["retirements"] += 1
 
     return {"draws": by_draw, "stats": stats}
 

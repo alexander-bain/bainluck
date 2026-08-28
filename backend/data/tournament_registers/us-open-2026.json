@@ -2,7 +2,7 @@
   "schema_version": "tournament-register/v1",
   "tournament": "us-open",
   "season": "2026",
-  "version": 9,
+  "version": 10,
   "generated_at": "2026-08-27T00:15:00+00:00",
   "draw_released": true,
   "players": [
@@ -21097,7 +21097,7 @@
       }
     }
   ],
-  "supersedes_version": 8,
+  "supersedes_version": 9,
   "broadcasts": [
     {
       "region": "US",
@@ -21142,9 +21142,44 @@
       ],
       "evidence": {
         "kind": "prop-census",
-        "observed_at": "2026-08-26T19:35:47+00:00",
+        "observed_at": "2026-08-28T01:20:00+00:00",
         "market_name": "Jannik Sinner to play in the US Open",
         "answer": "Yes"
+      }
+    },
+    {
+      "key": "alcaraz-second-major",
+      "title": "Can Alcaraz win a second major this year?",
+      "hook": "The other half of the men's duopoly, chasing the same thing.",
+      "draw": "mens-singles",
+      "source": "kalshi",
+      "market_id": 53796,
+      "market_external_id": "KXGRANDSLAM-CALC26",
+      "outcomes": [
+        {
+          "entity_key": "alcaraz-second-major:2+-grand-slam-wins",
+          "display_name": "2+ Grand Slam wins",
+          "outcome_id": 848773,
+          "is_answer": true
+        },
+        {
+          "entity_key": "alcaraz-second-major:all-4-grand-slam-wins",
+          "display_name": "All 4 Grand Slam wins",
+          "outcome_id": 848771,
+          "is_answer": false
+        },
+        {
+          "entity_key": "alcaraz-second-major:3+-grand-slam-wins",
+          "display_name": "3+ Grand Slam wins",
+          "outcome_id": 848772,
+          "is_answer": false
+        }
+      ],
+      "evidence": {
+        "kind": "prop-census",
+        "observed_at": "2026-08-28T01:20:00+00:00",
+        "market_name": "Carlos Alcaraz: Grand Slam wins in 2026",
+        "answer": "2+ Grand Slam wins"
       }
     },
     {
@@ -21177,13 +21212,13 @@
       ],
       "evidence": {
         "kind": "prop-census",
-        "observed_at": "2026-08-26T19:35:47+00:00",
+        "observed_at": "2026-08-28T01:20:00+00:00",
         "market_name": "Jannik Sinner: Grand Slam wins in 2026",
         "answer": "2+ Grand Slam wins"
       }
     }
   ],
-  "props_observed_at": "2026-08-26T19:35:47+00:00",
+  "props_observed_at": "2026-08-28T01:20:00+00:00",
   "reaches": [
     {
       "draw": "mens-singles",
@@ -38662,7 +38697,6 @@
   "matchups_observed_at": "2026-08-27T00:15:00+00:00",
   "props_declined": {
     "advance-ladder": "the eight \"does X reach the Y\" cards are grid cells now (UX-P139): `reaches` pins all 336 of them. Each is also listed by its own key above so a future silent drop still fails the guard.",
-    "alcaraz-second-major": "one question with two names in it, next to sinner-second-major. Ruling 8 dropped it at render every time; this drops it at the source. Sinner 55.5% is the closer question and his participation is the one in doubt",
     "alcaraz-semifinals": "became a grid cell (UX-P139 ruling 3): `reaches` pins this exact question as a per-player per-round market on the Bracket tab, and one market living in two collections is a divergence waiting to happen",
     "djokovic-quarterfinals": "became a grid cell (UX-P139 ruling 3): `reaches` pins this exact question as a per-player per-round market on the Bracket tab, and one market living in two collections is a divergence waiting to happen",
     "gauff-semifinals": "became a grid cell (UX-P139 ruling 3): `reaches` pins this exact question as a per-player per-round market on the Bracket tab, and one market living in two collections is a divergence waiting to happen",
