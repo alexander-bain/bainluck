@@ -2129,3 +2129,89 @@ class SettlementCapture(Base):
         # The re-probe read: newest capture per market.
         Index("ix_settlement_captures_market_time", "market_id", "captured_at"),
     )
+
+
+class EventProviderAnchor(Base):
+    """One provider id, one event — the channel ruling 048's drain clause needs.
+
+    The table shipped EMPTY on 2026-08-24 (migration ``anchors_and_captures``,
+    #1946 / #2119 / #2114) and had no ORM model, so nothing could read or write
+    it from application code. That is why the measured state on 2026-08-25 was
+    **0 rows**, and why gotcha #32's bounding clause — *"id-keyed reconciliation
+    drains the duplicate when an id arrives"* — was still prose eleven months
+    after it was written.
+
+    WHAT A ROW MEANS. Exactly one thing: *provider ``source`` calls this event
+    ``source_id``, and that id is of kind ``id_kind``.* It is a correspondence
+    record, not a merge instruction and not a claim of quality. The registry
+    reads it as cascade Step 2 (cross-source id), which is ruling 048 **arm A**
+    — a SHARED id — reached through the channel instead of through one of the
+    three id columns that happen to exist on ``events``. Arm A never needed
+    ``schedule_derived`` and still does not; this widens nothing.
+
+    WHY ``id_kind`` IS THE LOAD-BEARING COLUMN. **Only ``id_kind='game'`` may
+    anchor an absorption.** A Kalshi player-prop ticker and a Polymarket
+    ``conditionId`` are ``market``; a Polymarket event id is ``container``. All
+    three are worth recording, because they are how an anchor is *discovered* —
+    but only one of them asserts "these two rows are the same game". A table
+    that stored all three without saying which kind they are would rebuild
+    ruling 048's original defect with better indexing.
+
+    WHY THE UNIQUE INDEX IS ALSO THE DUPLICATE DETECTOR. ``(source, source_id,
+    id_kind)`` is unique, so a second event trying to claim an id that is
+    already bound cannot succeed. The conflict is not an error to swallow — it
+    is the *first* moment the system holds proof that two rows are one game,
+    keyed on an id rather than guessed from names and a time window. The writer
+    in ``app/services/anchor_channel.py`` reads that conflict deliberately and
+    reports ``COLLISION``.
+
+    ``source_id`` IS NAMESPACE-QUALIFIED, NEVER BARE. It is a plain
+    ``VARCHAR(200)`` with no per-provider structure, so two different games can
+    collide on one key unless the writer qualifies it. Alex ruled the Kalshi
+    instance on 2026-08-21 (#1946 Item 7): a bare game-id token collides at
+    0.0404%, so a Kalshi anchor is written only as ``sport_key:game_id``.
+    ``app/utils/provider_anchor_keys.py`` applies that rule to every provider,
+    including the StatPal namespace split (6-digit vs 10-digit fixture ids under
+    one column name) that produced the 21 conflicting duplicate groups on #2213.
+    Callers must build keys with that module. Never hand-format a ``source_id``.
+    """
+
+    __tablename__ = "event_provider_anchors"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    #: The event this provider id names. ``CASCADE`` on delete: an anchor to a
+    #: row that no longer exists is not history, it is a dangling assertion that
+    #: a later absorption would act on.
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    #: ``odds_api`` | ``espn`` | ``statpal`` | ``kalshi`` | ``polymarket``.
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    #: The namespace-qualified id. See the class docstring — never bare.
+    source_id: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    #: ``game`` | ``market`` | ``container``. Only ``game`` may anchor.
+    id_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    #: Provenance of the claim that attached this anchor — which call site, and
+    #: whether that claim was schedule-derived. Recorded because an anchor that
+    #: cannot say who wrote it cannot be selectively withdrawn when a call site
+    #: turns out to have been wrong, and ruling 048 exists because two call
+    #: sites were wrong for months.
+    claim_context: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    __table_args__ = (
+        # Identity, and the duplicate detector. ``id_kind`` is IN the key so one
+        # value may legitimately appear as both a ``market`` and a ``container``
+        # without colliding. Name matches the migration exactly.
+        Index(
+            "uq_anchor_source_id", "source", "source_id", "id_kind", unique=True
+        ),
+    )
