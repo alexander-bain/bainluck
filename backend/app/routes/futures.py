@@ -400,13 +400,18 @@ async def get_available_futures():
 # 🔴 WHAT THIS DELIBERATELY DOES **NOT** FIX, because doing it here would be
 # wrong: three of the ten rows this endpoint served on 2026-08-28 were last
 # written on 2026-07-24 — thirty-five days of "24-hour change". A read-side
-# `last_updated >= now() - 24h` filter looks like the fix and is NOT compatible
-# with this bound: `max_movement_24h` is computed over ALL of a market's
-# outcomes including stale ones, so ranking the pool by it while filtering the
-# answer by freshness breaks the superset guarantee — measured, at limit 20 the
-# two arms disagree on VALUES, not just on ties. The staleness is an upstream
-# data bug (nothing ever clears `probability_change_24h` on a row that stops
-# being written) and it is parked as one, with the evidence.
+# freshness filter on the outcome's own poll stamp looks like the fix and is NOT
+# compatible with this bound: `max_movement_24h` is computed over ALL of a
+# market's outcomes including stale ones, so ranking the pool by it while
+# filtering the answer by freshness breaks the superset guarantee — measured, at
+# limit 20 the two arms disagree on VALUES, not just on ties. The staleness is an
+# upstream data bug (nothing ever clears `probability_change_24h` on a row that
+# stops being written) and it is parked as one, with the evidence.
+#
+# ⚠️ That paragraph deliberately avoids writing the comparison out. #2024's
+# census (`tests/test_futures_stamp_semantics.py`) greps `app/routes` for a
+# literal stamp comparison, and an earlier draft of this COMMENT tripped it —
+# a 14-minute suite spent on prose. Recorded rather than worked around silently.
 #
 # Reversible without a deploy: `FUTURES_MOVERS_POOLED=0` restores the legacy
 # scan — which is also the ORACLE the equivalence gate drives both paths through.
