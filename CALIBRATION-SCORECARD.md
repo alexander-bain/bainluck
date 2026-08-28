@@ -116,6 +116,14 @@ actually serves. There is not a single holdout, sample, or parallel-rail number 
 > misses read `not_attempted` — the beat never reached its gate. §5b. Published number **1.89 pp,
 > unmoved** on the same `20:37:41Z` curve; no datapoint banked, because nothing regenerated and
 > nothing shipped.
+>
+> **Then Alex ruled rank 2 mid-session** (queue 017, option **b**): `kalshi/economics` is
+> **APPROVED WITH DISCLOSURE** — the ladders leave the curve *and* the removed rows are named and
+> counted on the page. First of the four banked designs to have its decision taken. Because the
+> exclusion and its disclosure are one deliverable and only one of them is behind the freeze, **the
+> page half was built here and is green**: the new `nonexclusive_bundle_filter` block renders
+> nothing until the backend key exists, and 6 mutation-checked tests hold the per-cell counts and
+> the clause that stops a smaller curve being read as a fixed one. §6d.
 
 ---
 
@@ -834,7 +842,7 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 | # | published cell | cls | ECE | n | gap | bar | excess | σ | excess-outcomes | mechanism known? | status |
 |--:|---|:-:|--:|--:|--:|--:|--:|--:|--:|---|---|
 | 1 | `polymarket/baseball` | B | 4.80 | 43,768 | +3.03 | 3.0 | +1.80 | 7.5 | 78,782 | ✅ **named and designed (CAL-P117, §6c)** — the two banked mechanisms are worth −0.53 pp and are NOT it; 54.4% is `Player Props` containers whose published price is a manufactured coin flip. K′ → **2.71 pp PASS**, 17,827 rows | **ZERO** — designed, unbuilt |
-| 2 | `kalshi/economics` | C | 5.29 | 28,613 | −0.47 | 3.0 | +2.29 | 7.8 | 65,524 | ✅ **named and designed (CAL-P114, §6b)** — 99.7% cumulative index ladders; rules E+E2+E3 → 2.61 pp PASS | **ZERO** — designed, unbuilt |
+| 2 | `kalshi/economics` | C | 5.29 | 28,613 | −0.47 | 3.0 | +2.29 | 7.8 | 65,524 | ✅ **named, designed AND RULED (CAL-P114 §6b, Alex 2026-08-28 option b)** — 99.7% cumulative index ladders; rules E+E2+E3 → 2.61 pp PASS, **approved with disclosure** | **ZERO** — ruled, unbuilt (disclosure surface BUILT, §6d) |
 | 3 | `polymarket/esports` | B | 7.59 | 14,053 | +6.02 | 3.0 | +4.59 | 10.9 | 64,503 | ✅ **named and designed (CAL-P112, §6a; re-checked on the exact rail, CAL-P114)** — the 1-winner tail `esports_multi_bundle_filter` cannot reach | **ZERO** — designed, unbuilt |
 | 4 | `polymarket/soccer` | B | 3.42 | 106,803 | +2.16 | 3.0 | +0.42 | 2.8 | 44,857 | ✅ O/U ladder coherence (CAL-P106/107) | **ZERO** — branch-only, unwired |
 | 5 | `odds_api_bookmaker/basketball_nba` | A | 5.18 | 10,186 | +1.03 | **2.5** | +2.68 | 5.4 | 27,298 | ❌ none | **not started** |
@@ -1174,6 +1182,48 @@ payload to 0.11 pp and the class shares are sound; the absolute row counts are 5
 stated wherever a row count decides something. **`calibration_cell_exact.py` owes a `--scope-check`
 that folds the cell with and without the category conjunct, the way `--edge-check` folds it at two
 widths.** Parked.
+
+---
+
+## 6d. The first cell rule Alex has RULED — and the disclosure ships with it
+
+**Alex, 2026-08-28, on `kalshi/economics` (rank 2): option (b), APPROVED WITH DISCLOSURE.**
+
+> *the correlated intraday index-ladder rungs stop entering the published curve (5.29 → 2.61pp,
+> cell stays material and PASSES), AND the removed rows are disclosed on the page as a named,
+> counted exclusion exactly like the other 13 filters — "nobody later reads the smaller curve as a
+> fixed one."*
+
+This is the first of the four banked designs to have its Alex-decision taken, and it changes rank
+2's status from *designed* to **landable**. It still ships nothing today: the predicate lives in the
+frozen file and waits for ruling 009's amended lift.
+
+**The exclusion and its disclosure are ONE deliverable.** A release that lands the filter without
+the page copy has executed half the ruling, and the half it dropped is the half that protects the
+reader — so the disclosure half was built first, on the side of the fence that is not frozen:
+
+| half | where | status |
+|---|---|---|
+| the predicate | `precompute_calibration.py` — promote the existing `is_nonexclusive_bundle` census flag to a **gate**, allowlisted on `(source, category)`, seeded `{(kalshi, economics)}` | **waiting on the freeze.** Never with T alone: T without E takes this cell 5.29 → 5.73, *worse than doing nothing* |
+| the payload | new key **`nonexclusive_bundle_filter`** `{applies_to, rule, excluded, included?, excluded_by_cell}` — a NEW key, so the live `esports_multi_bundle_filter` contract does not change under existing consumers | spec'd, §9.1 of the rule doc |
+| **the page** | `frontend/app/calibration/page.tsx`, in the exclusions list between `esports_multi_bundle_filter` and `exclusion_symmetry` | ✅ **BUILT and green on this branch** |
+
+The page half is gated on `excluded > 0` exactly like the four filters above it, so it renders
+**nothing** until the backend key exists — which is what makes it safe to ship ahead of the rule
+rather than a release behind it. Three clauses, each pinned by a test because each is a clause of
+the ruling: the rule text and total from the payload; the **per-cell counts** (the allowlist is
+per-cell, so one total would hide which cell shrank); and the sentence that stops the smaller curve
+being read as a better one — *"the error on these cells fell because rows that were never forecasts
+of a single question stopped being counted, not because our prices got better."*
+`calibrationNonexclusiveBundleDisclosure.test.tsx`, 6 tests, mutation-checked: softening that
+closing clause reds it, and so does breaking the count binding.
+
+> ⚠️ **The ruling covers 3.0%, not 5.7%.** `polymarket/baseball`'s rule (§6c) removes a further
+> ~2.7% of the published curve on the same argument. Alex has ruled the first; he has not been
+> asked about the pair. `YOUR-TURN.md` item 9. The disclosure *mechanism* is deliberately general —
+> the key is `nonexclusive_bundle_filter`, not `economics_ladder_filter`, and `excluded_by_cell`
+> takes any number of cells — so rank 1 inherits the surface if it is approved. **That is the
+> mechanism generalising, not the ruling.**
 
 ---
 

@@ -3,9 +3,10 @@
 **Cell rank 2 of 19 · ECE 5.29 pp on 28,613 published outcomes · gap −0.47 · 65,524
 excess-outcomes** (payload `2026-08-28T20:37:41Z`, population `q268`).
 
-Status: **DESIGNED, NOT BUILT. Worth 0.00 pp today.** Banked so freeze-lift day is a merge, not
-a cold start. The frozen file is untouched — `git diff origin/master -- backend/app/` is empty
-on this branch.
+Status: **RULED BY ALEX AND LANDABLE — 2026-08-28, option (b), APPROVED WITH DISCLOSURE.** Still
+NOT BUILT and still worth 0.00 pp today (the frozen file is untouched — `git diff origin/master --
+backend/app/` is empty on this branch), but the decision it was waiting on has been taken. It
+ships when ruling 009's amended freeze lifts. **§9 is the ruling and the contract it obliges.**
 
 ---
 
@@ -385,3 +386,65 @@ load-bearing. Guarded structurally.
    the refusals are the evidence that the gate works.
 3. Re-measure the published curve and record the delta against the 2.61 prediction. **A cell is
    crossed off only when the published number moved.**
+
+---
+
+## 9. THE RULING — Alex, 2026-08-28: option (b), APPROVED WITH DISCLOSURE
+
+Staged to this lane as `runner-inbox/calibration/017-econ-rule-b.md`, in Alex's decision:
+
+> *The kalshi/economics population fix is APPROVED WITH DISCLOSURE: the correlated intraday
+> index-ladder rungs stop entering the published curve (5.29 -> 2.61pp, cell stays material and
+> PASSES), AND the removed rows are disclosed on the page as a named, counted exclusion exactly
+> like the other 13 filters — "nobody later reads the smaller curve as a fixed one."*
+
+**The exclusion and its disclosure are one deliverable.** A release that lands the filter without
+the page copy has not executed this ruling; it has executed half of it, and the half it dropped is
+the half that protects the reader.
+
+### 9.1 What lands in the frozen file, when the freeze lifts
+
+`is_nonexclusive_bundle` **already exists in the producer** as a census flag, with
+`NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT` and the comment *"this flag does NOT gate `deduped` outside
+esports"*. The rule is that flag's promotion, not a new predicate:
+
+| | |
+|---|---|
+| test | `n_outcomes >= 3 AND win_count >= 2` **OR** published price sum > **1.15**, and never a proved-exclusive field — RULE E, §4 |
+| scope | an allowlist keyed on **`(source, category)`**, seeded `{(kalshi, economics)}`. **Never category alone** — CAL-P114 measured that `polymarket/economics` goes 3.91 → **17.75** under category-only scoping |
+| shipped with | **E2** (winner-only single capture) and **E3** (`malformed_binaries` stops requiring the default-true `mutually_exclusive` column). E alone lands the cell at 3.00, exactly at the bar; E+E2+E3 lands it at **2.61** |
+| never | with **T alone** — T without E takes this cell 5.29 → **5.73**, worse than doing nothing (§4, note 1) |
+| payload key | **`nonexclusive_bundle_filter`** — a NEW key, so the live `esports_multi_bundle_filter` contract does not change shape or meaning under existing consumers |
+
+### 9.2 The disclosure contract, and it is BUILT
+
+The payload key must carry `{applies_to, rule, excluded, included?, excluded_by_cell}`, where
+`excluded_by_cell` is keyed `"<source>/<category>"`. **The per-cell map is not optional detail:**
+the filter is allowlisted per cell, so a single total would hide which cell shrank, and the whole
+point of the ruling is that the reader can see that.
+
+The page half **is already on this branch and green** — `frontend/app/calibration/page.tsx`,
+in the exclusions list between `esports_multi_bundle_filter` and `exclusion_symmetry`, gated on
+`excluded > 0` exactly like the four filters above it, so it renders **nothing** until the backend
+key exists. Type: `CalibrationNonexclusiveBundleFilter` in `frontend/lib/api.ts`. Guard:
+`frontend/__tests__/lib/calibrationNonexclusiveBundleDisclosure.test.tsx`, 6 tests, mutation-checked
+(softening the closing clause reds it; zeroing the count binding reds it).
+
+Three things the copy says, each pinned by a test because each is a clause of the ruling:
+
+1. the rule text and the total, from the payload;
+2. **the per-cell counts**, sorted biggest-first;
+3. *"This one shrank the curve rather than improving it: the error on these cells fell because rows
+   that were never forecasts of a single question stopped being counted, not because our prices got
+   better. We publish the count per cell so that is checkable and so the smaller curve is never read
+   as a fixed one."*
+
+### 9.3 What the ruling does NOT cover, and must not be read as covering
+
+**`polymarket/baseball` (rank 1) is a separate decision.** Its rule (CAL-P117, K′) removes a
+further **~2.7% of the published curve** on the same argument, and the two together come to
+**~5.7%**. Alex has ruled the 3.0%; he has not been asked about the 5.7%. It is item 9 in
+`YOUR-TURN.md`. The disclosure *mechanism* built here is deliberately general — the payload key is
+`nonexclusive_bundle_filter`, not `economics_ladder_filter`, and `excluded_by_cell` takes any
+number of cells — so if rank 1 is approved it inherits the surface rather than needing a second
+one. **That is the mechanism generalising, not the ruling.**
