@@ -131,6 +131,24 @@ function PlayerCard({
         heading={ADVANCEMENT_HEADING}
         testId={`${testId}-path`}
       />
+      {/* A LADDER THAT DOES NOT CLIMB SAYS SO (UX-P152).
+          The market sometimes prices "reach the final" above "reach the
+          semis" — 21 of 84 ladder players on 2026-08-26, all in the sub-5%
+          tail. The grid's standing ruling is report, not correct, because
+          fixing it would be the page lying on the market's behalf. On the
+          grid that inversion is two cells in an 84-row table and reads as
+          noise; here it is two of five large rows on one card, and silence
+          would read as our arithmetic rather than theirs. */}
+      {row.monotonic === false && (
+        <p
+          className="-mt-3 text-[11px] leading-snug text-text-muted"
+          data-testid={`${testId}-incoherent`}
+        >
+          These came from separate questions and they disagree — one later round
+          is priced above an earlier one, which cannot both be true. Shown as
+          the market has them.
+        </p>
+      )}
     </div>
   );
 }

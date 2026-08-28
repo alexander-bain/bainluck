@@ -71,6 +71,23 @@ final class DiscoverViewModelDeadlineTests: XCTestCase {
         }
     }
 
+    /// Succeeds, but only after `delay`. Stands in for the real production cold
+    /// build a known principal pays: measured 4.48s wall / 3.98s server on
+    /// 2026-08-28 at the native first-paint shape, against a 6s client ceiling.
+    private nonisolated final class SlowSuccessFake: DiscoverFeedProviding, @unchecked Sendable {
+        private let delay: TimeInterval
+        private let response: FeedResponse
+        init(delay: TimeInterval, response: FeedResponse) {
+            self.delay = delay; self.response = response
+        }
+        nonisolated func fetchDiscoverFeed(
+            limit: Int, offset: Int, eventPct: Double?, cacheTTL: TimeInterval?
+        ) async throws -> FeedResponse {
+            try await Task.sleep(for: .seconds(delay))
+            return response
+        }
+    }
+
     private func markerResponse() throws -> FeedResponse {
         let json = """
         {"items":[\(futuresJSON(999))],"total":1,"limit":50,"offset":0,"has_more":false}
@@ -123,8 +140,12 @@ final class DiscoverViewModelDeadlineTests: XCTestCase {
 
     func testSuspendedRevalidateCancelledButLastGoodPreserved() async throws {
         let fake = HangingFakeClient()
+        // Q425: this load IS seeded, so the seeded budget is the one that binds.
+        // Pinned to the same 0.3s the test was written around, so it still proves
+        // "cancelled at the budget" rather than silently waiting the new default.
         let vm = DiscoverViewModel(client: fake, lastGood: FakeLastGood(try cached([1, 2, 3])),
-                                   telemetry: nil, retryBudget: 0.3, retryBackoff: 0)
+                                   telemetry: nil, retryBudget: 0.3,
+                                   seededRetryBudget: 0.3, retryBackoff: 0)
 
         let started = Date()
         await vm.load()
@@ -158,6 +179,62 @@ final class DiscoverViewModelDeadlineTests: XCTestCase {
         XCTAssertLessThan(elapsed, 3.0, "settled within the total budget — no unbounded hang")
         XCTAssertTrue(vm.items.isEmpty,
             "no cache and the retry threw → honest error, never the marker from call 2")
+        XCTAssertEqual(vm.error, "Couldn't load feed")
+        XCTAssertFalse(vm.loading)
+    }
+
+    // MARK: - Q425: the budget is chosen by what is ON SCREEN
+
+    /// RED BEFORE THE FIX. A seeded revalidate that would have landed is thrown
+    /// away by the 6s ceiling, and the user keeps stale bytes behind "couldn't
+    /// refresh" — Alex's two-card screen, exactly.
+    ///
+    /// Measured cause (production, 2026-08-28, `limit=50&offset=0&event_pct=0.15`,
+    /// same minute, same client): a fresh session id takes the #2203 inert-principal
+    /// share and returns in 0.49s (`shared_stale_hit`); a REAL principal's session
+    /// id cannot take that share — its gate is `ctx == PersonalizationContext()` —
+    /// and pays a full private cold build, 4.48s, `X-Feed-Cache: miss`. Both return
+    /// the SAME full 50-card board. The board is not missing; the client is
+    /// discarding it.
+    ///
+    /// Pre-fix the deadline is `retryBudget` (0.1s here) whether or not anything is
+    /// painted, so the 0.5s response is cancelled and `items` stays the seed.
+    /// Post-fix a seeded load gets `seededRetryBudget`, the response lands, and the
+    /// full board publishes.
+    func testSeededRevalidateWaitsTheSeededBudgetAndPublishesTheFullBoard() async throws {
+        let fake = SlowSuccessFake(delay: 0.5, response: try markerResponse())
+        let vm = DiscoverViewModel(client: fake, lastGood: FakeLastGood(try cached([1, 2, 3])),
+                                   telemetry: nil, retryBudget: 0.1,
+                                   seededRetryBudget: 5, retryBackoff: 0)
+
+        await vm.load()
+
+        XCTAssertEqual(vm.items.map { $0.futures?.id }, [999],
+            "the seeded budget let the fresh board land — not the stale seed")
+        XCTAssertFalse(vm.refreshFailedShowingCache,
+            "a board that arrived is not a failed refresh")
+        XCTAssertNil(vm.error)
+        XCTAssertFalse(vm.loading)
+    }
+
+    /// CONTROL — the short budget must still bind when the screen is EMPTY. This is
+    /// the half that must not change: with nothing painted the user is watching a
+    /// spinner and is owed an honest error quickly, so widening the seeded budget
+    /// must not widen this one. Green on both sides would mean the fix was a global
+    /// budget increase; this asserts it is not.
+    func testUnseededLoadStillUsesTheShortBudget() async throws {
+        let fake = SlowSuccessFake(delay: 5, response: try markerResponse())
+        let vm = DiscoverViewModel(client: fake, lastGood: FakeLastGood(nil),
+                                   telemetry: nil, retryBudget: 0.3,
+                                   seededRetryBudget: 20, retryBackoff: 0)
+
+        let started = Date()
+        await vm.load()
+        let elapsed = Date().timeIntervalSince(started)
+
+        XCTAssertLessThan(elapsed, 3.0,
+            "empty screen still gives up at retryBudget, not at seededRetryBudget")
+        XCTAssertTrue(vm.items.isEmpty)
         XCTAssertEqual(vm.error, "Couldn't load feed")
         XCTAssertFalse(vm.loading)
     }

@@ -58,11 +58,22 @@ class TestTheListIsDerivedAndComplete:
     # the rail really emits. A pinned explicit ten follows, so a metadata-wide breakage
     # cannot pass by making every side equally empty.
 
-    def test_the_derived_set_is_the_expected_ten(self):
+    def test_the_derived_set_is_the_expected_eleven(self):
         """Named explicitly so a metadata-wide breakage cannot make the equality above
-        pass by making BOTH sides wrong (e.g. an import failure yielding two empties)."""
+        pass by making BOTH sides wrong (e.g. an import failure yielding two empties).
+
+        WAS TEN until 2026-08-26 (#2213, queue 413). `event_provider_anchors` has
+        existed in Postgres since the 2026-08-24 `anchors_and_captures` migration and
+        was invisible to this derivation until it gained an ORM model. It needs no
+        entry in `EVENT_SCOPED_UNIQUE_KEYS`: its unique key is
+        `(source, source_id, id_kind)` and does NOT include `event_id`, so two rows
+        being merged cannot hold the same anchor key — the index already made that
+        impossible — and a plain repoint cannot collide. That was checked rather than
+        assumed, because it is the exact property the other two entries exist for.
+        """
         assert set(event_fk_tables()) == {
             "espn_snapshots",
+            "event_provider_anchors",
             "futures_markets",
             "game_moments",
             "line_movement_analyses",

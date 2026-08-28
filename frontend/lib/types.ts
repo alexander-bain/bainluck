@@ -2105,6 +2105,16 @@ export interface TournamentAdvancementRow {
   record: string | null;
   conference: string | null;
   stages: TournamentAdvancementStage[];
+  /**
+   * Does the ladder fall the way a draw must — never likelier later?
+   *
+   * `false` means the market priced "reach the final" above "reach the semis"
+   * for this player. Reported and not corrected (the grid's standing ruling:
+   * 21 of 84 ladder players violate it, all in the sub-5% tail, and it is the
+   * market's own incoherence). The card says so out loud, because at one
+   * match's magnification a silent inversion reads as our mistake.
+   */
+  monotonic?: boolean;
 }
 
 export interface TournamentAdvancement {

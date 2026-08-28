@@ -38,10 +38,13 @@ class _FakeScalarResult:
 
 
 class _FakeExecuteResult:
-    def __init__(self, *, scalar=None, rows=None, first_row=None):
+    def __init__(self, *, scalar=None, rows=None, first_row=None, rowcount=0):
         self._scalar = scalar
         self._rows = rows or []
         self._first_row = first_row
+        #: DML results carry one; a SELECT double leaving it 0 is harmless
+        #: because nothing reads `rowcount` off a SELECT.
+        self.rowcount = rowcount
 
     def scalar_one_or_none(self):
         return self._scalar
@@ -64,12 +67,32 @@ class _FakeRegistrySession:
         self.flushed = 0
         self.statements = []
         self.structured_params = None
+        #: Anchor-channel traffic, recorded so a suite can assert the channel
+        #: was NOT consulted without having to model it.
+        self.anchor_statements = []
 
-    async def execute(self, statement):
+    async def execute(self, statement, params=None):
         self.statements.append(statement)
         statement_text = str(statement)
 
         if "pg_advisory_xact_lock" in statement_text:
+            return _FakeExecuteResult()
+
+        # `event_provider_anchors` — cascade Step 2 and its write path (#2213).
+        # The default is an EMPTY channel, which is both production's state when
+        # this landed (0 rows) and the correct baseline for the registry suites:
+        # none of them is about anchors, so all of them must see the anchor path
+        # find nothing and change nothing. A suite that wants a populated
+        # channel subclasses this double — see
+        # `tests/test_anchor_channel_consumer_2213.py`.
+        #
+        # `params` is accepted because those are `text()` statements carrying
+        # bound parameters positionally, unlike the Core selects below.
+        if (
+            "event_provider_anchors" in statement_text
+            or "UPDATE events SET event_tags" in statement_text
+        ):
+            self.anchor_statements.append((statement_text, params))
             return _FakeExecuteResult()
 
         compiled_params = statement.compile().params

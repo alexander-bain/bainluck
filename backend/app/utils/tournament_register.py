@@ -1066,6 +1066,20 @@ def diff_against_inventory(register: dict[str, Any], candidates: Any) -> list[st
 
     for block in priced_source_blocks(register):
         if block.get("status") == "missing":
+            # Q426, so the next reader does not re-derive this: skipping
+            # `missing` is right for THIS comparator and it is also the reason
+            # nothing was red for a day of the US Open. The draw census wrote
+            # `missing` against 96 R128 fixtures, markets appeared overnight,
+            # and a check that only verifies pinned identities cannot notice a
+            # row that has no pin — a guard blind to a population reports on it
+            # exactly like a healthy one (gotcha #53).
+            #
+            # The fix is deliberately NOT here. Asking the database what it
+            # thinks the tournament contains is the fuzzy discovery this whole
+            # design refuses (see `build_candidates`). The inverse question is
+            # asked by `tasks/tournament_matchup_linker`, which resolves what it
+            # can against an id-anchored rule and reports `needy` against
+            # `resolved` so an unfilled fixture is a number somebody can read.
             continue
         key = (block.get("source"), block.get("market_id"), block.get("outcome_id"))
         matches = index.get(key, [])

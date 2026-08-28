@@ -42,10 +42,19 @@ from app.utils.tournament_event_link import (  # noqa: E402
     pinned_market_ids,
 )
 from app.utils.tournament_grid import build_grids  # noqa: E402
+from app.utils.tournament_link_resolver import (  # noqa: E402
+    apply_resolved_links,
+    resolve_matchup_links,
+)
 from app.utils.tournament_match import build_match_detail  # noqa: E402
 from app.utils.tournament_register import TournamentRegister, load_register  # noqa: E402
 from app.utils.tournament_slate import build_results  # noqa: E402
-from scripts.capture_match_payload import _live_block, load_group  # noqa: E402
+from app.tasks.tournament_matchup_linker import (  # noqa: E402
+    MAX_CANDIDATE_MARKETS,
+    WATCHED,
+    _match_date,
+)
+from scripts.capture_match_payload import _live_block, _sql_str, load_group  # noqa: E402
 from scripts.capture_tournament_payload import _db_query, _espn, _load_prices  # noqa: E402
 
 API = os.environ.get("BAINLUCK_API", "https://api.bainluck.com")
@@ -54,6 +63,76 @@ API = os.environ.get("BAINLUCK_API", "https://api.bainluck.com")
 def _api(path: str) -> Any:
     with urllib.request.urlopen(f"{API}{path}", timeout=60) as response:
         return json.loads(response.read())
+
+
+def kalshi_candidates(series: tuple[str, ...]) -> list[dict[str, Any]]:
+    """``tournament_matchup_linker._load_candidates``, over the wire.
+
+    The same two-query shape — markets in the named series, then their
+    outcomes — so the resolver sees exactly the candidate set it sees in
+    production.
+    """
+    if not series:
+        return []
+    likes = " OR ".join(f"m.external_id LIKE {_sql_str(name + '-%')}" for name in series)
+
+    # BATCHED, because `db-query` truncates at 1000 rows and a silent
+    # truncation here would hand the resolver a partial candidate set — which
+    # looks exactly like "Kalshi does not quote that match". Markets first,
+    # then their outcomes in chunks, so neither query can reach the cap.
+    by_id: dict[int, dict[str, Any]] = {}
+    offset = 0
+    while True:
+        rows = _db_query(
+            "SELECT m.id, m.external_id, m.name FROM futures_markets m "
+            f"WHERE m.source = 'kalshi' AND ({likes}) "
+            # NEWEST FIRST, and this is load-bearing. These two series carry
+            # 5,007 markets (measured 2026-08-28) against a 2,000 cap, so two
+            # thirds of the pool is dropped either way — and the US Open's are
+            # the newest rows in it. Ascending by id returns 2,000 markets from
+            # 2023 and resolves nothing. Production's own query has NO
+            # `ORDER BY` under the same cap, which is a real finding this
+            # queue reports rather than something to reproduce.
+            f"ORDER BY m.id DESC LIMIT 500 OFFSET {offset}"
+        )
+        for mid, external, name in rows:
+            by_id[int(mid)] = {
+                "source": "kalshi",
+                "market_id": int(mid),
+                "external_id": external,
+                "name": name,
+                "match_date": _match_date(external),
+                "outcomes": [],
+            }
+        if len(rows) < 500:
+            break
+        offset += 500
+        if offset >= MAX_CANDIDATE_MARKETS:
+            print(
+                f"WARNING: stopped at {MAX_CANDIDATE_MARKETS} candidate markets — "
+                "the resolver in production applies the same cap",
+                file=sys.stderr,
+            )
+            break
+
+    ids = sorted(by_id)
+    for start in range(0, len(ids), 200):
+        chunk = ",".join(str(i) for i in ids[start : start + 200])
+        for mid, oid, oname, oext in _db_query(
+            "SELECT o.market_id, o.id, o.name, o.external_id FROM futures_outcomes o "
+            f"WHERE o.market_id IN ({chunk}) ORDER BY o.market_id, o.id"
+        ):
+            by_id[int(mid)]["outcomes"].append(
+                {"outcome_id": int(oid), "name": oname, "external_id": oext}
+            )
+
+    return list(by_id.values())
+
+
+def _watched_series(slug: str) -> tuple[str, ...]:
+    """The linker's own series list for this tournament. Named there, read here."""
+    entry = next((w for w in WATCHED if w["tournament"] == slug), None)
+    return tuple(entry["kalshi_series"]) if entry else ()
 
 
 def market_event_ids(market_ids: list[int]) -> dict[int, Optional[int]]:
@@ -127,6 +206,24 @@ def main() -> int:
     register = load_register(args.slug, spec["season"])
     if register is None:
         raise SystemExit(f"no register for {args.slug}")
+
+    # THE Q426 OVERLAY, THROUGH THE SHIPPED RESOLVER (not a shortcut).
+    #
+    # The committed register marks all 96 R128 blocks `missing`, so without the
+    # overlay nothing pins a market and nothing dereferences to an event. The
+    # linker's Redis output is not reachable from here, so its two halves are
+    # run directly instead: the candidate load is the same series scan over the
+    # wire, and `resolve_matchup_links` / `apply_resolved_links` are the
+    # shipped functions, imported. No name matching of this script's own — the
+    # only thing reproduced is the query.
+    register, applied = apply_resolved_links(
+        register,
+        resolve_matchup_links(
+            register, kalshi_candidates(_watched_series(args.slug)), now=now
+        ).get("links")
+        or {},
+    )
+    print(f"link overlay filled {applied} blocks", file=sys.stderr)
 
     links = resolve_links(register)
     print(

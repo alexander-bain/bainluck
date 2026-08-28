@@ -171,7 +171,7 @@ interface ResolvedSource {
  * — the reader is never shouted at by five names over a chart whose subject is
  * one number.
  */
-function SourceEndLabel(props: {
+export function SourceEndLabel(props: {
   x?: number;
   y?: number;
   index?: number;

@@ -2417,7 +2417,15 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         # DO NOT set this True to "fix" a duplicate. Duplicates are the declared,
         # bounded price; reconciliation drains them once a real id arrives. Setting
         # it True re-opens the path that blended two games onto one row.
-        claim=EventClaim(market.source, external_id),
+        # `external_id` here is SYNTHETIC — `pm_{source}_{market.external_id}`.
+        # `provider_id` carries what Kalshi/Polymarket actually call the thing,
+        # which is the only string the anchor channel can key on (#2213). Without
+        # it, `kalshi_anchor_key` finds no game token inside the `pm_kalshi_`
+        # prefix and degrades to `id_kind='market'` — recorded, and permanently
+        # unable to anchor. The rail would have written rows and resolved nothing.
+        claim=EventClaim(
+            market.source, external_id, provider_id=market.external_id
+        ),
         status=status,
     )
     try:

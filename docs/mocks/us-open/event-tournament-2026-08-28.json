@@ -1,0 +1,194 @@
+{
+  "event_id": 15293809,
+  "tournament": {
+    "slug": "us-open",
+    "title": "US Open 2026",
+    "url": "/tournaments/us-open"
+  },
+  "matchup_key": "mens-singles:alexander-bublik-vs-j-j-wolf:2026-08-30",
+  "round": "R128",
+  "draw_label": "Men's Singles",
+  "advancement": {
+    "event_id": 15293809,
+    "league": "us-open",
+    "league_name": "US Open 2026",
+    "grid_url": "/tournaments/us-open",
+    "columns": [
+      {
+        "key": "R16",
+        "label": "Round of 16",
+        "order": 0
+      },
+      {
+        "key": "QF",
+        "label": "Quarter-finals",
+        "order": 1
+      },
+      {
+        "key": "SF",
+        "label": "Semi-finals",
+        "order": 2
+      },
+      {
+        "key": "F",
+        "label": "Final",
+        "order": 3
+      },
+      {
+        "key": "title",
+        "label": "Title",
+        "order": 4
+      }
+    ],
+    "home_team": {
+      "name": "Alexander Bublik",
+      "short_name": "Bublik",
+      "team_id": null,
+      "logo_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Sascha_Bublik_%282023_DC_Open%29_05_%28cropped%29.jpg/330px-Sascha_Bublik_%282023_DC_Open%29_05_%28cropped%29.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "stages": [
+        {
+          "key": "R16",
+          "label": "Round of 16",
+          "probability": 0.31,
+          "trend_24h": null,
+          "sources": [
+            {
+              "source": "polymarket",
+              "probability": 0.31
+            }
+          ]
+        },
+        {
+          "key": "QF",
+          "label": "Quarter-finals",
+          "probability": 0.105,
+          "trend_24h": null,
+          "sources": [
+            {
+              "source": "polymarket",
+              "probability": 0.105
+            }
+          ]
+        },
+        {
+          "key": "SF",
+          "label": "Semi-finals",
+          "probability": 0.105,
+          "trend_24h": null,
+          "sources": [
+            {
+              "source": "polymarket",
+              "probability": 0.105
+            }
+          ]
+        },
+        {
+          "key": "F",
+          "label": "Final",
+          "probability": 0.055,
+          "trend_24h": null,
+          "sources": [
+            {
+              "source": "polymarket",
+              "probability": 0.055
+            }
+          ]
+        },
+        {
+          "key": "title",
+          "label": "Title",
+          "probability": 0.00775,
+          "trend_24h": null,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.01
+            },
+            {
+              "source": "polymarket",
+              "probability": 0.0055
+            }
+          ]
+        }
+      ]
+    },
+    "away_team": {
+      "name": "J.J. Wolf",
+      "short_name": "Wolf",
+      "team_id": null,
+      "logo_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/06/J.J._Wolf_%282023_US_Open%29_01_%28cropped%29.jpg/330px-J.J._Wolf_%282023_US_Open%29_01_%28cropped%29.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "stages": [
+        {
+          "key": "R16",
+          "label": "Round of 16",
+          "probability": 0.055,
+          "trend_24h": null,
+          "sources": [
+            {
+              "source": "polymarket",
+              "probability": 0.055
+            }
+          ]
+        },
+        {
+          "key": "QF",
+          "label": "Quarter-finals",
+          "probability": 0.046,
+          "trend_24h": null,
+          "sources": [
+            {
+              "source": "polymarket",
+              "probability": 0.046
+            }
+          ]
+        },
+        {
+          "key": "SF",
+          "label": "Semi-finals",
+          "probability": 0.0245,
+          "trend_24h": null,
+          "sources": [
+            {
+              "source": "polymarket",
+              "probability": 0.0245
+            }
+          ]
+        },
+        {
+          "key": "F",
+          "label": "Final",
+          "probability": 0.036,
+          "trend_24h": null,
+          "sources": [
+            {
+              "source": "polymarket",
+              "probability": 0.036
+            }
+          ]
+        },
+        {
+          "key": "title",
+          "label": "Title",
+          "probability": null,
+          "trend_24h": null,
+          "sources": []
+        }
+      ]
+    },
+    "side_order": "event"
+  },
+  "props": [],
+  "props_count": 0,
+  "props_dropped": {},
+  "decided": false,
+  "result": null,
+  "generated_at": "2026-08-28T20:02:58.722863+00:00"
+}

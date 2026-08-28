@@ -1,0 +1,258 @@
+{
+  "event_id": 15293809,
+  "home_team": "Alexander Bublik",
+  "away_team": "JJ Wolf",
+  "commence_time": "2026-08-30T15:00:00+00:00",
+  "completed_at": null,
+  "status": "scheduled",
+  "time_domain": {
+    "start": "2026-08-30T15:00:00+00:00",
+    "end": "2026-08-30T15:30:00+00:00",
+    "is_live": true,
+    "min_window_seconds": 1800
+  },
+  "history": [
+    {
+      "timestamp": "2026-08-27T22:05:00+00:00",
+      "home_probability": 0.6898,
+      "away_probability": 0.3102,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null,
+      "bookmaker_count": 2,
+      "probability_range": {
+        "min": 0.689,
+        "max": 0.6907
+      }
+    },
+    {
+      "timestamp": "2026-08-28T02:05:00+00:00",
+      "home_probability": 0.704,
+      "away_probability": 0.296,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null,
+      "bookmaker_count": 3,
+      "probability_range": {
+        "min": 0.6945,
+        "max": 0.7124
+      }
+    },
+    {
+      "timestamp": "2026-08-28T06:38:00+00:00",
+      "home_probability": 0.7091,
+      "away_probability": 0.2909,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null,
+      "bookmaker_count": 1,
+      "probability_range": {
+        "min": 0.7091,
+        "max": 0.7091
+      }
+    },
+    {
+      "timestamp": "2026-08-28T10:39:00+00:00",
+      "home_probability": 0.6571,
+      "away_probability": 0.3429,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null,
+      "bookmaker_count": 6,
+      "probability_range": {
+        "min": 0.6454,
+        "max": 0.6675
+      }
+    },
+    {
+      "timestamp": "2026-08-28T15:06:00+00:00",
+      "home_probability": 0.6693,
+      "away_probability": 0.3307,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null,
+      "bookmaker_count": 6,
+      "probability_range": {
+        "min": 0.66,
+        "max": 0.6782
+      }
+    }
+  ],
+  "bookmaker_history": {
+    "mybookieag": [
+      {
+        "timestamp": "2026-08-27T22:05:00+00:00",
+        "home_probability": 0.689,
+        "away_probability": 0.311,
+        "valid_until": "2026-08-28T02:05:00+00:00",
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "timestamp": "2026-08-28T02:05:00+00:00",
+        "home_probability": 0.7051,
+        "away_probability": 0.2949,
+        "valid_until": "2026-08-28T10:39:00+00:00",
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "timestamp": "2026-08-28T10:39:00+00:00",
+        "home_probability": 0.6533,
+        "away_probability": 0.3467,
+        "valid_until": "2026-08-28T15:06:00+00:00",
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "timestamp": "2026-08-28T15:06:00+00:00",
+        "home_probability": 0.6618,
+        "away_probability": 0.3382,
+        "valid_until": null,
+        "projected_home_score": null,
+        "projected_away_score": null
+      }
+    ],
+    "draftkings": [
+      {
+        "timestamp": "2026-08-27T22:05:00+00:00",
+        "home_probability": 0.6907,
+        "away_probability": 0.3093,
+        "valid_until": "2026-08-28T02:05:00+00:00",
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "timestamp": "2026-08-28T02:05:00+00:00",
+        "home_probability": 0.7124,
+        "away_probability": 0.2876,
+        "valid_until": "2026-08-28T10:39:00+00:00",
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "timestamp": "2026-08-28T10:39:00+00:00",
+        "home_probability": 0.6454,
+        "away_probability": 0.3546,
+        "valid_until": "2026-08-28T15:06:00+00:00",
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "timestamp": "2026-08-28T15:06:00+00:00",
+        "home_probability": 0.6645,
+        "away_probability": 0.3355,
+        "valid_until": null,
+        "projected_home_score": null,
+        "projected_away_score": null
+      }
+    ],
+    "betrivers": [
+      {
+        "timestamp": "2026-08-28T02:05:00+00:00",
+        "home_probability": 0.6945,
+        "away_probability": 0.3055,
+        "valid_until": "2026-08-28T10:39:00+00:00",
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "timestamp": "2026-08-28T10:39:00+00:00",
+        "home_probability": 0.6612,
+        "away_probability": 0.3388,
+        "valid_until": "2026-08-28T15:06:00+00:00",
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "timestamp": "2026-08-28T15:06:00+00:00",
+        "home_probability": 0.6782,
+        "away_probability": 0.3218,
+        "valid_until": null,
+        "projected_home_score": null,
+        "projected_away_score": null
+      }
+    ],
+    "fanatics": [
+      {
+        "timestamp": "2026-08-28T06:38:00+00:00",
+        "home_probability": 0.7091,
+        "away_probability": 0.2909,
+        "valid_until": "2026-08-28T10:39:00+00:00",
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "timestamp": "2026-08-28T10:39:00+00:00",
+        "home_probability": 0.6571,
+        "away_probability": 0.3429,
+        "valid_until": null,
+        "projected_home_score": null,
+        "projected_away_score": null
+      }
+    ],
+    "bovada": [
+      {
+        "timestamp": "2026-08-28T10:39:00+00:00",
+        "home_probability": 0.6581,
+        "away_probability": 0.3419,
+        "valid_until": "2026-08-28T15:06:00+00:00",
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "timestamp": "2026-08-28T15:06:00+00:00",
+        "home_probability": 0.6756,
+        "away_probability": 0.3244,
+        "valid_until": null,
+        "projected_home_score": null,
+        "projected_away_score": null
+      }
+    ],
+    "fanduel": [
+      {
+        "timestamp": "2026-08-28T10:39:00+00:00",
+        "home_probability": 0.6675,
+        "away_probability": 0.3325,
+        "valid_until": "2026-08-28T15:06:00+00:00",
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "timestamp": "2026-08-28T15:06:00+00:00",
+        "home_probability": 0.6756,
+        "away_probability": 0.3244,
+        "valid_until": null,
+        "projected_home_score": null,
+        "projected_away_score": null
+      }
+    ],
+    "williamhill_us": [
+      {
+        "timestamp": "2026-08-28T15:06:00+00:00",
+        "home_probability": 0.66,
+        "away_probability": 0.34,
+        "valid_until": null,
+        "projected_home_score": null,
+        "projected_away_score": null
+      }
+    ]
+  },
+  "score_history": [],
+  "espn_history": [],
+  "win_prob_history": {},
+  "win_prob_sources": {},
+  "scoring_plays": [],
+  "moments": [],
+  "period_markers": [],
+  "aggregate_line": null,
+  "pm_spread_data": {
+    "implied_spreads": {},
+    "implied_totals": {},
+    "projected_final": null
+  },
+  "points": 5,
+  "bookmaker_count": 7,
+  "snapshot_count": 18,
+  "espn_snapshot_count": 0
+}

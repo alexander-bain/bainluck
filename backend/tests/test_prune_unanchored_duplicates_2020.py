@@ -632,13 +632,20 @@ class TestTheHostileSpecimens:
         # Both enumerations run 2026-08-20 — codex's C-EVENT-CHILD-CENSUS from
         # information_schema, and lane1's independent one (fingerprint
         # 31ae6a56ff829aa5). They agreed on the SET. This pins it.
+        # UPDATED 2026-08-26 (#2213, queue 413): 10 -> 11. `event_provider_anchors`
+        # was created in Postgres on 2026-08-24 by the `anchors_and_captures`
+        # migration and had no ORM model until queue 413, so this DERIVATION could
+        # not see it and the two 08-20 enumerations could not have listed it. The
+        # pin moved because the schema did, which is the case this test is for —
+        # it turned CI red on the new model exactly as designed, and the number is
+        # updated here together with the disposition rather than instead of it.
         assert set(derived) == {
-            "espn_snapshots", "futures_markets", "game_moments",
-            "line_movement_analyses", "odds_aggregated", "odds_snapshots",
-            "ranking_judgments", "score_snapshots", "scoring_plays",
-            "win_prob_snapshots",
+            "espn_snapshots", "event_provider_anchors", "futures_markets",
+            "game_moments", "line_movement_analyses", "odds_aggregated",
+            "odds_snapshots", "ranking_judgments", "score_snapshots",
+            "scoring_plays", "win_prob_snapshots",
         }
-        assert len(derived) == 10
+        assert len(derived) == 11
         assert unclassified_event_children() == ()
         assert set(EVENT_CHILD_DISPOSITIONS) == set(derived)
 
@@ -699,7 +706,11 @@ class TestTheHostileSpecimens:
         session = _Session(deletable=5, batch_ids=[1])
         out = await prune(session, sport_id=37871)
         assert "game_moments" in out["cascading_tables"]
-        assert len(out["substance_tables"]) == 10
+        # The anchor table CASCADEs too, and it is the one child whose silent
+        # removal would also remove the proof that the deletion was correct — so
+        # it must appear by name, not merely be counted (#2213).
+        assert "event_provider_anchors" in out["cascading_tables"]
+        assert len(out["substance_tables"]) == 11
 
     # ── R5: the never-absorbs guard, read semantically ─────────────────────
 

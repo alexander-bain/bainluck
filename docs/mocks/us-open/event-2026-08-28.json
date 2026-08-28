@@ -1,0 +1,125 @@
+{
+  "id": 15293809,
+  "external_id": "ccec1e9522672756e21606135720d66d",
+  "sport": "tennis_atp_us_open",
+  "home_team": "Alexander Bublik",
+  "away_team": "JJ Wolf",
+  "commence_time": "2026-08-30T15:00:00+00:00",
+  "completed_at": null,
+  "status": "scheduled",
+  "home_score": null,
+  "away_score": null,
+  "metadata": {
+    "gender": "men",
+    "level": "professional",
+    "league": "ATP",
+    "importance": "unknown"
+  },
+  "event_tags": [
+    "class:other",
+    "gender:men",
+    "level:professional",
+    "sport:tennis",
+    "status:scheduled",
+    "tier:4",
+    "timing:weekend"
+  ],
+  "current_odds": {
+    "captured_at": "2026-08-28T15:06:13.230080+00:00",
+    "home_probability": 0.6675,
+    "away_probability": 0.3325,
+    "away_rendered_percent": 33,
+    "home_rendered_percent": 67,
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null,
+    "bookmaker_count": 7
+  },
+  "bookmaker_odds": [
+    {
+      "bookmaker": "fanatics",
+      "home_moneyline": -230,
+      "away_moneyline": 175,
+      "home_probability": 0.6571,
+      "away_probability": 0.3429,
+      "captured_at": "2026-08-28T10:39:03.646579+00:00",
+      "spread": null,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null
+    },
+    {
+      "bookmaker": "mybookieag",
+      "home_moneyline": -250,
+      "away_moneyline": 174,
+      "home_probability": 0.6618,
+      "away_probability": 0.3382,
+      "captured_at": "2026-08-28T15:06:13.218583+00:00",
+      "spread": null,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null
+    },
+    {
+      "bookmaker": "draftkings",
+      "home_moneyline": -236,
+      "away_moneyline": 182,
+      "home_probability": 0.6645,
+      "away_probability": 0.3355,
+      "captured_at": "2026-08-28T15:06:13.219688+00:00",
+      "spread": null,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null
+    },
+    {
+      "bookmaker": "betrivers",
+      "home_moneyline": -250,
+      "away_moneyline": 195,
+      "home_probability": 0.6782,
+      "away_probability": 0.3218,
+      "captured_at": "2026-08-28T15:06:13.222483+00:00",
+      "spread": null,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null
+    },
+    {
+      "bookmaker": "bovada",
+      "home_moneyline": -240,
+      "away_moneyline": 195,
+      "home_probability": 0.6756,
+      "away_probability": 0.3244,
+      "captured_at": "2026-08-28T15:06:13.225002+00:00",
+      "spread": null,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null
+    },
+    {
+      "bookmaker": "fanduel",
+      "home_moneyline": -240,
+      "away_moneyline": 195,
+      "home_probability": 0.6756,
+      "away_probability": 0.3244,
+      "captured_at": "2026-08-28T15:06:13.227532+00:00",
+      "spread": null,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null
+    },
+    {
+      "bookmaker": "williamhill_us",
+      "home_moneyline": -240,
+      "away_moneyline": 175,
+      "home_probability": 0.66,
+      "away_probability": 0.34,
+      "captured_at": "2026-08-28T15:06:13.230080+00:00",
+      "spread": null,
+      "over_under": null,
+      "projected_home_score": null,
+      "projected_away_score": null
+    }
+  ]
+}

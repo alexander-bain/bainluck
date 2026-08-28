@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
+from app.tasks.tournament_matchup_linker import apply_resolved_links, read_links
 from app.services import get_db
 from app.utils.tournament_advancement import build_advancement
 from app.utils.tournament_board import TREND_DAYS, build_boards
@@ -270,45 +271,22 @@ async def _load_series(
 async def _with_link_overlay(
     slug: str, register: dict[str, Any]
 ) -> tuple[dict[str, Any], int]:
-    """The Q426 link overlay, applied to the match page as well as the hub.
+    """The Q426 link overlay, for callers other than the hub.
 
-    ═══ WHY THIS IS HERE AND NOT ONLY IN `get_tournament` ═══
+    Same read the hub does inline, in one place, because a surface that did not
+    apply it would contradict the list it was reached from: on the 96 R128
+    fixtures the hub would print a probability and the other surface would say
+    no market exists — two surfaces disagreeing about one question, which is
+    the divergence the standing ruling exists to prevent.
 
-    Lane1's Q426 ships `tournament_matchup_linker`: the draw census ran once, at
-    the ceremony, and recorded ``status: "missing"`` against all 96 R128
-    fixtures because nobody quotes a first round before qualifying finishes. By
-    the next morning Kalshi quoted every one of them.  The linker re-asks on a
-    beat and the hub reads what it finds.
-
-    **A match page that did not read the same overlay would contradict the list
-    it was reached from.**  On those 96 fixtures the hub would print a
-    probability and the match's own page would say "no market has put a
-    probability on this match yet" — two surfaces disagreeing about one
-    question, which is the divergence the standing ruling exists to prevent, on
-    the main draw, in the week it starts.  It is also the worse half of the
-    disagreement: the reader arrives at the detail page expecting MORE.
-
-    ═══ WHY THE IMPORT IS INSIDE THE `try` ═══
-
-    Not defensiveness — an honest statement of what this branch holds.  The
-    linker and `apply_resolved_links` are lane1's, on master, and are NOT in
-    this branch's tree; this queue is not going to vendor a copy of them to
-    make an import statement look tidy.  Inside the `try`, the call degrades to
-    the committed register here and starts working the moment the two branches
-    meet, with no further edit.  That is the same posture `get_tournament`'s own
-    wrapper takes for the same overlay, and for the same reason: **the overlay
-    is an optimisation over the committed truth and must never be a gate.**
+    Never a gate. A linker outage falls back to the committed register, which
+    is where the page stood before the overlay existed.
 
     Returns the register (never mutated in place — gotcha #6: a module-level
     cached dict edited in place leaks one request's overlay into the next) and
     how many blocks were filled.
     """
     try:
-        from app.tasks.tournament_matchup_linker import (  # noqa: PLC0415
-            apply_resolved_links,
-            read_links,
-        )
-
         links = (await read_links(slug)).get("links") or {}
         return apply_resolved_links(register, links)
     except Exception as exc:  # noqa: BLE001 — an overlay is never a gate
@@ -590,14 +568,40 @@ async def _hub_payload(
         logger.error("registered tournament %s has no readable register", slug)
         raise HTTPException(status_code=503, detail="Tournament register unavailable")
 
-    # THE Q426 OVERLAY, BEFORE ANYTHING READS THE MATCHUPS. The committed
-    # register's 96 R128 blocks are all `status: "missing"` — the census ran at
-    # the ceremony, before anyone quoted a first round. The overlay is what
-    # gives them a `market_id`, and a `market_id` is the first hop of the
-    # id-anchored path to an `events` row (`tournament_event_link`). Without it
-    # every R128 fixture resolves `NO_PINNED_MARKET` and the whole draw loses
-    # its click-through in the week it starts.
-    register, auto_linked = await _with_link_overlay(slug, register)
+    # THE FIXTURES THE CENSUS FOUND NO MARKET FOR, LINKED SINCE (Q426), AND
+    # THE FIRST HOP OF THE ROUTE TO AN EVENT PAGE (UX-P152).
+    #
+    # The draw census ran once, at the ceremony, and recorded `status:
+    # "missing"` against all 96 R128 fixtures because nobody quotes a first
+    # round before qualifying finishes. By the next morning Kalshi quoted every
+    # one of them and the register still said there was no market, so the cards
+    # rendered blank while we held the prices.
+    #
+    # `tournament_matchup_linker` re-asks that question on a beat and writes
+    # what it finds; this reads it. Two properties make it safe to apply here
+    # rather than being the fuzzy request-time matching this module's docstring
+    # forbids: the resolution already happened in a task (this is a dict lookup
+    # of a pinned `(market_id, outcome_id)`, the same kind of read as the
+    # committed file), and `apply_resolved_links` may only replace a block the
+    # register itself marked `missing`. A curated pin is untouchable from here.
+    #
+    # UX-P152 gave the overlay a SECOND job. The `market_id` it fills in is the
+    # first hop of the id-anchored path to an `events` row
+    # (`tournament_event_link`), so without it every R128 fixture resolves
+    # `NO_PINNED_MARKET` and the whole main draw loses its click-through in the
+    # week it starts. That does not change the posture below: an overlay outage
+    # costs some cards their numbers and their link, never the page.
+    #
+    # Wrapped, and the bare `except` is the point: the overlay is an
+    # optimisation over the committed truth and must never be a gate. Falling
+    # back leaves the page exactly as the register wrote it, which is where it
+    # stood before this existed.
+    linked = 0
+    try:
+        links = (await read_links(slug)).get("links") or {}
+        register, linked = apply_resolved_links(register, links)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tournament link overlay failed for %s: %s", slug, exc)
 
     reg = TournamentRegister(register)
     board_outcome_ids = sorted(
@@ -693,6 +697,12 @@ async def _hub_payload(
         register, results=await _espn_results(slug), prices=prices
     )
     payload["broadcasts"] = reg.broadcasts
+    # How many blank fixtures the overlay filled this request. Reported rather
+    # than inferred: a page whose cards are dark because no market exists and
+    # one whose cards are dark because the linker died look identical from the
+    # outside, and that is the exact confusion that let this ship broken for a
+    # day (gotcha #53).
+    payload["auto_linked_matchups"] = linked
     payload["slug"] = slug
     payload["title"] = spec["title"]
     payload["subtitle"] = spec["subtitle"]
@@ -702,7 +712,6 @@ async def _hub_payload(
     payload["draw_release_label"] = spec["draw_release_label"]
     payload["main_draw_starts_at"] = spec["main_draw_starts_at"]
     payload["main_draw_label"] = spec["main_draw_label"]
-    payload["auto_linked_matchups"] = auto_linked
     # NO SILENT CAPS. `by_event` is what `/by-event/{id}` reads; the reason
     # counts are what makes a fixture with no click-through a named gap rather
     # than a row that quietly stopped being a link.

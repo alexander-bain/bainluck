@@ -302,6 +302,7 @@ class TestBeatScheduleCompleteness:
         # UX-P139 item 9 — ESPN tennis results into Redis, so the hub route
         # never makes a third-party call inside a GET.
         "sync-tournament-results",
+        "link-tournament-matchups",
         "horizon-sentinel-daily",
         "settled-concept-sentinel-daily",
         "board-sentinel-daily",
@@ -324,6 +325,9 @@ class TestBeatScheduleCompleteness:
         "backfill-espn-win-prob-oldest",
         "backfill-polymarket-winners",
         "clob-resolve-drain",
+        # #2077 (queue 419) — the nightly settlement-capture sweep. Gotcha #12:
+        # this allowlist is the reason a new beat entry cannot land silently.
+        "settlement-capture-sweep-nightly",
         "snapshot-coverage-metrics-daily",
         # "resolve-winners",  # RETIRED 2026-07-06 (#991) — redundant with backfill_winners
         "digest-external-feature-requests-weekly",
