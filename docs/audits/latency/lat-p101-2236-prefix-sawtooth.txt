@@ -1,0 +1,69 @@
+# api=https://api.bainluck.com commit=56dbbfa5 uptime_s=1511
+# started_utc=2026-08-27T19:35:47Z
+# t_s	shape	ms	status	live	ttl	stale	age_s
+3	sports_native	2606	miss	True	30	60	0.2	
+4	sports_web	895	miss	True	30	60	0.0	
+14	sports_native	755	hit	True	30	60	11.9	
+15	sports_web	867	hit	True	30	60	11.7	
+26	sports_native	714	hit	True	30	60	23.5	
+26	sports_web	313	hit	True	30	60	22.7	
+37	sports_native	468	stale_hit	True	30	60	34.3	
+37	sports_web	382	stale_hit	True	30	60	33.6	
+48	sports_native	513	stale_hit	True	30	60	45.2	
+48	sports_web	335	stale_hit	True	30	60	44.4	
+59	sports_native	1005	stale_hit	True	30	60	56.5	
+59	sports_web	478	stale_hit	True	30	60	55.9	
+73	sports_native	3513	miss	True	30	60	0.3	
+75	sports_web	1892	miss	True	30	60	0.1	
+85	sports_native	537	hit	True	30	60	12.8	
+86	sports_web	313	hit	True	30	60	11.0	
+96	sports_native	747	hit	True	30	60	23.9	
+97	sports_web	577	hit	True	30	60	22.3	
+107	sports_native	452	stale_hit	True	30	60	34.9	
+108	sports_web	306	stale_hit	True	30	60	33.1	
+118	sports_native	538	stale_hit	True	30	60	45.7	
+119	sports_web	306	stale_hit	True	30	60	43.9	
+129	sports_native	490	stale_hit	True	30	60	56.5	
+129	sports_web	388	stale_hit	True	30	60	54.8	
+144	sports_native	4558	miss	True	30	60	0.2	
+146	sports_web	2315	miss	True	30	60	0.0	
+158	sports_native	1776	hit	True	30	60	14.3	
+159	sports_web	1120	hit	True	30	60	12.9	
+171	sports_native	2008	hit	True	30	60	27.4	
+172	sports_web	681	hit	True	30	60	25.6	
+183	sports_native	974	stale_hit	True	30	60	39.1	
+184	sports_web	691	stale_hit	True	30	60	37.3	
+194	sports_native	873	stale_hit	True	30	60	50.6	
+196	sports_web	1384	hit	True	30	60	3.3	
+206	sports_native	483	hit	True	30	60	9.9	
+207	sports_web	397	hit	True	30	60	14.2	
+218	sports_native	808	hit	True	30	60	21.1	
+218	sports_web	855	hit	True	30	60	25.8	
+229	sports_native	473	stale_hit	True	30	60	32.5	
+229	sports_web	591	stale_hit	True	30	60	36.9	
+240	sports_native	486	stale_hit	True	30	60	43.6	
+240	sports_web	332	stale_hit	True	30	60	47.7	
+251	sports_native	498	stale_hit	True	30	60	54.4	
+251	sports_web	376	stale_hit	True	30	60	58.6	
+264	sports_native	2768	miss	True	30	60	0.2	
+265	sports_web	1108	miss	True	30	60	0.0	
+276	sports_native	608	hit	True	30	60	11.9	
+276	sports_web	388	hit	True	30	60	11.0	
+287	sports_native	622	hit	True	30	60	22.9	
+287	sports_web	312	hit	True	30	60	22.0	
+298	sports_native	735	stale_hit	True	30	60	33.9	
+298	sports_web	332	stale_hit	True	30	60	33.0	
+309	sports_native	684	stale_hit	True	30	60	45.0	
+309	sports_web	301	stale_hit	True	30	60	44.0	
+320	sports_native	893	stale_hit	True	30	60	56.2	
+321	sports_web	749	hit	True	30	60	0.6	
+331	sports_native	438	hit	True	30	60	8.3	
+332	sports_web	372	hit	True	30	60	11.4	
+342	sports_native	435	hit	True	30	60	19.1	
+342	sports_web	296	hit	True	30	60	22.1	
+353	sports_native	439	hit	True	30	60	29.8	
+353	sports_web	310	stale_hit	True	30	60	32.9	
+
+# --- summary ---------------------------------------------------
+# sports_native: n=31 live=31/31 MISS=4/31 warm_p50=608ms cold=[2606, 2768, 3513, 4558] max_age=56.5s
+# sports_web: n=31 live=31/31 MISS=4/31 warm_p50=382ms cold=[895, 1108, 1892, 2315] max_age=58.6s

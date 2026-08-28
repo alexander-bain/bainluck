@@ -57,6 +57,52 @@ FEED_RESPONSE_TTL_LIVE_SECONDS = 30
 FEED_RESPONSE_STALE_TTL_LIVE_SECONDS = 60
 FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS = 60
 
+# --- #2236: the republish period lives beside the ceiling it must respect ------
+# The ceiling above is a bound on how OLD a served live payload may be. A warmer
+# is the thing that keeps a key from ever reaching it. Those are two halves of
+# one contract, and #2236 happened because they were written in two files: the
+# ceiling here at 60 s, the warm rail's period in
+# `tasks/__init__.py`'s beat schedule at 120 s, and nothing anywhere compared
+# them. Both numbers were individually correct and their PRODUCT was that every
+# live-containing feed shape paid a full cold build once a minute, forever,
+# while the warm rail reported success — because it had genuinely warmed a key
+# that then died a full minute before its next chance to be refreshed.
+#
+# So the period is declared HERE, three lines under the ceiling, and the
+# arithmetic that ties them is a function rather than a comment.
+#
+#: How often a live-containing shape is republished. Strictly below the ceiling.
+FEED_LIVE_REPUBLISH_PERIOD_S = 40
+#: Wall budget for ONE republish pass. Not headroom — it is the second term of
+#: the invariant: even a pass that burns its entire budget must still land
+#: before the PREVIOUS publication's stale mirror expires.
+FEED_LIVE_REPUBLISH_BUDGET_S = 20
+
+
+def live_republish_headroom_s() -> int:
+    """Seconds of slack in the #2236 invariant. Negative means it is violated.
+
+    The invariant, stated once so it cannot be re-derived differently by the
+    next reader:
+
+        PERIOD + BUDGET <= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+
+    Read it as a worst case, not an average. A pass fires at t=0 and publishes a
+    payload whose stale mirror dies at t=60. The next pass fires at t=PERIOD and
+    may take up to BUDGET before it publishes. If PERIOD + BUDGET exceeds the
+    ceiling there is a window in which the key is simply gone and a user eats a
+    cold build — which is exactly the state #2236 measured, with PERIOD=120 and
+    no budget term at all.
+
+    It is a function and not a bare `assert` at import time because a guard test
+    should FAIL, loudly and by name, rather than take the web dyno down.
+    """
+    return (
+        FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+        - FEED_LIVE_REPUBLISH_PERIOD_S
+        - FEED_LIVE_REPUBLISH_BUDGET_S
+    )
+
 # LAT-P089 operator kill switch for the inert-principal share.
 FEED_INERT_PRINCIPAL_SHARE_ENV = "FEED_INERT_PRINCIPAL_SHARE"
 _INERT_SHARE_OFF_VALUES = frozenset({"0", "false", "no", "off"})
