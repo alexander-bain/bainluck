@@ -183,6 +183,32 @@ final class DiscoverViewModel: ObservableObject {
     /// single attempt rather than multiplying one load into many long requests
     /// (C42 P3). Injectable so tests drive it deterministically.
     private let retryBudget: TimeInterval
+    /// Total wall-clock budget for the initial load when a last-good cache seed is
+    /// ALREADY painted (Q425, #2143).
+    ///
+    /// The 6s `retryBudget` exists to bound how long a user stares at a SPINNER.
+    /// Behind a painted cache seed there is no spinner — the revalidate is silent
+    /// (`if items.isEmpty { loading = true }` above), so the only thing the short
+    /// budget buys is giving up on the fresh board sooner and keeping older bytes.
+    /// For a personalized principal that trade is strictly bad, and it is the
+    /// measured cause of the two-card screen:
+    ///
+    ///   Production, 2026-08-28, `limit=50&offset=0&event_pct=0.15`, same minute:
+    ///     fresh session id (inert principal) → `shared_stale_hit`  0.49s
+    ///     a real principal's session id      → `miss` (cold build) 4.48s, 50 cards
+    ///
+    /// A known principal cannot take the #2203 inert-principal share (its gate is
+    /// `ctx == PersonalizationContext()`), and its response-cache entry is fresh
+    /// for 5s / stale-servable for 300s — so essentially every app open pays the
+    /// full private cold build. The server HAS a full 50-card board for that
+    /// principal; a 6s ceiling in front of a ~4–6.5s build is what throws it away
+    /// and settles the screen back to weeks-old disk bytes.
+    ///
+    /// This does NOT fix the build cost — that is #2143, owned by the latency
+    /// lane. It stops the client from discarding a board it very nearly had.
+    /// Bounded above by URLSession's 30/60s timeouts and the server's own 25s
+    /// `FEED_TOTAL_BUDGET_MS`, so it cannot hang.
+    private let seededRetryBudget: TimeInterval
     /// Backoff between transient retries, clamped to the remaining budget.
     private let retryBackoff: TimeInterval
 
@@ -214,12 +240,14 @@ final class DiscoverViewModel: ObservableObject {
         lastGood: DiscoverLastGoodReading? = APIClient.shared,
         telemetry: (@Sendable (DiscoverFeedTelemetry) -> Void)? = { AnalyticsService.trackDiscoverFeedCache($0) },
         retryBudget: TimeInterval = 6,
+        seededRetryBudget: TimeInterval = 20,
         retryBackoff: TimeInterval = 1
     ) {
         self.client = client
         self.lastGood = lastGood
         self.telemetry = telemetry
         self.retryBudget = retryBudget
+        self.seededRetryBudget = seededRetryBudget
         self.retryBackoff = retryBackoff
     }
 
@@ -331,7 +359,13 @@ final class DiscoverViewModel: ObservableObject {
         // six-request ceiling. This makes a single attempt, retries only transient
         // transport / 5xx / 429 failures, and only while one shared budget remains.
         let netStart = Date()
-        let deadline = Date().addingTimeInterval(retryBudget)
+        // Q425: the budget is chosen by WHAT IS ON SCREEN, not by the request.
+        // Empty screen → the short budget, because the user is watching a spinner
+        // and is owed an honest error quickly. Seeded screen → the long budget,
+        // because the revalidate is silent and giving up early only means keeping
+        // staler content. See `seededRetryBudget` for the production measurement.
+        let deadline = Date().addingTimeInterval(
+            seededFromCache ? seededRetryBudget : retryBudget)
         // Whether the ONE guaranteed initial attempt has been admitted yet
         // (L2-208 Item 2 / C67 P1). The first attempt always runs (bounded by the
         // budget); once admitted, any later loop that finds the budget exhausted
