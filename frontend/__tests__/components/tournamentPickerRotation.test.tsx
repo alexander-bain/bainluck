@@ -348,6 +348,22 @@ describe("ruling 8 — resolved and dark questions rotate out", () => {
  * The cap is not weaker. It is keyed on the WHOLE register key now, so it still
  * collapses the same question about the same subject, and it still cannot be
  * defeated by rewording — nothing is read off the title.
+ *
+ * ═══ UX-P151: THE CASE IS GONE, THE RULE IS NOT ═══
+ *
+ * Alex ruled on 2026-08-28 that the two questions become ONE COMBINED CARD, so
+ * the register no longer carries `alcaraz-second-major` or `sinner-second-
+ * major` at all. These tests are KEPT, and the keys in them are now synthetic
+ * rather than shipped, because the clause survives deleting its case
+ * (`docs/doctrine.md`): a near-duplicate rule may never collapse across
+ * subjects. If it were deleted along with its case, the next two same-topic
+ * cards to be curated would silently lose one — which is exactly how the first
+ * one was lost, and the reason there were three queues about it.
+ *
+ * The combined card is a REGISTER-level composition, decided once against the
+ * evidence with both markets named. That is a different act from a render-time
+ * cap deciding which of two curated cards the reader gets, and the test below
+ * pins that the cap leaves it alone.
  */
 describe("ruling 8 as amended — a family is a subject AND a topic", () => {
   it("keys the family on the whole curated key, so two players never merge", () => {
@@ -415,6 +431,81 @@ describe("ruling 8 as amended — a family is a subject AND a topic", () => {
     const a = prop("sinner-competes", { title: "Will Sinner actually play?" });
     const b = prop("sinner-retires", { title: "Will Sinner actually retire?" });
     expect(curatedProps([a, b], "mens-singles").markets).toHaveLength(2);
+  });
+
+  it("UX-P151: the combined card survives rotation and prints BOTH rows", () => {
+    // The shape Alex ruled: one card, two legs, no headline. It has to clear
+    // all four rotation rules — it is not an advance question, not resolved,
+    // not dark, and cannot collide with itself on the template cap — and then
+    // it has to actually render two names and two numbers.
+    const combined = prop("second-major", {
+      title: "Who wins a second major this year?",
+      hook: "Both already have one in 2026.",
+      // A comparison has no single answering outcome. `null` selects the
+      // ranked rendering; anything else would promote one man's number into
+      // the headline slot under a question about both of them.
+      answer_entity_key: null,
+      outcomes: [
+        outcome({
+          entity_key: "second-major:alcaraz",
+          display_name: "Alcaraz",
+          probability: 0.25,
+          is_answer: false,
+        }),
+        outcome({
+          entity_key: "second-major:sinner",
+          display_name: "Sinner",
+          probability: 0.555,
+          is_answer: false,
+        }),
+      ],
+    });
+
+    const result = curatedProps([combined], "mens-singles");
+    expect(result.markets.map((m) => m.key)).toEqual(["second-major"]);
+    expect(result.dropped).toEqual({ advance: 0, resolved: 0, dark: 0, template: 0 });
+
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={[combined]} draw="mens-singles" />
+    );
+    expect(html).toContain('data-shape="field"');
+    expect(count(html, 'data-testid="prop-field-row"')).toBe(2);
+    expect(html).toContain("Alcaraz");
+    expect(html).toContain("Sinner");
+    expect(html).toContain("25%");
+    expect(html).toContain("56%");
+    // No headline number: there is no single answer, and inventing one is the
+    // defect `answerOutcome` was written to stop.
+    expect(html).not.toContain('data-testid="prop-probability"');
+  });
+
+  it("a two-market card is dark when EITHER leg is, not only the leader", () => {
+    // CERT-411's rule, on the shape that makes it matter most. A comparison
+    // whose fresh side is confident and whose old side is silent is a card
+    // arguing that one man's number is more real than the other's.
+    const mixed = prop("second-major", {
+      answer_entity_key: null,
+      outcomes: [
+        outcome({
+          entity_key: "second-major:alcaraz",
+          display_name: "Alcaraz",
+          probability: 0.25,
+          is_answer: false,
+          probability_is_live: false,
+          price_state: "dark",
+          age_hours: 856,
+        }),
+        outcome({
+          entity_key: "second-major:sinner",
+          display_name: "Sinner",
+          probability: 0.555,
+          is_answer: false,
+        }),
+      ],
+    });
+    // The card's governing age is its OLDEST printed leg, so it rotates out.
+    expect(propIsDark(mixed)).toBe(true);
+    expect(curatedProps([mixed], "mens-singles").dropped.dark).toBe(1);
   });
 });
 

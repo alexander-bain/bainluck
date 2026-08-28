@@ -2,7 +2,7 @@
   "schema_version": "tournament-register/v1",
   "tournament": "us-open",
   "season": "2026",
-  "version": 10,
+  "version": 11,
   "generated_at": "2026-08-27T00:15:00+00:00",
   "draw_released": true,
   "players": [
@@ -21097,7 +21097,7 @@
       }
     }
   ],
-  "supersedes_version": 9,
+  "supersedes_version": 10,
   "broadcasts": [
     {
       "region": "US",
@@ -21132,93 +21132,85 @@
       "source": "kalshi",
       "market_id": 59172808,
       "market_external_id": "KXATPCOMPETE-26USOSIN",
+      "markets": [
+        {
+          "market_id": 59172808,
+          "market_external_id": "KXATPCOMPETE-26USOSIN"
+        }
+      ],
       "outcomes": [
         {
           "entity_key": "sinner-competes:yes",
           "display_name": "Yes",
           "outcome_id": 219796782,
-          "is_answer": true
+          "is_answer": true,
+          "market_id": 59172808,
+          "market_external_id": "KXATPCOMPETE-26USOSIN"
         }
       ],
       "evidence": {
         "kind": "prop-census",
-        "observed_at": "2026-08-28T01:20:00+00:00",
+        "observed_at": "2026-08-28T18:54:37+00:00",
         "market_name": "Jannik Sinner to play in the US Open",
         "answer": "Yes"
       }
     },
     {
-      "key": "alcaraz-second-major",
-      "title": "Can Alcaraz win a second major this year?",
-      "hook": "The other half of the men's duopoly, chasing the same thing.",
+      "key": "second-major",
+      "title": "Who wins a second major this year?",
+      "hook": "Both already have one in 2026. These are two separate questions — they could both do it, or neither.",
       "draw": "mens-singles",
       "source": "kalshi",
-      "market_id": 53796,
-      "market_external_id": "KXGRANDSLAM-CALC26",
+      "markets": [
+        {
+          "market_id": 53796,
+          "market_external_id": "KXGRANDSLAM-CALC26"
+        },
+        {
+          "market_id": 53795,
+          "market_external_id": "KXGRANDSLAM-JSIN26"
+        }
+      ],
       "outcomes": [
         {
-          "entity_key": "alcaraz-second-major:2+-grand-slam-wins",
-          "display_name": "2+ Grand Slam wins",
+          "entity_key": "second-major:alcaraz",
+          "display_name": "Alcaraz",
           "outcome_id": 848773,
-          "is_answer": true
+          "is_answer": false,
+          "market_id": 53796,
+          "market_external_id": "KXGRANDSLAM-CALC26"
         },
         {
-          "entity_key": "alcaraz-second-major:all-4-grand-slam-wins",
-          "display_name": "All 4 Grand Slam wins",
-          "outcome_id": 848771,
-          "is_answer": false
-        },
-        {
-          "entity_key": "alcaraz-second-major:3+-grand-slam-wins",
-          "display_name": "3+ Grand Slam wins",
-          "outcome_id": 848772,
-          "is_answer": false
-        }
-      ],
-      "evidence": {
-        "kind": "prop-census",
-        "observed_at": "2026-08-28T01:20:00+00:00",
-        "market_name": "Carlos Alcaraz: Grand Slam wins in 2026",
-        "answer": "2+ Grand Slam wins"
-      }
-    },
-    {
-      "key": "sinner-second-major",
-      "title": "Can Sinner win a second major this year?",
-      "hook": "He already has one in 2026. The next chance is this fortnight.",
-      "draw": "mens-singles",
-      "source": "kalshi",
-      "market_id": 53795,
-      "market_external_id": "KXGRANDSLAM-JSIN26",
-      "outcomes": [
-        {
-          "entity_key": "sinner-second-major:1+-grand-slam-wins",
-          "display_name": "1+ Grand Slam wins",
-          "outcome_id": 848770,
-          "is_answer": false
-        },
-        {
-          "entity_key": "sinner-second-major:2+-grand-slam-wins",
-          "display_name": "2+ Grand Slam wins",
+          "entity_key": "second-major:sinner",
+          "display_name": "Sinner",
           "outcome_id": 848769,
-          "is_answer": true
-        },
-        {
-          "entity_key": "sinner-second-major:3+-grand-slam-wins",
-          "display_name": "3+ Grand Slam wins",
-          "outcome_id": 848768,
-          "is_answer": false
+          "is_answer": false,
+          "market_id": 53795,
+          "market_external_id": "KXGRANDSLAM-JSIN26"
         }
       ],
       "evidence": {
-        "kind": "prop-census",
-        "observed_at": "2026-08-28T01:20:00+00:00",
-        "market_name": "Jannik Sinner: Grand Slam wins in 2026",
-        "answer": "2+ Grand Slam wins"
+        "kind": "prop-census-combined",
+        "observed_at": "2026-08-28T18:54:37+00:00",
+        "legs": [
+          {
+            "market_external_id": "KXGRANDSLAM-CALC26",
+            "market_name": "Carlos Alcaraz: Grand Slam wins in 2026",
+            "source_outcome_name": "2+ Grand Slam wins",
+            "renamed_to": "Alcaraz"
+          },
+          {
+            "market_external_id": "KXGRANDSLAM-JSIN26",
+            "market_name": "Jannik Sinner: Grand Slam wins in 2026",
+            "source_outcome_name": "2+ Grand Slam wins",
+            "renamed_to": "Sinner"
+          }
+        ],
+        "answer": null
       }
     }
   ],
-  "props_observed_at": "2026-08-28T01:20:00+00:00",
+  "props_observed_at": "2026-08-28T18:54:37+00:00",
   "reaches": [
     {
       "draw": "mens-singles",
@@ -38704,7 +38696,9 @@
     "sabalenka-semifinals": "became a grid cell (UX-P139 ruling 3): `reaches` pins this exact question as a per-player per-round market on the Bracket tab, and one market living in two collections is a divergence waiting to happen",
     "shelton-quarterfinals": "became a grid cell (UX-P139 ruling 3): `reaches` pins this exact question as a per-player per-round market on the Bracket tab, and one market living in two collections is a divergence waiting to happen",
     "swiatek-semifinals": "became a grid cell (UX-P139 ruling 3): `reaches` pins this exact question as a per-player per-round market on the Bracket tab, and one market living in two collections is a divergence waiting to happen",
-    "zverev-semifinals": "became a grid cell (UX-P139 ruling 3): `reaches` pins this exact question as a per-player per-round market on the Bracket tab, and one market living in two collections is a divergence waiting to happen"
+    "zverev-semifinals": "became a grid cell (UX-P139 ruling 3): `reaches` pins this exact question as a per-player per-round market on the Bracket tab, and one market living in two collections is a divergence waiting to happen",
+    "alcaraz-second-major": "retired INTO `second-major` (UX-P151, Alex 2026-08-28): Alcaraz is a leg of the combined card now, not a card of his own. The number did not go anywhere — it is the Alcaraz row",
+    "sinner-second-major": "retired INTO `second-major` (UX-P151, Alex 2026-08-28): Sinner is a leg of the combined card now, not a card of his own. The number did not go anywhere — it is the Sinner row"
   },
   "draw_observed_at": "2026-08-27T18:00:00+00:00",
   "images_observed_at": "2026-08-27T18:30:00+00:00"
