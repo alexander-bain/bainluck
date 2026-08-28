@@ -7,7 +7,9 @@ authorization)
 
 **Sits beside:** ruling 138 (`price` is not a word we say to readers) and ruling 142 (a section
 states what it IS). The three were issued from one live-page reading and share one guard.
-**Swept by:** UX-P150, on the tournament surfaces.
+**Swept by:** UX-P150, on the tournament surfaces. **Debt paid by UX-P155** (2026-08-28) — the
+four remaining narrative sentences; see "PAID" below. Pending the production read that ruling 142
+requires before a copy ruling is called closed.
 **AMENDED by Alex 2026-08-28, recorded by UX-P152** — the ban was overinterpreted and is now
 scoped to narrative/empty-state/promotional copy. Attribution of a number the reader is looking at
 is allowed. Read "The clause — AS AMENDED" first; the rest of this file predates it and is marked
@@ -168,6 +170,48 @@ The original provisional classification, kept for the record:
   clause; under the amended one it is a legend on numbers the reader is looking at, and the call
   reverses.
 - **Out of scope on the ruling's own terms:** `app/layout.tsx` keywords.
+
+### PAID — UX-P155, 2026-08-28
+
+The re-read above left exactly four sentences on the narrative side of the line. All four are
+rewritten, and every `venue-*` entry in the guard's `OWED` map went dead in the same build:
+
+| Surface | Was | Is | The fact that had to survive |
+|---|---|---|---|
+| `/about` category grid | `Kalshi + Polymarket, unified` | `Open questions, merged into one number` | that this is the category where several places quote the same question and we publish one number — the standing *blend is the product* ruling, without the supplier list |
+| `/about` blend section | `Sportsbooks, ESPN, Kalshi, Polymarket, and live stat models each have a guess.` | `Sportsbooks, ESPN, prediction markets, and live stat models each have a guess.` | the KINDS of guess, and that they are independent. The names stay fifty lines down, attributing 63% and 59% in the source table |
+| `/categories/golf` hero | `Tournament odds from Polymarket, Kalshi, sportsbooks & DataGolf` | `Who wins each tournament, one number per golfer` | what the page shows — which the old line never said. Coverage is stated below it by the real count; sources by `SourceLegend` |
+| `/weather` rain card | `Daily "Will it rain?" markets from Kalshi` | `Daily "Will it rain?" questions, one per day` | the question and its cadence. `<SourceBadge src="kalshi" />` is on the same row and renders the name — the sentence was saying it twice |
+
+In every case the attribution that was already on the page is what makes the removal free. That is
+the amendment doing its work in the other direction: because captions and chips are allowed, the
+narrative sentence was redundant rather than load-bearing.
+
+`shippedCopyBans.test.ts` now asserts that **no venue rule may appear in `OWED` again** — the
+ruling is closed structurally rather than by an empty space in a list. What remains in that map is
+rulings 138 and 142 only.
+
+**Not closed until production is read** (ruling 142): `SHIPPED_BUNDLE_DIR=… npx jest
+shippedCopyBans` against chunks fetched after the deploy. Carried forward on the conveyor.
+
+#### What the sweep found on the way — the JSON blind spot
+
+The render rig built for this queue read a venue name off the `/about` markup that the bundle scan
+had just passed as clean. Both were right. webpack inlines an imported `.json` as
+`JSON.parse('{…}')` — one code-shaped literal that `isProse` rejects on its braces — so **every
+sentence inside a JSON fixture was invisible to the shipped-copy scan**. That is the same failure
+this guard exists to prevent, one layer down.
+
+`expandJsonPayload` in `lib/copyBans.ts` now expands such a literal into the strings inside it, and
+a planted violation in the exact emitted shape is pinned. Expanding it surfaced exactly one string
+in the current bundle: `Alcaraz win probability through the match (Polymarket)`, the caption on the
+`/about` trust exhibit. Under the amendment that is attribution — the amendment's own example, a
+caption naming the source of a plotted line — so it is listed in `ATTRIBUTION_LITERALS`, not fixed.
+The copy was fine; the blind spot was not.
+
+Artifact: `.claude/handoff/artifacts-ux-p155/p155-ruling-141-last-four.html` (also
+`docs/mocks/ruling-141/`), rendered from `app/about/page.tsx`, `app/categories/golf/page.tsx` and
+`components/weather/RainForecast.tsx` with the app's own compiled stylesheet.
 
 ### The original list
 
