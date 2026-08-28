@@ -164,7 +164,9 @@ export default function MatchProps({ payload }: { payload: MatchDetailPayload })
           <p className="mt-1 max-w-[62ch] text-[12.5px] leading-snug text-text-secondary">
             {decided
               ? "We hold no numbers from before this match beyond the winner."
-              : "The only market on this match is the winner. Questions about sets, games and margins appear here as soon as anyone opens one."}
+              : // Ruling 142: "…appear here as soon as anyone opens one" described
+                // what the section WOULD hold. This says what is true now.
+                "Who wins is the only question anyone is answering on this match. Sets, games and margins have no probability against them."}
           </p>
         </div>
       </section>

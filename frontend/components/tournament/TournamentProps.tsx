@@ -257,17 +257,23 @@ export default function TournamentProps({
             className="mt-1 max-w-[62ch] text-[12.5px] leading-snug text-text-secondary"
             data-testid="props-empty-reason"
           >
+            {/* Ruling 142: the fallback ended "New questions are coming — check
+                back soon." A section that cannot name a date should not name a
+                time at all; what it owes the reader is the present fact. */}
             {reason ??
-              "Beyond the title race and today’s matches, we only show questions worth asking, and there are none for this draw yet. New questions are coming — check back soon."}
+              "Beyond the title race and today’s matches, we only show questions worth asking. This draw has none with a probability against them."}
           </p>
-          {/* WHAT WILL BE HERE. A section that only apologises reads as a dead
-              feature; naming the next thing reads as one between deliveries.
-              Deliberately a statement about the SOURCES, not a promise about a
-              date — we do not control when they list. */}
+          {/* WHAT THIS SECTION IS. Ruling 142 (Alex, 2026-08-28): a section
+              states what it IS, not what it WILL be — "we should make it the
+              thing it's supposed to be", not describe the thing it might
+              become. The old line promised a future ("Once the main draw
+              starts… show up here as soon as they have a number") and named
+              two venues while doing it, which ruling 141 bans outright.
+              Present tense, our number, no date we do not control. */}
           <p className="mt-2 max-w-[62ch] border-t border-surface-border pt-2 text-[11.5px] leading-snug text-text-muted">
-            Questions like <i>Will Sinner actually play?</i> live here. Once the main
-            draw starts, Kalshi and Polymarket open more of them beyond who-reaches-what,
-            and the ones worth asking show up here as soon as they have a number.
+            This section holds the questions about this draw worth asking beyond who
+            reaches which round — <i>Will Sinner actually play?</i> is the shape of one.
+            None have a probability against them today.
           </p>
         </div>
         <MovedToGrid dropped={curated.dropped.advance} />

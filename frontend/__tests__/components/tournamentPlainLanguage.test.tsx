@@ -72,6 +72,7 @@ import TournamentMatches from "@/components/tournament/TournamentMatches";
 import TournamentProps from "@/components/tournament/TournamentProps";
 import TournamentResults from "@/components/tournament/TournamentResults";
 import { buildMatchList } from "@/lib/matchList";
+import { ALL_COPY_BANS, findBannedCopy } from "@/lib/copyBans";
 import { readPlayoffGrid } from "@/lib/playoffGrid";
 import {
   curatedProps,
@@ -120,44 +121,28 @@ function visibleText(html: string): string {
 /**
  * The words a Bain Luck reader has no reason to know.
  *
- * Every entry is a word Alex named, in the grammatical form that makes it
- * jargon. Since UX-P146 the `price` family is banned at the STEM — see the file
- * header for the ruling that replaced UX-P145's noun/verb split.
+ * UX-P150 moved this list out to `lib/copyBans.ts`. It did not change what is
+ * banned here; it changed how many bodies of text the SAME list gets applied
+ * to. This file sweeps rendered components. `shippedCopyBans.test.ts` sweeps
+ * the built bundle and, on demand, the chunks production actually serves —
+ * which is the layer that was missing when Alex found three already-"fixed"
+ * sentences live on 2026-08-28. Two consumers, one list, no drift.
+ *
+ * `ALL_COPY_BANS` therefore now also carries ruling 141 (venue names) and
+ * ruling 142 (future-tense promises) on top of the UX-P145 jargon list and
+ * ruling 138's `price` stem.
  */
-const BANNED: { pattern: RegExp; why: string }[] = [
-  { pattern: /\bgone dark\b/i, why: '"gone dark" is our price_state enum' },
-  { pattern: /\bgoes dark\b/i, why: '"goes dark" is our price_state enum' },
-  { pattern: /\bwent dark\b/i, why: '"went dark" is our price_state enum' },
-  { pattern: /\brotated out\b/i, why: '"rotated out" is our render rule' },
-  { pattern: /\brotation\b/i, why: '"rotation" is our render rule' },
-  { pattern: /\bcurated\b/i, why: '"curated" is our editorial process' },
-  { pattern: /\bcuration\b/i, why: '"curation" is our editorial process' },
-  { pattern: /\bregistered\b/i, why: '"registered" is the name of our JSON file' },
-  { pattern: /\bthe register\b/i, why: '"the register" is the name of our JSON file' },
-  { pattern: /\bcensus(ed)?\b/i, why: '"census" is our data-collection step' },
-  { pattern: /\bblend(ed|s)?\b/i, why: '"blend" is our aggregation step' },
-  { pattern: /\bstale\b/i, why: '"stale" is our price_state enum' },
-  // THE WHOLE `price` FAMILY — UX-P146, Alex's permanent product-wide ruling.
-  // One stem rule replaces the eleven variants UX-P145 needed to ban the verb
-  // while sparing the noun. The word is PROBABILITY.
-  {
-    pattern: /\b(un)?pric(e|es|ed|ing)\b/i,
-    why: '"price" is trading vocabulary — the word is PROBABILITY (Alex, product-wide, 2026-08-27)',
-  },
-];
+const BANNED = ALL_COPY_BANS;
 
 function assertPlain(html: string, where: string) {
   const text = visibleText(html);
-  for (const { pattern, why } of BANNED) {
-    const hit = text.match(pattern);
-    if (hit) {
-      const at = text.indexOf(hit[0]);
-      throw new Error(
-        `${where}: internal jargon in user-visible copy — ${why}.\n` +
-          `  matched: "${hit[0]}"\n` +
-          `  context: …${text.slice(Math.max(0, at - 90), at + 110)}…`
-      );
-    }
+  const [hit] = findBannedCopy(text, BANNED);
+  if (hit) {
+    throw new Error(
+      `${where}: internal jargon in user-visible copy — ${hit.ban.why}.\n` +
+        `  matched: "${hit.matched}"\n` +
+        `  context: …${hit.context}…`
+    );
   }
 }
 
@@ -237,14 +222,19 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
     });
 
     it("is EXACTLY this sentence — the copy Alex signs off, pinned", () => {
-      // Pinned verbatim on purpose. Alex named the replacement register ("New
-      // questions are coming — check back soon."); a paraphrase that drifts
-      // back toward the pipeline is the regression, and only an equality
-      // catches a drift that stays inside the banned-word list.
+      // Pinned verbatim on purpose: a paraphrase that drifts back toward the
+      // pipeline is the regression, and only an equality catches a drift that
+      // stays inside the banned-word list.
+      //
+      // UX-P150 dropped the second half. UX-P145 added "New questions are
+      // coming — check back soon." so the section would not read as a dead
+      // feature; ruling 142 (Alex, 2026-08-28) rules that fix out — we do not
+      // control when a market lists, so naming a time was a promise we could
+      // not keep. What remains is the whole of the FACT, which is what the
+      // count was always for.
       const curated = curatedProps(darkMarkets(), "mens-singles");
       expect(curatedPropsEmptyReason(curated)).toBe(
-        "We have not seen a new number on 3 questions in a while, so they are hidden for now. " +
-          "New questions are coming — check back soon."
+        "We have not seen a new number on 3 questions in a while, so they are hidden for now."
       );
     });
 
@@ -260,8 +250,7 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
       const curated = curatedProps(darkMarkets().slice(0, 1), "mens-singles");
       const reason = curatedPropsEmptyReason(curated);
       expect(reason).toBe(
-        "We have not seen a new number on 1 question in a while, so it is hidden for now. " +
-          "New questions are coming — check back soon."
+        "We have not seen a new number on 1 question in a while, so it is hidden for now."
       );
       // "1 questions have" is the kind of thing a reader files under "nobody
       // looked at this", which is the opposite of what this sentence is for.
@@ -549,9 +538,33 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
     );
     expect(() => assertPlain("<p>this reading is stale</p>", "canary")).toThrow(/stale/i);
 
-    // And it must NOT fire on the data attributes that carry the same words.
+    // UX-P150, ruling 141: a venue name in a sentence aimed at a reader.
+    expect(() =>
+      assertPlain("<p>we asked Kalshi and Polymarket and neither runs that market</p>", "canary")
+    ).toThrow(/Kalshi/);
+    expect(() => assertPlain("<p>Polymarket 20 days ago</p>", "canary")).toThrow(/Polymarket/);
+
+    // UX-P150, ruling 142: a promise about what the section WILL be.
+    expect(() => assertPlain("<p>New questions are coming — check back soon.</p>", "canary")).toThrow(
+      /check back/i
+    );
+    expect(() => assertPlain("<p>Matches appear here as they are scheduled.</p>", "canary")).toThrow(
+      /appear here/i
+    );
+    expect(() =>
+      assertPlain("<p>Once the main draw starts, more of them are listed</p>", "canary")
+    ).toThrow(/once the/i);
+    expect(() => assertPlain("<p>the number comes later</p>", "canary")).toThrow(/comes later/i);
+
+    // And it must NOT fire on the data attributes that carry the same words —
+    // including the venue ids, which are enum values the sentinels read.
     expect(() =>
       assertPlain('<li data-price-state="dark" data-placeholder="register-hole">Alcaraz 62%</li>', "canary")
     ).not.toThrow();
+    expect(() =>
+      assertPlain('<li data-source="kalshi" data-group="polymarket:88">Alcaraz 62%</li>', "canary")
+    ).not.toThrow();
+    // …nor on a market's OWN question, which is content and not our voice.
+    expect(() => assertPlain("<h3>Will Sinner actually play?</h3>", "canary")).not.toThrow();
   });
 });

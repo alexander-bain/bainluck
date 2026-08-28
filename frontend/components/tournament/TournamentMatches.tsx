@@ -454,8 +454,9 @@ export default function TournamentMatches({
       >
         <div className="text-[15px] font-semibold text-text-primary">No matches scheduled</div>
         <p className="mt-1 text-[13px] text-text-secondary">
-          {emptyHint ??
-            "Nothing is on right now. Matches appear here as they are scheduled."}
+          {/* Ruling 142: "Matches appear here as they are scheduled" described
+              what the section would hold. The schedule is the fact. */}
+          {emptyHint ?? "Nothing is on right now. This is where the day's matches sit."}
         </p>
       </section>
     );

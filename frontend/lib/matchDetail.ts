@@ -182,7 +182,10 @@ export function propStalenessLabel(ageHours: number | null): string {
 export function propFreshnessLabel(prop: MatchProp, decided: boolean): string | null {
   if (decided) return null;
   if (propIsPresentedAsLive(prop, decided)) return null;
-  if (prop.price_state === "unpriced") return "No market yet";
+  // Ruling 138 says the word is PROBABILITY; "No market yet" answered a
+  // probability question with an inventory fact. Same slot, same length, the
+  // page's own noun.
+  if (prop.price_state === "unpriced") return "No probability yet";
   if (!prop.coherent && prop.price_state === "live") return null;
   return propStalenessLabel(prop.age_hours);
 }
