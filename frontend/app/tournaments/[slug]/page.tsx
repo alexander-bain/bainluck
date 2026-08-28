@@ -394,6 +394,11 @@ export default function TournamentPage() {
                     tournament's matches. The championship board follows. */}
                 <TournamentMatches
                   entries={matches}
+                  /* UX-P149: each row now addresses its own page, where the
+                     match props live. Passed rather than read from the route
+                     inside the component, so the component stays pure enough
+                     for the capture rig to render. */
+                  slug={slug}
                   notice={data.slate ? slateNotice(data.slate) : null}
                   /**
                    * UX-P145: this used to end "…and the draw fills them in on

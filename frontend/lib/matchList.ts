@@ -205,6 +205,21 @@ export interface MatchListEntry {
    * is fixed would send a reader from a rich page to a bare one.
    */
   eventId: number | null;
+  /**
+   * THE REGISTER'S KEY FOR THIS FIXTURE, and the address of its own page
+   * (UX-P149) — `/tournaments/{slug}/matches/{matchupKey}`.
+   *
+   * Separate from `id`, which is the LIST's key and is a draw-slot id on a
+   * bracket-sourced row. Only a registered matchup has a page, so a bracket
+   * row that never joined a slate row carries `null` here and renders no link
+   * rather than one that 404s.
+   *
+   * This is what `eventId` was reaching for and could not have: it is
+   * register-owned, it exists today on every priced fixture, and it needs no
+   * `events` row — which is the blocker lane1's Q426 note named as the reason
+   * the props had nowhere to go.
+   */
+  matchupKey: string | null;
   source: "slate" | "bracket";
 }
 
@@ -361,6 +376,7 @@ export function matchListFromSlate(
       broadcast: matchBroadcast(match, options.broadcasts, options.region),
       detailNote: null,
       eventId: match.event_id ?? null,
+      matchupKey: match.matchup_key ?? null,
       source: "slate",
     };
     entry.detailNote = matchDetailNote(entry);
@@ -501,6 +517,7 @@ export function matchListFromBracket(
         // A positioned draw slot has no event of its own; the link, like the
         // price, comes from the slate row it absorbed.
         eventId: joined?.event_id ?? null,
+        matchupKey: joined?.matchup_key ?? null,
         source: "bracket",
       };
       entry.detailNote = matchDetailNote(entry);

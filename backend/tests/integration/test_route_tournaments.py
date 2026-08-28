@@ -258,3 +258,134 @@ class TestAutoLinkedMatchups:
         )
         assert applied == 0
         assert out["matchups"][0]["sources"][0]["market_id"] == 1
+
+
+class TestMatchDetail:
+    """One match's own page — GET /api/tournaments/{slug}/matches/{key} (UX-P149).
+
+    The surface lane1's Q426 note asked for: match props rendered on the
+    match's own page, grouped under the match-winner market. What is pinned
+    here is what the pure-logic suite cannot reach — that a matchup key does
+    not infer any more than a slug does, and that the sibling load is an
+    id-anchored group hop rather than a query anyone could widen.
+    """
+
+    MATCH = "mens-singles:henrique-rocha-vs-lloyd-harris:2026-08-26"
+
+    async def test_a_registered_matchup_is_served(self, client):
+        resp = await client.get(f"/api/tournaments/us-open/matches/{self.MATCH}")
+        assert resp.status_code == 200
+
+    async def test_a_matchup_key_does_not_infer(self, client):
+        """Ruling 031's disease, one level down from the slug.
+
+        Answering a mistyped key with a plausible other match is exactly the
+        failure that cost the US Open its own page (#1793), and it would be
+        worse here — the reader would be looking at two real players' names
+        over another match's numbers.
+        """
+        for key in ("nonsense", "mens-singles:a-vs-b:2026-08-26", self.MATCH[:-2]):
+            resp = await client.get(f"/api/tournaments/us-open/matches/{key}")
+            assert resp.status_code == 404, key
+
+    async def test_an_unregistered_tournament_is_404(self, client):
+        resp = await client.get(f"/api/tournaments/wimbledon/matches/{self.MATCH}")
+        assert resp.status_code == 404
+
+    async def test_rejects_post(self, client):
+        resp = await client.post(f"/api/tournaments/us-open/matches/{self.MATCH}")
+        assert resp.status_code == 405
+
+    async def test_payload_shape(self, client):
+        body = (
+            await client.get(f"/api/tournaments/us-open/matches/{self.MATCH}")
+        ).json()
+        for key in (
+            "slug", "title", "matchup_key", "match", "result", "decided",
+            "props", "props_count", "props_dropped", "generated_at",
+        ):
+            assert key in body, key
+        assert body["matchup_key"] == self.MATCH
+        assert body["match"]["matchup_key"] == self.MATCH
+
+    async def test_empty_database_is_an_honest_empty_page(self, client):
+        """No prices must never become a fabricated question."""
+        body = (
+            await client.get(f"/api/tournaments/us-open/matches/{self.MATCH}")
+        ).json()
+        assert body["props"] == []
+        assert body["decided"] is False
+        assert all(side["probability"] is None for side in body["match"]["sides"])
+
+    async def test_a_started_match_still_has_a_page(self, client):
+        """`build_slate` drops a match six hours after its start; this must not.
+
+        Every match in the committed register was played days before this test
+        runs, so if the page inherited the slate's window every one of them
+        would 404 — at exactly the moment its result exists.
+        """
+        resp = await client.get(f"/api/tournaments/us-open/matches/{self.MATCH}")
+        assert resp.status_code == 200
+
+    def test_the_sibling_load_is_a_group_hop_not_a_search(self):
+        """The grouping is an id. If this stops being true, say so loudly.
+
+        No name comparison, no time window and no category test may enter this
+        path — that is the whole reason lane1 could hand the surface over
+        without handing over a matching problem with it.
+        """
+        source = inspect.getsource(tournaments._load_match_group)
+        assert "FuturesMarket.group_id == group_id" in source
+        assert "MAX_MATCH_GROUP_ROWS" in source
+        for banned in ("ilike", "like(", "commence_time", "llm_sport_category"):
+            assert banned not in source.lower(), banned
+
+
+class TestLinkOverlayOnTheMatchPage:
+    """The match page reads the SAME overlay the hub does (UX-P149).
+
+    Lane1's Q426 linker fills in the R128 fixtures the ceremony census recorded
+    as `missing`. If the match page did not read it, the hub would print a
+    probability for those 96 main-draw matches and the match's own page would
+    say no market exists — two surfaces disagreeing about one question, on the
+    main draw, in the week it starts.
+
+    On THIS branch the linker module does not exist (it is lane1's, on master),
+    so what is pinned here is the seam and the degradation: the call is made,
+    the absence costs nothing, and the page renders the committed register.
+    """
+
+    MATCH = "mens-singles:henrique-rocha-vs-lloyd-harris:2026-08-26"
+
+    def test_the_match_route_applies_the_overlay(self):
+        source = inspect.getsource(tournaments.get_tournament_match)
+        assert "_with_link_overlay" in source
+
+    def test_the_overlay_is_never_a_gate(self):
+        """It must not be able to 503 the page, whatever it does."""
+        source = inspect.getsource(tournaments._with_link_overlay)
+        assert "except Exception" in source
+        assert "return register, 0" in source
+
+    async def test_a_missing_linker_leaves_the_page_exactly_as_the_register_wrote_it(
+        self, client
+    ):
+        resp = await client.get(f"/api/tournaments/us-open/matches/{self.MATCH}")
+        assert resp.status_code == 200
+        assert resp.json()["matchup_key"] == self.MATCH
+
+    async def test_the_overlay_cannot_mutate_the_cached_register(self):
+        """gotcha #6: a module-level cached dict edited in place leaks forward.
+
+        Proven against the real helper rather than the real linker, because the
+        register the route holds is the thing at risk and it is the same object
+        on the next request.
+        """
+        from app.utils.tournament_register import load_register
+
+        register = load_register("us-open", "2026")
+        before = len(register["matchups"])
+        out, applied = await tournaments._with_link_overlay("us-open", register)
+        assert applied == 0
+        assert out is register or len(out["matchups"]) == before
+        assert len(register["matchups"]) == before

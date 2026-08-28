@@ -3,6 +3,7 @@
  */
 
 import type { EntityAvailability, EntityTier } from "@/lib/entityPageChrome";
+import type { MatchDetailPayload } from "@/lib/matchDetail";
 import type { TournamentPayload } from "@/lib/tournament";
 import type {
   EventsResponse,
@@ -2270,4 +2271,26 @@ export async function fetchSourceIntelligence(): Promise<SourceIntelligenceData>
  */
 export async function fetchTournament(slug: string): Promise<TournamentPayload> {
   return apiFetch<TournamentPayload>(`/api/tournaments/${encodeURIComponent(slug)}`);
+}
+
+/**
+ * One match's own page — the match-winner market and its props (UX-P149).
+ *
+ * `matchup_key` is the register's, e.g.
+ * `mens-singles:aziz-dougaz-vs-andrea-guerrieri:2026-08-27`. It is encoded
+ * whole rather than split on its colons: the key is one opaque identifier the
+ * register owns, and a client that parsed it would be re-deriving an identity
+ * decision that has already been made against evidence.
+ *
+ * A key the register does not hold 404s, for the same reason an unregistered
+ * slug does — answering with a plausible other match would put two real
+ * players' names over a third match's numbers.
+ */
+export async function fetchTournamentMatch(
+  slug: string,
+  matchupKey: string,
+): Promise<MatchDetailPayload> {
+  return apiFetch<MatchDetailPayload>(
+    `/api/tournaments/${encodeURIComponent(slug)}/matches/${encodeURIComponent(matchupKey)}`,
+  );
 }

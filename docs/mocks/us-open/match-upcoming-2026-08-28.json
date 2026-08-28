@@ -1,0 +1,491 @@
+{
+  "tournament": "us-open",
+  "season": "2026",
+  "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+  "match": {
+    "priced": true,
+    "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+    "event_id": null,
+    "draw": "mens-singles",
+    "draw_label": "Men's Singles",
+    "round": "qualifying",
+    "scheduled_date": "2026-08-27T15:00:00+00:00",
+    "sides": [
+      {
+        "entity_key": "dalibor-svrcina",
+        "display_name": "Dalibor Svrcina",
+        "seed": null,
+        "country": "Czechia",
+        "image": {
+          "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fd/Svrcina_RGQ22_%2823%29_%2852129537653%29.jpg/330px-Svrcina_RGQ22_%2823%29_%2852129537653%29.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+          "flag_url": "https://a.espncdn.com/i/teamlogos/countries/500/cze.png"
+        },
+        "role": "participant",
+        "probability": 0.865,
+        "opening_probability": 0.555,
+        "move": 0.31,
+        "raw_probability": 0.865,
+        "raw_opening_probability": 0.555,
+        "observed_at": "2026-08-28 17:00:04.606312+00:00",
+        "age_hours": 0.12,
+        "price_state": "live"
+      },
+      {
+        "entity_key": "mackenzie-mcdonald",
+        "display_name": "Mackenzie McDonald",
+        "seed": null,
+        "country": "USA",
+        "image": {
+          "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d7/Mackie_McDonald_%282023_DC_Open%29_01.jpg/330px-Mackie_McDonald_%282023_DC_Open%29_01.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+          "flag_url": "https://a.espncdn.com/i/teamlogos/countries/500/usa.png"
+        },
+        "role": "participant",
+        "probability": 0.135,
+        "opening_probability": 0.445,
+        "move": -0.31,
+        "raw_probability": 0.135,
+        "raw_opening_probability": 0.445,
+        "observed_at": "2026-08-28 17:00:04.606312+00:00",
+        "age_hours": 0.12,
+        "price_state": "live"
+      }
+    ],
+    "coherent": true,
+    "raw_sum": 1.0,
+    "opening_raw_sum": 1.0,
+    "probability_is_live": true,
+    "price_state": "live",
+    "observed_at": "2026-08-28T17:00:04.606312+00:00",
+    "age_hours": 0.12,
+    "freshest_observed_at": "2026-08-28T17:00:04.606312+00:00",
+    "freshest_age_hours": 0.12,
+    "stale_sides": [],
+    "mixed_freshness": false,
+    "favourite": "dalibor-svrcina",
+    "has_moved": true,
+    "source_count": 1
+  },
+  "result": null,
+  "decided": false,
+  "props": [
+    {
+      "key": "m59620186",
+      "market_id": 59620186,
+      "market_ids": [
+        59620186
+      ],
+      "family": "set_winner",
+      "kind": "duel",
+      "question": "Who wins set 1",
+      "line": null,
+      "unit": null,
+      "sort": [
+        0,
+        1
+      ],
+      "source_title": "Set 1 Winner: Svrcina vs McDonald",
+      "note": null,
+      "answers": [
+        {
+          "label": "Dalibor Svrcina",
+          "entity_key": "dalibor-svrcina",
+          "probability": 0.53,
+          "opening_probability": 0.54,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.76,
+          "price_state": "stale"
+        },
+        {
+          "label": "Mackenzie McDonald",
+          "entity_key": "mackenzie-mcdonald",
+          "probability": 0.47,
+          "opening_probability": 0.46,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.76,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": 1.0,
+      "opening_coherent": true,
+      "opening_raw_sum": 1.0,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.76,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.76,
+      "stale_answers": [
+        "Dalibor Svrcina",
+        "Mackenzie McDonald"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "m59620187",
+      "market_id": 59620187,
+      "market_ids": [
+        59620187
+      ],
+      "family": "set_winner",
+      "kind": "duel",
+      "question": "Who wins set 2",
+      "line": null,
+      "unit": null,
+      "sort": [
+        0,
+        2
+      ],
+      "source_title": "Set 2 Winner: Svrcina vs McDonald",
+      "note": null,
+      "answers": [
+        {
+          "label": "Dalibor Svrcina",
+          "entity_key": "dalibor-svrcina",
+          "probability": 0.54,
+          "opening_probability": 0.55,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.76,
+          "price_state": "stale"
+        },
+        {
+          "label": "Mackenzie McDonald",
+          "entity_key": "mackenzie-mcdonald",
+          "probability": 0.46,
+          "opening_probability": 0.45,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.76,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": 1.0,
+      "opening_coherent": true,
+      "opening_raw_sum": 1.0,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.76,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.76,
+      "stale_answers": [
+        "Dalibor Svrcina",
+        "Mackenzie McDonald"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "m59622240",
+      "market_id": 59622240,
+      "market_ids": [
+        59622240
+      ],
+      "family": "handicap",
+      "kind": "handicap",
+      "question": "Winning margin, in games",
+      "line": -1.5,
+      "unit": "game",
+      "sort": [
+        1,
+        1
+      ],
+      "source_title": "Game Spread: Svrcina (-1.5) vs McDonald (+1.5)",
+      "note": null,
+      "answers": [
+        {
+          "label": "Dalibor Svrcina by 2 games or more",
+          "entity_key": "dalibor-svrcina",
+          "probability": 0.5,
+          "opening_probability": 0.5,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T01:16:04.118865+00:00",
+          "age_hours": 39.85,
+          "price_state": "stale"
+        },
+        {
+          "label": "Anything else",
+          "entity_key": null,
+          "probability": 0.5,
+          "opening_probability": 0.5,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T01:16:04.118865+00:00",
+          "age_hours": 39.85,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": 1.0,
+      "opening_coherent": true,
+      "opening_raw_sum": 1.0,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T01:16:04.118865+00:00",
+      "age_hours": 39.85,
+      "freshest_observed_at": "2026-08-27T01:16:04.118865+00:00",
+      "freshest_age_hours": 39.85,
+      "stale_answers": [
+        "Dalibor Svrcina by 2 games or more",
+        "Anything else"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "ladder:Total games in the match",
+      "market_id": null,
+      "market_ids": [
+        59628302,
+        59626270
+      ],
+      "family": "total",
+      "kind": "ladder",
+      "question": "Total games in the match",
+      "line": null,
+      "unit": "game",
+      "sort": [
+        2,
+        0
+      ],
+      "source_title": null,
+      "note": null,
+      "answers": [
+        {
+          "label": "More than 22 games",
+          "entity_key": null,
+          "probability": 0.49,
+          "opening_probability": 0.5,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.76,
+          "price_state": "stale"
+        },
+        {
+          "label": "More than 23 games",
+          "entity_key": null,
+          "probability": 0.445,
+          "opening_probability": 0.49,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.76,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": null,
+      "opening_coherent": true,
+      "opening_raw_sum": null,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.76,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.76,
+      "stale_answers": [
+        "More than 22 games",
+        "More than 23 games"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "m59633838",
+      "market_id": 59633838,
+      "market_ids": [
+        59633838
+      ],
+      "family": "total",
+      "kind": "threshold",
+      "question": "Total sets in the match",
+      "line": 2.5,
+      "unit": "set",
+      "sort": [
+        2,
+        1
+      ],
+      "source_title": "Dalibor Svrcina vs. Mackenzie McDonald: Total Sets O/U 2.5",
+      "note": null,
+      "answers": [
+        {
+          "label": "More than 2 sets",
+          "entity_key": null,
+          "probability": 0.41,
+          "opening_probability": 0.395,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.76,
+          "price_state": "stale"
+        },
+        {
+          "label": "2 sets or fewer",
+          "entity_key": null,
+          "probability": 0.59,
+          "opening_probability": 0.605,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.76,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": 1.0,
+      "opening_coherent": true,
+      "opening_raw_sum": 1.0,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.76,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.76,
+      "stale_answers": [
+        "More than 2 sets",
+        "2 sets or fewer"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "ladder:Games in set 1",
+      "market_id": null,
+      "market_ids": [
+        59628303,
+        59638575
+      ],
+      "family": "total",
+      "kind": "ladder",
+      "question": "Games in set 1",
+      "line": null,
+      "unit": "game",
+      "sort": [
+        2,
+        3
+      ],
+      "source_title": null,
+      "note": null,
+      "answers": [
+        {
+          "label": "More than 9 games",
+          "entity_key": null,
+          "probability": 0.51,
+          "opening_probability": 0.54,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.76,
+          "price_state": "stale"
+        },
+        {
+          "label": "More than 10 games",
+          "entity_key": null,
+          "probability": 0.495,
+          "opening_probability": 0.495,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.76,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": null,
+      "opening_coherent": true,
+      "opening_raw_sum": null,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.76,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.76,
+      "stale_answers": [
+        "More than 9 games",
+        "More than 10 games"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "m59633839",
+      "market_id": 59633839,
+      "market_ids": [
+        59633839
+      ],
+      "family": "total",
+      "kind": "threshold",
+      "question": "Games in set 2",
+      "line": 8.5,
+      "unit": "game",
+      "sort": [
+        2,
+        4
+      ],
+      "source_title": "Svrcina vs. McDonald: Set 2 Games O/U 8.5",
+      "note": null,
+      "answers": [
+        {
+          "label": "More than 8 games",
+          "entity_key": null,
+          "probability": 0.497512,
+          "opening_probability": 0.497512,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T06:19:51.311636+00:00",
+          "age_hours": 34.79,
+          "price_state": "stale"
+        },
+        {
+          "label": "8 games or fewer",
+          "entity_key": null,
+          "probability": 0.502488,
+          "opening_probability": 0.502488,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T06:19:51.311636+00:00",
+          "age_hours": 34.79,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": 1.005,
+      "opening_coherent": true,
+      "opening_raw_sum": 1.005,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T06:19:51.311636+00:00",
+      "age_hours": 34.79,
+      "freshest_observed_at": "2026-08-27T06:19:51.311636+00:00",
+      "freshest_age_hours": 34.79,
+      "stale_answers": [
+        "More than 8 games",
+        "8 games or fewer"
+      ],
+      "mixed_freshness": false
+    }
+  ],
+  "props_count": 7,
+  "props_markets": 9,
+  "props_dropped": {},
+  "generated_at": "2026-08-28T17:07:21.214105+00:00",
+  "slug": "us-open",
+  "title": "US Open 2026",
+  "subtitle": "Flushing Meadows",
+  "broadcasts": [
+    {
+      "region": "US",
+      "channels": [
+        "ESPN",
+        "ESPN2",
+        "ESPN+"
+      ],
+      "note": "ESPN holds exclusive US rights through 2026."
+    },
+    {
+      "region": "UK",
+      "channels": [
+        "Sky Sports Tennis"
+      ],
+      "note": null
+    },
+    {
+      "region": "AU",
+      "channels": [
+        "Stan Sport"
+      ],
+      "note": null
+    }
+  ]
+}

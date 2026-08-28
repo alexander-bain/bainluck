@@ -1,0 +1,3792 @@
+{
+ "captured_at": "2026-08-28",
+ "source": "production futures_markets via /api/admin/db-query",
+ "winner_pins": [
+  {
+   "matchup_key": "mens-singles:henrique-rocha-vs-lloyd-harris:2026-08-26",
+   "title": "US Open, Qualification ATP: Henrique Rocha vs Lloyd Harris",
+   "players": [
+    {
+     "entity_key": "henrique-rocha",
+     "display_name": "Henrique Rocha",
+     "source_label": "Henrique Rocha"
+    },
+    {
+     "entity_key": "lloyd-harris",
+     "display_name": "Lloyd Harris",
+     "source_label": "Lloyd Harris"
+    }
+   ],
+   "yes_entity_key": "henrique-rocha",
+   "no_entity_key": "lloyd-harris"
+  },
+  {
+   "matchup_key": "mens-singles:pablo-llamas-ruiz-vs-vitaliy-sachko:2026-08-26",
+   "title": "US Open, Qualification ATP: Vitaliy Sachko vs Pablo Llamas Ruiz",
+   "players": [
+    {
+     "entity_key": "vitaliy-sachko",
+     "display_name": "Vitaliy Sachko",
+     "source_label": "Vitaliy Sachko"
+    },
+    {
+     "entity_key": "pablo-llamas-ruiz",
+     "display_name": "Pablo Llamas Ruiz",
+     "source_label": "Pablo Llamas Ruiz"
+    }
+   ],
+   "yes_entity_key": "vitaliy-sachko",
+   "no_entity_key": "pablo-llamas-ruiz"
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "US Open, Qualification WTA: Yeon-Woo Ku vs Storm Hunter",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ],
+   "yes_entity_key": "yeon-woo-ku",
+   "no_entity_key": "storm-hunter"
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "US Open, Qualification WTA: Priscilla Hon vs Joanna Garland",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ],
+   "yes_entity_key": "priscilla-hon",
+   "no_entity_key": "joanna-garland"
+  },
+  {
+   "matchup_key": "womens-singles:kristina-liutova-vs-lola-radivojevic:2026-08-26",
+   "title": "US Open, Qualification WTA: Kristina Liutova vs Lola Radivojevic",
+   "players": [
+    {
+     "entity_key": "kristina-liutova",
+     "display_name": "Kristina Liutova",
+     "source_label": "Kristina Liutova"
+    },
+    {
+     "entity_key": "lola-radivojevic",
+     "display_name": "Lola Radivojevic",
+     "source_label": "Lola Radivojevic"
+    }
+   ],
+   "yes_entity_key": "kristina-liutova",
+   "no_entity_key": "lola-radivojevic"
+  },
+  {
+   "matchup_key": "womens-singles:elvina-kalieva-vs-sofia-costoulas:2026-08-26",
+   "title": "US Open, Qualification WTA: Elvina Kalieva vs Sofia Costoulas",
+   "players": [
+    {
+     "entity_key": "elvina-kalieva",
+     "display_name": "Elvina Kalieva",
+     "source_label": "Elvina Kalieva"
+    },
+    {
+     "entity_key": "sofia-costoulas",
+     "display_name": "Sofia Costoulas",
+     "source_label": "Sofia Costoulas"
+    }
+   ],
+   "yes_entity_key": "elvina-kalieva",
+   "no_entity_key": "sofia-costoulas"
+  },
+  {
+   "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
+   "title": "US Open, Qualification ATP: Tristan Schoolkate vs Seong-Chan Hong",
+   "players": [
+    {
+     "entity_key": "tristan-schoolkate",
+     "display_name": "Tristan Schoolkate",
+     "source_label": "Tristan Schoolkate"
+    },
+    {
+     "entity_key": "seong-chan-hong",
+     "display_name": "Seong-Chan Hong",
+     "source_label": "Seong-Chan Hong"
+    }
+   ],
+   "yes_entity_key": "tristan-schoolkate",
+   "no_entity_key": "seong-chan-hong"
+  },
+  {
+   "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
+   "title": "US Open, Qualification WTA: Vendula Valdmannova vs Aliaksandra Sasnovich",
+   "players": [
+    {
+     "entity_key": "vendula-valdmannova",
+     "display_name": "Vendula Valdmannova",
+     "source_label": "Vendula Valdmannova"
+    },
+    {
+     "entity_key": "aliaksandra-sasnovich",
+     "display_name": "Aliaksandra Sasnovich",
+     "source_label": "Aliaksandra Sasnovich"
+    }
+   ],
+   "yes_entity_key": "vendula-valdmannova",
+   "no_entity_key": "aliaksandra-sasnovich"
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "US Open, Qualification WTA: Darja Semenistaja vs Alexandra Shubladze",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ],
+   "yes_entity_key": "darja-semenistaja",
+   "no_entity_key": "alexandra-shubladze"
+  },
+  {
+   "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
+   "title": "US Open, Qualification ATP: Jerome Kym vs Colton Smith",
+   "players": [
+    {
+     "entity_key": "jerome-kym",
+     "display_name": "Jerome Kym",
+     "source_label": "Jerome Kym"
+    },
+    {
+     "entity_key": "colton-smith",
+     "display_name": "Colton Smith",
+     "source_label": "Colton Smith"
+    }
+   ],
+   "yes_entity_key": "jerome-kym",
+   "no_entity_key": "colton-smith"
+  },
+  {
+   "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
+   "title": "US Open, Qualification ATP: Federico Cina vs Hugo Dellien",
+   "players": [
+    {
+     "entity_key": "federico-cina",
+     "display_name": "Federico Cina",
+     "source_label": "Federico Cina"
+    },
+    {
+     "entity_key": "hugo-dellien",
+     "display_name": "Hugo Dellien",
+     "source_label": "Hugo Dellien"
+    }
+   ],
+   "yes_entity_key": "federico-cina",
+   "no_entity_key": "hugo-dellien"
+  },
+  {
+   "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
+   "title": "US Open, Qualification ATP: Aziz Dougaz vs Andrea Guerrieri",
+   "players": [
+    {
+     "entity_key": "aziz-dougaz",
+     "display_name": "Aziz Dougaz",
+     "source_label": "Aziz Dougaz"
+    },
+    {
+     "entity_key": "andrea-guerrieri",
+     "display_name": "Andrea Guerrieri",
+     "source_label": "Andrea Guerrieri"
+    }
+   ],
+   "yes_entity_key": "aziz-dougaz",
+   "no_entity_key": "andrea-guerrieri"
+  },
+  {
+   "matchup_key": "mens-singles:coleman-wong-vs-dusan-lajovic:2026-08-27",
+   "title": "US Open, Qualification ATP: Coleman Wong vs Dusan Lajovic",
+   "players": [
+    {
+     "entity_key": "coleman-wong",
+     "display_name": "Coleman Wong",
+     "source_label": "Coleman Wong"
+    },
+    {
+     "entity_key": "dusan-lajovic",
+     "display_name": "Dusan Lajovic",
+     "source_label": "Dusan Lajovic"
+    }
+   ],
+   "yes_entity_key": "coleman-wong",
+   "no_entity_key": "dusan-lajovic"
+  },
+  {
+   "matchup_key": "mens-singles:cristian-garin-vs-toby-samuel:2026-08-27",
+   "title": "US Open, Qualification ATP: Toby Samuel vs Cristian Garin",
+   "players": [
+    {
+     "entity_key": "toby-samuel",
+     "display_name": "Toby Samuel",
+     "source_label": "Toby Samuel"
+    },
+    {
+     "entity_key": "cristian-garin",
+     "display_name": "Cristian Garin",
+     "source_label": "Cristian Garin"
+    }
+   ],
+   "yes_entity_key": "toby-samuel",
+   "no_entity_key": "cristian-garin"
+  },
+  {
+   "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+   "title": "US Open, Qualification ATP: Dalibor Svrcina vs Mackenzie McDonald",
+   "players": [
+    {
+     "entity_key": "dalibor-svrcina",
+     "display_name": "Dalibor Svrcina",
+     "source_label": "Dalibor Svrcina"
+    },
+    {
+     "entity_key": "mackenzie-mcdonald",
+     "display_name": "Mackenzie McDonald",
+     "source_label": "Mackenzie McDonald"
+    }
+   ],
+   "yes_entity_key": "dalibor-svrcina",
+   "no_entity_key": "mackenzie-mcdonald"
+  },
+  {
+   "matchup_key": "mens-singles:daniel-rincon-vs-tomas-barrios:2026-08-27",
+   "title": "US Open, Qualification ATP: Daniel Rincon vs Tomas Barrios",
+   "players": [
+    {
+     "entity_key": "daniel-rincon",
+     "display_name": "Daniel Rincon",
+     "source_label": "Daniel Rincon"
+    },
+    {
+     "entity_key": "tomas-barrios",
+     "display_name": "Tomas Barrios",
+     "source_label": "Tomas Barrios"
+    }
+   ],
+   "yes_entity_key": "daniel-rincon",
+   "no_entity_key": "tomas-barrios"
+  },
+  {
+   "matchup_key": "mens-singles:francesco-passaro-vs-shintaro-mochizuki:2026-08-27",
+   "title": "US Open, Qualification ATP: Shintaro Mochizuki vs Francesco Passaro",
+   "players": [
+    {
+     "entity_key": "shintaro-mochizuki",
+     "display_name": "Shintaro Mochizuki",
+     "source_label": "Shintaro Mochizuki"
+    },
+    {
+     "entity_key": "francesco-passaro",
+     "display_name": "Francesco Passaro",
+     "source_label": "Francesco Passaro"
+    }
+   ],
+   "yes_entity_key": "shintaro-mochizuki",
+   "no_entity_key": "francesco-passaro"
+  },
+  {
+   "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
+   "title": "US Open, Qualification ATP: Vilius Gaubas vs Harry Wendelken",
+   "players": [
+    {
+     "entity_key": "vilius-gaubas",
+     "display_name": "Vilius Gaubas",
+     "source_label": "Vilius Gaubas"
+    },
+    {
+     "entity_key": "harry-wendelken",
+     "display_name": "Harry Wendelken",
+     "source_label": "Harry Wendelken"
+    }
+   ],
+   "yes_entity_key": "vilius-gaubas",
+   "no_entity_key": "harry-wendelken"
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "US Open, Qualification ATP: Jacob Fearnley vs Jurij Rodionov",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ],
+   "yes_entity_key": "jacob-fearnley",
+   "no_entity_key": "jurij-rodionov"
+  },
+  {
+   "matchup_key": "womens-singles:andrea-lazaro-garcia-vs-polina-iatcenko:2026-08-27",
+   "title": "US Open, Qualification WTA: Polina Iatcenko vs Andrea Lazaro Garcia",
+   "players": [
+    {
+     "entity_key": "polina-iatcenko",
+     "display_name": "Polina Iatcenko",
+     "source_label": "Polina Iatcenko"
+    },
+    {
+     "entity_key": "andrea-lazaro-garcia",
+     "display_name": "Andrea Lazaro Garcia",
+     "source_label": "Andrea Lazaro Garcia"
+    }
+   ],
+   "yes_entity_key": "polina-iatcenko",
+   "no_entity_key": "andrea-lazaro-garcia"
+  },
+  {
+   "matchup_key": "womens-singles:anouk-koevermans-vs-mariam-bolkvadze:2026-08-27",
+   "title": "US Open, Qualification WTA: Mariam Bolkvadze vs Anouk Koevermans",
+   "players": [
+    {
+     "entity_key": "mariam-bolkvadze",
+     "display_name": "Mariam Bolkvadze",
+     "source_label": "Mariam Bolkvadze"
+    },
+    {
+     "entity_key": "anouk-koevermans",
+     "display_name": "Anouk Koevermans",
+     "source_label": "Anouk Koevermans"
+    }
+   ],
+   "yes_entity_key": "mariam-bolkvadze",
+   "no_entity_key": "anouk-koevermans"
+  },
+  {
+   "matchup_key": "womens-singles:arantxa-rus-vs-susan-bandecchi:2026-08-27",
+   "title": "US Open, Qualification WTA: Susan Bandecchi vs Arantxa Rus",
+   "players": [
+    {
+     "entity_key": "susan-bandecchi",
+     "display_name": "Susan Bandecchi",
+     "source_label": "Susan Bandecchi"
+    },
+    {
+     "entity_key": "arantxa-rus",
+     "display_name": "Arantxa Rus",
+     "source_label": "Arantxa Rus"
+    }
+   ],
+   "yes_entity_key": "susan-bandecchi",
+   "no_entity_key": "arantxa-rus"
+  },
+  {
+   "matchup_key": "womens-singles:carson-branstine-vs-robin-montgomery:2026-08-27",
+   "title": "US Open, Qualification WTA: Carson Branstine vs Robin Montgomery",
+   "players": [
+    {
+     "entity_key": "carson-branstine",
+     "display_name": "Carson Branstine",
+     "source_label": "Carson Branstine"
+    },
+    {
+     "entity_key": "robin-montgomery",
+     "display_name": "Robin Montgomery",
+     "source_label": "Robin Montgomery"
+    }
+   ],
+   "yes_entity_key": "carson-branstine",
+   "no_entity_key": "robin-montgomery"
+  },
+  {
+   "matchup_key": "womens-singles:ekaterine-gorgodze-vs-gabriela-knutson:2026-08-27",
+   "title": "US Open, Qualification WTA: Gabriela Knutson vs Ekaterine Gorgodze",
+   "players": [
+    {
+     "entity_key": "gabriela-knutson",
+     "display_name": "Gabriela Knutson",
+     "source_label": "Gabriela Knutson"
+    },
+    {
+     "entity_key": "ekaterine-gorgodze",
+     "display_name": "Ekaterine Gorgodze",
+     "source_label": "Ekaterine Gorgodze"
+    }
+   ],
+   "yes_entity_key": "gabriela-knutson",
+   "no_entity_key": "ekaterine-gorgodze"
+  },
+  {
+   "matchup_key": "womens-singles:elena-pridankina-vs-qinwen-zheng:2026-08-27",
+   "title": "US Open, Qualification WTA: Qinwen Zheng vs Elena Pridankina",
+   "players": [
+    {
+     "entity_key": "qinwen-zheng",
+     "display_name": "Qinwen Zheng",
+     "source_label": "Qinwen Zheng"
+    },
+    {
+     "entity_key": "elena-pridankina",
+     "display_name": "Elena Pridankina",
+     "source_label": "Elena Pridankina"
+    }
+   ],
+   "yes_entity_key": "qinwen-zheng",
+   "no_entity_key": "elena-pridankina"
+  },
+  {
+   "matchup_key": "womens-singles:himeno-sakatsume-vs-mia-ristic:2026-08-27",
+   "title": "US Open, Qualification WTA: Mia Ristic vs Himeno Sakatsume",
+   "players": [
+    {
+     "entity_key": "mia-ristic",
+     "display_name": "Mia Ristic",
+     "source_label": "Mia Ristic"
+    },
+    {
+     "entity_key": "himeno-sakatsume",
+     "display_name": "Himeno Sakatsume",
+     "source_label": "Himeno Sakatsume"
+    }
+   ],
+   "yes_entity_key": "mia-ristic",
+   "no_entity_key": "himeno-sakatsume"
+  },
+  {
+   "matchup_key": "womens-singles:julieta-pareja-vs-lucrezia-stefanini:2026-08-27",
+   "title": "US Open, Qualification WTA: Julieta Pareja vs Lucrezia Stefanini",
+   "players": [
+    {
+     "entity_key": "julieta-pareja",
+     "display_name": "Julieta Pareja",
+     "source_label": "Julieta Pareja"
+    },
+    {
+     "entity_key": "lucrezia-stefanini",
+     "display_name": "Lucrezia Stefanini",
+     "source_label": "Lucrezia Stefanini"
+    }
+   ],
+   "yes_entity_key": "julieta-pareja",
+   "no_entity_key": "lucrezia-stefanini"
+  },
+  {
+   "matchup_key": "mens-singles:grigor-dimitrov-vs-otto-virtanen:2026-08-27",
+   "title": "US Open, Qualification ATP: Otto Virtanen vs Grigor Dimitrov",
+   "players": [
+    {
+     "entity_key": "otto-virtanen",
+     "display_name": "Otto Virtanen",
+     "source_label": "Otto Virtanen"
+    },
+    {
+     "entity_key": "grigor-dimitrov",
+     "display_name": "Grigor Dimitrov",
+     "source_label": "Grigor Dimitrov"
+    }
+   ],
+   "yes_entity_key": "otto-virtanen",
+   "no_entity_key": "grigor-dimitrov"
+  }
+ ],
+ "prop_titles": [
+  {
+   "matchup_key": "mens-singles:henrique-rocha-vs-lloyd-harris:2026-08-26",
+   "title": "Set 1 Winner: Rocha vs Harris",
+   "players": [
+    {
+     "entity_key": "henrique-rocha",
+     "display_name": "Henrique Rocha",
+     "source_label": "Henrique Rocha"
+    },
+    {
+     "entity_key": "lloyd-harris",
+     "display_name": "Lloyd Harris",
+     "source_label": "Lloyd Harris"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:henrique-rocha-vs-lloyd-harris:2026-08-26",
+   "title": "Set 2 Winner: Rocha vs Harris",
+   "players": [
+    {
+     "entity_key": "henrique-rocha",
+     "display_name": "Henrique Rocha",
+     "source_label": "Henrique Rocha"
+    },
+    {
+     "entity_key": "lloyd-harris",
+     "display_name": "Lloyd Harris",
+     "source_label": "Lloyd Harris"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:pablo-llamas-ruiz-vs-vitaliy-sachko:2026-08-26",
+   "title": "Sachko vs. Ruiz: Set 2 Games O/U 10.5",
+   "players": [
+    {
+     "entity_key": "vitaliy-sachko",
+     "display_name": "Vitaliy Sachko",
+     "source_label": "Vitaliy Sachko"
+    },
+    {
+     "entity_key": "pablo-llamas-ruiz",
+     "display_name": "Pablo Llamas Ruiz",
+     "source_label": "Pablo Llamas Ruiz"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:pablo-llamas-ruiz-vs-vitaliy-sachko:2026-08-26",
+   "title": "Set 2 Winner: Sachko vs Ruiz",
+   "players": [
+    {
+     "entity_key": "vitaliy-sachko",
+     "display_name": "Vitaliy Sachko",
+     "source_label": "Vitaliy Sachko"
+    },
+    {
+     "entity_key": "pablo-llamas-ruiz",
+     "display_name": "Pablo Llamas Ruiz",
+     "source_label": "Pablo Llamas Ruiz"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "Set 1 Winner: Ku vs Hunter",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "Set 2 Winner: Ku vs Hunter",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "Set Handicap: Ku (-1.5) vs Hunter (+1.5)",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "Ku vs. Hunter: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "Ku vs. Hunter: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "Yeon-Woo Ku vs. Storm Hunter: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "Ku vs. Hunter: Set 1 Games O/U 8.5",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "Ku vs. Hunter: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "Set Handicap: Hunter (-1.5) vs Ku (+1.5)",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "Ku vs. Hunter: Set 1 Games O/U 10.5",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
+   "title": "Ku vs. Hunter: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "yeon-woo-ku",
+     "display_name": "Yeon-Woo Ku",
+     "source_label": "Yeon-Woo Ku"
+    },
+    {
+     "entity_key": "storm-hunter",
+     "display_name": "Storm Hunter",
+     "source_label": "Storm Hunter"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "Set 2 Winner: Hon vs Garland",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "Set 1 Winner: Hon vs Garland",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "Hon vs. Garland: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "Hon vs. Garland: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "Priscilla Hon vs. Joanna Garland: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "Hon vs. Garland: Set 1 Games O/U 8.5",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "Hon vs. Garland: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "Hon vs. Garland: Set 1 Games O/U 10.5",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "Hon vs. Garland: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "Set Handicap: Hon (-1.5) vs Garland (+1.5)",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
+   "title": "Set Handicap: Garland (-1.5) vs Hon (+1.5)",
+   "players": [
+    {
+     "entity_key": "priscilla-hon",
+     "display_name": "Priscilla Hon",
+     "source_label": "Priscilla Hon"
+    },
+    {
+     "entity_key": "joanna-garland",
+     "display_name": "Joanna Garland",
+     "source_label": "Joanna Garland"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elvina-kalieva-vs-sofia-costoulas:2026-08-26",
+   "title": "Set 1 Winner: Kalieva vs Costoulas",
+   "players": [
+    {
+     "entity_key": "elvina-kalieva",
+     "display_name": "Elvina Kalieva",
+     "source_label": "Elvina Kalieva"
+    },
+    {
+     "entity_key": "sofia-costoulas",
+     "display_name": "Sofia Costoulas",
+     "source_label": "Sofia Costoulas"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elvina-kalieva-vs-sofia-costoulas:2026-08-26",
+   "title": "Set 2 Winner: Kalieva vs Costoulas",
+   "players": [
+    {
+     "entity_key": "elvina-kalieva",
+     "display_name": "Elvina Kalieva",
+     "source_label": "Elvina Kalieva"
+    },
+    {
+     "entity_key": "sofia-costoulas",
+     "display_name": "Sofia Costoulas",
+     "source_label": "Sofia Costoulas"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elvina-kalieva-vs-sofia-costoulas:2026-08-26",
+   "title": "Elvina Kalieva vs. Sofia Costoulas: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "elvina-kalieva",
+     "display_name": "Elvina Kalieva",
+     "source_label": "Elvina Kalieva"
+    },
+    {
+     "entity_key": "sofia-costoulas",
+     "display_name": "Sofia Costoulas",
+     "source_label": "Sofia Costoulas"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elvina-kalieva-vs-sofia-costoulas:2026-08-26",
+   "title": "Kalieva vs. Costoulas: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "elvina-kalieva",
+     "display_name": "Elvina Kalieva",
+     "source_label": "Elvina Kalieva"
+    },
+    {
+     "entity_key": "sofia-costoulas",
+     "display_name": "Sofia Costoulas",
+     "source_label": "Sofia Costoulas"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elvina-kalieva-vs-sofia-costoulas:2026-08-26",
+   "title": "Kalieva vs. Costoulas: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "elvina-kalieva",
+     "display_name": "Elvina Kalieva",
+     "source_label": "Elvina Kalieva"
+    },
+    {
+     "entity_key": "sofia-costoulas",
+     "display_name": "Sofia Costoulas",
+     "source_label": "Sofia Costoulas"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elvina-kalieva-vs-sofia-costoulas:2026-08-26",
+   "title": "Kalieva vs. Costoulas: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "elvina-kalieva",
+     "display_name": "Elvina Kalieva",
+     "source_label": "Elvina Kalieva"
+    },
+    {
+     "entity_key": "sofia-costoulas",
+     "display_name": "Sofia Costoulas",
+     "source_label": "Sofia Costoulas"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elvina-kalieva-vs-sofia-costoulas:2026-08-26",
+   "title": "Kalieva vs. Costoulas: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "elvina-kalieva",
+     "display_name": "Elvina Kalieva",
+     "source_label": "Elvina Kalieva"
+    },
+    {
+     "entity_key": "sofia-costoulas",
+     "display_name": "Sofia Costoulas",
+     "source_label": "Sofia Costoulas"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elvina-kalieva-vs-sofia-costoulas:2026-08-26",
+   "title": "Set Handicap: Kalieva (-1.5) vs Costoulas (+1.5)",
+   "players": [
+    {
+     "entity_key": "elvina-kalieva",
+     "display_name": "Elvina Kalieva",
+     "source_label": "Elvina Kalieva"
+    },
+    {
+     "entity_key": "sofia-costoulas",
+     "display_name": "Sofia Costoulas",
+     "source_label": "Sofia Costoulas"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elvina-kalieva-vs-sofia-costoulas:2026-08-26",
+   "title": "Set Handicap: Costoulas (-1.5) vs Kalieva (+1.5)",
+   "players": [
+    {
+     "entity_key": "elvina-kalieva",
+     "display_name": "Elvina Kalieva",
+     "source_label": "Elvina Kalieva"
+    },
+    {
+     "entity_key": "sofia-costoulas",
+     "display_name": "Sofia Costoulas",
+     "source_label": "Sofia Costoulas"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
+   "title": "Set 1 Winner: Schoolkate vs Hong",
+   "players": [
+    {
+     "entity_key": "tristan-schoolkate",
+     "display_name": "Tristan Schoolkate",
+     "source_label": "Tristan Schoolkate"
+    },
+    {
+     "entity_key": "seong-chan-hong",
+     "display_name": "Seong-Chan Hong",
+     "source_label": "Seong-Chan Hong"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
+   "title": "Set 2 Winner: Schoolkate vs Hong",
+   "players": [
+    {
+     "entity_key": "tristan-schoolkate",
+     "display_name": "Tristan Schoolkate",
+     "source_label": "Tristan Schoolkate"
+    },
+    {
+     "entity_key": "seong-chan-hong",
+     "display_name": "Seong-Chan Hong",
+     "source_label": "Seong-Chan Hong"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
+   "title": "Schoolkate vs. Hong: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "tristan-schoolkate",
+     "display_name": "Tristan Schoolkate",
+     "source_label": "Tristan Schoolkate"
+    },
+    {
+     "entity_key": "seong-chan-hong",
+     "display_name": "Seong-Chan Hong",
+     "source_label": "Seong-Chan Hong"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
+   "title": "Set Handicap: Schoolkate (-1.5) vs Hong (+1.5)",
+   "players": [
+    {
+     "entity_key": "tristan-schoolkate",
+     "display_name": "Tristan Schoolkate",
+     "source_label": "Tristan Schoolkate"
+    },
+    {
+     "entity_key": "seong-chan-hong",
+     "display_name": "Seong-Chan Hong",
+     "source_label": "Seong-Chan Hong"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
+   "title": "Schoolkate vs. Hong: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "tristan-schoolkate",
+     "display_name": "Tristan Schoolkate",
+     "source_label": "Tristan Schoolkate"
+    },
+    {
+     "entity_key": "seong-chan-hong",
+     "display_name": "Seong-Chan Hong",
+     "source_label": "Seong-Chan Hong"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
+   "title": "Schoolkate vs. Hong: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "tristan-schoolkate",
+     "display_name": "Tristan Schoolkate",
+     "source_label": "Tristan Schoolkate"
+    },
+    {
+     "entity_key": "seong-chan-hong",
+     "display_name": "Seong-Chan Hong",
+     "source_label": "Seong-Chan Hong"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
+   "title": "Tristan Schoolkate vs. Seong-Chan Hong: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "tristan-schoolkate",
+     "display_name": "Tristan Schoolkate",
+     "source_label": "Tristan Schoolkate"
+    },
+    {
+     "entity_key": "seong-chan-hong",
+     "display_name": "Seong-Chan Hong",
+     "source_label": "Seong-Chan Hong"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
+   "title": "Schoolkate vs. Hong: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "tristan-schoolkate",
+     "display_name": "Tristan Schoolkate",
+     "source_label": "Tristan Schoolkate"
+    },
+    {
+     "entity_key": "seong-chan-hong",
+     "display_name": "Seong-Chan Hong",
+     "source_label": "Seong-Chan Hong"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
+   "title": "Schoolkate vs. Hong: Set 1 Games O/U 8.5",
+   "players": [
+    {
+     "entity_key": "tristan-schoolkate",
+     "display_name": "Tristan Schoolkate",
+     "source_label": "Tristan Schoolkate"
+    },
+    {
+     "entity_key": "seong-chan-hong",
+     "display_name": "Seong-Chan Hong",
+     "source_label": "Seong-Chan Hong"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
+   "title": "Schoolkate vs. Hong: Set 1 Games O/U 10.5",
+   "players": [
+    {
+     "entity_key": "tristan-schoolkate",
+     "display_name": "Tristan Schoolkate",
+     "source_label": "Tristan Schoolkate"
+    },
+    {
+     "entity_key": "seong-chan-hong",
+     "display_name": "Seong-Chan Hong",
+     "source_label": "Seong-Chan Hong"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
+   "title": "Set 1 Winner: Valdmannova vs Sasnovich",
+   "players": [
+    {
+     "entity_key": "vendula-valdmannova",
+     "display_name": "Vendula Valdmannova",
+     "source_label": "Vendula Valdmannova"
+    },
+    {
+     "entity_key": "aliaksandra-sasnovich",
+     "display_name": "Aliaksandra Sasnovich",
+     "source_label": "Aliaksandra Sasnovich"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
+   "title": "Set 2 Winner: Valdmannova vs Sasnovich",
+   "players": [
+    {
+     "entity_key": "vendula-valdmannova",
+     "display_name": "Vendula Valdmannova",
+     "source_label": "Vendula Valdmannova"
+    },
+    {
+     "entity_key": "aliaksandra-sasnovich",
+     "display_name": "Aliaksandra Sasnovich",
+     "source_label": "Aliaksandra Sasnovich"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
+   "title": "Valdmannova vs. Sasnovich: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "vendula-valdmannova",
+     "display_name": "Vendula Valdmannova",
+     "source_label": "Vendula Valdmannova"
+    },
+    {
+     "entity_key": "aliaksandra-sasnovich",
+     "display_name": "Aliaksandra Sasnovich",
+     "source_label": "Aliaksandra Sasnovich"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
+   "title": "Valdmannova vs. Sasnovich: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "vendula-valdmannova",
+     "display_name": "Vendula Valdmannova",
+     "source_label": "Vendula Valdmannova"
+    },
+    {
+     "entity_key": "aliaksandra-sasnovich",
+     "display_name": "Aliaksandra Sasnovich",
+     "source_label": "Aliaksandra Sasnovich"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
+   "title": "Valdmannova vs. Sasnovich: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "vendula-valdmannova",
+     "display_name": "Vendula Valdmannova",
+     "source_label": "Vendula Valdmannova"
+    },
+    {
+     "entity_key": "aliaksandra-sasnovich",
+     "display_name": "Aliaksandra Sasnovich",
+     "source_label": "Aliaksandra Sasnovich"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
+   "title": "Vendula Valdmannova vs. Aliaksandra Sasnovich: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "vendula-valdmannova",
+     "display_name": "Vendula Valdmannova",
+     "source_label": "Vendula Valdmannova"
+    },
+    {
+     "entity_key": "aliaksandra-sasnovich",
+     "display_name": "Aliaksandra Sasnovich",
+     "source_label": "Aliaksandra Sasnovich"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
+   "title": "Valdmannova vs. Sasnovich: Set 1 Games O/U 8.5",
+   "players": [
+    {
+     "entity_key": "vendula-valdmannova",
+     "display_name": "Vendula Valdmannova",
+     "source_label": "Vendula Valdmannova"
+    },
+    {
+     "entity_key": "aliaksandra-sasnovich",
+     "display_name": "Aliaksandra Sasnovich",
+     "source_label": "Aliaksandra Sasnovich"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
+   "title": "Set Handicap: Valdmannova (-1.5) vs Sasnovich (+1.5)",
+   "players": [
+    {
+     "entity_key": "vendula-valdmannova",
+     "display_name": "Vendula Valdmannova",
+     "source_label": "Vendula Valdmannova"
+    },
+    {
+     "entity_key": "aliaksandra-sasnovich",
+     "display_name": "Aliaksandra Sasnovich",
+     "source_label": "Aliaksandra Sasnovich"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
+   "title": "Set Handicap: Sasnovich (-1.5) vs Valdmannova (+1.5)",
+   "players": [
+    {
+     "entity_key": "vendula-valdmannova",
+     "display_name": "Vendula Valdmannova",
+     "source_label": "Vendula Valdmannova"
+    },
+    {
+     "entity_key": "aliaksandra-sasnovich",
+     "display_name": "Aliaksandra Sasnovich",
+     "source_label": "Aliaksandra Sasnovich"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
+   "title": "Valdmannova vs. Sasnovich: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "vendula-valdmannova",
+     "display_name": "Vendula Valdmannova",
+     "source_label": "Vendula Valdmannova"
+    },
+    {
+     "entity_key": "aliaksandra-sasnovich",
+     "display_name": "Aliaksandra Sasnovich",
+     "source_label": "Aliaksandra Sasnovich"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "Set 1 Winner: Semenistaja vs Shubladze",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "Semenistaja vs. Shubladze: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "Set 2 Winner: Semenistaja vs Shubladze",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "Semenistaja vs. Shubladze: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "Semenistaja vs. Shubladze: Set 1 Games O/U 8.5",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "Darja Semenistaja vs. Alexandra Shubladze: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "Set Handicap: Semenistaja (-1.5) vs Shubladze (+1.5)",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "Set Handicap: Shubladze (-1.5) vs Semenistaja (+1.5)",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "Semenistaja vs. Shubladze: Set 1 Games O/U 10.5",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "Semenistaja vs. Shubladze: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
+   "title": "Semenistaja vs. Shubladze: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "darja-semenistaja",
+     "display_name": "Darja Semenistaja",
+     "source_label": "Darja Semenistaja"
+    },
+    {
+     "entity_key": "alexandra-shubladze",
+     "display_name": "Alexandra Shubladze",
+     "source_label": "Alexandra Shubladze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
+   "title": "Kym vs. Smith: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "jerome-kym",
+     "display_name": "Jerome Kym",
+     "source_label": "Jerome Kym"
+    },
+    {
+     "entity_key": "colton-smith",
+     "display_name": "Colton Smith",
+     "source_label": "Colton Smith"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
+   "title": "Set 2 Winner: Kym vs Smith",
+   "players": [
+    {
+     "entity_key": "jerome-kym",
+     "display_name": "Jerome Kym",
+     "source_label": "Jerome Kym"
+    },
+    {
+     "entity_key": "colton-smith",
+     "display_name": "Colton Smith",
+     "source_label": "Colton Smith"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
+   "title": "Set 1 Winner: Kym vs Smith",
+   "players": [
+    {
+     "entity_key": "jerome-kym",
+     "display_name": "Jerome Kym",
+     "source_label": "Jerome Kym"
+    },
+    {
+     "entity_key": "colton-smith",
+     "display_name": "Colton Smith",
+     "source_label": "Colton Smith"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
+   "title": "Kym vs. Smith: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "jerome-kym",
+     "display_name": "Jerome Kym",
+     "source_label": "Jerome Kym"
+    },
+    {
+     "entity_key": "colton-smith",
+     "display_name": "Colton Smith",
+     "source_label": "Colton Smith"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
+   "title": "Kym vs. Smith: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "jerome-kym",
+     "display_name": "Jerome Kym",
+     "source_label": "Jerome Kym"
+    },
+    {
+     "entity_key": "colton-smith",
+     "display_name": "Colton Smith",
+     "source_label": "Colton Smith"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
+   "title": "Jerome Kym vs. Colton Smith: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "jerome-kym",
+     "display_name": "Jerome Kym",
+     "source_label": "Jerome Kym"
+    },
+    {
+     "entity_key": "colton-smith",
+     "display_name": "Colton Smith",
+     "source_label": "Colton Smith"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
+   "title": "Set Handicap: Kym (-1.5) vs Smith (+1.5)",
+   "players": [
+    {
+     "entity_key": "jerome-kym",
+     "display_name": "Jerome Kym",
+     "source_label": "Jerome Kym"
+    },
+    {
+     "entity_key": "colton-smith",
+     "display_name": "Colton Smith",
+     "source_label": "Colton Smith"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
+   "title": "Kym vs. Smith: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "jerome-kym",
+     "display_name": "Jerome Kym",
+     "source_label": "Jerome Kym"
+    },
+    {
+     "entity_key": "colton-smith",
+     "display_name": "Colton Smith",
+     "source_label": "Colton Smith"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
+   "title": "Kym vs. Smith: Set 1 Games O/U 8.5",
+   "players": [
+    {
+     "entity_key": "jerome-kym",
+     "display_name": "Jerome Kym",
+     "source_label": "Jerome Kym"
+    },
+    {
+     "entity_key": "colton-smith",
+     "display_name": "Colton Smith",
+     "source_label": "Colton Smith"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
+   "title": "Kym vs. Smith: Set 1 Games O/U 10.5",
+   "players": [
+    {
+     "entity_key": "jerome-kym",
+     "display_name": "Jerome Kym",
+     "source_label": "Jerome Kym"
+    },
+    {
+     "entity_key": "colton-smith",
+     "display_name": "Colton Smith",
+     "source_label": "Colton Smith"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
+   "title": "Set 1 Winner: Cina vs Dellien",
+   "players": [
+    {
+     "entity_key": "federico-cina",
+     "display_name": "Federico Cina",
+     "source_label": "Federico Cina"
+    },
+    {
+     "entity_key": "hugo-dellien",
+     "display_name": "Hugo Dellien",
+     "source_label": "Hugo Dellien"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
+   "title": "Set 2 Winner: Cina vs Dellien",
+   "players": [
+    {
+     "entity_key": "federico-cina",
+     "display_name": "Federico Cina",
+     "source_label": "Federico Cina"
+    },
+    {
+     "entity_key": "hugo-dellien",
+     "display_name": "Hugo Dellien",
+     "source_label": "Hugo Dellien"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
+   "title": "Cina vs. Dellien: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "federico-cina",
+     "display_name": "Federico Cina",
+     "source_label": "Federico Cina"
+    },
+    {
+     "entity_key": "hugo-dellien",
+     "display_name": "Hugo Dellien",
+     "source_label": "Hugo Dellien"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
+   "title": "Cina vs. Dellien: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "federico-cina",
+     "display_name": "Federico Cina",
+     "source_label": "Federico Cina"
+    },
+    {
+     "entity_key": "hugo-dellien",
+     "display_name": "Hugo Dellien",
+     "source_label": "Hugo Dellien"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
+   "title": "Cina vs. Dellien: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "federico-cina",
+     "display_name": "Federico Cina",
+     "source_label": "Federico Cina"
+    },
+    {
+     "entity_key": "hugo-dellien",
+     "display_name": "Hugo Dellien",
+     "source_label": "Hugo Dellien"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
+   "title": "Federico Cina vs. Hugo Dellien: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "federico-cina",
+     "display_name": "Federico Cina",
+     "source_label": "Federico Cina"
+    },
+    {
+     "entity_key": "hugo-dellien",
+     "display_name": "Hugo Dellien",
+     "source_label": "Hugo Dellien"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
+   "title": "Set Handicap: Cina (-1.5) vs Dellien (+1.5)",
+   "players": [
+    {
+     "entity_key": "federico-cina",
+     "display_name": "Federico Cina",
+     "source_label": "Federico Cina"
+    },
+    {
+     "entity_key": "hugo-dellien",
+     "display_name": "Hugo Dellien",
+     "source_label": "Hugo Dellien"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
+   "title": "Cina vs. Dellien: Set 1 Games O/U 8.5",
+   "players": [
+    {
+     "entity_key": "federico-cina",
+     "display_name": "Federico Cina",
+     "source_label": "Federico Cina"
+    },
+    {
+     "entity_key": "hugo-dellien",
+     "display_name": "Hugo Dellien",
+     "source_label": "Hugo Dellien"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
+   "title": "Cina vs. Dellien: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "federico-cina",
+     "display_name": "Federico Cina",
+     "source_label": "Federico Cina"
+    },
+    {
+     "entity_key": "hugo-dellien",
+     "display_name": "Hugo Dellien",
+     "source_label": "Hugo Dellien"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
+   "title": "Game Spread: Cina (-4.5) vs Dellien (+4.5)",
+   "players": [
+    {
+     "entity_key": "federico-cina",
+     "display_name": "Federico Cina",
+     "source_label": "Federico Cina"
+    },
+    {
+     "entity_key": "hugo-dellien",
+     "display_name": "Hugo Dellien",
+     "source_label": "Hugo Dellien"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
+   "title": "Set 2 Winner: Dougaz vs Guerrieri",
+   "players": [
+    {
+     "entity_key": "aziz-dougaz",
+     "display_name": "Aziz Dougaz",
+     "source_label": "Aziz Dougaz"
+    },
+    {
+     "entity_key": "andrea-guerrieri",
+     "display_name": "Andrea Guerrieri",
+     "source_label": "Andrea Guerrieri"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
+   "title": "Set 1 Winner: Dougaz vs Guerrieri",
+   "players": [
+    {
+     "entity_key": "aziz-dougaz",
+     "display_name": "Aziz Dougaz",
+     "source_label": "Aziz Dougaz"
+    },
+    {
+     "entity_key": "andrea-guerrieri",
+     "display_name": "Andrea Guerrieri",
+     "source_label": "Andrea Guerrieri"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
+   "title": "Dougaz vs. Guerrieri: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "aziz-dougaz",
+     "display_name": "Aziz Dougaz",
+     "source_label": "Aziz Dougaz"
+    },
+    {
+     "entity_key": "andrea-guerrieri",
+     "display_name": "Andrea Guerrieri",
+     "source_label": "Andrea Guerrieri"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
+   "title": "Dougaz vs. Guerrieri: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "aziz-dougaz",
+     "display_name": "Aziz Dougaz",
+     "source_label": "Aziz Dougaz"
+    },
+    {
+     "entity_key": "andrea-guerrieri",
+     "display_name": "Andrea Guerrieri",
+     "source_label": "Andrea Guerrieri"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
+   "title": "Dougaz vs. Guerrieri: Set 1 Games O/U 10.5",
+   "players": [
+    {
+     "entity_key": "aziz-dougaz",
+     "display_name": "Aziz Dougaz",
+     "source_label": "Aziz Dougaz"
+    },
+    {
+     "entity_key": "andrea-guerrieri",
+     "display_name": "Andrea Guerrieri",
+     "source_label": "Andrea Guerrieri"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
+   "title": "Aziz Dougaz vs. Andrea Guerrieri: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "aziz-dougaz",
+     "display_name": "Aziz Dougaz",
+     "source_label": "Aziz Dougaz"
+    },
+    {
+     "entity_key": "andrea-guerrieri",
+     "display_name": "Andrea Guerrieri",
+     "source_label": "Andrea Guerrieri"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
+   "title": "Dougaz vs. Guerrieri: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "aziz-dougaz",
+     "display_name": "Aziz Dougaz",
+     "source_label": "Aziz Dougaz"
+    },
+    {
+     "entity_key": "andrea-guerrieri",
+     "display_name": "Andrea Guerrieri",
+     "source_label": "Andrea Guerrieri"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
+   "title": "Set Handicap: Dougaz (-1.5) vs Guerrieri (+1.5)",
+   "players": [
+    {
+     "entity_key": "aziz-dougaz",
+     "display_name": "Aziz Dougaz",
+     "source_label": "Aziz Dougaz"
+    },
+    {
+     "entity_key": "andrea-guerrieri",
+     "display_name": "Andrea Guerrieri",
+     "source_label": "Andrea Guerrieri"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
+   "title": "Game Spread: Dougaz (-0.5) vs Guerrieri (+0.5)",
+   "players": [
+    {
+     "entity_key": "aziz-dougaz",
+     "display_name": "Aziz Dougaz",
+     "source_label": "Aziz Dougaz"
+    },
+    {
+     "entity_key": "andrea-guerrieri",
+     "display_name": "Andrea Guerrieri",
+     "source_label": "Andrea Guerrieri"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
+   "title": "Dougaz vs. Guerrieri: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "aziz-dougaz",
+     "display_name": "Aziz Dougaz",
+     "source_label": "Aziz Dougaz"
+    },
+    {
+     "entity_key": "andrea-guerrieri",
+     "display_name": "Andrea Guerrieri",
+     "source_label": "Andrea Guerrieri"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:coleman-wong-vs-dusan-lajovic:2026-08-27",
+   "title": "Wong vs. Lajovic: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "coleman-wong",
+     "display_name": "Coleman Wong",
+     "source_label": "Coleman Wong"
+    },
+    {
+     "entity_key": "dusan-lajovic",
+     "display_name": "Dusan Lajovic",
+     "source_label": "Dusan Lajovic"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:coleman-wong-vs-dusan-lajovic:2026-08-27",
+   "title": "Set 2 Winner: Wong vs Lajovic",
+   "players": [
+    {
+     "entity_key": "coleman-wong",
+     "display_name": "Coleman Wong",
+     "source_label": "Coleman Wong"
+    },
+    {
+     "entity_key": "dusan-lajovic",
+     "display_name": "Dusan Lajovic",
+     "source_label": "Dusan Lajovic"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:coleman-wong-vs-dusan-lajovic:2026-08-27",
+   "title": "Set 1 Winner: Wong vs Lajovic",
+   "players": [
+    {
+     "entity_key": "coleman-wong",
+     "display_name": "Coleman Wong",
+     "source_label": "Coleman Wong"
+    },
+    {
+     "entity_key": "dusan-lajovic",
+     "display_name": "Dusan Lajovic",
+     "source_label": "Dusan Lajovic"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:coleman-wong-vs-dusan-lajovic:2026-08-27",
+   "title": "Set Handicap: Wong (-1.5) vs Lajovic (+1.5)",
+   "players": [
+    {
+     "entity_key": "coleman-wong",
+     "display_name": "Coleman Wong",
+     "source_label": "Coleman Wong"
+    },
+    {
+     "entity_key": "dusan-lajovic",
+     "display_name": "Dusan Lajovic",
+     "source_label": "Dusan Lajovic"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:coleman-wong-vs-dusan-lajovic:2026-08-27",
+   "title": "Wong vs. Lajovic: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "coleman-wong",
+     "display_name": "Coleman Wong",
+     "source_label": "Coleman Wong"
+    },
+    {
+     "entity_key": "dusan-lajovic",
+     "display_name": "Dusan Lajovic",
+     "source_label": "Dusan Lajovic"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:coleman-wong-vs-dusan-lajovic:2026-08-27",
+   "title": "Wong vs. Lajovic: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "coleman-wong",
+     "display_name": "Coleman Wong",
+     "source_label": "Coleman Wong"
+    },
+    {
+     "entity_key": "dusan-lajovic",
+     "display_name": "Dusan Lajovic",
+     "source_label": "Dusan Lajovic"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:coleman-wong-vs-dusan-lajovic:2026-08-27",
+   "title": "Wong vs. Lajovic: Set 2 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "coleman-wong",
+     "display_name": "Coleman Wong",
+     "source_label": "Coleman Wong"
+    },
+    {
+     "entity_key": "dusan-lajovic",
+     "display_name": "Dusan Lajovic",
+     "source_label": "Dusan Lajovic"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:coleman-wong-vs-dusan-lajovic:2026-08-27",
+   "title": "Coleman Wong vs. Dusan Lajovic: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "coleman-wong",
+     "display_name": "Coleman Wong",
+     "source_label": "Coleman Wong"
+    },
+    {
+     "entity_key": "dusan-lajovic",
+     "display_name": "Dusan Lajovic",
+     "source_label": "Dusan Lajovic"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:cristian-garin-vs-toby-samuel:2026-08-27",
+   "title": "Samuel vs. Garin: Set 2 Games O/U 8.5",
+   "players": [
+    {
+     "entity_key": "toby-samuel",
+     "display_name": "Toby Samuel",
+     "source_label": "Toby Samuel"
+    },
+    {
+     "entity_key": "cristian-garin",
+     "display_name": "Cristian Garin",
+     "source_label": "Cristian Garin"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:cristian-garin-vs-toby-samuel:2026-08-27",
+   "title": "Samuel vs. Garin: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "toby-samuel",
+     "display_name": "Toby Samuel",
+     "source_label": "Toby Samuel"
+    },
+    {
+     "entity_key": "cristian-garin",
+     "display_name": "Cristian Garin",
+     "source_label": "Cristian Garin"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:cristian-garin-vs-toby-samuel:2026-08-27",
+   "title": "Set 1 Winner: Samuel vs Garin",
+   "players": [
+    {
+     "entity_key": "toby-samuel",
+     "display_name": "Toby Samuel",
+     "source_label": "Toby Samuel"
+    },
+    {
+     "entity_key": "cristian-garin",
+     "display_name": "Cristian Garin",
+     "source_label": "Cristian Garin"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:cristian-garin-vs-toby-samuel:2026-08-27",
+   "title": "Toby Samuel vs. Cristian Garin: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "toby-samuel",
+     "display_name": "Toby Samuel",
+     "source_label": "Toby Samuel"
+    },
+    {
+     "entity_key": "cristian-garin",
+     "display_name": "Cristian Garin",
+     "source_label": "Cristian Garin"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:cristian-garin-vs-toby-samuel:2026-08-27",
+   "title": "Set 2 Winner: Samuel vs Garin",
+   "players": [
+    {
+     "entity_key": "toby-samuel",
+     "display_name": "Toby Samuel",
+     "source_label": "Toby Samuel"
+    },
+    {
+     "entity_key": "cristian-garin",
+     "display_name": "Cristian Garin",
+     "source_label": "Cristian Garin"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:cristian-garin-vs-toby-samuel:2026-08-27",
+   "title": "Samuel vs. Garin: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "toby-samuel",
+     "display_name": "Toby Samuel",
+     "source_label": "Toby Samuel"
+    },
+    {
+     "entity_key": "cristian-garin",
+     "display_name": "Cristian Garin",
+     "source_label": "Cristian Garin"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:cristian-garin-vs-toby-samuel:2026-08-27",
+   "title": "Samuel vs. Garin: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "toby-samuel",
+     "display_name": "Toby Samuel",
+     "source_label": "Toby Samuel"
+    },
+    {
+     "entity_key": "cristian-garin",
+     "display_name": "Cristian Garin",
+     "source_label": "Cristian Garin"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:cristian-garin-vs-toby-samuel:2026-08-27",
+   "title": "Samuel vs. Garin: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "toby-samuel",
+     "display_name": "Toby Samuel",
+     "source_label": "Toby Samuel"
+    },
+    {
+     "entity_key": "cristian-garin",
+     "display_name": "Cristian Garin",
+     "source_label": "Cristian Garin"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+   "title": "Set 1 Winner: Svrcina vs McDonald",
+   "players": [
+    {
+     "entity_key": "dalibor-svrcina",
+     "display_name": "Dalibor Svrcina",
+     "source_label": "Dalibor Svrcina"
+    },
+    {
+     "entity_key": "mackenzie-mcdonald",
+     "display_name": "Mackenzie McDonald",
+     "source_label": "Mackenzie McDonald"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+   "title": "Set 2 Winner: Svrcina vs McDonald",
+   "players": [
+    {
+     "entity_key": "dalibor-svrcina",
+     "display_name": "Dalibor Svrcina",
+     "source_label": "Dalibor Svrcina"
+    },
+    {
+     "entity_key": "mackenzie-mcdonald",
+     "display_name": "Mackenzie McDonald",
+     "source_label": "Mackenzie McDonald"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+   "title": "Game Spread: Svrcina (-1.5) vs McDonald (+1.5)",
+   "players": [
+    {
+     "entity_key": "dalibor-svrcina",
+     "display_name": "Dalibor Svrcina",
+     "source_label": "Dalibor Svrcina"
+    },
+    {
+     "entity_key": "mackenzie-mcdonald",
+     "display_name": "Mackenzie McDonald",
+     "source_label": "Mackenzie McDonald"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+   "title": "Svrcina vs. McDonald: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "dalibor-svrcina",
+     "display_name": "Dalibor Svrcina",
+     "source_label": "Dalibor Svrcina"
+    },
+    {
+     "entity_key": "mackenzie-mcdonald",
+     "display_name": "Mackenzie McDonald",
+     "source_label": "Mackenzie McDonald"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+   "title": "Svrcina vs. McDonald: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "dalibor-svrcina",
+     "display_name": "Dalibor Svrcina",
+     "source_label": "Dalibor Svrcina"
+    },
+    {
+     "entity_key": "mackenzie-mcdonald",
+     "display_name": "Mackenzie McDonald",
+     "source_label": "Mackenzie McDonald"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+   "title": "Svrcina vs. McDonald: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "dalibor-svrcina",
+     "display_name": "Dalibor Svrcina",
+     "source_label": "Dalibor Svrcina"
+    },
+    {
+     "entity_key": "mackenzie-mcdonald",
+     "display_name": "Mackenzie McDonald",
+     "source_label": "Mackenzie McDonald"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+   "title": "Dalibor Svrcina vs. Mackenzie McDonald: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "dalibor-svrcina",
+     "display_name": "Dalibor Svrcina",
+     "source_label": "Dalibor Svrcina"
+    },
+    {
+     "entity_key": "mackenzie-mcdonald",
+     "display_name": "Mackenzie McDonald",
+     "source_label": "Mackenzie McDonald"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+   "title": "Svrcina vs. McDonald: Set 2 Games O/U 8.5",
+   "players": [
+    {
+     "entity_key": "dalibor-svrcina",
+     "display_name": "Dalibor Svrcina",
+     "source_label": "Dalibor Svrcina"
+    },
+    {
+     "entity_key": "mackenzie-mcdonald",
+     "display_name": "Mackenzie McDonald",
+     "source_label": "Mackenzie McDonald"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
+   "title": "Svrcina vs. McDonald: Set 1 Games O/U 10.5",
+   "players": [
+    {
+     "entity_key": "dalibor-svrcina",
+     "display_name": "Dalibor Svrcina",
+     "source_label": "Dalibor Svrcina"
+    },
+    {
+     "entity_key": "mackenzie-mcdonald",
+     "display_name": "Mackenzie McDonald",
+     "source_label": "Mackenzie McDonald"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:daniel-rincon-vs-tomas-barrios:2026-08-27",
+   "title": "Set 1 Winner: Rincon vs Barrios",
+   "players": [
+    {
+     "entity_key": "daniel-rincon",
+     "display_name": "Daniel Rincon",
+     "source_label": "Daniel Rincon"
+    },
+    {
+     "entity_key": "tomas-barrios",
+     "display_name": "Tomas Barrios",
+     "source_label": "Tomas Barrios"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:daniel-rincon-vs-tomas-barrios:2026-08-27",
+   "title": "Rincon vs. Barrios: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "daniel-rincon",
+     "display_name": "Daniel Rincon",
+     "source_label": "Daniel Rincon"
+    },
+    {
+     "entity_key": "tomas-barrios",
+     "display_name": "Tomas Barrios",
+     "source_label": "Tomas Barrios"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:daniel-rincon-vs-tomas-barrios:2026-08-27",
+   "title": "Set 2 Winner: Rincon vs Barrios",
+   "players": [
+    {
+     "entity_key": "daniel-rincon",
+     "display_name": "Daniel Rincon",
+     "source_label": "Daniel Rincon"
+    },
+    {
+     "entity_key": "tomas-barrios",
+     "display_name": "Tomas Barrios",
+     "source_label": "Tomas Barrios"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:francesco-passaro-vs-shintaro-mochizuki:2026-08-27",
+   "title": "Set 1 Winner: Mochizuki vs Passaro",
+   "players": [
+    {
+     "entity_key": "shintaro-mochizuki",
+     "display_name": "Shintaro Mochizuki",
+     "source_label": "Shintaro Mochizuki"
+    },
+    {
+     "entity_key": "francesco-passaro",
+     "display_name": "Francesco Passaro",
+     "source_label": "Francesco Passaro"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:francesco-passaro-vs-shintaro-mochizuki:2026-08-27",
+   "title": "Set 2 Winner: Mochizuki vs Passaro",
+   "players": [
+    {
+     "entity_key": "shintaro-mochizuki",
+     "display_name": "Shintaro Mochizuki",
+     "source_label": "Shintaro Mochizuki"
+    },
+    {
+     "entity_key": "francesco-passaro",
+     "display_name": "Francesco Passaro",
+     "source_label": "Francesco Passaro"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:francesco-passaro-vs-shintaro-mochizuki:2026-08-27",
+   "title": "Mochizuki vs. Passaro: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "shintaro-mochizuki",
+     "display_name": "Shintaro Mochizuki",
+     "source_label": "Shintaro Mochizuki"
+    },
+    {
+     "entity_key": "francesco-passaro",
+     "display_name": "Francesco Passaro",
+     "source_label": "Francesco Passaro"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:francesco-passaro-vs-shintaro-mochizuki:2026-08-27",
+   "title": "Mochizuki vs. Passaro: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "shintaro-mochizuki",
+     "display_name": "Shintaro Mochizuki",
+     "source_label": "Shintaro Mochizuki"
+    },
+    {
+     "entity_key": "francesco-passaro",
+     "display_name": "Francesco Passaro",
+     "source_label": "Francesco Passaro"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:francesco-passaro-vs-shintaro-mochizuki:2026-08-27",
+   "title": "Mochizuki vs. Passaro: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "shintaro-mochizuki",
+     "display_name": "Shintaro Mochizuki",
+     "source_label": "Shintaro Mochizuki"
+    },
+    {
+     "entity_key": "francesco-passaro",
+     "display_name": "Francesco Passaro",
+     "source_label": "Francesco Passaro"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:francesco-passaro-vs-shintaro-mochizuki:2026-08-27",
+   "title": "Shintaro Mochizuki vs. Francesco Passaro: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "shintaro-mochizuki",
+     "display_name": "Shintaro Mochizuki",
+     "source_label": "Shintaro Mochizuki"
+    },
+    {
+     "entity_key": "francesco-passaro",
+     "display_name": "Francesco Passaro",
+     "source_label": "Francesco Passaro"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:francesco-passaro-vs-shintaro-mochizuki:2026-08-27",
+   "title": "Mochizuki vs. Passaro: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "shintaro-mochizuki",
+     "display_name": "Shintaro Mochizuki",
+     "source_label": "Shintaro Mochizuki"
+    },
+    {
+     "entity_key": "francesco-passaro",
+     "display_name": "Francesco Passaro",
+     "source_label": "Francesco Passaro"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:francesco-passaro-vs-shintaro-mochizuki:2026-08-27",
+   "title": "Set Handicap: Mochizuki (-1.5) vs Passaro (+1.5)",
+   "players": [
+    {
+     "entity_key": "shintaro-mochizuki",
+     "display_name": "Shintaro Mochizuki",
+     "source_label": "Shintaro Mochizuki"
+    },
+    {
+     "entity_key": "francesco-passaro",
+     "display_name": "Francesco Passaro",
+     "source_label": "Francesco Passaro"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:francesco-passaro-vs-shintaro-mochizuki:2026-08-27",
+   "title": "Mochizuki vs. Passaro: Set 1 Games O/U 10.5",
+   "players": [
+    {
+     "entity_key": "shintaro-mochizuki",
+     "display_name": "Shintaro Mochizuki",
+     "source_label": "Shintaro Mochizuki"
+    },
+    {
+     "entity_key": "francesco-passaro",
+     "display_name": "Francesco Passaro",
+     "source_label": "Francesco Passaro"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
+   "title": "Set 1 Winner: Gaubas vs Wendelken",
+   "players": [
+    {
+     "entity_key": "vilius-gaubas",
+     "display_name": "Vilius Gaubas",
+     "source_label": "Vilius Gaubas"
+    },
+    {
+     "entity_key": "harry-wendelken",
+     "display_name": "Harry Wendelken",
+     "source_label": "Harry Wendelken"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
+   "title": "Set 2 Winner: Gaubas vs Wendelken",
+   "players": [
+    {
+     "entity_key": "vilius-gaubas",
+     "display_name": "Vilius Gaubas",
+     "source_label": "Vilius Gaubas"
+    },
+    {
+     "entity_key": "harry-wendelken",
+     "display_name": "Harry Wendelken",
+     "source_label": "Harry Wendelken"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
+   "title": "Gaubas vs. Wendelken: Match O/U 23.5",
+   "players": [
+    {
+     "entity_key": "vilius-gaubas",
+     "display_name": "Vilius Gaubas",
+     "source_label": "Vilius Gaubas"
+    },
+    {
+     "entity_key": "harry-wendelken",
+     "display_name": "Harry Wendelken",
+     "source_label": "Harry Wendelken"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
+   "title": "Vilius Gaubas vs. Harry Wendelken: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "vilius-gaubas",
+     "display_name": "Vilius Gaubas",
+     "source_label": "Vilius Gaubas"
+    },
+    {
+     "entity_key": "harry-wendelken",
+     "display_name": "Harry Wendelken",
+     "source_label": "Harry Wendelken"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
+   "title": "Gaubas vs. Wendelken: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "vilius-gaubas",
+     "display_name": "Vilius Gaubas",
+     "source_label": "Vilius Gaubas"
+    },
+    {
+     "entity_key": "harry-wendelken",
+     "display_name": "Harry Wendelken",
+     "source_label": "Harry Wendelken"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
+   "title": "Gaubas vs. Wendelken: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "vilius-gaubas",
+     "display_name": "Vilius Gaubas",
+     "source_label": "Vilius Gaubas"
+    },
+    {
+     "entity_key": "harry-wendelken",
+     "display_name": "Harry Wendelken",
+     "source_label": "Harry Wendelken"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
+   "title": "Gaubas vs. Wendelken: Set 2 Games O/U 8.5",
+   "players": [
+    {
+     "entity_key": "vilius-gaubas",
+     "display_name": "Vilius Gaubas",
+     "source_label": "Vilius Gaubas"
+    },
+    {
+     "entity_key": "harry-wendelken",
+     "display_name": "Harry Wendelken",
+     "source_label": "Harry Wendelken"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
+   "title": "Gaubas vs. Wendelken: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "vilius-gaubas",
+     "display_name": "Vilius Gaubas",
+     "source_label": "Vilius Gaubas"
+    },
+    {
+     "entity_key": "harry-wendelken",
+     "display_name": "Harry Wendelken",
+     "source_label": "Harry Wendelken"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
+   "title": "Game Spread: Gaubas (-0.5) vs Wendelken (+0.5)",
+   "players": [
+    {
+     "entity_key": "vilius-gaubas",
+     "display_name": "Vilius Gaubas",
+     "source_label": "Vilius Gaubas"
+    },
+    {
+     "entity_key": "harry-wendelken",
+     "display_name": "Harry Wendelken",
+     "source_label": "Harry Wendelken"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
+   "title": "Set Handicap: Gaubas (-1.5) vs Wendelken (+1.5)",
+   "players": [
+    {
+     "entity_key": "vilius-gaubas",
+     "display_name": "Vilius Gaubas",
+     "source_label": "Vilius Gaubas"
+    },
+    {
+     "entity_key": "harry-wendelken",
+     "display_name": "Harry Wendelken",
+     "source_label": "Harry Wendelken"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Fearnley vs. Rodionov: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Jacob Fearnley vs. Jurij Rodionov: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Fearnley vs. Rodionov: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Set 1 Winner: Fearnley vs Rodionov",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Set 2 Winner: Fearnley vs Rodionov",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Fearnley vs. Rodionov: Set 2 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Fearnley vs. Rodionov: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Fearnley vs. Rodionov: Set 2 Games O/U 10.5",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Fearnley vs. Rodionov: Set 1 Games O/U 8.5",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Game Spread: Fearnley (-3.5) vs Rodionov (+3.5)",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Set Handicap: Fearnley (-1.5) vs Rodionov (+1.5)",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+   "title": "Fearnley vs. Rodionov: Set 1 Games O/U 10.5",
+   "players": [
+    {
+     "entity_key": "jacob-fearnley",
+     "display_name": "Jacob Fearnley",
+     "source_label": "Jacob Fearnley"
+    },
+    {
+     "entity_key": "jurij-rodionov",
+     "display_name": "Jurij Rodionov",
+     "source_label": "Jurij Rodionov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:andrea-lazaro-garcia-vs-polina-iatcenko:2026-08-27",
+   "title": "Iatcenko vs. Garcia: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "polina-iatcenko",
+     "display_name": "Polina Iatcenko",
+     "source_label": "Polina Iatcenko"
+    },
+    {
+     "entity_key": "andrea-lazaro-garcia",
+     "display_name": "Andrea Lazaro Garcia",
+     "source_label": "Andrea Lazaro Garcia"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:andrea-lazaro-garcia-vs-polina-iatcenko:2026-08-27",
+   "title": "Set 1 Winner: Iatcenko vs Garcia",
+   "players": [
+    {
+     "entity_key": "polina-iatcenko",
+     "display_name": "Polina Iatcenko",
+     "source_label": "Polina Iatcenko"
+    },
+    {
+     "entity_key": "andrea-lazaro-garcia",
+     "display_name": "Andrea Lazaro Garcia",
+     "source_label": "Andrea Lazaro Garcia"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:andrea-lazaro-garcia-vs-polina-iatcenko:2026-08-27",
+   "title": "Set 2 Winner: Iatcenko vs Garcia",
+   "players": [
+    {
+     "entity_key": "polina-iatcenko",
+     "display_name": "Polina Iatcenko",
+     "source_label": "Polina Iatcenko"
+    },
+    {
+     "entity_key": "andrea-lazaro-garcia",
+     "display_name": "Andrea Lazaro Garcia",
+     "source_label": "Andrea Lazaro Garcia"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:andrea-lazaro-garcia-vs-polina-iatcenko:2026-08-27",
+   "title": "Polina Iatcenko vs. Andrea Lazaro Garcia: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "polina-iatcenko",
+     "display_name": "Polina Iatcenko",
+     "source_label": "Polina Iatcenko"
+    },
+    {
+     "entity_key": "andrea-lazaro-garcia",
+     "display_name": "Andrea Lazaro Garcia",
+     "source_label": "Andrea Lazaro Garcia"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:andrea-lazaro-garcia-vs-polina-iatcenko:2026-08-27",
+   "title": "Iatcenko vs. Garcia: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "polina-iatcenko",
+     "display_name": "Polina Iatcenko",
+     "source_label": "Polina Iatcenko"
+    },
+    {
+     "entity_key": "andrea-lazaro-garcia",
+     "display_name": "Andrea Lazaro Garcia",
+     "source_label": "Andrea Lazaro Garcia"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:andrea-lazaro-garcia-vs-polina-iatcenko:2026-08-27",
+   "title": "Iatcenko vs. Garcia: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "polina-iatcenko",
+     "display_name": "Polina Iatcenko",
+     "source_label": "Polina Iatcenko"
+    },
+    {
+     "entity_key": "andrea-lazaro-garcia",
+     "display_name": "Andrea Lazaro Garcia",
+     "source_label": "Andrea Lazaro Garcia"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:anouk-koevermans-vs-mariam-bolkvadze:2026-08-27",
+   "title": "Bolkvadze vs. Koevermans: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "mariam-bolkvadze",
+     "display_name": "Mariam Bolkvadze",
+     "source_label": "Mariam Bolkvadze"
+    },
+    {
+     "entity_key": "anouk-koevermans",
+     "display_name": "Anouk Koevermans",
+     "source_label": "Anouk Koevermans"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:anouk-koevermans-vs-mariam-bolkvadze:2026-08-27",
+   "title": "Set 1 Winner: Bolkvadze vs Koevermans",
+   "players": [
+    {
+     "entity_key": "mariam-bolkvadze",
+     "display_name": "Mariam Bolkvadze",
+     "source_label": "Mariam Bolkvadze"
+    },
+    {
+     "entity_key": "anouk-koevermans",
+     "display_name": "Anouk Koevermans",
+     "source_label": "Anouk Koevermans"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:anouk-koevermans-vs-mariam-bolkvadze:2026-08-27",
+   "title": "Bolkvadze vs. Koevermans: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "mariam-bolkvadze",
+     "display_name": "Mariam Bolkvadze",
+     "source_label": "Mariam Bolkvadze"
+    },
+    {
+     "entity_key": "anouk-koevermans",
+     "display_name": "Anouk Koevermans",
+     "source_label": "Anouk Koevermans"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:anouk-koevermans-vs-mariam-bolkvadze:2026-08-27",
+   "title": "Mariam Bolkvadze vs. Anouk Koevermans: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "mariam-bolkvadze",
+     "display_name": "Mariam Bolkvadze",
+     "source_label": "Mariam Bolkvadze"
+    },
+    {
+     "entity_key": "anouk-koevermans",
+     "display_name": "Anouk Koevermans",
+     "source_label": "Anouk Koevermans"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:anouk-koevermans-vs-mariam-bolkvadze:2026-08-27",
+   "title": "Set 2 Winner: Bolkvadze vs Koevermans",
+   "players": [
+    {
+     "entity_key": "mariam-bolkvadze",
+     "display_name": "Mariam Bolkvadze",
+     "source_label": "Mariam Bolkvadze"
+    },
+    {
+     "entity_key": "anouk-koevermans",
+     "display_name": "Anouk Koevermans",
+     "source_label": "Anouk Koevermans"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:anouk-koevermans-vs-mariam-bolkvadze:2026-08-27",
+   "title": "Bolkvadze vs. Koevermans: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "mariam-bolkvadze",
+     "display_name": "Mariam Bolkvadze",
+     "source_label": "Mariam Bolkvadze"
+    },
+    {
+     "entity_key": "anouk-koevermans",
+     "display_name": "Anouk Koevermans",
+     "source_label": "Anouk Koevermans"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:anouk-koevermans-vs-mariam-bolkvadze:2026-08-27",
+   "title": "Set Handicap: Koevermans (-1.5) vs Bolkvadze (+1.5)",
+   "players": [
+    {
+     "entity_key": "mariam-bolkvadze",
+     "display_name": "Mariam Bolkvadze",
+     "source_label": "Mariam Bolkvadze"
+    },
+    {
+     "entity_key": "anouk-koevermans",
+     "display_name": "Anouk Koevermans",
+     "source_label": "Anouk Koevermans"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:arantxa-rus-vs-susan-bandecchi:2026-08-27",
+   "title": "Set 1 Winner: Bandecchi vs Rus",
+   "players": [
+    {
+     "entity_key": "susan-bandecchi",
+     "display_name": "Susan Bandecchi",
+     "source_label": "Susan Bandecchi"
+    },
+    {
+     "entity_key": "arantxa-rus",
+     "display_name": "Arantxa Rus",
+     "source_label": "Arantxa Rus"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:arantxa-rus-vs-susan-bandecchi:2026-08-27",
+   "title": "Bandecchi vs. Rus: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "susan-bandecchi",
+     "display_name": "Susan Bandecchi",
+     "source_label": "Susan Bandecchi"
+    },
+    {
+     "entity_key": "arantxa-rus",
+     "display_name": "Arantxa Rus",
+     "source_label": "Arantxa Rus"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:arantxa-rus-vs-susan-bandecchi:2026-08-27",
+   "title": "Susan Bandecchi vs. Arantxa Rus: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "susan-bandecchi",
+     "display_name": "Susan Bandecchi",
+     "source_label": "Susan Bandecchi"
+    },
+    {
+     "entity_key": "arantxa-rus",
+     "display_name": "Arantxa Rus",
+     "source_label": "Arantxa Rus"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:arantxa-rus-vs-susan-bandecchi:2026-08-27",
+   "title": "Set 2 Winner: Bandecchi vs Rus",
+   "players": [
+    {
+     "entity_key": "susan-bandecchi",
+     "display_name": "Susan Bandecchi",
+     "source_label": "Susan Bandecchi"
+    },
+    {
+     "entity_key": "arantxa-rus",
+     "display_name": "Arantxa Rus",
+     "source_label": "Arantxa Rus"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:arantxa-rus-vs-susan-bandecchi:2026-08-27",
+   "title": "Bandecchi vs. Rus: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "susan-bandecchi",
+     "display_name": "Susan Bandecchi",
+     "source_label": "Susan Bandecchi"
+    },
+    {
+     "entity_key": "arantxa-rus",
+     "display_name": "Arantxa Rus",
+     "source_label": "Arantxa Rus"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:arantxa-rus-vs-susan-bandecchi:2026-08-27",
+   "title": "Bandecchi vs. Rus: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "susan-bandecchi",
+     "display_name": "Susan Bandecchi",
+     "source_label": "Susan Bandecchi"
+    },
+    {
+     "entity_key": "arantxa-rus",
+     "display_name": "Arantxa Rus",
+     "source_label": "Arantxa Rus"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:carson-branstine-vs-robin-montgomery:2026-08-27",
+   "title": "Branstine vs. Montgomery: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "carson-branstine",
+     "display_name": "Carson Branstine",
+     "source_label": "Carson Branstine"
+    },
+    {
+     "entity_key": "robin-montgomery",
+     "display_name": "Robin Montgomery",
+     "source_label": "Robin Montgomery"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:carson-branstine-vs-robin-montgomery:2026-08-27",
+   "title": "Set 1 Winner: Branstine vs Montgomery",
+   "players": [
+    {
+     "entity_key": "carson-branstine",
+     "display_name": "Carson Branstine",
+     "source_label": "Carson Branstine"
+    },
+    {
+     "entity_key": "robin-montgomery",
+     "display_name": "Robin Montgomery",
+     "source_label": "Robin Montgomery"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:carson-branstine-vs-robin-montgomery:2026-08-27",
+   "title": "Carson Branstine vs. Robin Montgomery: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "carson-branstine",
+     "display_name": "Carson Branstine",
+     "source_label": "Carson Branstine"
+    },
+    {
+     "entity_key": "robin-montgomery",
+     "display_name": "Robin Montgomery",
+     "source_label": "Robin Montgomery"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:carson-branstine-vs-robin-montgomery:2026-08-27",
+   "title": "Set 2 Winner: Branstine vs Montgomery",
+   "players": [
+    {
+     "entity_key": "carson-branstine",
+     "display_name": "Carson Branstine",
+     "source_label": "Carson Branstine"
+    },
+    {
+     "entity_key": "robin-montgomery",
+     "display_name": "Robin Montgomery",
+     "source_label": "Robin Montgomery"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:carson-branstine-vs-robin-montgomery:2026-08-27",
+   "title": "Branstine vs. Montgomery: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "carson-branstine",
+     "display_name": "Carson Branstine",
+     "source_label": "Carson Branstine"
+    },
+    {
+     "entity_key": "robin-montgomery",
+     "display_name": "Robin Montgomery",
+     "source_label": "Robin Montgomery"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:ekaterine-gorgodze-vs-gabriela-knutson:2026-08-27",
+   "title": "Set 1 Winner: Knutson vs Gorgodze",
+   "players": [
+    {
+     "entity_key": "gabriela-knutson",
+     "display_name": "Gabriela Knutson",
+     "source_label": "Gabriela Knutson"
+    },
+    {
+     "entity_key": "ekaterine-gorgodze",
+     "display_name": "Ekaterine Gorgodze",
+     "source_label": "Ekaterine Gorgodze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:ekaterine-gorgodze-vs-gabriela-knutson:2026-08-27",
+   "title": "Set 2 Winner: Knutson vs Gorgodze",
+   "players": [
+    {
+     "entity_key": "gabriela-knutson",
+     "display_name": "Gabriela Knutson",
+     "source_label": "Gabriela Knutson"
+    },
+    {
+     "entity_key": "ekaterine-gorgodze",
+     "display_name": "Ekaterine Gorgodze",
+     "source_label": "Ekaterine Gorgodze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:ekaterine-gorgodze-vs-gabriela-knutson:2026-08-27",
+   "title": "Gabriela Knutson vs. Ekaterine Gorgodze: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "gabriela-knutson",
+     "display_name": "Gabriela Knutson",
+     "source_label": "Gabriela Knutson"
+    },
+    {
+     "entity_key": "ekaterine-gorgodze",
+     "display_name": "Ekaterine Gorgodze",
+     "source_label": "Ekaterine Gorgodze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:ekaterine-gorgodze-vs-gabriela-knutson:2026-08-27",
+   "title": "Knutson vs. Gorgodze: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "gabriela-knutson",
+     "display_name": "Gabriela Knutson",
+     "source_label": "Gabriela Knutson"
+    },
+    {
+     "entity_key": "ekaterine-gorgodze",
+     "display_name": "Ekaterine Gorgodze",
+     "source_label": "Ekaterine Gorgodze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:ekaterine-gorgodze-vs-gabriela-knutson:2026-08-27",
+   "title": "Knutson vs. Gorgodze: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "gabriela-knutson",
+     "display_name": "Gabriela Knutson",
+     "source_label": "Gabriela Knutson"
+    },
+    {
+     "entity_key": "ekaterine-gorgodze",
+     "display_name": "Ekaterine Gorgodze",
+     "source_label": "Ekaterine Gorgodze"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elena-pridankina-vs-qinwen-zheng:2026-08-27",
+   "title": "Set 1 Winner: Zheng vs Pridankina",
+   "players": [
+    {
+     "entity_key": "qinwen-zheng",
+     "display_name": "Qinwen Zheng",
+     "source_label": "Qinwen Zheng"
+    },
+    {
+     "entity_key": "elena-pridankina",
+     "display_name": "Elena Pridankina",
+     "source_label": "Elena Pridankina"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elena-pridankina-vs-qinwen-zheng:2026-08-27",
+   "title": "Set 2 Winner: Zheng vs Pridankina",
+   "players": [
+    {
+     "entity_key": "qinwen-zheng",
+     "display_name": "Qinwen Zheng",
+     "source_label": "Qinwen Zheng"
+    },
+    {
+     "entity_key": "elena-pridankina",
+     "display_name": "Elena Pridankina",
+     "source_label": "Elena Pridankina"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elena-pridankina-vs-qinwen-zheng:2026-08-27",
+   "title": "Qinwen Zheng vs. Elena Pridankina: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "qinwen-zheng",
+     "display_name": "Qinwen Zheng",
+     "source_label": "Qinwen Zheng"
+    },
+    {
+     "entity_key": "elena-pridankina",
+     "display_name": "Elena Pridankina",
+     "source_label": "Elena Pridankina"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:elena-pridankina-vs-qinwen-zheng:2026-08-27",
+   "title": "Zheng vs. Pridankina: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "qinwen-zheng",
+     "display_name": "Qinwen Zheng",
+     "source_label": "Qinwen Zheng"
+    },
+    {
+     "entity_key": "elena-pridankina",
+     "display_name": "Elena Pridankina",
+     "source_label": "Elena Pridankina"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:himeno-sakatsume-vs-mia-ristic:2026-08-27",
+   "title": "Ristic vs. Sakatsume: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "mia-ristic",
+     "display_name": "Mia Ristic",
+     "source_label": "Mia Ristic"
+    },
+    {
+     "entity_key": "himeno-sakatsume",
+     "display_name": "Himeno Sakatsume",
+     "source_label": "Himeno Sakatsume"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:himeno-sakatsume-vs-mia-ristic:2026-08-27",
+   "title": "Set 1 Winner: Ristic vs Sakatsume",
+   "players": [
+    {
+     "entity_key": "mia-ristic",
+     "display_name": "Mia Ristic",
+     "source_label": "Mia Ristic"
+    },
+    {
+     "entity_key": "himeno-sakatsume",
+     "display_name": "Himeno Sakatsume",
+     "source_label": "Himeno Sakatsume"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:himeno-sakatsume-vs-mia-ristic:2026-08-27",
+   "title": "Set 2 Winner: Ristic vs Sakatsume",
+   "players": [
+    {
+     "entity_key": "mia-ristic",
+     "display_name": "Mia Ristic",
+     "source_label": "Mia Ristic"
+    },
+    {
+     "entity_key": "himeno-sakatsume",
+     "display_name": "Himeno Sakatsume",
+     "source_label": "Himeno Sakatsume"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:himeno-sakatsume-vs-mia-ristic:2026-08-27",
+   "title": "Mia Ristic vs. Himeno Sakatsume: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "mia-ristic",
+     "display_name": "Mia Ristic",
+     "source_label": "Mia Ristic"
+    },
+    {
+     "entity_key": "himeno-sakatsume",
+     "display_name": "Himeno Sakatsume",
+     "source_label": "Himeno Sakatsume"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:himeno-sakatsume-vs-mia-ristic:2026-08-27",
+   "title": "Ristic vs. Sakatsume: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "mia-ristic",
+     "display_name": "Mia Ristic",
+     "source_label": "Mia Ristic"
+    },
+    {
+     "entity_key": "himeno-sakatsume",
+     "display_name": "Himeno Sakatsume",
+     "source_label": "Himeno Sakatsume"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:himeno-sakatsume-vs-mia-ristic:2026-08-27",
+   "title": "Ristic vs. Sakatsume: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "mia-ristic",
+     "display_name": "Mia Ristic",
+     "source_label": "Mia Ristic"
+    },
+    {
+     "entity_key": "himeno-sakatsume",
+     "display_name": "Himeno Sakatsume",
+     "source_label": "Himeno Sakatsume"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:julieta-pareja-vs-lucrezia-stefanini:2026-08-27",
+   "title": "Set 2 Winner: Pareja vs Stefanini",
+   "players": [
+    {
+     "entity_key": "julieta-pareja",
+     "display_name": "Julieta Pareja",
+     "source_label": "Julieta Pareja"
+    },
+    {
+     "entity_key": "lucrezia-stefanini",
+     "display_name": "Lucrezia Stefanini",
+     "source_label": "Lucrezia Stefanini"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:julieta-pareja-vs-lucrezia-stefanini:2026-08-27",
+   "title": "Set 1 Winner: Pareja vs Stefanini",
+   "players": [
+    {
+     "entity_key": "julieta-pareja",
+     "display_name": "Julieta Pareja",
+     "source_label": "Julieta Pareja"
+    },
+    {
+     "entity_key": "lucrezia-stefanini",
+     "display_name": "Lucrezia Stefanini",
+     "source_label": "Lucrezia Stefanini"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:julieta-pareja-vs-lucrezia-stefanini:2026-08-27",
+   "title": "Julieta Pareja vs. Lucrezia Stefanini: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "julieta-pareja",
+     "display_name": "Julieta Pareja",
+     "source_label": "Julieta Pareja"
+    },
+    {
+     "entity_key": "lucrezia-stefanini",
+     "display_name": "Lucrezia Stefanini",
+     "source_label": "Lucrezia Stefanini"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:julieta-pareja-vs-lucrezia-stefanini:2026-08-27",
+   "title": "Pareja vs. Stefanini: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "julieta-pareja",
+     "display_name": "Julieta Pareja",
+     "source_label": "Julieta Pareja"
+    },
+    {
+     "entity_key": "lucrezia-stefanini",
+     "display_name": "Lucrezia Stefanini",
+     "source_label": "Lucrezia Stefanini"
+    }
+   ]
+  },
+  {
+   "matchup_key": "womens-singles:julieta-pareja-vs-lucrezia-stefanini:2026-08-27",
+   "title": "Pareja vs. Stefanini: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "julieta-pareja",
+     "display_name": "Julieta Pareja",
+     "source_label": "Julieta Pareja"
+    },
+    {
+     "entity_key": "lucrezia-stefanini",
+     "display_name": "Lucrezia Stefanini",
+     "source_label": "Lucrezia Stefanini"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:grigor-dimitrov-vs-otto-virtanen:2026-08-27",
+   "title": "Virtanen vs. Dimitrov: Match O/U 22.5",
+   "players": [
+    {
+     "entity_key": "otto-virtanen",
+     "display_name": "Otto Virtanen",
+     "source_label": "Otto Virtanen"
+    },
+    {
+     "entity_key": "grigor-dimitrov",
+     "display_name": "Grigor Dimitrov",
+     "source_label": "Grigor Dimitrov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:grigor-dimitrov-vs-otto-virtanen:2026-08-27",
+   "title": "Set 1 Winner: Virtanen vs Dimitrov",
+   "players": [
+    {
+     "entity_key": "otto-virtanen",
+     "display_name": "Otto Virtanen",
+     "source_label": "Otto Virtanen"
+    },
+    {
+     "entity_key": "grigor-dimitrov",
+     "display_name": "Grigor Dimitrov",
+     "source_label": "Grigor Dimitrov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:grigor-dimitrov-vs-otto-virtanen:2026-08-27",
+   "title": "Virtanen vs. Dimitrov: Match O/U 21.5",
+   "players": [
+    {
+     "entity_key": "otto-virtanen",
+     "display_name": "Otto Virtanen",
+     "source_label": "Otto Virtanen"
+    },
+    {
+     "entity_key": "grigor-dimitrov",
+     "display_name": "Grigor Dimitrov",
+     "source_label": "Grigor Dimitrov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:grigor-dimitrov-vs-otto-virtanen:2026-08-27",
+   "title": "Set 2 Winner: Virtanen vs Dimitrov",
+   "players": [
+    {
+     "entity_key": "otto-virtanen",
+     "display_name": "Otto Virtanen",
+     "source_label": "Otto Virtanen"
+    },
+    {
+     "entity_key": "grigor-dimitrov",
+     "display_name": "Grigor Dimitrov",
+     "source_label": "Grigor Dimitrov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:grigor-dimitrov-vs-otto-virtanen:2026-08-27",
+   "title": "Otto Virtanen vs. Grigor Dimitrov: Total Sets O/U 2.5",
+   "players": [
+    {
+     "entity_key": "otto-virtanen",
+     "display_name": "Otto Virtanen",
+     "source_label": "Otto Virtanen"
+    },
+    {
+     "entity_key": "grigor-dimitrov",
+     "display_name": "Grigor Dimitrov",
+     "source_label": "Grigor Dimitrov"
+    }
+   ]
+  },
+  {
+   "matchup_key": "mens-singles:grigor-dimitrov-vs-otto-virtanen:2026-08-27",
+   "title": "Virtanen vs. Dimitrov: Set 1 Games O/U 9.5",
+   "players": [
+    {
+     "entity_key": "otto-virtanen",
+     "display_name": "Otto Virtanen",
+     "source_label": "Otto Virtanen"
+    },
+    {
+     "entity_key": "grigor-dimitrov",
+     "display_name": "Grigor Dimitrov",
+     "source_label": "Grigor Dimitrov"
+    }
+   ]
+  }
+ ]
+}

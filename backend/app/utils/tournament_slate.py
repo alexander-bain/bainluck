@@ -162,6 +162,193 @@ def _side_view(
     }
 
 
+def build_match_row(
+    reg: TournamentRegister,
+    matchup: dict[str, Any],
+    *,
+    prices: dict[int, dict[str, Any]],
+    now: datetime,
+    cutoff: Optional[datetime],
+) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """ONE matchup -> one slate row, or a named reason it is not one.
+
+    Extracted from ``build_slate``'s loop by UX-P149 so the match detail page
+    (``app.utils.tournament_match``) renders a fixture through **the same
+    definition of a match row** the list does, rather than through a second
+    copy that agrees today.  Two surfaces each computing "the favourite" or
+    "is this coherent" is the divergence bug in miniature; the standing ruling
+    is that the blend is the product and one question gets one number.
+
+    ``cutoff`` is the only difference between the two callers, and it is the
+    reason this is a parameter rather than a constant:
+
+    * The **slate** passes ``now - MATCH_STALE_AFTER_HOURS`` and drops anything
+      older, because a list of "what is on" must not still be showing this
+      morning's matches at midnight (refusal 3 in the module docstring).
+    * The **match page** passes ``None``.  A page about one fixture is not a
+      claim that the fixture is upcoming, and 404-ing a match because it has
+      started is the worst possible moment to stop answering questions about
+      it.
+
+    Returns ``(row, None)`` or ``(None, reason)``.  Never both, never neither.
+    """
+    players = matchup.get("players")
+    if not isinstance(players, list) or len(players) != 2:
+        return None, "NOT_A_PAIR"
+
+    scheduled = matchup.get("scheduled_date")
+    started: Optional[datetime] = None
+    if isinstance(scheduled, str) and scheduled:
+        try:
+            started = datetime.fromisoformat(scheduled.replace("Z", "+00:00"))
+        except ValueError:
+            started = None
+    if started is None:
+        return None, "NO_SCHEDULED_START"
+    if cutoff is not None and started < cutoff:
+        # Registered when it was upcoming; it is not upcoming now. The
+        # register is a file and the clock is not.
+        return None, "ALREADY_PLAYED"
+
+    block = next(
+        (
+            b for b in (matchup.get("sources") or [])
+            if isinstance(b, dict) and b.get("status") == "live"
+        ),
+        None,
+    )
+    # A REGISTERED FIXTURE NOBODY PRICES IS STILL A FIXTURE (UX-P142).
+    #
+    # This used to `drop("NO_LIVE_SOURCE")`, and on ceremony day that one
+    # line was the reason the page showed none of the released draw. The
+    # main draw is 96 registered fixtures four days out and NOT ONE of them
+    # has a match market at either source yet — nobody quotes a first round
+    # before qualifying finishes — so every one of them was dropped by a
+    # price rule and the reader was shown an empty list.
+    #
+    # A price is a fact ABOUT a fixture. Its absence is not evidence the
+    # fixture does not exist, and the page's own standing rule is that no
+    # state renders blank. So the row is built with no numbers on it and
+    # `priced: False` saying why, exactly as the grid's `no_market` cell
+    # does one tab over. `probability` stays None on both sides, which is
+    # the same None every downstream honesty gate already handles.
+    #
+    # `SIDES_UNMAPPED` keeps its drop: that is a live quote we cannot
+    # attribute to a player, which is a linkage DEFECT and not an absence,
+    # and rendering it unpriced would hide it.
+    sides_map: dict[str, Any] = {}
+    if block is not None:
+        candidate = block.get("sides")
+        if not isinstance(candidate, dict) or set(candidate) != set(players):
+            return None, "SIDES_UNMAPPED"
+        sides_map = candidate
+
+    views: list[dict[str, Any]] = []
+    # Both sides' own times, kept as a list. The verdict needs the oldest
+    # and the display needs the newest; a running max destroys one of them.
+    side_times: list[Optional[datetime]] = []
+    for entity_key in players:
+        player = reg.by_entity.get(entity_key)
+        if player is None:
+            break
+        side = sides_map.get(entity_key) or {}
+        outcome_id = side.get("outcome_id")
+        loaded = prices.get(outcome_id) if isinstance(outcome_id, int) else None
+        view = _side_view(entity_key, player, loaded or {}, now)
+        observed = (loaded or {}).get("observed_at")
+        side_times.append(observed if isinstance(observed, datetime) else None)
+        views.append(view)
+    if len(views) != 2:
+        return None, "PLAYER_NOT_REGISTERED"
+
+    a_norm, b_norm, raw_sum, coherent = normalize_pair(
+        views[0]["raw_probability"], views[1]["raw_probability"]
+    )
+    # The script is normalized on its OWN sum, not the current one — an
+    # opening pair has its own overround, and mixing bases would make the
+    # move an artifact of the two sums differing rather than of the market
+    # moving.
+    a_open, b_open, open_sum, open_coherent = normalize_pair(
+        views[0]["raw_opening_probability"], views[1]["raw_opening_probability"]
+    )
+
+    if coherent:
+        views[0]["probability"] = a_norm
+        views[1]["probability"] = b_norm
+    if open_coherent:
+        views[0]["opening_probability"] = a_open
+        views[1]["opening_probability"] = b_open
+    if coherent and open_coherent:
+        for view in views:
+            view["move"] = round(
+                view["probability"] - view["opening_probability"], 6
+            )
+
+    # THE AND (UX-P135): the pair is as old as its older side.
+    age = governing_age_hours(side_times, now)
+    state = price_state(age)
+    newest = freshest_observation(side_times)
+    freshest_age = (now - newest).total_seconds() / 3600.0 if newest else None
+    stale_sides = [
+        v["entity_key"] for v in views if v["price_state"] != "live"
+    ]
+
+    favourite = None
+    if coherent:
+        favourite = (
+            views[0]["entity_key"]
+            if (views[0]["probability"] or 0) >= (views[1]["probability"] or 0)
+            else views[1]["entity_key"]
+        )
+
+    moves = [v["move"] for v in views if v["move"] is not None]
+    return {
+        "priced": block is not None,
+        "matchup_key": matchup.get("matchup_key"),
+        # OUR `events.id` for this fixture, when the register carries one
+        # (UX-P139, Alex's item 7). Register-owned so a click-through is an
+        # identity decision made once against the evidence, never a
+        # request-time name match across two systems that disagree about
+        # `Auger-Aliassime`. `None` on every US Open matchup today: the
+        # qualifying draw has no `events` rows at all.
+        "event_id": matchup.get("event_id"),
+        "draw": matchup.get("draw"),
+        "draw_label": draw_label(str(matchup.get("draw") or "")),
+        "round": matchup.get("round"),
+        "scheduled_date": started.isoformat(),
+        "sides": views,
+        # The honesty fields. A client that ignores every one of them still
+        # cannot render a confident number, because `probability` is None
+        # whenever the pair is incoherent.
+        "coherent": coherent,
+        "raw_sum": raw_sum,
+        "opening_raw_sum": open_sum,
+        "probability_is_live": state == "live" and coherent,
+        # `unpriced` is its own word, distinct from `dark`. Dark means a
+        # price we HAVE gone stale; unpriced means no market was ever
+        # pinned. Collapsing them would make "the market stopped quoting
+        # this" and "no market exists" the same sentence to a reader, and
+        # only one of those is our problem to fix.
+        "price_state": "unpriced" if block is None else state,
+        # GOVERNING, not newest — see doctrine 4 in the module docstring.
+        "observed_at": (
+            min(t for t in side_times if t is not None).isoformat()
+            if age is not None
+            else None
+        ),
+        "age_hours": round(age, 2) if age is not None else None,
+        "freshest_observed_at": newest.isoformat() if newest else None,
+        "freshest_age_hours": (
+            round(freshest_age, 2) if freshest_age is not None else None
+        ),
+        "stale_sides": stale_sides,
+        "mixed_freshness": 0 < len(stale_sides) < len(views),
+        "favourite": favourite,
+        "has_moved": any(abs(m) > MOVE_DEAD_BAND for m in moves),
+        "source_count": 1,
+    }, None
+
+
 def build_slate(
     register: dict[str, Any],
     *,
@@ -182,170 +369,15 @@ def build_slate(
     rows: list[dict[str, Any]] = []
     dropped: dict[str, int] = {}
 
-    def drop(reason: str) -> None:
-        dropped[reason] = dropped.get(reason, 0) + 1
-
     for matchup in reg.matchups:
-        players = matchup.get("players")
-        if not isinstance(players, list) or len(players) != 2:
-            drop("NOT_A_PAIR")
-            continue
-
-        scheduled = matchup.get("scheduled_date")
-        started: Optional[datetime] = None
-        if isinstance(scheduled, str) and scheduled:
-            try:
-                started = datetime.fromisoformat(scheduled.replace("Z", "+00:00"))
-            except ValueError:
-                started = None
-        if started is None:
-            drop("NO_SCHEDULED_START")
-            continue
-        if started < cutoff:
-            # Registered when it was upcoming; it is not upcoming now. The
-            # register is a file and the clock is not.
-            drop("ALREADY_PLAYED")
-            continue
-
-        block = next(
-            (
-                b for b in (matchup.get("sources") or [])
-                if isinstance(b, dict) and b.get("status") == "live"
-            ),
-            None,
+        row, reason = build_match_row(
+            reg, matchup, prices=prices, now=now, cutoff=cutoff
         )
-        # A REGISTERED FIXTURE NOBODY PRICES IS STILL A FIXTURE (UX-P142).
-        #
-        # This used to `drop("NO_LIVE_SOURCE")`, and on ceremony day that one
-        # line was the reason the page showed none of the released draw. The
-        # main draw is 96 registered fixtures four days out and NOT ONE of them
-        # has a match market at either source yet — nobody quotes a first round
-        # before qualifying finishes — so every one of them was dropped by a
-        # price rule and the reader was shown an empty list.
-        #
-        # A price is a fact ABOUT a fixture. Its absence is not evidence the
-        # fixture does not exist, and the page's own standing rule is that no
-        # state renders blank. So the row is built with no numbers on it and
-        # `priced: False` saying why, exactly as the grid's `no_market` cell
-        # does one tab over. `probability` stays None on both sides, which is
-        # the same None every downstream honesty gate already handles.
-        #
-        # `SIDES_UNMAPPED` keeps its drop: that is a live quote we cannot
-        # attribute to a player, which is a linkage DEFECT and not an absence,
-        # and rendering it unpriced would hide it.
-        sides_map: dict[str, Any] = {}
-        if block is not None:
-            candidate = block.get("sides")
-            if not isinstance(candidate, dict) or set(candidate) != set(players):
-                drop("SIDES_UNMAPPED")
-                continue
-            sides_map = candidate
-
-        views: list[dict[str, Any]] = []
-        # Both sides' own times, kept as a list. The verdict needs the oldest
-        # and the display needs the newest; a running max destroys one of them.
-        side_times: list[Optional[datetime]] = []
-        for entity_key in players:
-            player = reg.by_entity.get(entity_key)
-            if player is None:
-                break
-            side = sides_map.get(entity_key) or {}
-            outcome_id = side.get("outcome_id")
-            loaded = prices.get(outcome_id) if isinstance(outcome_id, int) else None
-            view = _side_view(entity_key, player, loaded or {}, now)
-            observed = (loaded or {}).get("observed_at")
-            side_times.append(observed if isinstance(observed, datetime) else None)
-            views.append(view)
-        if len(views) != 2:
-            drop("PLAYER_NOT_REGISTERED")
+        if row is None:
+            reason = reason or "UNKNOWN"
+            dropped[reason] = dropped.get(reason, 0) + 1
             continue
-
-        a_norm, b_norm, raw_sum, coherent = normalize_pair(
-            views[0]["raw_probability"], views[1]["raw_probability"]
-        )
-        # The script is normalized on its OWN sum, not the current one — an
-        # opening pair has its own overround, and mixing bases would make the
-        # move an artifact of the two sums differing rather than of the market
-        # moving.
-        a_open, b_open, open_sum, open_coherent = normalize_pair(
-            views[0]["raw_opening_probability"], views[1]["raw_opening_probability"]
-        )
-
-        if coherent:
-            views[0]["probability"] = a_norm
-            views[1]["probability"] = b_norm
-        if open_coherent:
-            views[0]["opening_probability"] = a_open
-            views[1]["opening_probability"] = b_open
-        if coherent and open_coherent:
-            for view in views:
-                view["move"] = round(
-                    view["probability"] - view["opening_probability"], 6
-                )
-
-        # THE AND (UX-P135): the pair is as old as its older side.
-        age = governing_age_hours(side_times, now)
-        state = price_state(age)
-        newest = freshest_observation(side_times)
-        freshest_age = (now - newest).total_seconds() / 3600.0 if newest else None
-        stale_sides = [
-            v["entity_key"] for v in views if v["price_state"] != "live"
-        ]
-
-        favourite = None
-        if coherent:
-            favourite = (
-                views[0]["entity_key"]
-                if (views[0]["probability"] or 0) >= (views[1]["probability"] or 0)
-                else views[1]["entity_key"]
-            )
-
-        moves = [v["move"] for v in views if v["move"] is not None]
-        rows.append({
-            "priced": block is not None,
-            "matchup_key": matchup.get("matchup_key"),
-            # OUR `events.id` for this fixture, when the register carries one
-            # (UX-P139, Alex's item 7). Register-owned so a click-through is an
-            # identity decision made once against the evidence, never a
-            # request-time name match across two systems that disagree about
-            # `Auger-Aliassime`. `None` on every US Open matchup today: the
-            # qualifying draw has no `events` rows at all.
-            "event_id": matchup.get("event_id"),
-            "draw": matchup.get("draw"),
-            "draw_label": draw_label(str(matchup.get("draw") or "")),
-            "round": matchup.get("round"),
-            "scheduled_date": started.isoformat(),
-            "sides": views,
-            # The honesty fields. A client that ignores every one of them still
-            # cannot render a confident number, because `probability` is None
-            # whenever the pair is incoherent.
-            "coherent": coherent,
-            "raw_sum": raw_sum,
-            "opening_raw_sum": open_sum,
-            "probability_is_live": state == "live" and coherent,
-            # `unpriced` is its own word, distinct from `dark`. Dark means a
-            # price we HAVE gone stale; unpriced means no market was ever
-            # pinned. Collapsing them would make "the market stopped quoting
-            # this" and "no market exists" the same sentence to a reader, and
-            # only one of those is our problem to fix.
-            "price_state": "unpriced" if block is None else state,
-            # GOVERNING, not newest — see doctrine 4 in the module docstring.
-            "observed_at": (
-                min(t for t in side_times if t is not None).isoformat()
-                if age is not None
-                else None
-            ),
-            "age_hours": round(age, 2) if age is not None else None,
-            "freshest_observed_at": newest.isoformat() if newest else None,
-            "freshest_age_hours": (
-                round(freshest_age, 2) if freshest_age is not None else None
-            ),
-            "stale_sides": stale_sides,
-            "mixed_freshness": 0 < len(stale_sides) < len(views),
-            "favourite": favourite,
-            "has_moved": any(abs(m) > MOVE_DEAD_BAND for m in moves),
-            "source_count": 1,
-        })
+        rows.append(row)
 
     rows.sort(key=lambda r: (r["scheduled_date"], r["matchup_key"] or ""))
 
