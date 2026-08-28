@@ -726,8 +726,30 @@ def test_rebuild_typeahead_index_is_on_heavy_and_cannot_starve_the_warmer():
     )
 
 
-def test_the_background_queue_carries_104_beats_and_45_are_fall_through():
-    """59 beats NAME `background`. The queue carries 104.
+def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
+    """60 beats NAME `background`. The queue carries 105.
+
+    🔴 **MERGE RE-DERIVATION (Integrator INT-139): 104 (ux-122 fold) x 103
+    (queue 419) -> 105, explicit 60.** Both lanes re-derived against a master
+    that did not yet carry the other, so NEITHER number was the merged one.
+    Obtained by running the census below over the merged `beat_schedule`, never
+    by reconciling the two numbers arithmetically (#1910) — `104 + 103 - 102`
+    happens to equal 105 here, which is luck, not a method. The fall-through
+    half is UNMOVED at **45**: all four contested beats
+    (`warm-search-head`, `refresh-registered-tournament-prices`,
+    `sync-tournament-results`, `settlement-capture-sweep-nightly`) name their
+    queue explicitly.
+
+    🔴 **RE-DERIVED at queue 419 (2026-08-26, #2077): 102 -> 103, explicit
+    57 -> 58.** This lane added `settlement-capture-sweep-nightly`
+    (`crontab(minute=31, hour=10)`, the nightly settlement-capture sweep) with an
+    explicit `options={"queue": "background"}`. RE-DERIVED by running the census
+    below over the assembled schedule and printing all three numbers, never by
+    adding one to the old number (#1910). The fall-through half is UNMOVED at
+    **45** — the new beat named its queue rather than defaulting into it, which is
+    the benign direction this docstring reserves. The cost declaration (one fire a
+    night, 780 s worst case = ~0.9 % of a slot-day, and why `background` rather
+    than `heavy`) is on `BACKGROUND_BEAT_COUNT`.
 
     🔴 **RE-DERIVED AT THE MERGE (ux-121 x LAT-P090).** Two lanes re-derived
     this from the same base of 101 without knowing about each other: LAT-P090
@@ -784,9 +806,9 @@ def test_the_background_queue_carries_104_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 59, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 60, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 104
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 105
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

@@ -888,8 +888,11 @@ def background_slot_occupancy(
     about the beat changed: it was 10 s then and it is 10 s now. What changed is
     the pass wall, 32.0 s -> 45.7 s median, against a period that barely moved.
 
-    `worker-background` runs `--concurrency=2`. **102 beat entries route to that
-    queue** and one of them is this warmer. At LAT-P062's numbers the warmer held
+    `worker-background` runs `--concurrency=2`. **103 beat entries route to that
+    queue** (58 explicit + 45 fall-through, re-derived 2026-08-26 — the running
+    count and every re-derivation live on `BACKGROUND_BEAT_COUNT` below; the
+    numbered corrections that follow are dated history and keep the counts they
+    were written with) and one of them is this warmer. At LAT-P062's numbers the warmer held
     32.0/50 = 64 % of one of the two slots; at today's it holds **91 %** —
     effectively a permanent resident of one slot.
 
@@ -1024,15 +1027,26 @@ def free_background_slots(
 #: queue rather than defaulting into it — the benign direction the guard's own
 #: docstring reserves.
 #:
-#: 🔴 MERGE RE-DERIVATION (Integrator, ux-121 x LAT-P090): both lanes re-derived
-#: from the same base of 101 and neither knew about the other — LAT-P090 got 102
-#: (+`warm-search-head`), UX-P139 got 103 (+`refresh-registered-tournament-prices`,
-#: +`sync-tournament-results`). The merged schedule carries all three, so the
-#: number is **104 / explicit 59 / fall-through still 45**, and it was obtained
-#: by RUNNING the census over the merged `beat_schedule` — not by adding 1 and 2,
-#: which is the arithmetic #1910 forbids and which would have been right only by
-#: luck here.
-BACKGROUND_BEAT_COUNT = 104
+#: 🔴 MERGE RE-DERIVATION (Integrator INT-139, ux-122 fold x queue 419): the SAME
+#: collision as the one directly below, one cycle later and for the third time on
+#: this constant. The ux fold landed first and set 104 / explicit 59; queue 419
+#: was certified against the PRE-fold master and independently set 103 /
+#: explicit 58. Neither number is the merged one. Running the census over the
+#: merged `beat_schedule` gives **105 / explicit 60 / fall-through still 45** —
+#: and note that 104 + 103 - 102 = 105 only by luck, which is exactly the
+#: arithmetic #1910 forbids and exactly why the census was run instead.
+#:
+#: The merged schedule carries all four of the beats the two lanes argued about:
+#: `warm-search-head`, `refresh-registered-tournament-prices`,
+#: `sync-tournament-results` (ux side) and `settlement-capture-sweep-nightly`
+#: (queue 419). ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. All four
+#: named their queue explicitly — the benign direction, four times over.
+#:
+#: 🔴 STANDING NOTE FOR THE NEXT LANE: this constant has now conflicted on three
+#: consecutive integration cycles because every lane re-derives it from whatever
+#: master it was certified against. A cert's "merge-tree is clean" is a statement
+#: about a base, not about this file. Re-measure it at merge time, always.
+BACKGROUND_BEAT_COUNT = 105
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
@@ -1043,6 +1057,44 @@ BACKGROUND_BEAT_COUNT = 104
 #: direction: the fall-through half is untouched at 45, which is the half this
 #: guard exists to watch. Re-derived by running the census over the merged
 #: `beat_schedule`, not by adding two to the old number.
+#:
+#: 🔴 RE-DERIVED AGAIN at queue 419 (2026-08-26, #2077): 102 -> **103**, explicit
+#: 57 -> **58**. This lane added `settlement-capture-sweep-nightly`
+#: (`crontab(minute=31, hour=10)`) with an EXPLICIT
+#: `options={"queue": "background"}`. RE-DERIVED by running the census over the
+#: assembled `beat_schedule` and printing all three numbers, never by adding one
+#: to the previous number (#1910).
+#:
+#: 🔴 THIS ONE IS ALSO THIS LANE'S OWN, SO IT IS DECLARED, and the cost shape is
+#: the OPPOSITE of LAT-P090's above — that was a 20 s warmer, this is one fire a
+#: night. Worst case is the task's own 780 s deadline once per 24 h = **~0.9 %
+#: of one slot-day**; observed is ~420 s (both production runs covered 3,000
+#: markets at concurrency 4 in ~7 minutes) = ~0.5 %. Against the 4,538-7,546 s/h
+#: bracket below that is under a third of one percent on the mean estimate.
+#:
+#: The placement is argued rather than defaulted, because this file is the
+#: reason `background` gets argued about: the alternative was `heavy`, and
+#: `heavy` is where a multi-minute network sweep does the most damage — the
+#: routing block in `app/tasks/__init__.py` keeps the whole 600-960 s backfill
+#: family off it precisely because that class fills both heavy slots for
+#: ten-minute stretches and delays the hourly calibration warmer. So this task
+#: is DECLARED in `_HEAVY_KEEP_ON_BACKGROUND` alongside `kalshi_cliff_drain`,
+#: which is the same shape (a resumable sweep over an EXPIRING population).
+#: 10:31 UTC is likewise chosen, not defaulted — and this file is why the first
+#: choice was wrong. :10 was picked by reading hour 10's DAILY beats (:00, :05)
+#: and calling the rest clear; CERT-418 BLOCKed it, because `*/2`, `*/5` and two
+#: `*/10` background beats fire at :10 and this queue has ~one effective slot.
+#: The correction is enumerative, not editorial: :31 is one of 22 minutes in the
+#: hour with zero other background crontab fires, and it has the lightest
+#: 13-minute run window of them. The three pure-interval background beats
+#: (10 s / 20 s / 180 s) fire during every minute and are unavoidable at any
+#: placement; they are named, not filtered. Enforced by
+#: `TestG8TheFireMinuteIsClearOnItsOwnQueue`.
+#:
+#: ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. The new beat named its
+#: queue rather than defaulting into it — the benign direction again.
+#: (Queue 419's own number, 103, was superseded at merge — see the merge
+#: re-derivation above; the live constant is 105.)
 
 #: Demand on `background` in slot-seconds per hour, EXCLUDING `warm_typeahead`
 #: (which is self-gated by its run lock, so its 360 fires/h are not 360 passes).

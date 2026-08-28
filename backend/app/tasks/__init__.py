@@ -630,6 +630,16 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.backfill_polymarket_winners",
     "app.tasks.backfill_espn_win_prob",
     "app.tasks.backfill_team_identities",
+    # #2077 (queue 419). Same class as `kalshi_cliff_drain` two lines up and
+    # placed here for the same reason: a multi-minute network sweep over an
+    # EXPIRING population. It belongs to the 600-960s backfill family the
+    # routing block above keeps off `heavy` — the observation that moving that
+    # class here fills both heavy slots for ten-minute stretches and delays the
+    # hourly calibration warmer was made about exactly this shape. Declared
+    # rather than left to `task_default_queue`, because a default is not a
+    # decision and the next reader of the routing block needs to see an
+    # objection, not a silence.
+    "app.tasks.run_settlement_sweep",
 }
 
 # The heavy lane = the calibration/precompute cache-warmer family PLUS the
@@ -1183,6 +1193,39 @@ def kalshi_cliff_drain(self, limit: int = 400):
     return _tracked_run(
         "kalshi_cliff_drain",
         run_cliff_drain(limit=limit, deadline=_time.monotonic() + 780),
+    )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=900,
+    time_limit=960,
+    name="app.tasks.run_settlement_sweep",
+)
+def run_settlement_sweep(self, budget: int = 0, concurrency: int = 0):
+    """#2077 (queue 419): drain the settlement-capture backlog on a schedule.
+
+    The runner is certified and unchanged — CERT-405 / `C-CAPTURE-AUTH-BACKOFF-1`
+    GREEN, `C-CAPTURE-LIVELOCK-1` GREEN — and it has fired twice in production,
+    3,000 rows each night with `rate_limited` 0. Both fires happened because a
+    person pasted a `heroku run:detached` line. This is that line, on beat.
+
+    Nothing here plans, queries or writes: it opens a session and calls
+    `run_sweep`. Full reasoning — why no explicit sweep label is passed, why the
+    deadline sits inside the soft limit, and why the four terminals must survive
+    the wrapper — is in `app/tasks/settlement_sweep`, with a gate per property in
+    `tests/test_settlement_sweep_beat.py`.
+    """
+    from app.services.settlement_sweep_runner import DEFAULT_BUDGET, DEFAULT_CONCURRENCY
+    from app.tasks.settlement_sweep import SWEEP_DEADLINE_S, _run_settlement_sweep
+
+    return _tracked_run(
+        "settlement_sweep",
+        _run_settlement_sweep(
+            budget=budget or DEFAULT_BUDGET,
+            concurrency=concurrency or DEFAULT_CONCURRENCY,
+            deadline_s=SWEEP_DEADLINE_S,
+        ),
     )
 
 
@@ -3927,6 +3970,49 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.kalshi_cliff_drain",
         "schedule": crontab(minute=20),  # hourly, off the :00/:15/:30/:45 crowd
         "kwargs": {"limit": 400},
+        "options": {"queue": "background"},
+    },
+    # --- #2077 (queue 419): the settlement-capture sweep, on a schedule -------
+    #
+    # The RUN has fired twice in production — 2026-08-25 and 2026-08-26, 3,000
+    # rows each, `rate_limited` 0 both nights — and both times because a person
+    # pasted a shell line. The population it drains does not wait for that:
+    # C-KALSHI-RETENTION-1 measured market-level purge starting at 47 days with
+    # NON-MONOTONIC age ordering, so there is no cliff to beat and no step
+    # function to notice a miss by. A skipped week is simply rows gone.
+    #
+    # 10:31 UTC = 03:31 PDT / 02:31 PST. Chosen, not defaulted — and the choice
+    # is ENFORCED by `TestG8TheFireMinuteIsClearOnItsOwnQueue`, not by this
+    # comment. Read that gate, not this paragraph: the first attempt at this
+    # entry sat at :10 under a comment claiming :10 was "the only clear minute
+    # in that hour", and CERT-418 BLOCKed it. The claim was true of hour 10's
+    # DAILY beats and false of the schedule that runs — `*/2`, `*/5` and two
+    # `*/10` background beats all fire at :10. A minute is only clear if the
+    # FULL assembled schedule says so.
+    #   * :31 carries zero other background crontab fires. Every even minute is
+    #     spoken for by `precompute-discover-candidate-base` (*/2), so the
+    #     minute has to be odd; :05/:10/:15/... are taken by the */5 and */10
+    #     warmers and watchdogs.
+    #   * the sweep's own 780 s deadline ends it by :44, so its whole run window
+    #     is clear of the :45 and :00 crowds. Of the 22 collision-free minutes
+    #     in the hour, :31 has the lightest 13-minute window (12 fires, 7 of
+    #     them the */2 warmer that no minute avoids).
+    #   * three background beats are pure intervals (10 s, 20 s, 180 s) and fire
+    #     during every minute of the day. No choice of minute avoids them; they
+    #     are named and pinned in the G8 section rather than filtered away.
+    #   * one fire a night, not an interval — the cohort re-cuts daily and a
+    #     second fire inside the same day resumes the same date-derived sweep
+    #     rather than re-probing, so an extra fire would be safe but pointless.
+    #
+    # `budget`/`concurrency` are stated literally and pinned EQUAL to the
+    # runner's own DEFAULT_BUDGET / DEFAULT_CONCURRENCY by a test, so the two
+    # cannot drift into two opinions. 3,000 is not comfort: `plan_sweep` caps
+    # the terminal bucket at `budget * (1 - NON_TERMINAL_RESERVE)`, so the
+    # budget has to be read through the reserve.
+    "settlement-capture-sweep-nightly": {
+        "task": "app.tasks.run_settlement_sweep",
+        "schedule": crontab(minute=31, hour=10),
+        "kwargs": {"budget": 3000, "concurrency": 4},
         "options": {"queue": "background"},
     },
     "backfill-polymarket-open-sparse": {
