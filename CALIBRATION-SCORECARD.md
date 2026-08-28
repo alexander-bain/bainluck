@@ -1,9 +1,10 @@
 # CALIBRATION SCORECARD
 
-**Published curve: 1.90 pp** (`mce_closing_line`, CI [0.87, 1.97]) — **🟡 → FLAT-TO-WORSE over 30 days.**
-1.23 pp (2026-07-24) → 1.88 pp (2026-08-20) → 1.90 pp (2026-08-27) → **1.90 pp (2026-08-28)**. Zero
-improvement in the window. The headline is flat to two decimal places; the queue underneath it is
-not — queued excess-outcomes went 436,754 → 477,794 → **480,342**.
+**Published curve: 1.89 pp** (`mce_closing_line`, CI [0.87, 1.98]) — **🟡 → FLAT-TO-WORSE over 30 days.**
+1.23 pp (2026-07-24) → 1.88 pp (2026-08-20) → 1.90 pp (2026-08-27) → 1.90 pp (2026-08-28 `17:33Z`)
+→ **1.89 pp (2026-08-28 `20:37Z`)**. The last point is the first DOWN move this page has recorded
+— queued excess-outcomes 480,342 → **455,783** — and it is **drift, not progress**: nothing has
+shipped into the producer since 2026-08-13. See §3.
 
 *Re-run: `python3 backend/scripts/calibration_scorecard.py --live --record --markdown`.
 Everything on this page is folded from the payload `https://api.bainluck.com/api/calibration`
@@ -37,6 +38,24 @@ actually serves. There is not a single holdout, sample, or parallel-rail number 
 > `kalshi/tech`** (§6a) — the ±cancellation pair from §2, which turn out to be **one structural
 > defect pointing in two directions**. Published number **1.90 pp, unmoved**; a fifth datapoint was
 > banked because the curve genuinely regenerated (`17:33:03Z`), not because anything was fixed.
+
+> **CAL-P114, 2026-08-28 — rank 2 is designed, and the rail it needed did not exist.** The gates
+> are still shut: the freeze score reads **1 post-baseline beat, WINDOW_NOT_FULL**, so this is a
+> pre-build queue, not a landing one. Three things banked, none touching the frozen file.
+> **`calibration_cell_exact.py`** folds a cell through the producer's OWN CTE chain — imported,
+> not re-implemented — and reproduces four cells to ±1.22% on n with ECE and gap identical at two
+> decimals; it exists because the CAL-P112 census reads `kalshi/economics` at **+4.27 gap against
+> the payload's −0.47**, and *ranked that cell's sub-classes anyway*, producing a monotone
+> price-staleness "mechanism" the exact rail **reverses**. **`kalshi/economics`** (rank 2, 65,524
+> excess-outcomes) is the third and largest instance of CAL-P112's non-partition-bundle defect —
+> 99.7% cumulative index ladders, one market publishing 76 rungs at a price sum of 72.48 — and
+> rules E+E2+E3 take it **5.29 → 2.61 pp, PASS, with 1,641 rows still above the materiality
+> floor**: the first cell on this board whose fix leaves it passing rather than absent. And the
+> measurement **forces one correction on CAL-P112's banked design** — the bundle allowlist must be
+> keyed on `(source, category)`, because category-only scoping fixes rank 2 and takes
+> `polymarket/economics` from 3.91 to **17.75**. CAL-P112's parked `polymarket/tech` debt is
+> discharged in passing (and its predicted direction was wrong). Published number **1.89 pp**,
+> down 0.01 on population drift with nothing shipped — recorded as drift, in §3.
 
 ---
 
@@ -172,7 +191,19 @@ per-cell for that reason.
 | 2026-08-27 | **1.90 pp** | `q268` | 19 | 477,794 | live |
 | 2026-08-28 `13:35Z` | **1.90 pp** | `q268` | **19** | **480,342** | live |
 | 2026-08-28 `15:34Z` | **1.90 pp** | `q268` | **19** | **480,342** | live (CAL-P110) |
-| **2026-08-28 `17:33Z`** | **1.90 pp** | `q268` | **19** | **480,342** | live (CAL-P112) — banked, the curve really did regenerate |
+| 2026-08-28 `17:33Z` | **1.90 pp** | `q268` | **19** | **480,342** | live (CAL-P112) — banked, the curve really did regenerate |
+| **2026-08-28 `20:37Z`** | **1.89 pp** | `q268` | **19** | **455,783** | live (CAL-P114) — **the first DOWN move in the series** |
+
+> **The 20:37Z point is the first improvement this page has ever recorded, and it is not a win.**
+> Headline 1.90 → **1.89**, queued excess-outcomes 480,342 → **455,783 (−24,559, −5.1%)**, queued
+> cells flat at 19. **Nothing shipped into the producer between 17:33Z and 20:37Z** — the freeze
+> is still on and no rule has been merged since 2026-08-13 — so this is population drift in the
+> same class as the +0.02 pp drift of 08-20 → 08-27, pointing the other way. The population grew
+> by 18,623 outcomes over the same three hours. It is recorded because the curve genuinely
+> regenerated, and it is labelled drift because **a page that banks drift as progress is the
+> thing this page was built to stop.** The board also reshuffled: `kalshi/economics` passed
+> `polymarket/esports` into rank 2, `kalshi/football` left the queue, and
+> `polymarket/economics` entered it at rank 13.
 
 **Five points is the entire published-curve history this repo holds, and that is itself a
 finding.** Nobody ever banked the served payload on a schedule, so "did the last three months
@@ -582,6 +613,15 @@ the log-wording fix went with the frozen file — **judge it by count, not by wo
 > 19,357) and `polymarket/tech` 5.28 → **5.40** (6,006 → 6,377). Nothing shipped into the producer
 > between the two readings; this is population drift. §2's `kalshi/football` figure carries the
 > same 13:35Z vintage.*
+>
+> ⚠️ **RE-MEASURED AGAIN at `20:37Z` (CAL-P114) — the ORDER below is now stale, though the count
+> is not.** Still 19 cells; total 480,342 → **455,783**. The rows that moved enough to matter:
+> **`kalshi/economics` is now rank 2** (65,524, ahead of `polymarket/esports` at 64,503) and is
+> the cell CAL-P114 designs against; `polymarket/baseball` 4.99 → **4.80** on 43,768 (82,758 →
+> 78,782); `polymarket/soccer` 3.53 → **3.42** on 106,803 (54,320 → 44,857); `kalshi/football`
+> **left the queue**; `polymarket/economics` **entered it** at rank 13 (3.90 on 12,882, 11,594).
+> Live ordering: `python3 backend/scripts/calibration_scorecard.py --live`. Nothing shipped into
+> the producer between any of these readings.*
 
 | # | published cell | ECE | n | gap | excess | σ | excess-outcomes | mechanism known? | status |
 |--:|---|--:|--:|--:|--:|--:|--:|---|---|
@@ -684,6 +724,114 @@ Holdout (split on `market_id`, monotone with creation, rule never re-fitted):
    queue with 260 rows — below the materiality floor — and `polymarket/esports` lands at ~3.0 pp,
    *at* the bar rather than under it (0.04σ). Both are the correct outcome for rows that were never
    scoreable forecasts of one question, and both are said here rather than discovered after deploy.
+
+---
+
+## 6b. Rank 2 pre-built, and the instrument that had to exist first — CAL-P114
+
+Full document: **`artifacts/cal-p114/RULE-DESIGN-kalshi-economics.md`**. Designed, benched,
+holdout-validated, **not built, worth 0.00 pp today.**
+
+### The instrument: `calibration_cell_exact.py` — the producer's own chain, not a re-implementation
+
+CAL-P112 shipped two rails and this queue could not use either. The shape census reads
+`kalshi/economics` at **69,653 / 4.65 / +4.27** against the payload's **28,613 / 5.29 / −0.47** —
+2.4x the rows and the **wrong sign**; the replica caps at ~6,000 candidate rows and this cell has
+69,653. So the third rail does not re-implement the predicate at all: it **imports
+`_calibration_population_ctes()` from `precompute_calibration` and appends a `GROUP BY`**, scoped
+to one cell through the chain's own documented `market_info_extra` hook and chunked on `fm.id`.
+Reading the frozen file is not committing to it; `git diff origin/master -- backend/app/` is
+empty on this branch.
+
+It reproduces every cell it has been pointed at, and prints its number beside the payload's on
+every run:
+
+| cell | exact rail | payload | Δn |
+|---|---|---|--:|
+| `kalshi/economics` | 28,738 / **5.29** / **−0.47** | 28,613 / 5.29 / −0.47 | +0.55% |
+| `polymarket/economics` | 12,952 / **3.91** / −0.04 | 12,882 / 3.90 / +0.14 | +0.54% |
+| `kalshi/tech` | 1,208 / **11.01** / −9.40 | 1,203 / 10.96 / −9.35 | +0.42% |
+| `polymarket/tech` | 2,745 / **5.04** / −1.09 | 2,779 / 4.91 / −0.85 | −1.22% |
+
+`--edge-check` re-runs the whole sweep at half the chunk width: **identical n, ECE and gap**, so
+the chunking is not doing the work.
+
+> 🔴 **The census did not merely fail to reproduce — it produced a confident false mechanism.**
+> Folded by price-capture age, the census says error rises monotonically with staleness (2.86 at
+> <15 min → 10.52 at >7 d), which is a clean, shippable story. The exact rail **reverses it**:
+> the freshest bucket is the **worst** (8.81) and the stalest the **best** (3.81). Same
+> dimension, same day, opposite conclusion. **A rail that has not been shown to reproduce a cell
+> will still rank that cell's sub-classes, and the ranking will look like a mechanism.**
+
+### The cell: `kalshi/economics` is mis-populated, not miscalibrated
+
+99.7% of it is cumulative intraday index and commodity ladders — `KXNASDAQ100U`, `KXINXU`,
+`KXDJI` — published as N independent rungs. `KXDJI-26JUL2814`: **76 outcomes, 76 winners,
+published price sum 72.48**; the median KXDJI market is 35 rungs / 24.5 winners / **sum 21.66**.
+86.3% is `bundle_multiwin` and the 13.4% `field_1win` remainder is *the same ladders on a day the
+index landed on one rung* — sorted by published price sum it runs **2.61 → 4.09 → 15.67 →
+30.75**, and only the `sum ≤ 1.15` slice is a forecast of one question.
+
+| policy | n | ECE | gap | excess-outcomes | |
+|---|--:|--:|--:|--:|---|
+| A_today (control) | 28,738 | 5.29 | −0.47 | 65,810 | |
+| B — RULE T alone | 3,944 | **5.73** | +5.73 | 10,767 | 🔴 **worse than doing nothing** |
+| C — RULE E | 1,722 | 3.00 | +0.24 | 0 | exactly at the bar |
+| **D — E + E2 + E3** | **1,641** | **2.61** | +1.74 | **0** | **PASS, and still above the floor** |
+
+Holdout on `market_id` 12,000,000, never re-fitted: OLD 9,338 @ 6.55 → **441 @ 3.31**; NEW
+19,400 @ 4.69 → **1,200 @ 2.75**. Both halves improve by a large margin, and **the survivor sits
+AT the bar rather than under it** — the honest claim is 2.6–3.3 pp, not "fixed forever".
+
+**This is the first cell on the board whose rule leaves it PASSING and MATERIAL** — `kalshi/tech`
+(183 rows) and `polymarket/tech` (707) both fall below the 1,000 floor and become absences.
+
+### 🔴 The correction CAL-P114 forces on CAL-P112's banked design
+
+`esports_multi_bundles` filters on `mrs.category` and **not on source**, and RULE T inherits that
+shape. Measured, category-only scoping is wrong:
+
+| cell | today | B — T only | C — E | D | verdict |
+|---|--:|--:|--:|--:|---|
+| `kalshi/economics` | 5.29 | 5.73 | 3.00 | **2.61 (1,641)** | **ADMIT** |
+| `polymarket/economics` | 3.91 | 7.01 | **17.75** | 5.10 (457) | **REFUSE** |
+| `kalshi/tech` | 11.01 | 4.65 | 7.24 | 4.53 (183) | admit → absence |
+| `polymarket/tech` | 5.04 | 4.80 | 4.48 | 3.90 (707) | **REFUSE** |
+
+**The allowlist must be keyed on `(source, category)`.** One extra column in a tuple is the
+difference between crossing rank 2 off and silently deleting rank 13.
+
+Two further corrections, both from the same rail:
+
+* **RULE T's evidence gate (bundle worse than remainder) REFUSES the cell the rule fixes.** On
+  `kalshi/economics` it reads bundle **5.67** vs remainder **6.48** — bundle is *better* —
+  because the remainder is not a control, it is the same ladders. And **dominance does not
+  discriminate either**: `kalshi/economics` is 94.0% non-partition and `polymarket/economics` is
+  91.4%, and they sit on opposite sides of the decision. **The admission gate is the BENCH**, per
+  pair, recorded in a design document. A threshold that cannot separate 94.0 from 91.4 is not a
+  threshold (ruling 124).
+* **CAL-P112's parked `polymarket/tech` debt is DISCHARGED, and its direction was wrong.** That
+  queue predicted T alone moves the cell *"8.04 → 12.62, i.e. worse"* off the census. On the
+  published population it moves **5.04 → 4.80 — marginally better.** The cell is still refused,
+  but for the measured reason (it falls below the floor), and the old reason should not be
+  quoted again.
+
+### Also parked, not dropped
+
+`backfill_winners.py:7495-7506` — Part B names its subquery `settled` and orders
+`captured_at ASC LIMIT 1`, taking the **first** snapshot an hour after the market opened, while
+Parts A, A2 and C all order `DESC`. It is not this cell's defect (100% of `kalshi/economics` is
+Part A2's population), but "the first price after open" being called a closing line is a real
+question for whichever cells Part B does own. Appended to `PARKED-MEASUREMENTS.md`.
+
+### 3a's σ note, flagged for the threshold table
+
+Criterion 3 gates on `σ = 50/√n` with `n` = published **rows**. A ladder's rungs are near-perfectly
+correlated, so this cell's 28,613 rows carry roughly **2,507 markets** of independent
+information: the gate reads **7.8σ** where the market count would read about **2.3σ**. The cell is
+established either way. It is recorded because criterion 3 overstates significance on exactly the
+bundle-dominated cells criterion 6 was proposed for. **Flagged for Alex with the threshold table
+— this page does not get to redefine its own finish line.**
 
 ---
 
