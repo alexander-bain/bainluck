@@ -187,6 +187,42 @@ _PRICE_DARK_WORST_SQL = """
      LIMIT 25
 """
 
+#: The registered-coverage half, and the reason it is a separate query.
+#:
+#: The two queries above are value-bounded, so they are structurally incapable of
+#: reporting the failure that emptied the US Open "More predictions" section:
+#: every market behind it was tier 5, which means it was never in the
+#: denominator. `price_dark` read 19 and `status` read green-ish while a curated
+#: page showed nothing. A guard that cannot see a population cannot report on it,
+#: and reporting only what it can see is how this stayed invisible (gotcha #53).
+#:
+#: No tier or volume bound, same liveness bounds, same snapshot-derived freshness
+#: — the register decides membership and the market decides nothing.
+_REGISTERED_DARK_SQL = """
+    SELECT fm.id, fm.source, fm.external_id, fm.name, fm.market_tier,
+           COALESCE(fm.llm_sport_category, 'uncategorized') AS category
+      FROM futures_markets fm
+     WHERE fm.id = ANY(:market_ids)
+       AND fm.status = 'open'
+       AND fm.source IN ('kalshi', 'polymarket')
+       AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
+       AND NOT EXISTS (
+             SELECT 1 FROM futures_outcomes fo
+               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
+              WHERE fo.market_id = fm.id
+                AND s.captured_at > NOW() - make_interval(hours => :max_age_hours)
+           )
+     ORDER BY fm.id
+"""
+
+_REGISTERED_ELIGIBLE_SQL = """
+    SELECT COUNT(*) FROM futures_markets fm
+     WHERE fm.id = ANY(:market_ids)
+       AND fm.status = 'open'
+       AND fm.source IN ('kalshi', 'polymarket')
+       AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
+"""
+
 
 @router.get("/futures-price-freshness")
 async def futures_price_freshness(
@@ -234,13 +270,63 @@ async def futures_price_freshness(
         by_category.setdefault(category, {})[source] = int(dark)
         dark_total += int(dark)
 
+    # The curated half. Every market a committed register renders, at any tier.
+    from app.utils.tournament_register import registered_market_ids
+
+    registered_ids = sorted(registered_market_ids())
+    registered_params = {
+        "market_ids": registered_ids,
+        "max_age_hours": max_age_hours,
+    }
+    registered_dark = (
+        (await db.execute(text(_REGISTERED_DARK_SQL), registered_params)).fetchall()
+        if registered_ids
+        else []
+    )
+    registered_eligible = (
+        (
+            await db.execute(
+                text(_REGISTERED_ELIGIBLE_SQL), {"market_ids": registered_ids}
+            )
+        ).scalar()
+        or 0
+        if registered_ids
+        else 0
+    )
+
     return {
         "invariant": (
             f"a tier-1 open market with volume >= {HIGH_VALUE_VOLUME_FLOOR} and a "
             f"future resolution date must have a price capture within "
             f"{max_age_hours}h, in every category"
         ),
+        # UNCHANGED SEMANTICS: this is the tier-1 value class only, because
+        # CERT-404 G5 and the existing dashboards read it. Read `status_all` for
+        # "is anything price-dark".
         "status": "green" if dark_total == 0 else "red",
+        "status_all": (
+            "green" if dark_total == 0 and not registered_dark else "red"
+        ),
+        "registered": {
+            "invariant": (
+                "a market any committed tournament register renders must have a "
+                f"price capture within {max_age_hours}h, at ANY tier and ANY volume"
+            ),
+            "status": "green" if not registered_dark else "red",
+            "eligible_markets": int(registered_eligible),
+            "price_dark": len(registered_dark),
+            "dark_markets": [
+                {
+                    "market_id": r[0],
+                    "source": r[1],
+                    "external_id": r[2],
+                    "name": r[3],
+                    "market_tier": r[4],
+                    "category": r[5],
+                }
+                for r in registered_dark
+            ],
+        },
         "max_age_hours": max_age_hours,
         "volume_floor": HIGH_VALUE_VOLUME_FLOOR,
         "eligible_markets": int(total_eligible),

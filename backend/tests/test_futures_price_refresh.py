@@ -352,6 +352,41 @@ class TestRegisteredMarketsAreReachable:
         assert registered_market_ids(directory=tmp_path) == set()
 
 
+class TestTheGuardCanSeeTheCuratedPopulation:
+    """A guard bounded by value cannot report a failure that is tier 5.
+
+    When the section emptied, `/futures-price-freshness` was reporting on a
+    denominator the three dark markets were never in. It was not wrong, it was
+    blind — and a blind guard reads exactly like a green one (gotcha #53).
+    """
+
+    def test_registered_arm_exists_and_drops_the_value_bounds(self):
+        sql = _extract_sql_literal(_ADMIN_SRC, "_REGISTERED_DARK_SQL")
+        assert "market_tier = 1" not in sql
+        assert "volume_floor" not in sql
+        assert "fm.id = ANY(:market_ids)" in sql
+        # Same liveness bounds and the same snapshot-derived freshness as the
+        # class arm — only the membership test differs.
+        assert "fm.status = 'open'" in sql
+        assert "resolution_date > NOW()" in sql
+        assert "s.captured_at" in sql
+        assert "updated_at" not in sql
+
+    def test_it_reports_tier_so_a_reader_sees_why_the_class_arm_missed_it(self):
+        assert "fm.market_tier" in _extract_sql_literal(_ADMIN_SRC, "_REGISTERED_DARK_SQL")
+        assert '"market_tier": r[4]' in _ADMIN_SRC
+
+    def test_the_class_verdict_keeps_its_meaning(self):
+        """CERT-404 G5 and the dashboards read `status`. Redefining it under them
+        would move a number they are grading against."""
+        assert '"status": "green" if dark_total == 0 else "red",' in _ADMIN_SRC
+
+    def test_a_single_field_answers_is_anything_dark(self):
+        """Two verdicts and no combined one is how the second gets ignored."""
+        assert '"status_all"' in _ADMIN_SRC
+        assert "dark_total == 0 and not registered_dark" in _ADMIN_SRC
+
+
 class TestTheProducerClockLeadsTheRenderClock:
     def test_registered_window_is_a_strict_sub_interval_of_the_beat(self):
         """Producer-at-6h + renderer-at-6h is a lockstep, not a margin.
