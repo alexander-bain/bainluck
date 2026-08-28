@@ -687,6 +687,11 @@ side, the state of the men's draw; separately, trivia.
 still collapses, and the drop is still counted. What changed is what the key
 carries.
 
+*Sequel (ruling **143**, 2026-08-28).* Alex went one step further on the same
+two cards: not "keep both", but **combine them**. That does not weaken this
+clause — it is the answer to the question the clause leaves open. See clause
+**28**.
+
 ### 26. A guard proves a property of the artifact it reads.
 
 A test over source proves something about source. A test over a fixture proves
@@ -750,6 +755,71 @@ identifiers (`source: "kalshi"`, enum values, columns, data attributes) were
 never in scope, and the honest admission the venue name was carrying has to
 survive the removal — usually by counting rather than naming ("one reading 20
 days ago"), never by deleting the sentence.
+
+### 28. When two items are a comparison, the fix is composition, not suppression.
+
+Clause **25** says a near-duplicate rule may not collapse across subjects. It
+leaves the harder question open: what if the reader really is being shown the
+same question twice, and the answer *"keep both"* is also unsatisfying? The
+answer is that the unit was wrong. **Two items that ask one question about
+different subjects are one item whose rows are the subjects.**
+
+The reason this is not obvious is that suppression and composition look like the
+same decision from inside the rule. Both notice the similarity; both act on it.
+But suppression is a subtraction taken at RENDER time, by a rule that cannot see
+what it is destroying, and composition is an addition made ONCE, offline, against
+the evidence, with both sources named. One of them can delete a subject silently
+and the other cannot, and that is the whole difference.
+
+Three obligations follow, and they are what stop composition becoming a new way
+to lose things:
+
+- **A composed item has no single headline.** If two rows answer the question,
+  promoting one of them into the big type is a guess dressed as an answer.
+- **A missing part refuses the whole.** A comparison with one side is not a
+  smaller comparison. It reads as an answer and is not one, so the pass that
+  builds it fails loudly rather than shipping a half.
+- **Independent parts are never normalised to sum.** Composing two questions
+  into one card does not make their answers exclusive. If both can be true, the
+  numbers must be allowed not to add up.
+
+*Charter case (ruling **143**).* Alex, MC 2026-08-28: *"ONE COMBINED CARD — 'Who
+wins a second major this year?' — showing BOTH players' probabilities."* Three
+queues had oscillated between deleting one player and printing the same question
+twice, because both readings assumed the unit was one card per market.
+
+*The limit:* composition is written by hand, subject by subject, where a person
+decided these two questions are the same question. It is not a similarity
+threshold, and nothing in it licenses a rule that merges items it noticed look
+alike — that is suppression again, with an extra step.
+
+### 29. An attribution is a claim about evidence.
+
+"X ruled this" is subject to the same bar as every other claim: **state the
+evidence, or state that you are inferring.** The evidence for an attribution is
+the sentence the person actually wrote, with a date and a source. Anything less
+is the writer's reading of it, published under the other person's authority.
+
+The failure is specific and it is not carelessness. A paraphrase entered in good
+faith becomes indistinguishable from the ruling within one hop — it is in a
+comment, a test name, a report — and from then on nobody can check it, because
+the words it replaced are gone. A quote can be *wrong about its own meaning* and
+still be re-read by the next person. A paraphrase cannot be re-read at all.
+That asymmetry, not accuracy, is why the quote is required.
+
+Where someone must act on their own reading of an ambiguous note, the fix is not
+to be more careful — it is to say *this lane read X as Y*, which makes the
+reading falsifiable instead of authoritative.
+
+*Charter case (ruling **144**).* Alex, 2026-08-28: *"no lane may attribute a
+ruling to Alex without quoting his actual words with date and source. 'Exactly
+as ruled' without a quote is a violation — this queue exists because a paraphrase
+inverted a ruling."* The inverted paraphrase is ruling **143**'s own history: a
+note that two cards repeated a template was recorded as a decision to remove the
+repetition, and what was removed was a player.
+
+*Sibling:* clause **1** — an inference and a measurement must not render as the
+same thing. This is that clause applied to authority rather than to data.
 
 # MECHANICAL SPECS — enforced by the Integrator, not judged by it
 

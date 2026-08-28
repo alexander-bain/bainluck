@@ -568,3 +568,54 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
     expect(() => assertPlain("<h3>Will Sinner actually play?</h3>", "canary")).not.toThrow();
   });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * UX-P151 — THE CURATED COPY IS READER COPY, AND NOTHING WAS SWEEPING IT
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every guard above sweeps what a COMPONENT renders. But half the words on the
+ * questions section are not in any component: a prop's `title` and `hook` are
+ * written by hand into `backend/data/tournament_registers/us-open-2026.json`
+ * and printed verbatim. A sweep over `components/tournament/*.tsx` cannot see
+ * them, and neither can the bundle scanner — the register is data fetched at
+ * request time, not a string literal in a chunk.
+ *
+ * So this reaches across into the backend file on purpose. Copy is copy
+ * wherever it is stored, and the only alternative — trusting whoever writes the
+ * next card to remember the ban list — is the arrangement that produced the
+ * sentence Alex read on production in the first place.
+ */
+describe("UX-P151: the register's own curated copy obeys the same bans", () => {
+  const REGISTER_PATH = path.join(
+    __dirname, "..", "..", "..",
+    "backend", "data", "tournament_registers", "us-open-2026.json"
+  );
+  const register = JSON.parse(fs.readFileSync(REGISTER_PATH, "utf8")) as {
+    props: { key: string; title: string; hook: string | null }[];
+  };
+
+  it("has props to check, so this cannot pass vacuously", () => {
+    expect(register.props.length).toBeGreaterThan(0);
+  });
+
+  it("no prop title or hook uses our vocabulary", () => {
+    for (const prop of register.props) {
+      // Wrapped in a tag so it goes through the same attribute-stripping path
+      // the rendered sweeps use — one code path, one set of exemptions.
+      assertPlain(`<p>${prop.title}</p>`, `register prop ${prop.key} title`);
+      if (prop.hook) assertPlain(`<p>${prop.hook}</p>`, `register prop ${prop.key} hook`);
+    }
+  });
+
+  it("the combined card's copy is the one Alex ruled, and it says both", () => {
+    const card = register.props.find((p) => p.key === "second-major");
+    expect(card).toBeDefined();
+    // His title, verbatim.
+    expect(card!.title).toBe("Who wins a second major this year?");
+    // And the hook that stops it reading as an exclusive race. Two independent
+    // binaries can BOTH resolve Yes — four majors a year, each man needs two —
+    // so a title phrased as "who wins" needs the sentence underneath it.
+    expect(card!.hook).toMatch(/two separate questions/i);
+    expect(card!.hook).toMatch(/both do it, or neither/i);
+  });
+});

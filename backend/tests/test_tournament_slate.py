@@ -615,17 +615,33 @@ def test_the_committed_register_answers_where_to_watch():
 # The curation bar (scripts/populate_tournament_props.py)
 # ---------------------------------------------------------------------------
 
-def _run_props_script(tmp_path, dump_rows):
+#: The two legs of the `second-major` combined card (UX-P151).
+#:
+#: Prepended to every dump by default, because the pass REFUSES to write at all
+#: when a combined card is missing a leg — a comparison card with one side is
+#: not a smaller card, it is a wrong one. Without these rows every test in this
+#: section would fail on that refusal instead of on its own subject, which is a
+#: fixture problem masquerading as five findings.
+COMBINED_LEG_ROWS = [
+    [53796, "KXGRANDSLAM-CALC26", "kalshi", "Carlos Alcaraz: Grand Slam wins in 2026",
+     "open", 848773, "2+ Grand Slam wins", "0.25"],
+    [53795, "KXGRANDSLAM-JSIN26", "kalshi", "Jannik Sinner: Grand Slam wins in 2026",
+     "open", 848769, "2+ Grand Slam wins", "0.555"],
+]
+
+
+def _run_props_script(tmp_path, dump_rows, *, with_combined_legs=True):
     import json as _json
     import subprocess
     import sys as _sys
     from pathlib import Path as _Path
 
     root = _Path(__file__).resolve().parents[1]
+    rows = ([*COMBINED_LEG_ROWS, *dump_rows] if with_combined_legs else list(dump_rows))
     dump = {
         "columns": ["market_id", "market_ext", "source", "market_name", "status",
                     "outcome_id", "outcome_name", "current_probability"],
-        "rows": dump_rows,
+        "rows": rows,
         "truncated": False,
     }
     (tmp_path / "dump.json").write_text(_json.dumps(dump))
@@ -655,19 +671,16 @@ def test_the_curation_bar_excludes_an_uncurated_market(tmp_path):
     returned, so a new high-volume dull market cannot arrive on the page.
     """
     result, out = _run_props_script(tmp_path, [
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "2+ Grand Slam wins", "0.18"],
         [999, "KXSOMETHING-DULL", "kalshi", "Dull", "open", 5099, "Yes", "0.50"],
     ])
     assert result.returncode == 0, result.stderr
-    assert [p["key"] for p in out["props"]] == ["sinner-second-major"]
+    assert [p["key"] for p in out["props"]] == ["second-major"]
     assert "below the bar" in result.stdout
 
 
 def test_a_curated_prop_absent_from_the_dump_is_reported_not_invented(tmp_path):
     """A market we curated and did not find must be loud, not silently missing."""
-    result, _ = _run_props_script(tmp_path, [
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "2+ Grand Slam wins", "0.18"],
-    ])
+    result, _ = _run_props_script(tmp_path, [])
     assert result.returncode == 0
     assert "curated but ABSENT from the dump" in result.stdout
     assert "KXATPCOMPETE-26USOSIN" in result.stdout
@@ -677,14 +690,111 @@ def test_the_props_pass_writes_a_register_that_still_validates(tmp_path):
     from app.utils.tournament_register import us_open_2026_contract, validate_register
 
     result, out = _run_props_script(tmp_path, [
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "2+ Grand Slam wins", "0.18"],
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5002, "3+ Grand Slam wins", "0.02"],
+        [53795, "KXGRANDSLAM-JSIN26", "kalshi", "Jannik Sinner: Grand Slam wins in 2026",
+         "open", 848768, "3+ Grand Slam wins", "0.02"],
     ])
     assert result.returncode == 0
     assert validate_register(out, us_open_2026_contract()) == []
     # And the second population pass's work is still intact underneath it.
     assert len(out["matchups"]) > 0
     assert out["version"] == 3 and out["supersedes_version"] == 2
+
+
+# ── The combined card (UX-P151, Alex 2026-08-28) ─────────────────────────────
+#
+# Alex, verbatim: *"ONE COMBINED CARD — 'Who wins a second major this year?' —
+# showing BOTH players' probabilities (Alcaraz 2+ majors, Sinner 2+ majors,
+# each from its own real Kalshi market)."*
+#
+# The interesting property is not that the card exists — it is that the pass
+# cannot produce a HALF of it. Every prior shape of this question failed by
+# quietly losing a player: UX-P138's template cap deleted Alcaraz at render
+# time, and the hand edit that followed deleted him from the file. A card that
+# prints one man's number under "who wins" is the same defect wearing the new
+# shape, so the pass refuses instead.
+
+
+def test_the_combined_card_carries_one_leg_per_market_and_no_single_answer(tmp_path):
+    result, out = _run_props_script(tmp_path, [])
+    assert result.returncode == 0, result.stderr
+
+    card = next(p for p in out["props"] if p["key"] == "second-major")
+    assert card["title"] == "Who wins a second major this year?"
+    assert [o["display_name"] for o in card["outcomes"]] == ["Alcaraz", "Sinner"]
+    # Two markets, one card. This is the whole shape.
+    assert [m["market_external_id"] for m in card["markets"]] == [
+        "KXGRANDSLAM-CALC26", "KXGRANDSLAM-JSIN26",
+    ]
+    assert {o["market_external_id"] for o in card["outcomes"]} == {
+        "KXGRANDSLAM-CALC26", "KXGRANDSLAM-JSIN26",
+    }
+    # NO single answer, by construction: two legs means no one outcome answers
+    # the question, so the renderer ranks rather than guessing a headline.
+    assert all(o["is_answer"] is False for o in card["outcomes"])
+    # And the rename is traceable back to the source's own outcome name.
+    assert [leg["source_outcome_name"] for leg in card["evidence"]["legs"]] == [
+        "2+ Grand Slam wins", "2+ Grand Slam wins",
+    ]
+
+
+def test_a_combined_card_missing_a_leg_refuses_the_whole_write(tmp_path):
+    """THE defect this shape exists to prevent, asserted as a refusal.
+
+    One leg present is not a smaller card. It is "Who wins a second major?"
+    with one man under it, which reads as an answer and is not one.
+    """
+    result, out = _run_props_script(
+        tmp_path,
+        [[53795, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 848769,
+          "2+ Grand Slam wins", "0.555"]],
+        with_combined_legs=False,
+    )
+    assert result.returncode == 1
+    assert "KXGRANDSLAM-CALC26 is absent from the dump" in result.stderr
+    assert out is None, "a refused population pass must write nothing"
+
+
+def test_a_combined_leg_whose_outcome_was_renamed_refuses_the_write(tmp_path):
+    """A source renaming `2+ Grand Slam wins` must stop the pass, not silently
+    drop that man from the comparison."""
+    rows = [list(row) for row in COMBINED_LEG_ROWS]
+    rows[0][6] = "Two or more Grand Slam wins"
+    result, out = _run_props_script(tmp_path, rows, with_combined_legs=False)
+    assert result.returncode == 1
+    assert "matched 0 rows in KXGRANDSLAM-CALC26" in result.stderr
+    assert out is None
+
+
+def test_a_market_cannot_be_both_a_card_and_a_leg(tmp_path):
+    """The repetition Alex ruled out, arriving by a different door.
+
+    If `KXGRANDSLAM-JSIN26` were curated as its own card AND as a leg of the
+    combined one, the section would show the comparison and one of its halves
+    again underneath. That is a curation mistake, and the pass names it rather
+    than shipping both.
+    """
+    import scripts.populate_tournament_props as pop
+
+    legs = {leg["market_ext"] for spec in pop.COMBINED_CURATION.values()
+            for leg in spec["legs"]}
+    assert legs, "the combined curation is empty; this guard would pass vacuously"
+    assert not (legs & set(pop.CURATION)), (
+        "a market is curated as its own card and as a combined leg"
+    )
+    assert not (legs & set(pop.ADVANCE_CURATION))
+
+
+def test_every_retired_card_is_recorded_where_it_went(tmp_path):
+    """`sinner-second-major` and `alcaraz-second-major` did not vanish — they
+    became rows of `second-major`, and the file has to say so."""
+    result, out = _run_props_script(tmp_path, [])
+    assert result.returncode == 0, result.stderr
+    declined = out["props_declined"]
+    for key in ("alcaraz-second-major", "sinner-second-major"):
+        assert "second-major" in declined[key]
+        assert "retired INTO" in declined[key]
+    # Merged, not replaced: the UX-P139 grid-cell reasons are still there.
+    assert "alcaraz-semifinals" in declined
 
 
 # ── The answer rule (UX-P134) ────────────────────────────────────────────────
@@ -772,13 +882,44 @@ def test_two_outcomes_claiming_the_answer_is_structurally_invalid():
 
 
 def test_the_committed_props_each_answer_their_own_question():
-    """On the shipped file: every curated prop names exactly one answer."""
+    """On the shipped file: a card's shape and its answer count agree.
+
+    UX-P151 AMENDED THIS, and the amendment is the rule rather than an
+    exception to it. The old assertion was a flat ``len(answers) == 1``, which
+    encoded an assumption that was true of every card at the time — one card,
+    one market, one headline number — and stopped being true the moment Alex
+    ruled a COMBINED card: *"showing BOTH players' probabilities"*.
+
+    What actually matters has not moved: the card must never be ambiguous about
+    which number is its answer. So the count is derived from the shape instead
+    of asserted flat. A single-market card names exactly one answer. A card
+    whose outcomes come from more than one market names NONE, because no single
+    outcome can answer a comparison — and a field card is the shape
+    ``validate_prop`` has supported since UX-P134 for exactly this.
+
+    Two answers is still invalid in both shapes, and the flat rule's real job —
+    catching the zero-answer card that a source rename produces silently — is
+    kept for the single-market case where it is the actual failure mode.
+    """
     register = load_register("us-open", "2026")
     props = register.get("props") or []
     assert props, "the props population pass has not run"
+    combined = 0
     for prop in props:
         answers = [o for o in prop["outcomes"] if o.get("is_answer")]
-        assert len(answers) == 1, f"{prop['key']} has {len(answers)} answers"
+        markets = {o.get("market_external_id") for o in prop["outcomes"]}
+        assert None not in markets, f"{prop['key']} has an outcome with no provenance"
+        if len(markets) > 1:
+            combined += 1
+            assert len(answers) == 0, (
+                f"{prop['key']} spans {len(markets)} markets and still names an answer; "
+                "no single outcome can answer a comparison"
+            )
+        else:
+            assert len(answers) == 1, f"{prop['key']} has {len(answers)} answers"
+    # And the combined card is actually on the shipped file, so this test cannot
+    # go green by the branch above never running.
+    assert combined == 1, f"expected the one combined card, found {combined}"
 
 
 def test_every_prop_removed_from_the_register_says_why_it_went():
@@ -1091,8 +1232,14 @@ def test_a_curated_answer_missing_from_the_market_refuses_the_write(tmp_path):
     """A source renaming an outcome must stop the pass, not silently produce a
     card with a question and no answer — which the renderer would then show as
     a ranked field, quietly turning a curated question into a list."""
+    # `KXATPCOMPETE-26USOSIN` and not a `*-second-major` ticker: since UX-P151
+    # those two are LEGS of the combined card, and a leg's rename has its own
+    # refusal with its own message (`test_a_combined_leg_whose_outcome_was_
+    # renamed_refuses_the_write`). This one is the single-market answer rule,
+    # which needs a single-market card to be about.
     result, out = _run_props_script(tmp_path, [
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "Affirmative", "0.18"],
+        [59172808, "KXATPCOMPETE-26USOSIN", "kalshi", "Sinner to play", "open",
+         219796782, "Affirmative", "0.63"],
     ])
     assert result.returncode == 1
     assert "REFUSED" in result.stderr

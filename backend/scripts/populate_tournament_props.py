@@ -103,82 +103,28 @@ from app.utils.tournament_register import (  # noqa: E402
 #: ``outcomes`` (optional) pins a SUBSET of the market's legs. See
 #: :func:`main` for why a subset is a curation decision and not a filter.
 CURATION: dict[str, dict] = {
-    # RETITLED 2026-08-25 (UX-P134) against the census. The old title was "Can
-    # Sinner complete the calendar slam?" and this market cannot answer it: its
-    # outcomes are the threshold ladder 1+/2+/3+, and "all four" is not among
-    # them. The card would have printed the ladder's max, `1+` at 99%, under a
-    # calendar-slam question — 99% for something whose real probability is
-    # about 1%. The market DOES answer a better US Open question anyway: Sinner
-    # already has one major this year, so `2+` is "does he win this one".
-    "KXGRANDSLAM-JSIN26": {
-        "key": "sinner-second-major",
-        "title": "Can Sinner win a second major this year?",
-        "hook": "He already has one in 2026. The next chance is this fortnight.",
-        "draw": "mens-singles",
-        "answer": "2+ Grand Slam wins",
-        # THE LADDER'S OTHER TWO RUNGS ARE NOT REFRESHABLE, MEASURED (Q443).
-        # `1+ Grand Slam wins` is graded (`is_winner` TRUE, Kalshi `finalized`
-        # / `result: yes`) and `_write_prices` refuses a settled outcome by
-        # design — gotcha #21, a settled book stops quoting and re-pricing it
-        # can only corrupt resolved state. `3+ Grand Slam wins` is worse: the
-        # venue DELISTED it. `KXGRANDSLAM-JSIN26` carried three legs when this
-        # curation was written and carries two today, so `-3` can never appear
-        # in a price payload again and its row is frozen at a 2026-07-24 1%.
-        #
-        # Both were pinned, so the card's freshness AND held two contributors
-        # nothing is permitted or able to refresh. That is the producer /
-        # renderer lockstep #2199 fixed on the CLOCK, one level down on the
-        # POPULATION: the page demanded a live reading from rows the rail is
-        # forbidden to write. Neither leg is printed (the card prints its
-        # answer), so pinning them bought a permanent dark contributor and no
-        # information.
-        "outcomes": ["2+ Grand Slam wins"],
-    },
-    # Same retitle, same reason. Alcaraz's ladder does carry "All 4 Grand Slam
-    # wins" (1%), so a calendar-slam card would at least be answerable here —
-    # but a 1% card is not a question anybody is asking two days out, and the
-    # asymmetry with Sinner's market would read as a data bug.
+    # ═══ KXGRANDSLAM-JSIN26 / KXGRANDSLAM-CALC26 ARE NOT CURATED HERE ═══
     #
-    # ═══ RESTORED 2026-08-27 (UX-P147, Alex's item 6) ═══
+    # Both are consumed by ``COMBINED_CURATION["second-major"]`` below, and the
+    # guard in :func:`main` refuses a market claimed by a per-market card and a
+    # combined card at once. Retiring them here is what makes that legal.
     #
-    # This card was curated OUT of the committed register by a hand edit whose
-    # recorded reason was "one question with two names in it, next to
-    # sinner-second-major".  Alex overruled that, verbatim: *"alcaraz-second-
-    # major and sinner-second-major are DIFFERENT PLAYERS and must both render.
-    # Key the near-duplicate rule so it never collapses across players."*
-    #
-    # He is right, and the rule was doing the deleting at BOTH ends — the
-    # renderer's template cap (fixed in `lib/tournamentProps.ts`) and this file.
-    # A fix to only one of them leaves the card gone; a fix to only the other
-    # leaves it deletable again the next time the cap runs.  So both, together.
-    #
-    # And the two cards are the argument for keeping them: measured on Kalshi
-    # 2026-08-28T00:5xZ, Alcaraz's `2+` is 27c bid 26 / ask 27 on 42,723 open
-    # interest, and Sinner's `2+` is 1c — because his "to play" market is also
-    # 1c.  Side by side that is the whole men's draw in two numbers.  One of
-    # them alone is trivia.
-    "KXGRANDSLAM-CALC26": {
-        "key": "alcaraz-second-major",
-        "title": "Can Alcaraz win a second major this year?",
-        "hook": "The other half of the men's duopoly, chasing the same thing.",
-        "draw": "mens-singles",
-        "answer": "2+ Grand Slam wins",
-        # RESTORED TO THE REGISTER 2026-08-29 (Q443) on Alex's ruling 6 of
-        # 2026-08-27, verbatim: "alcaraz-second-major and sinner-second-major
-        # are DIFFERENT PLAYERS and must both render ... I'd love to see both."
-        # UX-P139 had de-curated it a day earlier as "one question with two
-        # names in it"; the ruling post-dates that and overrules it, so the
-        # register carries both again. The render-side near-duplicate rule that
-        # still collapses them by template family is `program/ux-122`'s to key
-        # per player — not this lane's file, and not a reason to keep the
-        # question out of the register.
-        #
-        # Same subset reasoning as Sinner's ladder: `3+ Grand Slam wins` is
-        # graded no at the venue and `All 4 Grand Slam wins` is not listed
-        # there at all — one settled leg and one delisted one, neither
-        # printable and neither refreshable.
-        "outcomes": ["2+ Grand Slam wins"],
-    },
+    # KEEP THIS MEASUREMENT (Q443, 2026-08-29) — it is why the combined card's
+    # one-leg-per-market shape is REQUIRED, not just tidier. Pinning a market's
+    # whole ladder pinned legs nothing is permitted or able to refresh:
+    #   * `KXGRANDSLAM-JSIN26-1` ("1+ Grand Slam wins") is graded — `is_winner`
+    #     TRUE, Kalshi `finalized` / `result: yes` — and `_write_prices` refuses
+    #     a settled outcome by design (gotcha #21).
+    #   * `KXGRANDSLAM-JSIN26-3` ("3+ Grand Slam wins") was DELISTED: the venue
+    #     event carried three legs when the curation was written and carries two
+    #     today, so that ticker can never appear in a price payload again. Frozen
+    #     at a 2026-07-24 1%.
+    #   * Alcaraz's ladder is the same shape — `All 4 Grand Slam wins` is not
+    #     listed at the venue and `3+` is graded no.
+    # A card's freshness is the AND over its priced legs, so each unrefreshable
+    # pin bought a permanent dark contributor and no information — neither leg is
+    # printed. A combined leg names ONE outcome per market, so the defect cannot
+    # recur here by construction.
     "KXATPCOMPETE-26USOSIN": {
         "key": "sinner-competes",
         "title": "Will Sinner actually play?",
@@ -251,6 +197,70 @@ CURATION: dict[str, dict] = {
     },
 }
 
+#: ONE CARD, TWO MARKETS — the shape a comparison question needs (UX-P151).
+#:
+#: ═══ ALEX'S RULING, 2026-08-28 ~10:45am PT, quoted ═══
+#:
+#: *"ONE COMBINED CARD — 'Who wins a second major this year?' — showing BOTH
+#: players' probabilities (Alcaraz 2+ majors, Sinner 2+ majors, each from its
+#: own real Kalshi market: KXGRANDSLAM-CALC26-family and KXGRANDSLAM-JSIN26)."*
+#:
+#: It resolves a tension the file had carried, unresolved, through three
+#: queues.  UX-P138's note said the two ``*-second-major`` cards were *"one
+#: templated question with the name swapped"*, and the fix that shipped for it
+#: DELETED Alcaraz.  UX-P147 read Alex's *"I'd love to"* see both, restored
+#: Alcaraz, and rekeyed the template cap so it could never collapse across
+#: players — two cards, and the repetition Alex had objected to was back.
+#:
+#: Both readings were partial because both assumed the unit was a CARD PER
+#: MARKET.  Drop that assumption and the two constraints stop fighting: one
+#: card carrying both men's numbers has both players present and no template
+#: repeated, which is the whole of what he asked for in each of the two notes.
+#:
+#: WHAT A LEG IS.  ``market_ext`` is the market the number comes from,
+#: ``outcome`` is that market's own name for the leg (matched exactly, never
+#: fuzzily), and ``display_name`` is what the row prints.  The rename is the
+#: point: three rows reading "2+ Grand Slam wins" would be a threshold ladder,
+#: and what the reader is comparing is two MEN.  Renaming a row is a curation
+#: decision made once against the evidence — the same doctrine as the matchup
+#: sides mapping — never a request-time guess.
+#:
+#: WHY NO ``answer``.  A card with a single headline number needs one outcome
+#: that answers its question, and this one has two by construction.  So it is a
+#: FIELD card: ``answer_entity_key`` is ``None``, the renderer ranks instead of
+#: leading, and the "which number goes in the big type" question never has to
+#: be guessed.  ``validate_prop`` has supported that shape since UX-P134; this
+#: is the first curated card that uses it.
+#:
+#: WHAT THE HOOK IS DOING.  The title Alex wrote reads as a race — *who* wins —
+#: and these are two INDEPENDENT binaries that can both resolve Yes: there are
+#: four majors a year and each man needs two of them, not the same two.  Their
+#: numbers do not sum to 100 and must never be normalised so they do (the same
+#: rule the cycling GC field carries).  The title is his, verbatim; the hook is
+#: what stops it being read as an exclusive race.
+COMBINED_CURATION: dict[str, dict] = {
+    "second-major": {
+        "title": "Who wins a second major this year?",
+        "hook": (
+            "Both already have one in 2026. These are two separate questions — "
+            "they could both do it, or neither."
+        ),
+        "draw": "mens-singles",
+        "legs": [
+            {
+                "market_ext": "KXGRANDSLAM-CALC26",
+                "outcome": "2+ Grand Slam wins",
+                "display_name": "Alcaraz",
+            },
+            {
+                "market_ext": "KXGRANDSLAM-JSIN26",
+                "outcome": "2+ Grand Slam wins",
+                "display_name": "Sinner",
+            },
+        ],
+    },
+}
+
 #: Curated OUT, with the reason, because a silent omission is indistinguishable
 #: from an oversight and this section's whole claim is that the bar was applied.
 #:
@@ -306,6 +316,28 @@ DECLINED: dict[str, str] = {
     # `KXATPCOMPETE-26USOSIN` is KEPT: at Yes .63 and 186.7h it is both the
     # freshest incumbent and genuinely undecided, which is the whole difference.
     "KXATPCOMPETE-26USOALC": "Yes .905 at 808.7h (33.7d); near-decided and the draw resolves it tomorrow",
+}
+
+#: Card keys this pass RETIRES, and where they went — merged into the register's
+#: own ``props_declined`` on every run.
+#:
+#: `props_declined` used to be hand-maintained while `props` was generated, so
+#: the two could disagree and only a test noticed.  That is the wrong way round:
+#: the pass that removes a card is the thing that knows why, and
+#: ``test_every_prop_removed_from_the_register_says_why_it_went`` exists because
+#: a silent removal is indistinguishable from an oversight.  Merged, never
+#: replaced — the eight UX-P139 grid-cell reasons are hand-written and stay.
+RETIRED: dict[str, str] = {
+    "alcaraz-second-major": (
+        "retired INTO `second-major` (UX-P151, Alex 2026-08-28): Alcaraz is a leg of the "
+        "combined card now, not a card of his own. The number did not go anywhere — it is "
+        "the Alcaraz row"
+    ),
+    "sinner-second-major": (
+        "retired INTO `second-major` (UX-P151, Alex 2026-08-28): Sinner is a leg of the "
+        "combined card now, not a card of his own. The number did not go anywhere — it is "
+        "the Sinner row"
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -511,11 +543,27 @@ def main() -> int:
     # different bars); keeping them separate HERE would duplicate the refusal
     # logic, which is the part that must not diverge.
     curation = {**CURATION, **ADVANCE_CURATION}
-    keys = [spec["key"] for spec in curation.values()]
+    keys = [spec["key"] for spec in curation.values()] + list(COMBINED_CURATION)
     if len(set(keys)) != len(keys):
         # Two curations writing one card key would silently drop one of them,
         # and the section would be short with nothing to point at.
         print(f"REFUSED: duplicate curation keys in {sorted(keys)}", file=sys.stderr)
+        return 1
+
+    # A market a combined card consumes must NOT also produce a card of its own.
+    # Without this the register would carry both the comparison and the two
+    # single-player cards it replaced, which is the repetition Alex ruled out
+    # arriving by a different door.
+    combined_markets = {
+        leg["market_ext"] for spec in COMBINED_CURATION.values() for leg in spec["legs"]
+    }
+    claimed_by_both = combined_markets & set(curation)
+    if claimed_by_both:
+        print(
+            f"REFUSED: {sorted(claimed_by_both)} is curated as its own card AND as a leg "
+            "of a combined card. Pick one.",
+            file=sys.stderr,
+        )
         return 1
 
     by_market: dict[str, list[dict]] = {}
@@ -525,6 +573,9 @@ def main() -> int:
     props: list[dict] = []
     skipped: list[str] = []
     for market_ext, market_rows in sorted(by_market.items()):
+        if market_ext in combined_markets:
+            # Consumed by a combined card below. Not skipped, not below the bar.
+            continue
         spec = curation.get(market_ext)
         if spec is None:
             # In the dump but not curated. Not an error — it is the bar working.
@@ -594,12 +645,23 @@ def main() -> int:
             "source": market_rows[0]["source"],
             "market_id": market_rows[0]["market_id"],
             "market_external_id": market_ext,
+            "markets": [
+                {"market_id": market_rows[0]["market_id"], "market_external_id": market_ext}
+            ],
             "outcomes": [
                 {
                     "entity_key": f"{spec['key']}:{str(r['outcome_name']).lower().replace(' ', '-')}",
                     "display_name": r["outcome_name"],
                     "outcome_id": r["outcome_id"],
                     "is_answer": str(r["outcome_name"]) == answer_name,
+                    # PER-OUTCOME PROVENANCE, on every card and not only the
+                    # combined ones. It is what makes "these two numbers come
+                    # from two different markets" a readable property of the
+                    # file rather than something a reader of it has to infer,
+                    # and the committed-register guard asserts the answer rule
+                    # off exactly this field.
+                    "market_id": r["market_id"],
+                    "market_external_id": market_ext,
                 }
                 for r in market_rows
             ],
@@ -611,7 +673,94 @@ def main() -> int:
             },
         })
 
+    # ── The combined cards: one question, one leg per market (UX-P151) ───────
+    #
+    # Every refusal here is loud and fatal, and that is the whole design. A
+    # comparison card that quietly loses a leg is WORSE than no card: it prints
+    # one man's number under "who wins", which is the exact class of defect
+    # UX-P134 fixed when it stopped a ladder maximum answering a slam question.
+    for key, spec in sorted(COMBINED_CURATION.items()):
+        outcomes: list[dict] = []
+        legs_evidence: list[dict] = []
+        for leg in spec["legs"]:
+            market_rows = by_market.get(leg["market_ext"])
+            if not market_rows:
+                print(
+                    f"REFUSED {key}: leg market {leg['market_ext']} is absent from the dump. "
+                    "A comparison card missing a side is not a smaller card, it is a wrong one.",
+                    file=sys.stderr,
+                )
+                return 1
+            match = [r for r in market_rows if str(r["outcome_name"]) == leg["outcome"]]
+            if len(match) != 1:
+                names = [str(r["outcome_name"]) for r in market_rows]
+                print(
+                    f"REFUSED {key}: leg outcome {leg['outcome']!r} matched {len(match)} rows "
+                    f"in {leg['market_ext']}. Present: {names}",
+                    file=sys.stderr,
+                )
+                return 1
+            row = match[0]
+            outcomes.append({
+                "entity_key": f"{key}:{leg['display_name'].lower().replace(' ', '-')}",
+                "display_name": leg["display_name"],
+                "outcome_id": row["outcome_id"],
+                # NO ANSWER, by construction — see COMBINED_CURATION's note.
+                # Two legs means no single outcome answers the question, so the
+                # card is a field and the renderer ranks it.
+                "is_answer": False,
+                "market_id": row["market_id"],
+                "market_external_id": leg["market_ext"],
+            })
+            legs_evidence.append({
+                "market_external_id": leg["market_ext"],
+                "market_name": row["market_name"],
+                "source_outcome_name": leg["outcome"],
+                "renamed_to": leg["display_name"],
+            })
+
+        # One `source` on the card, so it has to be true of every leg. A
+        # cross-source comparison is a real thing to want and this shape cannot
+        # honestly describe it, so refuse rather than pick the first one.
+        leg_sources = {
+            str(by_market[leg["market_ext"]][0]["source"]) for leg in spec["legs"]
+        }
+        if len(leg_sources) != 1:
+            print(
+                f"REFUSED {key}: legs span {sorted(leg_sources)} and the card carries one "
+                "`source`. A cross-source card needs a shape that can say so.",
+                file=sys.stderr,
+            )
+            return 1
+
+        props.append({
+            "key": key,
+            "title": spec["title"],
+            "hook": spec["hook"],
+            "draw": spec["draw"],
+            "source": leg_sources.pop(),
+            "markets": [
+                {
+                    "market_id": o["market_id"],
+                    "market_external_id": o["market_external_id"],
+                }
+                for o in outcomes
+            ],
+            "outcomes": outcomes,
+            "evidence": {
+                "kind": "prop-census-combined",
+                "observed_at": args.observed_at,
+                # The rename is recorded leg by leg. A curated display name that
+                # nobody can trace back to the source's own outcome name is an
+                # unfalsifiable claim about what a number means.
+                "legs": legs_evidence,
+                "answer": None,
+            },
+        })
+
     register["props"] = props
+    # Merged, never replaced: the hand-written UX-P139 grid-cell reasons stay.
+    register["props_declined"] = {**(register.get("props_declined") or {}), **RETIRED}
     register["version"] = args.version
     register["supersedes_version"] = args.supersedes_version
 
@@ -635,11 +784,13 @@ def main() -> int:
 
     print(f"curated props: {len(props)}")
     for prop in props:
-        print(f"  {prop['key']}: {len(prop['outcomes'])} outcomes ({prop['market_external_id']})")
+        tickers = ", ".join(m["market_external_id"] for m in prop["markets"])
+        print(f"  {prop['key']}: {len(prop['outcomes'])} outcomes ({tickers})")
     print(f"in the dump but below the bar: {len(skipped)} {skipped}")
     missing = sorted(set(curation) - set(by_market))
     if missing:
         print(f"curated but ABSENT from the dump: {missing}")
+    print(f"retired into a combined card: {sorted(RETIRED)}")
     print(f"findings: {findings or 'none'}")
     print(f"verdict:  {verdict}")
 

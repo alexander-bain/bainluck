@@ -58,7 +58,19 @@ import type { TournamentBoardData, TournamentPayload } from "@/lib/tournament";
 
 const MOCKS = path.join(__dirname, "..", "..", "..", "docs", "mocks", "us-open");
 const SLATE_PATH = path.join(MOCKS, "slate-2026-08-25.json");
-const PAYLOAD_PATH = path.join(MOCKS, "payload-2026-08-27.json");
+/**
+ * UX-P151: moved from `payload-2026-08-27.json` to the 08-28 capture.
+ *
+ * Not a refresh for its own sake. The 08-27 payload was captured BEFORE Alex's
+ * combined-card ruling and carries the two `*-second-major` cards it replaced,
+ * so a props assertion read off it is an assertion about a superseded
+ * curation. The whole rig moves rather than the props panel alone, because
+ * UX-P142's rule for this file is that one payload feeds every panel — a rig
+ * reading boards from one capture and questions from another is the exact
+ * "was that real or a mock artifact?" ambiguity the capture script exists to
+ * remove.
+ */
+const PAYLOAD_PATH = path.join(MOCKS, "payload-2026-08-28.json");
 
 function loadPayload(): TournamentPayload {
   return JSON.parse(fs.readFileSync(PAYLOAD_PATH, "utf8")) as TournamentPayload;
@@ -405,22 +417,74 @@ describe("US Open board capture rig", () => {
       .toHaveLength(0);
   });
 
-  it("register v7 carries ONE second-major card, not two — item 11's repetition", () => {
-    // "The two *-second-major cards ARE the repeating template you named" was
-    // the sentence Alex could not parse. What it meant: those two cards ask one
-    // question about two different players, which is a template. The runtime
-    // rule dropped one of them at every render; v7 drops it from the file, so
-    // the template is gone rather than hidden.
+  it("ONE COMBINED second-major card, with BOTH players on it — Alex 2026-08-28", () => {
+    // ═══ THE RULING, QUOTED ═══
+    //
+    // Alex, 2026-08-28 ~10:45am PT: *"ONE COMBINED CARD — 'Who wins a second
+    // major this year?' — showing BOTH players' probabilities (Alcaraz 2+
+    // majors, Sinner 2+ majors, each from its own real Kalshi market:
+    // KXGRANDSLAM-CALC26-family and KXGRANDSLAM-JSIN26)."*
+    //
+    // WHAT THIS ASSERTION USED TO SAY, and why replacing it is the fix rather
+    // than a relaxation. It read `expect(family).toEqual(["sinner-second-
+    // major"])` — one card, Alcaraz deleted — under a comment claiming that
+    // was Alex's item 11. It was a PARAPHRASE of his note, and the paraphrase
+    // inverted it: he objected to one templated question printed twice, and
+    // what shipped was one of the two players removed from the product. He
+    // then had to say *"DIFFERENT PLAYERS and must both render"* (UX-P147) to
+    // get Alcaraz back, and the two cards came back with the repetition.
+    //
+    // The combined card satisfies BOTH notes at once, which is why it is the
+    // resolution and not a third opinion: both players are present, and there
+    // is exactly one question on the page instead of the same one twice.
     const props = loadProps();
-    const family = props.filter((p) => p.key.endsWith("-second-major"));
-    expect(family.map((p) => p.key)).toEqual(["sinner-second-major"]);
+    const family = props.filter((p) => p.key.includes("second-major"));
+    expect(family.map((p) => p.key)).toEqual(["second-major"]);
+
+    const card = family[0];
+    expect(card.title).toBe("Who wins a second major this year?");
+    // BOTH players' probabilities, which is the load-bearing half of the
+    // ruling. A card that renders with one leg would satisfy "one card".
+    expect(card.outcomes.map((o) => o.display_name)).toEqual(["Alcaraz", "Sinner"]);
+    for (const outcome of card.outcomes) {
+      expect(typeof outcome.probability).toBe("number");
+    }
+    // Field shape: no single outcome answers a comparison, so nothing is
+    // promoted into the headline slot and the renderer ranks instead.
+    expect(card.answer_entity_key).toBeNull();
+  });
+
+  it("the combined card RENDERS both numbers when it is live", () => {
+    // The register and the payload can both be right and the reader still see
+    // one number — `printedOutcomes` caps a field at FIELD_RANK_LIMIT and the
+    // whole card rotates out while it is dark. So this asserts the RENDER, on
+    // the real card, with only the server-owned liveness fields moved.
+    const card = loadProps().find((p) => p.key === "second-major");
+    expect(card).toBeDefined();
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={freshQuestions([card as PropMarket])} draw="mens-singles" />
+    );
+    expect(html).toContain('data-key="second-major"');
+    expect(html).toContain('data-shape="field"');
+    expect(html).toContain("Who wins a second major this year?");
+    // Both names and both numbers, in ranked order — Sinner .555 above
+    // Alcaraz .25 on the readings this payload carries.
+    expect(html).toContain("Sinner");
+    expect(html).toContain("Alcaraz");
+    expect(html).toContain("56%");
+    expect(html).toContain("25%");
+    // And the two are NOT normalised to sum to 100: four majors a year means
+    // both men can win a second one, and a card that made them add up would be
+    // inventing an exclusivity the markets do not have.
+    expect(html).not.toContain("69%");
+    expect(html).not.toContain("31%");
   });
 
   it("RULING 8 ON REAL DATA: the questions section is EMPTY, and says why", () => {
     // The finding, asserted so it cannot be softened into a caption. Both
-    // remaining curated markets are dark: `sinner-competes` at ~190 hours,
-    // `sinner-second-major` at ~810. Applying the rotation Alex asked for
-    // empties the section on both draws today.
+    // remaining curated cards are dark on this capture: `sinner-competes` at
+    // ~234 hours and `second-major` at ~856 on both of its legs. Applying the
+    // rotation Alex asked for empties the section on both draws today.
     const props = loadProps();
     for (const draw of ["mens-singles", "womens-singles"]) {
       const html = renderToStaticMarkup(<TournamentProps markets={props} draw={draw} />);
