@@ -45,7 +45,28 @@ const TELEMETRY_HOSTS = [
   "google-analytics.com",
   "analytics.google.com",
 ];
-const TELEMETRY_PATHS = ["/_vercel/insights", "/_vercel/speed-insights"];
+/**
+ * UX-P144 — `/api/feed/interactions` is FIRST-PARTY telemetry, and the ledger
+ * was blind to it for exactly that reason.
+ *
+ * Every entry above this line is somebody else's collector, so "telemetry" got
+ * read as "third-party" and our own behavioural rail was never observed. It
+ * records every card a reader scrolls past, keyed to their session id, to
+ * personalise their feed — the same class of collection the banner asks about,
+ * and the consent pack could not see it. `consent.decline` therefore passed its
+ * telemetry ledger while the page was still POSTing the reader's scroll.
+ *
+ * It surfaced instead as ~20 `console.no_errors` / `network.no_unexpected_
+ * failures` issues, because one request per card impression spent the 60/min
+ * anonymous budget and the resulting cross-origin 429s reach the page as opaque
+ * CORS errors. The ledger is the right place to catch it: an assertion that
+ * NAMES the destination beats a console error that only describes the wreckage.
+ */
+const TELEMETRY_PATHS = [
+  "/_vercel/insights",
+  "/_vercel/speed-insights",
+  "/api/feed/interactions",
+];
 
 /**
  * #1658 — the GA4 event names a ledger rule is allowed to count.
