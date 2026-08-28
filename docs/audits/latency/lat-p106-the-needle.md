@@ -1,5 +1,14 @@
 # LAT-P106 — the latency needle exists, and here is its first reading
 
+> 🔴 **SUPERSEDED STATISTIC — read this before quoting any number below.**
+> This report's Alex-ask was ANSWERED the same day: Alex ruled **option b**, and
+> the published needle is now the **equal-weighted** cold p50 (each member path
+> weighted once), not the raw pool. See `lat-p107-option-b.md` and
+> `README.md` §2.
+> **The comparable series is this report's 882 → 873, not its 711 → 536.** The
+> headline below and the `NEEDLE:` line at the end of this file are the raw-pool
+> statistic and belong to no series that includes anything after 2026-08-28.
+
 **NEEDLE: latency 711 ms @ 2026-08-28T17:51:51+00:00**
 
 Production slug `bddb5f3f`, uptime 2,468 s (warm — a slug younger than five

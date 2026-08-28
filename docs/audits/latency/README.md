@@ -29,6 +29,18 @@ ONE number per lane, and **the lane computes and emits it — Fable only copies.
 So a report that does not carry the line has not produced the lane's number,
 whatever else it measured.
 
+**The number is the EQUAL-WEIGHTED cold p50** — the median of the per-member-path
+cold medians, each of the pool's seven paths counted once. Alex, 2026-08-28,
+"option b", amending the same day's spec after LAT-P106 measured the original
+raw-pooled form moving −25 % on identical code from sample mix alone.
+
+🔴 **The comparable series starts at 882 → 873 → …** — LAT-P106's two
+equal-weighted readings. LAT-P106's headline numbers **711 and 536 are the raw
+pool and belong to no series that includes this one.** Quoting them together
+would make a delta of instruments look like a delta of latency (ruling 127).
+The raw pool is still computed and still printed on every run, demoted to a
+cross-check.
+
 The last line of every latency report, verbatim in this shape:
 
     NEEDLE: latency <ms> ms @ <ISO-8601 UTC timestamp>
@@ -50,7 +62,12 @@ metric on a bad day — per the spec, the metric changes only by Alex ruling.
 
 **If the run refuses (exit 1, "POOL TOO THIN"), the report says the needle was
 not obtainable and why.** That is a null, and a null is not a fast number. It
-does not license reporting the previous cycle's value as current.
+does not license reporting the previous cycle's value as current. There are
+three refusal floors and the script prints which ones fired: fewer than 8 cold
+samples underneath the medians, fewer than 4 of 7 member paths contributing a
+median at all, or any of the three graded surfaces missing entirely. The last
+two exist because equal weighting fixes *how often* a path missed but not
+*whether* it missed — the median of one surviving 11 ms member is 11 ms.
 
 ### The two hazards that will bite the next session
 
@@ -61,13 +78,16 @@ response TTL measures what the first run warmed. Measured 2026-08-28: a read
 taken ~1 minute after a 22-cold-sample read returned 0 cold samples on 6 of 7
 member paths and correctly refused to publish. Leave a real gap between runs.
 
-**2. Read the balanced cross-check before you attribute a move.** The raw pool
-is composition-sensitive. Measured 2026-08-28 on identical code, same slug, ten
-minutes apart: the needle went 711 ms → 536 ms (−25 %) while the balanced
-cross-check went 882 ms → 873 ms (−1 %) and Discover's own cold p50 *doubled*.
-The published statistic is the raw pool (that is what the spec ratified), but a
-report that quotes a move without checking the cross-check and the per-path cold
-counts is reporting a cache-mix change as a product change. Say which it is.
+**2. Read the per-path cold counts before you attribute a move.** This is why
+the published statistic is the equal-weighted one. Measured 2026-08-28 on
+identical code, same slug, ten minutes apart: the raw pool went 711 ms → 536 ms
+(−25 %) while Discover's own cold p50 *doubled*; the equal-weighted statistic
+went 882 ms → 873 ms (−1 %). Equal weighting removes the "which path missed
+most" bias, so a headline move is now much more likely to be real — but it does
+not remove the "which path missed at all" one. A report that quotes a move
+without naming which members contributed, and comparing that to the previous
+reading's members, is still reporting a cache-mix change as a product change.
+Say which it is, and print the demoted raw pool beside it.
 
 ## 3. The instrument clauses of ruling 127 carry over
 
