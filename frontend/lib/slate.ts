@@ -236,7 +236,10 @@ export function slateRowFreshnessLabel(match: SlateMatch): string | null {
     // Not an age. "Never priced" would be technically true and read as a
     // complaint about staleness; the fixture is four days away and nobody has
     // opened a book on it, which is ordinary and worth one plain sentence.
-    return "No market yet";
+    // Ruling 138: "No market yet" answered a probability question with an
+    // inventory fact. Worded identically to `propFreshnessLabel` so the two
+    // halves of the page do not teach two vocabularies for one idea.
+    return "No probability yet";
   }
   if (!match.coherent && match.price_state === "live") {
     // Muted for disagreement, not for age. The incoherent block already says

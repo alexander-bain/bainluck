@@ -410,8 +410,8 @@ export default function TournamentPage() {
                    */
                   emptyHint={
                     data.draw_released || !data.main_draw_label
-                      ? "Nothing is on right now. Matches appear here as they are scheduled."
-                      : `Nothing is on right now. Matches appear here as they are scheduled, and the draw fills them in ${data.main_draw_label}.`
+                      ? "Nothing is on right now. This is where the day's matches sit."
+                      : `Nothing is on right now. This is where the day's matches sit, and the draw fills them in ${data.main_draw_label}.`
                   }
                 />
               </div>

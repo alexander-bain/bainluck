@@ -268,7 +268,9 @@ export function matchDetailNote(entry: {
     // released main draw is 96 such rows; getting this sentence wrong would
     // have been the page's most-printed sentence on ceremony day.
     // UX-P146: "the price comes later" — Alex's product-wide ruling on the noun.
-    return "Nobody is quoting this match yet. It is in the draw; the number comes later.";
+    // Ruling 142: "the number comes later" was still a promise about a listing
+    // we do not control. The fact is the fixture is real and has no probability.
+    return "Nobody is quoting this match yet. It is in the draw with no probability against it.";
   }
   if (!entry.coherent) {
     return "The two numbers for this match do not agree yet, so we are not showing a split.";

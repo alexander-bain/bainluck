@@ -1,0 +1,351 @@
+/**
+ * THE BANNED-LANGUAGE RULES, IN ONE PLACE, SO A SWEEP CANNOT BE PARTIAL.
+ *
+ * ═══ WHY THIS FILE EXISTS ═══
+ *
+ * Alex, reading the LIVE production tournament page on 2026-08-28, found the
+ * copy that UX-P145 and UX-P146 had already "swept". Every one of those sweeps
+ * was real: the branch was clean, the render guards were green, the report said
+ * done. None of it was on production, because the branch had never landed.
+ *
+ *   > Extend the pinned copy test to run against the strings the PRODUCTION
+ *   > bundle serves, so branch-only sweeps can never look done again.
+ *
+ * A guard that reads `components/tournament/*.tsx` proves something about a
+ * working tree. A guard that reads the JavaScript a browser downloads proves
+ * something about a reader. Those are different claims and only the second one
+ * is the ship. So the rules live here, as data, and three consumers apply the
+ * SAME list to three different bodies of text:
+ *
+ *   1. `tournamentPlainLanguage.test.tsx` — server-rendered component output,
+ *      which is the only place that catches copy assembled at render time.
+ *   2. `shippedCopyBans.test.ts` — the built `.next` bundle, which is the exact
+ *      bytes Vercel uploads, and (when pointed at one) a directory of chunks
+ *      downloaded from production.
+ *   3. `scripts/fetch-shipped-copy.mjs` — the fetcher that fills that
+ *      directory. It carries no rules of its own, deliberately: a scanner that
+ *      re-declares the list is a scanner that drifts from it.
+ *
+ * ═══ WHAT IS BANNED, AND ON WHOSE AUTHORITY ═══
+ *
+ * | Group | Ruling | Clause |
+ * |---|---|---|
+ * | `JARGON_BANS` | UX-P145, Alex 2026-08-27 | our pipeline's nouns are not the reader's |
+ * | `TRADING_VOCAB_BANS` | ruling 138, Alex 2026-08-27 | the word is PROBABILITY, never *price* |
+ * | `VENUE_BANS` | ruling 141, Alex 2026-08-28 | readers get our probability, not our sourcing |
+ * | `FUTURE_PROMISE_BANS` | ruling 142, Alex 2026-08-28 | a section states what it IS, not what it WILL be |
+ *
+ * ═══ WHAT IS NOT BANNED ═══
+ *
+ * Data contracts (`price_state`, `data-price-state`, `priced_cells`,
+ * `PRICED_STATES`, the `kalshi`/`polymarket` source ids), code, comments and
+ * reports. Every consumer strips attributes and identifiers before applying
+ * these rules, so the exemption is structural rather than an allowlist.
+ */
+
+export interface CopyBan {
+  /** Stable id, so a report can name the rule that fired. */
+  id: string;
+  pattern: RegExp;
+  why: string;
+}
+
+/** Our pipeline's vocabulary, in the grammatical form that makes it jargon. */
+export const JARGON_BANS: CopyBan[] = [
+  { id: "gone-dark", pattern: /\bgone dark\b/i, why: '"gone dark" is our price_state enum' },
+  { id: "goes-dark", pattern: /\bgoes dark\b/i, why: '"goes dark" is our price_state enum' },
+  { id: "went-dark", pattern: /\bwent dark\b/i, why: '"went dark" is our price_state enum' },
+  { id: "rotated-out", pattern: /\brotated out\b/i, why: '"rotated out" is our render rule' },
+  { id: "rotation", pattern: /\brotation\b/i, why: '"rotation" is our render rule' },
+  { id: "curated", pattern: /\bcurated\b/i, why: '"curated" is our editorial process' },
+  { id: "curation", pattern: /\bcuration\b/i, why: '"curation" is our editorial process' },
+  { id: "registered", pattern: /\bregistered\b/i, why: '"registered" is the name of our JSON file' },
+  { id: "the-register", pattern: /\bthe register\b/i, why: '"the register" is the name of our JSON file' },
+  { id: "census", pattern: /\bcensus(ed)?\b/i, why: '"census" is our data-collection step' },
+  { id: "blend", pattern: /\bblend(ed|s)?\b/i, why: '"blend" is our aggregation step' },
+  { id: "stale", pattern: /\bstale\b/i, why: '"stale" is our price_state enum' },
+];
+
+/**
+ * Ruling 138. The whole `price` stem — noun, verb, participle and gerund.
+ *
+ * One stem rule replaces the eleven hand-written variants UX-P145 needed in
+ * order to ban the verb while sparing the noun. The word is PROBABILITY.
+ */
+export const TRADING_VOCAB_BANS: CopyBan[] = [
+  {
+    id: "price-family",
+    pattern: /\b(un)?pric(e|es|ed|ing)\b/i,
+    why: '"price" is trading vocabulary — the word is PROBABILITY (ruling 138)',
+  },
+];
+
+/**
+ * Ruling 141. The venues we read are not part of the product a reader bought.
+ *
+ * This bans the NAME in a sentence aimed at a reader. It does not touch the
+ * source ids (`kalshi`, `polymarket`) that the payload, the enums and the
+ * sentinels are built on — those never reach a rendered text node, and the
+ * consumers of this list strip attributes before applying it.
+ */
+export const VENUE_BANS: CopyBan[] = [
+  {
+    id: "venue-kalshi",
+    pattern: /\bKalshi\b/,
+    why: 'a venue name in reader copy — readers get our probability, not our sourcing (ruling 141)',
+  },
+  {
+    id: "venue-polymarket",
+    pattern: /\bPolymarket\b/,
+    why: 'a venue name in reader copy — readers get our probability, not our sourcing (ruling 141)',
+  },
+];
+
+/**
+ * Ruling 142. A section states what it IS, not what it WILL be.
+ *
+ * ═══ WHY THESE PATTERNS AND NOT `\bwill\b` ═══
+ *
+ * Half the questions on this page are market questions that a market wrote:
+ * *Will Sinner actually play?*, *Who will be the champion?*. Banning the bare
+ * auxiliary would fire on the product's own content and this guard would be
+ * switched off within a week — which is the real failure mode of a broad rule.
+ *
+ * So every pattern here is a phrase that only OUR voice produces: a promise
+ * about a section, addressed to the reader, about a time that has not come.
+ * A market question cannot accidentally contain "check back soon".
+ */
+export const FUTURE_PROMISE_BANS: CopyBan[] = [
+  { id: "check-back", pattern: /\bcheck back\b/i, why: "a promise about later, not a statement about now" },
+  { id: "coming-soon", pattern: /\bcoming soon\b/i, why: "a promise about later, not a statement about now" },
+  { id: "are-coming", pattern: /\b(are|is) coming\b/i, why: "a promise about later, not a statement about now" },
+  { id: "stay-tuned", pattern: /\bstay tuned\b/i, why: "a promise about later, not a statement about now" },
+  { id: "watch-this-space", pattern: /\bwatch this space\b/i, why: "a promise about later, not a statement about now" },
+  { id: "appear-here", pattern: /\bappear here\b/i, why: "describes what the section WILL hold, not what it holds" },
+  { id: "show-up-here", pattern: /\bshow up here\b/i, why: "describes what the section WILL hold, not what it holds" },
+  { id: "live-here-later", pattern: /\bwill (be|live|go|sit) here\b/i, why: "describes what the section WILL hold, not what it holds" },
+  { id: "comes-later", pattern: /\b(comes|come) later\b/i, why: "a promise about later, not a statement about now" },
+  { id: "as-soon-as", pattern: /\bas soon as (anyone|someone|they|we|it|a|the|there)\b/i, why: "a promise conditioned on a future event" },
+  { id: "once-the", pattern: /\bonce the .{1,40} (starts|opens|begins)\b/i, why: "describes a state the page is not in yet" },
+  { id: "will-populate", pattern: /\bwill (appear|show|list|open|arrive|populate|update|fill|carry)\b/i, why: "describes what the section WILL do, not what it does" },
+];
+
+/** Every rule, in the order a report should read them. */
+export const ALL_COPY_BANS: CopyBan[] = [
+  ...JARGON_BANS,
+  ...TRADING_VOCAB_BANS,
+  ...VENUE_BANS,
+  ...FUTURE_PROMISE_BANS,
+];
+
+export interface CopyBanHit {
+  ban: CopyBan;
+  /** The text the pattern actually matched. */
+  matched: string;
+  /** Enough surrounding text to recognise the sentence without opening a file. */
+  context: string;
+}
+
+/** Every rule that fires on `text`, with enough context to act on. */
+export function findBannedCopy(text: string, bans: CopyBan[] = ALL_COPY_BANS): CopyBanHit[] {
+  const hits: CopyBanHit[] = [];
+  for (const ban of bans) {
+    const hit = text.match(ban.pattern);
+    if (!hit) continue;
+    const at = text.indexOf(hit[0]);
+    hits.push({
+      ban,
+      matched: hit[0],
+      context: text.slice(Math.max(0, at - 90), at + 110).replace(/\s+/g, " ").trim(),
+    });
+  }
+  return hits;
+}
+
+/**
+ * Rendered markup → the words a reader actually sees.
+ *
+ * Attributes go first and entities are decoded after, in that order. Stripping
+ * tags without stripping attributes would drag `data-price-state="dark"` and
+ * `class="border-dashed"` into the text and every banned word would "fail"
+ * forever, which is how a guard like this gets deleted for crying wolf.
+ */
+export function visibleTextFromHtml(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&mdash;/g, "—")
+    .replace(/&ndash;/g, "–")
+    .replace(/&amp;/g, "&")
+    .replace(/&#x27;|&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ---------------------------------------------------------------------------
+// Reading copy back out of a shipped JavaScript bundle
+// ---------------------------------------------------------------------------
+
+/**
+ * String literals in a minified bundle, scanned SEQUENTIALLY.
+ *
+ * The obvious version of this — one global regex for `"([^"]*)"` — is wrong in
+ * a way that looks right: run over minified code it happily matches from the
+ * CLOSING quote of one literal to the OPENING quote of the next, so the
+ * "strings" it returns are stretches of executable code. The first draft of
+ * this scanner reported `===e.price_state)return null;if(` as user-facing copy
+ * containing the word *price*. A gate that cries wolf on its own extraction
+ * step is a gate somebody deletes.
+ *
+ * So this walks the source one character at a time and tracks what it is
+ * inside. It handles `"`, `'` and backtick strings, escapes, and line and block
+ * comments. It does NOT try to distinguish a regex literal from a division —
+ * that needs a real parser — which is why `isProse` below is a second filter
+ * and not a nicety.
+ */
+export function extractBundleStrings(source: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    const c = source[i];
+    if (c === "/" && source[i + 1] === "/") {
+      while (i < n && source[i] !== "\n") i += 1;
+      continue;
+    }
+    if (c === "/" && source[i + 1] === "*") {
+      i += 2;
+      while (i < n && !(source[i] === "*" && source[i + 1] === "/")) i += 1;
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      i += 1;
+      let buf = "";
+      while (i < n) {
+        const d = source[i];
+        if (d === "\\") {
+          const e = source[i + 1];
+          if (e === "x" || e === "u") {
+            // `·` minifies to `\xb7` and `’` to `’`. Decoding them is not
+            // cosmetic: a half-decoded escape leaves the letters `x`/`u` glued
+            // to the next word, which both hides a real match at a word
+            // boundary and makes the failure report unreadable.
+            const isBrace = e === "u" && source[i + 2] === "{";
+            const start = i + (isBrace ? 3 : 2);
+            const end = isBrace ? source.indexOf("}", start) : start + (e === "x" ? 2 : 4);
+            const hex = source.slice(start, end);
+            if (/^[0-9a-fA-F]+$/.test(hex)) {
+              buf += String.fromCodePoint(parseInt(hex, 16));
+              i = end + (isBrace ? 1 : 0);
+              continue;
+            }
+          }
+          // Every other escape survives as its literal second character, which
+          // is enough for a text sweep. Newlines become spaces so a word
+          // boundary still lands where a reader would see one.
+          buf += e === "n" || e === "t" || e === "r" ? " " : e ?? "";
+          i += 2;
+          continue;
+        }
+        if (d === quote) {
+          i += 1;
+          break;
+        }
+        // A `${` inside a template literal ends this static chunk; the
+        // interpolated expression is code, and the chunk after it is its own
+        // piece of copy. Splitting here is why "…for ${n} questions" cannot be
+        // stitched into a sentence that never existed.
+        if (quote === "`" && d === "$" && source[i + 1] === "{") {
+          out.push(buf);
+          buf = "";
+          let depth = 1;
+          i += 2;
+          while (i < n && depth > 0) {
+            if (source[i] === "{") depth += 1;
+            else if (source[i] === "}") depth -= 1;
+            i += 1;
+          }
+          continue;
+        }
+        buf += d;
+        i += 1;
+      }
+      out.push(buf);
+      continue;
+    }
+    i += 1;
+  }
+  return out;
+}
+
+/**
+ * Does this literal look like a sentence somebody wrote for a reader?
+ *
+ * Deliberately conservative in the direction of MISSING code rather than
+ * missing copy: a bundle holds tens of thousands of identifiers, css class
+ * strings and enum values, and one false positive in a deploy gate costs more
+ * than one extra pass of the sweep.
+ */
+export function isProse(literal: string): boolean {
+  const s = literal.trim();
+  if (s.length < 8) return false;
+  // At least two real words and a space between something. Requiring the two
+  // words to be ADJACENT was too strict and quietly dropped real copy:
+  // "Polymarket & Kalshi ·" is a source chip a reader looks at, and no two of
+  // its words touch. Identifiers (`priced_cells`) have no space at all, and
+  // Tailwind strings are caught by the bracket and css rules below.
+  if (!/\s/.test(s)) return false;
+  if ((s.match(/[A-Za-z]{3,}/g) ?? []).length < 2) return false;
+  // Anything carrying operators or statement punctuation is code that this
+  // extractor mis-sliced, or a template of class names.
+  if (/[{}<>\\]|=>|===|!==|\|\||&&|;|\+\+|\$\{/.test(s)) return false;
+  if (/\b(function|return|typeof|undefined|null|prototype|Symbol)\b/.test(s)) return false;
+  // Tailwind's arbitrary-value syntax — `max-w-[62ch]`, `text-[11.5px]`. The
+  // decimal point inside it defeats the "no sentence punctuation" test below,
+  // so this marker is what actually rejects a className string.
+  if (/-\[[^\]]*\]/.test(s)) return false;
+  // Tailwind and css: runs of `token-token` separated by spaces, no sentence
+  // punctuation and no capital letter starting a word.
+  if (/^[a-z0-9:\-/[\].% ]+$/.test(s) && !/[.,?!]/.test(s)) return false;
+  return true;
+}
+
+export interface BundleCopyHit extends CopyBanHit {
+  /** The chunk the literal came from, for the report. */
+  file: string;
+  /** The route the chunk belongs to — stable across builds, unlike `file`. */
+  surface: string;
+  literal: string;
+}
+
+/**
+ * Which SURFACE a chunk belongs to.
+ *
+ * Next names route chunks `app/<route>/page-<hash>.js` and shared chunks
+ * `<number>-<hash>.js`, and both the hash AND the leading number change on
+ * every build. Anything keyed on a filename resets itself the first time
+ * somebody edits an unrelated page.
+ */
+export function surfaceOf(file: string): string {
+  const normalised = file.replace(/\\/g, "/");
+  const m = normalised.match(/(?:^|\/)app\/([^/]+)/);
+  return m ? `app/${m[1]}` : "shared";
+}
+
+/** Apply the rules to one bundle chunk's prose literals. */
+export function scanBundleSource(
+  file: string,
+  source: string,
+  bans: CopyBan[] = ALL_COPY_BANS
+): BundleCopyHit[] {
+  const hits: BundleCopyHit[] = [];
+  for (const literal of extractBundleStrings(source)) {
+    if (!isProse(literal)) continue;
+    for (const hit of findBannedCopy(literal, bans)) {
+      hits.push({ ...hit, file, surface: surfaceOf(file), literal: literal.trim().slice(0, 200) });
+    }
+  }
+  return hits;
+}

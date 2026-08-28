@@ -941,7 +941,7 @@ number old enough to stop being a price is removed rather than shown quietly.
     expect((html.match(/data-round="R128"/g) ?? []).length).toBeGreaterThan(45);
     expect(html).toContain("Round of 128");
     // ...and the unpriced fixture says the right thing about itself.
-    expect(html).toContain("No market yet");
+    expect(html).toContain("No probability yet");
     expect(html).not.toContain("The two numbers for this match do not agree");
     // The detail note only renders on a TAPPED-OPEN row, so it needs a panel
     // of its own or the sentence written for the page's most common state is

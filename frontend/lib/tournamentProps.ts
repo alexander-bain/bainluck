@@ -476,15 +476,20 @@ export function curatedPropsEmptyReason(result: CuratedProps): string | null {
   const { dark, resolved, template, advance } = result.dropped;
   if (dark > 0) {
     const one = dark === 1;
+    // Ruling 142 (Alex, 2026-08-28): the sentence used to end "New questions
+    // are coming — check back soon." That is a promise about a listing we do
+    // not control, on a date we cannot name, and it is the second half of the
+    // copy Alex read on production. What survives is the whole of the fact:
+    // how many, and why they are not on screen. Present tense, no promise.
     return `We have not seen a new number on ${dark} question${one ? "" : "s"} in a while, so ${
       one ? "it is" : "they are"
-    } hidden for now. New questions are coming — check back soon.`;
+    } hidden for now.`;
   }
   if (resolved > 0) {
     const one = resolved === 1;
     return `${resolved} question${one ? " has" : "s have"} been answered and ${
       one ? "is" : "are"
-    } no longer up for debate. New questions are coming — check back soon.`;
+    } no longer up for debate.`;
   }
   if (template > 0) {
     return "The only questions left for this draw ask the same thing as one we already show.";

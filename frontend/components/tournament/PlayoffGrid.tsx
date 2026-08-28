@@ -530,9 +530,15 @@ export default function PlayoffGrid({
         cells carry a number from a real market.{" "}
         {grid.noMarketCells > 0 && (
           <span data-testid="grid-no-market">
+            {/* Ruling 141 (Alex, 2026-08-28): venue names are banned in reader
+                copy — "we asked Kalshi and Polymarket and neither runs that
+                market" told a tennis reader our sourcing. The admission it
+                carried is the load-bearing half and survives intact: the cell
+                is blank because the QUESTION is not being answered anywhere,
+                not because we failed to read it. */}
             <b className="font-semibold text-text-secondary">{grid.noMarketCells}</b> say{" "}
-            <span className="uppercase">no mkt</span> — we asked Kalshi and Polymarket and
-            neither runs that market.{" "}
+            <span className="uppercase">no mkt</span> — nobody is answering that
+            question, so we have nothing to show.{" "}
           </span>
         )}
         Nothing here is calculated from anything else: every number is one a market

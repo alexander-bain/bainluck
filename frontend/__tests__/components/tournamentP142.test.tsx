@@ -120,7 +120,7 @@ describe("(a) the released main draw reaches the page", () => {
     const unpriced = (payload.slate?.matches ?? []).find((m) => m.priced === false)!;
     expect(unpriced).toBeDefined();
     expect(unpriced.price_state).toBe("unpriced");
-    expect(slateRowFreshnessLabel(unpriced)).toBe("No market yet");
+    expect(slateRowFreshnessLabel(unpriced)).toBe("No probability yet");
 
     const note = matchDetailNote({
       coherent: false,
@@ -265,7 +265,7 @@ describe("(c) players have images", () => {
     expect(html).not.toContain('data-testid="match-probability"');
     expect(html).not.toContain("—");
     // The absence is explained once, in words, on the row.
-    expect(html).toContain("No market yet");
+    expect(html).toContain("No probability yet");
     // And the title chance, which we DO have, still prints.
     expect(html).toContain('data-testid="match-title-chip"');
     expect(html).toContain("% title");

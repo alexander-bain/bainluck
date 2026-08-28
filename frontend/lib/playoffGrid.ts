@@ -298,8 +298,11 @@ export function gridCellExplanation(cell: GridCell, columnLabel: string): string
       return `${columnLabel}. Settled: ${cell.note ?? "decided"}.`;
     case "no_market":
       // UX-P145: the fallback said "Neither source prices this question" —
-      // *prices* as a verb, and *source* is our word for Kalshi/Polymarket.
-      return `${columnLabel}. ${cell.note ?? "Neither Kalshi nor Polymarket runs this market."}`;
+      // *prices* as a verb, and *source* is our word for the venues.
+      // UX-P150, ruling 141: naming the venues instead was the wrong fix. What
+      // the reader needs is that the QUESTION has no answer anywhere, which is
+      // the same admission without our sourcing in it.
+      return `${columnLabel}. ${cell.note ?? "Nobody is answering this question."}`;
     case "unlinked":
     case "unregistered":
       return `${columnLabel}. ${cell.note ?? "Market not linked."} This is a fault on our side.`;

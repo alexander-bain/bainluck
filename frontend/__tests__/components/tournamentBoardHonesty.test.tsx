@@ -269,8 +269,15 @@ describe("a row blended from a fresh source and a stale one", () => {
     expect(html).not.toContain("1 hour ago");
   });
 
-  it("names the stale source rather than implying the whole row is abandoned", () => {
-    expect(html).toContain("Polymarket");
+  it("says only PART of it is old, rather than implying the whole row is abandoned", () => {
+    // UX-P150, ruling 141: this used to assert the venue NAME ("Polymarket").
+    // Alex banned venue names in reader copy on 2026-08-28 — a reader gets our
+    // probability, not our sourcing. The honesty property the assertion exists
+    // for is untouched and is what is pinned here: the line has to distinguish
+    // "one of the readings behind this is old" from "nobody has looked at this
+    // in three weeks", and a count does that as well as a name did.
+    expect(html).toContain("one reading");
+    expect(html).not.toContain("Polymarket");
   });
 });
 
@@ -279,8 +286,20 @@ describe("rowFreshnessLabel", () => {
     expect(rowFreshnessLabel(row())).toBeNull();
   });
 
-  it("names the stale contributor on a mixed row", () => {
-    expect(rowFreshnessLabel(MIXED_ROW)).toBe("Polymarket 20 days ago");
+  it("counts the stale contributors on a mixed row, without naming them", () => {
+    // Ruling 141. The count is the fact; the venue was never the fact.
+    expect(rowFreshnessLabel(MIXED_ROW)).toBe("one reading 20 days ago");
+  });
+
+  it("pluralises when more than one leg is old but not all of them", () => {
+    // Three-source rows exist and "two reading 20 days ago" would be the kind
+    // of sentence a reader files under "nobody looked at this".
+    expect(
+      rowFreshnessLabel({
+        ...MIXED_ROW,
+        stale_sources: ["polymarket", "odds_api"],
+      })
+    ).toBe("two readings 20 days ago");
   });
 
   it("falls back to a bare age when EVERY contributor is stale", () => {

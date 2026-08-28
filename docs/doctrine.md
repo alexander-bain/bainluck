@@ -687,6 +687,70 @@ side, the state of the men's draw; separately, trivia.
 still collapses, and the drop is still counted. What changed is what the key
 carries.
 
+### 26. A guard proves a property of the artifact it reads.
+
+A test over source proves something about source. A test over a fixture proves
+something about the fixture. Only a test over the thing that shipped proves
+something about what shipped — and the moment a claim is phrased as **"a user no
+longer sees X"**, source and fixture have both stopped being evidence for it.
+
+This is not a criticism of unit tests. The failure needs no bug at all: three
+sweeps can be correct, guarded, reviewed and reported honestly, and every one of
+them can be a true statement about a working tree that never reached a browser.
+Nothing goes red, because nothing is wrong — the guard is answering a different
+question from the one being asked of it, and the two questions have the same
+words.
+
+So the rule is about WHERE the guard points, and it has a second half that
+matters as much: **where a guard cannot read the shipped artifact, it must say so
+out loud rather than pass.** A scan of a directory that does not exist returns no
+findings, and no findings is indistinguishable from a clean bill of health
+(gotcha #53). Every conditional layer needs a branch that reports "this did not
+run" in the same breath as the green.
+
+*Charter case (ruling **142**).* Alex, 2026-08-28, reading the live tournament
+page, quoted four sentences of banned copy back at us. Every one had already been
+fixed — two by UX-P145, two by UX-P146 — with render guards, and neither branch
+had landed. Measured against the JavaScript bainluck.com was actually serving
+that day: **41 violations across 30 distinct sentences**, including the complete
+output of both "done" sweeps.
+
+*The limit:* it does not demand a production round-trip for every test. It
+demands that the artifact a guard reads be **named in the claim the guard is used
+to support** — and that "shipped" claims be closed against a shipped artifact,
+after the deploy, not before the merge.
+
+### 27. A translated surface may not name the sources it translated.
+
+Doctrine **24** bans the source domain's *vocabulary*; this bans its *proper
+nouns*. Where the whole product is the abstraction — one number, one answer,
+arrived at from several places a reader was deliberately spared — printing the
+places underneath converts a finished answer back into a research task. It hands
+the reader a decision the product exists to make on their behalf.
+
+The under-appreciated half is what it does to an **absence**. Naming the
+suppliers makes a gap read as *our* gap: "we asked A and B and neither runs that
+market" tells a reader we have two vendors and both let us down. The true
+statement is almost always broader and more useful — *nobody is answering that
+question* — and it is shorter.
+
+*Charter case (ruling **141**).* Alex, 2026-08-28: *"venue names are BANNED in
+user-facing copy, everywhere. Users get our probability, not our sourcing."*
+
+*The limit, and it is a real one:* three carve-outs survive on their own merits
+and none of them is a loophole. **Legal disclosure** must name who receives or
+supplies data. **Operator surfaces** exist so somebody can go and fix the exact
+named thing. And a **deliberate comparison surface** — one whose subject IS how
+the sources differ — is not improved by anonymising them; that is a judgement
+call about what the page is for, and it belongs to whoever owns the page rather
+than to a sweep.
+
+Two carve-outs that are NOT exemptions and should be written down as such: the
+identifiers (`source: "kalshi"`, enum values, columns, data attributes) were
+never in scope, and the honest admission the venue name was carrying has to
+survive the removal — usually by counting rather than naming ("one reading 20
+days ago"), never by deleting the sentence.
+
 # MECHANICAL SPECS — enforced by the Integrator, not judged by it
 
 Everything above this line is a **clause**: a sentence a reader applies with judgement.
