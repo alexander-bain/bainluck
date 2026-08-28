@@ -153,7 +153,7 @@ class NotPlainData(TypeError):
 # principal, never a query parameter. Anything else shares silently.
 SHARED_ARTIFACT_NAMES: frozenset[str] = frozenset({"concepts", "canonical_counts"})
 
-#: Per-namespace entry cap. Concepts key on (sport_filter, minute-bucket) and
+#: Per-namespace entry cap. Concepts key on (sport_filter, hour-bucket) and
 #: canonical counts on a digest of the candidate key set, so the live cardinality
 #: is small; the cap exists so an unexpected key explosion cannot grow a
 #: process-global dict without bound.
@@ -163,6 +163,39 @@ MAX_ENTRIES_PER_NAMESPACE = 64
 #: state, so the TTL is what bounds how wrong that can be. 60s is far below the
 #: coarsest boundary those values move on (marquee pin windows are hours).
 DEFAULT_TTL_S = 60.0
+
+#: The clock-bucket width for a shared key that carries one (LAT-P104).
+#:
+#: **A key that rotates faster than the TTL discards entries that are still
+#: fresh.** The concept key bucketed on 30s against this 60s TTL, so the fleet
+#: rebuilt a 865-1249ms stage TWICE per TTL when once is the floor. The natural
+#: experiment is already in LAT-P103's production read: across the same ten cold
+#: requests, `canonical_counts` — which carries no clock component at all —
+#: was reused 10/10, and `concepts` — which carried the 30s bucket — 6/10.
+#:
+#: **Why a bucket at all, rather than letting the TTL be the only bound.** Its
+#: remaining job is BOUNDARY ALIGNMENT, not staleness: an entry is served only
+#: while `age < TTL` *and* the bucket has not turned, so staleness is already
+#: `min(TTL, bucket)` and the TTL binds at any width >= 60s. What the bucket
+#: still buys is that the key turns AT a content boundary instead of up to a
+#: TTL after it.
+#:
+#: **Why an hour.** Every `now`-derived branch in the concept build sits on a
+#: grid no finer than 12 hours, and all three are enumerated rather than
+#: assumed — `_score_event_concept` and `_concept_headline` read `now.date()`,
+#: and `marquee_pin_state`'s windows open at UTC midnight and expire at UTC
+#: 12:00 (`list_all_concepts`, the fourth input, takes no clock at all). An
+#: hourly bucket lands exactly on all of them. `test_feed_concept_stage_key_
+#: bucket_p104.py` executes that enumeration, so an hour-granularity branch
+#: added later goes red here rather than shipping stale text.
+#:
+#: **Why not 12 hours, which those same boundaries would permit.** The rebuild
+#: rate is `1/TTL + 1/bucket`, so once the bucket clears the TTL the TTL
+#: dominates and 12h saves under 2% over 1h. Against that: `datetime.timestamp()`
+#: reads a NAIVE datetime as local time, and every zone this product runs in is
+#: a whole number of hours from UTC — so an hourly grid stays aligned under that
+#: mistake and a 12-hour grid silently would not.
+CLOCK_BUCKET_S = 3600
 
 #: How long a coalesced caller waits for the in-flight build before giving up
 #: and building for itself. A waiter must never end up SLOWER than a solo
@@ -286,6 +319,21 @@ def shared_build_ttl_s() -> float:
         return max(0.0, float(raw))
     except (TypeError, ValueError):
         return DEFAULT_TTL_S
+
+
+def clock_bucket_s() -> float:
+    """The clock-bucket width to key on, never finer than the live TTL.
+
+    `CLOCK_BUCKET_S` is the chosen width; this clamp is what makes "the key
+    never discards a fresh entry" hold BY CONSTRUCTION rather than by an
+    assertion a reviewer has to notice. `FEED_SHARED_BUILD_TTL_S` can be raised
+    at runtime with no deploy, and the one thing that must not happen when it is
+    is the defect LAT-P104 removed coming back one env var later.
+
+    Widening the bucket past the TTL is free: staleness is `min(TTL, bucket)`,
+    so the TTL keeps binding and only the wasted rotation goes away.
+    """
+    return max(float(CLOCK_BUCKET_S), shared_build_ttl_s())
 
 
 def cross_worker_enabled() -> bool:
@@ -861,12 +909,19 @@ async def get_or_build(
 # --------------------------------------------------------------------------
 
 
-def time_bucket(now: datetime, seconds: int) -> int:
+def time_bucket(now: datetime, seconds: float) -> int:
     """A coarse, principal-independent time component for a shared key.
 
     Bucketing on the clock — NOT on an offset from a per-request `now` — is what
-    makes two principals arriving 200ms apart land on the SAME key. It is also
-    the second bound on staleness alongside the TTL.
+    makes two principals arriving 200ms apart land on the SAME key.
+
+    It is NOT a staleness bound (LAT-P104 corrects the sentence that used to
+    stand here). An entry is served only while `age < TTL` *and* the bucket has
+    not turned, so staleness is `min(TTL, bucket)` and a bucket wider than the
+    TTL changes nothing about how stale a reader can get. What the width does
+    govern is how much still-fresh work the key throws away: pass
+    `clock_bucket_s()` rather than a literal unless you have enumerated the
+    boundaries your build actually moves on.
     """
     return int(now.timestamp()) // max(1, int(seconds))
 
