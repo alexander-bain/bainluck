@@ -107,17 +107,48 @@ implementation — got **34 of 34 cells wrong, every one high** (soccer 2.80 →
 | 5 | **The curve must be live** | `availability: "ok"`, `producer.stalled: false` | A number nobody can refresh is not a published number. **Currently RED** — see §5. |
 
 > **FIXED** = criteria 1–3 satisfied on **every material cell**, with 4 and 5 green, **on the
-> published curve**, holding across two consecutive producer beats.
+> published curve**, holding across two consecutive producer beats — **and, since Alex's
+> 2026-08-28 ratification (§1b), his own eyeball on the page at 49/49.** Criterion 1's flat 3.0 pp
+> is superseded by the per-cohort table in §1b; this row is kept because the amendment is an
+> argument about its shape.
 
-**Today: NOT DONE. 19 material cells are over bar and established.**
+**Today: NOT DONE. 19 material cells are over bar and established on the incumbent flat bar —
+20 on the ratified per-cohort bars (§1b).**
 
-## 1b. The per-cohort bar — PROPOSED, awaiting Alex's MC (CAL-P112)
+## 1b. The per-cohort bar — ✅ RATIFIED (Alex, MC, 2026-08-28 ~1:15pm PT)
 
-Criterion 1 above declares **one** bar for every cell. CAL-P112 is the ratification instrument for
-the question that leaves open — *should the bar be the same number in every cohort?* Full argument,
-derivation and side-by-side: **`artifacts/cal-p112/THRESHOLD-TABLE-PROPOSAL.md`**. Re-render with
-`python3 backend/scripts/calibration_threshold_table.py --live --markdown`. **Nothing below is
-live** — `calibration_scorecard.py` still renders the flat 3.0 pp bar until Alex rules.
+> **Alex ratified the table as proposed: A 2.5 pp / B 3.0 pp / C 3.0 pp**, and added a clause that
+> is now part of the definition of DONE:
+>
+> > **At 49/49, Alex eyeballs the calibration PAGE and confirms it is up to standard. His
+> > sign-off is the final gate, not the number alone.**
+>
+> So the finish line is a conjunction: every material cell at its class's bar **AND** a human
+> looking at the page. Two consequences the lane has to carry from here: **the needle series
+> starts at 29/49**, and **the page's presentability is in scope as cells land** — source
+> attribution by venue name is ALLOWED there, per amended ruling 141.
+
+Criterion 1 above declares **one** bar for every cell; this table replaces it per cohort. Full
+argument, derivation and side-by-side: **`artifacts/cal-p112/THRESHOLD-TABLE-PROPOSAL.md`**.
+Re-render with `python3 backend/scripts/calibration_threshold_table.py --live --markdown`.
+
+> ⚠️ **RATIFIED IS NOT YET WIRED — and the gap is the exact failure this program has hit before.**
+> `calibration_scorecard.py` still renders the flat 3.0 pp bar (`BAR_PP`), so **§1, §3 and §6 on
+> this page are still the incumbent's numbers.** The ratified table lives in
+> `calibration_threshold_table.py`, which imports `BAR_PP` from the scorecard — so wiring it is a
+> small refactor across two scripts plus its guard test, not a one-line edit, and CAL-P114
+> declined to do it at the end of a long session rather than do it hastily to a live instrument.
+> **It is item 0 of the next queue.** Until then, read the ratified numbers from the threshold
+> table and the incumbent's from this page, and do not mix them:
+>
+> | | cells at bar | queued | queued excess-outcomes |
+> |---|--:|--:|--:|
+> | incumbent flat 3.0 — what this page renders | **30/49** | 19 | 455,783 |
+> | **RATIFIED 2.5 / 3.0 / 3.0 — the live definition of DONE** | **29/49** | **20** | **478,677** |
+>
+> The one cell that moves is `odds_api_bookmaker/icehockey_nhl`, exactly as the proposal
+> predicted. **`kalshi/economics` is class C, so its bar stays 3.0 and CAL-P114's design (§6b) is
+> unaffected by the ratification.**
 
 | class | what a cell in it is | **bar** | derivation |
 |---|---|--:|---|
