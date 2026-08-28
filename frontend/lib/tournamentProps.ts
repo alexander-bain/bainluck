@@ -247,10 +247,13 @@ export function propStaleOutcomes(market: PropMarket): PropOutcome[] {
  *   3. DARK — a reading old enough that we no longer call it a price is not an
  *      answer to anything. Stale is fine and wears the honesty treatment; dark
  *      rotates out.
- *   4. TEMPLATE — at most ONE card per template family. "Can Alcaraz win a
- *      second major this year?" and "Can Sinner win a second major this year?"
- *      differ by a name. Two of them is a template; the more interesting one
- *      is a question.
+ *   4. TEMPLATE — at most ONE card per template family, where a family is the
+ *      register key WHOLE, subject and all. UX-P147 rekeyed this: it used to
+ *      drop the leading token, which made "Can Alcaraz win a second major this
+ *      year?" and "Can Sinner win a second major this year?" one family and
+ *      deleted one of them. Alex overruled it — *"DIFFERENT PLAYERS and must
+ *      both render"* — and he is right that two rivals' odds of the same feat
+ *      is the comparison, not a repetition. See `propTemplateFamily`.
  *
  * ⚠️ APPLIED TO TODAY'S REGISTER THIS RULE EMPTIES THE SECTION, and that is a
  * true statement about our data rather than a bug in the rule. Of the three
@@ -297,17 +300,58 @@ export function propIsDark(market: PropMarket): boolean {
 }
 
 /**
- * The template family a question belongs to — its shape with the player
- * removed.
+ * The template family a question belongs to.
  *
- * Register keys are hand-written and follow `<subject>-<topic>`, so the family
- * is the key with its leading subject token dropped: `alcaraz-second-major`
- * and `sinner-second-major` both reduce to `second-major`. A single-token key
- * is its own family. Nothing is inferred from the TITLE text: two questions
- * that happen to share phrasing are not a template, and two that share a
- * curated topic are, whatever they are worded like.
+ * ═══ UX-P147, ALEX'S ITEM 6: A FAMILY MAY NEVER CROSS PLAYERS ═══
+ *
+ * Verbatim: *"alcaraz-second-major and sinner-second-major are DIFFERENT
+ * PLAYERS and must both render. Key the near-duplicate rule so it never
+ * collapses across players."* And: *"I'd love to"* see both.
+ *
+ * This function used to drop the leading token — `alcaraz-second-major` and
+ * `sinner-second-major` both reduced to `second-major`, so ruling 8's
+ * one-card-per-family cap kept whichever scored better and silently deleted the
+ * other. That is now overruled, and the ruling it overrules is worth restating
+ * so the two are not confused: UX-P138 ruling 8 banned *"a repeating
+ * template"*, and the reading that shipped — *same question, different name in
+ * it* — was the wrong one. Two rivals' odds of the same feat is not one
+ * question printed twice; it is the comparison, and it is the single most
+ * interesting thing a two-horse men's draw has to offer. Deleting Alcaraz to
+ * avoid repeating Sinner threw away the only card that made either mean
+ * anything.
+ *
+ * So the family is the WHOLE key, subject included, and the cap now only
+ * collapses cards that are the same question about the same subject. The rule
+ * did not get weaker — it got keyed correctly. It still cannot be defeated by
+ * rewording, because nothing is inferred from the TITLE: two questions that
+ * happen to share phrasing are not a template, and two that share a curated
+ * topic and a subject are, whatever they are worded like.
+ *
+ * `propSubject` and `propTopic` are exported beside it because the split is
+ * still real and still load-bearing — the report and the guards both need to
+ * assert "these two share a topic and differ by subject, and BOTH survive",
+ * which is a claim you cannot make about an opaque key.
  */
 export function propTemplateFamily(market: PropMarket): string {
+  return (market.key ?? "").toLowerCase();
+}
+
+/**
+ * The leading token of a register key — the player or thing a question is
+ * about. `alcaraz-second-major` -> `alcaraz`. Empty for a single-token key,
+ * which is a question about the tournament rather than about anybody.
+ */
+export function propSubject(market: PropMarket): string {
+  const parts = (market.key ?? "").toLowerCase().split("-");
+  return parts.length <= 1 ? "" : parts[0];
+}
+
+/**
+ * A register key with its subject removed — the shape of the question.
+ * `alcaraz-second-major` -> `second-major`. This is what `propTemplateFamily`
+ * used to return, and the reason it no longer does is written above it.
+ */
+export function propTopic(market: PropMarket): string {
   const key = (market.key ?? "").toLowerCase();
   const parts = key.split("-");
   return parts.length <= 1 ? key : parts.slice(1).join("-");

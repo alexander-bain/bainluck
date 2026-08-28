@@ -653,6 +653,40 @@ output in the source vocabulary. It does not forbid the word where the subject
 genuinely is the source thing — `/economics` still says "the price at the pump",
 because that market is about a price.
 
+### 25. A suppression rule must key on everything that makes two items different questions.
+
+Every surface that shows a list eventually grows a rule for "we already have one
+of these" — a template family, a story key, a diversity cap, a near-match
+threshold. Each one derives a KEY and drops whatever collides. The clause is
+about the key: **it must carry every field that makes two items answer different
+questions.** Dropping a field so the rule fires more often does not make it
+stricter. It makes it blind to the distinction it was written to protect.
+
+The reason this needs stating is that the failure is **silent by construction**.
+A suppression rule reports a count, and a count reads as evidence of curation.
+The list looks deliberate; the item that was deleted left no trace on the page;
+and the only person who could notice is the one holding both items in their
+head, which is nobody after the day it shipped.
+
+The usable test is not similarity. It is: **if a reader saw both, would they
+learn something from the second one?** Two items about different subjects almost
+always pass it, and the contrast between them is routinely worth more than
+either alone — which is the case a shape-based key gets exactly backwards,
+because two items are most similar in shape precisely when they are most
+comparable in substance.
+
+*Charter case (ruling **139**).* Alex, 2026-08-27: *"alcaraz-second-major and
+sinner-second-major are DIFFERENT PLAYERS and must both render. Key the
+near-duplicate rule so it never collapses across players."* The family key
+dropped the subject token, so two rivals' odds of the same feat were one
+"template" and one of them was deleted — at the renderer AND, later, at the
+source. Measured the same night: 27c on 42,723 open interest against 1c. Side by
+side, the state of the men's draw; separately, trivia.
+
+*The limit:* the rule still exists and still fires. Same subject, same topic
+still collapses, and the drop is still counted. What changed is what the key
+carries.
+
 # MECHANICAL SPECS — enforced by the Integrator, not judged by it
 
 Everything above this line is a **clause**: a sentence a reader applies with judgement.

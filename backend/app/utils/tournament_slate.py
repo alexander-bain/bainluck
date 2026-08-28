@@ -495,7 +495,7 @@ def build_results(
     reg = TournamentRegister(register)
     by_draw = (results or {}).get("draws") or {}
 
-    from app.services.espn_tennis import normalize_name
+    from app.services.espn_tennis import COMPLETION_UNKNOWN, normalize_name
 
     # (draw, normalized name) -> player. Built once; the join is a lookup.
     by_name: dict[tuple[str, str], dict[str, Any]] = {}
@@ -571,10 +571,16 @@ def build_results(
                     for key, entry in zip(keys, entries)
                 ],
                 "winner_entity_key": winner_key,
-                # Winner's games first, set by set. `None` for a retirement or a
-                # partial read — see `format_score`, which refuses rather than
-                # printing half a result as a whole one.
+                # Winner's games first, set by set. `None` for a WALKOVER (no
+                # set was played) or a partial read — see `format_score`.
                 "score": found.get("score"),
+                # HOW it ended (UX-P147, Alex's item 5): `final`, `retired`,
+                # `walkover`, or `unknown`. The row that made him ask carried
+                # neither a score nor a reason; ESPN had the reason all along
+                # (`STATUS_WALKOVER`) and this is it reaching the reader. It
+                # also marks the eight retirements whose scores are REAL but
+                # partial, which nothing on the page said before.
+                "completion": found.get("completion") or COMPLETION_UNKNOWN,
                 "completed_at": found.get("completed_at"),
                 "source_round": found.get("espn_round"),
                 "source": "espn",
@@ -598,6 +604,11 @@ def build_results(
         "with_prematch": with_prematch,
         "source_competitions": (results or {}).get("stats", {}).get("final", 0),
         "source_scored": (results or {}).get("stats", {}).get("scored", 0),
+        # UX-P147: how the unscored ones ended, counted at the source rather
+        # than guessed in prose. The provenance line said "retirement or
+        # walkover" because nobody had measured which; now it can name them.
+        "source_walkovers": (results or {}).get("stats", {}).get("walkovers", 0),
+        "source_retirements": (results or {}).get("stats", {}).get("retirements", 0),
         "source_errors": (results or {}).get("errors") or [],
     }
 

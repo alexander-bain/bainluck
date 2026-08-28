@@ -34,7 +34,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import fs from "node:fs";
 import path from "node:path";
 
-import PlayoffGrid, { GRID_SIZING } from "@/components/tournament/PlayoffGrid";
+import PlayoffGrid, { GRID_SIZING, gridTemplate } from "@/components/tournament/PlayoffGrid";
 import { TOURNAMENT_COLUMNS, TOURNAMENT_SHELL } from "@/components/tournament/layout";
 import {
   GRID_COLUMN_WIDTH_DESKTOP_PX,
@@ -213,6 +213,41 @@ describe("UX-P145: the desktop layout exists", () => {
       expect(html).toContain("var(--grid-name-w)");
       expect(html).toContain("minmax(var(--grid-col-w), 1fr)");
       expect(html).toContain(GRID_SIZING);
+    });
+
+    /* ═══ UX-P147, ALEX'S ITEM 1: NAMES BEFORE BARS ═══
+     *
+     * "Player names truncate too early when the window is not super wide ...
+     * names get priority over bar width; bars compress first."
+     *
+     * That priority is not a number anywhere — it is which of the two track
+     * kinds carries a growth limit, because the CSS grid algorithm maximizes
+     * non-flexible tracks (§12.6) BEFORE it expands flexible ones (§12.7). So
+     * this asserts the shape of the template, at the render, and states what
+     * each half of it buys. A revert to the fixed name track passes every other
+     * test in the repo and silently restores the truncation.
+     */
+    it("gives the NAME track the growth limit and the bars the leftovers", () => {
+      const grid = loadGrid();
+      const html = renderToStaticMarkup(<PlayoffGrid grid={grid} initialExpanded />);
+      expect(html).toContain(
+        `minmax(var(--grid-name-w), max-content) repeat(${grid.columns.length}, minmax(var(--grid-col-w), 1fr))`
+      );
+      // The old template, which must not come back: a bare `var()` name track
+      // takes no free space at all.
+      expect(html).not.toContain(
+        `columns:var(--grid-name-w) repeat(${grid.columns.length}`
+      );
+      expect(gridTemplate(4)).toBe(
+        "minmax(var(--grid-name-w), max-content) repeat(4, minmax(var(--grid-col-w), 1fr))"
+      );
+    });
+
+    it("draws the spark bars by default — Alex ruled Option A", () => {
+      // The plant has to hit the RENDER: `SparkBar` existing is not the same
+      // claim as the shipped page drawing one.
+      const html = renderToStaticMarkup(<PlayoffGrid grid={loadGrid()} initialExpanded />);
+      expect(html).toContain('data-testid="grid-spark-bar"');
     });
 
     it("⚠️ GRID_SIZING IS A LITERAL — this is the one that will actually fire", () => {

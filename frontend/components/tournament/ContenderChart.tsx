@@ -18,6 +18,7 @@ import {
   seriesEndpoint,
   seriesPoints,
   timeframeIsDrawable,
+  type AxisTickTier,
   type Timeframe,
 } from "@/lib/contenderChart";
 import { TITLE_COLUMN_LABEL } from "@/lib/bracket";
@@ -70,6 +71,32 @@ import { formatBoardProbability, type TournamentRow } from "@/lib/tournament";
 
 const WIDTH = 320;
 const HEIGHT = 96;
+
+/**
+ * Where each tick tier starts being drawn (UX-P147, Alex's item 2: the axis is
+ * "still oddly sparse").
+ *
+ * `axisTicks` emits one set of ticks for every width and tags each with the
+ * narrowest plot its label fits in; this is the half that spends the tag. The
+ * axis therefore goes 4 labels → 7 → 13 as the window grows, from a single
+ * server render, with no viewport measurement anywhere — see `axisTicks` for
+ * the slot arithmetic and the clearance budget behind those three counts.
+ *
+ * `block` rather than `inline` on the way back because these classes are shared
+ * by an SVG `<line>` and an HTML `<span>`: SVG renders on any display value
+ * that is not `none`, and the span is absolutely positioned, so `block` is
+ * correct for both and `inline` would be wrong for neither-but-confusing.
+ *
+ * The BREAKPOINTS are the plot widths `lg:h-40` / `2xl:h-56` were measured
+ * against on the same element, deliberately — one story about how wide this
+ * chart is, not two.
+ */
+const TICK_TIER_VISIBILITY: Record<AxisTickTier, string> = {
+  end: "",
+  major: "",
+  wide: "hidden lg:block",
+  fine: "hidden 2xl:block",
+};
 
 export default function ContenderChart({
   rows,
@@ -247,11 +274,12 @@ export default function ContenderChart({
               y2={HEIGHT}
               stroke="currentColor"
               strokeWidth={1}
-              className="text-surface-border"
+              className={`text-surface-border ${TICK_TIER_VISIBILITY[tick.tier]}`}
               opacity={0.7}
               vectorEffect="non-scaling-stroke"
               data-testid="chart-axis-tick"
               data-date={tick.date}
+              data-tier={tick.tier}
             />
           ))}
           {series.map((entry) => {
@@ -301,7 +329,10 @@ export default function ContenderChart({
             return (
               <span
                 key={tick.date}
-                className="absolute top-0 whitespace-nowrap text-[9.5px] tabular-nums text-text-muted"
+                className={`absolute top-0 whitespace-nowrap text-[9.5px] tabular-nums text-text-muted ${
+                  TICK_TIER_VISIBILITY[tick.tier]
+                }`}
+                data-tier={tick.tier}
                 style={{
                   left: `${(tick.x / WIDTH) * 100}%`,
                   transform: first

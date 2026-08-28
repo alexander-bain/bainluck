@@ -138,6 +138,25 @@ CURATION: dict[str, dict] = {
     # wins" (1%), so a calendar-slam card would at least be answerable here —
     # but a 1% card is not a question anybody is asking two days out, and the
     # asymmetry with Sinner's market would read as a data bug.
+    #
+    # ═══ RESTORED 2026-08-27 (UX-P147, Alex's item 6) ═══
+    #
+    # This card was curated OUT of the committed register by a hand edit whose
+    # recorded reason was "one question with two names in it, next to
+    # sinner-second-major".  Alex overruled that, verbatim: *"alcaraz-second-
+    # major and sinner-second-major are DIFFERENT PLAYERS and must both render.
+    # Key the near-duplicate rule so it never collapses across players."*
+    #
+    # He is right, and the rule was doing the deleting at BOTH ends — the
+    # renderer's template cap (fixed in `lib/tournamentProps.ts`) and this file.
+    # A fix to only one of them leaves the card gone; a fix to only the other
+    # leaves it deletable again the next time the cap runs.  So both, together.
+    #
+    # And the two cards are the argument for keeping them: measured on Kalshi
+    # 2026-08-28T00:5xZ, Alcaraz's `2+` is 27c bid 26 / ask 27 on 42,723 open
+    # interest, and Sinner's `2+` is 1c — because his "to play" market is also
+    # 1c.  Side by side that is the whole men's draw in two numbers.  One of
+    # them alone is trivia.
     "KXGRANDSLAM-CALC26": {
         "key": "alcaraz-second-major",
         "title": "Can Alcaraz win a second major this year?",
@@ -287,6 +306,81 @@ DECLINED: dict[str, str] = {
     # `KXATPCOMPETE-26USOSIN` is KEPT: at Yes .63 and 186.7h it is both the
     # freshest incumbent and genuinely undecided, which is the whole difference.
     "KXATPCOMPETE-26USOALC": "Yes .905 at 808.7h (33.7d); near-decided and the draw resolves it tomorrow",
+}
+
+# ---------------------------------------------------------------------------
+# THE WOMEN'S SECTION (UX-P147, Alex's item 7) — RULED YES, AND BLOCKED
+# ---------------------------------------------------------------------------
+#
+# Alex ruled YES on a women's props section and named the direction he wanted:
+# **Sabalenka back-to-back, first-time major winner, all-American final**, plus
+# the nationality props "once lane1/012's discovery fix lands (do not hand-enter
+# what discovery should find)".
+#
+# The curation is written and the section is ready.  What is missing is the
+# markets, and the census below is the whole reason this file still ships two
+# men's cards and no women's ones.  Three sweeps, 2026-08-27/28:
+#
+# **1. Our database.**  Every open US-Open market at either source that is not
+# an advance-to-round binary, a qualifying match, or a celebrity-attendance
+# novelty: seventeen rows, and all seventeen are the two winner fields, the six
+# Polymarket reach-ladders, the two Kalshi "to play" markets, or unrelated
+# tickers that matched on the words ("RÜFÜS DU SOL Streams in 2026").  Nothing
+# a woman's props section could print.
+#
+# **2. Polymarket upstream** (Gamma, `tag_slug=tennis`, 60 open events).  The
+# two winner fields, the eight reach-ladders, "Who will attend the US Open
+# Finals?", and a Chipotle promotion.  No non-advance women's question exists.
+#
+# **3. Kalshi upstream — the full open book.**  13,511 open events scanned by
+# ticker and title.  Twelve US-Open-specific markets exist that WE DO NOT HOLD:
+#
+#     KXWTANATSTAGE-26QF     Women's Singles: Americans to Reach Quarterfinals
+#     KXWTANATSTAGE-26SF     Women's Singles: Americans to Reach Semifinals
+#     KXATPNATSTAGE-26QF     Men's Singles: Americans to Reach Quarterfinals
+#     KXATPNATSTAGE-26SF     Men's Singles: Americans to Reach Semifinals
+#     KXATPNATSTAGE-26FIN    Men's Singles: Americans to Reach Final
+#     KXATPWTA-26USO         US Open Exacta (80 men-and-women pairings)
+#     KXWTAADVANCE-26USO{QUAR,SEMI,FIN}   women's reach-fields
+#     KXATPADVANCE-26USO{QUAR,SEMI,FIN}   men's reach-fields
+#
+# `SELECT ... WHERE external_id IN (...)` over those twelve returns **0 rows**.
+# The `NATSTAGE` family IS the nationality prop Alex asked for, and
+# `KXATPNATSTAGE-26FIN` is as close as any market gets to "all-American final".
+# So his parenthetical governs: do not hand-enter them.  They are lane1/012's.
+#
+# ** AND THE PART THAT CHANGES THE DEPENDENCY. **  Discovery is necessary and
+# NOT sufficient.  Measured on Kalshi's own API the same night, every one of the
+# six NATSTAGE markets is::
+#
+#     last_price_dollars 0.0000   open_interest_fp 0.00   liquidity_dollars 0.0000
+#     yes_bid 0.02  yes_ask 0.90                (KXWTANATSTAGE-26SF-1, "1+ Americans")
+#
+# Zero trades, zero open interest, an 88-cent spread.  Ingesting them tomorrow
+# would put a question on the page with no number under it.  So the women's
+# section is blocked on the market TRADING, not only on us fetching it, and the
+# report says so rather than letting a discovery fix be mistaken for the unlock.
+#
+# **"Sabalenka back-to-back" and "first-time major winner" do not exist as
+# markets anywhere.**  Not at Kalshi (all 13,511 open events), not at
+# Polymarket.  The only thing that could print under either title is a slice of
+# the women's winner field, which is the board directly above — one number
+# answering two differently-worded questions is the divergence this register
+# refuses, and it is the same defect UX-P134 fixed when it stopped a
+# threshold-ladder maximum from answering a calendar-slam question.
+#
+# WHAT IS READY.  `curatedProps` takes a draw and does not care which; the
+# renderer, the rotation, the honesty treatment and the empty-state sentence
+# already work for `womens-singles`, and were re-verified this queue.  The day a
+# NATSTAGE market lands with a price, it is an entry in `CURATION` and nothing
+# else.
+WOMENS_NON_ADVANCE_CENSUS: dict[str, str] = {
+    "KXWTANATSTAGE-26QF": "not ingested (0 rows); and 0 trades / 0 OI / .02-.90 spread upstream",
+    "KXWTANATSTAGE-26SF": "not ingested (0 rows); and 0 trades / 0 OI / .02-.90 spread upstream",
+    "KXATPNATSTAGE-26FIN": "the closest market to 'all-American final'; not ingested, 0 OI",
+    "KXATPWTA-26USO": "US Open Exacta, 80 pairings — genuinely fun, not ingested, unpriced",
+    "sabalenka-back-to-back": "NO MARKET EXISTS at either source. Would have to be the winner field's Sabalenka row, which is the board above",
+    "first-time-major-winner": "NO MARKET EXISTS at either source. Would have to be derived from the winner field, which the client never does (ruling 003)",
 }
 
 # ---------------------------------------------------------------------------

@@ -88,27 +88,41 @@ export const GRID_SIZING =
   "[--grid-name-w:118px] [--grid-col-w:46px] lg:[--grid-name-w:236px] lg:[--grid-col-w:84px]";
 
 /**
- * ═══ THE SPARK BARS — A MOCK SEAM, NOT A SHIPPED DEFAULT (UX-P146) ═══
+ * ═══ THE SPARK BARS — RULED IN (UX-P147) ═══
  *
- * Alex, on the "Chance of reaching" table: he likes it, and asked whether
- * "subtle spark bars would help scanning or make it busy". The charter rule for
- * that question is visual mocks, never a written argument, so the capability
- * lives here behind a prop that defaults to OFF and
- * `__tests__/capture/usOpenReachTableMocks.test.tsx` renders the real component
- * both ways for his eye.
+ * UX-P146 built these behind a prop defaulting to OFF and rendered both
+ * options for Alex's eye (`reach-table-with-bars.html` / `reach-table-plain.html`).
+ * He ruled: **"Option A is great"** — the bars. So the default is ON and the
+ * prop stays only as the seam the plain mock is still rendered through, because
+ * a comparison artifact that cannot draw the rejected option stops being a
+ * comparison the moment somebody asks the question again.
  *
- * Built as a prop rather than as a second component on purpose: whichever way
- * he rules, the change is this default and nothing else — there is no second
- * implementation to keep in step with the first, and the mock he judged is the
- * component that ships.
+ * What a bar is: a single faint rule under the number, filled from the right to
+ * the cell's own probability. One colour for every column and every row — a bar
+ * is a length, and colour-coding it would add a second variable to a table
+ * whose whole claim is that each cell answers exactly its own column. No
+ * labels, no axis, no gridline: the number IS the label and it is already
+ * there. `aria-hidden`, because it says nothing the cell's own screen-reader
+ * sentence does not.
  *
- * What a bar is, when it is on: a single faint rule under the number, filled
- * from the right to the cell's own probability. One colour for every column and
- * every row — a bar is a length, and colour-coding it would add a second
- * variable to a table whose whole claim is that each cell answers exactly its
- * own column. No labels, no axis, no gridline: the number IS the label and it
- * is already there. `aria-hidden`, because it says nothing the cell's own
- * screen-reader sentence does not.
+ * ═══ AND THE TRUNCATION HE NAMED WITH IT ═══
+ *
+ * *"Player names truncate too early when the window is **not super wide**."*
+ * The emphasis is his and it is the diagnosis. The name track was a FIXED
+ * `var(--grid-name-w)` while every value column was `minmax(var(--grid-col-w),
+ * 1fr)`, so every pixel a window gained went to the numbers and none of it to
+ * the names — and `--grid-name-w` only steps up to 236px at `lg`.
+ *
+ * Between 560px and 1024px of viewport, therefore, the grid was drawing the
+ * PHONE's 118px name box inside up to 830px of available width: "Tomas Martin
+ * Etcheverry" cut to about "Tomas Marti", five value columns at ~140px each
+ * holding a three-character percentage, and — now the bars are on — a bar
+ * stretched across the whitespace that was paid for with his surname. Above
+ * `lg` nothing truncates and nothing changes, which is exactly why the
+ * complaint is scoped to windows that are not super wide.
+ *
+ * Alex's rule for the fix is the fix: **names get priority over bar width; bars
+ * compress first.** See `gridTemplate` below.
  */
 function SparkBar({ probability }: { probability: number }) {
   const pct = Math.max(0, Math.min(1, probability)) * 100;
@@ -130,11 +144,11 @@ function SparkBar({ probability }: { probability: number }) {
 function Cell({
   cell,
   column,
-  sparkBars = false,
+  sparkBars = true,
 }: {
   cell: GridCell | undefined;
   column: GridColumn;
-  /** Mock seam — see `SparkBar`. Off in the shipped page. */
+  /** On since UX-P147 — see `SparkBar`. `false` renders the plain mock. */
   sparkBars?: boolean;
 }) {
   if (!cell) {
@@ -199,6 +213,65 @@ function Cell({
       {barred && <SparkBar probability={cell.probability as number} />}
     </span>
   );
+}
+
+/**
+ * ONE template, two sets of measurements — and, since UX-P147, an ORDER OF
+ * PRIORITY between the two kinds of track.
+ *
+ * The widths are CSS variables set by `GRID_SIZING`, so the phone keeps the
+ * 118/46 every prior ruling was verdicted against and a `lg` window gets
+ * 236/84.
+ *
+ * ═══ WHAT CHANGED, AND WHY IT IS `max-content` ═══
+ *
+ * It was `var(--grid-name-w) repeat(n, minmax(var(--grid-col-w), 1fr))` — the
+ * name track FIXED, the value tracks flexible. Every pixel of extra window
+ * therefore went to the numbers, so a 900px window truncated a name at exactly
+ * the character a 600px one did. Alex, item 1: *"names get priority over bar
+ * width; bars compress first."*
+ *
+ * So the name track is `minmax(var(--grid-name-w), max-content)`. Read it as
+ * the sentence it is: *never narrower than the measured minimum, never wider
+ * than the longest name in this table.* The CSS grid algorithm then does
+ * exactly what Alex asked, in this order:
+ *
+ *   1. every track starts at its minimum — the name at 118/236, each value
+ *      column at 46/84, which is the phone's layout unchanged;
+ *   2. **"maximize tracks"** hands out free space to non-flexible tracks up to
+ *      their growth limits. `max-content` is a growth limit; `1fr` is not
+ *      (a flexible track's growth limit is frozen at its base size for this
+ *      step). So the NAME grows first, and stops the moment the longest name
+ *      fits whole;
+ *   3. **"expand flexible tracks"** gives whatever is left to the `1fr` value
+ *      columns, which is where the bars live.
+ *
+ * Bars compress first because they are last in that order, and they can only
+ * compress to `var(--grid-col-w)` — a floor wide enough for `100%` — after
+ * which the grid scrolls rather than crushing them, exactly as ruling 5 says.
+ *
+ * ⚠️ THE PHONE IS UNTOUCHED, and this is the property to keep. At 390px there
+ * is no free space, step 2 distributes nothing, and the name track sits at its
+ * 118px minimum truncating precisely as before. `max-content` cannot widen a
+ * track past the space available — it is a *growth limit*, not a minimum — so
+ * it cannot overflow a narrow window either.
+ *
+ * ⚠️ AND `lg` AND ABOVE IS UNTOUCHED TOO, for the mirror reason. There the
+ * minimum is already 236px, which was measured as "the widest real name plus a
+ * seed badge with nothing clipped"; the longest name on the men's grid is
+ * "Tomas Martin Etcheverry" and it fits. A `max-content` growth limit BELOW the
+ * base size is clamped up to it by the spec, so the track does not grow, the
+ * free space still goes to the bars, and the desktop layout every prior ruling
+ * was verdicted against is byte-identical. The change bites in exactly the
+ * range Alex named — 560px to 1024px — and nowhere else.
+ *
+ * A NOTE ON WHAT `max-content` MEASURES. It is the longest name in the WHOLE
+ * table, not per row, because grid tracks are shared. That is the correct
+ * reading of "names get priority": a column sized to its longest entry is a
+ * column where no name is cut while another row has slack.
+ */
+export function gridTemplate(columnCount: number): string {
+  return `minmax(var(--grid-name-w), max-content) repeat(${columnCount}, minmax(var(--grid-col-w), 1fr))`;
 }
 
 function SumCheck({ grid }: { grid: PlayoffGridModel }) {
@@ -267,17 +340,17 @@ export default function PlayoffGrid({
   grid,
   drawLabel,
   initialExpanded = false,
-  sparkBars = false,
+  sparkBars = true,
 }: {
   grid: PlayoffGridModel;
   drawLabel?: string;
   /** Capture seam: render the full field rather than the collapsed five. */
   initialExpanded?: boolean;
   /**
-   * Mock seam (UX-P146): draw a faint bar under each numeric cell. OFF in the
-   * shipped page — Alex asked to SEE the two options, and the two artifacts
-   * this renders are `reach-table-with-bars.html` and `reach-table-plain.html`.
-   * See `SparkBar` above.
+   * Draw a faint bar under each numeric cell. **ON since UX-P147** — Alex saw
+   * `reach-table-with-bars.html` beside `reach-table-plain.html` and ruled
+   * "Option A is great". The prop survives so the plain artifact can still be
+   * re-rendered from the shipped component. See `SparkBar` above.
    */
   sparkBars?: boolean;
 }) {
@@ -299,22 +372,7 @@ export default function PlayoffGrid({
   }
 
   const visible = expanded ? grid.rows : grid.rows.slice(0, COLLAPSED_LIST_COUNT);
-  /**
-   * ONE template, two sets of measurements (UX-P145).
-   *
-   * The widths are CSS variables set by `GRID_SIZING` below, so the phone keeps
-   * the 118/46 every prior ruling was verdicted against and a `lg` window gets
-   * 236/84. `minmax(var(--grid-col-w), 1fr)` rather than a bare `var()` is what
-   * makes the desktop grid FILL its column instead of huddling at the left
-   * edge — and it is also why ruling 5's horizontal scroll simply never
-   * triggers up there: a track that grows to the space available cannot
-   * overflow it.
-   *
-   * On the phone `1fr` is a no-op in the scrolling case (the inline `minWidth`
-   * pins the row to exactly the sum of the minimums) and worth ~2px per column
-   * in the non-scrolling one.
-   */
-  const template = `var(--grid-name-w) repeat(${grid.columns.length}, minmax(var(--grid-col-w), 1fr))`;
+  const template = gridTemplate(grid.columns.length);
   const scrolls = gridScrolls(grid.columns.length);
 
   return (

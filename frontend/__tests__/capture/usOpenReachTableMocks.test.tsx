@@ -153,14 +153,20 @@ describe("UX-P146: the reach table, with bars and without", () => {
     expect(winnerMarkets.size).toBe(SOURCING.winnerMarkets);
   });
 
-  it("the bars are OFF by default — the shipped table is unchanged", () => {
-    // The proposal must not ship itself. Until Alex rules, `/tournaments/us-open`
-    // renders exactly what it rendered before this queue.
+  it("the bars are ON by default — Alex ruled 'Option A is great'", () => {
+    // UX-P146 shipped this defaulting to OFF, with the two artifacts rendered
+    // for Alex's eye. He ruled for the bars, so the default flipped; the prop
+    // survives only so the rejected option can still be re-rendered from the
+    // shipped component if the question is ever reopened.
     const html = renderToStaticMarkup(<PlayoffGrid grid={grid!} initialExpanded />);
-    expect(html).not.toContain('data-testid="grid-spark-bar"');
+    expect(html).toContain('data-testid="grid-spark-bar"');
+    const plain = renderToStaticMarkup(
+      <PlayoffGrid grid={grid!} initialExpanded sparkBars={false} />
+    );
+    expect(plain).not.toContain('data-testid="grid-spark-bar"');
   });
 
-  it("with the prop on, every PRICED cell gets a bar and nothing else does", () => {
+  it("every PRICED cell gets a bar and nothing else does", () => {
     const html = renderToStaticMarkup(
       <PlayoffGrid grid={grid!} initialExpanded sparkBars />
     );
@@ -173,7 +179,9 @@ describe("UX-P146: the reach table, with bars and without", () => {
     // explicitly not making.
     expect(bars).toBe(numbers);
     // …and the numbers themselves are untouched by the treatment.
-    const plain = renderToStaticMarkup(<PlayoffGrid grid={grid!} initialExpanded />);
+    const plain = renderToStaticMarkup(
+      <PlayoffGrid grid={grid!} initialExpanded sparkBars={false} />
+    );
     const digitsOf = (markup: string) =>
       (markup.match(/>(\d{1,3}(\.\d)?%)</g) ?? []).join("");
     expect(digitsOf(html)).toBe(digitsOf(plain));

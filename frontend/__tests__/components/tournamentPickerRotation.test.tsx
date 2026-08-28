@@ -33,7 +33,9 @@ import {
   propInterestScore,
   propIsDark,
   propIsResolved,
+  propSubject,
   propTemplateFamily,
+  propTopic,
   type PropMarket,
   type PropOutcome,
 } from "@/lib/tournamentProps";
@@ -330,28 +332,82 @@ describe("ruling 8 — resolved and dark questions rotate out", () => {
   });
 });
 
-describe("ruling 8 — never a repeating template", () => {
-  it("reads the family off the curated key, not off the wording", () => {
-    expect(propTemplateFamily(prop("alcaraz-second-major"))).toBe("second-major");
-    expect(propTemplateFamily(prop("sinner-second-major"))).toBe("second-major");
-    expect(propTemplateFamily(prop("sinner-competes"))).toBe("competes");
+/* ═══ UX-P147, ALEX'S ITEM 6: THE FAMILY MAY NOT CROSS PLAYERS ═══
+ *
+ * Verbatim: "alcaraz-second-major and sinner-second-major are DIFFERENT
+ * PLAYERS and must both render. Key the near-duplicate rule so it never
+ * collapses across players." And: "I'd love to" see both.
+ *
+ * The two tests this replaces asserted the opposite and were correct under the
+ * reading of UX-P138 ruling 8 that shipped — "a repeating template" was taken
+ * to mean *the same question with a different name in it*. Alex overruled that
+ * reading, and he is right about why: two rivals' odds of the same feat is the
+ * comparison, and it is the single most interesting thing a two-horse men's
+ * draw has. One of them alone is trivia.
+ *
+ * The cap is not weaker. It is keyed on the WHOLE register key now, so it still
+ * collapses the same question about the same subject, and it still cannot be
+ * defeated by rewording — nothing is read off the title.
+ */
+describe("ruling 8 as amended — a family is a subject AND a topic", () => {
+  it("keys the family on the whole curated key, so two players never merge", () => {
+    expect(propTemplateFamily(prop("alcaraz-second-major"))).toBe("alcaraz-second-major");
+    expect(propTemplateFamily(prop("sinner-second-major"))).toBe("sinner-second-major");
+    expect(propTemplateFamily(prop("alcaraz-second-major"))).not.toBe(
+      propTemplateFamily(prop("sinner-second-major"))
+    );
+    // The split is still real and still nameable — the report and the guards
+    // both need to say "same topic, different subject" out loud.
+    expect(propSubject(prop("alcaraz-second-major"))).toBe("alcaraz");
+    expect(propTopic(prop("alcaraz-second-major"))).toBe("second-major");
+    expect(propTopic(prop("sinner-second-major"))).toBe("second-major");
+    expect(propSubject(prop("sinner-competes"))).toBe("sinner");
   });
 
-  it("keeps ONE card per family, and the more interesting one survives", () => {
-    // Our actual register: Alcaraz at 25% and Sinner at 55.5% for the same
-    // question with the name swapped. The coin flip is the question.
+  it("RENDERS both second-major cards — Alex's item 6, at the render", () => {
+    // Measured on Kalshi 2026-08-28T00:5xZ: Alcaraz's `2+` is 27c on 42,723
+    // open interest and Sinner's is 1c, because his "to play" market is 1c
+    // too. Side by side that is the men's draw in two numbers.
+    const markets = [
+      prop("alcaraz-second-major", {
+        title: "Can Alcaraz win a second major this year?",
+        outcomes: [outcome({ entity_key: "alcaraz-second-major:yes", probability: 0.27 })],
+      }),
+      prop("sinner-second-major", {
+        title: "Can Sinner win a second major this year?",
+        outcomes: [outcome({ entity_key: "sinner-second-major:yes", probability: 0.555 })],
+      }),
+    ];
+    const result = curatedProps(markets, "mens-singles");
+    expect(result.markets.map((m) => m.key).sort()).toEqual([
+      "alcaraz-second-major",
+      "sinner-second-major",
+    ]);
+    expect(result.dropped.template).toBe(0);
+
+    // And at the RENDER, not only in the pure layer — a library assertion stays
+    // green the day the component stops printing the card.
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={markets} draw="mens-singles" />
+    );
+    expect(html).toContain("Can Alcaraz win a second major this year?");
+    expect(html).toContain("Can Sinner win a second major this year?");
+  });
+
+  it("still collapses the SAME question about the same subject", () => {
+    // The cap has not been weakened, only keyed correctly.
     const result = curatedProps(
       [
-        prop("alcaraz-second-major", {
-          outcomes: [outcome({ entity_key: "alcaraz-second-major:yes", probability: 0.25 })],
+        prop("sinner-second-major", {
+          outcomes: [outcome({ entity_key: "a", probability: 0.9 })],
         }),
         prop("sinner-second-major", {
-          outcomes: [outcome({ entity_key: "sinner-second-major:yes", probability: 0.555 })],
+          outcomes: [outcome({ entity_key: "b", probability: 0.555 })],
         }),
       ],
       "mens-singles"
     );
-    expect(result.markets.map((m) => m.key)).toEqual(["sinner-second-major"]);
+    expect(result.markets).toHaveLength(1);
     expect(result.dropped.template).toBe(1);
   });
 
@@ -431,6 +487,72 @@ describe("ruling 8 — an empty section says WHY, with a number", () => {
       "womens-singles"
     );
     expect(curatedPropsEmptyReason(result)).toContain("Bracket tab");
+  });
+
+  /* ═══ UX-P147, ALEX'S ITEM 7: THE WOMEN'S SECTION, READY AND BLOCKED ═══
+   *
+   * He ruled YES on a women's props section with real questions. The register
+   * carries none, and the reason is measured rather than asserted — see
+   * `WOMENS_NON_ADVANCE_CENSUS` in `scripts/populate_tournament_props.py`. In
+   * one line: every non-advance women's US Open market that exists anywhere is
+   * one we do not ingest (six Kalshi `*NATSTAGE*` tickers, 0 rows in our DB),
+   * and every one of those is 0 trades / 0 open interest / a .02–.90 spread
+   * upstream, so it has no number to print either.
+   *
+   * "The section is ready" is the load-bearing claim in that report, and a
+   * claim in a report is worth nothing. This proves it: a women's question with
+   * a live number renders, in full, through the shipped component, with no code
+   * change of any kind. The day a NATSTAGE market lands and trades, it is one
+   * entry in `CURATION`.
+   */
+  it("renders a WOMEN'S question the moment one exists — no code change owed", () => {
+    const womens = [
+      // ⚠️ NOT `americans-quarterfinals`. `advanceRound` claims any key ending
+      // in a round suffix and routes it to the playoff grid, which is right for
+      // "Does Gauff reach the semifinals?" and wrong for "how many Americans
+      // do" — the grid has one row per player and no row for a count. The
+      // curation naming rule this implies is written down beside the census in
+      // `scripts/populate_tournament_props.py`.
+      prop("americans-in-the-quarters", {
+        draw: "womens-singles",
+        title: "Do two Americans reach the women's quarter-finals?",
+        outcomes: [
+          outcome({ entity_key: "americans-in-the-quarters:yes", probability: 0.41 }),
+        ],
+      }),
+      prop("sabalenka-back-to-back", {
+        draw: "womens-singles",
+        title: "Can Sabalenka win back-to-back US Opens?",
+        outcomes: [
+          outcome({ entity_key: "sabalenka-back-to-back:yes", probability: 0.33 }),
+        ],
+      }),
+    ];
+    const result = curatedProps(womens, "womens-singles");
+    // BOTH survive — different subjects, so item 6's rekeying holds here too.
+    expect(result.markets.map((m) => m.key).sort()).toEqual([
+      "americans-in-the-quarters",
+      "sabalenka-back-to-back",
+    ]);
+    expect(result.dropped).toEqual({ advance: 0, resolved: 0, dark: 0, template: 0 });
+
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={womens} draw="womens-singles" />
+    );
+    expect(html).toContain('data-key="americans-in-the-quarters"');
+    expect(html).toContain('data-key="sabalenka-back-to-back"');
+    expect(html).toContain("Do two Americans reach the women");
+    expect(html).toContain("Can Sabalenka win back-to-back US Opens?");
+    expect(html).toContain("41%");
+    expect(html).toContain("33%");
+    // Both live, both with the confident treatment — the honesty layer is not
+    // muting a women's card for being a women's card.
+    expect(count(html, 'data-live="true"')).toBe(2);
+    // And it does not leak into the men's tab, which is the other half of
+    // "the section takes a draw and does not care which".
+    expect(
+      renderToStaticMarkup(<TournamentProps markets={womens} draw="mens-singles" />)
+    ).toContain("Nothing to ask yet");
   });
 
   it("keeps the genuinely-empty sentence when there is truly nothing on file", () => {
