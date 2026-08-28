@@ -81,29 +81,32 @@ export interface MatchProp {
   mixed_freshness: boolean;
 }
 
-export interface MatchDetailPayload {
-  slug: string;
-  title: string;
-  subtitle: string;
-  tournament: string;
-  season: string;
-  matchup_key: string;
-  match: SlateMatch;
-  /** ESPN's verdict, or `null` while the match is still to come. */
-  result: TournamentResult | null;
-  /** ESPN's verdict, not a clock comparison — a late match is still on. */
-  decided: boolean;
+/* UX-P152: `MatchDetailPayload` was DELETED here. It described the response of
+ * a match-page endpoint that no longer exists — a match is an ordinary event and
+ * renders on `/events/{id}`. What survived is `MatchPropsSource` above: the four
+ * fields the props section actually reads, which both the tournament hub and the
+ * event page's tournament section can supply.
+ */
+
+
+/**
+ * The slice of a payload the props section actually reads (UX-P152).
+ *
+ * `visibleProps` / `hiddenPropCount` / `propsProvenance` were typed against the
+ * whole `MatchDetailPayload` and only ever touched these four fields. Narrowing
+ * them is what lets `MatchProps` render on the EVENT page — where the props
+ * arrive as a section of `/api/tournaments/by-event/{id}`, with no `slug`, no
+ * `match` row and no `subtitle`, because the event page already IS the match
+ * and prints all three above.
+ *
+ * A structural type rather than a second payload interface: one component, one
+ * set of helpers, two callers that each carry what they have.
+ */
+export interface MatchPropsSource {
   props: MatchProp[];
   props_count: number;
-  /** Named reasons a sibling market did not render. Never a silent short list. */
   props_dropped: Record<string, number>;
-  /**
-   * Where to watch, per region. Tournament-wide until a session feed exists —
-   * see `matchBroadcast`, which tags the scope so a guard can prove which
-   * answer this is rather than a per-match one that coincidentally matched.
-   */
-  broadcasts?: Broadcast[];
-  generated_at: string;
+  decided: boolean;
 }
 
 /** The section's name. One constant, so a re-wording is one line. */
@@ -198,14 +201,14 @@ export function propFreshnessLabel(prop: MatchProp, decided: boolean): string | 
  * against every answer teaches the reader nothing except that the page is
  * broken. It is a filter and not a truncation — `hiddenPropCount` reports it.
  */
-export function visibleProps(payload: MatchDetailPayload): MatchProp[] {
+export function visibleProps(payload: MatchPropsSource): MatchProp[] {
   return (payload.props ?? []).filter((prop) =>
     answerPercents(prop, payload.decided).some((percent) => percent !== null)
   );
 }
 
 /** How many cards `visibleProps` left out. Never a silent shrink. */
-export function hiddenPropCount(payload: MatchDetailPayload): number {
+export function hiddenPropCount(payload: MatchPropsSource): number {
   return (payload.props ?? []).length - visibleProps(payload).length;
 }
 
@@ -217,69 +220,15 @@ export function hiddenPropCount(payload: MatchDetailPayload): number {
  * the same market's answers to other questions about the same match, and not a
  * different source, a model, or our opinion.
  */
-export function propsProvenance(payload: MatchDetailPayload): string {
+export function propsProvenance(payload: MatchPropsSource): string {
   if (payload.decided) {
     return "These are the numbers the market was showing before the match, not readings taken after the result was known.";
   }
   return "Same market as the probability above, asked about other parts of the same match.";
 }
 
-/**
- * "Men's Singles · Qualifying · Thu, Aug 27, 3:00 PM" — the one metadata line.
- *
- * The round goes through `MATCH_ROUND_LABELS` rather than being printed raw.
- * The register's own value is `qualifying`, lowercase, and a line reading
- * "Men's Singles · qualifying" looks like a field somebody forgot to format —
- * which is exactly what it was.
+/* UX-P152: `matchSubheading` and `heroOrder` were DELETED here. Both existed
+ * only for `MatchHero`, the bespoke match-page hero that this queue removed —
+ * the event page prints its own hero, its own draw/round line and its own
+ * settled treatment, and has for every other sport since long before tennis.
  */
-export function matchSubheading(match: SlateMatch, now: Date = new Date()): string {
-  const parts: string[] = [];
-  if (match.draw_label) parts.push(match.draw_label);
-  if (match.round) parts.push(MATCH_ROUND_LABELS[slateRoundKey(match.round)]);
-  const at = new Date(match.scheduled_date);
-  if (!Number.isNaN(at.getTime())) {
-    const sameYear = at.getFullYear() === now.getFullYear();
-    parts.push(
-      at.toLocaleString(undefined, {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        ...(sameYear ? {} : { year: "numeric" }),
-        hour: "numeric",
-        minute: "2-digit",
-      })
-    );
-  }
-  return parts.join(" · ");
-}
-
-/**
- * The two sides in the order the hero draws them: favourite first.
- *
- * `null` when the pair is incoherent — with no trustworthy split there is no
- * favourite, and picking the larger of two numbers we have refused to display
- * would smuggle the refused comparison back onto the page. Mirrors
- * `orderedSides` on the slate deliberately.
- *
- * On a DECIDED match the order is the result's, not the market's: the winner
- * leads. A finished match whose loser is listed first because the market liked
- * them is a page arguing with its own headline.
- */
-export function heroOrder(
-  match: SlateMatch,
-  result: TournamentResult | null
-): SlateMatch["sides"] | null {
-  const sides = match.sides ?? [];
-  if (sides.length !== 2) return null;
-  if (result) {
-    const winner = result.winner_entity_key;
-    const ordered = [...sides].sort((a, b) =>
-      a.entity_key === winner ? -1 : b.entity_key === winner ? 1 : 0
-    );
-    return ordered;
-  }
-  if (!match.coherent) return null;
-  return (sides[0].probability ?? 0) >= (sides[1].probability ?? 0)
-    ? sides
-    : [sides[1], sides[0]];
-}

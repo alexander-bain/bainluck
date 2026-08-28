@@ -394,11 +394,10 @@ export default function TournamentPage() {
                     tournament's matches. The championship board follows. */}
                 <TournamentMatches
                   entries={matches}
-                  /* UX-P149: each row now addresses its own page, where the
-                     match props live. Passed rather than read from the route
-                     inside the component, so the component stays pure enough
-                     for the capture rig to render. */
-                  slug={slug}
+                  /* UX-P152: no `slug`. A row routes to `/events/{id}` — the
+                     standard event page, where the graph, the hero and the
+                     match's props all live — so it needs no tournament
+                     context to build its own link. */
                   notice={data.slate ? slateNotice(data.slate) : null}
                   /**
                    * UX-P145: this used to end "…and the draw fills them in on

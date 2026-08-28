@@ -169,6 +169,7 @@ def build_match_row(
     prices: dict[int, dict[str, Any]],
     now: datetime,
     cutoff: Optional[datetime],
+    event_ids: Optional[dict[str, int]] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """ONE matchup -> one slate row, or a named reason it is not one.
 
@@ -305,13 +306,21 @@ def build_match_row(
     return {
         "priced": block is not None,
         "matchup_key": matchup.get("matchup_key"),
-        # OUR `events.id` for this fixture, when the register carries one
-        # (UX-P139, Alex's item 7). Register-owned so a click-through is an
-        # identity decision made once against the evidence, never a
-        # request-time name match across two systems that disagree about
-        # `Auger-Aliassime`. `None` on every US Open matchup today: the
-        # qualifying draw has no `events` rows at all.
-        "event_id": matchup.get("event_id"),
+        # OUR `events.id` for this fixture — the row this match card ROUTES TO
+        # (UX-P139 item 7, made real by UX-P152).
+        #
+        # Two ways it can be filled, both id-anchored and neither a name match:
+        # the register may pin it directly, or `tournament_event_link` may
+        # dereference the pinned match-winner `market_id` through
+        # `futures_markets.event_id`. `event_ids` carries the second and the
+        # register's own value wins when both exist.
+        #
+        # Measured 2026-08-28: the Odds API ingested US Open main-draw singles
+        # the previous evening, so 94 of the 96 R128 fixtures now have a
+        # standard `events` row. It is no longer true that "the draw has no
+        # events rows" — that was measured before the ingest and expired.
+        "event_id": matchup.get("event_id")
+        or (event_ids or {}).get(matchup.get("matchup_key")),
         "draw": matchup.get("draw"),
         "draw_label": draw_label(str(matchup.get("draw") or "")),
         "round": matchup.get("round"),
@@ -355,6 +364,7 @@ def build_slate(
     prices: dict[int, dict[str, Any]],
     now: datetime,
     max_stale_hours: float = MATCH_STALE_AFTER_HOURS,
+    event_ids: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
     """Assemble the daily slate payload.
 
@@ -371,7 +381,7 @@ def build_slate(
 
     for matchup in reg.matchups:
         row, reason = build_match_row(
-            reg, matchup, prices=prices, now=now, cutoff=cutoff
+            reg, matchup, prices=prices, now=now, cutoff=cutoff, event_ids=event_ids
         )
         if row is None:
             reason = reason or "UNKNOWN"

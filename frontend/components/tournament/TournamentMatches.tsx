@@ -217,7 +217,8 @@ function MatchRow({
   entry: MatchListEntry;
   open: boolean;
   onToggle: () => void;
-  /** `/tournaments/{slug}/matches/{key}`, or `null` for a row with no key. */
+  /** `/events/{id}` — the STANDARD event page — or `null` when the fixture
+   *  has no `events` row to route to. Never a tournament-private URL. */
   matchHref: string | null;
 }) {
   const time = entry.scheduledDate ? formatMatchTime(entry.scheduledDate) : null;
@@ -346,13 +347,25 @@ function MatchRow({
               {entry.detailNote}
             </div>
           )}
-          {/* THE MATCH'S OWN PAGE (UX-P149). What item 7's `eventId` link was
-              reaching for, and could not have: this needs no `events` row —
-              zero exist for any registered matchup, which is precisely the
-              blocker lane1's Q426 note named as the reason the match props
-              had nowhere to go. `matchupKey` is register-owned, so the
-              destination is an identity decision made once against the
-              evidence, exactly as `eventId` was meant to be. */}
+          {/* THE MATCH IS AN EVENT — SO THE LINK GOES TO THE EVENT PAGE.
+              (UX-P152. Alex, 2026-08-28: "I thought that tournaments were
+              containers for related events", and on the UX-P149 artifact:
+              "It seems like we're reinventing the event page here".)
+
+              This was TWO links a moment ago: UX-P139 item 7's `/events/{id}`,
+              which rendered on nothing because no fixture carried an event id,
+              and UX-P149's `/tournaments/{slug}/matches/{key}`, a parallel
+              match surface built because the first one had nowhere to go. The
+              premise under both expired on 2026-08-27, when the Odds API
+              ingested US Open main-draw singles and 94 standard `events` rows
+              appeared for the 96 registered R128 fixtures.
+
+              So the parallel route is deleted and the row routes exactly as
+              every other game card on the site does. `entry.eventId` is
+              resolved server-side by id — the register's pinned match-winner
+              `market_id` dereferenced through `futures_markets.event_id` — and
+              is `null` rather than guessed when that dereference does not land.
+              A link to the wrong match is worse than no link. */}
           {matchHref !== null && (
             <a
               href={matchHref}
@@ -361,25 +374,6 @@ function MatchRow({
               data-match={entry.matchupKey ?? undefined}
             >
               {entry.decided ? "See what the market thought" : "See more on this match"}
-            </a>
-          )}
-          {/* ITEM 7 — the click-through to the standard event page.
-              REGISTER-OWNED: `entry.eventId` comes from `matchup.event_id`, so
-              a link is an identity decision made once against the evidence and
-              never a name match at render time. A link to the wrong match is
-              worse than no link.
-              It renders on NO US Open match today — checked 2026-08-26, none
-              of the 66 registered matchups has an `events` row, because the
-              qualifying draw was never ingested as events. The report says so
-              rather than this shipping as a silently-dead affordance. */}
-          {entry.eventId !== null && (
-            <a
-              href={`/events/${entry.eventId}`}
-              className="mt-1.5 inline-block font-semibold text-text-primary underline decoration-dotted underline-offset-2"
-              data-testid="match-event-link"
-              data-event={entry.eventId}
-            >
-              Open the match page
             </a>
           )}
         </div>
@@ -408,7 +402,6 @@ function formatMatchTime(scheduled: string, now: Date = new Date()): string {
 
 export default function TournamentMatches({
   entries,
-  slug,
   initialRound,
   initialExpanded = false,
   initialOpenMatchId,
@@ -416,14 +409,10 @@ export default function TournamentMatches({
   notice,
 }: {
   entries: MatchListEntry[];
-  /**
-   * The tournament slug, so a row can address its own page (UX-P149).
-   *
-   * Optional so every existing caller and every capture rig still compiles;
-   * absent means no link is rendered, which is what this component did before
-   * the match page existed.
-   */
-  slug?: string;
+  /* UX-P152: the `slug` prop is gone. It existed to build a tournament-private
+     match URL; a row now routes to `/events/{id}`, which needs no tournament
+     context at all. Callers that still pass it are harmless — TS just ignores
+     an extra prop on a spread — but none do. */
   /** Capture seam and deep-link seam: which round pill is active. */
   initialRound?: MatchRoundKey;
   /** Capture seam: render the round already expanded. */
@@ -559,11 +548,7 @@ export default function TournamentMatches({
               entry={entry}
               open={openId === entry.id}
               onToggle={() => setOpenId((value) => (value === entry.id ? null : entry.id))}
-              matchHref={
-                slug && entry.matchupKey
-                  ? `/tournaments/${encodeURIComponent(slug)}/matches/${encodeURIComponent(entry.matchupKey)}`
-                  : null
-              }
+              matchHref={entry.eventId !== null ? `/events/${entry.eventId}` : null}
             />
           ))}
         </ol>

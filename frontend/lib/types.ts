@@ -3,6 +3,9 @@
  */
 
 import type { ConfidenceSignals } from "@/lib/confidence";
+// The props section is shared with the tournament hub's match rows — one
+// definition of a prop card, not a second copy that agrees today (UX-P152).
+import type { MatchProp } from "@/lib/matchDetail";
 
 export interface Sport {
   id: number;
@@ -2067,4 +2070,68 @@ export interface CompetitionEdition {
   concept_key: string | null;
   start: string | null; // ISO date (YYYY-MM-DD)
   end: string | null; // ISO date (YYYY-MM-DD)
+}
+
+/* ─── Tournament extensions on a standard event page (UX-P152) ───
+ *
+ * A tournament is a container for ordinary events (Alex, 2026-08-28), so a
+ * tennis match renders on `/events/{id}` like any other game and the tournament
+ * adds sections to it. This is what `GET /api/tournaments/by-event/{id}`
+ * returns.
+ *
+ * `advancement` deliberately reuses the shape of the league grid's per-team
+ * progression, so one component renders both. See
+ * `components/event/AdvancementPath`.
+ */
+
+export interface TournamentAdvancementStage {
+  key: string;
+  /** "Quarter-finals" — the destination in words, from the register's column. */
+  label: string;
+  probability: number | null;
+  /** `null` when nothing was measured twice — never a 0 standing in for it. */
+  trend_24h: number | null;
+  sources: { source: string; probability: number | null }[];
+}
+
+export interface TournamentAdvancementRow {
+  name: string;
+  short_name: string;
+  team_id: number | null;
+  logo_url: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+  /** The one standing fact a draw holds about a player — "Seed 3". */
+  record: string | null;
+  conference: string | null;
+  stages: TournamentAdvancementStage[];
+}
+
+export interface TournamentAdvancement {
+  event_id: number;
+  league: string | null;
+  league_name?: string;
+  grid_url?: string | null;
+  columns?: { key: string; label: string; order: number }[];
+  home_team: TournamentAdvancementRow | null;
+  away_team: TournamentAdvancementRow | null;
+  /** `event` when the two cards were ordered against the event row, else `register`. */
+  side_order?: "event" | "register";
+}
+
+export interface EventTournamentResponse {
+  event_id: number;
+  /** `null` for almost every event on the site — the ordinary answer, not an error. */
+  tournament: { slug: string; title: string; url: string } | null;
+  /** Named, when there is one: `NOT_IN_REGISTER`, `REGISTER_MOVED`. */
+  reason?: string;
+  matchup_key?: string;
+  round?: string | null;
+  draw_label?: string | null;
+  advancement?: TournamentAdvancement | null;
+  props: MatchProp[];
+  props_count: number;
+  props_dropped: Record<string, number>;
+  decided: boolean;
+  generated_at?: string;
 }
