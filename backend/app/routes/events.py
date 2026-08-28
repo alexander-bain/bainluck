@@ -5238,7 +5238,19 @@ async def search_suggestions(
         # Get latest odds for live events via subquery
         if live_events:
             live_ids = [e.id for e in live_events]
-            # Ranked window: latest snapshot per event
+            # LAT-P107/#1605 SURVEYED AND DELIBERATELY LEFT: this is the third and
+            # last `row_number()` odds window in this module, and it is a RELATED
+            # shape, not the same one. It partitions by `event_id` alone under a
+            # fixed `bookmaker == "aggregate"`, so `latest_odds_per_bookmaker_query`
+            # — whose whole mechanism is enumerating the distinct bookmakers — does
+            # not fit it and cannot be reused here.
+            #
+            # It has the same underlying cost (reads every `aggregate` snapshot of
+            # up to 50 live events to keep 50 rows), but fixing it needs its own
+            # top-1-per-event helper and its own real-Postgres equivalence proof.
+            # Bolting an unproven second rewrite onto this queue is exactly the
+            # LAT-P010 failure this route's history records. Recorded in #1605's
+            # survey; it is a separate, smaller ship on a non-graded surface.
             ranked = (
                 select(
                     OddsSnapshot.event_id,
@@ -5801,31 +5813,35 @@ async def list_events(
     aggregated_odds_map = {}
 
     if event_ids:
-        # Get the most recent snapshot per bookmaker per event
-        # (deduplication means different bookmakers may have different latest times)
-
-        # Subquery: rank snapshots by recency within each event+bookmaker group
-        ranked_subq = (
-            select(
-                OddsSnapshot.id,
-                OddsSnapshot.event_id,
-                func.row_number().over(
-                    partition_by=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
-                    order_by=OddsSnapshot.captured_at.desc()
-                ).label("rn")
-            )
-            .where(OddsSnapshot.event_id.in_(event_ids))
-            .subquery()
-        )
-
-        # Get only the most recent snapshot per bookmaker per event (rn=1)
-        latest_odds_query = (
-            select(OddsSnapshot)
-            .join(ranked_subq, and_(
-                OddsSnapshot.id == ranked_subq.c.id,
-                ranked_subq.c.rn == 1
-            ))
-        )
+        # LAT-P107/#1605: the most recent snapshot per (event, bookmaker), via the
+        # SHARED helper rather than a window function over the page's whole
+        # snapshot history.
+        #
+        # This route carried the exact shape LAT-P013 then LAT-P030 retired from
+        # `/api/events/search` (call site ~line 3110 quotes both plans and the
+        # numbers): `row_number() OVER (PARTITION BY event_id, bookmaker ORDER BY
+        # captured_at DESC)` over every snapshot of every event on the page, then a
+        # join back by id. It reads O(SNAPSHOT DEPTH) to return O(BOOKMAKERS), and
+        # Tier-1 sports poll every 32s, so the depth is the part that grows: one
+        # measured Red Sox event carries 13,522 snapshots across 19 bookmakers.
+        #
+        # On the sibling route that shape was the ENTIRE cost of any query that
+        # returned real team events — 16,516ms of a 21,032ms request on `q=la`,
+        # ~0ms when the page had no events, which is the signature of a cost that
+        # scales with snapshot volume rather than result count. The replacement
+        # measured 6,724ms -> 185ms (36x), 78,800 rows read -> 947, byte-identical
+        # output. That measurement is the SIBLING's; this route's own before/after
+        # is owed in production and pre-registered in the queue report — the shape
+        # is provably the same, the traffic is not.
+        #
+        # Set-identical by construction and proven on real Postgres against the
+        # very shape being deleted here
+        # (`tests/integration/test_search_odds_enrichment_equivalence.py`). The one
+        # behavioural change is that `id DESC` makes the pick deterministic among
+        # equal `captured_at`, where `row_number()` left it arbitrary.
+        #
+        # No migration: `ix_odds_snapshots_bookmaker_closing` already exists.
+        latest_odds_query = latest_odds_per_bookmaker_query(event_ids)
 
         latest_odds_result = await db.execute(latest_odds_query)
         all_snapshots = latest_odds_result.scalars().all()
@@ -6053,28 +6069,31 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
 
     # Load only the latest odds snapshot per bookmaker (not ALL snapshots).
     # This prevents R14 memory errors on events with thousands of snapshots.
-    ranked = (
-        select(
-            OddsSnapshot.id,
-            func.row_number().over(
-                partition_by=OddsSnapshot.bookmaker,
-                order_by=OddsSnapshot.captured_at.desc(),
-            ).label("rn"),
-        )
-        .where(OddsSnapshot.event_id == event_id)
-        .subquery()
+    #
+    # LAT-P107/#1605: same shared helper as the search and list routes. The window
+    # form this replaces bounded MEMORY (it returned ~19 rows, not 13,522) but not
+    # WORK: `row_number() OVER (PARTITION BY bookmaker ORDER BY captured_at DESC)`
+    # still had to read and sort every snapshot this event has ever had in order to
+    # find the 19 it keeps, and then a second round trip re-fetched them by id.
+    #
+    # This is the worst case for the anti-pattern, not the mildest: the deepest
+    # single event on the busiest surface. A page of 25 events amortises one bad
+    # event across the page; here the reader waits for exactly one, and it is the
+    # one they chose — a Tier-1 team's game polled every 32s for days. The event
+    # page is product priority #3 ("read the probability"), and this query gates it.
+    #
+    # The helper reads O(distinct bookmakers) instead: a recursive loose index scan
+    # enumerates them off `ix_odds_snapshots_bookmaker_closing`, then one row is
+    # fetched per (event, bookmaker). One round trip instead of two. Set-identical,
+    # proven on real Postgres in
+    # `tests/integration/test_search_odds_enrichment_equivalence.py`; the only
+    # change is the `id DESC` tiebreak, which is deterministic where the window's
+    # tie was arbitrary.
+    latest_snapshots = list(
+        (await db.execute(latest_odds_per_bookmaker_query([event_id])))
+        .scalars()
+        .all()
     )
-    latest_ids_result = await db.execute(
-        select(ranked.c.id).where(ranked.c.rn == 1)
-    )
-    latest_ids = [row[0] for row in latest_ids_result.fetchall()]
-    if latest_ids:
-        snap_result = await db.execute(
-            select(OddsSnapshot).where(OddsSnapshot.id.in_(latest_ids))
-        )
-        latest_snapshots = list(snap_result.scalars().all())
-    else:
-        latest_snapshots = []
 
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
