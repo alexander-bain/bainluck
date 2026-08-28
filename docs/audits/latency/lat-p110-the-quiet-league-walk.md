@@ -19,8 +19,10 @@ LAT-P109's parked P109-6 — "cause NOT established" — established.
 
 ## 0. The cold path, first (ruling 137)
 
-Taken on production slug `67e2585c`, uptime 2,115 s, `LAT-P110-mid`,
-`backend/scripts/needle_latency.py` at the canonical defaults.
+Three reads this cycle, all on production slug `67e2585c`, all
+`backend/scripts/needle_latency.py` at the canonical defaults (`--n 5 --n-search 6`), spaced
+by roughly an hour. The closing one, `LAT-P110-close` at uptime 3,312 s, **taken with the
+grader fixed** (§5):
 
 | surface | member | graded | cold | p50 cold |
 |---|---|---|---|---|
@@ -29,11 +31,28 @@ Taken on production slug `67e2585c`, uptime 2,115 s, `LAT-P110-mid`,
 | tab loads | `sports_native` | 5 | 0 | — |
 | | `sports_web` | 5 | 0 | — |
 | | `search_trending` | 5 | 0 | — |
-| | `my_stuff_stats` | 5 | 5 | **11.0 ms** |
-| cold search | `search_cold` | 6 | 0 | — *(all six were 429 — §5)* |
+| | `my_stuff_stats` | 5 | 5 | **12.0 ms** |
+| cold search | `search_cold` | **0** | 0 | — 🔴 **6× HTTP 429, refused by the server** |
 
 **REFUSED**: 1 of 7 cold members against a floor of 4; 1 of 3 graded surfaces. The floors
-did their job — the arithmetic would otherwise have published **11 ms**.
+did their job — the arithmetic would otherwise have published **12 ms**.
+
+That `search_cold` row is what changed. On the two earlier reads it said `graded: 6` and
+those six samples were counted as warm 2 ms searches. It now says `graded: 0`, and the run
+prints why:
+
+```
+🔴 search_cold was REFUSED BY THE SERVER, not warm — 6x HTTP 429. This surface was
+   UNMEASURABLE this run; that is a different fact from 'it was fast'.
+```
+
+The refusal itself is unchanged — the floors rejected all three reads either way. What
+changed is that the run no longer reports a surface as measured when it was not.
+
+**The three reads, for the record:** `baseline` 1/7 (uptime 789 s), `mid` 1/7 (2,115 s),
+`close` 1/7 (3,312 s). The pool is equally warm at thirteen minutes and at fifty-five
+minutes after a deploy, so "the slug is young" is not the explanation — checked, because it
+is the explanation a reader would reach for.
 
 And the surface this queue actually shipped on is not in that pool at all. The league tab
 is not a needle member, so the fix below moves nothing in the line. Said plainly rather
@@ -233,12 +252,28 @@ It is also self-inflicted in a way worth naming: a latency lane spends its sessi
 the lane is working. This session put a 29-league sweep and ~60 EXPLAINs through production
 before the needle ran.
 
-**Fixed in this branch** (`backend/scripts/cold_path_snapshot.py`): a non-200 sample is
-classed `error`, is excluded from `graded`, and is reported by count and status so a
-throttled run is loud rather than silent. The needle prints `THROTTLED` for a member whose
-samples were all rejected, instead of dropping it into the same bucket as a member that was
-genuinely warm. This changes only what the instrument **refuses** — no served request is
-measured differently — so the series is unaffected.
+**Fixed in this branch** (`backend/scripts/cold_path_snapshot.py`, `needle_latency.py`): a
+non-200 or a transport failure classes **`rejected`**, is excluded from `graded`, and is
+counted by status. The needle now prints
+
+```
+   🔴 search_cold was REFUSED BY THE SERVER, not warm — 6x HTTP 429. This surface was
+      UNMEASURABLE this run; that is a different fact from 'it was fast'.
+   🔴 RATE LIMITED: 1 member(s) — search_cold. ... A latency lane running EXPLAINs from the
+      same IP throttles its own harness (parked P110-4 — pacing needs a ruling, not a patch).
+```
+
+instead of filing the member beside the genuinely warm ones. The timing fields are **kept,
+not dropped**: the 2 ms IS what the limiter took, and discarding it would hide the throttle
+as thoroughly as mis-grading it did. This changes only what the instrument **refuses** — no
+served request is measured differently — so the series is unaffected.
+
+Guarded by `backend/tests/test_cold_path_rejected_samples.py`, **19 tests**, whose fixtures
+are the verbatim `LAT-P110-mid` samples rather than invented shapes: a hand-drawn "error
+sample" would have carried no `server_ms` and the old code would have excluded it anyway,
+which is exactly why the real one got through. **RED-proven 5/5** by
+`scripts/evals/cold_path_rejected_sample_mutations.py`, including R5 in the other direction
+— over-rejecting a 200 would empty every median and read as a refusal.
 
 **Not fixed, and parked:** pacing the harness under 60/min, or retrying a 429 after
 `Retry-After`. Either would restore cold search as a measurable surface, and either is an
@@ -250,7 +285,20 @@ its own decision.
 ## 6. Gates
 
 - **Full suite** — see §6a. `EXIT CODE` read BY VALUE (gotcha #124).
-- **New guards**: `backend/tests/test_league_rails_query_plan.py`, **14 tests**.
+- 🔴 **The first full run was GENUINELY RED, and it was right.** Three failures in
+  `tests/test_mutation_guard.py`, all one finding: the new
+  `league_rails_fence_mutations.py` writes to disk without `guarded_targets`, and the
+  residue scanner exited **2 — CANNOT MEASURE** on a harness shape it did not know. The
+  harness's own `cp` + sha256 loop is real, but it is bookkeeping *between* mutants, not a
+  crash guard — `try/finally` does not run under SIGTERM, which is how a mutant once rode
+  `bcdcd95f` into a branch for a full cycle. Fixed rather than explained away: the guard now
+  wraps the run and the shape is registered as `("MUTANTS", 2, 3, 1)`. Scanner back to exit
+  0, 119 needles across 13 targets, 0 residue. (Its two `typeahead_warmer_mutations` drift
+  reports are pre-existing and are DRIFT, not residue.) This is the class of catch that only
+  a full run produces, and it argues against ever calling a targeted run sufficient.
+- **New guards**: `backend/tests/test_league_rails_query_plan.py` (**14 tests**) and
+  `backend/tests/test_cold_path_rejected_samples.py` (**19 tests**) — 33 in total, both
+  RED-proven by their own harnesses (8/8 and 5/5).
 - **RED-proven 8/8** by `backend/scripts/evals/league_rails_fence_mutations.py`: each
   mutation applied alone from a `cp` backup, the suite required to exit **1** (not merely
   non-zero — an exit 2 collection error is recorded as HARNESS, not as a kill), and the
@@ -333,10 +381,13 @@ load in an async context. No frontend or iOS consumer found, so it breaks no pag
 ## 10. The needle
 
 ```
-NEEDLE: latency REFUSED @ 2026-08-28T23:07:45Z — 1/7 cold members against a floor of 4,
-1/3 graded surfaces. Series 882 -> 873 -> 940 -> 1273 -> refused -> refused -> refused.
-Without the floors this read would have published 11 ms. NEW THIS CYCLE: one of the six
-missing members was never warm — `search_cold` was 6/6 HTTP 429 and the harness graded the
-throttle as a warm 2 ms search (§5, now fixed). The published series is not contaminated;
-the last three refusals were partly mis-diagnosed.
+NEEDLE: latency REFUSED @ 2026-08-29T00:01Z — 1/7 cold members against a floor of 4, 1/3
+graded surfaces. Series 882 -> 873 -> 940 -> 1273 -> refused x3 (this cycle took three
+reads, 789s / 2115s / 3312s after deploy, all 1/7). Without the floors this read would have
+published 12 ms. NEW THIS CYCLE: one of the six missing members was never warm —
+`search_cold` was 6/6 HTTP 429 and the harness graded the throttle as a warm 2 ms search.
+Fixed; the read above is the first taken with an honest grader. The published series
+(882/873/940/1273) is NOT contaminated — every run that produced a number did so on real
+200s — but the last three refusals were partly mis-diagnosed. Restoring cold search as a
+measurable surface needs Alex's ruling, raised as YOUR-TURN item 1-LAT.
 ```
