@@ -175,6 +175,10 @@ describe("the event page actually wraps its sections", () => {
       "Special markets",
       "The script",
       "The series picture",
+      // UX-P152: a US Open match is an ordinary event, and the tournament adds
+      // its advancement strip and match questions as a section of THIS page
+      // rather than as a page of its own.
+      "Tournament",
       "Related futures",
       "Related content",
     ];

@@ -615,7 +615,10 @@ ${panel(
     expect(written.length).toBeGreaterThan(20000);
     expect(written).toContain(ADVANCEMENT_HEADING);
     expect(written).toContain(`href="/events/${EVENT.id}"`);
-    expect(written).not.toContain("/matches/");
+    // No LIVE link to the deleted route. Scoped to `href=` because the banner
+    // above names the route in prose — the artifact explains what was removed,
+    // and a substring guard would fail on its own explanation.
+    expect(written).not.toMatch(/href="[^"]*\/matches\//);
     expect(written.split("<svg").length - 1).toBeGreaterThanOrEqual(2);
     expect(css.length).toBeGreaterThan(1000);
   });

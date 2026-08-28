@@ -133,7 +133,7 @@ describe("the route in — a match card addresses the standard event page", () =
     // The parallel page is gone. A row that still addressed it would 404, and
     // it would do so only for a reader who expanded a row — the quietest
     // possible break.
-    expect(html).not.toContain("/matches/");
+    expect(html).not.toMatch(/href="[^"]*\/matches\//);
   });
 
   it("renders NO link when the fixture has no events row", () => {
@@ -289,7 +289,8 @@ describe("the props section renders on the event page's payload", () => {
                   entity_key: "alexander-bublik",
                   probability: 0.62,
                   opening_probability: 0.6,
-                  outcome_id: 1,
+                  probability_is_live: true,
+                  observed_at: "2026-08-28T19:00:00Z",
                   price_state: "live",
                   age_hours: 0.4,
                 },
@@ -298,7 +299,8 @@ describe("the props section renders on the event page's payload", () => {
                   entity_key: "j-j-wolf",
                   probability: 0.38,
                   opening_probability: 0.4,
-                  outcome_id: 2,
+                  probability_is_live: true,
+                  observed_at: "2026-08-28T19:00:00Z",
                   price_state: "live",
                   age_hours: 0.4,
                 },

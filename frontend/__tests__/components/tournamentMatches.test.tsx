@@ -639,16 +639,31 @@ describe("collapse — five, then an expander that says how many", () => {
 // ---------------------------------------------------------------------------
 
 describe("item 7 — matches click through to the event page", () => {
+  /**
+   * UX-P152 merged the two links these tests were written against into one.
+   *
+   * There were two: item 7's `match-event-link` to `/events/{id}`, which
+   * rendered on nothing because no fixture carried an event id, and UX-P149's
+   * `match-page-link` to a tournament-private match URL, built BECAUSE the
+   * first had nowhere to go. Both premises expired on 2026-08-27, when the Odds
+   * API ingested the main draw and 94 standard `events` rows appeared for the
+   * 96 registered R128 fixtures. The parallel page is deleted; one link remains
+   * and it addresses `/events/{id}`.
+   *
+   * So the testid is `match-page-link` and the behaviour these tests pin —
+   * a link exactly when there is an event to link to — is unchanged.
+   */
   it("renders NO link when the register pins no event", () => {
-    // The honest state today: checked 2026-08-26, none of the 66 registered US
-    // Open matchups has an `events` row, because the qualifying draw was never
+    // Still the honest state for the 28 registered QUALIFYING matchups: their
+    // markets carry no `event_id` because the qualifying draw was never
     // ingested as events. A dead affordance is worse than an absent one.
     const entries = matchListFromSlate([match()]);
     expect(entries[0].eventId).toBeNull();
     const html = renderToStaticMarkup(
       <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
     );
-    expect(html).not.toContain('data-testid="match-event-link"');
+    expect(html).not.toContain('data-testid="match-page-link"');
+    expect(html).not.toContain('href="/events/');
   });
 
   it("renders the link to /events/{id} the moment the register pins one", () => {
@@ -657,7 +672,7 @@ describe("item 7 — matches click through to the event page", () => {
     const html = renderToStaticMarkup(
       <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
     );
-    expect(html).toContain('data-testid="match-event-link"');
+    expect(html).toContain('data-testid="match-page-link"');
     expect(html).toContain('href="/events/15201771"');
   });
 
