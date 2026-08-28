@@ -91,6 +91,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.tasks.precompute_calibration import (  # noqa: E402
     _calibration_population_ctes,
 )
+from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE  # noqa: E402
 
 #: The db-query row path's silent truncation point.
 ROW_CAP = 1000
@@ -235,6 +236,18 @@ msums AS (
     FROM deduped GROUP BY market_id
 )"""
 SUMBAND_JOIN = SHAPE_JOIN + "\nLEFT JOIN msums ms ON ms.market_id = d.market_id"
+
+#: The price-sum band on its own, so the ``pairsum`` cross below composes it
+#: rather than restating it. Two dimensions that band the same quantity must
+#: band it identically or their tables cannot be read against each other.
+SUMBAND_ONLY_EXPR = """
+CASE WHEN ms.msum IS NULL THEN 'na'
+     WHEN ms.msum <= 1.15 THEN 'a_sum_le_1.15'
+     WHEN ms.msum <= 2    THEN 'b_sum_1.15_2'
+     WHEN ms.msum <= 5    THEN 'c_sum_2_5'
+     WHEN ms.msum <= 15   THEN 'd_sum_5_15'
+     ELSE 'e_sum_gt_15' END
+"""
 SUMBAND_EXPR = """
 CASE WHEN sh.mw = 0 THEN 'void'
      WHEN sh.mn >= 3 AND sh.mw >= 2 THEN 'bundle'
@@ -242,12 +255,205 @@ CASE WHEN sh.mw = 0 THEN 'void'
      WHEN sh.mn = 2 THEN 'binary'
      ELSE 'single' END
 || '|' ||
-CASE WHEN ms.msum IS NULL THEN 'na'
-     WHEN ms.msum <= 1.15 THEN 'a_sum_le_1.15'
-     WHEN ms.msum <= 2    THEN 'b_sum_1.15_2'
-     WHEN ms.msum <= 5    THEN 'c_sum_2_5'
-     WHEN ms.msum <= 15   THEN 'd_sum_5_15'
-     ELSE 'e_sum_gt_15' END
+""" + SUMBAND_ONLY_EXPR
+
+#: CAL-P117 — the Over/Under PAIR dimension, for `polymarket/baseball`.
+#:
+#: Rank 1 of the board is not a bundle cell: it is two-leg Over/Under quantity
+#: markets, and the two mechanisms named for it on ``program/calibration-99``
+#: (CAL-P094's 0.5000 placeholder, CAL-P100's published-pair incoherence) are
+#: both properties of the PAIR, not of a row. Neither has ever been measured
+#: against the published cell — CAL-P100 shipped its arm with the words *"NO
+#: ECE CLAIM ... this ships with its delta unmeasured"* — so this dimension
+#: exists to supply exactly that number on the producer's own chain.
+#:
+#: The aggregates are over ALL outcomes of the market, which is the basis
+#: ``market_result_shape`` uses; the branch's own predicates are reproduced
+#: verbatim rather than paraphrased:
+#:
+#:   * shape       — ``hs_n_outcomes = 2 AND hs_named_over = 1 AND
+#:                   hs_named_under = 1`` (``two_leg_over_under_shape_clauses``)
+#:   * half-spike  — ``hs_half_legs = 2``, where a half leg is
+#:                   ``ROUND(opening_probability, 4) = 0.5000``
+#:   * CAL-P100    — both sums over a COMPLETE pair, coherent at opening and
+#:                   incoherent as published, against ``PAIR_SUM_TOLERANCE``
+#:
+#: The CASE is ORDERED, so the classes it prints are marginal-with-precedence
+#: rather than the two rules' raw marginals: a pair that opens 0.5000/0.5000
+#: opens coherent by construction, so it can also satisfy CAL-P100's arm if its
+#: published sum drifts. Half-spike is tested first and the overlap is therefore
+#: reported inside ``a_half_spike``. That is a reporting choice and it is stated
+#: because the two arms are OR'd in the real predicate, where the overlap is
+#: removed once either way.
+#: IMPORTED, never restated. ``pair_opening_coherence``'s own comment gives the
+#: reason and it applies here verbatim: a tolerance that drifted between the
+#: writer gate and the instrument that benches a read-side rule would let one of
+#: them disagree with the measurement that justified the other. A test asserts
+#: this name *is* the imported one, not a copy that happens to be equal
+#: (CAL-P115's rule — an equal copy drifts on the next edit).
+PAIR_TOLERANCE = PAIR_SUM_TOLERANCE
+PAIR_JOIN = """
+LEFT JOIN (
+    SELECT fo5.market_id,
+           COUNT(*) AS pr_n,
+           COUNT(*) FILTER (WHERE lower(btrim(fo5.name)) = 'over') AS pr_over,
+           COUNT(*) FILTER (WHERE lower(btrim(fo5.name)) = 'under') AS pr_under,
+           COUNT(*) FILTER (WHERE ROUND(fo5.opening_probability, 4) = 0.5000)
+               AS pr_half,
+           SUM(fo5.opening_probability) AS pr_open_sum,
+           COUNT(*) FILTER (WHERE fo5.opening_probability IS NOT NULL)
+               AS pr_open_legs,
+           SUM(COALESCE(fo5.calibration_probability, fo5.opening_probability))
+               AS pr_pub_sum,
+           COUNT(*) FILTER (WHERE COALESCE(fo5.calibration_probability,
+                                           fo5.opening_probability) IS NOT NULL)
+               AS pr_pub_legs
+    FROM futures_outcomes fo5
+    WHERE fo5.market_id IN (SELECT market_id FROM market_info)
+    GROUP BY fo5.market_id
+) pr ON pr.market_id = d.market_id
+"""
+PAIR_EXPR = f"""
+CASE WHEN pr.pr_n = 2 AND pr.pr_over = 1 AND pr.pr_under = 1 THEN
+       CASE WHEN pr.pr_half = 2 THEN 'a_half_spike'
+            WHEN pr.pr_open_legs = 2 AND pr.pr_pub_legs = 2
+                 AND ABS(pr.pr_open_sum - 1) <= {PAIR_TOLERANCE}
+                 AND ABS(pr.pr_pub_sum - 1) > {PAIR_TOLERANCE}
+                 THEN 'b_pub_incoherent'
+            WHEN pr.pr_open_legs = 2
+                 AND ABS(pr.pr_open_sum - 1) > {PAIR_TOLERANCE}
+                 THEN 'c_open_incoherent'
+            WHEN pr.pr_open_legs = 2 AND pr.pr_pub_legs = 2
+                 THEN 'd_pair_coherent'
+            ELSE 'e_pair_partial' END
+     ELSE 'z_not_ou_pair' END
+"""
+
+#: The same classes crossed with ``market_type``. CAL-P100 scoped its rule to
+#: ``polymarket/baseball/quantity``; whether that scope is the right one is a
+#: measurement, not a preference, and this is the fold that answers it.
+PAIRTYPE_EXPR = PAIR_EXPR.rstrip() + "\n|| '|' || COALESCE(d.market_type, 'null')\n"
+
+#: pair class x published price sum band, in ONE fold.
+#:
+#: Needed because the two candidate rule families for this cell live in
+#: different dimensions and a policy that combines them cannot be arithmetic'd
+#: out of two separate sweeps: the pair rules act on two-leg markets (which sit
+#: in the ``a_sum_le_1.15`` band by construction) and the sum rule acts on the
+#: many-legged tail. They LOOK disjoint, and "looks disjoint" is how a
+#: double-counted exclusion gets published (CERT-403B). One fold, one
+#: partition, no inference.
+PAIRSUM_JOIN = PAIR_JOIN + "\nLEFT JOIN msums ms ON ms.market_id = d.market_id"
+PAIRSUM_EXPR = PAIR_EXPR.rstrip() + "\n|| '|' ||\n" + SUMBAND_ONLY_EXPR
+
+#: THE POLICY FOLD — every candidate exclusion for `polymarket/baseball` as one
+#: ORDERED partition, crossed with the price-sum band so the survivors can be
+#: read as well as counted.
+#:
+#: A policy that is assembled by subtracting three separate sweeps from each
+#: other is a policy whose overlaps were assumed. This dimension assigns each
+#: published row to at most ONE arm, in a fixed precedence, so "what does
+#: shipping all three do" is a pooling of classes rather than an inference:
+#:
+#:   r1  CAL-P094's 0.5000 placeholder pair (both legs open at exactly 0.5000)
+#:   r2  CAL-P100's published-pair incoherence (coherent open, incoherent
+#:       published) — r1 first, so a pair that is both is charged to r1
+#:   r3  CAL-P117's player-prop bundle: a Polymarket market whose NAME ends in
+#:       "Player Props", which packs 36-38 independent player binaries into one
+#:       market at a published price sum of 15-19
+#:   keep  everything the three arms do not touch
+#:
+#: The name test is the market's own title, not a shape heuristic, because the
+#: shape it produces (many legs, few winners, sum >> 1) is shared with the
+#: honest 28-leg game bundles that publish at 1.0000 per leg and grade every
+#: leg a winner — those contribute exactly zero error and excluding them would
+#: be deleting rows to move a denominator.
+POLICY_JOIN = PAIR_JOIN + """
+LEFT JOIN futures_markets fm4 ON fm4.id = d.market_id
+LEFT JOIN msums ms ON ms.market_id = d.market_id
+"""
+POLICY_EXPR = f"""
+CASE WHEN pr.pr_n = 2 AND pr.pr_over = 1 AND pr.pr_under = 1
+          AND pr.pr_half = 2 THEN 'r1_half_spike'
+     WHEN pr.pr_n = 2 AND pr.pr_over = 1 AND pr.pr_under = 1
+          AND pr.pr_open_legs = 2 AND pr.pr_pub_legs = 2
+          AND ABS(pr.pr_open_sum - 1) <= {PAIR_TOLERANCE}
+          AND ABS(pr.pr_pub_sum - 1) > {PAIR_TOLERANCE} THEN 'r2_pub_incoherent'
+     WHEN fm4.name ILIKE '%player props%' THEN 'r3_player_props'
+     ELSE 'keep' END
+|| '|' ||
+""" + SUMBAND_ONLY_EXPR
+
+#: CAL-P117 — how far the PUBLISHED price was moved from the OPENING quote, and
+#: whether it was moved TO a coin flip.
+#:
+#: This is CAL-P094's 0.5000 spike asked as a row-level question instead of a
+#: two-leg-pair one. That predicate tests ``ROUND(opening_probability, 4) =
+#: 0.5000`` on a market with exactly two legs named Over and Under, so it is
+#: blind to the same phantom arriving through the other column on a market with
+#: 37 legs — which is what a Polymarket "Player Props" container is.
+#:
+#: ``c_moved_elsewhere`` is the CONTROL and the reason this dimension is a
+#: ladder rather than a flag: a published price that moved a long way from its
+#: open is ordinary line movement, and a rule that cannot tell that apart from
+#: a placeholder overwrite is a rule that deletes real forecasts. The claim the
+#: ladder has to support is not "moved" but "moved TO 0.50".
+DRIFT_JOIN = "LEFT JOIN futures_outcomes fo6 ON fo6.id = d.outcome_id"
+DRIFT_EXPR = """
+CASE WHEN fo6.calibration_probability IS NULL THEN 'z_no_cp_fallback'
+     WHEN fo6.opening_probability IS NULL THEN 'y_no_opening'
+     WHEN fo6.calibration_probability BETWEEN 0.45 AND 0.55
+          AND ABS(fo6.calibration_probability - fo6.opening_probability) > 0.25
+          THEN 'a_forced_to_half'
+     WHEN fo6.calibration_probability BETWEEN 0.45 AND 0.55
+          AND ABS(fo6.calibration_probability - fo6.opening_probability) > 0.10
+          THEN 'b_pulled_to_half'
+     WHEN ABS(fo6.calibration_probability - fo6.opening_probability) > 0.25
+          THEN 'c_moved_elsewhere'
+     ELSE 'd_normal' END
+"""
+
+#: THE SUCCESSION FOLD — can a COLUMN-level predicate retire the name match?
+#:
+#: ``policy``'s third arm is ``name ILIKE '%player props%'``, and a rule keyed
+#: on a provider's market title is a rule that breaks the day the provider
+#: renames the container. ``cpdrift`` says a column-level predicate for the
+#: same rows exists (``a_forced_to_half``: 1,915 rows, ECE 44.36, gap +44.36).
+#: Whether it can REPLACE the name arm cannot be answered by putting the two
+#: sweeps side by side — they overlap, and by how much is the whole question.
+#:
+#: So: one ordered partition over five arms, crossed with a single flag that
+#: says whether the row is in the name arm's population. Every combination of
+#: {R1, R2, M1, M2, R3} is then a pooling of these ten classes.
+#:
+#:   r1 / r2  as in ``policy``
+#:   m1       published price forced INTO [0.45, 0.55] from an open >0.25 away
+#:   m2       the same, pulled >0.10 — the softer rung, so the ladder is visible
+#:   keep     everything else
+#:   |p       the row is in a "Player Props" market whose published prices sum
+#:            to more than 1.15 (RULE E's own constant, not a new threshold)
+#:
+#: m1 is tested BEFORE the flag is read, so "drop m1" removes a props row that
+#: m1 catches and R3's residual is the props rows m1 does NOT catch. That is the
+#: succession question stated as an arithmetic one.
+POLICY2_JOIN = POLICY_JOIN + "\nLEFT JOIN futures_outcomes fo7 ON fo7.id = d.outcome_id"
+POLICY2_EXPR = f"""
+CASE WHEN pr.pr_n = 2 AND pr.pr_over = 1 AND pr.pr_under = 1
+          AND pr.pr_half = 2 THEN 'r1_half_spike'
+     WHEN pr.pr_n = 2 AND pr.pr_over = 1 AND pr.pr_under = 1
+          AND pr.pr_open_legs = 2 AND pr.pr_pub_legs = 2
+          AND ABS(pr.pr_open_sum - 1) <= {PAIR_TOLERANCE}
+          AND ABS(pr.pr_pub_sum - 1) > {PAIR_TOLERANCE} THEN 'r2_pub_incoherent'
+     WHEN fo7.calibration_probability BETWEEN 0.45 AND 0.55
+          AND ABS(fo7.calibration_probability - fo7.opening_probability) > 0.25
+          THEN 'm1_forced_to_half'
+     WHEN fo7.calibration_probability BETWEEN 0.45 AND 0.55
+          AND ABS(fo7.calibration_probability - fo7.opening_probability) > 0.10
+          THEN 'm2_pulled_to_half'
+     ELSE 'keep' END
+|| '|' ||
+CASE WHEN fm4.name ILIKE '%player props%' AND ms.msum > 1.15 THEN 'p'
+     ELSE 'n' END
 """
 
 #: name -> (key expression, extra JOINs, extra CTEs appended to the chain)
@@ -257,6 +463,12 @@ DIMENSIONS = {
     "series": (SERIES_EXPR, SERIES_JOIN, ""),
     "shape": (SHAPE_EXPR, SHAPE_JOIN, ""),
     "sumband": (SUMBAND_EXPR, SUMBAND_JOIN, SUMBAND_PRE),
+    "pair": (PAIR_EXPR, PAIR_JOIN, ""),
+    "pairtype": (PAIRTYPE_EXPR, PAIR_JOIN, ""),
+    "pairsum": (PAIRSUM_EXPR, PAIRSUM_JOIN, SUMBAND_PRE),
+    "policy": (POLICY_EXPR, POLICY_JOIN, SUMBAND_PRE),
+    "cpdrift": (DRIFT_EXPR, DRIFT_JOIN, ""),
+    "policy2": (POLICY2_EXPR, POLICY2_JOIN, SUMBAND_PRE),
     "price_moved": ("CASE WHEN d.price_moved THEN 'moved' ELSE 'unmoved' END", "", ""),
     "market_type": ("COALESCE(d.market_type, 'null')", "", ""),
 }

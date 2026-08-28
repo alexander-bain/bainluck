@@ -98,6 +98,25 @@ actually serves. There is not a single holdout, sample, or parallel-rail number 
 > already charged** with 22 beats still to come (§5b). Published number **1.89 pp, unmoved** on the
 > same `20:37:41Z` curve — no datapoint banked, because nothing regenerated and nothing shipped.
 
+> **CAL-P117, 2026-08-28 — rank 1 is designed, its inherited mechanism was not the mechanism, and
+> the countdown's budget is spent.** The gates are still shut (`WINDOW_NOT_FULL`), so this is a
+> pre-build queue. Two things banked, neither touching the frozen file. **`polymarket/baseball`**
+> (rank 1, 78,782 excess-outcomes — the largest cell on the board) is designed to a **PASS**: rule
+> **K′ takes it 4.71 → 2.71 pp on both holdout halves**, and the board's four designed cells now
+> carry **45.6% of all queued excess-outcomes**. The finding that mattered is that **the two
+> mechanisms this cell was carried on are worth −0.53 pp and are the wrong ones** — they were
+> diagnosed on a subcohort that is 3.1% of the published cell, 98% of what they remove is in the
+> OLD half, and rank 1's live defect is a *writer* that replaces a real prop price with a
+> manufactured coin flip inside 36-leg `Player Props` containers (`corr(published, opening)` 0.677
+> vs 0.897; 6.2x more legs published at ~0.50 than opened there). **The pooled ECE and the holdout
+> disagreed four separate times and the holdout was right every time** — the best pooled policy in
+> the document (2.16) leaves the OLD half at 5.13. §6c. And the **freeze countdown has spent its
+> whole miss budget at 3 beats** (1/3 clean, 2 of 2 misses charged, 21 to come): this window can now
+> only be satisfied by 21 consecutive clean beats, which is 1.4 × 10⁻⁷ at the pre-fix rate. Both
+> misses read `not_attempted` — the beat never reached its gate. §5b. Published number **1.89 pp,
+> unmoved** on the same `20:37:41Z` curve; no datapoint banked, because nothing regenerated and
+> nothing shipped.
+
 ---
 
 ## 0. Why this page exists, and what it replaces
@@ -735,6 +754,61 @@ publish rate has to rise from **0.472**, and the `sports` cancellation signature
 scan) has to leave Sentry. `BAINLUCK-Y8`'s title will keep saying `phase group ['futures']` because
 the log-wording fix went with the frozen file — **judge it by count, not by wording.**
 
+#### 🔴 Re-read 2026-08-28 `22:0xZ` (~15:00 PT) — CAL-P117: **the budget is SPENT at 3 beats**
+
+```
+RULING 009 FREEZE SCORE — 22 of the last 24
+  1/3 clean so far (window 24)   (2 misses; 2 allowed)
+  .#.   <- oldest ... newest
+  window   2026-08-28T19:40:52Z -> 2026-08-28T21:33:47Z
+  ring     168 observations, 165 excluded as pre-baseline
+  VERDICT  WINDOW_NOT_FULL
+           only 3 post-baseline beats exist; the freeze cannot lift before 24 of them do
+           (best still reachable: 22/24)
+```
+
+CAL-P116 wrote *"the next miss ends this window"*. **It arrived at the next beat.** Both budgeted
+misses are charged with **21 beats still to come**, so `reachable_if_all_remaining_clean` has fallen
+to exactly **22/24**: this window can now only be satisfied if **every one of the remaining 21 beats
+publishes cleanly**, with no margin of any kind.
+
+| | |
+|---|---|
+| P(21 consecutive clean) at the pre-fix rate **0.472** | **1.4 × 10⁻⁷** |
+| P(21 consecutive clean) at the prior-24 h rate **0.417** | **1.1 × 10⁻⁸** |
+| P(21 consecutive clean) at a healthy **0.95** | **0.34** |
+
+**So the honest reading is that the first window is, in practice, already lost, and the countdown
+now depends on the ring rolling** — which is exactly the behaviour the count-in-window form was
+chosen for and the streak form would have hidden. Nothing about the amendment is wrong; what this
+measures is the *producer*.
+
+**And the producer is the thing to look at, because both misses have the same shape:**
+
+| beat | terminal | outcome |
+|---|---|---|
+| `19:40:52Z` | `failed` | `gate: not_evaluated`, `durable/volatile: not_attempted`, `published: false` |
+| `20:37:42Z` | `complete` | `gate: pass`, `published: true` — this is the curve the whole page folds |
+| `21:33:47Z` | `failed` | `gate: not_evaluated`, `durable/volatile: not_attempted`, `published: false` |
+
+`not_attempted` on both halves means the beat **never reached the gate** — the phase-budget
+starvation signature, not a gate refusal. Per-beat clean rate by era, off the same ring:
+
+| era | beats | clean | rate |
+|---|--:|--:|--:|
+| 2026-08-21 22:35Z → 08-27 18:28Z | 141 | 69 | **0.489** |
+| the 24 h before the baseline | 24 | 10 | **0.417** |
+| **post-v3921** | **3** | **1** | 0.333 |
+
+> ⚠️ **Three beats is not a measurement of a rate, and this page will not pretend otherwise.** The
+> post-deploy figure is stated as a count, not as a refutation of CAL-P109's repair. What IS
+> established at n=3 is the *budget*, which is a count and not a rate: it is spent. **The falsifier
+> re-measure (§5a.2) is now the highest-value read on this page** — it needs ~24 more beats, i.e.
+> roughly 2026-08-29 19:00Z, and until then no one should either claim the repair worked or claim
+> it failed. `availability` on the served payload reads **`stale`** right now (`age_s` 7,262
+> against a 3,600 s interval, `beats_missed` 2, `stalled: false`), so **criterion 5 is RED on the
+> very payload every number on this page is folded from.**
+
 ---
 
 ## 6. The inventory — every queued cell, ordered by excess
@@ -759,7 +833,7 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 
 | # | published cell | cls | ECE | n | gap | bar | excess | σ | excess-outcomes | mechanism known? | status |
 |--:|---|:-:|--:|--:|--:|--:|--:|--:|--:|---|---|
-| 1 | `polymarket/baseball` | B | 4.80 | 43,768 | +3.03 | 3.0 | +1.80 | 7.5 | 78,782 | ✅ two named (0.5000 placeholder pair; published-pair incoherence) | **ZERO** — both branch-only |
+| 1 | `polymarket/baseball` | B | 4.80 | 43,768 | +3.03 | 3.0 | +1.80 | 7.5 | 78,782 | ✅ **named and designed (CAL-P117, §6c)** — the two banked mechanisms are worth −0.53 pp and are NOT it; 54.4% is `Player Props` containers whose published price is a manufactured coin flip. K′ → **2.71 pp PASS**, 17,827 rows | **ZERO** — designed, unbuilt |
 | 2 | `kalshi/economics` | C | 5.29 | 28,613 | −0.47 | 3.0 | +2.29 | 7.8 | 65,524 | ✅ **named and designed (CAL-P114, §6b)** — 99.7% cumulative index ladders; rules E+E2+E3 → 2.61 pp PASS | **ZERO** — designed, unbuilt |
 | 3 | `polymarket/esports` | B | 7.59 | 14,053 | +6.02 | 3.0 | +4.59 | 10.9 | 64,503 | ✅ **named and designed (CAL-P112, §6a; re-checked on the exact rail, CAL-P114)** — the 1-winner tail `esports_multi_bundle_filter` cannot reach | **ZERO** — designed, unbuilt |
 | 4 | `polymarket/soccer` | B | 3.42 | 106,803 | +2.16 | 3.0 | +0.42 | 2.8 | 44,857 | ✅ O/U ladder coherence (CAL-P106/107) | **ZERO** — branch-only, unwired |
@@ -782,9 +856,11 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 
 By source: **polymarket 9 cells / 263,728** · **odds_api_bookmaker 6 / 82,345** · **kalshi 5 / 132,604**.
 
-**Scoreboard: 0 of 20 cells crossed off. 2 have a built rule and 3 more a designed one (all worth
+**Scoreboard: 0 of 20 cells crossed off. 2 have a built rule and 4 more a designed one (all worth
 0.00 pp today). 3 have a shipped rule that did not clear the cell. 1 has a measured rule that was
-refused. 11 have no rule at all.**
+refused. 10 have no rule at all.** The four designed cells — ranks **1, 2, 3 and 17** — carry
+**218,385 of the board's 478,677 excess-outcomes, 45.6%**, and every one of them lands the day the
+freeze lifts.
 
 ### 12 material cells are over bar but NOT established — do not work these
 
@@ -997,6 +1073,107 @@ bundle-dominated cells criterion 6 was proposed for. **Flagged for Alex with the
 > **Still open after the 2026-08-28 MC.** Alex's ratification ruled the *bars* (criterion 1). It
 > said nothing about criterion 3's denominator or about criterion 6, and neither was silently
 > carried by it. Both are still awaiting a ruling and neither is wired.
+
+---
+
+## 6c. RANK 1 pre-built — CAL-P117, and the two banked mechanisms were not it
+
+Full document: **`artifacts/cal-p117/RULE-DESIGN-polymarket-baseball.md`**. Designed, benched on
+the producer's own chain, holdout-validated, **not built, worth 0.00 pp today.**
+
+### The premise this queue inherited was wrong, and the measurement says how
+
+The board carried `polymarket/baseball` as *"✅ two named mechanisms, both branch-only"* — CAL-P094's
+0.5000 placeholder pair and CAL-P100's published-pair incoherence. Both are real. Both were
+diagnosed on the **subcohort board's** `baseball/quantity` cell (n=6,778), which is **3.1% of the
+published cell**, and CAL-P100 shipped its arm on `program/calibration-99` saying so out loud:
+**"NO ECE CLAIM ... this ships with its delta unmeasured."**
+
+Measured on the published cell, together they are worth **−0.53 pp** and leave it at 4.16, failing
+its 3.0 bar. They are a **historical residue**: of the 1,284 rows they remove, **1,258 are in the
+OLD holdout half and 26 in the NEW.** The forward writer guard CAL-P094 named is already shipped and
+the census shows it working.
+
+### Rank 1's live mechanism: the writer replaces a real price with a coin flip
+
+**54.4% of the published cell is `... - Player Props` containers** — 36–38 independent player
+binaries packed into one market at a published price sum of 15–19. Market `56675315`
+(*Miami Marlins vs. Houston Astros - Player Props*), `opening_probability` → published
+`calibration_probability`: Yordan Alvarez HR O/U 1.5 **0.0355 → 0.5005**; Xavier Edwards HR O/U 1.5
+**0.0110 → 0.5005**; Jose Altuve HR O/U 0.5 **0.0850 → 0.5050**. The opening column is a coherent
+monotone prop ladder. The published column is a spray of near-0.50 values that carries no
+relationship to it — and `adj_opening_probability` is `COALESCE(calibration_probability,
+opening_probability)`, so the curve publishes the spray (gotcha #144 / ruling 103).
+
+Cell-wide on ids 56–57M: inside these containers `corr(published, opening)` is **0.677** against
+**0.897** outside, and **242 legs publish inside [0.45, 0.55] where only 39 opened there — a 6.2x
+manufacture of coin flips** on a class whose realized base rate is 0.18. Folded as a row-level
+ladder, the signature is unmistakable: **1,915 rows forced into [0.45, 0.55] from an open >0.25
+away read ECE 44.36 with gap +44.36** (one-directional), while the control — rows that moved just as
+far but landed elsewhere — reads 12.62 with a two-sided −2.92. Ordinary line movement and a
+placeholder overwrite are distinguishable.
+
+### 🔴 RULE E is REFUSED here, and the sum ladder is not monotone
+
+| policy | n | ECE | verdict |
+|---|--:|--:|---|
+| control | 41,247 | 4.69 | |
+| **RULE E** (keep only published sum ≤ 1.15) | 8,153 | **9.02** | 🔴 nearly doubles the error |
+| extend `esports_multi_bundle_filter` to `(polymarket, baseball)` | 11,788 | **8.35** | 🔴 worse |
+
+Sum band ≤1.15 / 1.15–2 / 2–5 / 5–15 / >15 reads **9.02 / 5.44 / 2.28 / 5.77 / 13.00**. The
+best-calibrated class in the cell is one that is *not* a partition and the worst is the one that
+looks most like one. **Third cell, third confirmation that the allowlist is per `(source,
+category)` and never by family resemblance.**
+
+### The design, and the four times the holdout refused what the pooled number admitted
+
+**K′ = R1 (half-spike pair) + R2 (published-pair incoherence) + R3 (Player Props container with
+published sum > 1.15, RULE E's own constant) + M1 (row forced into [0.45, 0.55] from >0.25 away).**
+
+| policy | n | ECE | (ECE−3)/σ | OLD | NEW | |
+|---|--:|--:|--:|--:|--:|---|
+| control | 41,127 | 4.71 | +6.94 | 6.83 | 4.96 | |
+| R1+R2 — *the two banked mechanisms* | 39,878 | 4.19 | +4.75 | 5.71 | 4.97 | fails |
+| R1+R2+M1 | 37,971 | **2.16** | −3.27 | **5.13** | 2.00 | 🔴 best pooled ECE on the page; OLD fails |
+| R1+R2+R3 restricted to sum > 15 | 36,448 | 2.94 | — | **4.12** | **3.48** | 🔴 passes pooled, fails BOTH halves |
+| R1+R2+R3, all props | 17,523 | 2.86 | — | 2.95 | **3.10** | 🔴 NEW over the bar |
+| R1+R2+R3+M1+M2 | 17,542 | 2.85 | −0.40 | **3.06** | 2.62 | 🔴 M2 pushes OLD back over |
+| **K′ — R1+R2+R3+M1** | **17,827** | **2.71** | **−0.77** | **2.90** | **2.63** | ✅ **PASS on both halves** |
+
+Every arm is load-bearing and **R2 is the clearest case**: worth −0.11 pp alone, and dropping it
+from the conjunction puts the cell back over the bar at 3.10. CAL-P112's *"T and E ship together"*
+on a different cell.
+
+> **The pooled column and the holdout point at different rules, four separate times, and the
+> holdout is right every time.** `R1+R2+M1` produces the best pooled ECE in the whole document
+> (2.16) and leaves the OLD half at 5.13, because M1 is a *forward* signature — 1,525 of its 1,739
+> in-container rows are in the NEW half. A reader shown only the pooled column would ship the one
+> policy here that fixes nothing about the back catalogue.
+
+**Rank 1 crosses off: 78,782 excess-outcomes → 0**, and the cell survives **PASSING and MATERIAL** at
+17,827 rows (≈18,900 scaled to the payload, 18x the floor) — the second cell on this board to do so.
+Honest edge: 2.71 against a 3.0 bar is **0.77σ under it**, a pass and not a comfortable one.
+
+### 🔴 What it costs, and it is Alex's call
+
+K′ removes **56.7% of the cell ≈ 2.7% of the entire published curve** (913,849 outcomes). With
+`kalshi/economics`'s ~3.0% also banked, **two queued rules now propose removing ≈5.7% of the
+published curve between them, and they should be ruled together** — a reader who accepts each 3% in
+isolation has not been shown the 6%. Same footing as ruling 103's 9.3%. **Owed to Alex.**
+
+### 🔴 The instrument's own finding: the exact rail is 5.7% short on this cell
+
+Five folds of the control cell read **41,127–41,294** against the payload's 43,768 — a stable
+**−5.65% to −6.03%**, 5x the ±1.22% CAL-P114 recorded on four cells. `--edge-check` at half the
+chunk width moved n by **35 rows (0.08%)** and ECE by 0.01, so **chunking is not the cause and the
+edge check cannot see the cause**: it is the *cell scope*. `market_info_extra` restricts
+`market_info` to one `(source, category)` and Polymarket's `virtual_market` grouping is built over
+`group_id`/`event_id` clusters that do not respect `llm_sport_category`. The ECEs agree with the
+payload to 0.11 pp and the class shares are sound; the absolute row counts are 5.7% low, which is
+stated wherever a row count decides something. **`calibration_cell_exact.py` owes a `--scope-check`
+that folds the cell with and without the category conjunct, the way `--edge-check` folds it at two
+widths.** Parked.
 
 ---
 
