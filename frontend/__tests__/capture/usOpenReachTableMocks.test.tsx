@@ -267,9 +267,20 @@ describe("UX-P146: the reach table, with bars and without", () => {
         <PlayoffGrid grid={grid!} drawLabel="Men's singles" initialExpanded sparkBars />
       )
     );
+    /* `sparkBars={false}` EXPLICITLY — added by UX-P149 as a repair, not a
+       style change. This call relied on the prop's default being `false`, and
+       UX-P147 flipped that default to `true` when Alex ruled "Option A is
+       great". From that moment the rig wrote an "Option B — no spark bars"
+       artifact WITH spark bars, and its own self-check below went red. It only
+       ever runs under `UX_CAPTURE_DIR`, so CI never saw it. */
     const plain = framed(
       renderToStaticMarkup(
-        <PlayoffGrid grid={grid!} drawLabel="Men's singles" initialExpanded />
+        <PlayoffGrid
+          grid={grid!}
+          drawLabel="Men's singles"
+          initialExpanded
+          sparkBars={false}
+        />
       )
     );
 

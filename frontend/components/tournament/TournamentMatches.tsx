@@ -212,17 +212,21 @@ function MatchRow({
   entry,
   open,
   onToggle,
+  matchHref,
 }: {
   entry: MatchListEntry;
   open: boolean;
   onToggle: () => void;
+  /** `/tournaments/{slug}/matches/{key}`, or `null` for a row with no key. */
+  matchHref: string | null;
 }) {
   const time = entry.scheduledDate ? formatMatchTime(entry.scheduledDate) : null;
   const hasDetail =
     entry.broadcast !== null ||
     entry.detailNote !== null ||
     entry.score !== null ||
-    entry.eventId !== null;
+    entry.eventId !== null ||
+    matchHref !== null;
 
   return (
     <li
@@ -342,6 +346,23 @@ function MatchRow({
               {entry.detailNote}
             </div>
           )}
+          {/* THE MATCH'S OWN PAGE (UX-P149). What item 7's `eventId` link was
+              reaching for, and could not have: this needs no `events` row —
+              zero exist for any registered matchup, which is precisely the
+              blocker lane1's Q426 note named as the reason the match props
+              had nowhere to go. `matchupKey` is register-owned, so the
+              destination is an identity decision made once against the
+              evidence, exactly as `eventId` was meant to be. */}
+          {matchHref !== null && (
+            <a
+              href={matchHref}
+              className="mt-1.5 inline-block font-semibold text-text-primary underline decoration-dotted underline-offset-2"
+              data-testid="match-page-link"
+              data-match={entry.matchupKey ?? undefined}
+            >
+              {entry.decided ? "See what the market thought" : "See more on this match"}
+            </a>
+          )}
           {/* ITEM 7 — the click-through to the standard event page.
               REGISTER-OWNED: `entry.eventId` comes from `matchup.event_id`, so
               a link is an identity decision made once against the evidence and
@@ -387,6 +408,7 @@ function formatMatchTime(scheduled: string, now: Date = new Date()): string {
 
 export default function TournamentMatches({
   entries,
+  slug,
   initialRound,
   initialExpanded = false,
   initialOpenMatchId,
@@ -394,6 +416,14 @@ export default function TournamentMatches({
   notice,
 }: {
   entries: MatchListEntry[];
+  /**
+   * The tournament slug, so a row can address its own page (UX-P149).
+   *
+   * Optional so every existing caller and every capture rig still compiles;
+   * absent means no link is rendered, which is what this component did before
+   * the match page existed.
+   */
+  slug?: string;
   /** Capture seam and deep-link seam: which round pill is active. */
   initialRound?: MatchRoundKey;
   /** Capture seam: render the round already expanded. */
@@ -528,6 +558,11 @@ export default function TournamentMatches({
               entry={entry}
               open={openId === entry.id}
               onToggle={() => setOpenId((value) => (value === entry.id ? null : entry.id))}
+              matchHref={
+                slug && entry.matchupKey
+                  ? `/tournaments/${encodeURIComponent(slug)}/matches/${encodeURIComponent(entry.matchupKey)}`
+                  : null
+              }
             />
           ))}
         </ol>
