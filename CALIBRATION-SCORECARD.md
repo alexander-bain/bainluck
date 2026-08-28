@@ -17,6 +17,16 @@ actually serves. There is not a single holdout, sample, or parallel-rail number 
 > `program/calibration-111` and merges without engaging ruling 009. **A measurement rail trapped
 > behind the thing it measures is the §4 finding wearing an instrument's coat.**
 
+> **CAL-P111, 2026-08-28 16:40Z — the freeze's lift condition is amended and #2248 is closed.**
+> Alex ruled #2248's option 1 by MC: ruling 009 clause 2 changes shape from *~13 CONSECUTIVE clean
+> beats* to **22 of the last 24**, with the baseline moving from CAL-P024 to the deploy carrying the
+> CAL-P109/P110 phase-budget repair. Blocker 3 is no longer a deadlock — it is a countdown that
+> starts when that deploy lands. **No number on this page moved, and the payload's `generated_at`
+> is still `15:34:39Z`, so no datapoint was banked** — a ruling is not a publish, and recording one
+> would be the exact fake `--record` exists to prevent. Full reasoning, both probabilities, and why
+> 22/24 rather than 21/24: the amendment in `docs/rulings/009-precompute-calibration-freeze.md`
+> and §5b below.
+
 ---
 
 ## 0. Why this page exists, and what it replaces
@@ -228,7 +238,14 @@ statement timeout` after 241 s against a 240 s budget. The twin is the only rail
 predict a published delta instead of discovering it afterward. Without it, every rule is shipped
 blind and §6's step 4 is a coin flip.
 
-**🛑 BLOCKER 3 — and this one is a DEADLOCK, not a bug.** `docs/rulings/009` freezes
+> **🔓 BLOCKER 3 IS ANSWERED — CAL-P111, 2026-08-28.** Alex ruled #2248 by MC: **amend the lift
+> condition, do not simply lift it.** Clause 2 is now **22 of the last 24 beats publish cleanly**,
+> measured from the deploy carrying the CAL-P109/P110 phase-budget repair. Everything below is
+> preserved as written because it is the diagnosis the ruling was made on; the deadlock it describes
+> is real and is now broken from the other end. **The freeze is still ON** — the amendment changed
+> the condition's shape, not its status. §5b carries the numbers.
+
+**🛑 BLOCKER 3 (as first written) — and this one is a DEADLOCK, not a bug.** `docs/rulings/009` freezes
 `backend/app/tasks/precompute_calibration.py` — the file every exclusion rule must ship into — and
 names exactly one lift condition:
 
@@ -264,11 +281,13 @@ one file that changes what publishes is sealed by a condition only a healthy pro
 **40 merges and no published movement is what a program looks like when it is working around a
 deadlock instead of breaking it.**
 
-> ⚠️ **One unresolved tension, flagged rather than resolved:** `program/calibration-99` nonetheless
-> carries **842 changed lines** in that frozen file (CAL-P099/P100). Either the freeze is being
-> worked under escalations that were not recorded here, or it is being treated as lapsed. Both
-> cannot be right, and a lane should not be the one to decide which — **this needs an Alex ruling
-> before the merge in §9 step 2.**
+> ~~⚠️ **One unresolved tension, flagged rather than resolved:**~~ **RESOLVED — CAL-P111,
+> 2026-08-28.** `program/calibration-99` carries **842 changed lines** in that frozen file
+> (CAL-P099/P100). The question was whether the freeze was being worked under unrecorded escalations
+> or treated as lapsed. **Neither.** Alex declined #2248's option 3: the 842 lines are *not*
+> retroactively sanctioned. They are unmerged work against a frozen file, they become mergeable when
+> the amended condition is met and the lift is recorded, and not before. The freeze was never lapsed
+> and no undocumented escalation is ratified after the fact.
 
 *This scorecard works around Blockers 1 and 2 — it reads the served payload, so it needs neither.
 It cannot work around Blocker 3.*
@@ -412,6 +431,77 @@ Two consequences the loop has to plan around:
 
 ---
 
+## 5b. Blocker 3, ruled — CAL-P111 (#2248): the lift condition is 22 of the last 24
+
+**Alex ruled #2248's option 1 by MC: amend the condition, do not simply lift it.** Ruling 009's
+intent stands unchanged — *a known-good producer version runs undisturbed long enough to prove it
+converges* — and so does the freeze. What changed is the shape of the measurement.
+
+> **~13 CONSECUTIVE clean beats  →  22 OF THE LAST 24 beats publish cleanly**
+
+Read it with `python3 backend/scripts/calibration_freeze_score.py` (CAL-P111, new file, freeze-clean).
+Prose thresholds rot — this program has the receipts — so the condition is a predicate now.
+
+### The two probabilities the amendment is required to state
+
+Measured off `calibration:beat_gauge_history`, **166 beats**, 2026-08-21T18:37Z → 2026-08-28T15:34Z:
+79 `complete/pass`, 38 `failed/not_evaluated`, 26 `cancelled/not_evaluated`, 23 `failed/refuse`.
+**Publish rate 0.476.** Longest clean run **9**. Best 24-beat window **19/24**.
+
+| publish rate | P(22 of 24) per window | expected wait |
+|---|---:|---:|
+| **0.472 — the broken pre-fix rate** | **5.6 × 10⁻⁶** (1 in 179,000) | ~20 years |
+| 0.85 | 0.280 | 2.0 days |
+| 0.90 | 0.564 | 1.3 days |
+| **0.95 — a healthy producer** | **0.884** | **1.0 days** |
+
+### The shape change buys DISCRIMINATION, not speed — and this page says so
+
+At a healthy 0.95 rate the *original* condition actually closes faster (0.79 d vs 1.04 d). Anyone
+reporting the amendment as "the freeze can now lift sooner" has it backwards. What it buys is
+measured under a clustering-aware moving-block bootstrap of the real pre-fix sequence — 90-day
+horizon, 3,000 trials, block lengths 12/24/36:
+
+| condition | P(ever satisfied by the BROKEN producer in 90 days) |
+|---|---|
+| 13-consecutive (original) | **0.27 – 0.59** |
+| 20-of-24 | 0.99 – 1.00 |
+| 21-of-24 | 0.48 – 0.70 |
+| **22-of-24 (chosen)** | **0.006 – 0.105** |
+| 23-of-24 | 0.000 |
+
+**A streak counter is a poor test of a rate**, because clustered misses leave long clean stretches
+behind them — which is why the consecutive form was 5–45× *easier* for the producer this freeze
+exists to exclude. 22 is the first value the measured pre-fix process does not reach; 23 was
+rejected in the other direction (3.7 days at a 0.85 rate, one dyno-cycle pair of misses costs a
+whole day) as re-creating a softer deadlock. M = 24 is one day of the hourly beat, so the condition
+reads without arithmetic: **one full day in which the producer lost at most two beats.**
+
+### This page's own number is corrected
+
+**§5's "P(13 consecutive) = 5.4 × 10⁻⁵ — 1 in 18,561 — ~2 years of waiting" is an i.i.d. artifact**,
+and so is the copy of it in #2248. The deadlock is real — the producer never did reach 13 in the
+measured week — but its mechanism is *the observed rate*, not an astronomically small probability.
+Corrected here rather than quietly dropped, because the amendment's own figures were derived the
+same way and would inherit the same error unstated. This does not change Alex's decision; it changes
+what the next lane is allowed to quote.
+
+### Freeze score today, and what starts the countdown
+
+```
+RULING 009 FREEZE SCORE — 22 of the last 24
+  9/24 clean   (15 misses; 2 allowed)
+  ......#..#.#...#.#..####   <- oldest ... newest
+  window   2026-08-27T17:35Z -> 2026-08-28T16:35Z          VERDICT  NOT_MET
+```
+
+**All 24 must post-date the baseline**, so the freeze cannot lift sooner than ~24 h after the
+CAL-P109/P110 deploy, by construction — and the score above is pre-baseline, i.e. a measurement of
+the broken producer, not a verdict. Whoever integrates `program/calibration-110` records the release
+SHA and version here; that is the instant the window starts filling.
+
+---
+
 ## 6. The inventory — every queued cell, ordered by excess
 
 19 cells. Status uses the directive's rule: **not deployed and re-measured = ZERO.**
@@ -514,6 +604,13 @@ Unstalling the producer and clearing the freeze is worth more to this date than 
 diagnosis combined. Until then the "current trajectory" row is the operative one, and it says
 **never**.
 
+> **CAL-P111 update — the deadlock is now a countdown, and the dates above still stand.** Blocker 3
+> is ruled (§5b) and Blocker 1's repair is cut and ready (§5a.1). Neither has *deployed*, and this
+> page's own rule is that an undeployed fix is worth zero — so **"current trajectory" remains the
+> operative row.** What changed is the shape of the wait: the finish date now turns on one deploy
+> plus a 24-beat window, rather than on a condition nobody could reach. The first honest re-estimate
+> is owed after `program/calibration-110` is deployed and the freeze score is read against it.
+
 ---
 
 ## 9. The loop, from now on
@@ -536,12 +633,14 @@ diagnosis — that is the point.**
    stays 🛑 until the rate is re-measured.
    **1b. Merge `program/calibration-111`** — the scorecard rail itself, new files only, zero
    `backend/app/` lines. Without it, §9 step 1 above cannot be run by anyone off master.
-2. **Get an Alex ruling on the ruling-009 freeze** (Blocker 3) — **filed as #2248 (`needs-user`)**
-   with the three options and a recommendation: lift it, formally escalate the pending rules
-   through it, or confirm the 842 lines already written into the frozen file are sanctioned. The
-   queue cannot ship into a file whose status is ambiguous. **This is now the single blocking
-   question for the lane** — it is the only thing standing between the three built-and-certed
-   rules and a published delta, and no lane may answer it for itself.
+2. ~~**Get an Alex ruling on the ruling-009 freeze** (Blocker 3) — filed as #2248 (`needs-user`).~~
+   **ANSWERED — CAL-P111, 2026-08-28. Alex ruled option 1 by MC; #2248 is CLOSED.** Clause 2 is now
+   **22 of the last 24 beats publish cleanly**, baseline = the CAL-P109/P110 deploy. Option 3 was
+   declined, so the 842 frozen-file lines on `program/calibration-99` are **not** retroactively
+   sanctioned. The lane is no longer blocked on a decision — it is blocked on a **countdown that
+   cannot start until step 1 deploys**. Read the score with
+   `python3 backend/scripts/calibration_freeze_score.py --baseline-at <deploy instant>`; numbers,
+   both probabilities, and why 22/24 rather than 21/24 are in §5b.
 
    The measurement that makes it urgent: `_calibration_population_ctes` is defined at
    `precompute_calibration.py:1692` and all 26 `_filter` references live in that same file, so
