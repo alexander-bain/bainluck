@@ -576,6 +576,13 @@ the log-wording fix went with the frozen file — **judge it by count, not by wo
 
 19 cells. Status uses the directive's rule: **not deployed and re-measured = ZERO.**
 
+> *Values below are the `2026-08-28T13:35Z` reading. Re-measured at `17:33Z` (CAL-P112) the cell
+> COUNT and the total are identical — 19 cells, 480,342 excess-outcomes — and two rows drifted
+> within it: `kalshi/football` 5.26 → **5.51** (gap −5.16 → −5.46, excess-outcomes 17,124 →
+> 19,357) and `polymarket/tech` 5.28 → **5.40** (6,006 → 6,377). Nothing shipped into the producer
+> between the two readings; this is population drift. §2's `kalshi/football` figure carries the
+> same 13:35Z vintage.*
+
 | # | published cell | ECE | n | gap | excess | σ | excess-outcomes | mechanism known? | status |
 |--:|---|--:|--:|--:|--:|--:|--:|---|---|
 | 1 | `polymarket/baseball` | 4.99 | 41,587 | +3.25 | +1.99 | 8.1 | 82,758 | ✅ two named (0.5000 placeholder pair; published-pair incoherence) | **ZERO** — both branch-only |
