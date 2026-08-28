@@ -1058,7 +1058,23 @@ def free_background_slots(
 #: ⚠️ Heeding the standing note directly above: this branch is unmerged, and if
 #: anything else lands a beat first this needs re-measuring at merge, not
 #: adding to.
-BACKGROUND_BEAT_COUNT = 106
+#:
+#: 🔴 LAT-P109 RE-DERIVATION (latency, 2026-08-28): **106 → 107, explicit
+#: 61 → 62.** One beat added, `flush-search-gin-pending-lists`
+#: (`schedule: 120.0`, `queue: background`, `expires: 110`), which keeps the
+#: search path's seven trigram GIN pending lists off the 4 MB sawtooth that
+#: makes cold `/api/events/search` a coin flip between ~180 ms and ~1,900 ms
+#: (#2255, `docs/audits/latency/lat-p109-the-gin-pending-list-sawtooth.md`).
+#: Census RUN over the assembled `beat_schedule` on this branch, printed rather
+#: than incremented (#1910); base is `0e2414cd`, so 106 was the correct starting
+#: reading and 107 is the measured one.
+#: ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. The beat names its queue.
+#: ⚠️ The standing note above applies here too and it is now four consecutive
+#: cycles: `program/latency-92` and `-93` are also unmerged and neither adds a
+#: beat, but Q426's `link-tournament-matchups` above is unmerged as well — so
+#: 107 is measured against a master that may not be the one this lands on.
+#: Re-measure at merge; do not add to it.
+BACKGROUND_BEAT_COUNT = 107
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
