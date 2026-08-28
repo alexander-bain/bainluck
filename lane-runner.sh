@@ -8,9 +8,14 @@
 #
 # How it works: watches ~/bainluck/.claude/handoff/runner-inbox/<lane>/ for *.md
 # queue files staged by Fable. Takes the OLDEST, runs a fresh headless claude
-# session on it, logs everything, marks it consumed, loops. Kill anytime with
-# Ctrl-C; in-flight session state lives in handoff files per standing doctrine,
-# so killing the runner never loses work.
+# session on it, logs everything, loops. Kill anytime with Ctrl-C; in-flight
+# session state lives in handoff files per standing doctrine, so killing the
+# runner never loses work.
+#
+# A directive is marked consumed ONLY on a clean session exit. A timeout, crash
+# or failed session restores the queue name and retries, up to LANE_MAX_FAILS
+# strikes, after which it is quarantined as *.failed-<ts> and announced loudly.
+# Nothing unfinished is ever silently dequeued.
 #
 # PROVENANCE: directives in the inbox are authored in Alex's Fable session under
 # the standing authorization Alex granted 2026-08-26 ("lane-runner, all lanes").
@@ -34,6 +39,36 @@ LANES=("$@")
 HANDOFF="$HOME/bainluck/.claude/handoff"
 LOGDIR="$HANDOFF/runner-logs"
 mkdir -p "$LOGDIR"
+
+# Ownership record for the orphan reaper in start-lanes.sh. Sessions spawned by
+# this runner inherit its process group, and re-parenting to launchd changes
+# ppid but never pgid — so the pgid is a durable "this runner started it" handle
+# that survives the runner's own death. start-lanes.sh reaps ONLY groups listed
+# here, so an unrelated headless claude elsewhere on the machine is never a
+# target. Deliberately NOT removed on exit: a surviving orphan must keep its
+# ownership record, and start-lanes.sh garbage-collects records whose group has
+# no live members.
+#
+# Residual, stated rather than hidden: ownership is a pgid, and the OS recycles
+# pgids. A record whose group is long dead could in principle be re-matched by an
+# unrelated process that later inherits that number. That is why records are
+# garbage-collected on every runner start AND every start-lanes.sh run — the
+# window is a live process's lifetime, not forever — and why the reap still also
+# requires ppid 1 and a headless-claude argv. Under-reaping is the safe direction.
+PIDDIR="$HANDOFF/runner-pids"
+mkdir -p "$PIDDIR"
+# GC before claiming: drop records whose process group has no live member. List
+# the files BEFORE snapshotting ps — the reverse order races the sibling runners
+# start-lanes.sh launches together and would delete a record written after the
+# snapshot, disowning a live runner's sessions.
+STALE=$(ls "$PIDDIR"/*.pgid 2>/dev/null || true)
+LIVE_PGIDS=$(ps -axo pgid= | tr -d ' ' | sort -u)
+for F in $STALE; do
+  P=$(tr -cd '0-9' < "$F" 2>/dev/null)
+  if [ -z "$P" ] || ! echo "$LIVE_PGIDS" | grep -qx "$P"; then rm -f "$F"; fi
+done
+RUNNER_PGID=$(ps -o pgid= -p $$ | tr -d ' ')
+echo "$RUNNER_PGID" > "$PIDDIR/runner-$$.pgid"
 for L in "${LANES[@]}"; do
   mkdir -p "$HANDOFF/runner-inbox/$L"
   # Crash recovery: a .running file means a prior runner died mid-session
@@ -53,6 +88,8 @@ echo "[runner] serving lanes: ${LANES[*]}  from $WORKDIR"
 echo "[runner] inbox root: $HANDOFF/runner-inbox/  logs: $LOGDIR/"
 
 SESSION_TIMEOUT="${LANE_SESSION_TIMEOUT:-7200}"   # 2h hard cap per session
+MAX_FAILS="${LANE_MAX_FAILS:-3}"                  # strikes before a directive is quarantined
+RETRY_BACKOFF="${LANE_RETRY_BACKOFF:-60}"         # seconds between re-queue and retry
 
 # stream-json → readable live lines. `claude -p` prints nothing until the end
 # unless asked for stream-json events; this renders them as they arrive:
@@ -103,10 +140,46 @@ while true; do
     # in handoff files, so a killed session resumes via its own report + re-stage.
     ( timeout "$SESSION_TIMEOUT" claude --dangerously-skip-permissions --verbose \
         --output-format stream-json -p "$(cat "$RUN")" \
-        2>&1 | python3 -u -c "$FMT" | tee -a "$LOG" )
-    RC=${PIPESTATUS[0]:-$?}
-    mv "$RUN" "${Q%.md}.consumed-$TS"   # no .md suffix — must never re-match the queue glob
-    echo "[runner:$L] done rc=$RC $(basename "$Q")"
+        2>&1 | python3 -u -c "$FMT" | tee -a "$LOG"
+      # PIPESTATUS MUST be read inside the subshell. Read outside it, the array
+      # holds the subshell's OWN status — i.e. tee's — so a timeout-124 or a
+      # dead `claude` measured as rc=0 (verified: `( timeout 1 sleep 5 | cat |
+      # cat )` then reading PIPESTATUS[0] in the parent yields 0). Re-exit with
+      # the session's real code so the caller can gate on it.
+      exit "${PIPESTATUS[0]}" )
+    RC=$?
+    # Consume ONLY a session that exited clean. Anything else — timeout 124,
+    # auth/network failure, crash — restores the queue name so the directive
+    # stays visible to the glob. mv preserves mtime, so a retry stays at the head
+    # of this lane's queue rather than jumping the order.
+    FAILS="$INBOX/.$(basename "$Q").fails"
+    if [ "$RC" -eq 0 ]; then
+      rm -f "$FAILS"
+      mv "$RUN" "${Q%.md}.consumed-$TS"   # no .md suffix — must never re-match the queue glob
+      echo "[runner:$L] done rc=0 $(basename "$Q")"
+    else
+      # Retry guard: without a strike count, a directive that fails on contact
+      # (bad auth, unreachable API) re-queues and re-runs forever at session
+      # speed. Three strikes and it is quarantined under a name the glob cannot
+      # see, loudly, so the lane moves on to real work.
+      N=$(tr -cd '0-9' < "$FAILS" 2>/dev/null)
+      N=$(( ${N:-0} + 1 ))
+      echo "$N" > "$FAILS"
+      if [ "$N" -ge "$MAX_FAILS" ]; then
+        rm -f "$FAILS"
+        mv "$RUN" "${Q%.md}.failed-$TS"   # no .md suffix — quarantined, never re-queued
+        echo "[runner:$L] ***************************************************************"
+        echo "[runner:$L] QUARANTINED $(basename "$Q") — $N consecutive failures, last rc=$RC"
+        echo "[runner:$L] NOT re-queued. Kept as $(basename "${Q%.md}.failed-$TS")"
+        echo "[runner:$L] Log: $LOG"
+        echo "[runner:$L] Re-stage it by renaming back to *.md once the cause is fixed."
+        echo "[runner:$L] ***************************************************************"
+      else
+        mv "$RUN" "$Q"
+        echo "[runner:$L] FAILED rc=$RC $(basename "$Q") — re-queued, attempt $N/$MAX_FAILS, log $(basename "$LOG")"
+        sleep "$RETRY_BACKOFF"
+      fi
+    fi
     TOOK=1
   done
   if [ "$TOOK" -eq 1 ]; then
