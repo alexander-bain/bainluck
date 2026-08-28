@@ -536,11 +536,19 @@ diagnosis — that is the point.**
    stays 🛑 until the rate is re-measured.
    **1b. Merge `program/calibration-111`** — the scorecard rail itself, new files only, zero
    `backend/app/` lines. Without it, §9 step 1 above cannot be run by anyone off master.
-2. **Get an Alex ruling on the ruling-009 freeze** (Blocker 3): lift it, formally escalate the
-   pending rules through it, or confirm the 842 lines already written into the frozen file are
-   sanctioned. The queue cannot ship into a file whose status is ambiguous. **This is now the
-   single blocking question for the lane** — it is the only thing standing between the three
-   built-and-certed rules and a published delta, and no lane may answer it for itself.
+2. **Get an Alex ruling on the ruling-009 freeze** (Blocker 3) — **filed as #2248 (`needs-user`)**
+   with the three options and a recommendation: lift it, formally escalate the pending rules
+   through it, or confirm the 842 lines already written into the frozen file are sanctioned. The
+   queue cannot ship into a file whose status is ambiguous. **This is now the single blocking
+   question for the lane** — it is the only thing standing between the three built-and-certed
+   rules and a published delta, and no lane may answer it for itself.
+
+   The measurement that makes it urgent: `_calibration_population_ctes` is defined at
+   `precompute_calibration.py:1692` and all 26 `_filter` references live in that same file, so
+   **there is no route around it — every exclusion rule must edit the frozen file.** Ruling 009's
+   lift condition needs 13 *consecutive* clean beats, which at the measured 0.472 rate has
+   probability 5.4 × 10⁻⁵ (~2 years of waiting). CAL-P110 raises that rate but does not by itself
+   make 13-consecutive reachable, which is why the ruling is owed either way.
 3. **Merge `program/calibration-99`** — 11 commits, three built-and-certed rules currently worth
    0.00 pp — once (2) is answered.
 4. **Wire `ladder_coherence` into `_calibration_population_ctes`.** It is the only one of the three
