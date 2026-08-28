@@ -1058,7 +1058,26 @@ def free_background_slots(
 #: ⚠️ Heeding the standing note directly above: this branch is unmerged, and if
 #: anything else lands a beat first this needs re-measuring at merge, not
 #: adding to.
-BACKGROUND_BEAT_COUNT = 106
+#:
+#: 🔴 LAT-P109 RE-DERIVATION (latency, 2026-08-28): **106 → 107, explicit
+#: 61 → 62.** One beat added, `flush-search-gin-pending-lists`
+#: (`schedule: 120.0`, `queue: background`, `expires: 110`), which keeps the
+#: search path's seven trigram GIN pending lists off the 4 MB sawtooth that
+#: makes cold `/api/events/search` a coin flip between ~180 ms and ~1,900 ms
+#: (#2255, `docs/audits/latency/lat-p109-the-gin-pending-list-sawtooth.md`).
+#: Census RUN over the assembled `beat_schedule` on this branch, printed rather
+#: than incremented (#1910); base is `0e2414cd`, so 106 was the correct starting
+#: reading and 107 is the measured one.
+#: ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. The beat names its queue.
+#: ⚠️ The standing note above applies here too, and the note's OWN premise was
+#: checked rather than inherited: Q426's warning that its branch was unmerged is
+#: now STALE — `link-tournament-matchups` is present in `origin/master`
+#: @ `0e2414cd`, so 106 was a correct reading of master and 107 is a correct
+#: reading of this branch. What is still live is the contention: four unmerged
+#: branches touch this file (`lane1/q419-settlement-beat`, `program/ux-120`,
+#: `rescue/ux-121-prerebase-d4e510df`, `lane1/q342`), and `program/latency-92`
+#: and `-93` are unmerged but add no beat. Re-measure at merge; do not add to it.
+BACKGROUND_BEAT_COUNT = 107
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
