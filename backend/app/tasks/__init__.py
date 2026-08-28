@@ -1063,6 +1063,29 @@ def refresh_registered_tournament_prices(self):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=180, time_limit=240,
+                 name="app.tasks.link_tournament_matchups")
+def link_tournament_matchups(self):
+    """Bind registered fixtures to the match markets that price them (Q426).
+
+    The draw census asked "does a market exist for this fixture?" once, at the
+    ceremony, and wrote `missing` for all 96 US Open R128 fixtures — true then,
+    false by the next morning, and never re-asked. Kalshi quoted every one of
+    those matches while the cards rendered blank.
+
+    This re-asks on a beat and writes an overlay to Redis. It never writes the
+    committed register and can only fill a block the register itself marked
+    `missing`; a curated pin is untouchable. Kalshi only, because a Kalshi match
+    outcome names its own player and Polymarket's decomposed sub-market is an
+    unlabelled Yes/No — see the resolver's docstring for why guessing there
+    would trade a blank card for a backwards one.
+
+    One indexed query per tournament, no third-party calls.
+    """
+    from app.tasks.tournament_matchup_linker import _link_tournament_matchups
+    return _tracked_run("tournament_matchup_linker", _link_tournament_matchups())
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=180,
                  name="app.tasks.sync_tournament_results")
 def sync_tournament_results(self):
@@ -3323,6 +3346,31 @@ celery_app.conf.beat_schedule = {
     "sync-tournament-results": {
         "task": "app.tasks.sync_tournament_results",
         "schedule": 180.0,
+        "options": {"queue": "background"},
+    },
+    # Q426. A first-round market can be listed at any hour, and the gap between
+    # it being listed and the card showing a number is time the reader spends
+    # looking at a blank fixture. Cheap by construction — one indexed query
+    # bounded by an explicit series list, then pure in-memory resolution over a
+    # few hundred candidates, and no third-party call at all.
+    #
+    # A CRONTAB, NOT AN INTERVAL, AND THAT IS DELIBERATE. `300.0` here would
+    # have joined `BACKGROUND_INTERVAL_FLOOR` — the background beats that fire
+    # on a fixed period, which the settlement sweep shares its slot with no
+    # matter where it is placed. That set's own rule is `period <= 180.0`: a
+    # slower beat is not a continuous floor and must be reasoned about as a
+    # discrete co-fire rather than absorbed into "unavoidable anyway".
+    #
+    # `*/10` RATHER THAN `*/5`, MEASURED NOT ASSUMED. Census over the hour-10
+    # window the sweep occupies (10:31 + 13 min), run three ways: baseline
+    # **13** fires, `*/10` → **14**, `*/5` → **15**. Five minutes buys a reader
+    # nothing here — main-draw markets list hours ahead of the match — and it
+    # costs the sweep a second fire inside its own run window. `*/10` also
+    # matches `refresh-registered-tournament-prices` exactly, so tournament
+    # upkeep reads as one cadence instead of two.
+    "link-tournament-matchups": {
+        "task": "app.tasks.link_tournament_matchups",
+        "schedule": crontab(minute="*/10"),
         "options": {"queue": "background"},
     },
     "enrich-events-hourly": {

@@ -1046,7 +1046,19 @@ def free_background_slots(
 #: consecutive integration cycles because every lane re-derives it from whatever
 #: master it was certified against. A cert's "merge-tree is clean" is a statement
 #: about a base, not about this file. Re-measure it at merge time, always.
-BACKGROUND_BEAT_COUNT = 105
+#:
+#: 🔴 Q426 RE-DERIVATION (lane1, 2026-08-28): **105 → 106, explicit 60 → 61.**
+#: One beat added, `link-tournament-matchups` (`crontab(minute="*/10")`), which
+#: re-asks whether a registered US Open fixture has a match market yet — the
+#: question the draw census asked once at the ceremony and never again.
+#: Census RUN over the assembled `beat_schedule` on this branch, not incremented
+#: (#1910); base is `6010f4b4`, which already carries the INT-139 merge above,
+#: so 105 was the correct starting reading and 106 is the measured one.
+#: ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. The beat names its queue.
+#: ⚠️ Heeding the standing note directly above: this branch is unmerged, and if
+#: anything else lands a beat first this needs re-measuring at merge, not
+#: adding to.
+BACKGROUND_BEAT_COUNT = 106
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls

@@ -187,3 +187,74 @@ class TestSlateContract:
         # Trend series stay a board concern; loading them for the slate's ~130
         # outcomes would triple the per-request scan to draw nothing.
         assert "_load_series(db, board_outcome_ids" in source
+
+
+class TestAutoLinkedMatchups:
+    """The overlay that fills fixtures the draw census found no market for (Q426).
+
+    The census ran once at the ceremony and wrote `status: "missing"` against
+    all 96 R128 fixtures. It was right at that instant and wrong by the next
+    morning, and nothing re-asked — so the cards rendered blank while Kalshi
+    quoted every match. These pin the two properties that make filling them
+    safe.
+    """
+
+    async def test_payload_reports_how_many_fixtures_were_auto_linked(self, client):
+        """A dark card and a dead linker must not look identical (gotcha #53)."""
+        body = (await client.get("/api/tournaments/us-open")).json()
+        assert "auto_linked_matchups" in body
+        assert isinstance(body["auto_linked_matchups"], int)
+
+    async def test_an_unreachable_overlay_leaves_the_committed_register_intact(
+        self, client, monkeypatch
+    ):
+        """No Redis, no links — and the page is exactly what the file says.
+
+        The overlay is an optimisation over the committed truth, never a gate.
+        If this ever 500s, a task outage takes the tournament page down with it.
+        """
+        async def _boom(slug):
+            raise RuntimeError("redis is down")
+
+        monkeypatch.setattr(tournaments, "read_links", _boom)
+        resp = await client.get("/api/tournaments/us-open")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["auto_linked_matchups"] == 0
+        # The page is whole: the register's own rows are all still there.
+        assert body["register_version"]
+        assert body["slate"]["count"] >= 0
+        assert body["boards"]
+
+    async def test_route_applies_links_before_building_the_register_view(self):
+        """Order matters: `TournamentRegister` snapshots what it is handed.
+
+        Applying the overlay after construction would leave every downstream
+        reader — the bounded outcome-id lists especially — looking at the
+        unlinked register while the payload claimed otherwise.
+        """
+        source = inspect.getsource(tournaments.get_tournament)
+        assert source.index("apply_resolved_links") < source.index(
+            "TournamentRegister(register)"
+        )
+
+    def test_the_overlay_can_only_fill_a_blank(self):
+        """The asymmetry that keeps a task from re-pointing a curated row."""
+        from app.utils.tournament_link_resolver import apply_resolved_links
+
+        pinned = {
+            "matchup_key": "k", "players": ["a", "b"],
+            "sources": [{
+                "source": "kalshi", "status": "live",
+                "market_id": 1, "outcome_id": 2,
+                "evidence": {"kind": "match-market-census",
+                             "observed_at": "2026-08-27T00:15:00+00:00"},
+                "sides": {},
+            }],
+        }
+        register = {"matchups": [pinned]}
+        out, applied = apply_resolved_links(
+            register, {"k|kalshi": {"source": "kalshi", "market_id": 999}}
+        )
+        assert applied == 0
+        assert out["matchups"][0]["sources"][0]["market_id"] == 1

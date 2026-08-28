@@ -34,6 +34,7 @@ from app.models import FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.tournament_board import TREND_DAYS, build_boards
 from app.utils.tournament_grid import build_grids
+from app.tasks.tournament_matchup_linker import apply_resolved_links, read_links
 from app.utils.tournament_register import TournamentRegister, load_register
 from app.utils.tournament_slate import (
     build_bracket,
@@ -267,6 +268,33 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
         logger.error("registered tournament %s has no readable register", slug)
         raise HTTPException(status_code=503, detail="Tournament register unavailable")
 
+    # THE FIXTURES THE CENSUS FOUND NO MARKET FOR, LINKED SINCE (Q426).
+    #
+    # The draw census ran once, at the ceremony, and recorded `status:
+    # "missing"` against all 96 R128 fixtures because nobody quotes a first
+    # round before qualifying finishes. By the next morning Kalshi quoted every
+    # one of them and the register still said there was no market, so the cards
+    # rendered blank while we held the prices.
+    #
+    # `tournament_matchup_linker` re-asks that question on a beat and writes
+    # what it finds; this reads it. Two properties make it safe to apply here
+    # rather than being the fuzzy request-time matching this module's docstring
+    # forbids: the resolution already happened in a task (this is a dict lookup
+    # of a pinned `(market_id, outcome_id)`, the same kind of read as the
+    # committed file), and `apply_resolved_links` may only replace a block the
+    # register itself marked `missing`. A curated pin is untouchable from here.
+    # Wrapped, and the bare `except` is the point: the overlay is an
+    # optimisation over the committed truth and must never be a gate. Falling
+    # back leaves the page exactly as the register wrote it, which is where it
+    # stood before this existed — a linker outage costs numbers on some cards,
+    # never the tournament page.
+    linked = 0
+    try:
+        links = (await read_links(slug)).get("links") or {}
+        register, linked = apply_resolved_links(register, links)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tournament link overlay failed for %s: %s", slug, exc)
+
     reg = TournamentRegister(register)
     board_outcome_ids = sorted(
         {
@@ -345,6 +373,12 @@ async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[
     # cannot hold a finished match — see `build_results`.
     payload["results"] = build_results(register, results=await _espn_results(slug))
     payload["broadcasts"] = reg.broadcasts
+    # How many blank fixtures the overlay filled this request. Reported rather
+    # than inferred: a page whose cards are dark because no market exists and
+    # one whose cards are dark because the linker died look identical from the
+    # outside, and that is the exact confusion that let this ship broken for a
+    # day (gotcha #53).
+    payload["auto_linked_matchups"] = linked
     payload["slug"] = slug
     payload["title"] = spec["title"]
     payload["subtitle"] = spec["subtitle"]
