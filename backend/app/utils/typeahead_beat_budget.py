@@ -1069,11 +1069,14 @@ def free_background_slots(
 #: than incremented (#1910); base is `0e2414cd`, so 106 was the correct starting
 #: reading and 107 is the measured one.
 #: ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. The beat names its queue.
-#: ⚠️ The standing note above applies here too and it is now four consecutive
-#: cycles: `program/latency-92` and `-93` are also unmerged and neither adds a
-#: beat, but Q426's `link-tournament-matchups` above is unmerged as well — so
-#: 107 is measured against a master that may not be the one this lands on.
-#: Re-measure at merge; do not add to it.
+#: ⚠️ The standing note above applies here too, and the note's OWN premise was
+#: checked rather than inherited: Q426's warning that its branch was unmerged is
+#: now STALE — `link-tournament-matchups` is present in `origin/master`
+#: @ `0e2414cd`, so 106 was a correct reading of master and 107 is a correct
+#: reading of this branch. What is still live is the contention: four unmerged
+#: branches touch this file (`lane1/q419-settlement-beat`, `program/ux-120`,
+#: `rescue/ux-121-prerebase-d4e510df`, `lane1/q342`), and `program/latency-92`
+#: and `-93` are unmerged but add no beat. Re-measure at merge; do not add to it.
 BACKGROUND_BEAT_COUNT = 107
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
