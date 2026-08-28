@@ -505,7 +505,24 @@ BACKGROUND_INTERVAL_FLOOR = frozenset(
 #: `warm-event-concepts`, and one each of `discover-new-events`,
 #: `refresh-registered-tournament-prices`, `run-freshness-watchdog`,
 #: `update-max-movement`.
-SWEEP_WINDOW_COFIRE_CEILING = 13
+#: 🔴 RE-DERIVED AGAIN (Q426, 2026-08-28): 13 -> **14**. `link-tournament-matchups`
+#: (`*/10`, background) puts one extra fire in this window, at 10:40.
+#: RE-DERIVED BY RUNNING THE CENSUS over the assembled schedule, three ways, not
+#: by incrementing (#1910): baseline with the beat removed = **13**, with `*/10`
+#: = **14**, with `*/5` = **15**.
+#:
+#: The guard's alternative — a cheaper cadence — was taken rather than waved
+#: off, and it is why this reads 14 and not 15. The beat was authored at `*/5`;
+#: the census said that costs the sweep two fires inside its own run window
+#: instead of one, and five minutes of latency buys a reader nothing (main-draw
+#: match markets list hours ahead of the match). So the cadence moved to `*/10`
+#: BECAUSE of this number, which is the entire point of asserting it.
+#:
+#: The other alternative the failure message offers — moving the sweep — was NOT
+#: evaluated and is not this queue's to take: :31 was chosen by CERT-419 on a
+#: full enumeration and re-confirmed at INT-139, and one lane trading somebody
+#: else's placement for its own beat is how that argument gets lost.
+SWEEP_WINDOW_COFIRE_CEILING = 14
 
 
 def _effective_queue(entry):

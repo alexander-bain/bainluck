@@ -3348,14 +3348,29 @@ celery_app.conf.beat_schedule = {
         "schedule": 180.0,
         "options": {"queue": "background"},
     },
-    # Q426. Every 5 minutes: a first-round market can be listed at any hour, and
-    # the gap between it being listed and the card showing a number is time the
-    # reader spends looking at a blank fixture. Cheap enough to run at this
-    # cadence — one indexed query bounded by an explicit series list, then pure
-    # in-memory resolution over a few hundred candidates, no network at all.
+    # Q426. A first-round market can be listed at any hour, and the gap between
+    # it being listed and the card showing a number is time the reader spends
+    # looking at a blank fixture. Cheap by construction — one indexed query
+    # bounded by an explicit series list, then pure in-memory resolution over a
+    # few hundred candidates, and no third-party call at all.
+    #
+    # A CRONTAB, NOT AN INTERVAL, AND THAT IS DELIBERATE. `300.0` here would
+    # have joined `BACKGROUND_INTERVAL_FLOOR` — the background beats that fire
+    # on a fixed period, which the settlement sweep shares its slot with no
+    # matter where it is placed. That set's own rule is `period <= 180.0`: a
+    # slower beat is not a continuous floor and must be reasoned about as a
+    # discrete co-fire rather than absorbed into "unavoidable anyway".
+    #
+    # `*/10` RATHER THAN `*/5`, MEASURED NOT ASSUMED. Census over the hour-10
+    # window the sweep occupies (10:31 + 13 min), run three ways: baseline
+    # **13** fires, `*/10` → **14**, `*/5` → **15**. Five minutes buys a reader
+    # nothing here — main-draw markets list hours ahead of the match — and it
+    # costs the sweep a second fire inside its own run window. `*/10` also
+    # matches `refresh-registered-tournament-prices` exactly, so tournament
+    # upkeep reads as one cadence instead of two.
     "link-tournament-matchups": {
         "task": "app.tasks.link_tournament_matchups",
-        "schedule": 300.0,
+        "schedule": crontab(minute="*/10"),
         "options": {"queue": "background"},
     },
     "enrich-events-hourly": {
