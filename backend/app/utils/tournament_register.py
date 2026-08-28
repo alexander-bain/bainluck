@@ -1211,6 +1211,66 @@ def load_register(
         return None
 
 
+def registered_market_ids(*, directory: Path | None = None) -> set[int]:
+    """Every ``futures_markets.id`` any committed register renders.
+
+    THE PRICE RAIL NEEDS THIS AND NOTHING ELSE DOES YET (#2199 follow-up).
+    ``futures_price_refresh`` selects by *tier and traded volume*, which is the
+    right bound for a platform-wide sweep and the wrong one for a curated page:
+    a market earns its place on ``/tournaments/us-open`` because an agent chose
+    it, not because it cleared $10K. Measured 2026-08-27, all three markets
+    behind the "More predictions" section were tier 5 — two at 837h stale, one
+    at 215h — so the only rail that can reach them structurally excluded every
+    one, permanently. Curation IS the value floor for these rows.
+
+    Walks the whole document rather than reading ``props``/``players`` by name.
+    The register grows sections (props, players, matchups, and whatever the next
+    surface needs) and a collector that enumerates today's keys silently stops
+    covering tomorrow's — the failure would be a *new* section going price-dark
+    with every existing test green.
+
+    Best-effort by construction: an unreadable or malformed register yields
+    nothing from that file and never raises. The sweep degrades to its volume
+    class, which is strictly better than not running (same posture as
+    :func:`load_register`, which returns ``None`` rather than propagating).
+    Files whose name starts with ``_`` are fixtures, not committed registers.
+    """
+    found: set[int] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            market_id = node.get("market_id")
+            # `bool` is an `int` subclass; `True` would collect as market 1.
+            if isinstance(market_id, int) and not isinstance(market_id, bool):
+                found.add(market_id)
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    root = directory or REGISTER_DIR
+    try:
+        paths = sorted(root.glob("*.json"))
+    except OSError as exc:
+        logger.error("Tournament register dir %s unreadable: %s", root, exc)
+        return found
+
+    for path in paths:
+        if path.name.startswith("_"):
+            continue
+        try:
+            walk(json.loads(path.read_text()))
+        except (OSError, ValueError) as exc:
+            logger.error(
+                "Tournament register %s unreadable — its markets will not be "
+                "price-refreshed as registered: %s",
+                path,
+                exc,
+            )
+    return found
+
+
 class TournamentRegister:
     """Read-only lookup view over a validated register.
 
