@@ -82,6 +82,22 @@ actually serves. There is not a single holdout, sample, or parallel-rail number 
 > the flat bar reds **6 tests across both suites**. Nothing in `backend/app/` was touched, so
 > ruling 009 is not engaged and no number here is a deploy claim.
 
+> **CAL-P116, 2026-08-28 — the queue's ship was ALREADY LANDED, and the countdown has spent half
+> its miss budget.** This queue was staged to amend ruling 009's lift condition *where lanes read
+> it*, on the premise that `docs/rulings/009-precompute-calibration-freeze.md` still said
+> *"~13 consecutive clean beats"*. **It does not, and had not since CAL-P111.** The amendment is on
+> `master` (`5ad6f851`), deployed in v3921, indexed in `docs/PRODUCT-BRAIN.md`, executable as
+> `calibration_freeze_score.py`, and **#2248 was already CLOSED** at `18:55:14Z` citing it. Both
+> required probabilities are documented (**5.6 × 10⁻⁶** at the broken 0.472 rate, **0.884** at a
+> healthy 0.95). Nothing was re-amended: re-deriving a landed ruling would have produced a second
+> conflicting text of a decided condition, which is the failure the single-file ruling layout
+> exists to prevent. Verified rather than assumed — the doc, the index line, the closed issue, and
+> `263 passed` across the freeze-score, PRODUCT-BRAIN, doctrine-clause, gotcha-numbering and
+> startup gates (RULING-CLAIMS digest `33fee2691a40`, 121 claims, 0 deviations). **The one live
+> finding is the countdown**: at `21:42Z` the freeze score reads **1/2 clean, 1 of 2 allowed misses
+> already charged** with 22 beats still to come (§5b). Published number **1.89 pp, unmoved** on the
+> same `20:37:41Z` curve — no datapoint banked, because nothing regenerated and nothing shipped.
+
 ---
 
 ## 0. Why this page exists, and what it replaces
@@ -688,6 +704,30 @@ RULING 009 FREEZE SCORE — 22 of the last 24
 **Earliest possible lift is ~2026-08-29T19:00Z (12:00 PT)**, and only if at least 22 of the first 24
 post-baseline beats publish. The pre-baseline ring stands at 10/24 clean, which is a measurement of
 the producer CAL-P110 was built to fix and carries no weight against the condition.
+
+#### Re-read 2026-08-28 `21:42Z` (14:42 PT) — CAL-P116: **half the miss budget is spent at 2 beats**
+
+```
+RULING 009 FREEZE SCORE — 22 of the last 24
+  1/2 clean so far (window 24)   (1 misses; 2 allowed)
+  .#   <- oldest ... newest
+  window   2026-08-28T19:40:52Z -> 2026-08-28T20:37:42Z
+  ring     168 observations, 166 excluded as pre-baseline
+  VERDICT  WINDOW_NOT_FULL
+           only 2 post-baseline beats exist; the freeze cannot lift before 24 of them do
+           (best still reachable: 23/24)
+```
+
+Two post-baseline beats exist and **one of the two budgeted misses is already charged.** That is not
+yet a verdict — 23/24 is still reachable and a single early miss is exactly the unrelated-failure
+case the amendment budgeted for, which is the whole reason the condition is a count and not a
+streak. It is recorded because the number is the one thing a count-in-window gives that a streak
+cannot (amendment, reason 2: *it is observable before it completes*), and because **the next miss
+ends this window** — after a second, the earliest possible lift moves out by however long it takes
+the ring to roll the misses off, not to 2026-08-29T19:00Z.
+
+Read it, do not re-derive it:
+`python3 backend/scripts/calibration_freeze_score.py --baseline-at 2026-08-28T18:55:19Z`.
 
 **The falsifier is now live and must be read before anything is claimed** (§5a.2): the 72 h per-beat
 publish rate has to rise from **0.472**, and the `sports` cancellation signature
