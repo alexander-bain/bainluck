@@ -150,6 +150,149 @@ def order_market_backfill_candidates(
     return sorted(events, key=_key)
 
 
+# ---------------------------------------------------------------------------
+# The guaranteed supplementary rescue net.
+#
+# Module level, not method local (Q426): these four constants ARE the policy
+# for what this service can and cannot see, and every incident recorded in the
+# comments below was a series being absent from them. A policy a guard test can
+# only reach by scraping `inspect.getsource` is one that stays green when
+# somebody comments the list out.
+# ---------------------------------------------------------------------------
+# Supplementary fetch: Kalshi neg-risk sports events can have
+# status=None and may not appear in the first N pages of the
+# unfiltered listing. Explicitly query key sports series tickers
+# to guarantee we don't miss championship/conference markets.
+_SPORTS_SERIES_TICKERS = [
+    # Championship / conference
+    "KXNBA", "KXNBAEAST", "KXNBAWEST",
+    "KXNHL", "KXNHLEAST", "KXNHLWEST",
+    "KXMLB", "KXMLBAL", "KXMLBNL",
+    "KXNFL", "KXNFLNFC", "KXNFLAFC",
+    # Game winner (moneyline) — Kalshi retains settled events forever
+    "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME",
+    # Game-level (neg-risk, status=None — missed by unfiltered pagination)
+    "KXNBASPREAD", "KXNBATOTAL", "KXNBATEAMTOTAL",
+    "KXNBA1HSPREAD", "KXNBA1HTOTAL", "KXNBA1HWINNER",
+    "KXNBA2HSPREAD", "KXNBA2HTOTAL", "KXNBA2HWINNER",
+    "KXNBASERIES",
+    "KXNHLSPREAD", "KXNHLTOTAL", "KXNHLTEAMTOTAL",
+    "KXNHL1HSPREAD", "KXNHL1HTOTAL", "KXNHLSERIES",
+    "KXMLBSPREAD", "KXMLBTOTAL", "KXMLBTEAMTOTAL",
+    "KXMLB1HSPREAD", "KXMLB1HTOTAL", "KXMLBSERIES",
+    "KXNFLSPREAD", "KXNFLTOTAL", "KXNFLTEAMTOTAL",
+    "KXNFL1HSPREAD", "KXNFL1HTOTAL", "KXNFL2HSPREAD", "KXNFL2HTOTAL",
+    "KXNFLSERIES",
+    # Announcer/broadcast mention props
+    "KXNBAMENTION", "KXNHLMENTION", "KXMLBMENTION", "KXNFLMENTION",
+    # Golf tournaments + props (Queue #163): the main unfiltered scan's
+    # resumable cursor was not reaching the KXPGA* series pages, so
+    # OPEN tournaments — incl. marquee majors like The Open Championship
+    # (KXPGATOUR-THOC26, listed but 0 markets ingested) AND the current
+    # week's Scottish Open / ISCO — surfaced with no cross-source
+    # markets. Golf had no supplementary safety net (this list was
+    # NBA/NHL/MLB/NFL only). None of these carry a _HEAVY_TOKEN, so they
+    # fetch WITH nested markets; per-series open-event counts are tiny
+    # (~4 events/series), well under the #995 monster-payload threshold.
+    # NB: the highest-volume matchup series (KXPGAH2H ~724, KXPGA3BALL
+    # ~677) are intentionally EXCLUDED — they open only during play and
+    # their nested payloads are the largest, so we keep them off the
+    # guaranteed rescue to avoid re-introducing #995 monster-page risk;
+    # the pre-tournament futures below are what marquee readiness needs.
+    "KXPGATOUR", "KXPGATOP5", "KXPGATOP10", "KXPGATOP20",
+    "KXPGAMAKECUT", "KXPGAR1LEAD", "KXPGAR2LEAD", "KXPGAR3LEAD",
+    "KXPGAHOLEINONE",
+    # #171: KXPGAPLAYOFF was the single golf series missing from the
+    # rescue net — the main scan carried its playoff market for 19
+    # prior events but The Open (KXPGAPLAYOFF-THOC26, active on Kalshi
+    # with 1 market) was never ingested. It carries no _HEAVY_TOKEN and
+    # each event holds a single market (tiny nested payload), so it fits
+    # the guaranteed rescue exactly like the other KXPGA* golf futures.
+    "KXPGAPLAYOFF",
+    "KXLPGATOUR", "KXLIVTOUR", "KXDPWORLDTOUR",
+    # Combat sports (#173/#1024): KXUFCFIGHT / KXBOXING had NO
+    # supplementary safety net — the golf-class gap applied to combat.
+    # The fight-WINNER series depend entirely on the deadline-bounded
+    # main unfiltered scan reaching their expiry-DESC tail page inside
+    # the ~180s fetch budget; during the #995 create-freeze window (and
+    # any slow beat) they never surfaced. Confirmed live: UFC 329
+    # (KXUFCFIGHT-26JUL11*) had 15 fights on Kalshi but only 1 in our DB
+    # (the McGregor headliner, ingested months early) — SAIPIM
+    # (Saint-Denis vs Pimblett) and 13 siblings were never created, so
+    # A5's combat cross-source blend had no fight to feed. These are the
+    # win-prob-blend-critical markets. Each card is one event with
+    # ~15 single-market fights (2 outcomes each) → tiny nested payload,
+    # no _HEAVY_TOKEN, so they fetch WITH nested markets like the golf
+    # futures — well under the #995 monster-page threshold. Fight-prop
+    # series (KXUFCMOV/DISTANCE/VICROUND/MOF/ROUNDS, KXBOXING* props)
+    # share the same events and already reach via the main scan; the
+    # guaranteed rescue on the winner series is what fixes the class.
+    "KXUFCFIGHT", "KXBOXING",
+    # Tennis (Q426). The golf-class gap, third occurrence — and this
+    # time it cost a whole Grand Slam. Measured 2026-08-28: Kalshi
+    # carried 47 KXATPMATCH + 49 KXWTAMATCH events for the US Open main
+    # draw (`KXATPMATCH-26AUG30YIBWAL`, Wu vs Walton, among them) and
+    # our database held ZERO of them; the 15 tennis match rows we did
+    # have were all created 2026-08-19 and long settled. Tennis had no
+    # supplementary safety net, so — exactly like golf before #163 and
+    # combat before #173 — it depended entirely on the deadline-bounded
+    # main scan reaching its pages. That scan's own report says it never
+    # does: 24 of 24 beats in the ring read `verdict: frozen`,
+    # `wrapped: false`, `stop_reason: max_pages`, with ~21K events
+    # fetched and a few hundred processed per beat. A series that is
+    # only reachable by a walk that has never once completed is not
+    # "low priority"; it is unreachable, and the register recorded the
+    # consequence as 96 R128 matchups pinned to nothing.
+    #
+    # KXATPNATSTAGE / KXWTANATSTAGE are the nationality props ("US Open
+    # Men's/Women's Singles: Americans to Reach Quarterfinals") — 5 open
+    # events total, both draws. They are here for the same reason and
+    # cost almost nothing: the whole series is one page of three rows.
+    #
+    # None of the four carries a _HEAVY_TOKEN, so they fetch WITH nested
+    # markets; a match event holds a single two-outcome market, which is
+    # the smallest nested payload on the exchange and nowhere near the
+    # #995 monster-page threshold. Ordering measured before adding them
+    # (gotcha #41 — ask what the ordering starts on): `status=None`
+    # paginates expiry-DESC, so page 0 of KXATPMATCH opens on
+    # `26AUG30ZVESON` and covers the entire main draw before it reaches
+    # anything settled. The 5-page uniform cap is not in the way.
+    "KXATPMATCH", "KXWTAMATCH",
+    "KXATPNATSTAGE", "KXWTANATSTAGE",
+]
+
+# Series whose supplementary fetch runs even when the main scan already
+# produced an event with the same prefix.
+#
+# Q426: this set used to be the four game series, and the `any(...)`
+# short-circuit below silently made partial coverage self-sealing for
+# everything else. Tennis match series turn over DAILY — one stale
+# KXATPMATCH event surviving in the listing is enough to satisfy
+# `startswith` and skip the rescue for all 60 of today's, which is the
+# shape our own data was already in (8 open KXATPMATCH rows, every one
+# of them created 2026-08-19). "We have one of these" is not "we have
+# these"; for a daily series it is the reverse.
+_ALWAYS_FETCH_SERIES = {
+    "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME",
+    "KXATPMATCH", "KXWTAMATCH",
+    "KXATPNATSTAGE", "KXWTANATSTAGE",
+}
+# #995 attempt-8 (targeted): game-level series (GAME/SPREAD/TOTAL/1H/2H/
+# WINNER/SERIES) explode into monster nested-markets payloads — the exact
+# blobs whose sync parse froze the loop (KXMLBGAME, KXNBA1HSPREAD). Fetch
+# them WITHOUT nested markets (tiny response); the empty-events backfill
+# below fetches their markets per-event, lazily + bounded. Small
+# championship series (KXNBA, KXNBAEAST, KXMLBAL…) keep nested.
+_HEAVY_TOKENS = ("GAME", "SPREAD", "TOTAL", "1H", "2H", "WINNER", "SERIES")
+# #999 / Queue #166: fetch the priority (golf) rescue tickers FIRST so
+# they get first claim on the reserved supplementary window. Even with
+# the main-scan cap, the earlier championship/game series could otherwise
+# eat the whole reserve before the loop ever reached the golf entries at
+# the tail of the list. `str.startswith` accepts a tuple; `sorted` is
+# stable, so within each group the original order is preserved.
+_PRIORITY_RESCUE_PREFIXES = ("KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD")
+
+
 class KalshiAPIService(BaseAPIClient):
     """Service for interacting with Kalshi's Trading API."""
 
@@ -1034,92 +1177,7 @@ class KalshiAPIService(BaseAPIClient):
             dict(sorted(categories_seen.items())),
         )
 
-        # Supplementary fetch: Kalshi neg-risk sports events can have
-        # status=None and may not appear in the first N pages of the
-        # unfiltered listing. Explicitly query key sports series tickers
-        # to guarantee we don't miss championship/conference markets.
-        _SPORTS_SERIES_TICKERS = [
-            # Championship / conference
-            "KXNBA", "KXNBAEAST", "KXNBAWEST",
-            "KXNHL", "KXNHLEAST", "KXNHLWEST",
-            "KXMLB", "KXMLBAL", "KXMLBNL",
-            "KXNFL", "KXNFLNFC", "KXNFLAFC",
-            # Game winner (moneyline) — Kalshi retains settled events forever
-            "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME",
-            # Game-level (neg-risk, status=None — missed by unfiltered pagination)
-            "KXNBASPREAD", "KXNBATOTAL", "KXNBATEAMTOTAL",
-            "KXNBA1HSPREAD", "KXNBA1HTOTAL", "KXNBA1HWINNER",
-            "KXNBA2HSPREAD", "KXNBA2HTOTAL", "KXNBA2HWINNER",
-            "KXNBASERIES",
-            "KXNHLSPREAD", "KXNHLTOTAL", "KXNHLTEAMTOTAL",
-            "KXNHL1HSPREAD", "KXNHL1HTOTAL", "KXNHLSERIES",
-            "KXMLBSPREAD", "KXMLBTOTAL", "KXMLBTEAMTOTAL",
-            "KXMLB1HSPREAD", "KXMLB1HTOTAL", "KXMLBSERIES",
-            "KXNFLSPREAD", "KXNFLTOTAL", "KXNFLTEAMTOTAL",
-            "KXNFL1HSPREAD", "KXNFL1HTOTAL", "KXNFL2HSPREAD", "KXNFL2HTOTAL",
-            "KXNFLSERIES",
-            # Announcer/broadcast mention props
-            "KXNBAMENTION", "KXNHLMENTION", "KXMLBMENTION", "KXNFLMENTION",
-            # Golf tournaments + props (Queue #163): the main unfiltered scan's
-            # resumable cursor was not reaching the KXPGA* series pages, so
-            # OPEN tournaments — incl. marquee majors like The Open Championship
-            # (KXPGATOUR-THOC26, listed but 0 markets ingested) AND the current
-            # week's Scottish Open / ISCO — surfaced with no cross-source
-            # markets. Golf had no supplementary safety net (this list was
-            # NBA/NHL/MLB/NFL only). None of these carry a _HEAVY_TOKEN, so they
-            # fetch WITH nested markets; per-series open-event counts are tiny
-            # (~4 events/series), well under the #995 monster-payload threshold.
-            # NB: the highest-volume matchup series (KXPGAH2H ~724, KXPGA3BALL
-            # ~677) are intentionally EXCLUDED — they open only during play and
-            # their nested payloads are the largest, so we keep them off the
-            # guaranteed rescue to avoid re-introducing #995 monster-page risk;
-            # the pre-tournament futures below are what marquee readiness needs.
-            "KXPGATOUR", "KXPGATOP5", "KXPGATOP10", "KXPGATOP20",
-            "KXPGAMAKECUT", "KXPGAR1LEAD", "KXPGAR2LEAD", "KXPGAR3LEAD",
-            "KXPGAHOLEINONE",
-            # #171: KXPGAPLAYOFF was the single golf series missing from the
-            # rescue net — the main scan carried its playoff market for 19
-            # prior events but The Open (KXPGAPLAYOFF-THOC26, active on Kalshi
-            # with 1 market) was never ingested. It carries no _HEAVY_TOKEN and
-            # each event holds a single market (tiny nested payload), so it fits
-            # the guaranteed rescue exactly like the other KXPGA* golf futures.
-            "KXPGAPLAYOFF",
-            "KXLPGATOUR", "KXLIVTOUR", "KXDPWORLDTOUR",
-            # Combat sports (#173/#1024): KXUFCFIGHT / KXBOXING had NO
-            # supplementary safety net — the golf-class gap applied to combat.
-            # The fight-WINNER series depend entirely on the deadline-bounded
-            # main unfiltered scan reaching their expiry-DESC tail page inside
-            # the ~180s fetch budget; during the #995 create-freeze window (and
-            # any slow beat) they never surfaced. Confirmed live: UFC 329
-            # (KXUFCFIGHT-26JUL11*) had 15 fights on Kalshi but only 1 in our DB
-            # (the McGregor headliner, ingested months early) — SAIPIM
-            # (Saint-Denis vs Pimblett) and 13 siblings were never created, so
-            # A5's combat cross-source blend had no fight to feed. These are the
-            # win-prob-blend-critical markets. Each card is one event with
-            # ~15 single-market fights (2 outcomes each) → tiny nested payload,
-            # no _HEAVY_TOKEN, so they fetch WITH nested markets like the golf
-            # futures — well under the #995 monster-page threshold. Fight-prop
-            # series (KXUFCMOV/DISTANCE/VICROUND/MOF/ROUNDS, KXBOXING* props)
-            # share the same events and already reach via the main scan; the
-            # guaranteed rescue on the winner series is what fixes the class.
-            "KXUFCFIGHT", "KXBOXING",
-        ]
         supplemented = 0
-        _GAME_SERIES = {"KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME"}
-        # #995 attempt-8 (targeted): game-level series (GAME/SPREAD/TOTAL/1H/2H/
-        # WINNER/SERIES) explode into monster nested-markets payloads — the exact
-        # blobs whose sync parse froze the loop (KXMLBGAME, KXNBA1HSPREAD). Fetch
-        # them WITHOUT nested markets (tiny response); the empty-events backfill
-        # below fetches their markets per-event, lazily + bounded. Small
-        # championship series (KXNBA, KXNBAEAST, KXMLBAL…) keep nested.
-        _HEAVY_TOKENS = ("GAME", "SPREAD", "TOTAL", "1H", "2H", "WINNER", "SERIES")
-        # #999 / Queue #166: fetch the priority (golf) rescue tickers FIRST so
-        # they get first claim on the reserved supplementary window. Even with
-        # the main-scan cap, the earlier championship/game series could otherwise
-        # eat the whole reserve before the loop ever reached the golf entries at
-        # the tail of the list. `str.startswith` accepts a tuple; `sorted` is
-        # stable, so within each group the original order is preserved.
-        _PRIORITY_RESCUE_PREFIXES = ("KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD")
         _ordered_series = sorted(
             _SPORTS_SERIES_TICKERS,
             key=lambda s: 0 if s.upper().startswith(_PRIORITY_RESCUE_PREFIXES) else 1,
@@ -1133,9 +1191,11 @@ class KalshiAPIService(BaseAPIClient):
                     "(%d events so far) — returning partial", st, len(all_events),
                 )
                 break
-            # Game series always need the supplementary fetch — the main scan
-            # finds open events but misses some open game events.
-            if st not in _GAME_SERIES and any(
+            # Daily-turnover series always need the supplementary fetch — the
+            # main scan finds SOME of their open events and misses the rest, and
+            # for these the difference between "some" and "all" is the whole
+            # slate. Everything else may short-circuit on presence.
+            if st not in _ALWAYS_FETCH_SERIES and any(
                 e.event_ticker.upper().startswith(st.upper()) for e in all_events.values()
             ):
                 continue

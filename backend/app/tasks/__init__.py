@@ -1063,6 +1063,29 @@ def refresh_registered_tournament_prices(self):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=180, time_limit=240,
+                 name="app.tasks.link_tournament_matchups")
+def link_tournament_matchups(self):
+    """Bind registered fixtures to the match markets that price them (Q426).
+
+    The draw census asked "does a market exist for this fixture?" once, at the
+    ceremony, and wrote `missing` for all 96 US Open R128 fixtures — true then,
+    false by the next morning, and never re-asked. Kalshi quoted every one of
+    those matches while the cards rendered blank.
+
+    This re-asks on a beat and writes an overlay to Redis. It never writes the
+    committed register and can only fill a block the register itself marked
+    `missing`; a curated pin is untouchable. Kalshi only, because a Kalshi match
+    outcome names its own player and Polymarket's decomposed sub-market is an
+    unlabelled Yes/No — see the resolver's docstring for why guessing there
+    would trade a blank card for a backwards one.
+
+    One indexed query per tournament, no third-party calls.
+    """
+    from app.tasks.tournament_matchup_linker import _link_tournament_matchups
+    return _tracked_run("tournament_matchup_linker", _link_tournament_matchups())
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=180,
                  name="app.tasks.sync_tournament_results")
 def sync_tournament_results(self):
@@ -3323,6 +3346,16 @@ celery_app.conf.beat_schedule = {
     "sync-tournament-results": {
         "task": "app.tasks.sync_tournament_results",
         "schedule": 180.0,
+        "options": {"queue": "background"},
+    },
+    # Q426. Every 5 minutes: a first-round market can be listed at any hour, and
+    # the gap between it being listed and the card showing a number is time the
+    # reader spends looking at a blank fixture. Cheap enough to run at this
+    # cadence — one indexed query bounded by an explicit series list, then pure
+    # in-memory resolution over a few hundred candidates, no network at all.
+    "link-tournament-matchups": {
+        "task": "app.tasks.link_tournament_matchups",
+        "schedule": 300.0,
         "options": {"queue": "background"},
     },
     "enrich-events-hourly": {

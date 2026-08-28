@@ -1,0 +1,322 @@
+"""Re-ask the question the draw census only asked once (Q426).
+
+``ingest_tournament_draw.py`` wrote 96 US Open R128 fixtures into the register
+at the ceremony and recorded ``status: "missing"`` against both sources,
+because at that instant neither carried a match market.  That was true.  It
+stopped being true the next morning and nothing noticed, so the R128 cards
+rendered without probabilities while Kalshi quoted every one of them.
+
+This task asks again, on a beat.  It reads the committed register, finds the
+fixtures whose market is recorded as absent, looks for one in our own tables,
+and writes what it finds to Redis for ``routes/tournaments.py`` to overlay.
+
+**It does not write the register.**  That file is committed to git and reviewed
+as code, and the register sentinel's doctrine — a task must not rewrite the
+page's source of truth at 07:45 UTC — is unchanged.  What this writes is an
+overlay with a TTL, applied only to blocks the register itself marked
+``missing``, so the committed file remains the only thing that can pin, move or
+retire an identity.  The overlay's whole power is to fill a blank.
+
+The shape is deliberately the one this page already uses: ``sync_tournament_
+results`` fetches into Redis and the route only ever reads.  No request pays for
+this, and nothing about the register pattern's request-time guarantee changes.
+
+Cheap by construction.  One indexed query per tournament bounded by an explicit
+series list and a row cap, then pure in-memory resolution over at most a few
+hundred candidates.  No third-party calls at all — the markets are already ours
+by the time this runs.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time as _time
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from sqlalchemy import select
+
+from app.utils.tournament_link_resolver import (
+    REFUSAL_CODES,
+    apply_resolved_links,
+    resolve_matchup_links,
+)
+from app.utils.tournament_register import load_register
+
+logger = logging.getLogger(__name__)
+
+#: Where this writes and ``routes/tournaments.py`` reads.
+LINKS_PREFIX = "bainluck:tournament-links:"
+
+#: Long relative to the 5-minute beat, so one missed run never blanks a card
+#: that was already lit, but finite so a genuinely dead task lets the links
+#: expire rather than pinning yesterday's market forever. The register's own
+#: `missing` state is what the page falls back to, which is exactly where it
+#: was before this existed — the honest state, not a stale one.
+LINKS_TTL_SECONDS = 3600
+
+#: One entry per tournament whose register this may fill, with the Kalshi
+#: series that carry its match markets.
+#:
+#: Explicit, not derived — the same posture as ``REGISTERED_TOURNAMENTS`` in the
+#: route and ``WATCHED`` in the sentinel. A resolver that inferred its own
+#: candidate pool from the register would be one bad inference away from
+#: scanning ``futures_markets`` unbounded, and the series names are three words
+#: a human can check against the exchange.
+WATCHED: tuple[dict[str, Any], ...] = (
+    {
+        "tournament": "us-open",
+        "season": "2026",
+        # Measured 2026-08-28: 47 KXATPMATCH + 49 KXWTAMATCH open events for the
+        # main draw, which is exactly the 96 registered R128 fixtures.
+        "kalshi_series": ("KXATPMATCH", "KXWTAMATCH"),
+    },
+)
+
+#: Hard cap on candidate market rows per tournament. The series filter already
+#: bounds this to the low hundreds; the cap is here so a series rename upstream
+#: cannot quietly turn this into a table scan.
+MAX_CANDIDATE_MARKETS = 2000
+
+#: Inner deadline, comfortably under the task's soft limit so the run always
+#: reaches its own terminal rather than being SIGKILLed untracked (#966).
+DEADLINE_SECONDS = 120.0
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _match_date(external_id: Optional[str]):
+    """The calendar date a Kalshi match ticker embeds, or None.
+
+    ``KXATPMATCH-26AUG30YIBWAL`` → ``2026-08-30``. Total: an unparseable ticker
+    yields None and the resolver's window check then fails closed on it.
+    """
+    if not external_id:
+        return None
+    try:
+        from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+        parsed = extract_game_date_from_ticker(external_id)
+    except Exception:  # noqa: BLE001 — a ticker parse must never fail a beat
+        return None
+    return parsed.date() if parsed is not None else None
+
+
+async def _load_candidates(
+    session, series: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """Kalshi match markets for these series, as plain resolver candidates.
+
+    Rows are copied to scalars here rather than handed on as ORM objects: this
+    runs in a task session and the resolver is pure, so nothing downstream may
+    hold a live row across a commit boundary (gotcha #6).
+
+    Note what is NOT in the predicate: ``status``. Kalshi settled markets stay
+    ``status='open'`` in our database (gotcha #33), so filtering on it would
+    neither exclude finished matches nor include all live ones — it would just
+    make the query look careful. The resolver's date window is the real bound
+    and it is applied where it can be tested.
+    """
+    from app.models import FuturesMarket, FuturesOutcome
+
+    if not series:
+        return []
+
+    conditions = [
+        FuturesMarket.external_id.like(f"{name}-%") for name in series
+    ]
+    from sqlalchemy import or_
+
+    market_rows = (
+        await session.execute(
+            select(
+                FuturesMarket.id,
+                FuturesMarket.external_id,
+                FuturesMarket.name,
+            )
+            .where(FuturesMarket.source == "kalshi", or_(*conditions))
+            .limit(MAX_CANDIDATE_MARKETS)
+        )
+    ).all()
+    if not market_rows:
+        return []
+
+    by_id: dict[int, dict[str, Any]] = {
+        row.id: {
+            "source": "kalshi",
+            "market_id": row.id,
+            "external_id": row.external_id,
+            "name": row.name,
+            "match_date": _match_date(row.external_id),
+            "outcomes": [],
+        }
+        for row in market_rows
+    }
+
+    outcome_rows = (
+        await session.execute(
+            select(
+                FuturesOutcome.market_id,
+                FuturesOutcome.id,
+                FuturesOutcome.name,
+                FuturesOutcome.external_id,
+            ).where(FuturesOutcome.market_id.in_(list(by_id)))
+        )
+    ).all()
+    for row in outcome_rows:
+        candidate = by_id.get(row.market_id)
+        if candidate is not None:
+            candidate["outcomes"].append(
+                {
+                    "outcome_id": row.id,
+                    "name": row.name,
+                    "external_id": row.external_id,
+                }
+            )
+
+    return list(by_id.values())
+
+
+async def _write_links(slug: str, payload: dict[str, Any]) -> bool:
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        await get_async_redis_client().setex(
+            f"{LINKS_PREFIX}{slug}", LINKS_TTL_SECONDS, json.dumps(payload, default=str)
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tournament link write failed for %s: %s", slug, exc)
+        return False
+
+
+async def _link_tournament_matchups(
+    watched: tuple[dict[str, Any], ...] | None = None,
+) -> dict[str, Any]:
+    """Resolve and publish match-market links for every watched tournament."""
+    from app.tasks.base import get_task_session
+
+    started = _time.monotonic()
+    entries = WATCHED if watched is None else tuple(watched)
+    now = _now()
+
+    stats: dict[str, Any] = {
+        "tournaments": 0,
+        "needy": 0,
+        "resolved": 0,
+        "published": 0,
+        "written": 0,
+        "deadline_hit": False,
+        "by_tournament": {},
+        **{code: 0 for code in REFUSAL_CODES},
+    }
+
+    for entry in entries:
+        if _time.monotonic() - started > DEADLINE_SECONDS:
+            stats["deadline_hit"] = True
+            logger.warning(
+                "tournament matchup linker hit its %.0fs deadline; %d of %d "
+                "tournaments done",
+                DEADLINE_SECONDS, stats["tournaments"], len(entries),
+            )
+            break
+
+        slug = entry.get("tournament")
+        season = entry.get("season")
+        # One poison tournament must not starve its siblings — the isolation
+        # property the register sentinel already holds itself to.
+        try:
+            register = load_register(slug, season)
+            if register is None:
+                stats["by_tournament"][slug] = {"error": "NO_REGISTER"}
+                logger.error("matchup linker: no readable register for %s", slug)
+                continue
+
+            async with get_task_session() as session:
+                candidates = await _load_candidates(
+                    session, tuple(entry.get("kalshi_series") or ())
+                )
+
+            outcome = resolve_matchup_links(register, candidates, now=now)
+            counters = outcome["counters"]
+            links = outcome["links"]
+
+            # A resolver that resolved nothing must not read like one that had
+            # nothing to do (gotcha #53). Both numbers are always reported.
+            published = await _write_links(
+                slug,
+                {
+                    "tournament": slug,
+                    "season": season,
+                    "generated_at": now.isoformat(),
+                    "candidates": len(candidates),
+                    "counters": counters,
+                    "links": links,
+                },
+            )
+
+            stats["tournaments"] += 1
+            stats["needy"] += counters.get("needy", 0)
+            stats["resolved"] += counters.get("resolved", 0)
+            stats["published"] += len(links)
+            stats["written"] += 1 if published else 0
+            for code in REFUSAL_CODES:
+                stats[code] += counters.get(code, 0)
+            stats["by_tournament"][slug] = {
+                "candidates": len(candidates),
+                "written": published,
+                **counters,
+            }
+
+            if counters.get("needy") and not counters.get("resolved"):
+                logger.warning(
+                    "matchup linker: %s has %d fixtures with no pinned market "
+                    "and resolved NONE of them from %d candidates — refusals %s",
+                    slug, counters["needy"], len(candidates),
+                    {c: counters.get(c, 0) for c in REFUSAL_CODES},
+                )
+            elif counters.get("resolved"):
+                logger.info(
+                    "matchup linker: %s resolved %d/%d unpinned fixtures",
+                    slug, counters["resolved"], counters["needy"],
+                )
+        except Exception as exc:  # noqa: BLE001 — isolation, per tournament
+            logger.exception("matchup linker failed for %s: %s", slug, exc)
+            stats["by_tournament"][slug] = {"error": type(exc).__name__}
+
+    stats["duration_s"] = round(_time.monotonic() - started, 2)
+    return stats
+
+
+async def read_links(slug: str) -> dict[str, Any]:
+    """What the route reads. A cold or dead cache yields no links, never an error.
+
+    An absent overlay is not a failure state: it returns the page to exactly the
+    register's own committed truth, which is where it was before this task
+    existed.
+    """
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        raw = await get_async_redis_client().get(f"{LINKS_PREFIX}{slug}")
+        if raw:
+            payload = json.loads(raw)
+            if isinstance(payload, dict) and isinstance(payload.get("links"), dict):
+                return payload
+    except Exception as exc:  # noqa: BLE001 — an overlay is never a gate
+        logger.warning("tournament link read failed for %s: %s", slug, exc)
+    return {"links": {}}
+
+
+__all__ = [
+    "LINKS_PREFIX",
+    "LINKS_TTL_SECONDS",
+    "MAX_CANDIDATE_MARKETS",
+    "WATCHED",
+    "_link_tournament_matchups",
+    "apply_resolved_links",
+    "read_links",
+]

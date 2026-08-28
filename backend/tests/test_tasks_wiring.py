@@ -302,6 +302,7 @@ class TestBeatScheduleCompleteness:
         # UX-P139 item 9 — ESPN tennis results into Redis, so the hub route
         # never makes a third-party call inside a GET.
         "sync-tournament-results",
+        "link-tournament-matchups",
         "horizon-sentinel-daily",
         "settled-concept-sentinel-daily",
         "board-sentinel-daily",
