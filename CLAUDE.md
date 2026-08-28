@@ -32,6 +32,22 @@ So:
 
 The LANE ROLES paragraph is Alex's wording and is the operative text; `docs/rulings/134-build-lanes-build-measurement-is-its-own-lane.md` carries the reasoning and the binds.
 
+**QUEUE LAW (Alex 2026-08-28) — a queue names its PILLAR and its SHIP.** The four pillars —
+**MATCHING · DISCOVER · FORMATTING · TRUTH** — are the constitution (`docs/PRODUCT-BRAIN.md`,
+"THE FOUR PILLARS") and are supreme over every codebase, architecture and UX decision. Every queue
+header carries both: the pillar it serves, and the user-visible ship it delivers. Neither substitutes
+for the other — a pillar with no ship is a mission statement, a ship with no pillar is a task — and a
+queue that cannot name both does not get run.
+
+**THE RIDER RULE.** Architecture work is permitted ONLY as the substrate of a named user-visible
+ship that is *already queued*. It rides that ship; it is never the cargo. Canonical example: the
+US Open register — identity architecture built FOR a page a person opens, not a register built
+first and pointed at a page later. **Architecture-only programs are forbidden**, however good the
+architecture, because the thing being deferred is the only thing anyone outside this repo can see.
+Alex's constraint, verbatim: *"I don't want to spend several more months creating beautiful
+architecture while simultaneously being embarrassed that I still don't have a product to show
+anyone."*
+
 Everything below is how to do the work. This section is what the work is for.
 
 ---
