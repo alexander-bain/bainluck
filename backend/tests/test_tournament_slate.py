@@ -29,6 +29,7 @@ from app.utils.tournament_slate import (
     MAX_PAIR_DEVIATION,
     build_bracket,
     build_props,
+    build_results,
     build_slate,
     normalize_pair,
 )
@@ -408,7 +409,7 @@ def test_the_committed_register_produces_a_real_slate():
         side["outcome_id"]
         for matchup in register["matchups"]
         for block in matchup["sources"]
-        for side in block["sides"].values()
+        for side in (block.get("sides") or {}).values()
     }
     prices = {
         oid: {"probability": 0.5, "opening_probability": 0.5, "observed_at": generated}
@@ -416,9 +417,23 @@ def test_the_committed_register_produces_a_real_slate():
     }
     slate = build_slate(register, prices=prices, now=generated)
 
+    # EVERY registered matchup renders, priced or not (UX-P142). It used to be
+    # every matchup because every matchup was priced; the released main draw
+    # added 96 that are not, and the count holding is the ship — a fixture is a
+    # fact even when nobody has quoted it.
     assert slate["count"] == len(register["matchups"]) > 0
     assert slate["dropped"] == {}
-    assert slate["incoherent"] == 0
+
+    unpriced = [row for row in slate["matches"] if row["priced"] is False]
+    assert len(unpriced) >= 90
+    # `incoherent` counts rows with no trustworthy split. Every one of them is
+    # an unpriced fixture and none is a disagreement between two quotes — which
+    # is the invariant the old `== 0` was standing in for.
+    assert slate["incoherent"] == len(unpriced)
+    for row in unpriced:
+        assert row["price_state"] == "unpriced"
+        assert all(side["probability"] is None for side in row["sides"])
+
     for row in slate["matches"]:
         assert len(row["sides"]) == 2
         for side in row["sides"]:
@@ -759,10 +774,59 @@ def test_the_committed_props_each_answer_their_own_question():
     """On the shipped file: every curated prop names exactly one answer."""
     register = load_register("us-open", "2026")
     props = register.get("props") or []
-    assert len(props) >= 4, "the props population pass has not run"
+    assert props, "the props population pass has not run"
     for prop in props:
         answers = [o for o in prop["outcomes"] if o.get("is_answer")]
         assert len(answers) == 1, f"{prop['key']} has {len(answers)} answers"
+
+
+def test_every_prop_removed_from_the_register_says_why_it_went():
+    """A shrinking props list is either curation or an accident, and the file
+    has to say which (UX-P139, Alex's item 11).
+
+    This replaces a bare ``len(props) >= 4`` floor.  That floor was written in
+    UX-P135 as a "did the population pass actually run" sentinel when eleven
+    props were committed, and it did its job.  But UX-P139 legitimately removes
+    nine of them — eight advance-to-round questions became grid cells, and
+    ``alcaraz-second-major`` was the duplicate template Alex named — so the
+    floor now fails on CORRECT curation, and the only ways to satisfy it are to
+    lower the number (a guard that guards nothing) or to re-add markets the page
+    should not show.
+
+    The property that actually matters is not *how many* props survive but that
+    none left SILENTLY.  So every key present in a prior version and absent now
+    must appear in ``props_declined`` with a reason.  A future pass that quietly
+    drops a card still fails; a pass that curates deliberately and writes down
+    why does not.
+    """
+    import json
+    import subprocess
+    from pathlib import Path as _Path
+
+    register = load_register("us-open", "2026")
+    declined = register.get("props_declined") or {}
+    current = {p["key"] for p in register.get("props") or []}
+
+    root = _Path(__file__).resolve().parents[2]
+    committed = subprocess.run(
+        ["git", "-C", str(root), "show",
+         "HEAD:backend/data/tournament_registers/us-open-2026.json"],
+        capture_output=True, text=True,
+    )
+    if committed.returncode != 0:  # pragma: no cover — no git in the sandbox
+        pytest.skip("register history unavailable")
+
+    previous = {p["key"] for p in json.loads(committed.stdout).get("props") or []}
+    vanished = previous - current - set(declined)
+    assert not vanished, (
+        f"props removed with no reason recorded: {sorted(vanished)}. "
+        "Add each to `props_declined` saying why, or restore it."
+    )
+    # And a reason is a sentence, not a placeholder.
+    for key, reason in declined.items():
+        assert isinstance(reason, str) and len(reason) > 20, (
+            f"props_declined[{key}] does not explain anything"
+        )
 
 
 # ── The draw ingest + fixture swap (UX-P134, item 4) ─────────────────────────
@@ -961,10 +1025,27 @@ def test_the_latch_cannot_be_un_latched_by_a_later_ingest(tmp_path):
 class TestTheFixtureSwap:
     """The bracket must come from the register, so 08-28 is a data change."""
 
-    def test_the_bracket_is_empty_before_the_ceremony(self):
+    def test_the_bracket_is_empty_because_we_hold_NO_SLOTS(self):
+        """⬅️ UX-P142 changed this test's REASON, not its expectation.
+
+        It read "empty before the ceremony" and asserted the latch was down.
+        The ceremony happened on 2026-08-27 and the latch is up; the bracket is
+        still `[]`, and now for the reason that matters:
+
+        ESPN publishes the pairings and NOT the draw-sheet position, so
+        `ingest_espn_draw.py` writes matchups and refuses to write `draw_slot`.
+        Inventing positions from ESPN's list order would fabricate the whole
+        second round while rendering exactly like the first. The fixtures reach
+        the page through the match list instead.
+
+        The sibling test below is the one that guards the LATCH, by handing
+        this function slots with the latch down.
+        """
         register = load_register("us-open", "2026")
-        assert register["draw_released"] is False
-        assert build_bracket(register, prices={}, draw="mens-singles") == []
+        assert register["draw_released"] is True
+        assert all(p.get("draw_slot") is None for p in register["players"])
+        for draw in ("mens-singles", "womens-singles"):
+            assert build_bracket(register, prices={}, draw=draw) == []
 
     def test_the_latch_alone_suppresses_the_bracket_even_with_slots_present(self):
         """The guard above passes trivially — the committed register carries no
@@ -1016,3 +1097,119 @@ def test_a_curated_answer_missing_from_the_market_refuses_the_write(tmp_path):
     assert "REFUSED" in result.stderr
     assert "is not an outcome of this market" in result.stderr
     assert out is None, "a refused population pass must write nothing"
+
+
+# ---------------------------------------------------------------------------
+# build_results — decided matches with their score (UX-P139, Alex's item 9)
+# ---------------------------------------------------------------------------
+
+def _results_register():
+    return {
+        "schema_version": "tournament-register/v1",
+        "tournament": "us-open",
+        "season": "2026",
+        "version": 1,
+        "generated_at": NOW.isoformat(),
+        "draw_released": False,
+        "players": [
+            {
+                "entity_key": "jacob-fearnley",
+                "display_name": "Jacob Fearnley",
+                "draw": "mens-singles",
+                "role": "participant",
+                "seed": None,
+                "sources": [],
+            },
+            {
+                "entity_key": "roberto-carballes-baena",
+                "display_name": "Roberto Carballes Baena",
+                "draw": "mens-singles",
+                "role": "participant",
+                "seed": None,
+                "sources": [],
+            },
+        ],
+        "matchups": [],
+    }
+
+
+def _espn(**overrides):
+    found = {
+        "score": "7-6, 6-3",
+        "winner_name": "Jacob Fearnley",
+        "winner_normalized": "jacobfearnley",
+        "players": ["Roberto Carballes Baena", "Jacob Fearnley"],
+        "espn_competition_id": "184607",
+        "espn_round": "Qualifying 1st Round",
+        "completed_at": "2026-08-24T15:05Z",
+    }
+    found.update(overrides)
+    return {
+        "draws": {"mens-singles": {"carballesbaena|jacobfearnley": found}},
+        "stats": {"final": 199, "scored": 181},
+        "errors": [],
+    }
+
+
+def test_a_result_attaches_when_both_players_are_registered():
+    payload = build_results(_results_register(), results=_espn())
+    assert payload["count"] == 1
+    [row] = payload["matches"]
+    assert row["score"] == "7-6, 6-3"
+    assert row["winner_entity_key"] == "jacob-fearnley"
+    assert [p["is_winner"] for p in row["players"]].count(True) == 1
+    assert row["source"] == "espn"
+
+
+def test_the_join_is_the_PAIR_and_not_the_matchup():
+    """The correction that made this section exist at all.
+
+    ``build_slate`` retires a matchup the moment it starts, so by the time a
+    match has a result the register no longer carries it. Joining on matchups
+    produced 0 results against 199 finished ESPN competitions — a section
+    structurally guaranteed to be empty.
+    """
+    register = _results_register()
+    assert register["matchups"] == []
+    assert build_results(register, results=_espn())["count"] == 1
+
+
+def test_a_result_naming_one_unregistered_player_is_counted_and_dropped():
+    register = _results_register()
+    register["players"] = register["players"][:1]
+    payload = build_results(register, results=_espn())
+    assert payload["count"] == 0
+    assert payload["unregistered_pairs"] == 1
+
+
+def test_a_winner_who_is_neither_player_is_never_attached():
+    """A score under the wrong two names looks completely plausible."""
+    payload = build_results(
+        _results_register(),
+        results=_espn(winner_name="Somebody Else", winner_normalized="somebodyelse"),
+    )
+    assert payload["count"] == 0
+    assert payload["winner_not_registered"] == 1
+
+
+def test_a_retirement_carries_the_outcome_with_no_score():
+    payload = build_results(_results_register(), results=_espn(score=None))
+    [row] = payload["matches"]
+    assert row["score"] is None
+    assert row["winner_entity_key"] == "jacob-fearnley"
+
+
+def test_the_source_error_travels_so_an_empty_section_can_say_why():
+    results = _espn()
+    results["errors"] = ["atp: timeout"]
+    results["draws"] = {}
+    payload = build_results(_results_register(), results=results)
+    assert payload["count"] == 0
+    assert payload["source_errors"] == ["atp: timeout"]
+
+
+def test_no_results_at_all_is_an_empty_section_not_a_crash():
+    payload = build_results(_results_register(), results={})
+    assert payload["count"] == 0
+    assert payload["source_competitions"] == 0
+

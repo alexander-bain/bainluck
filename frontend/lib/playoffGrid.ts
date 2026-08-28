@@ -1,398 +1,314 @@
 /**
- * THE PLAYOFF GRID — players × rounds, the chance of reaching each.
+ * THE PLAYOFF GRID — players × rounds, read from the server, computed nowhere.
  *
- * UX-P138, Alex's STRUCTURAL RULING 4: "Bracket tab = the PLAYOFF GRID —
- * players × rounds with the probability of reaching each, exactly like the
- * league playoff tables." Adopted. UX-P136 already measured why the tree
- * cannot be the answer on a phone (a 128 draw is ~1,360px wide and ~3,450px
- * tall in its first column alone at a 390px viewport), and UX-P137's answer —
- * one round at a time — turned the tab into a second match list. Ruling 4
- * removes the duplicate and gives the tab the one question a tree is actually
- * read for: **how far does this player get.**
+ * ═══ WHAT UX-P139 CHANGED, AND WHY IT IS A REWRITE ═══
  *
- * ALEX'S RULING 8 folds into this one: the advance-to-round questions ("Does
- * Gauff reach the semifinals?") are NOT props. They are cells. They were being
- * rendered as eight near-identical cards in a section reserved for interesting
- * questions, which is both the wrong home and the "repeating template" the
- * same ruling forbids. Here each one is a number in a column, which is what it
- * always was.
+ * UX-P138's grid assembled itself HERE, in the browser, from three unrelated
+ * payload sections: the match list for the next round, the curated props for
+ * the middle, the board for the title. It refused to compute — that part was
+ * right — but its coverage was whatever those three happened to contain, so
+ * the middle was holes. Alex read a row with a quarter-final number, a title
+ * number, and nothing between them, and named it correctly:
  *
- * ═══ THE ONE RULE THIS FILE IS BUILT AROUND: NO CELL IS EVER COMPUTED. ═══
+ *     "GRID GAPS ARE A DEALBREAKER ... a blank cell, an improperly blended
+ *     cell, or a cell populated from the WRONG future is a linkage defect — no
+ *     excuse, no interpolation. The derived-value fallback is retired: a cell
+ *     whose direct markets are not linked renders as an ALARM STATE naming the
+ *     missing linkage ... The register carries per-player per-round market IDs
+ *     from BOTH sources; the grid reads only the register."
  *
- * Every number in this grid is a price somebody quoted for exactly the
- * question its column asks. Nothing is multiplied, chained, or simulated.
- * That constraint is not fastidiousness — a grid of P(reach round N) is
- * *trivial* to fill by walking the draw and multiplying match odds, it would
- * look completely plausible, it would be dense where this one is sparse, and
- * every number in it would be a model output rendered in the type this app
- * reserves for a market price. The charter's reliability doctrine calls that
- * class by name: a projection that looks exactly like a result.
+ * "The grid reads only the register" is not something a client can promise
+ * while stitching three sections together, so the build moved to the server —
+ * `backend/app/utils/tournament_grid.py`, which walks `register.reaches` and
+ * nothing else. This module is now a TYPED READER plus the display rules, and
+ * it holds no cell-resolution logic at all. That absence is the feature: there
+ * is no code path here that could put a number in a cell.
  *
- * So there are exactly three sources, and each answers its column literally:
+ * ═══ WHAT THIS FILE STILL DECIDES ═══
  *
- *   1. **The next round** — the player's own undecided match price. If the
- *      market says Gauff wins today's match at 78%, then Gauff reaches the
- *      next round at 78%. Same question, same market, no arithmetic. This is
- *      the dense column.
- *   2. **A curated round** — the register's "Does <player> reach the <round>?"
- *      market, priced. Eight of these exist today across both draws. This is
- *      the sparse middle.
- *   3. **The title** — the championship board's own number, the same one the
- *      board and the chart print. Dense.
- *
- * Anything else is a hole, and a hole prints as a hole.
+ * How wide the grid is (it scrolls rather than dropping a column — ruling 5),
+ * what each state looks like in words, and how the two evals are worded for a
+ * reader. Nothing numeric.
  */
 
-import { ROUND_NAMES, reachColumnLabel, type RoundName } from "./bracket";
-import { advanceMarketsForRound } from "./advanceToStage";
-import type { MatchListEntry, MatchRoundKey } from "./matchList";
-import type { PropMarket } from "./tournamentProps";
-import type { TournamentBoardData } from "./tournament";
+/** The five cell states. Mirrors `tournament_grid.py`; there is no sixth. */
+export type GridCellState =
+  | "live"
+  | "stale"
+  | "dark"
+  | "settled"
+  | "no_market"
+  /** ALARM: the register pins a market for this cell and it did not price. */
+  | "unlinked"
+  /** ALARM: no cell registered for this player × round. Nobody censused it. */
+  | "unregistered";
 
-/**
- * ALEX'S RULING 3, applied. "Priced to get there" is gambling vocabulary —
- * *priced* is a trading verb and *get there* is a bet's payoff condition. This
- * is the probability sentence for the same fact.
- *
- * Runners-up considered and rejected, so the choice is arguable rather than
- * asserted: "Odds of reaching" (odds is the exact word the site's own
- * no-price-format rule exists to avoid), "How far they get" (a claim about the
- * future stated as fact), "Progression" (accurate, and jargon).
- */
-export const GRID_SECTION_LABEL = "Chance of reaching";
+import type { PlayerImage } from "./slate";
 
-/**
- * The title column is a DIFFERENT QUESTION and gets a different word.
- *
- * "Reach the final" and "win the title" are two markets, and one of them is
- * strictly harder. A grid whose last column silently switched from reaching to
- * winning under a shared header would be the exact defect UX-P137's ruling 2
- * was issued about, re-committed one tab over.
- */
-export const GRID_TITLE_COLUMN_LABEL = "To win the title";
-
-/**
- * How many reach columns fit a 390px phone beside the name.
- *
- * Measured against the layout rather than chosen: 390 − 32px page padding
- * = 358; the name column needs ~118px before a real surname truncates
- * ("Sørensen" with a seed badge); each numeric column needs 46px for `100%` in
- * tabular figures with breathing room. 118 + 4×46 = 302, plus gaps. Four
- * numeric columns fit and five do not. The last is always the title, so three
- * reach columns is the ceiling.
- *
- * THE CAP IS NEVER SILENT. `buildPlayoffGrid` reports `droppedColumns`, and
- * the component says how many rounds it is not showing. A grid that quietly
- * hid the semi-finals would read as "nobody prices the semi-finals".
- */
-export const GRID_MAX_REACH_COLUMNS = 3;
-
-export type GridCellState = "priced" | "unpriced" | "reached" | "out";
+export interface GridCellSource {
+  source: string;
+  probability?: number | null;
+  age_hours?: number | null;
+  price_state?: string;
+  market_external_id?: string | null;
+  state?: string;
+}
 
 export interface GridCell {
-  probability: number | null;
-  isLive: boolean;
   state: GridCellState;
-  /** Which of the three sources filled it — for the legend and for the guard. */
-  origin: "match" | "curated" | "board" | null;
+  probability: number | null;
+  probability_is_live: boolean;
+  sources: GridCellSource[];
+  source_count: number;
+  observed_at: string | null;
+  age_hours: number | null;
+  blend_rule: string | null;
+  divergent: boolean;
+  /** What is wrong / what is absent, in words. Always set on a failure state. */
+  note: string | null;
+  /** When both sources were last asked about this cell. */
+  censused_at: string | null;
+  is_alarm: boolean;
+  freshest_observed_at?: string | null;
+  partially_unlinked?: boolean;
+}
+
+export interface GridColumn {
+  key: string;
+  /** "SF" — the header a phone can fit. */
+  short_label: string;
+  /** "To reach the semi-finals" — the sentence, for `title=` and sr-only. */
+  long_label: string;
+  kind: "reach" | "title";
+  /** How many players the round admits — the sum check's denominator. */
+  slots: number | null;
 }
 
 export interface GridRow {
   entityKey: string;
   displayName: string;
   seed: number | null;
-  rank: number;
+  /** Register-pinned face + flag (Alex's ruling 8). Read, never resolved. */
+  image: PlayerImage | null;
+  rank: number | null;
+  /** On the championship board, so the title column is answerable for them. */
+  onBoard: boolean;
   cells: Record<string, GridCell>;
 }
 
-export interface GridColumn {
-  key: MatchRoundKey | "title";
-  /** "QF" — the header a phone can fit. */
-  shortLabel: string;
-  /** "To reach the quarter-finals" — the sentence, for `title=` and sr-only. */
-  longLabel: string;
-  kind: "reach" | "title";
+export interface GridColumnSum {
+  key: string;
+  short_label: string;
+  sum: number;
+  expected: number | null;
+  ratio: number | null;
+  priced_rows: number;
+  total_rows: number;
+  verdict: "pass" | "over" | "under" | "unchecked";
+}
+
+export interface GridMonotonicityViolation {
+  entity_key: string;
+  display_name: string;
+  earlier: string;
+  later: string;
+  earlier_probability: number;
+  later_probability: number;
+}
+
+/** The server's shape, verbatim. */
+export interface PlayoffGridPayload {
+  draw: string;
+  label: string;
+  columns: GridColumn[];
+  rows: {
+    entity_key: string;
+    display_name: string;
+    seed: number | null;
+    image?: PlayerImage | null;
+    rank: number | null;
+    on_board: boolean;
+    cells: Record<string, GridCell>;
+  }[];
+  counts: Record<string, number>;
+  total_cells: number;
+  priced_cells: number;
+  no_market_cells: number;
+  alarm_cells: number;
+  column_sums: GridColumnSum[];
+  monotonicity_violations: GridMonotonicityViolation[];
 }
 
 export interface PlayoffGrid {
+  draw: string;
+  label: string;
   columns: GridColumn[];
   rows: GridRow[];
-  /** How many cells actually carry a number — the honesty counter. */
-  pricedCells: number;
+  counts: Record<string, number>;
   totalCells: number;
-  /** Reach rounds we hold prices for but could not fit. Never silent. */
-  droppedColumns: GridColumn[];
-}
-
-/** The round a player reaches by WINNING a match in this one. `null` after the final. */
-export function roundAfter(round: MatchRoundKey): RoundName | null {
-  if (round === "qualifying") return "R128";
-  const index = ROUND_NAMES.indexOf(round);
-  if (index < 0 || index === ROUND_NAMES.length - 1) return null;
-  return ROUND_NAMES[index + 1];
+  pricedCells: number;
+  noMarketCells: number;
+  alarmCells: number;
+  columnSums: GridColumnSum[];
+  monotonicityViolations: GridMonotonicityViolation[];
 }
 
 /**
- * "To reach the quarter-finals" — the column's full sentence (UX-P137, ruling
- * 2). Re-exported from `bracket.ts` rather than restated: two modules owning
- * one column's wording is how the two surfaces end up disagreeing about what a
- * number means, which is the defect ruling 2 was issued about.
+ * ALEX'S RULING 3, applied. "Priced to get there" is gambling vocabulary —
+ * *priced* is a trading verb and *get there* is a bet's payoff condition. This
+ * is the probability sentence for the same fact.
  */
-export { reachColumnLabel };
-
-const SHORT_LABELS: Record<RoundName, string> = {
-  R128: "R128",
-  R64: "R64",
-  R32: "R32",
-  R16: "R16",
-  QF: "QF",
-  SF: "SF",
-  F: "Final",
-};
-
-export interface NextRoundOdd {
-  round: RoundName;
-  probability: number;
-  isLive: boolean;
-}
+export const GRID_SECTION_LABEL = "Chance of reaching";
 
 /**
- * "Win your current match" = "reach the next round", read straight off the
- * match list.
+ * How wide a numeric column is, and what a name needs beside it.
  *
- * The only join that could go wrong here is the round arithmetic, so it is one
- * lookup in a fixed array rather than a computation: winning in the Round of
- * 64 reaches the Round of 32, and `roundAfter` has its own test in both
- * directions. A DECIDED match contributes nothing — its price has collapsed to
- * 1 or 0 and "100% to reach the next round" is a result wearing a forecast's
- * clothes.
+ * Measured against the layout rather than chosen: `100%` in tabular figures
+ * with breathing room needs 46px, and a real surname with a seed badge
+ * ("Auger-Aliassime [11]") needs ~118px before it truncates.
  */
-export function nextRoundOdds(entries: MatchListEntry[]): Record<string, NextRoundOdd> {
-  const out: Record<string, NextRoundOdd> = {};
-  for (const entry of entries) {
-    if (entry.decided || !entry.coherent) continue;
-    const round = roundAfter(entry.round);
-    if (round === null) continue;
-    for (const side of entry.sides) {
-      if (side.entityKey === null) continue;
-      if (side.matchProbability === null || !Number.isFinite(side.matchProbability)) continue;
-      const existing = out[side.entityKey];
-      // A player with two undecided matches in the feed is a data fault, not a
-      // schedule. Keep the EARLIER round: it is the hurdle they face first, and
-      // a grid that skipped it would claim a round had been reached.
-      if (existing && ROUND_NAMES.indexOf(existing.round) <= ROUND_NAMES.indexOf(round)) {
-        continue;
-      }
-      out[side.entityKey] = {
-        round,
-        probability: side.matchProbability,
-        isLive: entry.isLive,
-      };
-    }
-  }
-  return out;
-}
+export const GRID_NAME_WIDTH_PX = 118;
+export const GRID_COLUMN_WIDTH_PX = 46;
 
 /**
- * Rounds a player has already reached, and the round they went out in.
+ * ALEX'S RULING 5: "Wide rounds may scroll horizontally — sparingly, better
+ * than excluding data."
  *
- * Empty on real data — we hold no results (see `SlateMatch.score`). The seam
- * exists so a reached cell can print a tick instead of a stale forecast the
- * day results land; until then every cell is a forecast or a hole, and the
- * grid says which.
+ * UX-P138 capped the grid at three reach columns and reported the drop. That
+ * cap is what produced the defect in ruling 4 — the second-week grid "jumped
+ * QF→title" because SF was the fourth column and did not fit. The ruling
+ * overturns the trade: a column is never dropped, and a grid wider than the
+ * viewport scrolls.
+ *
+ * `sparingly` is honoured by the arithmetic rather than by restraint: at five
+ * columns (R16, QF, SF, Final, Title) the grid is 118 + 5×46 = 348px inside a
+ * 358px content box, so today's grid does NOT scroll. Scrolling begins at six,
+ * which is a draw whose sources price more rounds than this one's do.
  */
-export interface GridProgress {
-  reached: Record<string, RoundName[]>;
-  outAt: Record<string, RoundName>;
+export function gridScrolls(columnCount: number, contentWidthPx = 358): boolean {
+  return gridWidthPx(columnCount) > contentWidthPx;
 }
 
-export function gridProgressFromMatches(entries: MatchListEntry[]): GridProgress {
-  const reached: Record<string, RoundName[]> = {};
-  const outAt: Record<string, RoundName> = {};
-  for (const entry of entries) {
-    if (!entry.decided) continue;
-    const next = roundAfter(entry.round);
-    for (const side of entry.sides) {
-      if (side.entityKey === null) continue;
-      if (side.isWinner) {
-        if (next !== null) {
-          const list = reached[side.entityKey] ?? [];
-          if (!list.includes(next)) list.push(next);
-          reached[side.entityKey] = list;
-        }
-      } else if (entry.round !== "qualifying") {
-        outAt[side.entityKey] = entry.round;
-      }
-    }
-  }
-  return { reached, outAt };
+export function gridWidthPx(columnCount: number): number {
+  return GRID_NAME_WIDTH_PX + columnCount * GRID_COLUMN_WIDTH_PX;
 }
 
-/**
- * The grid.
- *
- * Rows follow the BOARD's order, which is the title ranking, because that is
- * the order every other surface on this page already uses and two rankings of
- * one field is a divergence bug wearing a layout decision. Unpriced board rows
- * are kept: a registered player with no title price may still have a match
- * price today, and dropping them would make the dense column sparse.
- */
-export function buildPlayoffGrid(options: {
-  board: TournamentBoardData | null;
-  propMarkets?: PropMarket[];
-  matches?: MatchListEntry[];
-  draw: string;
-  progress?: GridProgress;
-  maxReachColumns?: number;
-}): PlayoffGrid {
-  const board = options.board;
-  const empty: PlayoffGrid = {
-    columns: [],
-    rows: [],
-    pricedCells: 0,
-    totalCells: 0,
-    droppedColumns: [],
-  };
-  if (!board || board.rows.length === 0) return empty;
-
-  const maxReach = options.maxReachColumns ?? GRID_MAX_REACH_COLUMNS;
-  const matches = options.matches ?? [];
-  const nextOdds = nextRoundOdds(matches);
-  const progress = options.progress ?? gridProgressFromMatches(matches);
-
-  /** (entityKey, round) -> curated advance market price. */
-  const curated = new Map<string, { probability: number; isLive: boolean }>();
-  for (const round of ROUND_NAMES) {
-    for (const entry of advanceMarketsForRound(options.propMarkets ?? [], round, options.draw)) {
-      // `advanceSubject` recovers a SURNAME from the curated question ("Does
-      // Alcaraz reach the semifinals?" -> "Alcaraz"); the board carries full
-      // names. Matching on the board row whose name ends with the subject is
-      // the join, and it is deliberately strict about direction: a subject
-      // must be a suffix of exactly one board name or the cell is dropped. A
-      // curated market attached to the wrong player is worse than one attached
-      // to nobody, because it renders as a confident answer.
-      const subject = entry.displayName.trim().toLowerCase();
-      const candidates = board.rows.filter((row) => {
-        const name = row.display_name.trim().toLowerCase();
-        return name === subject || name.endsWith(` ${subject}`);
-      });
-      if (candidates.length !== 1) continue;
-      curated.set(`${candidates[0].entity_key}|${round}`, {
-        probability: entry.probability,
-        isLive: entry.isLive,
-      });
-    }
-  }
-
-  // Which reach rounds are worth a column: any round some cell can fill.
-  const roundsWithData = ROUND_NAMES.filter((round) => {
-    if (Object.values(nextOdds).some((odd) => odd.round === round)) return true;
-    for (const row of board.rows) {
-      if (curated.has(`${row.entity_key}|${round}`)) return true;
-      if ((progress.reached[row.entity_key] ?? []).includes(round)) return true;
-    }
-    return false;
-  });
-
-  const reachColumns: GridColumn[] = roundsWithData.map((round) => ({
-    key: round,
-    shortLabel: SHORT_LABELS[round],
-    longLabel: reachColumnLabel(round),
-    kind: "reach" as const,
-  }));
-
-  const kept = reachColumns.slice(0, maxReach);
-  const droppedColumns = reachColumns.slice(maxReach);
-
-  const titleColumn: GridColumn = {
-    key: "title",
-    shortLabel: "Title",
-    longLabel: GRID_TITLE_COLUMN_LABEL,
-    kind: "title",
-  };
-  const columns = [...kept, titleColumn];
-
-  let pricedCells = 0;
-  const rows: GridRow[] = board.rows.map((row) => {
-    const cells: Record<string, GridCell> = {};
-    const isOut = progress.outAt[row.entity_key] !== undefined;
-
-    for (const column of kept) {
-      const round = column.key as RoundName;
-      if ((progress.reached[row.entity_key] ?? []).includes(round)) {
-        cells[column.key] = {
-          probability: null,
-          isLive: false,
-          state: "reached",
-          origin: null,
-        };
-        continue;
-      }
-      if (isOut) {
-        cells[column.key] = { probability: null, isLive: false, state: "out", origin: null };
-        continue;
-      }
-      const own = nextOdds[row.entity_key];
-      if (own && own.round === round) {
-        cells[column.key] = {
-          probability: own.probability,
-          isLive: own.isLive,
-          state: "priced",
-          origin: "match",
-        };
-        pricedCells += 1;
-        continue;
-      }
-      const hit = curated.get(`${row.entity_key}|${round}`);
-      if (hit) {
-        cells[column.key] = {
-          probability: hit.probability,
-          isLive: hit.isLive,
-          state: "priced",
-          origin: "curated",
-        };
-        pricedCells += 1;
-        continue;
-      }
-      cells[column.key] = { probability: null, isLive: false, state: "unpriced", origin: null };
-    }
-
-    if (isOut) {
-      cells.title = { probability: null, isLive: false, state: "out", origin: null };
-    } else if (row.probability !== null && Number.isFinite(row.probability)) {
-      cells.title = {
-        probability: row.probability,
-        isLive: row.probability_is_live === true,
-        state: "priced",
-        origin: "board",
-      };
-      pricedCells += 1;
-    } else {
-      cells.title = { probability: null, isLive: false, state: "unpriced", origin: null };
-    }
-
-    return {
+/** The server payload, in this module's own casing. No logic, no defaults. */
+export function readPlayoffGrid(payload: PlayoffGridPayload | null | undefined): PlayoffGrid | null {
+  if (!payload) return null;
+  return {
+    draw: payload.draw,
+    label: payload.label,
+    columns: payload.columns ?? [],
+    rows: (payload.rows ?? []).map((row) => ({
       entityKey: row.entity_key,
       displayName: row.display_name,
-      seed: row.seed,
-      rank: row.rank,
-      cells,
-    };
-  });
-
-  return {
-    columns,
-    rows,
-    pricedCells,
-    totalCells: rows.length * columns.length,
-    droppedColumns,
+      seed: row.seed ?? null,
+      image: row.image ?? null,
+      rank: row.rank ?? null,
+      onBoard: row.on_board !== false,
+      cells: row.cells ?? {},
+    })),
+    counts: payload.counts ?? {},
+    totalCells: payload.total_cells ?? 0,
+    pricedCells: payload.priced_cells ?? 0,
+    noMarketCells: payload.no_market_cells ?? 0,
+    alarmCells: payload.alarm_cells ?? 0,
+    columnSums: payload.column_sums ?? [],
+    monotonicityViolations: payload.monotonicity_violations ?? [],
   };
 }
 
-/** `58%`, or `null` — the caller renders the hole, so it can say what a hole is. */
+/**
+ * What a cell PRINTS, or `null` when it prints a word instead of a number.
+ *
+ * There is deliberately no "·" case any more. UX-P138 printed a middle dot for
+ * a hole and explained it in a legend; a hole is now one of four named,
+ * differently-styled states, each of which says what it is in the cell itself.
+ */
 export function formatGridCell(cell: GridCell): string | null {
-  if (cell.state === "reached") return "✓";
-  if (cell.state === "out") return "—";
   if (cell.probability === null || !Number.isFinite(cell.probability)) return null;
   return `${Math.round(cell.probability * 100)}%`;
+}
+
+/** The short word a non-numeric cell shows. */
+export function gridCellGlyph(cell: GridCell): string {
+  switch (cell.state) {
+    case "settled":
+      return cell.note === "won" ? "✓" : "—";
+    case "no_market":
+      // NOT a dot and NOT a dash. "No market" is a fact about the world; a
+      // punctuation mark is a fact about the layout, and UX-P137's ruling 2
+      // exists because the reader could not tell them apart.
+      return "no mkt";
+    case "unlinked":
+    case "unregistered":
+      return "!";
+    default:
+      return "—";
+  }
+}
+
+/** The sentence behind the glyph, for `title=` and for screen readers. */
+export function gridCellExplanation(cell: GridCell, columnLabel: string): string {
+  switch (cell.state) {
+    case "live":
+      return `${columnLabel}. Live price.`;
+    case "stale":
+      return `${columnLabel}. Last seen ${formatAge(cell.age_hours)} ago.`;
+    case "dark":
+      return `${columnLabel}. No reading in over two days.`;
+    case "settled":
+      return `${columnLabel}. Settled: ${cell.note ?? "decided"}.`;
+    case "no_market":
+      return `${columnLabel}. ${cell.note ?? "Neither source prices this question."}`;
+    case "unlinked":
+    case "unregistered":
+      return `${columnLabel}. ${cell.note ?? "Market not linked."} This is a fault on our side.`;
+    default:
+      return columnLabel;
+  }
+}
+
+export function formatAge(hours: number | null | undefined): string {
+  if (hours === null || hours === undefined || !Number.isFinite(hours)) return "an unknown time";
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
+  if (hours < 48) return `${Math.round(hours)}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+/**
+ * The sum check, in a sentence a reader can act on (Alex's ruling 4).
+ *
+ * "8 for QF, 4 for SF, 2 for F, 1 for title" is the arithmetic; this is what it
+ * MEANS when it misses, and the two directions mean different things. Under is
+ * usually coverage — the field is bigger than the market prices. Over is the
+ * market disagreeing with arithmetic, which is a real property of thin binaries
+ * and not something the page is entitled to correct.
+ */
+export function columnSumSentence(check: GridColumnSum): string {
+  const target = check.expected ?? 0;
+  const total = check.sum.toFixed(1);
+  // "1 places" is the kind of thing a reader files under "nobody looked at
+  // this", which is the opposite of what a check is for.
+  const places = `${target} place${target === 1 ? "" : "s"}`;
+  switch (check.verdict) {
+    case "pass":
+      return `${check.short_label} adds to ${total} against ${places} — as it should.`;
+    case "under":
+      return `${check.short_label} adds to ${total}, under the ${places} available: ${
+        check.total_rows - check.priced_rows
+      } of ${check.total_rows} players have no market for it.`;
+    case "over":
+      return `${check.short_label} adds to ${total} against ${places}. The market is pricing more than can happen; we show what it quotes rather than scaling it down.`;
+    default:
+      return `${check.short_label} has no priced rows to check.`;
+  }
+}
+
+export function gridEvalVerdict(grid: PlayoffGrid): "green" | "red" {
+  // ALARMS ARE RED, and nothing else is. A column that does not sum and a
+  // monotonicity break are the MARKET's incoherence, reported; an alarm is
+  // OURS, and Alex's amendment says so in as many words.
+  return grid.alarmCells > 0 ? "red" : "green";
 }

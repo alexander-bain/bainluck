@@ -2,6 +2,7 @@
 
 import React from "react";
 
+import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   defaultMatchRound,
@@ -144,8 +145,17 @@ function SideLine({
       data-won={side.isWinner ? "true" : "false"}
     >
       <span className="flex min-w-0 items-baseline">
+        {/* RULING 8. `self-center` because the row is a baseline flex — a
+            26px circle on a text baseline sits a third of its height below
+            the line and reads as a bullet, not a portrait. */}
+        <PlayerAvatar
+          name={side.displayName}
+          image={side.image}
+          size={26}
+          dim={entry.decided && !side.isWinner}
+        />
         <span
-          className={`min-w-0 truncate text-[15px] ${
+          className={`ml-2 min-w-0 self-center truncate text-[15px] ${
             favourite || side.isWinner
               ? "font-semibold text-text-primary"
               : "font-normal text-text-secondary"
@@ -164,6 +174,11 @@ function SideLine({
 
       <span className="flex shrink-0 items-baseline gap-2">
         {entry.decided && <OutcomeChip won={side.isWinner} />}
+        {/* NO EM-DASH ON AN UNPRICED ROW (UX-P142). Two "—" in the number
+            column, once per side, on 96 rows, is the em-dash UX-P137's ruling
+            3 deleted: it says "we have nothing" where the truth is "nobody has
+            opened a book on a match four days out". The row's own metadata
+            line already says `No market yet`, once, in words. */}
         {move !== "" && !entry.decided && (
           <span
             className={`text-[11px] tabular-nums ${
@@ -178,14 +193,16 @@ function SideLine({
             {move}
           </span>
         )}
-        <span
-          className={`text-[17px] font-bold tabular-nums tracking-tight ${
-            entry.isLive && !entry.decided ? "text-text-primary" : "text-text-secondary"
-          }`}
-          data-testid="match-probability"
-        >
-          {formatSlateProbability(side.matchProbability)}
-        </span>
+        {entry.priced && (
+          <span
+            className={`text-[17px] font-bold tabular-nums tracking-tight ${
+              entry.isLive && !entry.decided ? "text-text-primary" : "text-text-secondary"
+            }`}
+            data-testid="match-probability"
+          >
+            {formatSlateProbability(side.matchProbability)}
+          </span>
+        )}
       </span>
     </div>
   );
@@ -202,7 +219,10 @@ function MatchRow({
 }) {
   const time = entry.scheduledDate ? formatMatchTime(entry.scheduledDate) : null;
   const hasDetail =
-    entry.broadcast !== null || entry.detailNote !== null || entry.score !== null;
+    entry.broadcast !== null ||
+    entry.detailNote !== null ||
+    entry.score !== null ||
+    entry.eventId !== null;
 
   return (
     <li
@@ -242,7 +262,25 @@ function MatchRow({
           )}
         </div>
 
-        {!entry.coherent ? (
+        {/* UNPRICED IS NOT INCOHERENT (UX-P142).
+            
+            `!entry.coherent` used to be one branch, and it collapsed the row
+            to a single "A vs B" line. That is the right treatment for two
+            quotes that disagree: there is a split and we are refusing to show
+            it, so the two names and a sentence are all the row may say.
+            
+            It is the WRONG treatment for the released main draw. Alex's
+            finding was "the page shows none of the draw", and this line is how
+            it would have stayed shown: 96 fixtures rendered as bare text — no
+            faces, no seeds, no title chip, no structure — because a price rule
+            wrote the layout. Nothing is being withheld on these rows; there is
+            simply no match market yet, and everything else about the fixture
+            is known and worth printing.
+            
+            So an unpriced row renders as a full row with no match number. The
+            `SideLine` prints `—` for a null probability, which is what it has
+            always done. */}
+        {!entry.coherent && entry.priced ? (
           <div data-testid="match-incoherent">
             <div className="text-[15px] font-semibold text-text-primary">
               {entry.sides.map((side) => side.displayName).join(" vs ")}
@@ -303,6 +341,25 @@ function MatchRow({
             <div className="mt-1" data-testid="match-detail-note">
               {entry.detailNote}
             </div>
+          )}
+          {/* ITEM 7 — the click-through to the standard event page.
+              REGISTER-OWNED: `entry.eventId` comes from `matchup.event_id`, so
+              a link is an identity decision made once against the evidence and
+              never a name match at render time. A link to the wrong match is
+              worse than no link.
+              It renders on NO US Open match today — checked 2026-08-26, none
+              of the 66 registered matchups has an `events` row, because the
+              qualifying draw was never ingested as events. The report says so
+              rather than this shipping as a silently-dead affordance. */}
+          {entry.eventId !== null && (
+            <a
+              href={`/events/${entry.eventId}`}
+              className="mt-1.5 inline-block font-semibold text-text-primary underline decoration-dotted underline-offset-2"
+              data-testid="match-event-link"
+              data-event={entry.eventId}
+            >
+              Open the match page
+            </a>
           )}
         </div>
       )}

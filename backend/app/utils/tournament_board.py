@@ -59,6 +59,7 @@ from app.utils.tournament_register import (
     STALE_PRICE_HOURS,
     TournamentRegister,
     check_rendered_rows,
+    player_image,
     player_role,
 )
 
@@ -78,6 +79,11 @@ TREND_DAYS = 30
 DRAW_LABELS: dict[str, str] = {
     "mens-singles": "Men's Singles",
     "womens-singles": "Women's Singles",
+    # Ready and unused (UX-P139, item 12). No doubles market exists at either
+    # source; ESPN already carries all three draws' results under these slugs.
+    "mens-doubles": "Men's Doubles",
+    "womens-doubles": "Women's Doubles",
+    "mixed-doubles": "Mixed Doubles",
 }
 
 
@@ -326,6 +332,7 @@ def build_boards(
                         "display_name": player.get("display_name"),
                         "seed": player.get("seed"),
                         "country": player.get("country"),
+                        "image": player_image(player),
                         "state": settled_result,
                         "probability": None,
                         "probability_is_live": False,
@@ -380,6 +387,7 @@ def build_boards(
                     "display_name": player.get("display_name"),
                     "seed": player.get("seed"),
                     "country": player.get("country"),
+                    "image": player_image(player),
                     "state": "live",
                     "probability": round(blend, 6),
                     # The field the client cannot round past. See module docstring.

@@ -291,6 +291,60 @@ class PolymarketAPIService:
         except httpx.TimeoutException:
             raise
 
+    async def get_markets_by_conditions(
+        self, condition_ids: list[str], *, batch_size: int = 40
+    ) -> list["PolymarketMarket"]:
+        """Fetch specific markets by condition id, in batches (UX-P139).
+
+        WHY THIS EXISTS.  ``/markets?condition_ids=a&condition_ids=b`` is the
+        only Gamma read that is not subject to the offset-2000 pagination cap
+        (gotcha: "Poly creation freeze (Gamma offset cap)"), because it does not
+        paginate at all — it asks for named markets.  The scanning poll rotates
+        a 20-page window over ~2,000 events, so any given event is re-priced
+        only when the cursor happens to land on it.  Measured 2026-08-26: the
+        336 US Open round-advancement markets were last observed 2026-08-25
+        20:21 UTC, 27 hours earlier, while Polymarket snapshots overall were
+        current to the minute.  Those 336 markets are the entire content of the
+        playoff grid.
+
+        A register pins exactly which markets a page renders, so a page can ask
+        for exactly those and never depend on a rotation reaching it.
+
+        Batched because a URL with 336 repeated query parameters is a 414 in
+        waiting; 40 keeps each request comfortably short.  Rate-limit and
+        server errors re-raise (gotcha #36) — a throttled fetch that returned
+        an empty list would read as "these markets are gone".
+        """
+        import httpx
+
+        out: list[PolymarketMarket] = []
+        for start in range(0, len(condition_ids), batch_size):
+            batch = condition_ids[start : start + batch_size]
+            if not batch:
+                continue
+            try:
+                # `limit` is REQUIRED, not decorative: Gamma's default page size
+                # for `/markets` is 20, so a 40-id batch silently returns the
+                # first 20 and the other half reads as "these markets are gone".
+                # Measured 2026-08-26 — the first version of this method lost
+                # half of every batch to exactly that.
+                response = await self.gamma_client.get(
+                    "/markets",
+                    params=[("condition_ids", cid) for cid in batch]
+                    + [("limit", str(len(batch)))],
+                )
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    continue
+                raise
+            payload = response.json()
+            for market_data in payload if isinstance(payload, list) else []:
+                parsed = self._parse_market(market_data)
+                if parsed is not None:
+                    out.append(parsed)
+        return out
+
     async def get_clob_market_by_condition(self, condition_id: str) -> Optional[dict]:
         """Fetch a market from the CLOB API by condition_id, including
         authoritative settlement: the returned ``tokens`` array carries a

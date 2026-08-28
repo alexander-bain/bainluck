@@ -349,6 +349,25 @@ class TestEnforcementScope:
             # snapshots returns `failed`. Terminal comes from
             # `futures_price_refresh._terminal`.
             "futures_price_refresh",
+            # UX-P143, from CERT C-UX-P139-GRID-REGISTER-1 [P2]: the two rails
+            # that keep `/tournaments/{slug}` current. They shipped calling
+            # `_tracked_run` with no `terminal` at all — the exact no-op trap
+            # documented at `polymarket_winners` above — so both classified as
+            # the non-authoritative legacy unknown and read GREEN whatever they
+            # did.
+            #
+            # Their failure is silent BY CONSTRUCTION, which is the argument for
+            # enrolling them rather than a formality: a dead price refresh does
+            # not blank the grid, it lets every number on it age behind whatever
+            # freshness word the gates award; a dead results sync does not show a
+            # wrong score, it shows none. The page looks the same either way, and
+            # this rail was written precisely because the grid had silently gone
+            # 27 hours old once already.
+            #
+            # Terminals come from `_refresh_terminal` / `_results_terminal` in
+            # `app/tasks/tournament_price_refresh.py`, in this same change.
+            "tournament_price_refresh",
+            "tournament_results_sync",
         }
 
     def test_enforced_task_partial_blocks_success(self):

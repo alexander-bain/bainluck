@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import TrendSparkline from "./TrendSparkline";
+import PlayerAvatar from "./PlayerAvatar";
 import ShowMore from "./ShowMore";
 import { COLLAPSED_ROW_COUNT } from "@/lib/contenderChart";
 import { TITLE_COLUMN_LABEL } from "@/lib/bracket";
@@ -49,7 +50,11 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
 
   return (
     <li
-      className="grid grid-cols-[22px_1fr_auto_52px] items-center gap-2.5 border-t border-surface-border px-3.5 py-2.5 first:border-t-0"
+      /* RULING 8 adds a fifth column: rank, PICTURE, name, trend, number.
+         28px + the 10px gap, taken from the name column, which was the only
+         one with slack — the rank, the trend and the 52px number are all at
+         their measured minimum (see GRID_COLUMN_WIDTH_PX's note). */
+      className="grid grid-cols-[22px_28px_1fr_auto_52px] items-center gap-2.5 border-t border-surface-border px-3.5 py-2.5 first:border-t-0"
       data-testid="board-row"
       data-entity={row.entity_key}
       data-rank={row.rank}
@@ -58,6 +63,8 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
       data-mixed-freshness={row.mixed_freshness ? "true" : "false"}
     >
       <span className="text-right text-xs tabular-nums text-text-muted">{row.rank}</span>
+
+      <PlayerAvatar name={row.display_name} image={row.image} size={28} />
 
       <div className="min-w-0">
         <div className="truncate text-[15px] font-semibold text-text-primary">

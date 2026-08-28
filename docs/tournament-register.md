@@ -90,6 +90,63 @@ what makes the slate print player names instead of "Yes 54% / No 47%".
 | `LIVE_PRICE_STALE` / `LIVE_PRICE_NEVER_OBSERVED` | month-old prices presented as today's |
 | `UNREGISTERED_RENDER_ROW` | *a market not in the register does not render* — enforced at the render boundary, not just documented |
 
+### `reaches` — the playoff grid's cell (UX-P139)
+
+Alex's amendment to ruling 3: *"a blank cell, an improperly blended cell, or a cell populated from
+the WRONG future is a linkage defect — no excuse, no interpolation ... The register carries
+per-player per-round market IDs from BOTH sources; the grid reads only the register."*
+
+```jsonc
+"reaches": [{
+  "draw": "mens-singles",
+  "entity_key": "carlos-alcaraz",
+  "round": "SF",                       // one of ROUNDS
+  "sources": [{
+    "source": "polymarket", "kind": "reach",
+    "market_id": 59556735, "outcome_id": 221650932,
+    "market_external_id": "0x0d62…", "outcome_external_id": "0x0d62…_yes",
+    "source_name": "Yes",
+    // THE THREE RESTATEMENTS. Validation asserts each against the cell, so a
+    // reach-QF market wired into the SF cell REFUSES THE REGISTER rather than
+    // rendering a plausible number in the wrong column.
+    "question_round": "SF", "question_draw": "mens-singles",
+    "question_subject": "Carlos Alcaraz",
+    "question": "Will Carlos Alcaraz advance to the Semifinals in Men's Singles at the 2026 US Open?",
+    "status": "live", "price_observed_at": "…",
+    "evidence": {"kind": "advance-ladder-census", "observed_at": "…", "polymarket_event_id": "910171"}
+  }, {
+    // A CENSUSED ABSENCE, not an omission. Both sources get a block; the one
+    // that carries nothing says so, with the date we looked.
+    "source": "kalshi", "kind": "reach", "market_id": null, "outcome_id": null,
+    "status": "missing",
+    "evidence": {"kind": "advance-ladder-census-absent", "observed_at": "…", "note": "…"}
+  }]
+}]
+```
+
+| finding | the failure it names |
+|---|---|
+| `REACH_ROUND_MISMATCH` / `REACH_DRAW_MISMATCH` / `REACH_SUBJECT_MISMATCH` | **wrong-future placement** — a real price, from a real market, under the wrong question |
+| `DUPLICATE_REACH_CELL` / `REACH_IDENTITY_REUSED` | two markets for one cell, or one quote printed under two questions |
+| `REACH_SOURCE_WRONG_KIND` | P(wins the title) rendered in the "reaches the semis" column |
+| `REACH_PLAYER_NOT_REGISTERED` / `REACH_PLAYER_WRONG_DRAW` | a cell for somebody the register does not carry |
+| `REACH_NO_SOURCES` / `REACH_BLOCK_MISSING_QUESTION` | a cell nobody censused, or a block that cannot be checked |
+
+All of them are `STRUCTURAL_FINDINGS`: the register is **rejected**, not served with a warning.
+
+**The census behind it (2026-08-26).** Kalshi publishes **zero** round-advancement futures for this
+tournament — its whole US Open inventory is five markets. Polymarket publishes **336**, in eight
+`To Reach {R16, QF, SF, Final} × {Men's, Women's}` events, covering 44 of 128 men and 40 of 128
+women; verified against Gamma directly, so that is their inventory and not an ingest shortfall.
+Within it, coverage is total: all 84 players carry all four rounds, so **no player has a
+quarter-final number, a title number and a blank between them.** 28 board contenders have no
+ladder at either source; their cells are `no_market`, which is a census result and not an alarm.
+
+**Freshness.** `refresh_registered_tournament_prices` (every 10 min, `background`) asks Gamma for
+exactly the condition ids pinned here — `/markets?condition_ids=…`, which does not paginate and is
+therefore not subject to the offset-2000 cap that leaves the scanning poll reaching a given event
+about once a day. Prices only; it never creates a market and never touches identity.
+
 `classify()` maps findings to `(classification, action, publish)` in strict severity order:
 **invalid → needs_ruling → render_contract_failure → unambiguous_drift → clean**. Structural
 severity is decided by an explicit `STRUCTURAL_FINDINGS` set as well as name prefixes, because
@@ -246,6 +303,104 @@ is a close time, not a start).
 
 `tournament_slate.build_slate` re-applies the same 6h bound at serve time. The register is a
 committed file; the clock is not.
+
+### `image` — the player's face, pinned (UX-P142, Alex's ruling 8)
+
+Ruling 8: *"census ESPN (or other) headshot coverage for both draws first. Enable ONLY if
+coverage is ~complete per draw — half-covered looks worse than none."*
+
+```jsonc
+"image": {
+  "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/.../330px-....jpg",
+  "flag_url": "https://a.espncdn.com/i/teamlogos/countries/500/esp.png",
+  "country": "Spain",
+  // THE VERIFICATION. Without it the register is REFUSED, because a bare-name
+  // lookup that returns the wrong person returns it with a photo and a 200.
+  "verified_subject": true,
+  "subject_title": "Aleksandar Kovacevic (tennis)",
+  "subject_description": "American tennis player (born 1998)",
+  "evidence": {"kind": "player-image-census", "observed_at": "…",
+               "face_source": "wikipedia", "flag_source": "espn",
+               "espn_athlete_id": 4383091, "lookup": {"attempts": [...]}}
+}
+```
+
+| finding | the failure it names |
+|---|---|
+| `PLAYER_IMAGE_NOT_VERIFIED` | **a face nobody checked the subject of** — the wrong-person defect |
+| `PLAYER_IMAGE_BAD_URL` | a host outside `ALLOWED_IMAGE_PREFIXES` reaching an `<img src>` |
+| `PLAYER_IMAGE_WRONG_SHAPE` | a block, or a censused absence, with no evidence |
+
+**The census (2026-08-27), over the 222 named main-draw players.** ESPN headshots
+**FAIL Alex's gate** — 44/110 (40%) men, 31/112 (28%) women, and the 404s are real absences
+(ESPN's athlete endpoint returns `headshot: null` for each). They are not used. Wikipedia
+thumbnails clear it at 90%/95% bare-name and 94%/96% once `(tennis)` disambiguation is tried,
+and ESPN's country flag is 100%/100% as the fallback, so no row is blank.
+
+**Why it is a committed file and not `FighterAvatar`.** That component resolves
+`getWikipediaImage(name)` in the browser. Pointed at this draw it returns a **Serbian footballer**
+for `Aleksandar Kovacevic`, the **17th President of the United States** for `Andrew Johnson`, a
+**beach volleyball player** for `Yue Yuan`, and 14 disambiguation pages — 17 of 378, all HTTP 200,
+all with a photograph. `census_player_images.py` requires the article's own description to say
+*tennis* and rejects everything else, so the decision is made once, offline, against evidence.
+
+A **flag is exempt** from the subject check: it is a claim about a country, read off the same ESPN
+record as the name, with no wrong-person failure mode.
+
+```bash
+cd backend && python3 scripts/census_player_images.py \
+  --register data/tournament_registers/us-open-2026.json \
+  --version 9 --supersedes-version 8 \
+  --observed-at 2026-08-27T18:30:00+00:00 \
+  --payload /tmp/espn_atp.json --payload /tmp/espn_wta.json
+```
+
+---
+
+## DRAW DAY, WHAT ACTUALLY HAPPENED (UX-P142, 2026-08-27)
+
+The runbook below is written for a **draw sheet** — 128 numbered slots a side. We did not get one.
+
+**`usopen.org` is unreachable from the agent sandbox**: measured 2026-08-27, every request times
+out at the egress layer with zero bytes, while `site.api.espn.com` answers in under a second. So
+the draw came from ESPN, and ESPN publishes something different:
+
+| ESPN gives us | ESPN does not give us |
+|---|---|
+| **who plays whom** — 64 first-round competitions a side, both players named | the **draw-sheet position** of any of them |
+
+Its competition list is ingest order, not bracket order — the men's list opens on a qualifier slot
+and Alcaraz is 37th. Position is exactly the fact that says which first-round winner meets which,
+so writing `draw_slot` from that order would **fabricate the entire second round while looking
+identical to the first**: a real value under a question it does not answer, which is the class
+Alex's own grid amendment names.
+
+**So `scripts/ingest_espn_draw.py` writes pairings and refuses to write slots.** `build_bracket`
+still returns `[]`; the fixtures reach the page as register `matchups` at their real round, and the
+match list renders them. Run it exactly like the sheet ingest — `--out` for a dry pass first:
+
+```bash
+cd backend && python3 scripts/ingest_espn_draw.py \
+  --register data/tournament_registers/us-open-2026.json \
+  --version 8 --supersedes-version 7 --register-from-draw \
+  --observed-at 2026-08-27T18:00:00+00:00 \
+  --out /tmp/proposed-v8.json
+```
+
+Measured on the real ceremony: **96 fixtures written** (48 a side), 224 qualifying competitions
+deliberately out of scope, **30 `Qualifier v <named player>` fixtures NOT written** because a
+matchup is a pair of registered players — those close themselves when qualifying finishes 08-28 and
+the same command is re-run — 126 players admitted as participants, 96 `country` fields filled.
+
+**A fixture nobody prices is still a fixture.** `build_slate` used to `drop("NO_LIVE_SOURCE")`, and
+on ceremony day that one line hid the entire draw: four days out, not one main-draw fixture has a
+match market at either source. An unpriced registered fixture now renders with `priced: false` and
+`price_state: "unpriced"` and no numbers. **`SIDES_UNMAPPED` keeps its drop** — a live quote we
+cannot attribute to a player is a linkage defect, not an absence, and rendering it would hide it.
+
+**If a real draw sheet arrives**, the runbook below is unchanged and `ingest_tournament_draw.py`
+writes the slots; the two ingests are compatible (`ingest_espn_draw` never sets `draw_slot`, so
+there is nothing to undo).
 
 ---
 

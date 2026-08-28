@@ -21,8 +21,10 @@
  */
 
 import type { BracketSlot } from "./bracket";
-import type { Broadcast, SlateData } from "./slate";
+import type { PlayoffGridPayload } from "./playoffGrid";
+import type { Broadcast, PlayerImage, SlateData } from "./slate";
 import type { PropMarket } from "./tournamentProps";
+import type { TournamentResults } from "./tournamentResults";
 
 export type PriceState = "live" | "stale" | "dark";
 
@@ -45,6 +47,8 @@ export interface TournamentRow {
   display_name: string;
   seed: number | null;
   country: string | null;
+  /** Register-pinned face + flag (Alex's ruling 8). Never resolved client-side. */
+  image?: PlayerImage | null;
   rank: number;
   state: string;
   probability: number | null;
@@ -112,6 +116,25 @@ export interface TournamentPayload {
    * holds no player for and render as undetermined, never as an invented name.
    */
   bracket?: Record<string, (BracketSlot | null)[]>;
+  /**
+   * THE PLAYOFF GRID, per draw (UX-P139). Built server-side from the
+   * register's `reaches` and nothing else, because Alex's amendment makes cell
+   * provenance a correctness property: "the grid reads only the register", and
+   * a client stitching cells out of three payload sections cannot be held to
+   * that. Optional so an older server degrades to the pre-draw boards.
+   */
+  grids?: Record<string, PlayoffGridPayload>;
+  /**
+   * Decided matches with their scores (UX-P139, Alex's item 9), from ESPN.
+   * A separate section rather than a field on the slate — a slate structurally
+   * cannot hold a finished match; see `build_results`.
+   */
+  results?: TournamentResults;
+  /** "Thursday 27 August, 12:00 ET" — Alex's item 1. */
+  draw_release_at?: string;
+  draw_release_label?: string;
+  main_draw_starts_at?: string;
+  main_draw_label?: string;
   render_findings: string[];
   generated_at: string;
 }

@@ -6,6 +6,8 @@ import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   MAX_SERIES_COUNT,
   TIMEFRAMES,
+  axisSpanDays,
+  axisTicks,
   chartGeometry,
   chartSeriesFor,
   chartableRows,
@@ -123,6 +125,12 @@ export default function ContenderChart({
   const drawable = series.some(
     (entry) => pointsInTimeframe(entry.points, timeframe).length >= 2
   );
+  // RULING 6 (UX-P139). The y-axis has been a labelled, fixed 0-100 since the
+  // chart shipped; the x-axis had nothing at all, so a falling line could be a
+  // day or a month and the reader had no way to tell. On this page both are
+  // live possibilities.
+  const ticks = axisTicks(geometry, timeframe);
+  const spanDays = axisSpanDays(geometry);
   const anyLive = series.some((entry) => entry.isLive);
   const atCeiling = series.length >= MAX_SERIES_COUNT;
   const pickerVisible = pickerExpanded
@@ -188,14 +196,39 @@ export default function ContenderChart({
       </ul>
 
       {drawable ? (
+        <>
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           className="block h-24 w-full"
           preserveAspectRatio="none"
           role="img"
-          aria-label={`Probability history for ${series.length} contenders`}
+          aria-label={
+            spanDays !== null
+              ? `Probability history for ${series.length} contenders over ${spanDays} days, ${ticks[0]?.label} to ${ticks[ticks.length - 1]?.label}`
+              : `Probability history for ${series.length} contenders`
+          }
           data-testid="chart-svg"
         >
+          {/* THE TICKS, drawn first so a line is never behind a rule. Vertical
+              only: `preserveAspectRatio="none"` scales x and y independently,
+              so any TEXT in here would be stretched — the labels are HTML
+              below, positioned by the same percentages. */}
+          {ticks.map((tick) => (
+            <line
+              key={tick.date}
+              x1={tick.x}
+              x2={tick.x}
+              y1={0}
+              y2={HEIGHT}
+              stroke="currentColor"
+              strokeWidth={1}
+              className="text-surface-border"
+              opacity={0.7}
+              vectorEffect="non-scaling-stroke"
+              data-testid="chart-axis-tick"
+              data-date={tick.date}
+            />
+          ))}
           {series.map((entry) => {
             const points = seriesPoints(entry, geometry, timeframe);
             if (points === "") return null;
@@ -226,6 +259,41 @@ export default function ContenderChart({
             );
           })}
         </svg>
+        {/* THE DATE LABELS. HTML rather than SVG text, and positioned by the
+            same fraction of the width the tick uses, so they cannot drift from
+            the rules they belong to. First is left-aligned and last is
+            right-aligned against the plot edges; only the interior tick is
+            centred, because a centred label at x=0 hangs off the card. */}
+        <div
+          className="relative mt-0.5 h-3.5 select-none"
+          aria-hidden="true"
+          data-testid="chart-axis"
+          data-ticks={ticks.length}
+        >
+          {ticks.map((tick, index) => {
+            const first = index === 0;
+            const last = index === ticks.length - 1;
+            return (
+              <span
+                key={tick.date}
+                className="absolute top-0 whitespace-nowrap text-[9.5px] tabular-nums text-text-muted"
+                style={{
+                  left: `${(tick.x / WIDTH) * 100}%`,
+                  transform: first
+                    ? "none"
+                    : last
+                      ? "translateX(-100%)"
+                      : "translateX(-50%)",
+                }}
+                data-testid="chart-axis-label"
+                data-date={tick.date}
+              >
+                {tick.label}
+              </span>
+            );
+          })}
+        </div>
+        </>
       ) : (
         <div
           className="flex h-24 items-center justify-center text-[12px] text-text-muted"
@@ -238,6 +306,12 @@ export default function ContenderChart({
       <div className="mt-1.5 flex items-center justify-between">
         <span className="text-[11px] text-text-muted">
           {series.length} of {rows.length}
+          {/* How long the drawn window IS, not which button is pressed. `ALL`
+              on a field with four readings is four days, and the button cannot
+              say that. */}
+          {spanDays !== null && (
+            <span data-testid="chart-span"> · {spanDays}d shown</span>
+          )}
           {canReset && (
             // RULING 5's second gap. DataGolf's picker has a clear-all; ours
             // had no way back to the default short of removing lines one at a

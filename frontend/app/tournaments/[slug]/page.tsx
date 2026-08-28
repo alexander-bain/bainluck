@@ -77,6 +77,7 @@ import { useParams } from "next/navigation";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ContenderChart from "@/components/tournament/ContenderChart";
+import DrawToggle from "@/components/tournament/DrawToggle";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
 import { buildBracket, prematchFromSlate } from "@/lib/bracket";
@@ -87,10 +88,11 @@ import {
   toggleSelection,
 } from "@/lib/contenderChart";
 import { buildMatchList, type TitleChances } from "@/lib/matchList";
-import { buildPlayoffGrid } from "@/lib/playoffGrid";
+import { readPlayoffGrid } from "@/lib/playoffGrid";
 import { slateNotice } from "@/lib/slate";
 import TournamentMatches from "@/components/tournament/TournamentMatches";
 import TournamentProps from "@/components/tournament/TournamentProps";
+import TournamentResults from "@/components/tournament/TournamentResults";
 import { TOURNAMENT_PROPS_ENABLED } from "@/lib/tournamentFlags";
 import { fetchTournament } from "@/lib/api";
 import type { TournamentPayload } from "@/lib/tournament";
@@ -100,17 +102,6 @@ type Tab = "tournament" | "bracket";
 const TABS: { id: Tab; label: string }[] = [
   { id: "tournament", label: "Tournament" },
   { id: "bracket", label: "Bracket" },
-];
-
-/**
- * The gender pill. Alex's verdict: take direction A's toggle EVERYWHERE, and
- * never two stacked gender lists. One toggle flips the slate, the chart and the
- * contender list together, so the page only ever shows one draw at a time and
- * the reader never scrolls one draw to reach the other.
- */
-const DRAWS: { id: string; label: string }[] = [
-  { id: "mens-singles", label: "Men's" },
-  { id: "womens-singles", label: "Women's" },
 ];
 
 export default function TournamentPage() {
@@ -220,16 +211,19 @@ export default function TournamentPage() {
     [data, draw, rounds, prematch, titleChances]
   );
 
-  /** Players × rounds (ruling 4). Every cell a price; nothing derived. */
+  /**
+   * Players × rounds — read, not built (UX-P139, Alex's amendment).
+   *
+   * UX-P138 assembled this here from three payload sections. The amendment
+   * makes cell provenance a correctness property — "the grid reads only the
+   * register" — and a client stitching cells out of the match list, the props
+   * and the board cannot be held to that, however careful it is. So the grid
+   * arrives whole from `backend/app/utils/tournament_grid.py`, which walks the
+   * register's `reaches` and nothing else, and this is a typed read.
+   */
   const grid = useMemo(
-    () =>
-      buildPlayoffGrid({
-        board,
-        propMarkets: data?.props ?? [],
-        matches,
-        draw,
-      }),
-    [board, data, matches, draw]
+    () => readPlayoffGrid(data?.grids?.[draw]),
+    [data, draw]
   );
 
   if (loading) {
@@ -289,34 +283,13 @@ export default function TournamentPage() {
             ruling 1 deliberately shows both boards unfiltered and a pill would
             offer to filter something that is not filtered. */}
         {(tab === "tournament" || data.draw_released) && (
-          <div
-            className="flex gap-1.5 border-b border-surface-border bg-surface-card px-4 pb-3"
-            role="group"
-            aria-label="Draw"
-            data-testid="draw-toggle"
-          >
-            {DRAWS.map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                aria-pressed={draw === entry.id}
-                onClick={() => {
-                  setDraw(entry.id);
-                  setSelection(null);
-                }}
-                data-testid="draw-pill"
-                data-draw={entry.id}
-                data-active={draw === entry.id ? "true" : "false"}
-                className={`rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
-                  draw === entry.id
-                    ? "bg-text-primary text-text-inverse"
-                    : "bg-surface-elevated text-text-secondary"
-                }`}
-              >
-                {entry.label}
-              </button>
-            ))}
-          </div>
+          <DrawToggle
+            draw={draw}
+            onSelect={(id) => {
+              setDraw(id);
+              setSelection(null);
+            }}
+          />
         )}
 
         <div className="px-4 pb-16">
@@ -347,6 +320,12 @@ export default function TournamentPage() {
                 emptyHint="Nothing is on right now. Matches appear here as they are scheduled, and the draw fills them in on Thursday."
               />
 
+              {/* FINISHED MATCHES, WITH THE SCORE (UX-P139, item 9). Below the
+                  day's card and above the board: what just happened is worth
+                  less than what is on now and more than the season-long title
+                  race. Its data is ESPN's, which is stated on the section. */}
+              <TournamentResults results={data.results} draw={draw} />
+
               {board && <TournamentBoard board={board} seriesColors={seriesColors} />}
 
               {/* OFF since INT-131 (Alex product call 2026-08-26): CERT-411
@@ -362,17 +341,19 @@ export default function TournamentPage() {
 
           {tab === "bracket" && (
             <div className="mt-6">
-              {/* THE PLAYOFF GRID (UX-P138, ruling 4) — and before the draw,
-                  BOTH winner boards rather than an empty tab (UX-P137, ruling
-                  1). The ceremony stays a DATA change and not a deploy: the
-                  grid's rows are the board's, so it renders the moment
-                  `draw_released` latches and prices arrive, with nothing here
-                  changing. */}
+              {/* THE PLAYOFF GRID (UX-P139). It no longer waits for the draw:
+                  its cells come from round-advancement markets that are live
+                  and priced today, so withholding a fully-priced grid until a
+                  ceremony would break the "never an empty page when tradeable
+                  truth exists" rule. The ceremony changes what the rows are
+                  ordered by, not whether there is a grid. */}
               <TournamentBracket
                 grid={grid}
                 drawReleased={data.draw_released}
                 preDrawBoards={data.boards}
                 drawLabel={board?.label}
+                drawReleaseLabel={data.draw_release_label}
+                mainDrawLabel={data.main_draw_label}
               />
             </div>
           )}

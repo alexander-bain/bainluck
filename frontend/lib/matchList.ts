@@ -58,6 +58,7 @@ import {
   slateRowIsPresentedAsLive,
   slateStalenessLabel,
   type Broadcast,
+  type PlayerImage,
   type ResolvedBroadcast,
   type SlateMatch,
 } from "./slate";
@@ -128,6 +129,8 @@ export interface MatchListSide {
   /** The player, or the sentence that says what will fill this slot. */
   displayName: string;
   seed: number | null;
+  /** Register-pinned face + flag (ruling 8). `null` on a placeholder side. */
+  image: PlayerImage | null;
   /** TO WIN THIS MATCH. The primary number (ruling 1). */
   matchProbability: number | null;
   /** What the market said before it started — the detail view's addition. */
@@ -141,6 +144,14 @@ export interface MatchListSide {
 
 export interface MatchListEntry {
   id: string;
+  /**
+   * Does ANY source quote this match (UX-P142)?
+   *
+   * `false` is the released main draw four days out. Separate from `coherent`,
+   * which is two quotes disagreeing: this row has no quotes at all, and the
+   * two states get different sentences because they are different facts.
+   */
+  priced: boolean;
   round: MatchRoundKey;
   roundLabel: string;
   /** ISO string, or `null` for a bracket match with no scheduled date. */
@@ -171,6 +182,29 @@ export interface MatchListEntry {
    * See `matchDetailNote` — most rows get `null`, on purpose.
    */
   detailNote: string | null;
+  /**
+   * OUR event id, when this match has an `events` row — Alex's item 7,
+   * "matches click through to the standard event page".
+   *
+   * `null` on every US Open match today, and that is a data fact rather than a
+   * missing feature: checked 2026-08-26, **zero** of the register's matchups
+   * have an `events` row. The US Open qualifying draw was never ingested as
+   * events at all, so there is no page to click through to.
+   *
+   * The seam is here, typed and rendered, because the fix is an ingest change
+   * and the link should not be a second layout pass on the day it lands. It is
+   * REGISTER-OWNED (`matchup.event_id`), never derived from a name match at
+   * render time — a link to the wrong match is worse than no link, and a name
+   * join across two systems that disagree about `Auger-Aliassime` is exactly
+   * how you get one.
+   *
+   * The report's honest assessment of the DESTINATION is separate and less
+   * comfortable: today's tennis event pages carry surname-only participants, no
+   * blended win probability (`win_probability_sources` is null on every tennis
+   * event checked), no player images and no props. Linking to one before that
+   * is fixed would send a reader from a rich page to a bare one.
+   */
+  eventId: number | null;
   source: "slate" | "bracket";
 }
 
@@ -209,7 +243,17 @@ export function matchDetailNote(entry: {
   decided: boolean;
   score: string | null;
   sides: [MatchListSide, MatchListSide];
+  /** Absent reads as priced — every row before UX-P142 was. */
+  priced?: boolean;
 }): string | null {
+  if (entry.priced === false) {
+    // FOURTH CASE (UX-P142). An unpriced fixture used to fall into the
+    // incoherent branch and tell the reader "the two prices do not agree",
+    // which names a disagreement between two numbers that do not exist. The
+    // released main draw is 96 such rows; getting this sentence wrong would
+    // have been the page's most-printed sentence on ceremony day.
+    return "Nobody is quoting this match yet. It is in the draw; the price comes later.";
+  }
   if (!entry.coherent) {
     return "The two prices for this match do not agree yet, so we are not showing a split.";
   }
@@ -257,6 +301,7 @@ function sideFromSlate(
     entityKey: side.entity_key,
     displayName: side.display_name,
     seed: side.seed,
+    image: side.image ?? null,
     matchProbability: side.probability,
     openingProbability: side.opening_probability,
     move: side.move,
@@ -301,6 +346,7 @@ export function matchListFromSlate(
     const round = slateRoundKey(match.round);
     const entry: MatchListEntry = {
       id: match.matchup_key,
+      priced: match.priced !== false,
       round,
       roundLabel: MATCH_ROUND_LABELS[round],
       scheduledDate: match.scheduled_date ?? null,
@@ -313,6 +359,7 @@ export function matchListFromSlate(
       freshnessLabel: slateRowFreshnessLabel(match),
       broadcast: matchBroadcast(match, options.broadcasts, options.region),
       detailNote: null,
+      eventId: match.event_id ?? null,
       source: "slate",
     };
     entry.detailNote = matchDetailNote(entry);
@@ -387,6 +434,7 @@ export function matchListFromBracket(
             displayName:
               from === null ? "No registered player" : `Winner of ${from.replace("-", " #")}`,
             seed: null,
+            image: null,
             matchProbability: null,
             openingProbability: null,
             move: null,
@@ -407,6 +455,9 @@ export function matchListFromBracket(
           entityKey: slot.entity_key,
           displayName: slot.display_name,
           seed: slot.seed,
+          // A draw slot carries no image of its own; like the price, it comes
+          // from the slate row this match absorbed.
+          image: price?.image ?? null,
           matchProbability: decided ? pre : (price?.probability ?? pre),
           openingProbability: price?.opening_probability ?? pre,
           move: decided ? null : (price?.move ?? null),
@@ -427,6 +478,7 @@ export function matchListFromBracket(
 
       const entry: MatchListEntry = {
         id: match.id,
+        priced: joined ? joined.priced !== false : false,
         round: match.round,
         roundLabel: MATCH_ROUND_LABELS[match.round],
         scheduledDate: joined?.scheduled_date ?? null,
@@ -441,6 +493,9 @@ export function matchListFromBracket(
           ? matchBroadcast(joined, options.broadcasts, options.region)
           : null,
         detailNote: null,
+        // A positioned draw slot has no event of its own; the link, like the
+        // price, comes from the slate row it absorbed.
+        eventId: joined?.event_id ?? null,
         source: "bracket",
       };
       entry.detailNote = matchDetailNote(entry);

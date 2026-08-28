@@ -689,7 +689,10 @@ def test_a_register_with_one_draw_produces_one_board():
 
 def test_draw_label_falls_back_readably():
     assert draw_label("mens-singles") == "Men's Singles"
-    assert draw_label("mens-doubles") == "Mens Doubles"
+    # The three doubles draws got real labels in UX-P139 (item 12), so the
+    # fallback needs a draw that genuinely has none.
+    assert draw_label("mens-doubles") == "Men's Doubles"
+    assert draw_label("boys-singles") == "Boys Singles"
 
 
 def test_payload_carries_register_provenance():
