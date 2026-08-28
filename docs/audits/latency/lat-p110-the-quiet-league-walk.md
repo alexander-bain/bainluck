@@ -4,16 +4,20 @@ Queue: RUNNER DIRECTIVE, latency lane, `runner-inbox/latency/015-coldpath-convey
 Branch: `program/latency-95`, cut from `origin/master` @ `67e2585c`. Issue: **#2260**.
 Identity `LAT-P110-20260828-w12697`.
 
-Two things happened this cycle and only one of them was the ship.
+Three things happened this cycle and only one of them was the ship.
 
 **The ship:** opening a league tab that nobody has opened today cost **4,649 ms**, because
 the RECENT RESULTS rail read every event in a fourteen-day window looking for one league's
 own. Fixed, guarded, RED-proven 8/8.
 
-**The other thing:** the needle refused for a third consecutive read, and the reason is
+**The second thing:** the needle refused for a third consecutive read, and the reason is
 not the one the last two cycles filed. Its cold-search member has been returning **HTTP
 429** and the harness has been scoring the throttle as a **warm 2 ms search**. That is
 LAT-P109's parked P109-6 — "cause NOT established" — established.
+
+**The third thing arrived mid-session and outranked the other two.** Fable staged
+`runner-inbox/latency/015-needle-v3-ruling.md` — **Alex's option-c ruling** on the needle
+after the warmer victory. The needle now publishes. §11.
 
 ---
 
@@ -380,14 +384,123 @@ load in an async context. No frontend or iOS consumer found, so it breaks no pag
 
 ## 10. The needle
 
+🔴 **Superseded by §11 within the session.** The refusal below was the last reading taken
+under the cold-only definition; Alex's option-c ruling arrived afterwards and the lane's
+published line is now the one in §11. Kept because it is the evidence that the cold
+statistic had stopped being able to describe the product, which is the finding the ruling
+acts on.
+
 ```
-NEEDLE: latency REFUSED @ 2026-08-29T00:01Z — 1/7 cold members against a floor of 4, 1/3
-graded surfaces. Series 882 -> 873 -> 940 -> 1273 -> refused x3 (this cycle took three
-reads, 789s / 2115s / 3312s after deploy, all 1/7). Without the floors this read would have
-published 12 ms. NEW THIS CYCLE: one of the six missing members was never warm —
-`search_cold` was 6/6 HTTP 429 and the harness graded the throttle as a warm 2 ms search.
-Fixed; the read above is the first taken with an honest grader. The published series
-(882/873/940/1273) is NOT contaminated — every run that produced a number did so on real
-200s — but the last three refusals were partly mis-diagnosed. Restoring cold search as a
-measurable surface needs Alex's ruling, raised as YOUR-TURN item 1-LAT.
+(superseded) NEEDLE: latency REFUSED @ 2026-08-29T00:01Z — 1/7 cold members against a floor
+of 4, 1/3 graded surfaces. Series 882 -> 873 -> 940 -> 1273 -> refused x3 this cycle (789s /
+2115s / 3312s after deploy, all 1/7). Without the floors this read would have published
+12 ms. That statistic is now `DIAG: latency-build`.
 ```
+
+**THE LINE:**
+
+```
+NEEDLE: latency 18 ms @ 2026-08-28T23:45:40Z — 7/7 member paths served, all 3 graded
+surfaces, canonical depth, slug 67e2585c. FIRST POINT OF A NEW SERIES (Alex's option-c
+ruling, 2026-08-28): what a brand-new install waits, whatever cache serves it. Confirmed at
+20 ms two minutes later. The old cold series 882 -> 873 -> 940 -> 1273 -> refused x7 is now
+DIAG: latency-build (1,201 ms this run) and must never be plotted against this one.
+DIAG: latency-build 1,201 ms @ 2026-08-28T23:47:48Z
+```
+
+---
+
+## 11. 🔴 Alex's option-c ruling, and the needle publishing again
+
+A second directive landed mid-session (`runner-inbox/latency/015-needle-v3-ruling.md`,
+staged 15:52 PT). It outranks everything above, so it was implemented before close.
+
+### What he ruled
+
+The warmer landed and won: five of seven member paths could no longer be driven cold, so
+the cold-only statistic refused **seven reads running**. *A metric that refuses because the
+product got faster is measuring the wrong thing.* Strict division, two lines, distinct
+names:
+
+| line | what it is | where it goes |
+|---|---|---|
+| `NEEDLE: latency <ms>` | what a brand-new install actually **waits** — ruling 137's first load, whatever cache serves it | Alex's dial, one number per lane |
+| `DIAG: latency-build <ms>` | the same statistic over **cold** samples only | lane reports **only**, never the dial |
+
+**The series breaks, and the break is declared in the output of every run** rather than left
+for a reader to notice. `882 → 873 → 940 → 1273` was the cold statistic and belongs to
+`DIAG` from here; the `NEEDLE` series starts fresh. The two lines carry different names
+precisely so nobody can plot a point from one against the other.
+
+Option b's lesson survives option c: **both** statistics stay equal-weighted. A test drives
+a fixture where one chatty 5 ms member would drag a raw pool to 5 ms while the dial holds at
+800.
+
+### The decoupling is the load-bearing part
+
+Under the old shape a thin cold pool returned **before the line was ever printed**. That is
+mechanically how seven consecutive reads published nothing about a product that was, in
+fact, fast. `DIAG` may now refuse all it likes; the needle still ships, and the exit code
+follows the needle alone.
+
+### The harness had to stop throttling itself first, and the ruling is what made that legal
+
+§5's 429s were not incidental to this — they were **blocking**. With `search_cold`
+unmeasurable, the needle's own surface-coverage floor refuses just as the cold one did, so
+option c on its own would have published nothing either.
+
+Pacing at **1.05 s/request** is the fix, and it was deliberately *not* done earlier: ruling
+127 forbids a delta that is a delta of instruments, and re-pacing a live series is not a
+change a lane may make on its own authority. **This ruling breaks the series on purpose,
+which is exactly the moment at which the instrument change costs nothing.** A canonical run
+now takes ~75 s instead of ~20 s. That is the price of measuring the surface Alex named as
+the most important one.
+
+### The readings
+
+Production slug `67e2585c`, canonical depth:
+
+```
+NEEDLE: latency 18 ms @ 2026-08-28T23:45:40Z   7/7 members served, 3/3 surfaces
+NEEDLE: latency 20 ms @ 2026-08-28T23:47:48Z   7/7, confirming read two minutes later
+DIAG:   latency-build REFUSED (2/7 cold)  then  1,201 ms (4/7 cold)
+```
+
+Per-member wait on the first read:
+
+| member | p50 wait |
+|---|---:|
+| `sports_native` | 72.0 ms |
+| `discover_native` | 59.0 ms |
+| `my_stuff_stats` | 18.0 ms |
+| `discover_web` | 17.0 ms |
+| `search_trending` | 17.0 ms |
+| `sports_web` | 14.0 ms |
+| **`search_cold`** | **683.5 ms** |
+
+🔴 **The surface that was invisible for three cycles came back as the slowest thing in the
+pool by an order of magnitude** — 683.5 ms, then 458.5 ms on the confirming read, against
+14–72 ms for every tab. That is the surface Alex's ruling 137 named as what a person
+experiences in volume. It is the lane's obvious next ship and the conveyor will take it.
+
+### One honesty note on DIAG's own comparability
+
+Pacing changes DIAG too, and in a direction that flatters it: samples a second apart give
+TTLs more time to lapse, which is why the confirming read found 4 of 7 members cold where
+the unpaced reads found 1. **DIAG's series therefore restarts as well** — its 1,201 ms
+should not be read as a continuation of 1,273 just because the numbers sit close. Said here
+because the coincidence is inviting and nobody would have checked.
+
+### Gates on this half
+
+`tests/test_needle_latency.py`, **13 → 20 tests**. The five that asserted the old contract
+were **rewritten, not deleted** — each still pins the floor it always pinned, now on the
+`DIAG` line. One of them needed its fixture rebuilt:
+`test_a_healthy_pool_emits_the_spec_line` used an equal cold/warm split, under which the
+served median IS the cold median, so it would have passed with either statistic wired to
+either line — the one thing it exists to rule out.
+
+A set-precedence bug was found and fixed while wiring the refusal message: on sets `-` binds
+tighter than `|`, so `set(POOL) | {"cold search"} - served` evaluates as
+`POOL | (X - served)` and listed every surface as missing including the two that were
+served. Pinned by `test_the_needle_refusal_names_only_the_surfaces_actually_missing`.
