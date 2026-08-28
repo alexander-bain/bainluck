@@ -216,6 +216,45 @@ _FEED_RECYCLE_LIVE_HI = 0.88
 _THIN_FUTURES_POOL_FLOOR = 100
 
 
+def _broaden_relaxed_config(
+    config: dict[str, float | bool] | None,
+) -> dict[str, float | bool]:
+    """#1090's relaxed staleness windows, derived from the strict config.
+
+    Lifted out of the route body by LAT-P105 so the fused pass and the legacy
+    two-pass path cannot derive it differently — a divergence here would show up
+    as a feed difference and nowhere else.
+
+    The relaxed thresholds are never TIGHTER than the strict ones, for every
+    input: at ``s <= 7`` the floor gives ``7 >= s``, and above it ``3s > s`` (and
+    likewise ``14``/``2s``). That is what makes strict-eligible imply
+    relaxed-eligible, which is in turn what lets one gated loop produce both
+    pools. It is an executed test, not a comment.
+    """
+    relaxed = dict(config or {})
+    relaxed["stale_no_movement_days"] = max(
+        float(relaxed.get("stale_no_movement_days", 2)) * 3, 7
+    )
+    relaxed["no_resolution_stale_days"] = max(
+        float(relaxed.get("no_resolution_stale_days", 5)) * 2, 14
+    )
+    return relaxed
+
+
+def _fused_broaden_enabled() -> bool:
+    """Whether ONE scoring pass produces both futures pools (LAT-P105, #1459).
+
+    Default ON. ``FEED_FUSED_BROADEN_PASS=0`` restores the legacy two-pass path,
+    which stays in the tree and is the thing the identity test compares against —
+    so the rollback for this change is a config set, not a deploy. Read per call
+    rather than at import for the same reason.
+    """
+    raw = os.environ.get("FEED_FUSED_BROADEN_PASS")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
 def _futures_recycle_eligible(market, ctx, now) -> bool:
     """Whether a previously-seen futures market may be recycled into an exhausted
     feed.
@@ -421,6 +460,7 @@ def _emit_feed_stage_observability(
     started_at: float,
     golf_provenance: str | None = None,
     shared_reuse: list[str] | None = None,
+    shared_tiers: list[str] | None = None,
 ) -> None:
     """Attach identity-free stage headers and emit a sampled structured log line.
 
@@ -454,12 +494,21 @@ def _emit_feed_stage_observability(
         # source, because this is the byte that leaves the process: a share is
         # only worth having if it can be confirmed still working in production,
         # and a diagnostic header is only safe if its vocabulary is closed.
-        if shared_reuse:
-            from app.utils.principal_independent_cache import SHARED_ARTIFACT_NAMES
+        if shared_reuse or shared_tiers:
+            from app.utils.principal_independent_cache import (
+                SHARED_ARTIFACT_NAMES,
+                SHARED_TIER_NAMES,
+            )
 
-            names = [n for n in shared_reuse if n in SHARED_ARTIFACT_NAMES]
+            names = [n for n in (shared_reuse or ()) if n in SHARED_ARTIFACT_NAMES]
             if names:
                 response.headers["X-Feed-Shared"] = ",".join(sorted(set(names)))[:200]
+            # LAT-P103: a second closed vocabulary, `local` / `cross_worker`.
+            # Filtered here as well as at the source for the same reason the
+            # names are: this is the byte that leaves the process.
+            tiers = [t for t in (shared_tiers or ()) if t in SHARED_TIER_NAMES]
+            if tiers:
+                response.headers["X-Feed-Shared-Tier"] = ",".join(sorted(set(tiers)))
         if total_ms >= FEED_STAGE_ALWAYS_LOG_MS or (
             random.random() < _feed_stage_sample_rate()
         ):
@@ -533,6 +582,7 @@ def _finalize_feed_response(
     counts: dict[str, int],
     golf_provenance: str | None = None,
     shared_reuse: list[str] | None = None,
+    shared_tiers: list[str] | None = None,
 ) -> None:
     """Single truthful finalizer for EVERY successful /api/feed return path.
 
@@ -562,6 +612,7 @@ def _finalize_feed_response(
         started_at=started_at,
         golf_provenance=golf_provenance,
         shared_reuse=shared_reuse,
+        shared_tiers=shared_tiers,
     )
 
 
@@ -1795,6 +1846,12 @@ async def get_feed(
     # X-Feed-Shared so the share can be confirmed still working in production
     # without a timing argument.
     _shared_reuse: list[str] = []
+    # LAT-P103 (#2143 residual): WHICH tier served the reuse — `local` (this
+    # worker built it earlier) or `cross_worker` (another worker built it and
+    # this one read it out of Redis). Two different claims: the first was true
+    # before this change, only the second closes the residual, and only a header
+    # can tell them apart in production without a timing argument.
+    _shared_tiers: list[str] = []
     # Bind it as this request's ambient sink. The second shared artifact
     # (`canonical_counts`) is resolved three frames down inside `_score_futures`;
     # a contextvar avoids threading a diagnostic through a scoring signature,
@@ -1802,7 +1859,7 @@ async def get_feed(
     # had to be re-centralized in Queue 275. Each request runs in its own task
     # and therefore its own context copy, so the binding does not need an
     # explicit reset to stay request-scoped.
-    _bind_shared_reuse_sink(_shared_reuse)
+    _bind_shared_reuse_sink(_shared_reuse, _shared_tiers)
 
     if (debug or exclude_reviewed) and not await _check_admin_auth(secret, request, db):
         _set_feed_timing_header(response, _started_at)
@@ -2489,15 +2546,27 @@ async def get_feed(
                 # returns plain dicts, no ORM rows. It cost 865-1249ms on EVERY
                 # cold build, per principal, for a bit-identical result. Share it
                 # across principals, keyed only on its real inputs: the sport
-                # filter and a coarse clock bucket (the build embeds `now`-derived
-                # headlines and pin state, so the bucket plus the TTL are what
-                # bound how stale that text can get).
+                # filter and a coarse clock bucket.
+                #
+                # LAT-P104: that bucket was a 30-second literal against a 60-second
+                # TTL, so the key turned twice per TTL and every turn threw away an
+                # artifact that was still fresh — the fleet paid the ~1s stage
+                # rebuild twice a minute when once is the floor. It now comes from
+                # `clock_bucket_s()` (one hour, clamped never to be finer than the
+                # live TTL), which is the coarsest grid that still lands exactly on
+                # every boundary this build's `now` actually moves on: the three
+                # consumers are `marquee_pin_state` (windows open at UTC midnight,
+                # expire at UTC 12:00), `_score_event_concept` and
+                # `_concept_headline` (both read `now.date()` and nothing finer).
+                # `list_all_concepts` takes no clock at all. Staleness is unchanged
+                # — it was and remains `min(TTL, bucket)`, i.e. the 60s TTL.
                 #
                 # `_score_event_concepts` itself is untouched — several suites
                 # read it with `inspect.getsource`, and the sharing belongs at the
                 # call site anyway, where the principal-independence of the inputs
                 # is visible.
                 from app.utils.principal_independent_cache import (
+                    clock_bucket_s as _shared_clock_bucket_s,
                     get_or_build as _shared_get_or_build,
                     time_bucket as _shared_time_bucket,
                 )
@@ -2505,7 +2574,7 @@ async def get_feed(
                 _concept_key = (
                     sport or "all",
                     tuple(sorted(static_tag_filter or ())),
-                    _shared_time_bucket(now, 30),
+                    _shared_time_bucket(now, _shared_clock_bucket_s()),
                 )
 
                 async def _build_concepts():
@@ -2576,6 +2645,17 @@ async def get_feed(
                     # candidate base so the #1090 broaden re-score can reuse it
                     # instead of re-paying the ~494ms market_load SELECT.
                     _primary_base_capture: dict = {}
+                    # LAT-P105 (#1459): the relaxed config is a pure function of
+                    # the strict one, so it is derived BEFORE the pass instead of
+                    # after it. That is the whole trick — knowing the broaden
+                    # thresholds up front lets the ONE loop below gate on them and
+                    # record, per market, whether the strict pair would also have
+                    # admitted it. Measured: the second pass this replaces was
+                    # ~383ms of every cold Discover build, and it was invisible to
+                    # every instrument because it passed no `timing_records`.
+                    _relaxed_config = _broaden_relaxed_config(discover_config)
+                    _fuse_broaden = _fused_broaden_enabled()
+                    _broaden_capture: dict = {}
                     futures_items = await asyncio.wait_for(
                         _score_futures(
                             db,
@@ -2591,6 +2671,12 @@ async def get_feed(
                             timing_started_at=_started_at,
                             config=discover_config,
                             capture_base=_primary_base_capture,
+                            broaden_config=(
+                                _relaxed_config if _fuse_broaden else None
+                            ),
+                            capture_broadened=(
+                                _broaden_capture if _fuse_broaden else None
+                            ),
                         ),
                         timeout=_futures_budget_s(),
                     )
@@ -2605,45 +2691,53 @@ async def get_feed(
                     # original, un-penalized score. Fires only when thin, so the
                     # in-season pipeline is untouched.
                     if len(futures_items) < _THIN_FUTURES_POOL_FLOOR:
-                        relaxed = dict(discover_config or {})
-                        relaxed["stale_no_movement_days"] = max(
-                            float(relaxed.get("stale_no_movement_days", 2)) * 3, 7
-                        )
-                        relaxed["no_resolution_stale_days"] = max(
-                            float(relaxed.get("no_resolution_stale_days", 5)) * 2, 14
-                        )
                         seen_ids = {
                             (it.get("data") or {}).get("id") for it in futures_items
                         }
-                        # The broaden pass is best-effort: if it exceeds the remaining
-                        # budget, keep the primary futures rather than losing them.
-                        try:
-                            broadened = await asyncio.wait_for(
-                                _score_futures(
-                                    db,
-                                    now,
-                                    sport,
-                                    ctx,
-                                    my_teams_only=my_teams_only,
-                                    my_team_names=my_team_names,
-                                    my_team_sport_categories=my_team_sport_categories,
-                                    tag_filter=dynamic_tag_filter or None,
-                                    static_tag_filter=static_tag_filter or None,
-                                    config=relaxed,
-                                    # Queue 305 (#1475): reuse the primary pass's
-                                    # already-hydrated base (skips the redundant
-                                    # market_load SELECT); falls back to a fresh
-                                    # load if the primary somehow captured nothing.
-                                    preloaded_base=_primary_base_capture or None,
-                                ),
-                                timeout=_futures_budget_s(),
-                            )
-                        except asyncio.TimeoutError:
-                            broadened = []
-                            logger.warning(
-                                "Feed #1090 broaden: exceeded remaining budget — "
-                                "keeping primary futures (#1459)"
-                            )
+                        if _fuse_broaden:
+                            # LAT-P105: already built, by the pass above, for the
+                            # cost of three comparisons per market. The thin-pool
+                            # test still gates the MERGE, so a fat pool serves the
+                            # strict pool exactly as it did before.
+                            broadened = _broaden_capture.get("items") or []
+                        else:
+                            # Legacy two-pass path (`FEED_FUSED_BROADEN_PASS=0`).
+                            # Kept whole: it is the rollback, and it is what the
+                            # identity test compares the fused output against.
+                            #
+                            # The broaden pass is best-effort: if it exceeds the
+                            # remaining budget, keep the primary futures rather
+                            # than losing them.
+                            try:
+                                broadened = await asyncio.wait_for(
+                                    _score_futures(
+                                        db,
+                                        now,
+                                        sport,
+                                        ctx,
+                                        my_teams_only=my_teams_only,
+                                        my_team_names=my_team_names,
+                                        my_team_sport_categories=(
+                                            my_team_sport_categories
+                                        ),
+                                        tag_filter=dynamic_tag_filter or None,
+                                        static_tag_filter=static_tag_filter or None,
+                                        config=_relaxed_config,
+                                        # Queue 305 (#1475): reuse the primary
+                                        # pass's already-hydrated base (skips the
+                                        # redundant market_load SELECT); falls back
+                                        # to a fresh load if the primary somehow
+                                        # captured nothing.
+                                        preloaded_base=_primary_base_capture or None,
+                                    ),
+                                    timeout=_futures_budget_s(),
+                                )
+                            except asyncio.TimeoutError:
+                                broadened = []
+                                logger.warning(
+                                    "Feed #1090 broaden: exceeded remaining budget — "
+                                    "keeping primary futures (#1459)"
+                                )
                         added = [
                             it
                             for it in broadened
@@ -3042,6 +3136,7 @@ async def get_feed(
             ),
             golf_provenance=_golf_provenance,
             shared_reuse=_shared_reuse,
+            shared_tiers=_shared_tiers,
         )
         return payload
     except BaseException:
@@ -3607,8 +3702,27 @@ def _market_runtime_filter_trace(
     *,
     stale_no_movement_days: float = 2,
     no_resolution_stale_days: float = 5,
+    strict_no_movement_days: float | None = None,
+    strict_no_resolution_stale_days: float | None = None,
 ) -> dict:
+    """Decide whether a market may surface, and say why not when it may not.
+
+    LAT-P105 (#1459): the two ``*_days`` knobs are the ONLY inputs the #1090
+    broaden pass varies, and they reach exactly one decision — ``eligible``.
+    Passing ``strict_*`` in addition asks for a SECOND verdict from the same
+    already-computed intermediates: ``eligible_strict``, the answer the tighter
+    thresholds would have given. That is what lets one scoring loop produce both
+    the primary and the broadened pool instead of the loop running twice.
+
+    Only the four staleness blockers move with the thresholds, so only those are
+    re-derived. Everything else is threshold-independent and is shared verbatim
+    between the two verdicts — which is the reason the second verdict costs three
+    comparisons rather than a second pass over the outcomes.
+    """
     blockers: list[str] = []
+    # Blockers the STRICT thresholds would add on top of the ones computed below.
+    # Empty (and unread) unless a caller asked for the second verdict.
+    strict_only_blockers: list[str] = []
 
     # Past resolution date — market should have resolved already
     resolution_date = _utc(getattr(market, "resolution_date", None))
@@ -3677,6 +3791,27 @@ def _market_runtime_filter_trace(
                 blockers.append("stale_no_resolution_stale_movement")
             else:
                 blockers.append("stale_no_resolution_no_movement")
+        # LAT-P105: the same four rules at the STRICT thresholds. Deliberately
+        # re-evaluated rather than derived by subtraction — a subtraction would be
+        # correct only while the relaxed thresholds are provably the looser pair,
+        # and the whole point of a second verdict is that it must stay right if
+        # that ever stops being true.
+        if strict_no_movement_days is not None:
+            _strict_nores = (
+                no_resolution_stale_days
+                if strict_no_resolution_stale_days is None
+                else strict_no_resolution_stale_days
+            )
+            if has_any_movement and days_stale > strict_no_movement_days:
+                strict_only_blockers.append("stale_movement_evidence")
+            if days_stale > strict_no_movement_days and not has_any_movement:
+                strict_only_blockers.append("stale_no_movement")
+            if resolution_date is None and days_stale > _strict_nores:
+                strict_only_blockers.append(
+                    "stale_no_resolution_stale_movement"
+                    if has_any_movement
+                    else "stale_no_resolution_no_movement"
+                )
 
     resolved_threshold, opening_threshold = _effective_resolution_thresholds(
         sport_category
@@ -3728,6 +3863,14 @@ def _market_runtime_filter_trace(
 
     return {
         "eligible": not blockers,
+        # LAT-P105: absent unless the caller asked for it, so no existing reader
+        # of this dict can start depending on it by accident. When present it is
+        # the verdict the STRICT thresholds give, and it implies `eligible`.
+        **(
+            {"eligible_strict": not blockers and not strict_only_blockers}
+            if strict_no_movement_days is not None
+            else {}
+        ),
         "blockers": blockers,
         "checks": {
             "all_outcomes_settled": all_settled,
@@ -6628,17 +6771,52 @@ async def _score_futures(
     config: dict[str, float | bool] | None = None,
     capture_base: dict | None = None,
     preloaded_base: dict | None = None,
+    broaden_config: dict[str, float | bool] | None = None,
+    capture_broadened: dict | None = None,
 ) -> list[dict]:
     """Score and format futures markets for the feed.
 
     Uses per-category queries to guarantee diversity. A single big query
     sorted by resolution_date is dominated by crypto's 8,955 five-minute
     markets, so we query each category separately.
+
+    LAT-P105 (#1459): ``broaden_config`` + ``capture_broadened`` fuse #1090's
+    thin-pool broaden pass into this one. When both are given, the loop gates on
+    the RELAXED staleness thresholds and records, per market, whether the strict
+    thresholds would also have admitted it. The return value is unchanged — the
+    strict pool, exactly what a strict-config call returns — and the relaxed pool
+    is written to ``capture_broadened["items"]`` for the caller to merge from.
+    Every market is then scored once instead of twice; the measured cost of the
+    second scoring was ~383 ms of every cold Discover build.
     """
     timing_previous_at = time.perf_counter()
     config = config or _discover_runtime_config_defaults()
     stale_no_movement_days = float(config.get("stale_no_movement_days", 2))
     no_resolution_stale_days = float(config.get("no_resolution_stale_days", 5))
+    # The fused path is live only when the caller supplies BOTH halves: a relaxed
+    # config to gate on and somewhere to put the relaxed pool. One without the
+    # other would silently widen or silently discard, so it is neither.
+    _fused = broaden_config is not None and capture_broadened is not None
+    if _fused:
+        # The gate runs at the RELAXED thresholds; the strict pair rides along so
+        # the same call can answer both questions.
+        _gate_no_movement_days = float(
+            (broaden_config or {}).get("stale_no_movement_days", stale_no_movement_days)
+        )
+        _gate_no_resolution_days = float(
+            (broaden_config or {}).get(
+                "no_resolution_stale_days", no_resolution_stale_days
+            )
+        )
+        _strict_no_movement_days: float | None = stale_no_movement_days
+        _strict_no_resolution_days: float | None = no_resolution_stale_days
+    else:
+        _gate_no_movement_days = stale_no_movement_days
+        _gate_no_resolution_days = no_resolution_stale_days
+        _strict_no_movement_days = None
+        _strict_no_resolution_days = None
+    # The relaxed pool, in candidate order. Stays empty on the unfused path.
+    broadened_items: list[dict] = []
 
     # --- Precomputed interestingness cache ---
     # Load all interestingness scores from Redis in one batch after candidate
@@ -6923,7 +7101,9 @@ async def _score_futures(
         _interestingness_blend_weight = 0.0
     mark_timing("interestingness_cache")
 
-    scored_items = []
+    scored_items: list[dict] = []
+    # LAT-P105: the strict subset, populated only on the fused path.
+    strict_items: list[dict] = []
     for market in markets:
         try:
             is_recycled = False
@@ -7096,11 +7276,16 @@ async def _score_futures(
                 leader_prob,
                 now,
                 sport_category=market.llm_sport_category,
-                stale_no_movement_days=stale_no_movement_days,
-                no_resolution_stale_days=no_resolution_stale_days,
+                stale_no_movement_days=_gate_no_movement_days,
+                no_resolution_stale_days=_gate_no_resolution_days,
+                strict_no_movement_days=_strict_no_movement_days,
+                strict_no_resolution_stale_days=_strict_no_resolution_days,
             )
             if not runtime_filters["eligible"]:
                 continue
+            # LAT-P105: on the unfused path the gate WAS the strict gate, so
+            # everything that got here is strict-eligible.
+            _strict_eligible = runtime_filters.get("eligible_strict", True)
 
             # #921: drop markets with no REAL price — every outcome null/zero (dead)
             # OR even the top outcome below the 0.5% display floor (rounds to 0% — the
@@ -7740,6 +7925,13 @@ async def _score_futures(
                 item["recycled"] = True
 
             scored_items.append(item)
+            # LAT-P105: on the fused path `scored_items` is the RELAXED pool, so
+            # the strict pool is collected alongside it in the same candidate
+            # order. The two lists share item objects; nothing between here and
+            # the caller's merge mutates one, and the merge keeps them disjoint
+            # (the broadened pool contributes only IDs the strict pool lacks).
+            if _fused and _strict_eligible:
+                strict_items.append(item)
         except Exception as _score_err:
             # One malformed market (bad datetime, missing field, etc.) must
             # never wipe the entire futures pass — skip it and keep the rest
@@ -7752,18 +7944,39 @@ async def _score_futures(
             continue
     mark_timing("scoring_loop")
 
-    # Dedup by group_id: keep only the highest-scoring market per group.
-    # Polymarket sub-markets sharing a group_id represent the same real-world
-    # question (e.g., "Who wins Best Picture?" x 10 nominee markets).
-    scored_items = _dedupe_futures_by_group_id(scored_items)
+    def _dedupe_and_cap(items: list[dict]) -> list[dict]:
+        # Dedup by group_id: keep only the highest-scoring market per group.
+        # Polymarket sub-markets sharing a group_id represent the same real-world
+        # question (e.g., "Who wins Best Picture?" x 10 nominee markets).
+        items = _dedupe_futures_by_group_id(items)
+        items = cap_low_quality_families(items, cap=1)
+        return diversify_quality_families(
+            items,
+            exact_family_cap=1,
+            story_family_cap=5,
+        )
 
-    scored_items = cap_low_quality_families(scored_items, cap=1)
-    scored_items = diversify_quality_families(
-        scored_items,
-        exact_family_cap=1,
-        story_family_cap=5,
-    )
-    mark_timing("caps")
+    if _fused:
+        # Both pools go through the IDENTICAL dedupe + caps the single pool used
+        # to. Running them separately is what makes the fused output equal to the
+        # two-pass output: the caps are a function of the pool they see, and the
+        # two passes always saw different pools.
+        relaxed_pool = scored_items
+        scored_items = _dedupe_and_cap(strict_items)
+        mark_timing("caps")
+        broadened_items = _dedupe_and_cap(relaxed_pool)
+        if capture_broadened is not None:
+            capture_broadened["items"] = broadened_items
+        # The whole broaden pass, now, under its own name. The pass this replaced
+        # was ~383ms and carried NO stage mark at all, which is why it survived
+        # four latency cycles that were reading the same header. A key that exists
+        # only on the fused path also means production can be asked directly
+        # whether the fused path is live, instead of inferring it from a
+        # subtraction.
+        mark_timing("broaden_finalize")
+    else:
+        scored_items = _dedupe_and_cap(scored_items)
+        mark_timing("caps")
 
     return scored_items
 

@@ -156,6 +156,23 @@ RULINGS_2026_08_09 = [
     "PAUSE; specimens first",
 ]
 
+# Q427 (2026-08-28). The four pillars are declared SUPREME over every codebase,
+# architecture and UX decision, and they are the FIRST section in the doc — which
+# is exactly where a "consolidation" rewrite starts. Every named failure this file
+# records is a load-bearing section that was unguarded at the moment it was
+# dropped, so the section is pinned in the same change that writes it rather than
+# after the first loss. Each pillar is pinned individually: dropping one of four
+# while keeping the heading is the cheapest way to hollow out a constitution.
+PILLARS_2026_08_28 = [
+    "THE FOUR PILLARS",
+    "These four are supreme",
+    "**MATCHING.**",
+    "**DISCOVER.**",
+    "**FORMATTING.**",
+    "**TRUTH.**",
+    "RIDER RULE",
+]
+
 ALL_MARKERS = (
     REQUIRED_MARKERS
     + STRUCTURAL_MARKERS
@@ -166,6 +183,7 @@ ALL_MARKERS = (
     + RULING_EXIT_EXAM
     + RULINGS_2026_08_09
     + RULINGS_INDEX_MARKERS
+    + PILLARS_2026_08_28
 )
 
 #: The exam is a separate FILE, so the marker guard above cannot protect it —

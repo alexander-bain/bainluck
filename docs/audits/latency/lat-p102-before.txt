@@ -1,0 +1,10 @@
+1,red sox,2.720300,miss,200
+1,world series,1.510207,miss,200
+2,red sox,1.345757,miss,200
+2,world series,0.593038,miss,200
+3,red sox,0.760080,miss,200
+3,world series,0.448425,miss,200
+4,red sox,1.730913,miss,200
+4,world series,0.519580,miss,200
+5,red sox,2.061984,miss,200
+5,world series,0.580113,miss,200

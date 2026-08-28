@@ -20,16 +20,54 @@ index.** It can only be answered before it is asked.
 So: `app/utils/search_cache.py` gives `/search` a response cache, and this task
 keeps the head of the measured distribution inside it.
 
-THE HEAD IS ELECTED BY `search_query_logs`, WHOLE, AND THAT IS A DECISION.
-`typeahead_warmer` blends two sources — the `/search` log and the
-`search:trending:24h` zset — because a typeahead head needs the PREFIXES a user
-passes through on the way to a phrase, and `/search` never sees those. This
-surface has the opposite need and exactly one unpolluted source that measures
-it: `search_query_logs` is written only by `/search`, is time-windowed by its
-own query, records SUBMITTED intent, and — since the suppression in
-`_record_search_query` — cannot be written by this warmer. Warm the surface you
-measure. The 30-day head at the time of writing was `masters winner` (102),
-`stanley cup` (101), `world series` (95), `nba champion` (90).
+THE HEAD IS ELECTED BY THE **USER-ATTESTED ROWS** OF `search_query_logs`, RANKED
+BY DISTINCT SESSIONS, AND EVERY WORD OF THAT IS LOAD-BEARING (LAT-P102, #1916).
+
+The first version of this module elected its head from the table WHOLE, and
+shipped disabled because #1916 blocks exactly that. LAT-P102 re-measured the
+table and the block turned out to be both resolvable and far understated:
+
+    30-day census, 2026-08-27          rows    share
+    total                              3,851
+    carrying NO session_id and no user_id
+                                       3,838   99.66 %
+    in the 07:09-07:12 sentinel minute   922   23.9 %  (#1916's number)
+    in a "burst" minute (>= 8 distinct
+      queries in one clock minute)     2,858   74.2 %
+
+`session_id` is the flag #1916 asks for, **and it already exists in the schema.**
+`frontend/lib/api.ts:332` and `APIClient.swift` both attach `x-session-id` to
+every search, so a row carrying one was written on behalf of a real client. That
+is a write-time-recorded positive assertion, not a timestamp heuristic — which is
+precisely the discriminator #1916's acceptance criteria demand, and it needs no
+column and no migration.
+
+Reading the table through that flag returns the clean distribution #1916 said had
+to exist before a head could be sourced here. It exists. It is also **13 rows in
+30 days, across 12 sessions, with exactly one query asked by two different
+sessions** (`red sox`). So the honest finding is not "the head was contaminated
+and here is the clean one" — it is that ELECTING A HEAD FROM THE WHOLE TABLE
+WOULD HAVE WARMED OUR OWN PROBE TRAFFIC. Every one of the top eight terms
+(`masters winner`, `stanley cup`, `world cup`, `nba champion`, `world series`,
+`red sox`, `grammys`, `yankees`) is a sentinel or probe term.
+
+Hence the two rules below, which are what make the switch safe to leave ON:
+
+1. **A row with no session and no user is not demand.** `_head_from_user_rows`
+   filters to `session_id IS NOT NULL OR user_id IS NOT NULL`. It never falls
+   back to the unfiltered table — a fallback would silently reinstate the exact
+   block this module was shipped disabled under.
+2. **A head is ranked and floored by DISTINCT SESSIONS, not by rows.** One of
+   the 13 organic rows is `patriots`, submitted four times in nine seconds by one
+   session. Row-ranked, that single person out-votes everything. Session-ranked
+   with `MIN_HEAD_SESSIONS = 2`, a query one person asked is never warmed.
+
+Together those mean the warmer **self-gates on real demand**: today the clean
+head is empty, so a pass warms nothing and reports `partial` at ~1 ms; the day
+two different people search the same thing inside a month, it starts working
+with no further human decision and no re-tuning. That is the resolution of
+#1916's block for this source — not an argument that the contamination is
+tolerable, but a head that cannot contain it.
 
 THREE LESSONS ARE INHERITED RATHER THAN RE-LEARNED. Each one cost a cycle on
 `/typeahead`, and each is a test in `tests/test_search_response_cache.py`:
@@ -47,13 +85,13 @@ THREE LESSONS ARE INHERITED RATHER THAN RE-LEARNED. Each one cost a cycle on
 3. **A warmer must not be able to report success while the head is cold**
    (`app/utils/task_verdict.py`). An empty head is `partial`, never `complete`.
 
-🔴 **THIS TASK SHIPS DISABLED. `SEARCH_HEAD_WARM_ENABLED` is unset in production
-and unset means OFF.** #1916 measured `search_query_logs` as 23.6% gold-sentinel
-traffic and says, in bold, not to source a warmer head from it until a clean
-distribution exists. That block is respected rather than stepped over. The full
-argument — including why the closed-loop harm #1916 is about cannot occur here,
-and what a future window needs to flip it — is on `SEARCH_HEAD_WARM_ENV` below.
-**The response cache itself is unaffected and ships live**; it caches what was
+✅ **THIS TASK SHIPS ENABLED (LAT-P102). Unset now means ON**, in line with the
+rest of the family. What changed is not the appetite for risk, it is the head:
+the switch used to guard a head that could contain probe traffic, and now it
+guards one that cannot. The block lives in `_head_from_user_rows`, where it is
+structural, rather than in an env var an operator can flip past.
+
+**The response cache is unaffected and was already live**; it caches what was
 actually asked and has no opinion about what is popular, so it is
 contamination-proof by construction.
 
@@ -126,47 +164,59 @@ REFRESH_AHEAD_SECONDS = 25
 #: but a pass may not start more often than this.
 MIN_PASS_PERIOD_SECONDS = 45
 
-#: 🔴 THIS SHIPS **OFF**, AND UNSET MEANS OFF. That is the opposite of every
-#: other switch in this family and it is deliberate.
+#: The head window. Matches the window `typeahead_warmer._head_from_query_log`
+#: reads, so the two surfaces disagree about WHICH queries are hot and never
+#: about HOW LONG a query stays hot.
+HEAD_WINDOW_DAYS = 30
+
+#: How many DISTINCT sessions must have asked a query before it is worth a warm
+#: slot. **Two, and never one**, and this is the constant that makes
+#: `SEARCH_HEAD_WARM_ENABLED` safe to leave on.
 #:
-#: **#1916 blocks head selection from this source, in bold, and that block is
-#: respected rather than stepped over.** It measured `search_query_logs` as
-#: **23.6 % gold-sentinel traffic** — 848 of 3,600 rows landing in a single
-#: 07:09-07:12 UTC minute across 26 of 30 days, which is #1206's nightly gold
-#: query sentinel, and whose family phrasings ARE the top of the "real"
-#: distribution. Its instruction is *do not tune, re-rank, resize or re-source a
-#: warmer head until a clean distribution exists*. Electing a head from that
-#: table today means possibly warming a sentinel's echo and calling it demand.
+#: One is not a floor, it is the absence of one: a single session retyping the
+#: same word is the single most common shape in the organic rows — `patriots`
+#: appears four times in nine seconds from one session in the 30-day sample,
+#: which is more rows than any other real query has in total. Row-ranked and
+#: unfloored, that one person's frustration elects half the head.
 #:
-#: TWO THINGS FOR WHOEVER UN-BLOCKS IT, because they are the argument and they
-#: should not have to be re-derived:
+#: Two is also what makes the number MEAN something: a query two unrelated
+#: sessions asked inside a month is the weakest evidence of shared demand that is
+#: still evidence, and the response cache's own 60 s TTL means warming it only
+#: pays if somebody else is going to ask it again.
+MIN_HEAD_SESSIONS = 2
+
+#: ✅ THIS SHIPS **ON**, AND UNSET MEANS ON — the same convention as the rest of
+#: the family, restored by LAT-P102.
 #:
-#: * The specific harm #1916 exists to stop — a CLOSED SELF-ELECTING LOOP — is
-#:   structurally absent here. `_warm_one` sets `_suppress_search_log`, so unlike
-#:   the `/typeahead` warmer (89 % of whose head score was its own echo) this one
-#:   cannot vote for its own head at all. The contamination it would inherit is
-#:   fixed at 23.6 % and does not compound.
-#: * The cost of being wrong is therefore bounded at WASTED WARM SLOTS — some of
-#:   8 — not at a corrupted distribution.
+#: IT USED TO SHIP OFF, and the reason it no longer does is worth stating,
+#: because the change is not a re-weighing of the same evidence. #1916 blocked
+#: head selection from `search_query_logs` until a clean distribution existed.
+#: LAT-P102 found that the clean distribution can be READ — `session_id` is a
+#: write-time flag attached by every real client — and that reading it makes the
+#: contaminated rows unreachable by the head query rather than merely
+#: outnumbered. See the census in the module docstring; the short version is that
+#: the table is **99.66 % session-less automation**, four times worse than
+#: #1916's own 23.6 % figure, and all eight of the terms this warmer would have
+#: warmed are probe terms.
 #:
-#: That is an argument for flipping it. It is not a decision to flip it, and a
-#: build lane is not the right place to overrule a standing block on its own
-#: judgment in the same cycle. **`SEARCH_HEAD_WARM_ENABLED=1` is one config var
-#: and needs no deploy**, so the cost of shipping off and flipping later is a
-#: config change; the cost of shipping on and being wrong is a warmer tuned
-#: against our own echo, which is precisely #1916's thesis.
+#: So the guard moved from the env var into `_head_from_user_rows`, and that is
+#: strictly stronger: an env var can be flipped by an operator who has not read
+#: #1916, whereas a head query that filters on attestation cannot elect a probe
+#: term at all. Leaving the switch OFF would now protect nothing and would only
+#: keep a fix dark.
 #:
-#: The response cache itself is UNAFFECTED and ships live. It is
-#: contamination-proof by construction: it caches whatever was actually asked,
-#: and has no opinion about what is popular.
-#:
-#: Separate from `SEARCH_RESPONSE_CACHE` on purpose — the two failures are
+#: WHAT THIS SWITCH IS STILL FOR: turning the warmer off when it costs more
+#: database time than it saves. Separate from `SEARCH_RESPONSE_CACHE` on purpose
+#: — the two failures are
 #: different and so are their remedies. If the CACHE is wrong, turn the cache
 #: off. If the cache is fine but the WARMER is costing more database time than it
 #: saves, turn the warmer off and let the cache keep serving organic repeats. One
 #: switch would force an operator to give up the fix to relieve the load.
 SEARCH_HEAD_WARM_ENV = "SEARCH_HEAD_WARM_ENABLED"
-_WARM_ON_VALUES = frozenset({"1", "true", "yes", "on"})
+#: Byte-identical to `search_cache._CACHE_OFF_VALUES`, deliberately: an operator
+#: reaching for the kill switch under load must not have to remember that these
+#: two neighbouring vars disagree about what "off" spells.
+_WARM_OFF_VALUES = frozenset({"0", "false", "no", "off"})
 
 _LOCK_KEY = "bainluck:search_head_warmer:running"
 _LOCK_TTL_SECONDS = 180
@@ -186,18 +236,22 @@ _MAX_QUERY_CHARS = 200
 
 
 def head_warm_enabled() -> bool:
-    """Whether a pass may run. **Unset means OFF** — see `SEARCH_HEAD_WARM_ENV`.
+    """Whether a pass may run. **Unset means ON** — see `SEARCH_HEAD_WARM_ENV`.
 
-    FAILS CLOSED, and this is the one switch in this family that does. The
-    others default on because a typo must not silently disable a latency fix;
-    this one defaults off because a typo must not silently ENABLE head selection
-    from a distribution #1916 has measured as contaminated. The asymmetry is the
-    point: the expensive mistake runs in opposite directions for the two.
+    FAILS OPEN, like the rest of the family, because a typo must not silently
+    disable a latency fix. It used to fail closed, and the asymmetry was doing
+    real work at the time: it kept a head that could contain probe traffic from
+    being warmed by accident. LAT-P102 moved that guarantee into
+    `_head_from_user_rows`, where a filter enforces it instead of an env var, so
+    the asymmetry now costs a dark fix and buys nothing.
+
+    Only an EXPLICIT off value turns it off. An unrecognised value is a typo, and
+    a typo resolves toward the working state.
     """
     raw = os.environ.get(SEARCH_HEAD_WARM_ENV)
     if raw is None:
-        return False
-    return str(raw).strip().lower() in _WARM_ON_VALUES
+        return True
+    return str(raw).strip().lower() not in _WARM_OFF_VALUES
 
 
 def _needs_rebuild(ttl: int | None) -> bool:
@@ -442,26 +496,94 @@ def _record_pass_start(now: float) -> None:
         logger.warning("search_head_warmer: pass-start write failed", exc_info=True)
 
 
+#: The head query. Every clause in it is a finding from LAT-P102's census; see
+#: the module docstring for the numbers.
+#:
+#: `session_id IS NOT NULL OR user_id IS NOT NULL` — the attestation filter, and
+#: the whole resolution of #1916 for this source. Both shipping clients attach
+#: `x-session-id` to every search, so a row carrying one was written on behalf of
+#: a real client; no probe, sentinel or warmer in this repo sends that header.
+#: The filter excludes by the ABSENCE of an attestation rather than including by
+#: the presence of an automation flag, which is the conservative direction: it can
+#: under-count a real user whose client sent no session, and it cannot count a
+#: probe as one. #1916 asks for the opposite polarity (a positive `origin`
+#: written by the writer) and that remains the better instrument — but it needs a
+#: column, and this needs none, and the two agree on every row that matters.
+#:
+#: `count(DISTINCT ...)` in BOTH the HAVING and the ORDER BY — the anti-artifact.
+#: Ranking by row count lets one session's retyping elect the head; see
+#: `MIN_HEAD_SESSIONS`. Rows break ties only after sessions have spoken.
+#:
+#: `COALESCE(session_id, 'u:' || user_id)` — a signed-in request usually carries
+#: both, and keying on the session first counts per-device rather than per-person.
+#: Two devices of one person asking the same question IS two asks of the cache.
+_USER_HEAD_SQL = """
+    SELECT lower(btrim(query)) AS q,
+           count(DISTINCT COALESCE(session_id, 'u:' || user_id)) AS sessions,
+           count(*) AS rows_n
+    FROM search_query_logs
+    WHERE created_at >= now() - make_interval(days => :days)
+      AND (session_id IS NOT NULL OR user_id IS NOT NULL)
+      AND length(btrim(query)) BETWEEN :lo AND :hi
+    GROUP BY 1
+    HAVING count(DISTINCT COALESCE(session_id, 'u:' || user_id)) >= :min_sessions
+    ORDER BY sessions DESC, rows_n DESC, q ASC
+    LIMIT :lim
+"""
+
+
+async def _head_from_user_rows(session, limit: int) -> list[str]:
+    """The `/search` head as elected by ATTESTED rows only. Never raises.
+
+    Deliberately NOT `typeahead_warmer._head_from_query_log`, and the divergence
+    is the point rather than drift. That function reads the table whole because
+    its own surface needs the volume; this one reads it through the attestation
+    filter because #1916 blocks the whole-table read for head selection here. Two
+    different questions of one table, so two queries — sharing one would mean
+    silently changing the typeahead head too.
+    """
+    from sqlalchemy import text
+
+    try:
+        result = await session.execute(
+            text(_USER_HEAD_SQL),
+            {
+                "days": HEAD_WINDOW_DAYS,
+                "lo": _MIN_QUERY_CHARS,
+                "hi": _MAX_QUERY_CHARS,
+                "min_sessions": MIN_HEAD_SESSIONS,
+                "lim": limit,
+            },
+        )
+        return [row[0] for row in result.all() if row[0]]
+    except Exception:  # noqa: BLE001 — a warmer never takes the app down
+        logger.warning("search_head_warmer: user head unreadable", exc_info=True)
+        await _safe_rollback(session)
+        return []
+
+
 async def resolve_head(session, limit: int) -> tuple[list[str], str]:
     """Return `(queries, source)` for the `/search` head.
 
     `source` travels in the summary rather than being inferred, because which
     source produced a head changes what the run MEANS.
 
-    One source, whole, and the reasoning is in the module docstring: warm the
-    surface you measure. `_head_from_query_log` is imported from
-    `typeahead_warmer` rather than copied — it is the same SQL over the same
-    table, and two copies of a head query is two heads that can drift.
+    ONE SOURCE AND NO FALLBACK, and the missing fallback is the load-bearing
+    part. The obvious kindness here is "if the attested head is empty, fall back
+    to the whole table so the warmer has something to do" — and that would
+    reinstate #1916's block in the one state where it bites hardest, because the
+    attested head is empty precisely when all the traffic is ours. An empty head
+    is the correct answer to "what do users want warmed" when no user has asked
+    for anything twice. `_summarize` turns it into `partial`, not `complete`.
     """
-    from app.tasks.typeahead_warmer import _head_from_query_log
-
-    rows = await _head_from_query_log(session, limit)
+    rows = await _head_from_user_rows(session, limit)
     head = [normalize_search_query(r) for r in rows or []]
     head = [q for q in head if _MIN_QUERY_CHARS <= len(q) <= _MAX_QUERY_CHARS]
     if not head:
-        # NOT an empty success. `_summarize` turns this into `partial`.
-        return [], "empty:search_query_logs:30d"
-    return head, "db:search_query_logs:30d"
+        # NOT an empty success, and the source string says which emptiness it is:
+        # nobody asked twice, rather than the table being unreadable.
+        return [], f"empty:user_attested:{HEAD_WINDOW_DAYS}d"
+    return head, f"db:user_attested:{HEAD_WINDOW_DAYS}d:min{MIN_HEAD_SESSIONS}sess"
 
 
 async def _warm_head_concurrently(sessions: list, head: list[str]) -> list[dict]:

@@ -695,58 +695,89 @@ def test_the_ttl_is_declared_once_and_is_the_whole_invalidation_contract():
     )
 
 
-def test_the_head_warmer_ships_disabled_because_1916_blocks_its_head_source(monkeypatch):
-    """The one switch in this family that FAILS CLOSED, and the reason it does.
+def test_the_head_warmer_ships_enabled_because_the_block_moved_into_the_head_query(
+    monkeypatch,
+):
+    """The switch fails OPEN again, and the guarantee it used to carry moved.
 
-    #1916 measured `search_query_logs` as 23.6% gold-sentinel traffic — 848 of
-    3,600 rows in a single 07:09-07:12 UTC minute across 26 of 30 days, which is
-    #1206's nightly sentinel — and says in bold not to source a warmer head from
-    it until a clean distribution exists. Electing a head from that table today
-    risks warming our own echo and calling it demand, which is #1916's whole
-    thesis.
+    THIS TEST REPLACES `..._ships_disabled_because_1916_blocks_its_head_source`,
+    which existed to make lifting the block a visible act — a future window had
+    to delete it, and deleting it meant reading why it was there. LAT-P102 is
+    that window, so here is the reading, banked where the next one will find it.
 
-    So `SEARCH_HEAD_WARM_ENABLED` unset means OFF, inverting the convention its
-    two siblings follow. This test is what makes lifting that block a VISIBLE
-    act: a future window that flips the default has to delete this assertion,
-    and deleting it means reading why it is here.
+    #1916 blocked head selection from `search_query_logs` until a clean
+    distribution existed. LAT-P102's census found that one can be READ without a
+    migration: `session_id` is written from the `x-session-id` header that
+    `frontend/lib/api.ts` and `APIClient.swift` both attach to every search, and
+    no probe in this repo sends it. Through that filter the table is **99.66%
+    session-less automation** — four times worse than #1916's 23.6%, because that
+    figure counted only the 07:10 sentinel and missed 2,858 rows of burst-minute
+    probe traffic — and all eight terms the old whole-table head would have
+    warmed are probe terms.
 
-    The response cache is deliberately NOT gated on the same switch — it caches
-    what was actually asked and has no opinion about what is popular, so it
-    cannot be contaminated by a skewed distribution.
+    So the env var is no longer where the guarantee lives. It is in
+    `_head_from_user_rows`, which cannot elect a probe term at all, and in
+    `MIN_HEAD_SESSIONS`, which cannot elect a term one person asked. A filter
+    beats a default: an operator can flip a default without reading #1916.
+
+    What did NOT change: the response cache is still not gated on this switch.
     """
     from app.tasks.search_head_warmer import SEARCH_HEAD_WARM_ENV, head_warm_enabled
     from app.utils.search_cache import search_response_cache_enabled
 
     monkeypatch.delenv(SEARCH_HEAD_WARM_ENV, raising=False)
-    assert head_warm_enabled() is False, (
-        "the head warmer defaults ON — #1916 blocks head selection from "
-        "search_query_logs until a clean distribution exists"
+    assert head_warm_enabled() is True, (
+        "the head warmer defaults OFF — but #1916's block now lives in the head "
+        "QUERY, so defaulting off keeps a fix dark and protects nothing"
     )
-    monkeypatch.setenv(SEARCH_HEAD_WARM_ENV, "1")
-    assert head_warm_enabled() is True, "the block cannot be lifted by config"
 
-    # A typo must not enable it either — fails closed in both directions.
+    # Only an explicit off value turns it off...
+    for off in ("0", "false", "no", "off", "OFF", " No "):
+        monkeypatch.setenv(SEARCH_HEAD_WARM_ENV, off)
+        assert head_warm_enabled() is False, f"{off!r} must disable the warmer"
+
+    # ...and a typo resolves toward the WORKING state, like the rest of the
+    # family. This is the direction that inverted, and it is the whole change.
     monkeypatch.setenv(SEARCH_HEAD_WARM_ENV, "yse")
-    assert head_warm_enabled() is False
+    assert head_warm_enabled() is True
 
-    # And the cache is NOT gated on it.
+    # And the cache is still NOT gated on it.
     monkeypatch.delenv("SEARCH_RESPONSE_CACHE", raising=False)
     assert search_response_cache_enabled() is True, (
         "the response cache defaults off — it is the ship, and it is "
-        "contamination-proof, so it must not inherit the warmer's block"
+        "contamination-proof, so it must not inherit the warmer's switch"
     )
 
 
+def test_off_spelled_the_same_way_for_the_cache_and_the_warmer():
+    """Two neighbouring kill switches must not disagree about what "off" spells.
+
+    An operator reaching for one of these under load is not going to check
+    whether `SEARCH_RESPONSE_CACHE=off` and `SEARCH_HEAD_WARM_ENABLED=off` mean
+    the same thing. They do, and this asserts it rather than trusting a comment.
+    """
+    from app.tasks.search_head_warmer import _WARM_OFF_VALUES
+    from app.utils.search_cache import _CACHE_OFF_VALUES
+
+    assert _WARM_OFF_VALUES == _CACHE_OFF_VALUES
+
+
 @pytest.mark.asyncio
-async def test_a_disabled_pass_says_disabled_and_not_merely_zero():
+async def test_a_disabled_pass_says_disabled_and_not_merely_zero(monkeypatch):
     """"Turned off on purpose" and "wedged" must never produce the same summary.
 
     A pass that warmed nothing because an operator disabled it, and a pass that
     warmed nothing because the lock was stuck, are opposite diagnoses reaching
     the same `warmed: 0`. `skip_reason` is what separates them (gotcha #53).
-    """
-    from app.tasks.search_head_warmer import _warm_search_head
 
+    The disable is now EXPLICIT rather than inherited from an unset var: since
+    LAT-P102 unset means ON, so a test that wants the disabled path has to ask
+    for it. Deleting the `setenv` would silently turn this into a test of the
+    ENABLED path against a Redis that is not running.
+    """
+    from app.tasks.search_head_warmer import SEARCH_HEAD_WARM_ENV, _warm_search_head
+
+    monkeypatch.setenv(SEARCH_HEAD_WARM_ENV, "0")
     summary = await _warm_search_head()
 
     assert summary["terminal"] == "skipped"

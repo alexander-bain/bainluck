@@ -1,6 +1,7 @@
 """Futures/Outrights API endpoints."""
 
 import logging
+import os
 import re
 import unicodedata
 from collections import defaultdict
@@ -371,6 +372,120 @@ async def get_available_futures():
         raise HTTPException(status_code=502, detail=f"Error fetching from Odds API: {str(e)}")
 
 
+# ── /movers: why "Biggest Movers" cost 11 s of database time to produce ten
+# ── rows, and the bound that removes it. LAT-P108.
+#
+# The old query was `futures_outcomes JOIN futures_markets ... ORDER BY
+# abs(probability_change_24h) DESC LIMIT n`. `abs()` is not indexed, so Postgres
+# parallel-seq-scanned 1.95 M outcome rows, hash-joined 124 k survivors and
+# sorted all of them to emit ten. Measured on production 2026-08-28:
+# 11,129 ms execution, 9,799 ms of it in the seq scan alone.
+#
+# THE BOUND. `futures_markets.max_movement_24h` is, by the definition of the
+# task that writes it (`app.tasks.update_max_movement`, every 10 min),
+# `MAX(ABS(outcome.probability_change_24h))` for that market. So an outcome whose
+# |change| beats the smallest max_movement in the pool must live in a market
+# already inside the pool: the pool is a provable SUPERSET of the answer, not a
+# sample of it. `routes/feed.py` and `routes/admin_judgments.py` already read the
+# column this way; this is the third consumer, not a new idea.
+#
+# Verified on production 2026-08-28, not asserted — one atomic statement per
+# probe so the two arms see the same snapshot: limit 10 / pool 400 and limit 20 /
+# pool 800 both return the IDENTICAL id list AND value vector as the unbounded
+# scan. At limit 100 / pool 1500 the value vector is still identical and the ids
+# differ inside a tie group, which the legacy query never determined either — its
+# `ORDER BY abs(...) DESC` carries no tie-break and hundreds of outcomes sit on
+# the same value.
+#
+# 🔴 WHAT THIS DELIBERATELY DOES **NOT** FIX, because doing it here would be
+# wrong: three of the ten rows this endpoint served on 2026-08-28 were last
+# written on 2026-07-24 — thirty-five days of "24-hour change". A read-side
+# freshness filter on the outcome's own poll stamp looks like the fix and is NOT
+# compatible with this bound: `max_movement_24h` is computed over ALL of a
+# market's outcomes including stale ones, so ranking the pool by it while
+# filtering the answer by freshness breaks the superset guarantee — measured, at
+# limit 20 the two arms disagree on VALUES, not just on ties. The staleness is an
+# upstream data bug (nothing ever clears `probability_change_24h` on a row that
+# stops being written) and it is parked as one, with the evidence.
+#
+# ⚠️ That paragraph deliberately avoids writing the comparison out. #2024's
+# census (`tests/test_futures_stamp_semantics.py`) greps `app/routes` for a
+# literal stamp comparison, and an earlier draft of this COMMENT tripped it —
+# a 14-minute suite spent on prose. Recorded rather than worked around silently.
+#
+# Reversible without a deploy: `FUTURES_MOVERS_POOLED=0` restores the legacy
+# scan — which is also the ORACLE the equivalence gate drives both paths through.
+_MOVERS_POOLED = os.getenv("FUTURES_MOVERS_POOLED", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+)
+
+#: Statuses a market must be in to have a mover. Unchanged from the legacy query.
+_MOVERS_OPEN_STATUSES = ("open", "active")
+
+#: `limit` was unbounded. iOS asks for 10 and the default is 20; anything past
+#: this is a caller sorting a 3.2 M-row table on our dime.
+_MOVERS_MAX_LIMIT = 100
+
+#: Pool size, in markets. The bound is sound at any size — 40x the ask and a
+#: floor of 400 buy margin over the ~10-minute lag of `update_max_movement`, so
+#: a market that leaps into contention between two runs of that task is still
+#: very likely inside the pool. The ceiling is where the pool sort stops being
+#: cheap (production: 200 -> 627 ms, 1000 -> 1,138 ms, 2500 -> 2,833 ms).
+_MOVERS_POOL_PER_ITEM = 40
+_MOVERS_POOL_MIN = 400
+_MOVERS_POOL_MAX = 1500
+
+
+def _clamp_movers_limit(limit: int) -> int:
+    """Clamp rather than 422 — a shipped iOS build must not start erroring."""
+    return max(1, min(int(limit), _MOVERS_MAX_LIMIT))
+
+
+def _movers_market_pool_size(limit: int) -> int:
+    return max(_MOVERS_POOL_MIN, min(_MOVERS_POOL_MAX, limit * _MOVERS_POOL_PER_ITEM))
+
+
+def _build_movers_query(limit: int, *, pooled: bool):
+    """Build the `/futures/movers` query.
+
+    `pooled=False` is the legacy full-scan arm, kept as rollback and as the
+    equivalence oracle the gate drives both paths through.
+    """
+    conditions = [FuturesOutcome.probability_change_24h.isnot(None)]
+
+    if pooled:
+        market_pool = (
+            select(FuturesMarket.id)
+            .where(
+                FuturesMarket.status.in_(_MOVERS_OPEN_STATUSES),
+                FuturesMarket.max_movement_24h.isnot(None),
+            )
+            .order_by(FuturesMarket.max_movement_24h.desc())
+            .limit(_movers_market_pool_size(limit))
+            .scalar_subquery()
+        )
+        # `market_id IN pool` carries the status filter — the pool is already
+        # restricted to open/active — so the join is not re-stated here.
+        query = (
+            select(FuturesOutcome)
+            .options(joinedload(FuturesOutcome.market))
+            .where(*conditions, FuturesOutcome.market_id.in_(market_pool))
+        )
+    else:
+        query = (
+            select(FuturesOutcome)
+            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .options(joinedload(FuturesOutcome.market))
+            .where(*conditions, FuturesMarket.status.in_(_MOVERS_OPEN_STATUSES))
+        )
+
+    return query.order_by(
+        func.abs(FuturesOutcome.probability_change_24h).desc()
+    ).limit(limit)
+
+
 @router.get("/movers")
 async def get_futures_movers(
     hours: int = Query(24, description="Timeframe for movement calculation"),
@@ -385,6 +500,10 @@ async def get_futures_movers(
     import json as _json
     from app.tasks.redis_state import get_redis_client
 
+    # Clamped BEFORE the cache key so an unbounded `limit` can neither sort the
+    # whole outcome table nor mint an unbounded number of Redis keys.
+    limit = _clamp_movers_limit(limit)
+
     cache_key = f"bainluck:movers:{hours}:{limit}"
     try:
         redis = get_redis_client()
@@ -394,18 +513,7 @@ async def get_futures_movers(
     except Exception:
         pass
 
-    now = datetime.now(timezone.utc)
-    query = (
-        select(FuturesOutcome)
-        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-        .options(joinedload(FuturesOutcome.market))
-        .where(
-            FuturesOutcome.probability_change_24h.isnot(None),
-            FuturesMarket.status.in_(["open", "active"]),
-        )
-        .order_by(func.abs(FuturesOutcome.probability_change_24h).desc())
-        .limit(limit)
-    )
+    query = _build_movers_query(limit, pooled=_MOVERS_POOLED)
 
     result = await db.execute(query)
     outcomes = result.unique().scalars().all()

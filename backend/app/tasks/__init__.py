@@ -29,6 +29,10 @@ from sentry_sdk.integrations.celery import CeleryIntegration
 
 from app.tasks.base import run_async
 
+# #2236: the live republish period is declared beside the live cache ceiling it
+# has to stay under, not beside the beat that consumes it. See feed_cache.py.
+from app.utils.feed_cache import FEED_LIVE_REPUBLISH_PERIOD_S
+
 import time as _time
 
 # ---------------------------------------------------------------------------
@@ -600,6 +604,28 @@ celery_app.conf.task_routes = {
     "app.tasks.sync_statpal_livescores": {"queue": "realtime"},
     "app.tasks.heartbeat": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
+    # #2236 (LAT-P101). A warmer on `realtime` looks out of place, so the reason
+    # is written here rather than left to be re-litigated. This is not a cost
+    # decision, it is a CORRECTNESS one.
+    #
+    # The task's whole contract is "republish before the 60s live ceiling
+    # expires", expressed as `PERIOD (40) + BUDGET (20) <= 60`. That arithmetic
+    # assumes the pass STARTS at its period. `background` is documented three
+    # dozen lines above as having ~one effective slot for ~45 beats, is measured
+    # at ~90 % slot occupancy, and its own budget module says "ordinary co-tenant
+    # bursts produce multi-minute waits". A pass that starts two minutes late
+    # publishes nothing in time — the key already expired and the user already
+    # paid the cold build. The fix would have been PARTIALLY INERT there, and
+    # inert in the silent way: the beat would report success on every pass it
+    # eventually ran.
+    #
+    # And it is the queue's own stated purpose: "high-frequency tasks driving
+    # user-visible live game data. Never blocked by batch jobs." This fires only
+    # while a live card is on the page, at a 40s cadence, to keep a live score
+    # from going stale in front of somebody. Cost against the 4-slot pool: ~0.15
+    # slots in the working case, <=0.5 in the pathological one (20s budget / 40s
+    # period), and ~0 when nothing is live.
+    "app.tasks.prewarm_live_feed_shapes": {"queue": "realtime"},
     # --- Everything else routes to background (default queue) ---
     # --- 600s-class grinders route to `heavy` (applied below) ---
 }
@@ -3155,6 +3181,29 @@ def precompute_discover_candidate_base(self):
     )
 
 
+#: #2236. The limits are derived from the period, not chosen: the hard limit is
+#: BELOW `FEED_LIVE_REPUBLISH_PERIOD_S` so a wedged pass is dead before its
+#: successor fires, which is what makes an overlap lock unnecessary rather than
+#: merely unlikely. Soft sits under hard so the pass raises `SoftTimeLimitExceeded`
+#: and gets logged, instead of vanishing into an untracked SIGKILL (gotcha:
+#: "Celery SIGKILL untracked" — a hard-killed task reports nothing at all).
+_LIVE_PREWARM_HARD_LIMIT_S = 35
+_LIVE_PREWARM_SOFT_LIMIT_S = 28
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=_LIVE_PREWARM_SOFT_LIMIT_S,
+    time_limit=_LIVE_PREWARM_HARD_LIMIT_S,
+    name="app.tasks.prewarm_live_feed_shapes",
+)
+def prewarm_live_feed_shapes(self):
+    """Republish live-containing feed shapes inside the #2216 60s ceiling (#2236)."""
+    from app.tasks.precompute_category_pages import _prewarm_live_feed_shapes
+
+    return _tracked_run("prewarm_live_feed_shapes", _prewarm_live_feed_shapes())
+
+
 @celery_app.task(bind=True, soft_time_limit=60, time_limit=90, name="app.tasks.refresh_open_commentary")
 def refresh_open_commentary(self):
     """Refresh the live AI commentary box for The Open Championship (Open-only,
@@ -3754,20 +3803,23 @@ celery_app.conf.beat_schedule = {
         # alone is how `/typeahead` sat at a 47% duty cycle for two cycles while
         # reporting 40/40 every pass.
         #
-        # 🔴 IT SHIPS DISABLED. `SEARCH_HEAD_WARM_ENABLED` is unset and unset
-        # means OFF, because #1916 blocks sourcing a warmer head from
-        # `search_query_logs` (measured 23.6% gold-sentinel traffic) until a
-        # clean distribution exists. The beat is wired anyway, on purpose: a
-        # fire takes the `disabled` skip path at ~1ms and reports
-        # `terminal: skipped, skip_reason: disabled`, so "deliberately off" is
-        # READABLE in task-metrics. An unwired task is one nobody remembers to
-        # wire; a task reporting that it is off is a state you can see.
+        # ✅ IT SHIPS ENABLED SINCE LAT-P102. It shipped DISABLED under LAT-P090
+        # because #1916 blocks sourcing a warmer head from `search_query_logs`
+        # until a clean distribution exists. That distribution turned out to be
+        # readable without a migration — `session_id` is a write-time flag every
+        # real client attaches and no probe does — so the block moved out of the
+        # env var and into the head QUERY, which filters to attested rows and
+        # floors on distinct sessions. See `search_head_warmer`'s docstring for
+        # the census (the table is 99.66% session-less automation).
         #
-        # COST, STATED, because a warmer is not free and this lane's own doctrine
-        # says to say so. ENABLED: a steady-state pass rebuilds 8 `/search`
-        # answers at concurrency 2, ~4-8s of database time per 45s against
-        # `background`'s roughly one effective slot (#1609). DISABLED, the
-        # shipping state: negligible. Every knob is set below its
+        # COST, RE-STATED FOR THE ENABLED STATE, and it is far below the estimate
+        # this comment used to carry. The bound is `min(8, terms two different
+        # sessions asked in 30 days)`, and at the 2026-08-27 census that is
+        # exactly ONE term. So a steady-state pass rebuilds 1 `/search` answer,
+        # not 8: ~1-2s of database time per 45s against `background`'s roughly
+        # one effective slot (#1609). The 8-at-~4-8s figure is the CEILING the
+        # head would have to grow into, and it can only get there by real people
+        # asking the same questions. Every knob is set below its
         # `warm-typeahead` sibling's (8 terms not 40, width 2 not 4, floor 45s
         # not 30s) precisely because a `/search` call is the heavier one.
         #
@@ -3799,6 +3851,31 @@ celery_app.conf.beat_schedule = {
         # + request-path publish keep cold pages covered between beats.
         "schedule": crontab(minute="*/2"),
         "options": {"queue": "background"},
+    },
+    "prewarm-live-feed-shapes": {
+        "task": "app.tasks.prewarm_live_feed_shapes",
+        # #2236. The beat above cannot cover a payload whose stale mirror dies at
+        # 60s — it ticks at 120s, so the key is gone for a full minute before its
+        # next chance. This is the narrow republisher for exactly those shapes.
+        #
+        # The period is IMPORTED from `feed_cache.py`, where it sits three lines
+        # under `FEED_RESPONSE_STALE_TTL_LIVE_SECONDS`. That is the whole repair:
+        # #2236 was a 120 here and a 60 there with nothing comparing them, and a
+        # literal in this file would rebuild that arrangement exactly. Whoever
+        # next shortens the live ceiling will now be editing the period's
+        # neighbour, and `test_feed_live_prewarm.py` fails if they do not.
+        #
+        # Cost: `HGETALL` on an empty live set when nothing is live (the common
+        # case, and the reason a 40s beat is affordable at all), otherwise one
+        # feed build per LIVE shape inside a 20s pass budget.
+        #
+        # `realtime`, NOT `background` — and both routing surfaces say so, since
+        # beat options override `task_routes` and a disagreement would make the
+        # queue depend on whether the task was published by beat or by hand. The
+        # argument is at the `task_routes` entry: a 40s deadline cannot survive a
+        # queue whose own budget module documents multi-minute co-tenant waits.
+        "schedule": float(FEED_LIVE_REPUBLISH_PERIOD_S),
+        "options": {"queue": "realtime"},
     },
     "precompute-backfill-winners-status": {
         "task": "app.tasks.precompute_backfill_winners_status",
@@ -4560,6 +4637,15 @@ _EXPIRING_WARMER_BEATS = {
     "warm-typeahead": 120,
 
     "precompute-discover-candidate-base": 120,   # */2 min — #1609 saw 6 enqueued
+
+    # #2236. One period, so the flat #1609 rule applies unamended — this pass's
+    # wall is far shorter than its period (a `HGETALL` when nothing is live, one
+    # feed build per live shape inside a 20 s budget otherwise), so a fire that
+    # could not start IS superseded. It is superseded HARDER than most: the whole
+    # point of the task is to publish a payload no older than 60 s, and a message
+    # that has been queued past its own period would republish a build the next
+    # fire is about to redo. Expiring it is not hygiene here, it is the contract.
+    "prewarm-live-feed-shapes": int(FEED_LIVE_REPUBLISH_PERIOD_S),
     "refresh-open-commentary": 180,          # 180 s — #1609 saw 5 enqueued; also the only
                                              # OpenAI caller, so dropping stale work saves spend
     "warm-event-concepts": 300,              # */5 min
