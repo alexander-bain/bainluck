@@ -92,6 +92,22 @@ export interface PropMarket {
    * missing value: it selects the ranked-list rendering.
    */
   answer_entity_key: string | null;
+  /**
+   * How many MARKETS the register declared for this card (CERT-430, finding 1).
+   *
+   * `1`, or absent, is an ordinary card. Anything higher is a COMPARISON — one
+   * question printed across several markets — and the comparison rules in
+   * `propLegs` below apply to it.
+   *
+   * Optional because a payload captured before UX-P156 does not carry it, and
+   * reading a missing count as "one market" is the safe direction: it treats an
+   * old capture as an ordinary card rather than as a comparison with legs it
+   * cannot see. The live payload always sets it — `build_props` writes it from
+   * `prop["markets"]`, and a guard asserts the committed register's cards do.
+   */
+  legs?: number;
+  /** Declared markets we have no reading for. Named, never silently dropped. */
+  unpriced_legs?: string[];
   /** The AND over the card's PRICED outcomes — a ranked field is published too. */
   price_state: PriceState;
   observed_at: string | null;
@@ -144,11 +160,94 @@ export function answerOutcome(market: PropMarket): PropOutcome | null {
  * A field market's outcomes, best first — the rendering for a question no
  * single outcome answers. Unpriced outcomes are dropped from the ranking
  * because there is nothing to rank them by, not hidden as a judgement.
+ *
+ * ⚠️ NOT THE RULE FOR A COMPARISON. See `comparisonRows`: on a card built from
+ * several declared markets, dropping the unpriced row is how one fresh leg
+ * published a one-player answer to a two-player question (CERT-430).
  */
 export function rankedOutcomes(market: PropMarket): PropOutcome[] {
   return market.outcomes
     .filter((outcome) => outcome.probability !== null)
     .sort((a, b) => (b.probability as number) - (a.probability as number));
+}
+
+/* =========================================================================
+ * A COMPARISON IS COMPLETE OR IT IS NOT PRESENTED AS ONE (CERT-430, finding 1)
+ * =========================================================================
+ *
+ * THE SPECIMEN, executed by the cert: the register declares `second-major`
+ * across two markets — Alcaraz's and Sinner's. Alcaraz was unpriced; Sinner was
+ * fresh at .555. `rankedOutcomes` dropped the unpriced row for having nothing
+ * to rank it by, `printedOutcomes` therefore saw one live number, and the card
+ * rendered LIVE, in the confident type, with one player under
+ *
+ *     "Who wins a second major this year?"
+ *
+ * Every step was locally reasonable and the result is the defect the combined
+ * card was built to prevent: a structurally incomplete comparison laundered
+ * into a current answer by the one leg that happened to arrive.
+ *
+ * ═══ WHAT IT DOES INSTEAD, AND WHY IT IS NOT A DELETION ═══
+ *
+ * Two rules are in tension here and both are load-bearing:
+ *
+ *   • Alex, 2026-08-28: *illiquid props render with honest freshness
+ *     indication, never hidden — "that's part of the value of the product."*
+ *   • CERT-430: a registered multi-source card with a missing leg must
+ *     withhold live presentation and alarm.
+ *
+ * Hiding the card breaks the first; printing Sinner alone breaks the second.
+ * So the card renders EVERY DECLARED SUBJECT, the missing one included and
+ * visibly missing, it is never live, and `propIncompleteComparison` gives the
+ * page the sentence that names what is absent. The reader sees the question,
+ * both names, the one number we have, and the fact that the other has not
+ * arrived — which is the whole truth and is strictly more than either of the
+ * two failure modes shows.
+ */
+
+/** Declared markets behind this card. Absent means one — an ordinary card. */
+export function propLegs(market: PropMarket): number {
+  const legs = market.legs;
+  return typeof legs === "number" && Number.isFinite(legs) && legs > 0 ? legs : 1;
+}
+
+/** Several declared markets, one question — the shape the rules above govern. */
+export function propIsComparison(market: PropMarket): boolean {
+  return propLegs(market) > 1;
+}
+
+/**
+ * A comparison's rows: every subject it declared, quoted or not.
+ *
+ * Ordered best-first like a field, with the unquoted subjects last — they are
+ * the ones the card is going to admit to, and burying them mid-list would make
+ * the admission easy to miss.
+ */
+export function comparisonRows(market: PropMarket): PropOutcome[] {
+  return market.outcomes.slice().sort((a, b) => {
+    if (a.probability === null && b.probability === null) return 0;
+    if (a.probability === null) return 1;
+    if (b.probability === null) return -1;
+    return b.probability - a.probability;
+  });
+}
+
+/**
+ * What a comparison is missing, or `null` when it is whole.
+ *
+ * `subjects` are the declared rows we have no number for. `undeclared` counts
+ * legs the payload promised and did not deliver a row for at all — a register
+ * or route fault rather than a pricing one, which the reader is told about in
+ * the same breath because from where they sit it is the same hole.
+ */
+export function propIncompleteComparison(
+  market: PropMarket
+): { subjects: PropOutcome[]; undeclared: number } | null {
+  if (!propIsComparison(market)) return null;
+  const subjects = market.outcomes.filter((outcome) => outcome.probability === null);
+  const undeclared = Math.max(0, propLegs(market) - market.outcomes.length);
+  if (subjects.length === 0 && undeclared === 0) return null;
+  return { subjects, undeclared };
 }
 
 export function formatPropProbability(probability: number | null): string {
@@ -166,10 +265,16 @@ export const FIELD_RANK_LIMIT = 3;
  * outcome the card does not print cannot make it stale and cannot make it
  * live, which is the difference between "this card's numbers are old" and
  * "something in this market is old".
+ *
+ * A COMPARISON PRINTS ALL OF ITS ROWS — every declared subject, and no rank
+ * limit. Both halves of that are the same rule: a comparison the reader can
+ * only partly see is not the object the card claims to be, whether the missing
+ * subject was dropped for having no price or for sorting fourth.
  */
 export function printedOutcomes(market: PropMarket): PropOutcome[] {
   const answer = answerOutcome(market);
   if (answer !== null) return [answer];
+  if (propIsComparison(market)) return comparisonRows(market);
   return rankedOutcomes(market).slice(0, FIELD_RANK_LIMIT);
 }
 
@@ -194,6 +299,13 @@ export function printedOutcomes(market: PropMarket): PropOutcome[] {
  * fresh.
  */
 export function propIsPresentedAsLive(market: PropMarket): boolean {
+  // AND AN INCOMPLETE COMPARISON IS NEVER LIVE, whatever it prints. For a field
+  // card this is already implied — the missing subject is one of the printed
+  // rows and fails the `every` below. It is stated separately so the rule does
+  // not depend on that: a multi-market card that also named an answer would
+  // print one row, and one fresh answer must not certify a card whose other
+  // declared leg produced nothing.
+  if (propIncompleteComparison(market) !== null) return false;
   const printed = printedOutcomes(market);
   if (printed.length === 0) return false;
   return printed.every(
@@ -201,12 +313,22 @@ export function propIsPresentedAsLive(market: PropMarket): boolean {
   );
 }
 
-/** Longest age among the printed outcomes — the card is as fresh as its oldest. */
+/**
+ * Longest age among the printed outcomes — the card is as fresh as its oldest.
+ *
+ * `null` when ANY printed outcome has no age, because a reading that never
+ * arrived is older than every reading that did (gotcha #53, and the same rule
+ * the backend's `governing_age_hours` applies). Returning the oldest of the
+ * ones that DID arrive would let a card whose second row is missing entirely
+ * report the age of its first row as the card's age.
+ */
 export function propGoverningAgeHours(market: PropMarket): number | null {
-  const ages = printedOutcomes(market)
+  const printed = printedOutcomes(market);
+  if (printed.length === 0) return null;
+  const ages = printed
     .map((outcome) => outcome.age_hours)
     .filter((age): age is number => typeof age === "number" && Number.isFinite(age));
-  if (ages.length === 0) return null;
+  if (ages.length !== printed.length) return null;
   return Math.max(...ages);
 }
 
@@ -638,6 +760,12 @@ function mergeFamily(group: PropMarket[]): PropMarket | null {
     .map((row) => row.observed_at)
     .filter((at): at is string => typeof at === "string");
   const live = rows.filter((row) => row.probability_is_live === true).length;
+  // A MEMBER THAT ARRIVED WITHOUT A NUMBER IS A MISSING LEG, not a quiet one —
+  // the same hole `build_props` reports as `unpriced_legs` when the register
+  // composed the card, reaching the same rules by the same field. This path
+  // combines at render, for a register that was written before the population
+  // pass could compose families, so it has to carry the fact too.
+  const unpriced = rows.filter((row) => row.probability === null);
 
   return {
     key,
@@ -651,10 +779,18 @@ function mergeFamily(group: PropMarket[]): PropMarket | null {
     outcomes: rows,
     // No single outcome answers a comparison. This is the shape, not a gap.
     answer_entity_key: null,
-    price_state: rows.every((r) => r.price_state === "live") ? "live" : "stale",
+    legs: group.length,
+    unpriced_legs: unpriced.map((row) => row.entity_key),
+    price_state: unpriced.length
+      ? "dark"
+      : rows.every((r) => r.price_state === "live")
+        ? "live"
+        : "stale",
     // AS FRESH AS ITS OLDEST ROW, like every other combined thing on this page.
     observed_at: observed.length ? observed.slice().sort()[0] : null,
-    age_hours: ages.length ? Math.max(...ages) : null,
+    // AS OLD AS ITS OLDEST ROW, and a row nobody has ever seen is older than
+    // any of them — so a card missing a reading has no age, it has a hole.
+    age_hours: ages.length === rows.length ? Math.max(...ages) : null,
     freshest_observed_at: observed.length ? observed.slice().sort().reverse()[0] : null,
     freshest_age_hours: ages.length ? Math.min(...ages) : null,
     stale_outcomes: rows

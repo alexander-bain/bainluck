@@ -4,7 +4,6 @@ import React from "react";
 
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
-  FIELD_RANK_LIMIT,
   FRESHNESS_DEFINITION,
   answerOutcome,
   curatedProps,
@@ -12,10 +11,11 @@ import {
   formatPropProbability,
   printedOutcomes,
   propFreshness,
+  propIncompleteComparison,
   propIsPresentedAsLive,
   propIsResolved,
-  rankedOutcomes,
   type PropMarket,
+  type PropOutcome,
 } from "@/lib/tournamentProps";
 
 /**
@@ -193,6 +193,39 @@ function compactAge(ageHours: number | null): string {
   return `${Math.floor(ageHours / 24)}d`;
 }
 
+/** "A" / "A and B" / "A, B and C" — the page's own list voice, not an Oxford one. */
+function nameList(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
+ * What an incomplete comparison says out loud (CERT-430, finding 1).
+ *
+ * The sentence names the SUBJECT, not the market: "no number for Carlos
+ * Alcaraz" is a fact the reader can hold, where "leg KXGRANDSLAM-CALC26 is
+ * unpriced" is one of ours. Phrased as a fact about our knowledge — "has
+ * reached us" — for the same reason `FRESHNESS_DEFINITION` is: we cannot tell a
+ * market nobody quoted from a market we are not reading, and only one of those
+ * two would be the market's fault.
+ */
+function incompleteComparisonNote(incomplete: {
+  subjects: PropOutcome[];
+  undeclared: number;
+}): string {
+  const named = incomplete.subjects
+    .map((outcome) => outcome.display_name)
+    .filter((name) => Boolean(name));
+  const unnamed = incomplete.undeclared;
+  const who =
+    named.length === 0
+      ? unnamed === 1
+        ? "one of the names in it"
+        : `${unnamed} of the names in it`
+      : `${nameList(named)}${unnamed > 0 ? ` and ${unnamed} more` : ""}`;
+  return `No number has reached us for ${who} yet, so this comparison is not complete.`;
+}
+
 function PropCard({
   market,
   variant,
@@ -204,7 +237,15 @@ function PropCard({
   // market. See `answerOutcome` for the measured specimen this rule exists to
   // stop: a 99% printed under a question whose true answer was 1%.
   const answer = answerOutcome(market);
-  const ranked = answer === null ? rankedOutcomes(market) : [];
+  // ONE LIST, THE SAME ONE THE RULES ARE COMPUTED FROM. This used to re-derive
+  // `rankedOutcomes(...).slice(FIELD_RANK_LIMIT)` beside `printedOutcomes`,
+  // which is how a card could print rows that had no vote on its own liveness.
+  // A comparison's rows come back from here complete, unquoted ones included.
+  const rows = answer === null ? printedOutcomes(market) : [];
+  // A DECLARED SUBJECT WE HAVE NO NUMBER FOR (CERT-430, finding 1). Non-null
+  // means this card is a comparison with a hole in it: it renders, with every
+  // subject, muted, and it says which one is missing.
+  const incomplete = propIncompleteComparison(market);
 
   // LIVENESS IS THE AND OVER EVERY PRINTED OUTCOME (CERT-411 round 2).
   // This used to read `ranked[0].probability_is_live` — the leader's flag,
@@ -231,13 +272,19 @@ function PropCard({
       data-freshness={fresh.state}
       data-shape={answer ? "answer" : "field"}
       data-decided={looksDecided ? "true" : "false"}
+      data-incomplete={incomplete ? "true" : "false"}
     >
       <div className="flex items-baseline justify-between gap-3">
         <span className="min-w-0 text-[14px] font-semibold text-text-primary">
           {market.title}
         </span>
         <span className="flex shrink-0 items-baseline gap-2">
-          {variant !== "sentence" && (
+          {/* An incomplete comparison gets the sentence below instead of the
+              age chip. Both are the card admitting something, and "Last number
+              20 hours ago" beside a row that has never had a number at all is
+              the less true of the two — it answers a question the reader did
+              not ask yet and hides the one they will. */}
+          {variant !== "sentence" && incomplete === null && (
             <FreshnessMark market={market} variant={variant} />
           )}
           {answer && (
@@ -263,32 +310,57 @@ function PropCard({
           )}
         </div>
       )}
-      {variant === "sentence" && <FreshnessMark market={market} variant={variant} />}
+      {variant === "sentence" && incomplete === null && (
+        <FreshnessMark market={market} variant={variant} />
+      )}
 
       {/* A field market ranks instead. There is deliberately no headline
           number here: "who will win a slam" has no single answer, and picking
           the leader to fill the slot is exactly the guess this card refuses. */}
-      {answer === null && ranked.length > 0 && (
+      {answer === null && rows.length > 0 && (
         <ol className="mt-1.5 space-y-0.5" data-testid="prop-field">
-          {ranked.slice(0, FIELD_RANK_LIMIT).map((outcome) => (
+          {rows.map((outcome) => (
             <li
               key={outcome.entity_key}
               className="flex items-baseline justify-between gap-3 text-[12px]"
               data-testid="prop-field-row"
+              data-priced={outcome.probability === null ? "false" : "true"}
             >
               <span className="min-w-0 truncate text-text-secondary">
                 {outcome.display_name}
               </span>
-              <span
-                className={`shrink-0 tabular-nums ${
-                  outcome.probability_is_live ? "text-text-primary" : "text-text-secondary"
-                }`}
-              >
-                {formatPropProbability(outcome.probability)}
-              </span>
+              {/* A SUBJECT WITH NO READING SAYS SO IN WORDS. An em dash in the
+                  number column reads as "zero" or as a layout artefact; the
+                  point of keeping this row is that the reader knows a name is
+                  in the comparison and that we have nothing for it. */}
+              {outcome.probability === null ? (
+                <span className="shrink-0 text-text-muted" data-testid="prop-field-missing">
+                  No number yet
+                </span>
+              ) : (
+                <span
+                  className={`shrink-0 tabular-nums ${
+                    outcome.probability_is_live
+                      ? "text-text-primary"
+                      : "text-text-secondary"
+                  }`}
+                >
+                  {formatPropProbability(outcome.probability)}
+                </span>
+              )}
             </li>
           ))}
         </ol>
+      )}
+
+      {incomplete && (
+        <p
+          className="mt-1.5 text-[11.5px] leading-snug text-accent-warning"
+          data-testid="prop-incomplete"
+          data-missing={incomplete.subjects.length + incomplete.undeclared}
+        >
+          {incompleteComparisonNote(incomplete)}
+        </p>
       )}
 
       {market.hook && (
@@ -419,7 +491,13 @@ export default function TournamentProps({
   // WHETHER ANY CARD OWES THE READER AN AGE. The definition line is printed
   // once per section and only when something on screen needs it — a definition
   // standing over a section of live numbers is a footnote about nothing.
-  const anyQuiet = shown.some((market) => propFreshness(market).state !== "fresh");
+  // An incomplete comparison prints its own sentence instead of an age chip, so
+  // it does not summon the definition of an age nothing on screen is showing.
+  const anyQuiet = shown.some(
+    (market) =>
+      propIncompleteComparison(market) === null &&
+      propFreshness(market).state !== "fresh"
+  );
 
   return (
     <section data-testid="tournament-props" data-considered={curated.considered}>

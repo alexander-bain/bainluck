@@ -69,6 +69,7 @@ import {
   surfaceOf,
   type BundleCopyHit,
 } from "@/lib/copyBans";
+import { FRESHNESS_DEFINITION } from "@/lib/tournamentProps";
 
 /* ───────────────────────── layer 1: the predicate ───────────────────────── */
 
@@ -390,7 +391,105 @@ function report(hits: BundleCopyHit[]): string {
  * The rest is third-party code we did not write and cannot reword.
  */
 const EXEMPT_SURFACES = new Set(["app/admin"]);
-const THIRD_PARTY_CHUNKS = [/polyfills-/, /\bframework-/, /\bfd9d1056-/, /\b463d092a-/, /\bb3bee427-/];
+
+/* ═══ CERT-430, FINDING 4: EXEMPT THE PACKAGE, NOT THE FILENAME ═══
+ *
+ * THE DEFECT, measured by the cert: this list used to be
+ *
+ *     [/polyfills-/, /\bframework-/, /\bfd9d1056-/, /\b463d092a-/, /\bb3bee427-/]
+ *
+ * and the last three are webpack's CONTENT-DERIVED vendor chunk ids. Delete
+ * `.next`, rebuild, and Firebase Auth's own sentence — "The mobile app
+ * identifier is not registered for the current project." — came back in
+ * `568dbb46-…`, which nothing matched, so a clean build failed a copy gate on
+ * prose no human here has ever been able to edit. The bundle was fine; the
+ * exemption had gone stale by being written in the one identifier a rebuild is
+ * allowed to change.
+ *
+ * That is not a list to extend. Any enumeration of hashes is wrong the moment a
+ * dependency is bumped, and the failure it produces — a red gate on somebody
+ * else's string — is the kind teams fix by loosening the rules.
+ *
+ * ═══ WHAT REPLACES IT ═══
+ *
+ * A string is a dependency's if the dependency SHIPS it and we do not write it.
+ * Both halves are checked against the tree, not against a filename:
+ *
+ *   • `vendorOwner` finds the literal in an installed package's own source and
+ *     returns the package it belongs to. Survives every rebuild and every
+ *     version bump, because it asks the package.
+ *   • `authoredHere` refuses that exemption for anything present in our own
+ *     source. A sentence we wrote is ours even if a dependency happens to
+ *     contain the same words.
+ *
+ * The check is LAST in `unowned` and memoised, because it is the only one that
+ * reads the disk — on a clean run it never executes at all, and a run with one
+ * unlisted hit pays about a second.
+ *
+ * ⚠️ IT FAILS CLOSED. No `node_modules`, an unreadable tree, or a literal the
+ * minifier reshaped all mean "not attributed", and an unattributed hit FAILS.
+ * The alternative — excusing a hit we could not explain — is the exact shape of
+ * the bug this replaces.
+ */
+
+const NODE_MODULES = path.join(__dirname, "..", "..", "node_modules");
+const OUR_SOURCE = ["app", "components", "lib", "hooks"].map((d) =>
+  path.join(__dirname, "..", "..", d)
+);
+
+function fileContains(file: string, literal: string): boolean {
+  try {
+    return fs.readFileSync(file, "utf8").includes(literal);
+  } catch {
+    return false;
+  }
+}
+
+/** Walk `dir` for `exts` files; the first one containing `literal` wins. */
+function findInTree(dir: string, literal: string, exts: RegExp): string | null {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const dirs: string[] = [];
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === ".bin" || entry.name === ".cache") continue;
+      dirs.push(full);
+    } else if (exts.test(entry.name) && fileContains(full, literal)) {
+      return full;
+    }
+  }
+  for (const child of dirs) {
+    const hit = findInTree(child, literal, exts);
+    if (hit !== null) return hit;
+  }
+  return null;
+}
+
+/** The npm package a path under `node_modules` belongs to — scopes included. */
+function packageNameOf(file: string): string {
+  const parts = path.relative(NODE_MODULES, file).split(path.sep);
+  return parts[0].startsWith("@") ? `${parts[0]}/${parts[1]}` : parts[0];
+}
+
+const vendorCache = new Map<string, string | null>();
+
+/** The installed package that ships this exact string, or `null`. */
+function vendorOwner(literal: string): string | null {
+  const cached = vendorCache.get(literal);
+  if (cached !== undefined) return cached;
+  const inSource = OUR_SOURCE.some(
+    (dir) => findInTree(dir, literal, /\.(ts|tsx|js|jsx|json)$/) !== null
+  );
+  const file = inSource ? null : findInTree(NODE_MODULES, literal, /\.(js|mjs|cjs)$/);
+  const owner = file === null ? null : packageNameOf(file);
+  vendorCache.set(literal, owner);
+  return owner;
+}
 
 /**
  * ═══ EXEMPT — the ruling says these are ALLOWED here, so they are not debt ═══
@@ -526,12 +625,44 @@ const ATTRIBUTION_AWARE_IDS = new Set(VENUE_BANS.map((b) => b.id));
 /** Hits that neither the ruling's carve-outs nor the debt list account for. */
 function unowned(hits: BundleCopyHit[]): BundleCopyHit[] {
   return hits.filter((h) => {
-    if (THIRD_PARTY_CHUNKS.some((p) => p.test(h.file))) return false;
     if (EXEMPT_SURFACES.has(h.surface)) return false;
     if ((EXEMPT[h.surface] ?? []).includes(h.ban.id)) return false;
-    return !(OWED[h.surface] ?? []).includes(h.ban.id);
+    if ((OWED[h.surface] ?? []).includes(h.ban.id)) return false;
+    // LAST, and the only check that touches the disk — see `vendorOwner`.
+    return vendorOwner(h.literal) === null;
   });
 }
+
+describe("third-party prose is attributed to its package, not to a chunk name", () => {
+  // CERT-430, finding 4. Each of these is the mechanism doing the thing the
+  // hash list could not: answering the question from the tree, so that a
+  // dependency bump — which renames every vendor chunk — changes nothing here.
+
+  it("SPECIMEN: the Firebase sentence that reddened a clean build is attributed", () => {
+    // The exact string, from the cert's clean rebuild. It moved from chunk
+    // `463d092a-…` to `568dbb46-…` and the gate went red on prose nobody here
+    // can edit. Attributed by package, the chunk's name is irrelevant.
+    // The owner is named, not merely "not ours" — `@firebase/auth-compat` is
+    // the package that ships the sentence, and `firebase` re-exports it. Either
+    // is a true answer to "whose string is this", which is why the assertion is
+    // on the family rather than on whichever copy the walk reaches first.
+    expect(
+      vendorOwner("The mobile app identifier is not registered for the current project.")
+    ).toMatch(/firebase/);
+  });
+
+  it("our own copy is never excused, even where a dependency echoes it", () => {
+    // The half that keeps this from becoming a blanket amnesty. `authoredHere`
+    // wins: a sentence in `app/`, `components/` or `lib/` is ours, and the only
+    // way to clear it is to change it.
+    expect(vendorOwner(FRESHNESS_DEFINITION)).toBeNull();
+    expect(vendorOwner("Nothing to ask yet")).toBeNull();
+  });
+
+  it("a string no package ships is not attributed — the check can fail", () => {
+    expect(vendorOwner("Kalshi and Polymarket both quote this fake sentence.")).toBeNull();
+  });
+});
 
 describe("the built bundle — the bytes Vercel uploads", () => {
   const dir = path.join(__dirname, "..", "..", ".next", "static", "chunks");
@@ -567,6 +698,27 @@ describe("the built bundle — the bytes Vercel uploads", () => {
           report(hits)
       );
     }
+  });
+
+  (present ? it : it.skip)("the vendor exemption is EXERCISED by this build, not just available", () => {
+    // Non-vacuity for the mechanism that replaced the hash list. The specimen
+    // above proves `vendorOwner` can resolve a package; this proves the bundle
+    // path actually goes through it, on the bytes this build produced.
+    //
+    // The hits below are the ones EXEMPT and OWED do not account for, so each
+    // one either names a package or fails the gate three tests up. If a build
+    // ever legitimately ships no third-party prose at all, this is the line to
+    // relax — deliberately, with a note, not by deleting the mechanism.
+    const candidates = scanDir(dir).filter(
+      (h) =>
+        !EXEMPT_SURFACES.has(h.surface) &&
+        !(EXEMPT[h.surface] ?? []).includes(h.ban.id) &&
+        !(OWED[h.surface] ?? []).includes(h.ban.id)
+    );
+    const owners = candidates
+      .map((h) => vendorOwner(h.literal))
+      .filter((owner): owner is string => owner !== null);
+    expect(owners.length).toBeGreaterThan(0);
   });
 
   it("ruling 141 is closed: no venue rule may be carried as debt again", () => {

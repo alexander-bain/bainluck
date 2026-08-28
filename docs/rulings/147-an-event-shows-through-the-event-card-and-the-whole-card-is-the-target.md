@@ -90,3 +90,30 @@ left:
 card is pressed has reimplemented the card, whatever it reused of the styling — and the reader pays
 for that in the one currency they cannot get back, which is knowing what will happen when they
 touch something.
+
+---
+
+## AMENDMENT — the literal version is NOT wanted. Alex, 2026-08-28 ~4pm PT
+
+This ruling's text above ends by naming the two ways to satisfy it and putting
+the cost of each on the record: `EventCardShell`, which shipped, or `EventCard`
+growing a `sides` slot, which would be the literal reading of *"the tournament
+list uses THE standard event-card component, full stop."* The question went back
+to Alex with that cost, and it is now answered.
+
+Relayed through Fable's `019-cert-430-repair.md`, in that file's words rather
+than Alex's own (ruling 144):
+
+> **Item 9: option (a) RULED — keep EventCardShell (shared shell, marker,
+> behavior; tennis facts intact). No literal-EventCard migration.**
+
+So the shape above is final, not provisional, and the three properties it lists
+are the whole of what *"the standard event-card component"* requires: one shared
+shell, one marker, one behaviour. A future queue proposing the `sides`-slot
+migration is proposing to reopen a closed ruling and needs a new reason — not
+this file's own sentence, which was a costing, not an invitation.
+
+**What is NOT loosened:** a second card growing features is still the defect.
+`EventCardShell` is a shared component, and the day a surface reimplements the
+link, the card, the marker or the state treatment beside it, this ruling has
+been broken however tennis-shaped the contents are.

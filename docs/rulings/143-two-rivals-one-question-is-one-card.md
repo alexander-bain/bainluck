@@ -91,3 +91,40 @@ empty state. What ships today is the SHAPE; the card appears the day those two
 markets are read again, which is what the registered-market refresh arm (window
 424, unmerged) is for. Recorded here rather than in a report because a ruling
 whose visible effect is deferred will otherwise be re-litigated as unshipped.
+
+---
+
+## APPROVED FINAL — Alex, 2026-08-28 ~4pm PT
+
+Relayed through Fable's `019-cert-430-repair.md`, in that file's words rather
+than Alex's own (ruling 144 — the distinction is the point):
+
+> **Combined second-major card (P154 panel D): APPROVED FINAL. Closed world by
+> construction — only players who already won a major THIS YEAR can win a
+> second, so the card never needs to accommodate more names.**
+
+The second sentence is the load-bearing one and it settles a question this
+ruling left open. UX-P154 built the detector so *"a third player's ladder joins
+this card with no edit anywhere"*, and treated the open-endedness as the proof
+that the grouping was systemic. Alex's reading is that for THIS card the world
+is closed: the population is "won a major in 2026", which is a set of two, so
+the card is not waiting on anyone. Both remain true — the mechanism is general,
+the instance is finished — and the practical consequence is that nobody should
+spend another queue making this card accommodate names that cannot arrive.
+
+## AND WHAT IT MUST NOT DO — CERT-430, finding 1, 2026-08-28
+
+The cert executed the failure this card's whole existence is meant to prevent,
+one layer below where the ruling was looking. With Alcaraz's leg unquoted and
+Sinner's fresh at .555, the combined card rendered **live, with one player on
+it**, under *"Who wins a second major this year?"* — because an unpriced row has
+nothing to rank it by, so the ranking dropped it, and only priced rows voted on
+whether the card was current.
+
+**A comparison is complete or it is not presented as one.** A card built from
+several declared markets prints every declared subject, is never presented as
+current while one of them has no reading, and names the subject that is missing.
+It is not hidden — ruling 146 is unchanged, and hiding it would throw away the
+real number the other leg has. The repair is `legs` / `unpriced_legs` on the
+card payload (`build_props`), `propIncompleteComparison` in the pure layer, and
+a permanent-red specimen carrying the cert's exact shape.

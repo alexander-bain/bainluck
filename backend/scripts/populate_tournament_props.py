@@ -529,6 +529,54 @@ def read_query_dump(path: Path) -> list[dict]:
     return [dict(zip(payload["columns"], row)) for row in payload["rows"]]
 
 
+#: The one market state this pass may write a card from.  Everything else —
+#: ``closed``, ``settled``, ``finalized`` — is a question that has stopped being
+#: a question.
+OPEN_STATUS = "open"
+
+
+def refuse_non_open(rows: list[dict], label: str) -> list[str]:
+    """Every row must be an OPEN market, and the dump must be able to say so.
+
+    ═══ CERT-430, FINDING 3 ═══
+
+    The documented query filters ``fm.status = 'open'`` and nothing checked that
+    it had.  The cert executed the gap: flipping one leg's status to ``closed``
+    in the dump returned exit 0 and wrote the combined card, while the adjacent
+    missing-leg and duplicate-outcome controls both refused.  A settled leg is
+    the worst possible member of a comparison — its number is not stale, it is
+    *over*, and nothing downstream can tell that from a quiet market.
+
+    So the precondition is verified here rather than trusted, and it is verified
+    in the direction that fails safe: a dump with no ``status`` column at all is
+    refused too.  A guard that silently passes when its evidence is missing is
+    the gotcha #53 shape — an absent answer read as a good one — and it is
+    exactly how this one would come back.
+
+    Returns the refusal lines; empty means the dump is clean.
+    """
+    if not rows:
+        return []
+    if any("status" not in row for row in rows):
+        return [
+            f"REFUSED: {label} carries no `status` column, so this pass cannot "
+            "verify that every market is open. Re-run the documented query — it "
+            "selects `fm.status` for exactly this reason.",
+        ]
+    bad: dict[str, set[str]] = {}
+    for row in rows:
+        status = str(row.get("status") or "").strip()
+        if status != OPEN_STATUS:
+            bad.setdefault(str(row["market_ext"]), set()).add(status or "(empty)")
+    return [
+        f"REFUSED: {label} market {market_ext} is "
+        f"{'/'.join(sorted(states))}, not {OPEN_STATUS!r}. A settled or closed "
+        "market is not a question — the whole pass stops rather than writing a "
+        "card around it."
+        for market_ext, states in sorted(bad.items())
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--register", required=True)
@@ -546,8 +594,20 @@ def main() -> int:
 
     register = json.loads(Path(args.register).read_text())
     rows = read_query_dump(Path(args.dump))
+    refusals = refuse_non_open(rows, args.dump)
     if args.advance_dump:
-        rows = rows + read_query_dump(Path(args.advance_dump))
+        advance_rows = read_query_dump(Path(args.advance_dump))
+        refusals += refuse_non_open(advance_rows, args.advance_dump)
+        rows = rows + advance_rows
+
+    # BEFORE ANYTHING IS DECIDED. A closed leg must not reach curation, family
+    # detection or the writer — see `refuse_non_open`. Every refusal in the dump
+    # is printed, not just the first: a curator re-running after each one, one
+    # market at a time, is how a five-minute fix becomes an afternoon.
+    if refusals:
+        for line in refusals:
+            print(line, file=sys.stderr)
+        return 1
 
     # One curation table, assembled from two. Keeping them separate above is
     # editorial (the two populations were surveyed on different days, against
