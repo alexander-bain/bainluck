@@ -34,8 +34,13 @@
  * "render" of it here would be a blank rectangle presented as a chart. The
  * panel therefore plots the SAME production series the chart plots, at the
  * shipped chart's own line weights and colours, so the styling question Alex
- * asked can be answered from it. The shipped change — the end-of-line source
- * labels — is guarded separately against the real `SourceEndLabel` below.
+ * asked can be answered from it.
+ *
+ * ⚠️ UX-P154: ALEX RATIFIED 3B. The end-of-line source labels UX-P152 shipped
+ * are reverted in full, and the guard at the bottom of this file is inverted
+ * accordingly — it now asserts the chart writes NO source name onto the plot,
+ * because a passing guard around a reverted feature is how a reverted feature
+ * comes back.
  */
 
 import React from "react";
@@ -46,7 +51,6 @@ import path from "node:path";
 import AdvancementPath from "@/components/event/AdvancementPath";
 import MatchProps from "@/components/tournament/MatchProps";
 import TournamentMatches from "@/components/tournament/TournamentMatches";
-import { SourceEndLabel } from "@/components/OddsChart";
 import { toStages, ADVANCEMENT_HEADING } from "@/components/event/TournamentExtensions";
 import { matchListFromSlate } from "@/lib/matchList";
 import { sourceHex } from "@/lib/sourceColors";
@@ -402,11 +406,7 @@ function matchListPanel(): string {
   );
   return renderToStaticMarkup(
     <div className="px-4 lg:px-6">
-      <TournamentMatches
-        entries={entries}
-        initialExpanded
-        initialOpenMatchId={entries[0]?.id}
-      />
+      <TournamentMatches entries={entries} initialExpanded />
     </div>
   );
 }
@@ -448,29 +448,33 @@ describe("UX-P152 — the match, on the standard event page", () => {
     expect(matchListPanel()).toContain(`href="/events/${EVENT.id}"`);
   });
 
-  it("the shipped end-of-line label draws only at the series' last point", () => {
+  it("3B is what ships: the chart writes NO source name onto the plot", () => {
     /**
-     * The real component, not the drawing. `SourceEndLabel` is called once per
-     * point by Recharts; writing the source name at every sample would paper
-     * the chart with it.
+     * ═══ ALEX RATIFIED 3B OVER 3A (UX-P154) ═══
+     *
+     * *"Panel 3B ('+ N sources' press) is RATIFIED over 3A."* — Alex's review
+     * of P149/P150/P151/P152, relayed through the UX-P154 runner directive.
+     *
+     * So this test inverted. It used to assert that the real `SourceEndLabel`
+     * drew at the series' last point and nowhere else; the choice it was
+     * guarding was not the one Alex made, and a passing guard around a
+     * reverted feature is how a reverted feature comes back.
+     *
+     * It reads the SOURCE rather than a render because the thing being
+     * forbidden is a component that no longer exists — there is nothing to
+     * mount. The two forbidden strings are the label's own `data-testid` and
+     * the export name, so either rebuilding it under its old name or wiring a
+     * new one to the same hook turns this red.
      */
-    const at = (index: number) =>
-      renderToStaticMarkup(
-        <svg>
-          <SourceEndLabel
-            x={100}
-            y={50}
-            index={index}
-            text="Kalshi"
-            color="#22c55e"
-            faint
-            lastIndex={7}
-          />
-        </svg>
-      );
-    expect(at(7)).toContain("Kalshi");
-    expect(at(6)).not.toContain("Kalshi");
-    expect(at(0)).not.toContain("Kalshi");
+    const chart = fs.readFileSync(
+      path.join(FRONTEND, "components", "OddsChart.tsx"),
+      "utf8"
+    );
+    expect(chart).not.toContain('data-testid="chart-source-label"');
+    expect(chart).not.toContain("export function SourceEndLabel");
+    // The ratified treatment is still there — this must not pass by the legend
+    // having been deleted too.
+    expect(chart).toContain("legendExpanded");
   });
 
   it("writes the artifact when UX_CAPTURE_DIR is set", () => {
@@ -572,8 +576,10 @@ ${panel(
   <div class="drawn"><b>Panels 3A and 3B are drawn, not rendered.</b> The chart is Recharts and
   Recharts measures its container — server-rendered it emits an empty box, so a "render" here
   would be a blank rectangle presented as a chart. These plot the same production series at the
-  shipped chart's own line weights and colours, which is what the styling question needs. The
-  shipped change is the end-of-line labels, guarded against the real component in this file.</div>
+  shipped chart's own line weights and colours, which is what the styling question needs.
+  <br><br><b>UX-P154: you ratified 3B.</b> 3A is reverted in full — no source name is written onto
+  the plot, and the chart is exactly what it was before UX-P152 touched it. The panels below are
+  kept as the record of the choice, not as a proposal.</div>
   <div class="chartwrap">
     <div style="font:700 12px inherit;color:#111827;margin:6px 0 6px">3A — your format: every faint line ends in its own name</div>
     ${renderToStaticMarkup(<TrendGraph labelled />)}
@@ -586,12 +592,12 @@ ${panel(
     ${renderToStaticMarkup(<TrendGraph labelled={false} />)}
     ${legendRow()}
     <p style="font-size:12px;color:#4B5563;line-height:1.6;margin:10px 0 6px">
-      The blend already dominates and the faint lines are already there — that half was right.
-      What is missing is that the lines are anonymous until you press for a legend, and a legend
-      lists sources without saying which line is which or when one ended. <b>3A is the
-      recommendation.</b> I did not find an alternative that beats it: a hover tooltip needs an
-      intent the glance does not have, and colour-only keying fails for the two model lines that
-      track each other.
+      The blend already dominates and the faint lines are already there. 3A's argument was that
+      the lines are anonymous until you press for a legend, and that a legend cannot say
+      <i>when</i> a source stopped. <b>You ratified 3B, and 3B is what ships.</b> The one thing 3A
+      was right about is recorded in the chart's own source so the next lane starts from the gap
+      rather than from the argument you have already heard: an end-of-line label is the only
+      annotation that can carry when a source dropped out, and that remains unsurfaced.
     </p>
   </div>
 </div>

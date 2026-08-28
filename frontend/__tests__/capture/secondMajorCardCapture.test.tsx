@@ -190,7 +190,22 @@ function supersededCards(): PropMarket[] {
   ];
 }
 
-describe("UX-P151 — the combined second-major card", () => {
+/**
+ * The same two superseded cards with their TOPICS pulled apart, so the render-
+ * time combiner leaves them alone.
+ *
+ * Needed only for the "what it used to look like" panel, and captioned as a
+ * reconstruction on the artifact. Since UX-P154 there is no data that produces
+ * two same-topic cards on this page — which is the change — so the only way to
+ * photograph the old repetition is to defeat the thing that ended it.
+ */
+function unfamilied(cards: PropMarket[]): PropMarket[] {
+  return cards.map((card, index) =>
+    index === 0 ? { ...card, key: `${card.key}-a` } : { ...card, key: `${card.key}-b` }
+  );
+}
+
+describe("UX-P154 — the combined card, and who builds it", () => {
   const payload = loadPayload();
   const props = (payload.props ?? []) as PropMarket[];
   const combined = props.find((market) => market.key === "second-major");
@@ -200,7 +215,13 @@ describe("UX-P151 — the combined second-major card", () => {
     // `capture_tournament_payload.py`. These are the facts the panels are FOR.
     expect(combined).toBeDefined();
     expect(combined!.title).toBe("Who wins a second major this year?");
-    expect(combined!.outcomes.map((o) => o.display_name)).toEqual(["Alcaraz", "Sinner"]);
+    // UX-P154: the rows are the SOURCE's own words, derived from each market's
+    // title by `prop_template_family.subject_display`. UX-P151 hand-wrote
+    // "Alcaraz" and "Sinner", which nothing downstream could check.
+    expect(combined!.outcomes.map((o) => o.display_name)).toEqual([
+      "Carlos Alcaraz",
+      "Jannik Sinner",
+    ]);
     expect(combined!.outcomes.map((o) => o.probability)).toEqual([0.25, 0.555]);
     // A comparison has no single answer, so the card ranks rather than leading.
     expect(combined!.answer_entity_key).toBeNull();
@@ -214,7 +235,7 @@ describe("UX-P151 — the combined second-major card", () => {
 
   it("BEFORE: two cards, the same question twice, one number each", () => {
     const html = renderToStaticMarkup(
-      <TournamentProps markets={supersededCards().map(asLive)} draw="mens-singles" />
+      <TournamentProps markets={unfamilied(supersededCards()).map(asLive)} draw="mens-singles" />
     );
     // The repetition Alex objected to, on screen: two cards, and the only
     // difference between their questions is the name inside them.
@@ -229,6 +250,34 @@ describe("UX-P151 — the combined second-major card", () => {
     expect((html.match(/data-shape="answer"/g) ?? []).length).toBe(2);
   });
 
+  it("THE ANSWER TO ALEX'S QUESTION: the OLD data now combines itself", () => {
+    /* ═══ ITEM 1, ON SCREEN ═══
+     *
+     * *"Was this a bespoke solution? I thought we'd built tools to identify
+     * groups and surface them as groups. Why didn't any of them trigger?"*
+     *
+     * It was bespoke. This is the same superseded register-v10 payload, with
+     * its ORIGINAL keys, rendered by today's page — and it comes out as one
+     * card. Nothing in the data says to combine it; `combinePropFamilies` sees
+     * one topic and two subjects and merges them, and the question is named
+     * from the two titles' own shared words.
+     *
+     * This is the strongest form of the claim, because the input is the exact
+     * thing that produced the repetition Alex objected to.
+     */
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={supersededCards().map(asLive)} draw="mens-singles" />
+    );
+    expect((html.match(/data-testid="prop-market"/g) ?? []).length).toBe(1);
+    expect(html).toContain("Can … win a second major this year?");
+    expect((html.match(/data-testid="prop-field-row"/g) ?? []).length).toBe(2);
+    expect(html).toContain("Alcaraz");
+    expect(html).toContain("Sinner");
+    // Nobody was deleted. That is the difference between combining and the
+    // collapse ruling 139 forbids.
+    expect(html).toContain('data-testid="props-combined"');
+  });
+
   it("AFTER: one card, two players, no headline number", () => {
     const html = renderToStaticMarkup(
       <TournamentProps markets={[asLive(combined!)]} draw="mens-singles" />
@@ -238,8 +287,8 @@ describe("UX-P151 — the combined second-major card", () => {
     expect(html).toContain("Who wins a second major this year?");
     // Two names, two numbers, ranked — Sinner's 56% above Alcaraz's 25%.
     expect((html.match(/data-testid="prop-field-row"/g) ?? []).length).toBe(2);
-    expect(html).toContain("Sinner");
-    expect(html).toContain("Alcaraz");
+    expect(html).toContain("Jannik Sinner");
+    expect(html).toContain("Carlos Alcaraz");
     expect(html).toContain("56%");
     expect(html).toContain("25%");
     // NOT normalised to 100. Four majors a year and each man needs two of
@@ -252,13 +301,24 @@ describe("UX-P151 — the combined second-major card", () => {
     expect(html).not.toContain("Grand Slam wins");
   });
 
-  it("TODAY: on the real readings the card is dark and the section says so", () => {
-    // The honest half, and the reason the report cannot claim a visible ship.
-    // Both legs were last read 2026-07-24. `propIsDark` rotates the card out
-    // and the section renders its empty state with the count and the reason.
+  it("TODAY: on the real readings the card RENDERS, and says how old it is", () => {
+    /* ═══ ITEM 4, ON THE REAL PAYLOAD ═══
+     *
+     * This assertion is inverted from UX-P151's, and the inversion is the ship.
+     * Both legs were last read 2026-07-24, 856 hours ago. Until now that
+     * emptied the section, and the P151 report's honest half was that "what
+     * ships today is the SHAPE".
+     *
+     * Alex, item 4: illiquid props render with honest freshness indication,
+     * never hidden — *"that's part of the value of the product."* So the card
+     * is on the page, 35 days old, saying so, and never in the confident type.
+     */
     const html = renderToStaticMarkup(<TournamentProps markets={props} draw="mens-singles" />);
-    expect(html).toContain('data-testid="props-empty"');
-    expect(html).toContain("have not seen a new number on");
+    expect(html).not.toContain('data-testid="props-empty"');
+    expect(html).toContain("Who wins a second major this year?");
+    expect(html).toContain('data-live="false"');
+    expect(html).toContain("Last number 35 days ago");
+    expect(html).toContain("not when it was created");
   });
 
   it("writes the artifact when UX_CAPTURE_DIR is set", () => {
@@ -276,6 +336,12 @@ describe("UX-P151 — the combined second-major card", () => {
       `<div class="panel"><div class="panel-head"><span class="tag ${kind}">${kind}</span> <b>${label}</b> ${note}</div>${framed(markup)}<div class="rule"></div></div>`;
 
     const before = renderToStaticMarkup(
+      <TournamentProps
+        markets={unfamilied(supersededCards()).map(asLive)}
+        draw="mens-singles"
+      />
+    );
+    const systemic = renderToStaticMarkup(
       <TournamentProps markets={supersededCards().map(asLive)} draw="mens-singles" />
     );
     const after = renderToStaticMarkup(
@@ -284,11 +350,16 @@ describe("UX-P151 — the combined second-major card", () => {
     const today = renderToStaticMarkup(
       <TournamentProps markets={props} draw="mens-singles" />
     );
+    const variants = (["labelled", "sentence", "dot"] as const).map((variant) =>
+      renderToStaticMarkup(
+        <TournamentProps markets={props} draw="mens-singles" variant={variant} />
+      )
+    );
 
     const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>UX-P151 — Who wins a second major this year?</title>
+<title>UX-P154 — grouping by the system, and how a quiet question shows its age</title>
 <style>${css}</style>
 <style>
   body{background:#F5F5F7;margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Segoe UI,Roboto,sans-serif}
@@ -298,57 +369,110 @@ describe("UX-P151 — the combined second-major card", () => {
   .tag.before{background:#FEF2F2;color:#991B1B}
   .tag.after{background:#ECFDF5;color:#065F46}
   .tag.today{background:#FFFBEB;color:#92400E}
+  .tag.riff{background:#EEF2FF;color:#3730A3}
   .panel{padding:8px 0 40px}
   .panel-head{padding:16px 22px 4px;font-size:13px;color:#4B5563;line-height:1.6}
   .rule{height:1px;background:#E5E7EB;margin:8px 0 0}
+  .ask{padding:14px 22px;background:#FFFBEB;border-top:1px solid #FDE68A;border-bottom:1px solid #FDE68A;font-size:13px;line-height:1.6;color:#78350F}
 </style></head>
 <body>
 <div class="banner">
-  <span class="tag after">UX-P151</span> <b>One combined card, both men on it.</b>
-  Your ruling this morning: <i>"ONE COMBINED CARD — 'Who wins a second major this year?' —
-  showing BOTH players' probabilities."</i> Every number below is real: Alcaraz's
-  <b>2+ Grand Slam wins</b> at 25% and Sinner's at 55.5%, read from production through the page's
-  own <code>build_props</code>.
+  <span class="tag after">UX-P154</span> <b>The grouping is systemic now, and no question is
+  hidden for being old.</b>
   <br><br>
-  <b>The two markets are independent.</b> There are four majors a year and each man needs two of
-  them, not the same two — so both can resolve Yes, the numbers do not add to 100, and the card
-  does not make them. That is what the sentence under the card is for; the title on its own reads
-  as a race.
+  <b>Your question:</b> <i>"Was this a bespoke solution? I thought we'd built tools to identify
+  groups and surface them as groups. Why didn't any of them trigger?"</i>
+  <br>
+  <b>It was bespoke</b> — a human wrote down two tickers, the outcome to pull from each, and the
+  label each row should print. Nothing was detected. Two things could have fired and neither
+  could: the props renderer's family rule was a <i>cap</i>, whose only outputs were two cards or
+  one card and a deletion — and since UX-P147 keyed it on the whole register key, and register
+  keys are unique, it had been <b>structurally unreachable</b>. The real grouper
+  (<code>prop_families.py</code>) is not wired to this pass and returns nothing for
+  <i>"Carlos Alcaraz: Grand Slam wins in 2026"</i> anyway.
   <br><br>
-  <b>What you will actually see on merge is panel 3.</b> Both Kalshi markets were last read on
-  <b>2026-07-24</b>, 856 hours ago, so the card is too old to show and the section keeps its empty
-  state. Panel 2 is the same card with only the freshness fields moved — the shape you are ruling
-  on, over today's real numbers. It becomes panel 2 for real the day these two markets are read
-  again.
+  <b>Panel 2 is the answer.</b> It is the OLD two-card data, with its original keys, rendered by
+  today's page — and it comes out as one card. Nothing in the data says to combine it.
+  <br><br>
+  <b>And every number below is real:</b> Alcaraz's <b>2+ Grand Slam wins</b> at 25% and Sinner's at
+  55.5%, read from production. The two markets are independent — four majors a year and each man
+  needs two of them, not the same two — so both can resolve Yes, the numbers do not add to 100,
+  and the card does not make them.
 </div>
 ${panel(
   "before",
-  "Two cards — the same question with the name swapped.",
-  "Quoted from register v10, which this queue supersedes. Shipped component, real numbers.",
+  "1 — What it looked like: the same question with the name swapped.",
+  "Register v10's two cards. Reconstructed: their keys are pulled apart so today's combiner leaves them alone, because there is no longer any data that produces this.",
   before
 )}
 ${panel(
   "after",
-  "One card, two players, ranked. No headline number.",
-  "Shipped component, unmodified. Real numbers; freshness set live so the treatment is visible.",
+  "2 — The same old data, rendered by today's page.",
+  "Original keys, nothing else changed. One card, both men, and the question named from the two titles' own shared words. This is what &ldquo;by the system&rdquo; means.",
+  systemic
+)}
+${panel(
+  "after",
+  "3 — What the register now holds, built by the detector.",
+  "The rows say <b>Carlos Alcaraz</b> and <b>Jannik Sinner</b> because that is what the markets call them — derived, not curated. A third player's ladder joins this card with no edit anywhere. Freshness set live so the treatment is visible.",
   after
 )}
 ${panel(
   "today",
-  "The section as it renders on merge.",
-  "Nothing moved. Both legs are 856 hours old, so the card rotates out and the section says why.",
+  "4 — The section as it renders on merge. THIS IS THE SHIP.",
+  "Nothing moved. Both legs are 856 hours old — and the card is on the page, saying so, instead of being deleted. Until today this section was EMPTY every day it existed.",
   today
+)}
+<div class="ask">
+  <span class="tag riff">Your eyeball</span> <b>Three ways a quiet question can show its age.</b>
+  You said the <i>"32 hours ago"</i> ambiguity is real — created? updated? last traded? — and that
+  this is <i>"an open riff, not a settled design."</i>
+  <br><br>
+  <b>What the timestamp actually means,</b> traced to the query: it is
+  <code>MAX(futures_odds_snapshots.captured_at)</code>, and every refresh writes a snapshot whether
+  or not the number moved. So it is <b>the last time a probability for that question reached us</b>
+  — not created, not last updated by the venue, not last traded. And it cannot tell you which of
+  two causes it has: the market may be quoted and untraded, or our reader may not be covering it.
+  Both are &ldquo;no new number reached us&rdquo;, so that is what the copy says rather than
+  claiming to know the market went quiet.
+  <br><br>
+  All three below are the SHIPPED component with the same real data — not drawings.
+  <b>A is the default.</b>
+</div>
+${panel(
+  "riff",
+  "A — labelled chip (shipped default).",
+  "Carries the noun on every card without spending a line on it. The one that answers &ldquo;32 hours since what&rdquo; inline.",
+  variants[0]
+)}
+${panel(
+  "riff",
+  "B — plain sentence.",
+  "Least ambiguous, most vertical space. Reads well at two cards; would drown a section of eight.",
+  variants[1]
+)}
+${panel(
+  "riff",
+  "C — dot and compact age.",
+  "Densest. The meaning lives once in the section footnote instead of on each card. The one to try if this section grows.",
+  variants[2]
 )}
 </body></html>`;
 
-    const file = path.join(dir, "p151-second-major-card.html");
+    const file = path.join(dir, "p154-props-and-grouping.html");
     fs.writeFileSync(file, html);
 
     const written = fs.readFileSync(file, "utf8");
     expect(written.length).toBeGreaterThan(20_000);
     expect(written).toContain('class="tag before"');
     expect(written).toContain('class="tag after"');
+    expect(written).toContain('class="tag riff"');
     expect(written).toContain("Who wins a second major this year?");
     expect(written).toContain("Can Alcaraz win a second major this year?");
+    // All three riff variants really rendered — a panel that fell back to the
+    // default would look plausible and prove nothing.
+    for (const variant of ["labelled", "sentence", "dot"]) {
+      expect(written).toContain(`data-variant="${variant}"`);
+    }
   });
 });

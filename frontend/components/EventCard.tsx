@@ -1,20 +1,18 @@
 "use client";
 
 import { useEffect } from "react";
-import Link from "next/link";
 import { useSpring, useTransform } from "framer-motion";
 import { motion } from "@/components/motion";
 import type { Event } from "@/lib/types";
 import { getLeagueDisplay } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 import { cn } from "@/lib/utils";
-import { Card } from "@/components/ui/card";
+import EventCardShell from "./EventCardShell";
 import PersonalizedBadge from "./PersonalizedBadge";
 import ProbabilityBar from "./ProbabilityBar";
 import EntityImage from "./EntityImage";
 import { isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { teamColorStyle } from "@/lib/teamColors";
-import { fadeIn } from "@/lib/animations";
 import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
@@ -173,39 +171,27 @@ export default function EventCard({
   const awayShort = event.away_team.split(" ").pop() || event.away_team;
 
   return (
-    <Link
+    // UX-P083 (#1860) / UX-P154: the stable hook the browser rail counts and the
+    // link-and-card treatment both live in `EventCardShell` now. Ruling 047's
+    // acceptance is "the league page renders the SHARED event card", and that is
+    // a claim about WHICH COMPONENT rendered — unanswerable from the DOM unless
+    // the shared card marks itself. It moved one level down so the tournament
+    // match list can make the same claim without copying a wrapper, which is
+    // exactly the "reinventing the event card" Alex named.
+    <EventCardShell
       href={`/events/${event.id}`}
-      className="h-full"
       onClick={handleCardClick}
-      // UX-P083 (#1860): the stable hook the browser rail counts. Ruling 047's
-      // acceptance is "the league page renders the SHARED event card", and that
-      // is a claim about WHICH COMPONENT rendered — unanswerable from the DOM
-      // unless the shared card marks itself. Lives on the shared card rather
-      // than on each caller, so a future league-local variant cannot inherit it
-      // by copying a wrapper.
-      data-testid="event-card"
-      aria-label={`${event.away_team} at ${event.home_team}${isLive ? " - Live" : isFinished ? " - Final" : ""}`}
+      live={isLive}
+      finished={isFinished}
+      ariaLabel={`${event.away_team} at ${event.home_team}${isLive ? " - Live" : isFinished ? " - Final" : ""}`}
+      style={teamColorStyle(
+        event.home_team_data?.primary_color,
+        event.away_team_data?.primary_color,
+        event.home_team_data?.secondary_color,
+        event.away_team_data?.secondary_color,
+      )}
     >
-      <motion.div
-        variants={fadeIn}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card
-          className={cn(
-            "h-full flex flex-col p-3 sm:p-4 transition-all cursor-pointer group/card",
-            "bg-surface-card border-surface-border",
-            "hover:bg-surface-elevated hover:shadow-card-hover hover:scale-[1.005] hover:border-surface-elevated",
-            isLive && "border-l-[3px] border-l-accent-live ring-1 ring-accent-live/20",
-            isFinished && "opacity-80 hover:opacity-100 hover:scale-100",
-          )}
-          style={teamColorStyle(
-            event.home_team_data?.primary_color,
-            event.away_team_data?.primary_color,
-            event.home_team_data?.secondary_color,
-            event.away_team_data?.secondary_color,
-          )}
-        >
+      <>
           {/* Top bar: league + status + pin */}
           <div className="flex items-center justify-between gap-2 mb-2.5">
             <div className="flex items-center gap-1.5 min-w-0">
@@ -453,9 +439,8 @@ export default function EventCard({
               )}
             </div>
           )}
-        </Card>
-      </motion.div>
-    </Link>
+      </>
+    </EventCardShell>
   );
 }
 

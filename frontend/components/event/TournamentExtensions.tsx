@@ -50,6 +50,7 @@ import AdvancementPath, {
   type AdvancementStage,
 } from "@/components/event/AdvancementPath";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
+import { broadcastFor } from "@/lib/slate";
 import { fetchEventTournament } from "@/lib/api";
 import type {
   EventTournamentResponse,
@@ -84,6 +85,44 @@ export function toStages(row: TournamentAdvancementRow | null): AdvancementStage
       change: s.trend_24h ?? null,
       resolved: false,
     }));
+}
+
+/**
+ * WHERE TO WATCH — ALEX'S RULING 7, AT ITS NEW ADDRESS (UX-P154).
+ *
+ * Ruling 7: *"where-to-watch moves to the DETAIL view"* — off every row of a
+ * long list, where a single line at the top is wrong and a line per row is
+ * noise. UX-P138 implemented the detail view as an accordion inside the match
+ * row.
+ *
+ * Alex's item 2, 2026-08-28: the whole match card is clickable, no link row. So
+ * the accordion is gone and the detail view is THIS page — the one the tap
+ * arrives at. The ruling did not change; its venue did. The match list carries
+ * no broadcast at all now, and `tournamentMatches.test.tsx` holds that negative
+ * in both the region-wide and the per-match case.
+ *
+ * Exported so a guard can render it directly: the parent is a SWR client
+ * component that returns `null` server-side with no data, so a test that mounted
+ * only the parent would prove the line renders by never rendering it.
+ */
+export function WhereToWatch({
+  broadcasts,
+}: {
+  broadcasts?: EventTournamentResponse["broadcasts"];
+}) {
+  const watch = broadcastFor(broadcasts);
+  if (!watch || watch.channels.length === 0) return null;
+  return (
+    <p
+      className="-mt-2 mb-4 text-[12px] text-text-secondary"
+      data-testid="tournament-where-to-watch"
+      data-region={watch.region}
+    >
+      <span className="font-semibold text-text-primary">Where to watch</span>{" "}
+      {watch.channels.join(", ")}
+      <span className="text-text-muted"> ({watch.region})</span>
+    </p>
+  );
 }
 
 function PlayerCard({
@@ -164,7 +203,12 @@ export default function TournamentExtensions({
       toStages(advancement.away_team).length > 0)
   );
   const hasProps = (data.props?.length ?? 0) > 0;
-  if (!hasAdvancement && !hasProps) return null;
+  // Where to watch keeps the section alive on its own (UX-P154): a match whose
+  // reach board is unquoted and whose props have not listed still has a
+  // channel, and that is the most useful thing on the page an hour before play.
+  const watch = broadcastFor(data.broadcasts);
+  const hasWatch = !!watch && watch.channels.length > 0;
+  if (!hasAdvancement && !hasProps && !hasWatch) return null;
 
   return (
     <section className="mt-6" data-testid="tournament-extensions">
@@ -188,6 +232,8 @@ export default function TournamentExtensions({
           The whole draw →
         </Link>
       </div>
+
+      <WhereToWatch broadcasts={data.broadcasts} />
 
       {hasAdvancement && advancement && (
         <SectionErrorBoundary label="Advancement" resetKey={eventId}>

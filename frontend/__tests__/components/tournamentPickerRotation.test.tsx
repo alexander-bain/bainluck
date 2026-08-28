@@ -19,7 +19,9 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import ContenderChart from "@/components/tournament/ContenderChart";
-import TournamentProps from "@/components/tournament/TournamentProps";
+import TournamentProps, {
+  DEFAULT_FRESHNESS_VARIANT,
+} from "@/components/tournament/TournamentProps";
 import {
   MAX_SERIES_COUNT,
   defaultSelection,
@@ -27,11 +29,13 @@ import {
   selectionIsDefault,
 } from "@/lib/contenderChart";
 import {
-  PROP_DARK_AFTER_HOURS,
+  PROP_QUIET_AFTER_HOURS,
   curatedProps,
   curatedPropsEmptyReason,
+  propFamilyTitle,
+  propFreshness,
   propInterestScore,
-  propIsDark,
+  propIsQuiet,
   propIsResolved,
   propSubject,
   propTemplateFamily,
@@ -293,13 +297,40 @@ describe("ruling 8 — an advance-to-round question is not a prop", () => {
   });
 });
 
-describe("ruling 8 — resolved and dark questions rotate out", () => {
-  it("drops a question the market has answered", () => {
+/* ═══ ALEX'S ITEM 4, 2026-08-28: NEVER EXCLUDE PROPS ═══
+ *
+ * In his words: illiquid props render with honest freshness indication, never
+ * hidden — *"that's part of the value of the product."*
+ *
+ * This block asserted the opposite until UX-P154, and it was right under ruling
+ * 8's "when a prop resolves or goes stale, it rotates out". Alex reversed that
+ * half. The tests are INVERTED rather than deleted, because the drop is the
+ * thing that must never come back and a deleted test cannot say so — the
+ * counters are now asserted to be ZERO exactly as hard as they used to be
+ * asserted to be one.
+ *
+ * The measured consequence is the ship: all three cards the register held were
+ * older than 48 hours, so the section was empty on production every day it
+ * existed.
+ */
+describe("Alex's item 4 — an illiquid question is still a question", () => {
+  it("RENDERS a question the market appears to have answered, and labels it", () => {
     const settled = prop("done", {
       outcomes: [outcome({ entity_key: "done:yes", probability: 1 })],
     });
     expect(propIsResolved(settled)).toBe(true);
-    expect(curatedProps([settled], "mens-singles").dropped.resolved).toBe(1);
+    const result = curatedProps([settled], "mens-singles");
+    expect(result.markets.map((m) => m.key)).toEqual(["done"]);
+    expect(result.dropped.resolved).toBe(0);
+
+    // `propIsResolved` INFERS settlement from the number at a rail, which on an
+    // illiquid market is a guess. Labelling a guess is honest; hiding a card on
+    // one is not, because the reader cannot see what was decided about them.
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={[settled]} draw="mens-singles" />
+    );
+    expect(html).toContain('data-decided="true"');
+    expect(html).toContain("Looks decided");
   });
 
   it("keeps a near-certainty, because 98% is still a question", () => {
@@ -310,25 +341,126 @@ describe("ruling 8 — resolved and dark questions rotate out", () => {
     expect(curatedProps([nearly], "mens-singles").markets).toHaveLength(1);
   });
 
-  it("drops a reading we no longer call a price", () => {
-    expect(propIsDark(dark("old"))).toBe(true);
-    expect(curatedProps([dark("old")], "mens-singles").dropped.dark).toBe(1);
+  it("RENDERS a month-old reading, with its age said out loud", () => {
+    // THE SPECIMEN THAT EMPTIED THE LIVE SECTION. `dark("old")` is past the
+    // 48-hour boundary, which used to delete it.
+    expect(propIsQuiet(dark("old"))).toBe(true);
+    const result = curatedProps([dark("old")], "mens-singles");
+    expect(result.markets.map((m) => m.key)).toEqual(["old"]);
+    expect(result.dropped.dark).toBe(0);
+
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={[dark("old")]} draw="mens-singles" />
+    );
+    expect(html).toContain('data-freshness="quiet"');
+    expect(html).toContain("Last number");
+    // And the definition, once, so "Last number" is not a second riddle.
+    expect(html).toContain('data-testid="props-freshness-definition"');
   });
 
-  it("KEEPS a merely stale one, which wears the honesty treatment instead", () => {
-    // One vocabulary across the page: live is confident, stale is muted and
-    // says its age, dark is gone. A section-specific threshold would be a
-    // fourth opinion about what old means.
-    const stale = dark("stale-only", PROP_DARK_AFTER_HOURS - 1);
-    expect(propIsDark(stale)).toBe(false);
-    expect(curatedProps([stale], "mens-singles").markets).toHaveLength(1);
+  it("distinguishes waiting from quiet, because 30 hours is not a month", () => {
+    const waiting = dark("waiting", PROP_QUIET_AFTER_HOURS - 1);
+    expect(propIsQuiet(waiting)).toBe(false);
+    expect(propFreshness(waiting).state).toBe("waiting");
+    expect(propFreshness(dark("old")).state).toBe("quiet");
+    expect(curatedProps([waiting], "mens-singles").markets).toHaveLength(1);
   });
 
-  it("treats a never-priced question as dark rather than as fresh", () => {
+  it("renders a never-seen question rather than pretending it does not exist", () => {
     const never = prop("never", {
       outcomes: [outcome({ entity_key: "never:yes", probability: null, age_hours: null })],
     });
-    expect(propIsDark(never)).toBe(true);
+    expect(propIsQuiet(never)).toBe(true);
+    expect(propFreshness(never).label).toBe("No number yet");
+    expect(curatedProps([never], "mens-singles").markets).toHaveLength(1);
+  });
+
+  it("NOTHING is hidden for age or for looking decided — the counters stay 0", () => {
+    // The guard that makes the reversal permanent. Any future filter that
+    // starts removing a curated question turns this red rather than quietly
+    // reintroducing an empty section.
+    const result = curatedProps(
+      [
+        dark("old"),
+        prop("done", { outcomes: [outcome({ entity_key: "done:yes", probability: 1 })] }),
+        prop("never", {
+          outcomes: [outcome({ entity_key: "never:yes", probability: null, age_hours: null })],
+        }),
+      ],
+      "mens-singles"
+    );
+    expect(result.markets).toHaveLength(3);
+    expect(result.dropped).toEqual({ advance: 0, resolved: 0, dark: 0, template: 0 });
+  });
+});
+
+/* ═══ WHAT THE TIMESTAMP MEANS (UX-P154, Alex's item 3) ═══
+ *
+ * *"The '32 hours ago' ambiguity is real — created? updated? last traded?
+ * Define what the timestamp MEANS, label it so a reader knows."*
+ */
+describe("Alex's item 3 — the age says what it is the age OF", () => {
+  it("labels every age on the card itself, never as a bare number", () => {
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={[dark("old", 32)]} draw="mens-singles" />
+    );
+    // A bare "32 hours ago" is the ambiguity. The chip carries its own noun.
+    expect(html).toContain("Last number 32 hours ago");
+  });
+
+  it("is PER CARD, not per section, because liquidity varies within one", () => {
+    const fresh = prop("fresh", {
+      outcomes: [outcome({ entity_key: "fresh:yes", probability: 0.5 })],
+    });
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={[fresh, dark("old")]} draw="mens-singles" />
+    );
+    // Exactly one age mark for two cards: the live one says nothing, because a
+    // healthy card that keeps apologising teaches the reader to skip the
+    // apology.
+    expect(count(html, 'data-testid="prop-age"')).toBe(1);
+    expect(html).toContain('data-freshness="fresh"');
+    expect(html).toContain('data-freshness="quiet"');
+  });
+
+  it("defines the unit once per section, not once per card", () => {
+    const html = renderToStaticMarkup(
+      <TournamentProps
+        markets={[dark("one"), dark("two"), dark("three")]}
+        draw="mens-singles"
+      />
+    );
+    expect(count(html, 'data-testid="props-freshness-definition"')).toBe(1);
+    expect(html).toContain("not when it was created");
+  });
+
+  it("says nothing about ages when every card is live", () => {
+    const fresh = prop("fresh", {
+      outcomes: [outcome({ entity_key: "fresh:yes", probability: 0.5 })],
+    });
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={[fresh]} draw="mens-singles" />
+    );
+    expect(html).not.toContain('data-testid="props-freshness-definition"');
+    expect(html).not.toContain('data-testid="prop-age"');
+  });
+
+  it("renders all three riff variants from the real component", () => {
+    // Alex: *"continuing to riff on this until we have a better solution would
+    // be great ... this is an open riff, not a settled design."* The variants
+    // are a seam on the shipped component so the artifact shows what each would
+    // actually look like, and the default is pinned so production cannot drift
+    // onto one by accident.
+    expect(DEFAULT_FRESHNESS_VARIANT).toBe("labelled");
+    for (const variant of ["labelled", "sentence", "dot"] as const) {
+      const html = renderToStaticMarkup(
+        <TournamentProps markets={[dark("old")]} draw="mens-singles" variant={variant} />
+      );
+      expect(html).toContain(`data-variant="${variant}"`);
+      expect(html).toContain('data-freshness="quiet"');
+      // Every variant carries the age; only the presentation differs.
+      expect(html).toMatch(/7d|7 days/);
+    }
   });
 });
 
@@ -380,10 +512,22 @@ describe("ruling 8 as amended — a family is a subject AND a topic", () => {
     expect(propSubject(prop("sinner-competes"))).toBe("sinner");
   });
 
-  it("RENDERS both second-major cards — Alex's item 6, at the render", () => {
-    // Measured on Kalshi 2026-08-28T00:5xZ: Alcaraz's `2+` is 27c on 42,723
-    // open interest and Sinner's is 1c, because his "to play" market is 1c
-    // too. Side by side that is the men's draw in two numbers.
+  it("COMBINES both second-major cards into one, keeping both men — item 1", () => {
+    /* ═══ UX-P154, ALEX'S ITEM 1 ═══
+     *
+     * *"GENERALIZE: template-family props render as one combined card BY THE
+     * SYSTEM."*
+     *
+     * This test used to assert that both cards RENDERED SEPARATELY, which was
+     * the right answer to UX-P147's question ("must both render") and the wrong
+     * answer to this one. Both men are still present — that half is unchanged
+     * and is what ruling 139 protects — but they are two rows of one card
+     * rather than two cards asking one question.
+     *
+     * Measured on Kalshi 2026-08-28T00:5xZ: Alcaraz's `2+` is 27c on 42,723
+     * open interest and Sinner's is 1c. Side by side that is the men's draw in
+     * two numbers, which is the whole reason the comparison is the card.
+     */
     const markets = [
       prop("alcaraz-second-major", {
         title: "Can Alcaraz win a second major this year?",
@@ -395,23 +539,80 @@ describe("ruling 8 as amended — a family is a subject AND a topic", () => {
       }),
     ];
     const result = curatedProps(markets, "mens-singles");
-    expect(result.markets.map((m) => m.key).sort()).toEqual([
-      "alcaraz-second-major",
-      "sinner-second-major",
-    ]);
+    expect(result.markets.map((m) => m.key)).toEqual(["second-major"]);
+    expect(result.combined).toBe(1);
+    // NOT a drop. Every subject survives as a row — that is the difference
+    // between combining and the collapse ruling 139 forbids.
     expect(result.dropped.template).toBe(0);
+    expect(result.markets[0].outcomes.map((o) => o.display_name)).toEqual([
+      "Alcaraz",
+      "Sinner",
+    ]);
 
     // And at the RENDER, not only in the pure layer — a library assertion stays
     // green the day the component stops printing the card.
     const html = renderToStaticMarkup(
       <TournamentProps markets={markets} draw="mens-singles" />
     );
-    expect(html).toContain("Can Alcaraz win a second major this year?");
-    expect(html).toContain("Can Sinner win a second major this year?");
+    // The question, named from the members' OWN titles with the subject slot
+    // elided. Nothing is invented.
+    expect(html).toContain("Can … win a second major this year?");
+    expect(html).toContain("Alcaraz");
+    expect(html).toContain("Sinner");
+    expect(html).toContain("27%");
+    expect(html).toContain("56%");
+    // And the reader is told it is one card doing two questions' work — in
+    // words, pinned, because this is the one sentence on the page that explains
+    // why a question they saw yesterday is not a card of its own today.
+    expect(html).toContain('data-testid="props-combined"');
+    expect(html).toContain(
+      "2 of the questions above ask the same thing, so they share one card."
+    );
+    // Not our vocabulary: no "family", no "template", no "combined", no
+    // "collapsed" — the reader is told what happened, not what we call it.
+    // Applied to the VISIBLE TEXT, with tags stripped, exactly as the shipped
+    // copy guards do: `data-testid="props-combined"` is a data contract and
+    // never reaches a reader, and a rule that fired on it would be checking
+    // our own hooks rather than our own prose.
+    const visible = html.replace(/<[^>]+>/g, " ");
+    for (const ours of [/famil/i, /template/i, /combin/i, /collaps/i, /dedup/i]) {
+      expect(visible).not.toMatch(ours);
+    }
   });
 
-  it("still collapses the SAME question about the same subject", () => {
-    // The cap has not been weakened, only keyed correctly.
+  it("names the combined question from the members' own words, or declines", () => {
+    expect(
+      propFamilyTitle([
+        "Can Alcaraz win a second major this year?",
+        "Can Sinner win a second major this year?",
+      ])
+    ).toBe("Can … win a second major this year?");
+    // Too little in common to name — so the cards render separately rather
+    // than under an invented heading.
+    expect(propFamilyTitle(["Alcaraz?", "Sinner?"])).toBeNull();
+    // One title contained in the other is a truncation, not a template.
+    expect(propFamilyTitle(["Who wins a major", "Who wins a major"])).toBeNull();
+  });
+
+  it("renders BOTH when it cannot name the combined question", () => {
+    // The safety property: combining is best-effort, deleting is never an
+    // option. Repetition a person can see beats a card they cannot.
+    const markets = [
+      prop("alcaraz-second-major", { title: "Alcaraz?" }),
+      prop("sinner-second-major", { title: "Sinner?" }),
+    ];
+    const result = curatedProps(markets, "mens-singles");
+    expect(result.markets.map((m) => m.key).sort()).toEqual([
+      "alcaraz-second-major",
+      "sinner-second-major",
+    ]);
+    expect(result.combined).toBe(0);
+    expect(result.dropped.template).toBe(0);
+  });
+
+  it("does NOT merge the same question about the same subject", () => {
+    // Two cards with one key are a duplicate, not a family. They render as they
+    // are; nothing is silently kept over the other.
     const result = curatedProps(
       [
         prop("sinner-second-major", {
@@ -423,11 +624,30 @@ describe("ruling 8 as amended — a family is a subject AND a topic", () => {
       ],
       "mens-singles"
     );
-    expect(result.markets).toHaveLength(1);
-    expect(result.dropped.template).toBe(1);
+    expect(result.markets).toHaveLength(2);
+    expect(result.dropped.template).toBe(0);
+    expect(result.combined).toBe(0);
+  });
+
+  it("does NOT merge two cards on one key that were WORDED differently", () => {
+    // The sibling of the test above, and the one that is not caught for free.
+    // Identical titles fail `propFamilyTitle` on their own; a duplicate key with
+    // two different sentences would otherwise merge into a card printing one
+    // subject twice under one question.
+    const result = curatedProps(
+      [
+        prop("sinner-second-major", { title: "Can Sinner win a second major this year?" }),
+        prop("sinner-second-major", { title: "Will Sinner win a second major this year?" }),
+      ],
+      "mens-singles"
+    );
+    expect(result.markets).toHaveLength(2);
+    expect(result.combined).toBe(0);
   });
 
   it("does NOT merge two questions that merely share phrasing", () => {
+    // Same subject, different topics. Nothing is read off the title — the
+    // family is the curated topic, so two questions about one player stay two.
     const a = prop("sinner-competes", { title: "Will Sinner actually play?" });
     const b = prop("sinner-retires", { title: "Will Sinner actually retire?" });
     expect(curatedProps([a, b], "mens-singles").markets).toHaveLength(2);
@@ -464,6 +684,7 @@ describe("ruling 8 as amended — a family is a subject AND a topic", () => {
     const result = curatedProps([combined], "mens-singles");
     expect(result.markets.map((m) => m.key)).toEqual(["second-major"]);
     expect(result.dropped).toEqual({ advance: 0, resolved: 0, dark: 0, template: 0 });
+    expect(result.combined).toBe(0);
 
     const html = renderToStaticMarkup(
       <TournamentProps markets={[combined]} draw="mens-singles" />
@@ -479,7 +700,7 @@ describe("ruling 8 as amended — a family is a subject AND a topic", () => {
     expect(html).not.toContain('data-testid="prop-probability"');
   });
 
-  it("a two-market card is dark when EITHER leg is, not only the leader", () => {
+  it("a two-market card is as OLD as its oldest leg, not as its leader", () => {
     // CERT-411's rule, on the shape that makes it matter most. A comparison
     // whose fresh side is confident and whose old side is silent is a card
     // arguing that one man's number is more real than the other's.
@@ -503,9 +724,22 @@ describe("ruling 8 as amended — a family is a subject AND a topic", () => {
         }),
       ],
     });
-    // The card's governing age is its OLDEST printed leg, so it rotates out.
-    expect(propIsDark(mixed)).toBe(true);
-    expect(curatedProps([mixed], "mens-singles").dropped.dark).toBe(1);
+    // The card's governing age is its OLDEST printed leg — 856 hours, not the
+    // fresh side's. Since UX-P154 that decides the TREATMENT and not whether
+    // the card exists, so both halves are asserted: quiet, and still rendered.
+    expect(propIsQuiet(mixed)).toBe(true);
+    expect(propFreshness(mixed).ageHours).toBe(856);
+    const result = curatedProps([mixed], "mens-singles");
+    expect(result.markets).toHaveLength(1);
+    expect(result.dropped.dark).toBe(0);
+
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={[mixed]} draw="mens-singles" />
+    );
+    // And it names WHICH leg is the old one, because "35 days ago" over a card
+    // whose other half refreshed an hour ago is false about that half.
+    expect(html).toContain("Alcaraz:");
+    expect(html).toContain('data-freshness="quiet"');
   });
 });
 
@@ -552,24 +786,32 @@ describe("ruling 8 — curated by interestingness", () => {
   });
 });
 
-describe("ruling 8 — an empty section says WHY, with a number", () => {
-  it("names the count and the reason, not the generic 'nothing yet'", () => {
-    // UX-P145 rewrote the sentence into the reader's vocabulary — Alex quoted
-    // the old one as forbidden language. What ruling 8 requires is unchanged
-    // and is what this asserts: the empty section must give the NUMBER and the
-    // REASON, and must not fall back to the generic branch. The exact wording
-    // is pinned in `tournamentPlainLanguage.test.tsx`.
-    const result = curatedProps([dark("a"), dark("b"), dark("c")], "mens-singles");
-    expect(result.markets).toHaveLength(0);
-    const reason = curatedPropsEmptyReason(result);
-    expect(reason).toContain("3 questions");
-    expect(reason).toContain("have not seen a new number");
+describe("an empty section says WHY — and age is no longer a way to be empty", () => {
+  it("THREE OLD QUESTIONS ARE THREE CARDS, not an apology", () => {
+    /* ═══ THE SHIP, AS A TEST (UX-P154, Alex's item 4) ═══
+     *
+     * This exact specimen — three cards, all older than 48 hours — is the live
+     * production state, and this test used to assert that it produced an empty
+     * section reading "We have not seen a new number on 3 questions in a while,
+     * so they are hidden for now."
+     *
+     * That sentence was accurate about a behaviour that should not have
+     * existed. Alex: illiquid props render with honest freshness indication,
+     * never hidden — *"that's part of the value of the product."*
+     */
+    const olds = [dark("a"), dark("b"), dark("c")];
+    const result = curatedProps(olds, "mens-singles");
+    expect(result.markets).toHaveLength(3);
+    expect(result.dropped.dark).toBe(0);
+    expect(curatedPropsEmptyReason(result)).toBeNull();
+
     const html = renderToStaticMarkup(
-      <TournamentProps markets={[dark("a"), dark("b"), dark("c")]} draw="mens-singles" />
+      <TournamentProps markets={olds} draw="mens-singles" />
     );
-    expect(html).toContain('data-testid="props-empty-reason"');
-    expect(html).toContain("have not seen a new number on 3 questions");
-    expect(html).not.toContain("Nothing to ask yet");
+    expect(html).not.toContain('data-testid="props-empty"');
+    expect(count(html, 'data-testid="prop-market"')).toBe(3);
+    // Each carrying its OWN age, because liquidity varies within a section.
+    expect(count(html, 'data-testid="prop-age"')).toBe(3);
   });
 
   it("says so when every question for a draw is a reach market", () => {
@@ -655,7 +897,7 @@ describe("ruling 8 — an empty section says WHY, with a number", () => {
     expect(html).toContain("Nothing to ask yet");
   });
 
-  it("counts what it considered, so the drop is auditable from the markup", () => {
+  it("counts what it considered, so the section is auditable from the markup", () => {
     const html = renderToStaticMarkup(
       <TournamentProps
         markets={[dark("a"), prop("alcaraz-semifinals"), prop("live-one")]}
@@ -663,7 +905,12 @@ describe("ruling 8 — an empty section says WHY, with a number", () => {
       />
     );
     expect(html).toContain('data-considered="3"');
-    expect(html).toContain('data-testid="props-rotated-out"');
+    // Three considered, two rendered, and the one that is not here MOVED — the
+    // section says where. `props-rotated-out` used to sit beside this and
+    // counted the HIDDEN ones; there are none, so the sentence went with the
+    // behaviour rather than staying as a line that always reads zero.
+    expect(count(html, 'data-testid="prop-market"')).toBe(2);
+    expect(html).not.toContain('data-testid="props-rotated-out"');
     expect(html).toContain('data-testid="props-moved-to-grid"');
   });
 

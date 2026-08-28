@@ -3,7 +3,35 @@
 date: 2026-08-28
 author: program-ux lane (UX-P149) — **a lane judgement made in the course of the Q426 match-props
 ship, FLAGGED TO ALEX FOR RATIFICATION, not self-certified**
+status: **RATIFIED PROVISIONALLY by Alex, 2026-08-28** (review of UX-P149/150/151/152, relayed
+through the UX-P154 runner directive). His words, quoted rather than paraphrased because ruling 144
+requires it: *"happy to ratify and try... we can revert it if it's causing problems."*
 issues: #1946
+
+---
+
+## Status: provisional, and what that word is doing here
+
+**Provisional is a real state, not a hedge.** It says two things that a bare "ratified" would not:
+
+1. The clause is **in force now**. `attribute_yes_side` ships, the 28-of-28 replay is a gate, and a
+   lane may cite 140 as settled doctrine for a new inference — subject to its three obligations.
+2. The clause is **revertible on evidence rather than on argument**. Alex ratified it to *try* it,
+   so the thing that would take it back is a measured problem — a mis-attributed card, a refusal
+   rate that empties a page, a replay population that stops refuting — not a later lane's better
+   reading of the same case. A lane that wants 140 loosened owes a specimen, not a paragraph.
+
+**What a revert would cost, so the option stays real.** The licence is load-bearing for exactly one
+shipped surface today (`MatchProps` on the event page, via `attribute_yes_side`). Reverting 140
+means those cards print `Yes 53%` instead of a player's name, or do not print at all — it does not
+unwind anything else, because nothing else has claimed the licence. That containment is the reason
+provisional is affordable here and would not be affordable for a clause with ten call sites.
+
+**The trigger to re-read this section** is any of: a real mis-attribution reaching production; the
+replay dropping below 28/28 on the register's pins; or the refusal rate on real titles rising off
+`0 of 205` far enough that the page is being emptied by the guard rather than by the data. Each of
+those is already measured by an executing test, which is the point — a provisional ruling whose
+revert condition is unmeasured is just a ratified one with an apology attached.
 
 **Binds:** every place a user-facing surface derives an identity — a player, a team, a side, a
 subject — from text rather than from an id.

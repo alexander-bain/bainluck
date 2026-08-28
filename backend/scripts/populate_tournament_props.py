@@ -84,6 +84,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.utils.prop_template_family import (  # noqa: E402
+    detect_template_families,
+    outcome_signature,
+)
 from app.utils.tournament_register import (  # noqa: E402
     classify,
     us_open_2026_contract,
@@ -105,13 +109,16 @@ from app.utils.tournament_register import (  # noqa: E402
 CURATION: dict[str, dict] = {
     # ═══ KXGRANDSLAM-JSIN26 / KXGRANDSLAM-CALC26 ARE NOT CURATED HERE ═══
     #
-    # Both are consumed by ``COMBINED_CURATION["second-major"]`` below, and the
-    # guard in :func:`main` refuses a market claimed by a per-market card and a
-    # combined card at once. Retiring them here is what makes that legal.
+    # Both are members of the template family ``"{} grand slam wins in 2026"``,
+    # curated as one card by ``FAMILY_CURATION`` below. The detector claims a
+    # family's markets, so curating either one here as a card of its own would
+    # put the same market on two cards. Retiring them here is what makes the
+    # family card legal.
     #
-    # KEEP THIS MEASUREMENT (Q443, 2026-08-29) — it is why the combined card's
-    # one-leg-per-market shape is REQUIRED, not just tidier. Pinning a market's
-    # whole ladder pinned legs nothing is permitted or able to refresh:
+    # KEEP THIS MEASUREMENT (Q443, 2026-08-29) — it is why a family card's
+    # single ``compare_outcome`` per member is REQUIRED, not just tidier.
+    # Pinning a market's whole ladder pinned legs nothing is permitted or able
+    # to refresh:
     #   * `KXGRANDSLAM-JSIN26-1` ("1+ Grand Slam wins") is graded — `is_winner`
     #     TRUE, Kalshi `finalized` / `result: yes` — and `_write_prices` refuses
     #     a settled outcome by design (gotcha #21).
@@ -123,8 +130,8 @@ CURATION: dict[str, dict] = {
     #     listed at the venue and `3+` is graded no.
     # A card's freshness is the AND over its priced legs, so each unrefreshable
     # pin bought a permanent dark contributor and no information — neither leg is
-    # printed. A combined leg names ONE outcome per market, so the defect cannot
-    # recur here by construction.
+    # printed. ``compare_outcome`` names ONE outcome per member market, so the
+    # defect cannot recur on a family card by construction.
     "KXATPCOMPETE-26USOSIN": {
         "key": "sinner-competes",
         "title": "Will Sinner actually play?",
@@ -197,67 +204,71 @@ CURATION: dict[str, dict] = {
     },
 }
 
-#: ONE CARD, TWO MARKETS — the shape a comparison question needs (UX-P151).
+#: ONE CARD PER TEMPLATE FAMILY — AND THE SYSTEM FINDS THE FAMILY (UX-P154).
 #:
-#: ═══ ALEX'S RULING, 2026-08-28 ~10:45am PT, quoted ═══
+#: ═══ ALEX'S QUESTION, 2026-08-28, quoted (ruling 144) ═══
 #:
-#: *"ONE COMBINED CARD — 'Who wins a second major this year?' — showing BOTH
-#: players' probabilities (Alcaraz 2+ majors, Sinner 2+ majors, each from its
-#: own real Kalshi market: KXGRANDSLAM-CALC26-family and KXGRANDSLAM-JSIN26)."*
+#: On UX-P151's combined second-major card: *"clearly looks better"*, and then:
+#: *"Was this a bespoke solution? I thought we'd built tools to identify groups
+#: and surface them as groups. Why didn't any of them trigger?"*
 #:
-#: It resolves a tension the file had carried, unresolved, through three
-#: queues.  UX-P138's note said the two ``*-second-major`` cards were *"one
-#: templated question with the name swapped"*, and the fix that shipped for it
-#: DELETED Alcaraz.  UX-P147 read Alex's *"I'd love to"* see both, restored
-#: Alcaraz, and rekeyed the template cap so it could never collapse across
-#: players — two cards, and the repetition Alex had objected to was back.
+#: **It was bespoke.**  UX-P151 shipped a `COMBINED_CURATION` map in which a
+#: human wrote down two market tickers, the outcome name to pull from each, and
+#: the label each row should print.  Nothing in it was detected; the pass only
+#: checked that what a human had typed still existed.  Add a third player and
+#: the card would not have noticed him.
 #:
-#: Both readings were partial because both assumed the unit was a CARD PER
-#: MARKET.  Drop that assumption and the two constraints stop fighting: one
-#: card carrying both men's numbers has both players present and no template
-#: repeated, which is the whole of what he asked for in each of the two notes.
+#: Why nothing triggered is answered at length, with the measurements, in
+#: `app/utils/prop_template_family.py`.  The short version is that the two
+#: things that could have fired both could not: the props renderer's family rule
+#: is a CAP whose only outputs are two cards or one card and a deletion, and it
+#: had been keyed on the whole register key since UX-P147, making it
+#: structurally unreachable; and the real grouper, `prop_families.py`, is not
+#: wired to this pass and returns `None` for `"Carlos Alcaraz: Grand Slam wins
+#: in 2026"` anyway.
 #:
-#: WHAT A LEG IS.  ``market_ext`` is the market the number comes from,
-#: ``outcome`` is that market's own name for the leg (matched exactly, never
-#: fuzzily), and ``display_name`` is what the row prints.  The rename is the
-#: point: three rows reading "2+ Grand Slam wins" would be a threshold ladder,
-#: and what the reader is comparing is two MEN.  Renaming a row is a curation
-#: decision made once against the evidence — the same doctrine as the matchup
-#: sides mapping — never a request-time guess.
+#: ═══ WHAT THIS MAP IS NOW ═══
+#:
+#: Keyed on the SKELETON the detector produces — the question with the subject
+#: slot empty — and it carries only the things a machine cannot know: the
+#: sentence a reader sees, why it is interesting, which draw it belongs to, and
+#: which of the shared outcomes the card compares.
+#:
+#: Everything else is DERIVED: which markets are in the family, how many there
+#: are, who each row is, and what each row is called.  A third `KXGRANDSLAM-*`
+#: market with the same ladder joins this card with no edit here, which is the
+#: only real test of "by the system".
+#:
+#: THE ROWS ARE THE SOURCE'S OWN WORDS.  UX-P151 renamed "2+ Grand Slam wins" to
+#: a hand-written "Alcaraz"; the rows now read "Carlos Alcaraz" because that is
+#: what the market's own title calls him.  Alex, item 4 of the same directive:
+#: *"the market's own words are USED when they are the market's words."*  A
+#: curated rename is a claim about a number that nothing downstream can check.
 #:
 #: WHY NO ``answer``.  A card with a single headline number needs one outcome
-#: that answers its question, and this one has two by construction.  So it is a
-#: FIELD card: ``answer_entity_key`` is ``None``, the renderer ranks instead of
-#: leading, and the "which number goes in the big type" question never has to
-#: be guessed.  ``validate_prop`` has supported that shape since UX-P134; this
-#: is the first curated card that uses it.
+#: that answers its question, and a family has one per member by construction.
+#: So it is a FIELD card: ``answer_entity_key`` is ``None``, the renderer ranks
+#: instead of leading, and "which number goes in the big type" is never guessed.
 #:
 #: WHAT THE HOOK IS DOING.  The title Alex wrote reads as a race — *who* wins —
-#: and these are two INDEPENDENT binaries that can both resolve Yes: there are
-#: four majors a year and each man needs two of them, not the same two.  Their
+#: and these are INDEPENDENT binaries that can both resolve Yes: there are four
+#: majors a year and each man needs two of them, not the same two.  Their
 #: numbers do not sum to 100 and must never be normalised so they do (the same
 #: rule the cycling GC field carries).  The title is his, verbatim; the hook is
 #: what stops it being read as an exclusive race.
-COMBINED_CURATION: dict[str, dict] = {
-    "second-major": {
+FAMILY_CURATION: dict[str, dict] = {
+    "{} grand slam wins in 2026": {
+        "key": "second-major",
         "title": "Who wins a second major this year?",
         "hook": (
             "Both already have one in 2026. These are two separate questions — "
             "they could both do it, or neither."
         ),
         "draw": "mens-singles",
-        "legs": [
-            {
-                "market_ext": "KXGRANDSLAM-CALC26",
-                "outcome": "2+ Grand Slam wins",
-                "display_name": "Alcaraz",
-            },
-            {
-                "market_ext": "KXGRANDSLAM-JSIN26",
-                "outcome": "2+ Grand Slam wins",
-                "display_name": "Sinner",
-            },
-        ],
+        #: Matched EXACTLY against each member's own outcome names, never
+        #: fuzzily. The detector has already proved every member offers the same
+        #: set, so naming it once names it for all of them.
+        "compare_outcome": "2+ Grand Slam wins",
     },
 }
 
@@ -543,38 +554,93 @@ def main() -> int:
     # different bars); keeping them separate HERE would duplicate the refusal
     # logic, which is the part that must not diverge.
     curation = {**CURATION, **ADVANCE_CURATION}
-    keys = [spec["key"] for spec in curation.values()] + list(COMBINED_CURATION)
+    keys = [spec["key"] for spec in curation.values()] + [
+        spec["key"] for spec in FAMILY_CURATION.values()
+    ]
     if len(set(keys)) != len(keys):
         # Two curations writing one card key would silently drop one of them,
         # and the section would be short with nothing to point at.
         print(f"REFUSED: duplicate curation keys in {sorted(keys)}", file=sys.stderr)
         return 1
 
-    # A market a combined card consumes must NOT also produce a card of its own.
-    # Without this the register would carry both the comparison and the two
-    # single-player cards it replaced, which is the repetition Alex ruled out
-    # arriving by a different door.
-    combined_markets = {
-        leg["market_ext"] for spec in COMBINED_CURATION.values() for leg in spec["legs"]
-    }
-    claimed_by_both = combined_markets & set(curation)
-    if claimed_by_both:
-        print(
-            f"REFUSED: {sorted(claimed_by_both)} is curated as its own card AND as a leg "
-            "of a combined card. Pick one.",
-            file=sys.stderr,
-        )
-        return 1
-
     by_market: dict[str, list[dict]] = {}
     for row in rows:
         by_market.setdefault(str(row["market_ext"]), []).append(row)
 
+    # ── THE SYSTEM FINDS THE FAMILIES (UX-P154, Alex's item 1) ───────────────
+    #
+    # Detection runs over everything in the dump that has not been curated OUT,
+    # and it runs BEFORE anything decides what a card is. Declined tickers are
+    # excluded first: a market we have already refused on its merits must not be
+    # able to drag a good one into a family, and it must not be able to raise a
+    # refusal about a question nobody is going to write.
+    candidates = [
+        {
+            "market_ext": market_ext,
+            "market_name": market_rows[0]["market_name"],
+            "source": market_rows[0]["source"],
+            "outcomes": [str(r["outcome_name"]) for r in market_rows],
+        }
+        for market_ext, market_rows in sorted(by_market.items())
+        if market_ext not in DECLINED
+    ]
+    families = detect_template_families(candidates)
+
+    # EVERY DETECTED FAMILY NEEDS A QUESTION, or the pass stops.
+    #
+    # This is the refusal that makes the detector worth having. Without it a
+    # newly-listed family would either ship as N repeated cards (the UX-P147
+    # failure) or be silently dropped (the UX-P138 failure); with it, the pass
+    # tells the curator that a family exists, what its skeleton is, and which
+    # markets are in it — which is the whole of what they need to write one line.
+    uncurated = [f for f in families if f.skeleton not in FAMILY_CURATION]
+    if uncurated:
+        for family in uncurated:
+            print(
+                f"REFUSED: template family {family.skeleton!r} is not curated. "
+                f"Members: {list(family.market_exts)}. "
+                f"Shared outcomes: {list(family.signature)}. "
+                "These markets ask one question about different subjects and would "
+                "otherwise ship as repeated cards. Add a FAMILY_CURATION entry keyed "
+                "on that skeleton, or decline the markets.",
+                file=sys.stderr,
+            )
+        return 1
+
+    detected_skeletons = {f.skeleton for f in families}
+    stale = sorted(set(FAMILY_CURATION) - detected_skeletons)
+    if stale:
+        # A curated family the detector no longer finds. Either a source renamed
+        # a market out of the shape, or a member stopped being returned. Both are
+        # "the card you curated is not the card that would ship", and both are a
+        # decision to re-make rather than a shape to absorb.
+        print(
+            f"REFUSED: curated families {stale} are not present in this dump. "
+            f"Detected: {sorted(detected_skeletons)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    # A market in a family must NOT also produce a card of its own. Without this
+    # the register would carry both the comparison and the single-subject cards
+    # it replaced, which is the repetition Alex ruled out arriving by a different
+    # door.
+    family_markets = {ext for f in families for ext in f.market_exts}
+    claimed_by_both = family_markets & set(curation)
+    if claimed_by_both:
+        print(
+            f"REFUSED: {sorted(claimed_by_both)} is curated as its own card AND is a "
+            "member of a detected template family. Pick one.",
+            file=sys.stderr,
+        )
+        return 1
+
     props: list[dict] = []
     skipped: list[str] = []
     for market_ext, market_rows in sorted(by_market.items()):
-        if market_ext in combined_markets:
-            # Consumed by a combined card below. Not skipped, not below the bar.
+        if market_ext in family_markets:
+            # A member of a detected family, consumed by its combined card
+            # below. Not skipped, and not below the bar.
             continue
         spec = curation.get(market_ext)
         if spec is None:
@@ -673,62 +739,86 @@ def main() -> int:
             },
         })
 
-    # ── The combined cards: one question, one leg per market (UX-P151) ───────
+    # ── One card per DETECTED family: one question, one row per member ───────
+    #
+    # UX-P151 built this loop from a hand-written list of legs; UX-P154 builds it
+    # from `detect_template_families`. Nothing below names a ticker, a player or
+    # a count — the family says who is in it, and the curation says what the
+    # question is called.
     #
     # Every refusal here is loud and fatal, and that is the whole design. A
-    # comparison card that quietly loses a leg is WORSE than no card: it prints
-    # one man's number under "who wins", which is the exact class of defect
-    # UX-P134 fixed when it stopped a ladder maximum answering a slam question.
-    for key, spec in sorted(COMBINED_CURATION.items()):
+    # comparison card that quietly loses a member is WORSE than no card: it
+    # prints one man's number under "who wins", which is the exact class of
+    # defect UX-P134 fixed when it stopped a ladder maximum answering a slam
+    # question.
+    for family in sorted(families, key=lambda f: f.skeleton):
+        spec = FAMILY_CURATION[family.skeleton]
+        key = spec["key"]
+        compare = spec["compare_outcome"]
+
+        # THE COMPARISON MUST COME OUT OF THE SHARED SET. `family.signature` is
+        # the INTERSECTION of the members' outcome names, so an outcome one
+        # member does not offer cannot be named here — which is the check that
+        # makes "one column, same question, every member" true by construction
+        # rather than by the curator having looked.
+        if outcome_signature([compare]) and outcome_signature([compare])[0] not in (
+            family.signature
+        ):
+            print(
+                f"REFUSED {key}: compared outcome {compare!r} is not offered by every member "
+                f"of {family.skeleton!r}. Shared outcomes: {list(family.signature)}.",
+                file=sys.stderr,
+            )
+            return 1
+
         outcomes: list[dict] = []
         legs_evidence: list[dict] = []
-        for leg in spec["legs"]:
-            market_rows = by_market.get(leg["market_ext"])
-            if not market_rows:
-                print(
-                    f"REFUSED {key}: leg market {leg['market_ext']} is absent from the dump. "
-                    "A comparison card missing a side is not a smaller card, it is a wrong one.",
-                    file=sys.stderr,
-                )
-                return 1
-            match = [r for r in market_rows if str(r["outcome_name"]) == leg["outcome"]]
+        for member in family.members:
+            market_rows = by_market[member.market_ext]
+            match = [r for r in market_rows if str(r["outcome_name"]) == compare]
             if len(match) != 1:
                 names = [str(r["outcome_name"]) for r in market_rows]
                 print(
-                    f"REFUSED {key}: leg outcome {leg['outcome']!r} matched {len(match)} rows "
-                    f"in {leg['market_ext']}. Present: {names}",
+                    f"REFUSED {key}: compared outcome {compare!r} matched {len(match)} rows "
+                    f"in {member.market_ext}. Present: {names}",
                     file=sys.stderr,
                 )
                 return 1
             row = match[0]
+            slug = member.display_name.lower().replace(" ", "-")
             outcomes.append({
-                "entity_key": f"{key}:{leg['display_name'].lower().replace(' ', '-')}",
-                "display_name": leg["display_name"],
+                "entity_key": f"{key}:{slug}",
+                # THE SOURCE'S OWN WORDS (Alex, item 4). Derived from the
+                # market's own title, not curated — see `subject_display`.
+                "display_name": member.display_name,
                 "outcome_id": row["outcome_id"],
-                # NO ANSWER, by construction — see COMBINED_CURATION's note.
-                # Two legs means no single outcome answers the question, so the
-                # card is a field and the renderer ranks it.
+                # NO ANSWER, by construction — see FAMILY_CURATION's note. A
+                # family has one candidate answer per member, so no single
+                # outcome answers the question; the card is a field and the
+                # renderer ranks it.
                 "is_answer": False,
                 "market_id": row["market_id"],
-                "market_external_id": leg["market_ext"],
+                "market_external_id": member.market_ext,
             })
             legs_evidence.append({
-                "market_external_id": leg["market_ext"],
-                "market_name": row["market_name"],
-                "source_outcome_name": leg["outcome"],
-                "renamed_to": leg["display_name"],
+                "market_external_id": member.market_ext,
+                "market_name": member.market_name,
+                "source_outcome_name": compare,
+                # The DERIVATION is what is recorded now, not a rename. Two
+                # facts a reader of this file can check against the market
+                # title: the subject the detector isolated, and the skeleton
+                # every member shares.
+                "subject": member.display_name,
             })
 
-        # One `source` on the card, so it has to be true of every leg. A
+        # One `source` on the card, so it has to be true of every member. A
         # cross-source comparison is a real thing to want and this shape cannot
         # honestly describe it, so refuse rather than pick the first one.
-        leg_sources = {
-            str(by_market[leg["market_ext"]][0]["source"]) for leg in spec["legs"]
-        }
-        if len(leg_sources) != 1:
+        member_sources = {member.source for member in family.members}
+        if len(member_sources) != 1:
             print(
-                f"REFUSED {key}: legs span {sorted(leg_sources)} and the card carries one "
-                "`source`. A cross-source card needs a shape that can say so.",
+                f"REFUSED {key}: members span {sorted(member_sources)} and the card carries "
+                "one `source`. A cross-source card needs a shape that can say so.",
                 file=sys.stderr,
             )
             return 1
@@ -738,7 +828,7 @@ def main() -> int:
             "title": spec["title"],
             "hook": spec["hook"],
             "draw": spec["draw"],
-            "source": leg_sources.pop(),
+            "source": member_sources.pop(),
             "markets": [
                 {
                     "market_id": o["market_id"],
@@ -748,11 +838,15 @@ def main() -> int:
             ],
             "outcomes": outcomes,
             "evidence": {
-                "kind": "prop-census-combined",
+                "kind": "prop-census-family",
                 "observed_at": args.observed_at,
-                # The rename is recorded leg by leg. A curated display name that
-                # nobody can trace back to the source's own outcome name is an
-                # unfalsifiable claim about what a number means.
+                # THE DETECTION IS THE EVIDENCE. `skeleton` is the shared
+                # question the detector found and `shared_outcomes` is the set
+                # every member offers — the two facts that make this one card
+                # rather than N. A reader of the register can check both against
+                # the market titles without running anything.
+                "skeleton": family.skeleton,
+                "shared_outcomes": list(family.signature),
                 "legs": legs_evidence,
                 "answer": None,
             },
@@ -790,6 +884,16 @@ def main() -> int:
     missing = sorted(set(curation) - set(by_market))
     if missing:
         print(f"curated but ABSENT from the dump: {missing}")
+    # NO SILENT DETECTION. What the detector found is printed on every run, with
+    # the subjects it isolated, because a family that quietly gains or loses a
+    # member changes what a card says and nothing else would report it.
+    print(f"template families detected: {len(families)}")
+    for family in families:
+        subjects = ", ".join(m.display_name for m in family.members)
+        print(
+            f"  {family.skeleton!r} -> {FAMILY_CURATION[family.skeleton]['key']} "
+            f"[{subjects}]"
+        )
     print(f"retired into a combined card: {sorted(RETIRED)}")
     print(f"findings: {findings or 'none'}")
     print(f"verdict:  {verdict}")

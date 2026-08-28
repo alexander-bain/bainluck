@@ -212,73 +212,52 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
 
   /* ─────────── ALEX'S SENTENCE, PINNED BOTH WAYS ─────────── */
 
-  describe("the props empty state — the string Alex quoted", () => {
-    it("no longer says any of the four words he named", () => {
+  describe("the props section — the sentence Alex quoted, and the one that replaced it", () => {
+    /* ═══ UX-P154: THE SENTENCE IS GONE BECAUSE THE BEHAVIOUR IS ═══
+     *
+     * UX-P145 rewrote "3 curated questions have gone dark and rotated out" into
+     * the reader's words, and UX-P150 and ruling 142 trimmed it further. Every
+     * one of those was the right fix to the wrong object: the sentence was an
+     * accurate description of a behaviour Alex has now ruled out.
+     *
+     * Item 4, 2026-08-28: illiquid props render with honest freshness
+     * indication, never hidden — *"that's part of the value of the product."*
+     *
+     * So the empty-for-age branch is deleted and the tests that pinned its
+     * wording are replaced by tests that the branch is unreachable. The
+     * plain-language obligation did not go anywhere; it moved onto the copy
+     * that now renders in its place.
+     */
+    it("cannot be reached by age at all — three old questions are three cards", () => {
       const curated = curatedProps(darkMarkets(), "mens-singles");
-      // The premise: this really is the empty-with-dark-drops branch, so the
-      // assertion below is about the sentence Alex read and not a sibling.
-      expect(curated.markets).toHaveLength(0);
-      expect(curated.dropped.dark).toBe(3);
+      expect(curated.markets).toHaveLength(3);
+      expect(curated.dropped.dark).toBe(0);
+      expect(curatedPropsEmptyReason(curated)).toBeNull();
+    });
 
-      const reason = curatedPropsEmptyReason(curated);
+    it("the surviving branch is plain as well", () => {
+      // One branch is left: every question for the draw is a reach question,
+      // and those are on the Bracket tab. It is one bad day away from being the
+      // one Alex sees next.
+      const reason = curatedPropsEmptyReason({
+        markets: [],
+        considered: 8,
+        combined: 0,
+        dropped: { advance: 8, resolved: 0, dark: 0, template: 0 },
+      } as never);
       expect(reason).not.toBeNull();
-      expect(reason).not.toMatch(/curated/i);
-      expect(reason).not.toMatch(/gone dark/i);
-      expect(reason).not.toMatch(/rotated out/i);
-      expect(reason).not.toMatch(/priced/i);
+      assertPlain(reason as string, "curatedPropsEmptyReason(advance)");
     });
 
-    it("is EXACTLY this sentence — the copy Alex signs off, pinned", () => {
-      // Pinned verbatim on purpose: a paraphrase that drifts back toward the
-      // pipeline is the regression, and only an equality catches a drift that
-      // stays inside the banned-word list.
-      //
-      // UX-P150 dropped the second half. UX-P145 added "New questions are
-      // coming — check back soon." so the section would not read as a dead
-      // feature; ruling 142 (Alex, 2026-08-28) rules that fix out — we do not
-      // control when a market lists, so naming a time was a promise we could
-      // not keep. What remains is the whole of the FACT, which is what the
-      // count was always for.
-      const curated = curatedProps(darkMarkets(), "mens-singles");
-      expect(curatedPropsEmptyReason(curated)).toBe(
-        "We have not seen a new number on 3 questions in a while, so they are hidden for now."
+    it("the age copy that replaced it is plain, and says what it is the age OF", () => {
+      const html = renderToStaticMarkup(
+        <TournamentProps markets={darkMarkets()} draw="mens-singles" />
       );
-    });
-
-    it("still tells the reader HOW MANY — the count was never the problem", () => {
-      // The old sentence's one virtue: a section that quietly shrinks reads as
-      // "not much is happening" when the truth is that three questions aged
-      // out. Plain language must not cost the number.
-      const curated = curatedProps(darkMarkets(), "mens-singles");
-      expect(curatedPropsEmptyReason(curated)).toContain("3 questions");
-    });
-
-    it("reads plainly in the singular too", () => {
-      const curated = curatedProps(darkMarkets().slice(0, 1), "mens-singles");
-      const reason = curatedPropsEmptyReason(curated);
-      expect(reason).toBe(
-        "We have not seen a new number on 1 question in a while, so it is hidden for now."
-      );
-      // "1 questions have" is the kind of thing a reader files under "nobody
-      // looked at this", which is the opposite of what this sentence is for.
-      expect(reason).not.toMatch(/1 questions/);
-    });
-
-    it("every other branch of the same function is plain as well", () => {
-      // The dark branch is the one Alex saw. The other three are one bad day
-      // away from being the one he sees next.
-      const build = (dropped: Partial<Record<string, number>>) =>
-        curatedPropsEmptyReason({
-          markets: [],
-          considered: 3,
-          dropped: { advance: 0, resolved: 0, dark: 0, template: 0, ...dropped },
-        } as never);
-
-      for (const dropped of [{ resolved: 2 }, { template: 2 }, { advance: 8 }]) {
-        const reason = build(dropped);
-        expect(reason).not.toBeNull();
-        assertPlain(reason as string, `curatedPropsEmptyReason(${JSON.stringify(dropped)})`);
-      }
+      assertPlain(html, "TournamentProps (quiet cards)");
+      // Ruling 138/145 in the new copy: no "stale", no "dark", no "priced".
+      expect(html).toContain("Last number");
+      // And the ambiguity Alex named is answered once, in the section.
+      expect(html).toContain("not when it was created");
     });
   });
 
@@ -288,20 +267,25 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
     // Through the component, not just the pure function: the section wraps the
     // reason in two more paragraphs of its own prose, and one of those was the
     // "appear here as they are priced" line.
+    //
+    // UX-P154: the specimen changed. `darkMarkets()` no longer produces an
+    // empty section — nothing does except an empty draw — so the empty branch
+    // is exercised with nothing on file, which is now the only way to reach it.
     const html = renderToStaticMarkup(
-      <TournamentProps markets={darkMarkets()} draw="mens-singles" />
+      <TournamentProps markets={[]} draw="mens-singles" />
     );
     expect(html).toContain('data-testid="props-empty"');
     assertPlain(html, "TournamentProps (empty)");
 
     // The data contract the cert and the sentinels read is UNTOUCHED — the
-    // words changed, the attributes did not.
-    expect(html).toContain('data-dropped-dark="3"');
+    // words changed, the attributes did not. `data-dropped-dark` is held at
+    // zero rather than deleted, so "nothing is hidden for age" stays assertable.
+    expect(html).toContain('data-dropped-dark="0"');
   });
 
   it("the RENDERED populated section carries no jargon either", () => {
-    // The `props-rotated-out` line only renders when something was dropped AND
-    // something survived, so it needs a mixed set: one fresh, three not.
+    // A mixed set: one fresh, three quiet — which is the state that has to read
+    // well, because it is what the page looks like most days.
     const fresh: PropMarket = {
       ...darkMarkets()[0],
       key: "fresh-question",
@@ -320,7 +304,7 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
       <TournamentProps markets={[fresh, ...darkMarkets()]} draw="mens-singles" />
     );
     expect(html).toContain('data-testid="prop-market"');
-    expect(html).toContain('data-testid="props-rotated-out"');
+    expect(html).toContain('data-testid="props-freshness-definition"');
     assertPlain(html, "TournamentProps (populated)");
   });
 
