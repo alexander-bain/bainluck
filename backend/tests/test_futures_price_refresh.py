@@ -16,6 +16,7 @@ four properties that keep that from coming back:
    a null price.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -298,19 +299,95 @@ class TestRegisteredMarketsAreReachable:
     def test_the_committed_us_open_register_reaches_its_curated_props(self):
         """Behavioural, against the real committed file — not a shape assertion.
 
-        The three markets named here are the ones whose darkness Alex actually
-        saw. If a future register edit or a collector regression drops them, the
-        section empties again and this is the test that says so.
+        The markets named here are the ones whose darkness Alex actually saw. If
+        a collector regression drops them, the section empties again and this is
+        the test that says so.
+
+        THE THIRD MARKET LEFT ON PURPOSE. This pinned `53796`
+        (`alcaraz-second-major`) until UX-P139 (`af888d29`) **de-curated** it at
+        the source — "one question with two names in it, next to
+        sinner-second-major" — and the pin then failed in the merge tree while
+        passing on both sides alone (INT-141). Curation is a product decision
+        this test may not out-vote: what a register curates is the register's
+        call, and what this class guards is that whatever it curates is
+        *reachable by the price rail*. Hence the two survivors below by name,
+        and every id the file names — however many that is — by derivation in
+        :meth:`test_every_market_the_us_open_register_names_is_reachable`.
         """
         from app.utils.tournament_register import registered_market_ids
 
         ids = registered_market_ids()
         for market_id, what in (
             (59172808, "sinner-competes"),
-            (53796, "alcaraz-second-major"),
             (53795, "sinner-second-major"),
         ):
             assert market_id in ids, f"{what} ({market_id}) is not reachable"
+
+    def test_every_market_the_us_open_register_names_is_reachable(self):
+        """The class assertion, derived from the file — curation-edit proof.
+
+        Read independently of the collector: this walks the register's ``props``
+        section by name and asserts the rail reaches every market id in it. A
+        curation edit that adds, drops or regroups a prop moves this test's own
+        expectation with it, so a deliberate register change can never look like
+        a rail regression again — while a collector that stops covering props
+        still fails here, loudly, with the ids it lost.
+        """
+        from app.utils.tournament_register import REGISTER_DIR, registered_market_ids
+
+        register = json.loads((REGISTER_DIR / "us-open-2026.json").read_text())
+        props = register.get("props") or []
+        assert props, "the committed register curates no props — nothing to reach"
+
+        named: set[int] = set()
+
+        def collect(node):
+            if isinstance(node, dict):
+                market_id = node.get("market_id")
+                if isinstance(market_id, int) and not isinstance(market_id, bool):
+                    named.add(market_id)
+                for value in node.values():
+                    collect(value)
+            elif isinstance(node, list):
+                for value in node:
+                    collect(value)
+
+        collect(props)
+        assert named, "the committed props name no market ids at all"
+        assert named <= registered_market_ids(), (
+            f"curated props unreachable by the price rail: {sorted(named - registered_market_ids())}"
+        )
+
+    def test_a_prop_that_carries_a_list_of_markets_is_reached_too(self, tmp_path):
+        """The incoming shape, pinned as a fixture rather than as a dependency.
+
+        UX-P151 gives the two `*-second-major` markets ONE combined card, so that
+        prop carries no top-level ``market_id`` at all — its ids live in a nested
+        ``markets: [...]`` list. Walking the whole document already covers this;
+        a props reader that had enumerated ``prop["market_id"]`` would have gone
+        dark on both of them the day that card landed. Synthetic on purpose: this
+        must hold before, during and after any register the UX lane commits.
+        """
+        from app.utils.tournament_register import registered_market_ids
+
+        (tmp_path / "us-open-2026.json").write_text(
+            json.dumps(
+                {
+                    "props": [
+                        {"key": "sinner-competes", "market_id": 59172808},
+                        {
+                            "key": "second-major",
+                            "title": "Who wins a second major this year?",
+                            "markets": [
+                                {"market_id": 53796, "market_external_id": "KXGRANDSLAM-CALC26"},
+                                {"market_id": 53795, "market_external_id": "KXGRANDSLAM-JSIN26"},
+                            ],
+                        },
+                    ]
+                }
+            )
+        )
+        assert registered_market_ids(directory=tmp_path) == {59172808, 53796, 53795}
 
     def test_it_also_reaches_the_four_outright_winner_fields(self):
         """CERT-404's population. The boards and the props ride one rail."""
