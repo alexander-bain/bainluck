@@ -88,6 +88,31 @@ REQUIRED_PHASES: tuple[str, ...] = (
 #: publishes.
 RESUMABLE_PHASES: tuple[str, ...] = (PHASE_FUTURES, PHASE_SPORTS, PHASE_DIAGNOSTICS)
 
+#: Phases that answer a budget cut by doing LESS WORK instead of FAILING.
+#:
+#: CAL-P109 (#2045). This is a structural property of the code, not a
+#: measurement, which is why it is declared here rather than derived the way
+#: :func:`bottleneck_phase` derives its answer. ``futures`` runs a unit loop
+#: that asks ``_unit_fits_in_window`` before every unit and stops between them
+#: with everything it proved banked; a shorter budget costs it *units*, and the
+#: next beat resumes from the cursor. Every other phase is one statement, or a
+#: fixed sequence of them, with no partial credit: a budget below its cost is
+#: not a smaller result, it is a cancelled beat that publishes nothing.
+#:
+#: The distinction exists because ``derive_plan`` used to scale ALL FIVE phases
+#: down by the same factor when the declared total overran the window — and
+#: ``futures`` alone asks for more than the whole window, so the factor was
+#: 0.63 and every OTHER phase was budgeted at 0.94x its own worst observed
+#: completion. Measured in production 2026-08-28 (plan of generation
+#: 1787876100184): ``sports`` completed in 3,378 ms under a 3,771 ms statement
+#: timeout and its floor ring was FULL of failures at 3,745-4,180 ms;
+#: ``diagnostics`` was budgeted 176,964 ms against a 188,401 ms observed
+#: completion; ``serialize_gate_publish`` 539 ms against 574 ms. Three of five
+#: phases were capped below their own measured worst case, so an ordinary-slow
+#: beat died — twice consecutively at 21:15Z and 22:15Z, which is exactly the
+#: two-beat gap ``calibration_publish_age`` pages on.
+ELASTIC_PHASES: frozenset[str] = frozenset({PHASE_FUTURES})
+
 #: Exactly what a carried phase must hand back, per phase. Resume is
 #: all-or-nothing per phase and this is what enforces it: a stored output whose
 #: key set does not match EXACTLY is discarded, because a phase marked done
@@ -287,6 +312,11 @@ BUDGET_BASIS_MEASURED = "measured"
 BUDGET_BASIS_SCALED_DOWN = "measured_scaled_down"
 #: Measured, then handed the window slack no other phase declared (ruling 089).
 BUDGET_BASIS_PLUS_SLACK = "measured_plus_window_slack"
+#: Measured, then cut to whatever the window had left AFTER every inelastic
+#: phase kept its own measured budget — CAL-P109 (#2045). Only ever applied to a
+#: phase in :data:`ELASTIC_PHASES`, for which a smaller budget means less work
+#: done rather than a failure.
+BUDGET_BASIS_ELASTIC_CUT = "measured_elastic_cut"
 #: No completed observation exists, so no budget does either.
 BUDGET_BASIS_UNMEASURED = "unmeasured"
 
@@ -710,6 +740,66 @@ def _assign_window_slack(
     return out
 
 
+def _elastic_cut(
+    raw: list[tuple[str, Optional[int], bool, int, Optional[int], int]],
+    *,
+    available_ms: int,
+    unit_costs: dict[str, Any],
+) -> Optional[dict[str, int]]:
+    """Take an over-declared window's overrun out of the ELASTIC phase only.
+
+    CAL-P109 (#2045). ``derive_plan``'s scale-down is the right instinct applied
+    to the wrong set. The build genuinely does not have ``sum(max(observed) *
+    BUDGET_SAFETY)`` — that part is honest — but scaling every phase by the same
+    factor charges the shortfall to the four phases that cannot pay it. See
+    :data:`ELASTIC_PHASES` for the measurement: ``futures`` asks for 1.8M ms of
+    a 1.38M ms window, so the proportional factor lands at 0.63, and a
+    ``sports`` phase whose worst completion is 3,378 ms is handed a 3,771 ms
+    statement timeout. It dies on any beat as slow as its own recent worst, and
+    when it dies the beat publishes nothing — throwing away a futures phase that
+    had already completed, over roughly one second.
+
+    So: give every inelastic phase its full measured budget, and give the
+    elastic phase whatever is left. Nothing is invented and nothing is scaled
+    UP; the elastic phase is the only one asked to absorb the cut, and absorbing
+    it is what elastic means.
+
+    Returns ``{elastic_phase: budget_ms}`` when the reallocation applies, or
+    ``None`` to leave the caller on its proportional path. ``None`` is returned
+    — deliberately, in every ambiguous case — when:
+
+    * any phase is unmeasured (the plan is provisional; there is no total to
+      reallocate against),
+    * there is not exactly one elastic phase with a measured budget (two would
+      need a split rule this has no evidence for, zero has nothing to cut),
+    * the inelastic phases alone already overrun the window, so the shortfall
+      cannot be paid by the elastic phase at all and the proportional squeeze is
+      the only remaining option, or
+    * the remainder cannot hold ONE measured unit of the elastic phase. A
+      partial unit banks nothing, so a cut past that point stops being "less
+      work" and becomes "no work" — the fatal shape this function exists to keep
+      off the inelastic phases, and it must not be moved onto the elastic one
+      just because that phase is allowed to be cut.
+    """
+    budgeted = {name: ms for name, ms, flag, _, _, _ in raw if flag and ms is not None}
+    if len(budgeted) != len(raw):
+        return None
+    elastic = [name for name in budgeted if name in ELASTIC_PHASES]
+    if len(elastic) != 1:
+        return None
+    target = elastic[0]
+    inelastic_ms = sum(ms for name, ms in budgeted.items() if name != target)
+    remainder = available_ms - inelastic_ms
+    if remainder <= 0 or remainder >= budgeted[target]:
+        # Nothing left to give the elastic phase, or the window was never
+        # over-declared in the first place — the caller's own paths own both.
+        return None
+    unit_ms, _, _ = _decode_unit_cost(unit_costs.get(target))
+    if unit_ms is not None and remainder < unit_ms:
+        return None
+    return {target: remainder}
+
+
 def _decode_unit_cost(raw: Any) -> tuple[Optional[int], Optional[int], Optional[int]]:
     """Validate one phase's measured unit cost, or return all-``None``.
 
@@ -755,10 +845,16 @@ def derive_plan(
     Queue 300M's Item 0 acceptance names.
 
     When every phase IS measured and the declared budgets plus the cleanup
-    margin would overrun the soft limit, budgets are scaled DOWN proportionally
-    so publication headroom survives. Scaling a measured budget down is honest
-    (the build genuinely does not have that much time); scaling it up would not
-    be.
+    margin would overrun the soft limit, the overrun is charged to the ELASTIC
+    phase first (:func:`_elastic_cut`): every inelastic phase keeps its full
+    measured budget and the one unit-staged phase takes whatever the window has
+    left, because a smaller budget costs it units rather than the beat. Only
+    when that cannot be done — an unmeasured phase, no single elastic phase, or
+    an overrun the elastic phase cannot absorb — do budgets fall back to being
+    scaled DOWN proportionally so publication headroom survives. Scaling a
+    measured budget down is honest (the build genuinely does not have that much
+    time); scaling it up would not be. Charging the shortfall to phases that
+    cannot pay it is what CAL-P109 removed.
 
     ``floors`` carries the same shape for phases that ran out of time instead of
     finishing. It NEVER produces a budget — a phase cancelled at 1,355s took
@@ -814,15 +910,20 @@ def derive_plan(
     available = max(1, soft_limit_ms - cleanup_margin_ms)
     total = sum(ms or 0 for _, ms, _, _, _, _ in raw)
     scale = 1.0
-    if measured and total > available:
+    elastic_cut = _elastic_cut(raw, available_ms=available, unit_costs=unit_costs)
+    if measured and total > available and elastic_cut is None:
         scale = available / total
 
     budgets = []
     for name, ms, flag, count, floor_ms, floor_count in raw:
         budget_ms = max(1, int(ms * scale)) if ms is not None else None
         unit_ms, units_total, units_done = _decode_unit_cost(unit_costs.get(name))
+        if elastic_cut is not None and name in elastic_cut:
+            budget_ms = elastic_cut[name]
         if budget_ms is None:
             basis = BUDGET_BASIS_UNMEASURED
+        elif elastic_cut is not None and name in elastic_cut:
+            basis = BUDGET_BASIS_ELASTIC_CUT
         elif scale < 1.0:
             basis = BUDGET_BASIS_SCALED_DOWN
         else:
@@ -1156,6 +1257,30 @@ class PhaseLedger:
     @property
     def completed_required(self) -> tuple[str, ...]:
         return tuple(n for n in self.order if self.records[n].status in DONE_STATUSES)
+
+    @property
+    def failed_phase(self) -> Optional[str]:
+        """The phase the run DIED in, as opposed to the ones it got through.
+
+        CAL-P109 (#2045). The build's own failure log read
+        ``"ended timeout after 1111181ms in phase group ['futures']"`` — and the
+        list it printed there was :attr:`completed_required`, i.e. the phases
+        that FINISHED. Every beat that got through ``futures`` and then died in
+        ``sports`` therefore accused ``futures`` by name, in the one line anyone
+        reads first. Two separate investigations of #2045 opened on the futures
+        budget because of it; the cancelled statement was ``sports``'
+        ``read:events`` the whole time, and the ledger already knew.
+
+        Read after :meth:`close_open_phase` has run, which is what moves the
+        in-flight phase into a floor status. Returns ``None`` when no phase is
+        in one — a run that died between phases, or before the first began, has
+        no failing phase to name, and naming the nearest one anyway is how the
+        original line came to be wrong.
+        """
+        for name in self.order:
+            if self.records[name].status in FLOOR_STATUSES:
+                return name
+        return None
 
     @property
     def all_required_done(self) -> bool:
