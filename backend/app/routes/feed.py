@@ -2507,15 +2507,27 @@ async def get_feed(
                 # returns plain dicts, no ORM rows. It cost 865-1249ms on EVERY
                 # cold build, per principal, for a bit-identical result. Share it
                 # across principals, keyed only on its real inputs: the sport
-                # filter and a coarse clock bucket (the build embeds `now`-derived
-                # headlines and pin state, so the bucket plus the TTL are what
-                # bound how stale that text can get).
+                # filter and a coarse clock bucket.
+                #
+                # LAT-P104: that bucket was a 30-second literal against a 60-second
+                # TTL, so the key turned twice per TTL and every turn threw away an
+                # artifact that was still fresh — the fleet paid the ~1s stage
+                # rebuild twice a minute when once is the floor. It now comes from
+                # `clock_bucket_s()` (one hour, clamped never to be finer than the
+                # live TTL), which is the coarsest grid that still lands exactly on
+                # every boundary this build's `now` actually moves on: the three
+                # consumers are `marquee_pin_state` (windows open at UTC midnight,
+                # expire at UTC 12:00), `_score_event_concept` and
+                # `_concept_headline` (both read `now.date()` and nothing finer).
+                # `list_all_concepts` takes no clock at all. Staleness is unchanged
+                # — it was and remains `min(TTL, bucket)`, i.e. the 60s TTL.
                 #
                 # `_score_event_concepts` itself is untouched — several suites
                 # read it with `inspect.getsource`, and the sharing belongs at the
                 # call site anyway, where the principal-independence of the inputs
                 # is visible.
                 from app.utils.principal_independent_cache import (
+                    clock_bucket_s as _shared_clock_bucket_s,
                     get_or_build as _shared_get_or_build,
                     time_bucket as _shared_time_bucket,
                 )
@@ -2523,7 +2535,7 @@ async def get_feed(
                 _concept_key = (
                     sport or "all",
                     tuple(sorted(static_tag_filter or ())),
-                    _shared_time_bucket(now, 30),
+                    _shared_time_bucket(now, _shared_clock_bucket_s()),
                 )
 
                 async def _build_concepts():
