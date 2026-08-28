@@ -131,6 +131,13 @@ function visibleText(html: string): string {
  * `ALL_COPY_BANS` therefore now also carries ruling 141 (venue names) and
  * ruling 142 (future-tense promises) on top of the UX-P145 jargon list and
  * ruling 138's `price` stem.
+ *
+ * UX-P152: ruling 141 is applied AS AMENDED. A venue name is judged by what it
+ * is doing in the clause — narrative about our sourcing is banned, a label on
+ * a number the reader is looking at is not. Nothing under
+ * `components/tournament/` names a venue either way today; the canary at the
+ * bottom of this file pins both sides so the next chart legend on this page is
+ * not blocked by a rule Alex withdrew.
  */
 const BANNED = ALL_COPY_BANS;
 
@@ -543,6 +550,19 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
       assertPlain("<p>we asked Kalshi and Polymarket and neither runs that market</p>", "canary")
     ).toThrow(/Kalshi/);
     expect(() => assertPlain("<p>Polymarket 20 days ago</p>", "canary")).toThrow(/Polymarket/);
+
+    // UX-P152, ruling 141 AS AMENDED: the same name LABELLING a number the
+    // reader is looking at is allowed — a trend chart's faint source line, a
+    // source chip beside a figure. Alex narrowed the ban to narrative,
+    // empty-state and promotional copy the day after UX-P150 swept it, and
+    // this guard has to know the difference or the tournament page can never
+    // grow a legible chart legend.
+    expect(() =>
+      assertPlain('<span class="text-text-muted">Kalshi</span><span>61%</span>', "canary")
+    ).not.toThrow();
+    expect(() =>
+      assertPlain("<figcaption>Polymarket · Kalshi</figcaption>", "canary")
+    ).not.toThrow();
 
     // UX-P150, ruling 142: a promise about what the section WILL be.
     expect(() => assertPlain("<p>New questions are coming — check back soon.</p>", "canary")).toThrow(

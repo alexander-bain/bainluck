@@ -129,7 +129,37 @@ they are NOT debt and must not be swept. They are left in place verbatim so the 
 visible act rather than a quiet deletion, and the `OWED` map is not to be paid down until each line
 has been classified.
 
-Provisional classification, for whoever picks this up:
+### The re-read, DONE — UX-P152, 2026-08-28
+
+The amended test is now encoded in `lib/copyBans.ts` rather than applied by hand: `VENUE_BANS`
+still finds every capitalised name, and `isSourceAttribution` decides whether the name is the
+SUBJECT of the clause or the LABEL on a figure. A clause that is names, figures and separators is
+attribution; a clause that needs lowercase words to hold itself together is narrative about our
+sourcing. Judged per occurrence, so a legitimate caption cannot shelter a sentence further down
+the same page.
+
+Measured against the built bundle, every line of the original list below is now classified:
+
+| Surface | What the venue name was doing | Verdict |
+|---|---|---|
+| `/calibration` | methodology prose on a deliberate comparison surface | **EXEMPT** — moved out of `OWED` |
+| `/privacy` | legal disclosure | **EXEMPT** — exempt on this ruling's face |
+| `/politics` | `title="Both Kalshi and Polymarket"` on a source chip | **attribution** — entries deleted, nothing to fix |
+| `/weather` | chips ("Polymarket & Kalshi ·", "Kalshi · 10 cities") | **attribution** — `venue-polymarket` deleted |
+| `/weather` | "Daily *Will it rain?* markets from Kalshi" (sub-theme subtitle) | **narrative** — still owed |
+| `/about` | "Kalshi + Polymarket, unified" | **narrative** — still owed |
+| `/categories/golf` | "Tournament odds from Polymarket, Kalshi, sportsbooks & DataGolf" | **narrative** — still owed |
+| shared | the landing blurb — "…each have a guess" | **narrative** — still owed |
+| shared | `ScoreDifferentialChart` series names, `story-content` provenance captions | **attribution** — the rule no longer fires |
+| `CombinedFeedCard` / `SourceComparisonRow` | cross-source legends | **attribution** — the call reverses, as the amendment says |
+
+Nothing was restored, because nothing legitimate was removed: UX-P150's four venue removals were
+all narrative or empty-state, and `sourceLabel` in `lib/tournament.ts` had exactly one caller —
+`rowFreshnessLabel`, the removal this ruling pins. The guard's own `OWED` map now separates
+**EXEMPT** (the ruling allows it here) from **OWED** (we owe a fix), because filing a permanent
+carve-out as debt gives the list a floor nobody can pay and teaches the next reader to skip it.
+
+The original provisional classification, kept for the record:
 - **Narrative / promotional (still owed):** the shared landing blurbs; `/about`; the section
   subtitles on `/weather`, `/politics`, `/categories/golf` that read as coverage claims.
 - **Attribution (NOT owed — leave them):** `SourceComparisonRow`, the source chips beside figures,
@@ -163,3 +193,10 @@ only be paid down.
 `lib/copyBans.ts` holds the rules; `tournamentPlainLanguage.test.tsx` applies them to rendered
 components and `shippedCopyBans.test.ts` applies the same list to the built bundle and, on demand,
 to the chunks production is serving. See ruling 142 for why the second of those exists.
+
+Since UX-P152 the venue rule is not a name match but a name match plus a judgment, and both sides
+of that judgment are pinned: the two removals this ruling keeps must stay rejected, and chart
+series names, source chips and provenance captions must pass. A handful of descriptive captions
+that no shape rule can recognise are named one at a time in `ATTRIBUTION_LITERALS`, each with the
+figure it attributes, and a test asserts every entry is still doing work — the same discipline as
+`OWED`, opposite polarity.

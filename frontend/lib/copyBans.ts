@@ -32,7 +32,7 @@
  * |---|---|---|
  * | `JARGON_BANS` | UX-P145, Alex 2026-08-27 | our pipeline's nouns are not the reader's |
  * | `TRADING_VOCAB_BANS` | ruling 138, Alex 2026-08-27 | the word is PROBABILITY, never *price* |
- * | `VENUE_BANS` | ruling 141, Alex 2026-08-28 | readers get our probability, not our sourcing |
+ * | `VENUE_BANS` | ruling 141 AS AMENDED, Alex 2026-08-28 | a page may not talk ABOUT its suppliers; it may still say which line is whose |
  * | `FUTURE_PROMISE_BANS` | ruling 142, Alex 2026-08-28 | a section states what it IS, not what it WILL be |
  *
  * ═══ WHAT IS NOT BANNED ═══
@@ -81,25 +81,142 @@ export const TRADING_VOCAB_BANS: CopyBan[] = [
 ];
 
 /**
- * Ruling 141. The venues we read are not part of the product a reader bought.
+ * Ruling 141, AS AMENDED BY ALEX ON 2026-08-28. The amendment is the operative
+ * text and this file is where it is enforced, so read the distinction first.
  *
- * This bans the NAME in a sentence aimed at a reader. It does not touch the
- * source ids (`kalshi`, `polymarket`) that the payload, the enums and the
- * sentinels are built on — those never reach a rendered text node, and the
- * consumers of this list strip attributes before applying it.
+ * ═══ WHAT THE FIRST ENCODING GOT WRONG ═══
+ *
+ * UX-P150 (queue 013) implemented the ruling as first written — "venue names
+ * are banned in user-facing copy, everywhere" — and Alex narrowed it the same
+ * day:
+ *
+ *   > the venue-name ban was overinterpreted. The precise rule: venue names are
+ *   > BANNED in narrative/empty-state/promotional copy … but ALLOWED — and
+ *   > often good — as SOURCE ATTRIBUTION of a number or line the user is
+ *   > looking at.
+ *
+ * A blanket name ban is not a smaller version of the amended rule, it is a
+ * different rule: it would fail a trend chart for labelling its own faint
+ * source line, which makes the chart less legible rather than more abstract.
+ * So the pattern still finds every capitalised venue name, and
+ * `isSourceAttribution` decides whether the name is the SUBJECT of the sentence
+ * or the LABEL on a figure.
+ *
+ * ═══ HOW THE TWO ARE TOLD APART, WITHOUT A DOM ═══
+ *
+ * Two of the three consumers see a bare string — a literal prised out of a
+ * minified chunk — with no element, no class and no neighbouring number to
+ * consult. What they DO see is the shape of the clause the name sits in, and
+ * the shape is the tell:
+ *
+ *   • A LABEL is names, figures and separators. "Polymarket & Kalshi ·",
+ *     "Kalshi Implied", "Kalshi · 10 cities", "Both Kalshi and Polymarket".
+ *     Strip the venue names out and nothing is left that a sentence needs.
+ *   • NARRATIVE needs lowercase words to hold itself together — "we asked …
+ *     and neither runs that market", "Kalshi + Polymarket, unified",
+ *     "Tournament odds from Polymarket, Kalshi, sportsbooks & DataGolf". Those
+ *     leftover lowercase words ARE the sentence, and the sentence is about our
+ *     sourcing.
+ *
+ * The rule is therefore: after removing the venue names, the separators, the
+ * figures and a closed list of words a source label may legitimately contain,
+ * a clause with NO lowercase word left is attribution; anything else is
+ * narrative. Deliberately strict in that direction — a caption misread as
+ * narrative gets one line in `ATTRIBUTION_LITERALS` with its reason, whereas a
+ * sentence misread as a caption is a silent hole in the ruling.
+ *
+ * It is also what keeps the two removals ruling 141 PINS: "Polymarket 20 days
+ * ago" leaves "days ago" behind, and that phrase is the giveaway — the name is
+ * not labelling the number beside it, it is telling the reader about our
+ * reading schedule.
+ *
+ * It does not touch the source ids (`kalshi`, `polymarket`) that the payload,
+ * the enums and the sentinels are built on — those never reach a rendered text
+ * node, and the consumers of this list strip attributes before applying it.
  */
 export const VENUE_BANS: CopyBan[] = [
   {
     id: "venue-kalshi",
     pattern: /\bKalshi\b/,
-    why: 'a venue name in reader copy — readers get our probability, not our sourcing (ruling 141)',
+    why: 'a venue name as the SUBJECT of reader copy — a page may attribute a number to a venue, not talk about its suppliers (ruling 141 as amended)',
   },
   {
     id: "venue-polymarket",
     pattern: /\bPolymarket\b/,
-    why: 'a venue name in reader copy — readers get our probability, not our sourcing (ruling 141)',
+    why: 'a venue name as the SUBJECT of reader copy — a page may attribute a number to a venue, not talk about its suppliers (ruling 141 as amended)',
   },
 ];
+
+/** The bans that answer to `isSourceAttribution` rather than firing outright. */
+const ATTRIBUTION_AWARE_BANS: ReadonlySet<string> = new Set(VENUE_BANS.map((b) => b.id));
+
+/**
+ * Source captions the SHAPE rule cannot recognise, each with the reason.
+ *
+ * A provenance caption under a chart is attribution by any reading of Alex's
+ * test — the reader is looking at the exhibit and the caption says what drew
+ * it — but a descriptive one ("win-probability model", "futures") carries the
+ * lowercase words that otherwise mark narrative. Rather than widen the
+ * vocabulary until the rule stops meaning anything, the handful of real cases
+ * are named here.
+ *
+ * Same discipline as the `OWED` map in `shippedCopyBans.test.ts`, opposite
+ * polarity: an entry has to say which figure it attributes, and a test asserts
+ * every entry is still doing work.
+ */
+export const ATTRIBUTION_LITERALS: { literal: string; why: string }[] = [
+  {
+    literal: "DataGolf win-probability model + Kalshi futures",
+    why: "provenance caption under the McIlroy case-study bars in lib/story-content.ts — it names what produced the three numbers on screen",
+  },
+];
+
+/** Words a source LABEL may carry without becoming a sentence about sourcing. */
+const LABEL_WORDS = /^(source|sources|and|vs|via|sportsbook|sportsbooks)$/i;
+
+/**
+ * Where one clause ends and the next begins.
+ *
+ * Sentence enders, plus the typographic fences the design system uses to
+ * separate labels from each other (`·`, `•`, `|`) — "Polymarket · atp-… · real
+ * price series" is three labels, not one sentence. The em dash is deliberately
+ * NOT here: it fences appositions inside a sentence ("our sources — Kalshi and
+ * Polymarket — each have a guess"), and splitting on it would hand a narrative
+ * sentence a label-shaped middle.
+ */
+const CLAUSE_BOUNDARY = /[.!?;\n·•|]/;
+
+/** The clause a match sits in — the unit ruling 141's amended test judges. */
+export function clauseAround(text: string, index: number): string {
+  let start = 0;
+  let end = text.length;
+  for (let i = index; i >= 0; i -= 1) {
+    if (CLAUSE_BOUNDARY.test(text[i])) {
+      start = i + 1;
+      break;
+    }
+  }
+  for (let i = index; i < text.length; i += 1) {
+    if (CLAUSE_BOUNDARY.test(text[i])) {
+      end = i;
+      break;
+    }
+  }
+  return text.slice(start, end);
+}
+
+/**
+ * Is this clause a source LABEL rather than a sentence about our sourcing?
+ *
+ * Allowed: the reader is looking at a number or a line and this says whose it
+ * is. Banned: the clause's content IS the supplier list.
+ */
+export function isSourceAttribution(clause: string): boolean {
+  if (ATTRIBUTION_LITERALS.some((entry) => clause.includes(entry.literal))) return true;
+  const residue = clause.replace(/\b(Kalshi|Polymarket)\b/g, " ");
+  const words = residue.match(/[A-Za-z][A-Za-z'’-]*/g) ?? [];
+  return words.every((word) => !/^[a-z]/.test(word) || LABEL_WORDS.test(word));
+}
 
 /**
  * Ruling 142. A section states what it IS, not what it WILL be.
@@ -146,18 +263,34 @@ export interface CopyBanHit {
   context: string;
 }
 
-/** Every rule that fires on `text`, with enough context to act on. */
+/**
+ * Every rule that fires on `text`, with enough context to act on.
+ *
+ * At most one hit per rule — a report wants to know THAT the page says *price*,
+ * not eleven times over. But the search walks every occurrence rather than
+ * stopping at the first, because ruling 141's amended test is judged per
+ * OCCURRENCE: a page may legitimately label a chart line "Kalshi" and then, two
+ * paragraphs later, tell the reader we buy from Kalshi. Matching only the first
+ * would let the second hide behind it.
+ */
 export function findBannedCopy(text: string, bans: CopyBan[] = ALL_COPY_BANS): CopyBanHit[] {
   const hits: CopyBanHit[] = [];
   for (const ban of bans) {
-    const hit = text.match(ban.pattern);
-    if (!hit) continue;
-    const at = text.indexOf(hit[0]);
-    hits.push({
-      ban,
-      matched: hit[0],
-      context: text.slice(Math.max(0, at - 90), at + 110).replace(/\s+/g, " ").trim(),
-    });
+    const scanner = new RegExp(
+      ban.pattern.source,
+      ban.pattern.flags.includes("g") ? ban.pattern.flags : `${ban.pattern.flags}g`
+    );
+    const judged = ATTRIBUTION_AWARE_BANS.has(ban.id);
+    for (const hit of text.matchAll(scanner)) {
+      const at = hit.index ?? 0;
+      if (judged && isSourceAttribution(clauseAround(text, at))) continue;
+      hits.push({
+        ban,
+        matched: hit[0],
+        context: text.slice(Math.max(0, at - 90), at + 110).replace(/\s+/g, " ").trim(),
+      });
+      break;
+    }
   }
   return hits;
 }

@@ -725,22 +725,44 @@ demands that the artifact a guard reads be **named in the claim the guard is use
 to support** — and that "shipped" claims be closed against a shipped artifact,
 after the deploy, not before the merge.
 
-### 27. A translated surface may not name the sources it translated.
+### 27. A translated surface may not SELL the sources it translated.
 
 Doctrine **24** bans the source domain's *vocabulary*; this bans its *proper
-nouns*. Where the whole product is the abstraction — one number, one answer,
-arrived at from several places a reader was deliberately spared — printing the
-places underneath converts a finished answer back into a research task. It hands
-the reader a decision the product exists to make on their behalf.
+nouns as the subject*. Where the whole product is the abstraction — one number,
+one answer, arrived at from several places a reader was deliberately spared — a
+page whose CONTENT is the supplier list converts a finished answer back into a
+research task. It hands the reader a decision the product exists to make on
+their behalf.
 
-The under-appreciated half is what it does to an **absence**. Naming the
+**The clause was first written as "may not NAME" and that was too wide.** The
+distinction it was reaching for is what the name is DOING in the sentence:
+
+- **Subject** — a subtitle, an empty state, a landing blurb, a promise about
+  coverage. *"A + B, unified"*, *"we asked A and B and neither runs that
+  market"*. Banned. The page is filling space with who we buy from instead of
+  showing the reader the thing.
+- **Attribution** — the label on a faint source line in a trend chart, the dot
+  row under a probability cell, a source chip beside a figure. Allowed, and
+  often good. The reader is looking at a specific number; saying where that
+  number came from is an answer, not an advertisement, and withholding it makes
+  the chart less legible rather than more abstract.
+
+This is the same line doctrine **24**'s own scope note draws — the ban is on the
+source domain SOLD as a feature, not NAMED in passing — and a sweep that misses
+it strips captions the reader needs while leaving the taglines alone.
+
+The under-appreciated half is what naming does to an **absence**. Naming the
 suppliers makes a gap read as *our* gap: "we asked A and B and neither runs that
 market" tells a reader we have two vendors and both let us down. The true
 statement is almost always broader and more useful — *nobody is answering that
-question* — and it is shorter.
+question* — and it is shorter. That is the subject class, and it stays banned.
 
 *Charter case (ruling **141**).* Alex, 2026-08-28: *"venue names are BANNED in
 user-facing copy, everywhere. Users get our probability, not our sourcing."*
+Amended by Alex the same day, and the amendment is the operative text: *"the
+venue-name ban was overinterpreted … BANNED in narrative/empty-state/promotional
+copy, but ALLOWED — and often good — as SOURCE ATTRIBUTION of a number or line
+the user is looking at."*
 
 *The limit, and it is a real one:* three carve-outs survive on their own merits
 and none of them is a loophole. **Legal disclosure** must name who receives or
@@ -755,6 +777,15 @@ identifiers (`source: "kalshi"`, enum values, columns, data attributes) were
 never in scope, and the honest admission the venue name was carrying has to
 survive the removal — usually by counting rather than naming ("one reading 20
 days ago"), never by deleting the sentence.
+
+*And one for the enforcement, because this clause is enforced by a regex.* A
+name match is not a violation; a name match plus a judgment is. Where the guard
+cannot see the judgment — a bare string prised out of a minified bundle — it
+reads the SHAPE of the clause: names, figures and separators is a label, and a
+clause that needs lowercase words to hold itself together is a sentence about
+sourcing. Where even that cannot decide, the exception is written down one line
+at a time with the figure it attributes, never widened until the rule stops
+meaning anything.
 
 ### 28. When two items are a comparison, the fix is composition, not suppression.
 
