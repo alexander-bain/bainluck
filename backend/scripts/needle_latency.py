@@ -147,7 +147,14 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from cold_path_snapshot import PATHS, _fmt, _p50, measure  # noqa: E402
+from cold_path_snapshot import (  # noqa: E402
+    PATHS,
+    REJECTED,
+    _fmt,
+    _p50,
+    measure,
+    rejection_counts,
+)
 
 #: The three graded surfaces, by the snapshot's own path keys. Frozen: a new
 #: surface joins by an explicit edit to this literal, never by a predicate.
@@ -191,7 +198,17 @@ def _cold(rows: list[dict]) -> list[float]:
 
 
 def _graded(rows: list[dict]) -> list[float]:
-    return [r["server_ms"] for r in rows if r.get("server_ms") is not None]
+    """Server time for the samples that are latency observations at all.
+
+    A 429 carries an `x-response-time`, so "has a server_ms" was not enough of a
+    test and the rate limiter counted itself into `n_graded` — see
+    `cold_path_snapshot._classify`, #2260.
+    """
+    return [
+        r["server_ms"]
+        for r in rows
+        if r.get("server_ms") is not None and r.get("class") != REJECTED
+    ]
 
 
 def needle(snap: dict) -> dict:
@@ -209,6 +226,7 @@ def needle(snap: dict) -> dict:
                     "path": by_key[key].path,
                     "cold": _cold(rows),
                     "n_graded": len(_graded(rows)),
+                    "rejections": rejection_counts(rows),
                 }
             )
 
@@ -219,6 +237,7 @@ def needle(snap: dict) -> dict:
             "path": "/api/events/search?q=",
             "cold": _cold(snap["search_cold_samples"]),
             "n_graded": len(_graded(snap["search_cold_samples"])),
+            "rejections": rejection_counts(snap["search_cold_samples"]),
         }
     )
 
@@ -313,11 +332,37 @@ def report(snap: dict, nd: dict) -> int:
         " (zero requests on appear — nothing to measure)"
     )
     for m in nd["members"]:
-        if not m["cold"]:
+        if m["cold"]:
+            continue
+        rej = m.get("rejections") or {}
+        if rej:
+            # 🔴 A THROTTLED member is not a warm one, and saying so is the
+            # whole of #2260's second half. Three consecutive refusals were
+            # filed as "the pool went warm" while this member's six samples
+            # were 429s that the grader had scored as fast warm searches.
+            detail = ", ".join(f"{n}x HTTP {k}" for k, n in sorted(rej.items()))
+            print(
+                f"   🔴 {m['key']} was REFUSED BY THE SERVER, not warm — "
+                f"{detail}. This surface was UNMEASURABLE this run; that is a "
+                f"different fact from 'it was fast'."
+            )
+        else:
             print(
                 f"   ⚠️  {m['key']} produced NO cold sample this run — it is "
                 f"absent from the median, not counted as fast."
             )
+    throttled = sorted(
+        m["key"] for m in nd["members"] if (m.get("rejections") or {}).get("429")
+    )
+    if throttled:
+        print(
+            f"   🔴 RATE LIMITED: {len(throttled)} member(s) — {', '.join(throttled)}. "
+            f"The API allows 60 req/min per IP and this run issued "
+            f"{sum(nd['requests'].values()) if 'requests' in nd else 'many'}; the "
+            f"searches go last, so they are what gets refused. A latency lane "
+            f"running EXPLAINs from the same IP throttles its own harness "
+            f"(parked P110-4 — pacing needs a ruling, not a patch)."
+        )
 
     print()
     print(

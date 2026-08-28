@@ -441,8 +441,46 @@ WARM_STATUSES = frozenset(
 )
 
 
+#: A sample the SERVER refused. Not a latency observation at all, and kept out
+#: of the cold/warm vocabulary rather than folded into "unknown" so the report
+#: can say WHY nothing was measured.
+REJECTED = "rejected"
+
+
 def _classify(sample: dict) -> str:
-    """cold / warm / unknown, from the route's own header."""
+    """rejected / cold / warm / unknown.
+
+    🔴 THE STATUS CODE IS CHECKED FIRST, AND THAT IS THE WHOLE POINT OF THIS
+    FUNCTION'S FIRST BRANCH. LAT-P110, #2260.
+
+    It used to read `X-Feed-Cache`, fall back to the query count, and never look
+    at `http` at all. A **429** carries no cache header, executes zero queries
+    and answers in 2–3 ms with a real `x-response-time` — so it reached
+    `return "cold" if q > 0 else "warm"` and was graded as a **warm 2 ms
+    search**. The API limit is 60/minute per IP and a canonical needle run
+    issues ~68 requests with the six cold searches LAST, so the searches are
+    exactly what gets rejected — and a latency lane throttles its own harness
+    simply by doing its own `db-query` work from the same IP.
+
+    That produced a finding, not just a wrong cell. LAT-P109 parked P109-6 —
+    "the needle's cold-search member went 6/6 WARM … cause NOT established" —
+    and three consecutive needle refusals were read as "the pool went warm"
+    when for that member the truth was "the pool went UNMEASURABLE". Those are
+    different facts with different owners. Audited across every needle artifact
+    on disk: the published series (882 / 873 / 940 / 1273) is clean — every run
+    that produced a number did so on real 200s — but the refusals since were
+    partly mis-diagnosed.
+
+    A rejected sample keeps its timing fields, because the 2 ms IS what the
+    rate limiter took and throwing it away would hide the throttle as
+    thoroughly as mis-grading it did. It is excluded from `graded` instead, and
+    counted out loud (`_summarize`).
+    """
+    if sample.get("error") is not None:
+        return REJECTED
+    http = sample.get("http")
+    if http is not None and http != 200:
+        return REJECTED
     status = (sample.get("feed_cache") or "").strip().lower()
     if status in COLD_STATUSES:
         return "cold"
@@ -456,6 +494,23 @@ def _classify(sample: dict) -> str:
             return "unknown"
         return "cold" if q > 0 else "warm"
     return "unknown"
+
+
+def rejection_counts(rows: list[dict]) -> dict[str, int]:
+    """`{"429": 6}` — what the server said, for the samples it refused.
+
+    Named and exported because the needle prints it: a member that produced no
+    cold sample because it was THROTTLED is a different finding from one that
+    produced none because it was warm, and a run that cannot tell them apart
+    files the wrong parked measurement (it did, twice).
+    """
+    out: dict[str, int] = {}
+    for r in rows:
+        if r.get("class") != REJECTED:
+            continue
+        key = r.get("error") or str(r.get("http"))
+        out[key] = out.get(key, 0) + 1
+    return out
 
 
 def _p50(vals: list[float]) -> float | None:
@@ -553,7 +608,12 @@ def measure(
 
 
 def _summarize(rows: list[dict]) -> dict:
-    graded = [r for r in rows if r.get("server_ms") is not None]
+    # `class != REJECTED` as well as "has a server_ms": a 429 HAS an
+    # `x-response-time`, so the timing test alone let the rate limiter into
+    # every median below. #2260.
+    graded = [
+        r for r in rows if r.get("server_ms") is not None and r.get("class") != REJECTED
+    ]
     allv = [r["server_ms"] for r in graded]
     cold = [r["server_ms"] for r in graded if r["class"] == "cold"]
     warm = [r["server_ms"] for r in graded if r["class"] == "warm"]
@@ -566,6 +626,8 @@ def _summarize(rows: list[dict]) -> dict:
     return {
         "n": len(rows),
         "n_graded": len(graded),
+        "n_rejected": sum(1 for r in rows if r.get("class") == REJECTED),
+        "rejections": rejection_counts(rows),
         "p50_all": _p50(allv),
         "max_all": max(allv) if allv else None,
         "n_cold": len(cold),
