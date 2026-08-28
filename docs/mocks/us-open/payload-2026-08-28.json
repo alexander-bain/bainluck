@@ -9815,7 +9815,7 @@
       "entity_key": "zeynep-sonmez",
       "display_name": "Zeynep Sonmez",
       "seed": null,
-      "country": "T\u00fcrkiye",
+      "country": "Türkiye",
       "image": {
        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Sonmez_WMQ23_%2853062069365%29.jpg/330px-Sonmez_WMQ23_%2853062069365%29.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
        "flag_url": "https://a.espncdn.com/i/teamlogos/countries/500/tur.png"
@@ -12222,13 +12222,13 @@
   {
    "key": "second-major",
    "title": "Who wins a second major this year?",
-   "hook": "Both already have one in 2026. These are two separate questions \u2014 they could both do it, or neither.",
+   "hook": "Both already have one in 2026. These are two separate questions — they could both do it, or neither.",
    "draw": "mens-singles",
    "source": "kalshi",
    "outcomes": [
     {
-     "entity_key": "second-major:alcaraz",
-     "display_name": "Alcaraz",
+     "entity_key": "second-major:carlos-alcaraz",
+     "display_name": "Carlos Alcaraz",
      "probability": 0.25,
      "probability_is_live": false,
      "observed_at": "2026-07-24T02:50:56.699511+00:00",
@@ -12237,8 +12237,8 @@
      "is_answer": false
     },
     {
-     "entity_key": "second-major:sinner",
-     "display_name": "Sinner",
+     "entity_key": "second-major:jannik-sinner",
+     "display_name": "Jannik Sinner",
      "probability": 0.555,
      "probability_is_live": false,
      "observed_at": "2026-07-24T02:50:56.699511+00:00",
@@ -12254,8 +12254,8 @@
    "freshest_observed_at": "2026-07-24T02:50:56.699511+00:00",
    "freshest_age_hours": 856.1,
    "stale_outcomes": [
-    "second-major:alcaraz",
-    "second-major:sinner"
+    "second-major:carlos-alcaraz",
+    "second-major:jannik-sinner"
    ],
    "mixed_freshness": false
   }

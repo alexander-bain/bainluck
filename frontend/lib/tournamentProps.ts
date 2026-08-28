@@ -226,7 +226,7 @@ export function propStaleOutcomes(market: PropMarket): PropOutcome[] {
 }
 
 /* =========================================================================
- * ROTATION — what this section is FOR, and what falls out of it
+ * WHAT THIS SECTION SHOWS — AND, SINCE UX-P154, WHAT IT NEVER HIDES
  * =========================================================================
  *
  * UX-P138, ALEX'S RULING 8, verbatim: "The advance-to-round 'questions'
@@ -236,46 +236,65 @@ export function propStaleOutcomes(market: PropMarket): PropOutcome[] {
  * or goes stale, it rotates out, curated by interestingness, never a repeating
  * template."
  *
- * Four rules, in the order they run. Each drops cards, and every drop is
- * COUNTED and reported to the caller, because a section that silently shrinks
- * reads as "nothing is happening here" rather than "the register has gone
- * quiet" — and those need different fixes from different people.
+ * ═══ AND ALEX'S ITEM 4, 2026-08-28, WHICH OVERRULES HALF OF IT ═══
+ *
+ * **NEVER EXCLUDE PROPS.** In his words: illiquid props render with honest
+ * freshness indication, never hidden — *"that's part of the value of the
+ * product."*
+ *
+ * That is a direct reversal of ruling 8's "rotates out", and it is right for a
+ * reason ruling 8 could not see from where it was written. A thin market on a
+ * real question is not noise to be filtered — it IS the product, because the
+ * alternative places a reader can go do not have that question at all. What
+ * makes an old number dangerous is presenting it as a current one, and the
+ * honesty treatment already solves that. Deleting the card solves it by
+ * deleting the value.
+ *
+ * The measured consequence, which is the whole ship of UX-P154: this section
+ * has been EMPTY on production every day since it was built. All three of its
+ * cards were older than 48 hours, so all three were dropped, so the reader got
+ * an apology where three real questions should have been.
+ *
+ * ═══ THE RULES NOW ═══
+ *
+ * Only ONE rule still removes a card, and it does not hide anything:
  *
  *   1. STRUCTURAL — an advance-to-round market is not a prop. It is a cell in
- *      the grid and it is rendered there. Eight of our eleven are these.
- *   2. RESOLVED — a settled question is not a question. Nothing to predict.
- *   3. DARK — a reading old enough that we no longer call it a price is not an
- *      answer to anything. Stale is fine and wears the honesty treatment; dark
- *      rotates out.
- *   4. TEMPLATE — at most ONE card per template family, where a family is the
- *      register key WHOLE, subject and all. UX-P147 rekeyed this: it used to
- *      drop the leading token, which made "Can Alcaraz win a second major this
- *      year?" and "Can Sinner win a second major this year?" one family and
- *      deleted one of them. Alex overruled it — *"DIFFERENT PLAYERS and must
- *      both render"* — and he is right that two rivals' odds of the same feat
- *      is the comparison, not a repetition. See `propTemplateFamily`.
+ *      the grid and it is rendered THERE. Nothing is hidden; the section says
+ *      where it went.
  *
- * ⚠️ APPLIED TO TODAY'S REGISTER THIS RULE EMPTIES THE SECTION, and that is a
- * true statement about our data rather than a bug in the rule. Of the three
- * non-advance markets we curate, `sinner-competes` was last priced 188 hours
- * ago and both `*-second-major` cards 810 hours — 34 days. Every one is dark.
- * The report states it and the empty state says it in words; showing a
- * month-old number under a heading that calls it a prediction would be the
- * page arguing with its own freshness doctrine.
+ * Two former drops are now TREATMENTS. The card renders either way:
+ *
+ *   • QUIET (was "dark") — an old reading is shown with its age said out loud.
+ *     See `propFreshness`.
+ *   • LOOKS DECIDED (was "resolved") — a card pinned at 0 or 1. Note that
+ *     `propIsResolved` INFERS settlement from the number, which is a guess, and
+ *     an illiquid market sitting at 99.9% is not a settled one. Inferring
+ *     settlement and then HIDING the card is the worst available combination:
+ *     a wrong guess with no way for the reader to notice. So it labels instead.
+ *     Real settlement detection is lane1's (flagged in the UX-P154 report).
+ *
+ * And one former drop is now a COMBINE, which is Alex's item 1:
+ *
+ *   • TEMPLATE FAMILY — two cards asking one question about different subjects
+ *     become ONE card with one row each. Never a deletion. See
+ *     `combinePropFamilies`, and `backend/app/utils/prop_template_family.py`
+ *     for the same rule where the register is written.
  */
 
 /**
- * Beyond this age a reading is not a price (Alex's ruling 8, "goes stale ...
- * rotates out").
+ * Beyond this age we call a reading QUIET and say so on the card.
  *
- * Deliberately the SAME 48-hour boundary the slate's `dark_after_hours`
- * carries and the boards' `price_state` uses, rather than a fourth opinion
- * about what old means. One vocabulary: `live` is confident, `stale` is muted
- * and says its age, `dark` is gone. A section-specific threshold would be a
- * second definition of staleness on a page whose whole freshness doctrine is
- * that there is one.
+ * Deliberately the SAME 48-hour boundary the slate and the boards use, rather
+ * than a fourth opinion about what old means.
+ *
+ * ⚠️ SINCE UX-P154 THIS IS A TREATMENT THRESHOLD, NOT A FILTER. It decides how
+ * loudly a card admits its age; it has never again decided whether the card
+ * exists. The name kept the word "dark" for one release so the diff was
+ * readable, and then stopped: `dark` is our own `price_state` enum and the
+ * copy guard bans it from anything a reader sees.
  */
-export const PROP_DARK_AFTER_HOURS = 48;
+export const PROP_QUIET_AFTER_HOURS = 48;
 
 /**
  * A settled question. `probability` pinned at the rails is the observable — a
@@ -292,48 +311,357 @@ export function propIsResolved(market: PropMarket): boolean {
   );
 }
 
-/** Older than we are willing to call a price at all. */
-export function propIsDark(market: PropMarket): boolean {
+/** Old enough that the card says so loudly. Never a reason to hide it. */
+export function propIsQuiet(market: PropMarket): boolean {
   const age = propGoverningAgeHours(market);
   if (age === null) return true;
-  return age >= PROP_DARK_AFTER_HOURS;
+  return age >= PROP_QUIET_AFTER_HOURS;
+}
+
+/* =========================================================================
+ * FRESHNESS — WHAT THE TIMESTAMP MEANS, SAID IN ONE PLACE
+ * =========================================================================
+ *
+ * ═══ ALEX'S ITEM 3, 2026-08-28 ═══
+ *
+ * **Staleness is per card, not per section**, because liquidity varies within
+ * a section — one question can be quoted every fifteen minutes while the one
+ * under it has not moved in a month, and a banner over both is wrong about
+ * one of them. (That half was already true here and is now guarded.)
+ *
+ * And the part that was NOT true: *the "32 hours ago" ambiguity is real —
+ * created? updated? last traded?*
+ *
+ * ═══ THE ANSWER, TRACED TO THE QUERY ═══
+ *
+ * It is **none of those three.** `age_hours` is derived from
+ *
+ *     MAX(futures_odds_snapshots.captured_at) WHERE probability IS NOT NULL
+ *
+ * (`backend/app/routes/tournaments.py::_load_prices`), and every refresh writes
+ * a snapshot whether or not the number moved. So the timestamp means:
+ *
+ *     **the last time a probability for this question reached us.**
+ *
+ * Not when the market was created. Not when the venue last updated a row —
+ * `futures_outcomes.last_updated` was measured a month stale against running
+ * snapshots on day 1, which is exactly why the route does not read it. Not when
+ * it last traded; we do not receive trades.
+ *
+ * ⚠️ AND THE LIMIT OF WHAT IT CAN TELL A READER, because the label must not
+ * over-claim. "32 hours" has two possible causes and the number cannot tell
+ * them apart: the market may be quoted and untraded, or our reader may not be
+ * covering it. Both are "no new number reached us in 32 hours", which is
+ * therefore what the copy says — a fact about our knowledge, not a claim about
+ * the market's activity. Writing "nobody has traded this in 32 hours" would be
+ * inventing the half we do not have.
+ */
+
+/** The sentence that defines the age, once per section. Never per card. */
+export const FRESHNESS_DEFINITION =
+  "“Last number” is when we last saw a new probability for a question — not when it was created, and not when it last changed hands.";
+
+export type PropFreshnessState = "fresh" | "waiting" | "quiet";
+
+export interface PropFreshness {
+  state: PropFreshnessState;
+  /** Longest age among the outcomes the card PRINTS, in hours. */
+  ageHours: number | null;
+  /** "Last number 32 hours ago" / "No number yet". Always self-labelling. */
+  label: string;
+  /** Just the age — "32 hours ago" — for treatments that label separately. */
+  age: string;
+  /** Which printed outcomes are the old ones, when only some of them are. */
+  staleOutcomes: PropOutcome[];
+}
+
+/**
+ * One freshness verdict per card, computed from the outcomes the card prints.
+ *
+ * Three states rather than two, because "we have never had a number" and "we
+ * had one and it is old" are different facts to a reader deciding whether to
+ * believe the page:
+ *
+ *   • `fresh`   — every printed number is live. The card says nothing.
+ *   • `waiting` — old, but inside the day-or-two the whole page calls recent.
+ *   • `quiet`   — past `PROP_QUIET_AFTER_HOURS`, or never seen at all. This is
+ *                 the state that used to delete the card.
+ */
+export function propFreshness(market: PropMarket): PropFreshness {
+  const ageHours = propGoverningAgeHours(market);
+  const staleOutcomes = propStaleOutcomes(market);
+  const age = freshnessAge(ageHours);
+
+  if (propIsPresentedAsLive(market)) {
+    return { state: "fresh", ageHours, label: "", age, staleOutcomes: [] };
+  }
+  const state: PropFreshnessState =
+    ageHours === null || ageHours >= PROP_QUIET_AFTER_HOURS ? "quiet" : "waiting";
+  return {
+    state,
+    ageHours,
+    label: ageHours === null ? "No number yet" : `Last number ${age}`,
+    age,
+    staleOutcomes,
+  };
+}
+
+/**
+ * "32 hours ago" / "20 days ago" / "never".
+ *
+ * Rounded DOWN, like every other age on this page — "8 days ago" must never
+ * flatter to "7". Deliberately a local copy of `stalenessLabel`'s arithmetic
+ * rather than an import: this module is imported BY `lib/tournament.ts`'s
+ * types and importing back would close a cycle.
+ */
+export function freshnessAge(ageHours: number | null): string {
+  if (ageHours === null || !Number.isFinite(ageHours)) return "never";
+  if (ageHours < 1) {
+    const minutes = Math.max(1, Math.floor(ageHours * 60));
+    return `${minutes} min ago`;
+  }
+  if (ageHours < 48) {
+    const hours = Math.floor(ageHours);
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
+  return `${Math.floor(ageHours / 24)} days ago`;
 }
 
 /**
  * The template family a question belongs to.
  *
- * ═══ UX-P147, ALEX'S ITEM 6: A FAMILY MAY NEVER CROSS PLAYERS ═══
+ * ═══ THE HISTORY, BECAUSE ALEX ASKED WHY NOTHING TRIGGERED ═══
  *
- * Verbatim: *"alcaraz-second-major and sinner-second-major are DIFFERENT
- * PLAYERS and must both render. Key the near-duplicate rule so it never
- * collapses across players."* And: *"I'd love to"* see both.
+ * Alex, 2026-08-28: *"Was this a bespoke solution? I thought we'd built tools
+ * to identify groups and surface them as groups. Why didn't any of them
+ * trigger?"*
  *
- * This function used to drop the leading token — `alcaraz-second-major` and
- * `sinner-second-major` both reduced to `second-major`, so ruling 8's
- * one-card-per-family cap kept whichever scored better and silently deleted the
- * other. That is now overruled, and the ruling it overrules is worth restating
- * so the two are not confused: UX-P138 ruling 8 banned *"a repeating
- * template"*, and the reading that shipped — *same question, different name in
- * it* — was the wrong one. Two rivals' odds of the same feat is not one
- * question printed twice; it is the comparison, and it is the single most
- * interesting thing a two-horse men's draw has to offer. Deleting Alcaraz to
- * avoid repeating Sinner threw away the only card that made either mean
- * anything.
+ * This function is the tool he means, and here is its whole history:
  *
- * So the family is the WHOLE key, subject included, and the cap now only
- * collapses cards that are the same question about the same subject. The rule
- * did not get weaker — it got keyed correctly. It still cannot be defeated by
- * rewording, because nothing is inferred from the TITLE: two questions that
- * happen to share phrasing are not a template, and two that share a curated
- * topic and a subject are, whatever they are worded like.
+ *  - **UX-P138** keyed it on the topic — `alcaraz-second-major` and
+ *    `sinner-second-major` both reduced to `second-major` — and `curatedProps`
+ *    used it as a CAP, keeping whichever card scored better and deleting the
+ *    other. It deleted Alcaraz.
+ *  - **UX-P147** rekeyed it on the WHOLE key to stop that (*"DIFFERENT PLAYERS
+ *    and must both render"*, ruling 139). Both men came back — and so did the
+ *    repetition, because the only two outcomes the machinery had were two cards
+ *    or one card and a deletion.
+ *  - **And since register keys are unique by construction** (the population
+ *    pass refuses duplicates), keying on the whole key made the cap
+ *    STRUCTURALLY UNREACHABLE. From UX-P147 to UX-P154 `dropped.template` could
+ *    not be non-zero. The rule everybody was reasoning about was dead.
  *
- * `propSubject` and `propTopic` are exported beside it because the split is
- * still real and still load-bearing — the report and the guards both need to
- * assert "these two share a topic and differ by subject, and BOTH survive",
- * which is a claim you cannot make about an opaque key.
+ * That is the answer: the tool was a cap, a cap can only delete, and the one
+ * fix that stopped it deleting also stopped it running.
+ *
+ * ═══ WHAT IT IS NOW ═══
+ *
+ * The key is still the whole register key — ruling 139 is intact and this
+ * function still cannot collapse across subjects, because it never collapses at
+ * all. It is now used only to prove IDENTITY (has this exact card been seen
+ * twice), and grouping across subjects is `combinePropFamilies`, which
+ * combines instead of dropping.
  */
 export function propTemplateFamily(market: PropMarket): string {
   return (market.key ?? "").toLowerCase();
+}
+
+/* =========================================================================
+ * COMBINING — ALEX'S ITEM 1, AT THE RENDER LAYER
+ * =========================================================================
+ *
+ * *"GENERALIZE: template-family props render as one combined card BY THE
+ * SYSTEM. FORMATTING pillar: bespoke solutions to systemic shapes are
+ * defects."*
+ *
+ * There are two layers where that can be true and both need to be:
+ *
+ *  - `backend/app/utils/prop_template_family.py` detects families among the
+ *    MARKETS, so the register is written with one composed card instead of a
+ *    human typing out its legs. That is the primary fix.
+ *  - This function is the second half, and it is what makes the guarantee hold
+ *    for a register the new pass did not write — including every register
+ *    already committed. Two cards that ask one question about different
+ *    subjects are merged here, at render, into one card with a row each.
+ *
+ * **It combines or it renders both. It never deletes.** Where the members'
+ * own titles do not share enough for us to name the combined question, the
+ * cards render separately — visibly repetitive, which is a thing a person can
+ * see and fix, rather than invisibly halved, which is not. That is ruling 139
+ * satisfied in substance: no subject is ever collapsed away.
+ */
+
+/** How many leading/trailing words two titles must share to be combinable. */
+export const MIN_SHARED_TITLE_WORDS = 2;
+
+function titleWords(title: string): string[] {
+  return (title ?? "").trim().split(/\s+/).filter(Boolean);
+}
+
+/**
+ * The combined card's question, derived from the members' OWN titles, or null.
+ *
+ * "Can Alcaraz win a second major this year?" and "Can Sinner win a second
+ * major this year?" share "Can" in front and "win a second major this year?"
+ * behind, so the question is *"Can … win a second major this year?"* and the
+ * ellipsis is exactly the slot the rows fill.
+ *
+ * Nothing is invented. Where a register NAMES the family — which is what the
+ * population pass now writes — that curated sentence is used instead and this
+ * function is never consulted; it is the fallback that makes combining
+ * unconditional rather than curation-dependent.
+ *
+ * Returns `null` when the titles share fewer than `MIN_SHARED_TITLE_WORDS`, or
+ * when any member's title is entirely shared (one title contained in another is
+ * not a template, it is a truncation).
+ */
+export function propFamilyTitle(titles: string[]): string | null {
+  if (titles.length < 2) return null;
+  const words = titles.map(titleWords);
+  if (words.some((w) => w.length === 0)) return null;
+
+  const same = (index: number, from: "head" | "tail") =>
+    words.every((w) => {
+      const a = from === "head" ? w[index] : w[w.length - 1 - index];
+      const b =
+        from === "head" ? words[0][index] : words[0][words[0].length - 1 - index];
+      return a !== undefined && b !== undefined && a.toLowerCase() === b.toLowerCase();
+    });
+
+  const shortest = Math.min(...words.map((w) => w.length));
+  let head = 0;
+  while (head < shortest && same(head, "head")) head += 1;
+  let tail = 0;
+  while (tail < shortest - head && same(tail, "tail")) tail += 1;
+
+  if (head + tail < MIN_SHARED_TITLE_WORDS) return null;
+  // Every member must have something of its own in the middle, or one title is
+  // a truncation of another rather than the same question about someone else.
+  if (words.some((w) => w.length - head - tail <= 0)) return null;
+
+  const lead = words[0].slice(0, head);
+  const trail = tail > 0 ? words[0].slice(words[0].length - tail) : [];
+  return [...lead, "…", ...trail].join(" ");
+}
+
+/**
+ * One card per template family; every member survives as a row.
+ *
+ * A family here is: same `propTopic`, different `propSubject`. Both come from
+ * the register key, so nothing is inferred from free text — two questions that
+ * happen to share phrasing are not a template, and two that share a curated
+ * topic and differ by subject are, however they are worded.
+ *
+ * The combined card is a FIELD card by construction: `answer_entity_key` is
+ * `null`, so the renderer ranks its rows and never guesses which member's
+ * number belongs in the big type. Each row is the member's own answer outcome,
+ * relabelled to the member's subject — because three rows reading "Yes" is a
+ * list of one word, and what the reader is comparing is the subjects.
+ *
+ * The rows are NOT normalised to sum to 100. Two independent questions can both
+ * resolve Yes; a combined card is a comparison, never a field of one winner.
+ */
+export function combinePropFamilies(markets: PropMarket[]): {
+  markets: PropMarket[];
+  combined: number;
+} {
+  const groups = new Map<string, PropMarket[]>();
+  for (const market of markets) {
+    const topic = propTopic(market);
+    const subject = propSubject(market);
+    // A subject-less key is a question about the tournament, not about anybody,
+    // and two of those sharing a topic are the same question twice — not a
+    // family. Keyed apart so they can never merge.
+    const key = subject === "" ? `solo:${market.key}` : `topic:${topic}`;
+    groups.set(key, [...(groups.get(key) ?? []), market]);
+  }
+
+  const out: PropMarket[] = [];
+  let combined = 0;
+  for (const group of groups.values()) {
+    if (group.length < 2) {
+      out.push(group[0]);
+      continue;
+    }
+    const merged = mergeFamily(group);
+    if (merged === null) {
+      // Could not name the combined question from the members' own words. Both
+      // render. Repetition a person can see beats a deletion they cannot.
+      out.push(...group);
+      continue;
+    }
+    combined += group.length - 1;
+    out.push(merged);
+  }
+  return { markets: out, combined };
+}
+
+function mergeFamily(group: PropMarket[]): PropMarket | null {
+  // TWO MEMBERS WITH THE SAME SUBJECT ARE NOT A COMPARISON. Two cards sharing a
+  // register key are a duplicate, which is a different problem with a different
+  // fix, and merging them would print one subject twice under one question.
+  // The identical-titles case happens to be caught by `propFamilyTitle` as
+  // well; this catches the one that is not — same key, different wording.
+  const subjects = group.map(propSubject);
+  if (new Set(subjects).size !== subjects.length) return null;
+
+  const title = propFamilyTitle(group.map((m) => m.title));
+  if (title === null) return null;
+
+  const key = propTopic(group[0]);
+  const rows: PropOutcome[] = [];
+  for (const member of group) {
+    const printed = printedOutcomes(member);
+    // A member with nothing to print would be a blank row under a question
+    // about it, which is worse than the repetition this is avoiding.
+    if (printed.length !== 1) return null;
+    const subject = propSubject(member);
+    rows.push({
+      ...printed[0],
+      entity_key: `${key}:${subject}`,
+      // The member's own subject, title-cased from the register key — which is
+      // how this page names that subject everywhere else. `propSubject` returns
+      // one token today; the split survives a future multi-token subject rather
+      // than printing it hyphenated.
+      display_name: subject
+        .split("-")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" "),
+      is_answer: false,
+    });
+  }
+
+  const ages = rows
+    .map((row) => row.age_hours)
+    .filter((age): age is number => typeof age === "number" && Number.isFinite(age));
+  const observed = rows
+    .map((row) => row.observed_at)
+    .filter((at): at is string => typeof at === "string");
+  const live = rows.filter((row) => row.probability_is_live === true).length;
+
+  return {
+    key,
+    title,
+    // The members' hooks are about individual subjects and a combined card is
+    // not, so none of them survives. A hook is one clause of editorial and
+    // there is no honest way to merge two.
+    hook: null,
+    draw: group[0].draw,
+    source: group.every((m) => m.source === group[0].source) ? group[0].source : "mixed",
+    outcomes: rows,
+    // No single outcome answers a comparison. This is the shape, not a gap.
+    answer_entity_key: null,
+    price_state: rows.every((r) => r.price_state === "live") ? "live" : "stale",
+    // AS FRESH AS ITS OLDEST ROW, like every other combined thing on this page.
+    observed_at: observed.length ? observed.slice().sort()[0] : null,
+    age_hours: ages.length ? Math.max(...ages) : null,
+    freshest_observed_at: observed.length ? observed.slice().sort().reverse()[0] : null,
+    freshest_age_hours: ages.length ? Math.min(...ages) : null,
+    stale_outcomes: rows
+      .filter((row) => row.probability_is_live !== true)
+      .map((row) => row.entity_key),
+    mixed_freshness: live > 0 && live < rows.length,
+  };
 }
 
 /**
@@ -384,24 +712,39 @@ export function propInterestScore(market: PropMarket): number {
 
 export interface CuratedProps {
   markets: PropMarket[];
-  /** Every drop, by reason. Reported, never silent. */
+  /**
+   * Every card that is not on this list, by reason. Reported, never silent.
+   *
+   * ⚠️ SINCE UX-P154 ONLY `advance` CAN BE NON-ZERO, and it is not a hiding —
+   * those questions render on the Bracket tab and the section says so. The
+   * other three keys are kept, always 0, and asserted to be 0 by a guard,
+   * because that is a stronger statement than deleting them: a future change
+   * that starts hiding a curated question again turns a test red instead of
+   * quietly reintroducing the behaviour Alex ruled out.
+   */
   dropped: {
     advance: number;
+    /** Always 0 (Alex, item 4). A settled-looking card is labelled, not hidden. */
     resolved: number;
+    /** Always 0 (Alex, item 4). An old card says its age, and renders. */
     dark: number;
+    /** Always 0 (Alex, item 1). A family is combined, not capped. */
     template: number;
   };
-  /** How many the register holds for this draw before any rotation. */
+  /** How many cards merged INTO another. Every subject survives as a row. */
+  combined: number;
+  /** How many the register holds for this draw before any of this. */
   considered: number;
 }
 
 /**
- * The section's contents after rotation (Alex's ruling 8).
+ * The section's contents.
  *
- * Order is by interestingness. Membership is the register's call minus the
- * four rules above; this function never promotes anything the register did not
- * curate, which is what keeps "curated, not a dump" a structural property
- * rather than a promise.
+ * Order is by interestingness. Membership is the register's call minus the one
+ * structural rule; this function never promotes anything the register did not
+ * curate, which keeps "curated, not a dump" a structural property rather than
+ * a promise — and, since UX-P154, it never hides anything the register DID
+ * curate either.
  */
 export function curatedProps(markets: PropMarket[], draw: string): CuratedProps {
   const forDraw = propsForDraw(markets, draw);
@@ -409,36 +752,25 @@ export function curatedProps(markets: PropMarket[], draw: string): CuratedProps 
 
   const surviving: PropMarket[] = [];
   for (const market of forDraw) {
+    // The ONE removal, and it is a relocation. An advance-to-round market is a
+    // cell in the playoff grid and renders there; `MovedToGrid` says where.
     if (advanceRound(market) !== null) {
       dropped.advance += 1;
       continue;
     }
-    if (propIsResolved(market)) {
-      dropped.resolved += 1;
-      continue;
-    }
-    if (propIsDark(market)) {
-      dropped.dark += 1;
-      continue;
-    }
+    // NO OTHER FILTER (Alex, 2026-08-28, item 4): *"illiquid props render with
+    // honest freshness indication, never hidden — that's part of the value of
+    // the product."* Age and apparent settlement are treatments; see
+    // `propFreshness` and `propIsResolved`.
     surviving.push(market);
   }
 
-  surviving.sort((a, b) => propInterestScore(a) - propInterestScore(b));
+  // Combine BEFORE ordering, so a combined card is ranked on what it actually
+  // prints rather than on whichever member happened to sort first.
+  const { markets: kept, combined } = combinePropFamilies(surviving);
+  kept.sort((a, b) => propInterestScore(a) - propInterestScore(b));
 
-  const seen = new Set<string>();
-  const kept: PropMarket[] = [];
-  for (const market of surviving) {
-    const family = propTemplateFamily(market);
-    if (seen.has(family)) {
-      dropped.template += 1;
-      continue;
-    }
-    seen.add(family);
-    kept.push(market);
-  }
-
-  return { markets: kept, dropped, considered: forDraw.length };
+  return { markets: kept, dropped, combined, considered: forDraw.length };
 }
 
 /**
@@ -473,27 +805,14 @@ export function curatedProps(markets: PropMarket[], draw: string): CuratedProps 
  */
 export function curatedPropsEmptyReason(result: CuratedProps): string | null {
   if (result.markets.length > 0) return null;
-  const { dark, resolved, template, advance } = result.dropped;
-  if (dark > 0) {
-    const one = dark === 1;
-    // Ruling 142 (Alex, 2026-08-28): the sentence used to end "New questions
-    // are coming — check back soon." That is a promise about a listing we do
-    // not control, on a date we cannot name, and it is the second half of the
-    // copy Alex read on production. What survives is the whole of the fact:
-    // how many, and why they are not on screen. Present tense, no promise.
-    return `We have not seen a new number on ${dark} question${one ? "" : "s"} in a while, so ${
-      one ? "it is" : "they are"
-    } hidden for now.`;
-  }
-  if (resolved > 0) {
-    const one = resolved === 1;
-    return `${resolved} question${one ? " has" : "s have"} been answered and ${
-      one ? "is" : "are"
-    } no longer up for debate.`;
-  }
-  if (template > 0) {
-    return "The only questions left for this draw ask the same thing as one we already show.";
-  }
+  const { advance } = result.dropped;
+  // ⚠️ THE AGE BRANCH IS GONE, and its absence is the ship (Alex, item 4). This
+  // function used to lead with "We have not seen a new number on 3 questions in
+  // a while, so they are hidden for now" — which was an accurate description of
+  // a behaviour that should not have existed. Those three questions render now,
+  // each saying its own age. An empty section can no longer be caused by
+  // anything except an empty draw or a draw whose every question is a
+  // reach-a-round one.
   if (advance > 0) {
     return "Every question for this draw is about how far a player gets — those are on the Bracket tab.";
   }

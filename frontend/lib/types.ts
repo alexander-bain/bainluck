@@ -2143,5 +2143,13 @@ export interface EventTournamentResponse {
   props_count: number;
   props_dropped: Record<string, number>;
   decided: boolean;
+  /**
+   * Where to watch, by region (UX-P154). The route has always returned it —
+   * `"broadcasts": reg.broadcasts` — and nothing read it, because Alex's
+   * ruling 7 put where-to-watch behind the match row's tap and the row owned
+   * the drawer. UX-P154 deleted the drawer (the whole card is the link now), so
+   * the ruling's "detail view" is this page and the field is finally consumed.
+   */
+  broadcasts?: { region: string; channels: string[]; note: string | null }[];
   generated_at?: string;
 }

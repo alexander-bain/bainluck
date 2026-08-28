@@ -30,11 +30,13 @@
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import fs from "node:fs";
+import path from "node:path";
 
 import AdvancementPath from "@/components/event/AdvancementPath";
 import TournamentMatches from "@/components/tournament/TournamentMatches";
 import MatchProps from "@/components/tournament/MatchProps";
-import { toStages } from "@/components/event/TournamentExtensions";
+import { WhereToWatch, toStages } from "@/components/event/TournamentExtensions";
 import { matchListFromSlate } from "@/lib/matchList";
 import type { TournamentAdvancementRow } from "@/lib/types";
 
@@ -123,11 +125,7 @@ function matchList(row: Record<string, unknown>) {
 describe("the route in — a match card addresses the standard event page", () => {
   it("links to /events/{id}, not to a tournament-private URL", () => {
     const html = renderToStaticMarkup(
-      <TournamentMatches
-        entries={matchList(slateRow())}
-        initialExpanded
-        initialOpenMatchId={matchList(slateRow())[0].id}
-      />
+      <TournamentMatches entries={matchList(slateRow())} initialExpanded />
     );
     expect(html).toContain('href="/events/15293809"');
     // The parallel page is gone. A row that still addressed it would 404, and
@@ -145,24 +143,68 @@ describe("the route in — a match card addresses the standard event page", () =
      */
     const entries = matchList(slateRow({ event_id: null }));
     const html = renderToStaticMarkup(
-      <TournamentMatches entries={entries} initialExpanded initialOpenMatchId={entries[0].id} />
+      <TournamentMatches entries={entries} initialExpanded />
     );
     expect(html).not.toContain("/events/");
     expect(html).not.toContain('data-testid="match-page-link"');
   });
 
-  it("the guard is not vacuously green — the row really does expand", () => {
+  it("the guard is not vacuously green — the row really does render and link", () => {
     /**
      * Both directions. A "no link" assertion is satisfied by a component that
      * renders no rows at all, so the same fixture with an event id must produce
      * one.
+     *
+     * UX-P154: the link is the CARD now, not a row inside it, so the hook is
+     * the shared card's own `data-linked` rather than a link testid.
      */
     const entries = matchList(slateRow());
-    const html = renderToStaticMarkup(
-      <TournamentMatches entries={entries} initialExpanded initialOpenMatchId={entries[0].id} />
-    );
+    const html = renderToStaticMarkup(<TournamentMatches entries={entries} initialExpanded />);
     expect(visibleText(html)).toContain("Bublik");
-    expect(html).toContain('data-testid="match-page-link"');
+    expect(html).toContain('data-testid="event-card"');
+    expect(html).toContain('data-linked="true"');
+  });
+});
+
+/* ═══ RULING 7'S NEW ADDRESS (UX-P154, Alex's item 2) ═══
+ *
+ * The accordion that used to hold where-to-watch is gone, because the whole
+ * match card is the link. So the ruling's "detail view" is this page, and the
+ * channel renders here. The matching NEGATIVE — that it did not come back onto
+ * the match row — is held in `tournamentMatches.test.tsx`; a feature that moves
+ * usually loses one of those two halves.
+ */
+describe("where to watch, on the page the tap arrives at", () => {
+  const BROADCASTS = [
+    { region: "US", channels: ["ESPN", "ESPN2"], note: null },
+    { region: "UK", channels: ["Sky Sports Tennis"], note: null },
+  ];
+
+  it("prints the reader's region, once", () => {
+    const html = renderToStaticMarkup(<WhereToWatch broadcasts={BROADCASTS} />);
+    expect(visibleText(html)).toContain("Where to watch ESPN, ESPN2");
+    expect(html).toContain('data-region="US"');
+  });
+
+  it("renders nothing at all when the register holds no channel", () => {
+    expect(renderToStaticMarkup(<WhereToWatch broadcasts={[]} />)).toBe("");
+    expect(renderToStaticMarkup(<WhereToWatch broadcasts={undefined} />)).toBe("");
+    // An empty channel list is a register hole, not a channel called "".
+    expect(
+      renderToStaticMarkup(
+        <WhereToWatch broadcasts={[{ region: "US", channels: [], note: null }]} />
+      )
+    ).toBe("");
+  });
+
+  it("is mounted by the section, not merely exported beside it", () => {
+    // The failure this catches is the one UX-P152 found in `GridPlayoffPathPair`
+    // — a component written, tested and never rendered anywhere.
+    const src = fs.readFileSync(
+      path.join(__dirname, "..", "..", "components", "event", "TournamentExtensions.tsx"),
+      "utf8"
+    );
+    expect(src).toContain("<WhereToWatch broadcasts={data.broadcasts} />");
   });
 });
 

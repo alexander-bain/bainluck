@@ -851,7 +851,12 @@ def test_ruling_numbers_are_unique() -> None:
 #: UX-P149 banks 140 (an inference may reach a user surface only where an
 #: independently-pinned population can replay it as a test). Raised by
 #: COUNTING THIS TREE — 140 files, 140 index lines — never by adding a delta.
-MINIMUM_BANKED_RULINGS = 144
+#: UX-P154 banks 145, 146 and 147 (a template family is one card and the system
+#: finds it; an illiquid question is still a question; an event shows through
+#: THE event card and the whole card is the target). Raised by COUNTING THIS
+#: TREE — `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = 147 and 147 index
+#: lines in `docs/PRODUCT-BRAIN.md` — never by adding a delta.
+MINIMUM_BANKED_RULINGS = 147
 
 
 def test_the_rulings_directory_is_not_empty() -> None:

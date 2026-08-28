@@ -57,7 +57,7 @@ import {
   answerOutcome,
   printedOutcomes,
   propGoverningAgeHours,
-  propIsDark,
+  propIsQuiet,
   propIsPresentedAsLive,
   propStaleOutcomes,
   propsForDraw,
@@ -428,34 +428,40 @@ describe("where to watch", () => {
     expect(html).not.toContain('data-testid="slate-broadcast"');
   });
 
-  it("prints the channel once the row is opened", () => {
+  /* ═══ UX-P154 MOVED THE ANSWER AGAIN, AND THESE TWO INVERTED ═══
+   *
+   * Ruling 7's "detail view" was an accordion inside the row. Alex's item 2
+   * (2026-08-28) deleted the accordion — the whole card is the link — so the
+   * detail view is the EVENT PAGE, and the channel renders in
+   * `TournamentExtensions` (guarded in `tournamentExtensions.test.tsx`).
+   *
+   * The `matchBroadcast` resolution above is UNCHANGED and still tested: the
+   * per-match preference, the region fallback and the `scope` tag are all the
+   * same facts, still resolved on this list's entries, and still carried into
+   * the payload. What moved is only where they are printed. So these two
+   * assert the negative that a moved feature usually loses — the row does not
+   * quietly keep a copy.
+   */
+  it("prints no channel on the row IN ANY STATE — there are no states left", () => {
     const entries = matchListFromSlate([slateMatch(1)], { broadcasts });
-    const html = render(
-      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
-    );
-    expect(count(html, 'data-testid="match-detail-broadcast"')).toBe(1);
-    expect(count(html, 'data-broadcast-scope="tournament"')).toBe(0);
-    expect(html).toContain('data-scope="tournament"');
+    const html = render(<TournamentMatches entries={entries} />);
+    expect(html).not.toContain('data-testid="match-detail-broadcast"');
+    expect(html).not.toContain("ESPN");
+    // The resolution itself still ran — this is not green because the entry
+    // has no broadcast to print.
+    expect(entries[0].broadcast?.scope).toBe("tournament");
+    expect(entries[0].broadcast?.channels).toEqual(["ESPN", "ESPN2"]);
   });
 
-  it("a match with its own channel overrides the region-wide one", () => {
+  it("a match with its own channel is still resolved, and still not on the row", () => {
     const entries = matchListFromSlate(
       [slateMatch(1, { broadcast: { region: "US", channels: ["ESPN+"], note: null } })],
       { broadcasts }
     );
-    const html = render(
-      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
-    );
-    expect(html).toContain('data-scope="match"');
-    expect(html).toContain("ESPN+");
-  });
-
-  it("prints no channel line at all when the register has no mapping", () => {
-    const entries = matchListFromSlate([slateMatch(1)]);
-    const html = render(
-      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
-    );
-    expect(html).not.toContain('data-testid="match-detail-broadcast"');
+    expect(entries[0].broadcast?.scope).toBe("match");
+    expect(entries[0].broadcast?.channels).toEqual(["ESPN+"]);
+    const html = render(<TournamentMatches entries={entries} />);
+    expect(html).not.toContain("ESPN+");
   });
 
   it("a long round collapses to five matches with an expander (ruling 5)", () => {
@@ -760,14 +766,17 @@ describe("curated props", () => {
    * Fresh leader, stale runner-up — the card the old rule called live.
    *
    * ⚠️ THE RUNNER-UP'S AGE IS A PARAMETER SINCE UX-P138, and the default moved
-   * from 480 hours to 30. Ruling 8's rotation drops a card whose governing age
-   * is past `PROP_DARK_AFTER_HOURS`, so a 480-hour specimen no longer RENDERS
-   * at all — it rotates out before `PropCard` sees it. Left at 480 these
-   * render assertions would have been asserting against an empty section and
-   * passing for the wrong reason, which is how a fixed defect quietly comes
-   * back. The pure-layer assertions below still use 480, because the rule they
-   * test does not care, and the interaction between the two rulings has its
-   * own test at the end of this block.
+   * from 480 hours to 30. The reason was ruling 8's rotation: a card past the
+   * 48-hour boundary did not RENDER at all, so a 480-hour specimen made these
+   * render assertions pass against an empty section — a fixed defect quietly
+   * coming back.
+   *
+   * UX-P154 removed that hazard at the source. Alex's item 4 (2026-08-28)
+   * overruled the rotation — a curated question is never hidden for age — so a
+   * 480-hour card renders now, muted and saying its age. The 30-hour default
+   * STAYS: it is the shape most of these assertions are about (a card that is
+   * old but not remarkable), and the 480-hour case has its own test at the end
+   * of this block, which is where the two rules meet.
    */
   const freshLeaderStaleRunner = (runnerAgeHours = 30) =>
     market({
@@ -808,22 +817,33 @@ describe("curated props", () => {
     expect(propGoverningAgeHours(freshLeaderStaleRunner())).toBe(30);
   });
 
-  it("RULING 8 MEETS CERT-411: the twenty-day card rotates out, still not live", () => {
-    // The two rules compose rather than replace each other, and this is the
-    // test that says which does what. `propIsPresentedAsLive` is still false
-    // for the 480-hour specimen — the CERT-411 fix is untouched — and ruling
-    // 8's rotation then removes the card from the section entirely, because a
-    // three-week-old number is not a question worth asking. If rotation were
-    // ever loosened, the muted-with-a-reason rendering above is what catches
-    // the card instead.
+  it("ITEM 4 MEETS CERT-411: the twenty-day card RENDERS, still not live", () => {
+    /* The two rules compose, and UX-P154 changed which one owns the outcome.
+     *
+     * Until now ruling 8's rotation removed this card from the section
+     * entirely, and this test asserted the empty state. Alex's item 4
+     * (2026-08-28) reverses that half: illiquid props render with honest
+     * freshness indication, never hidden — *"that's part of the value of the
+     * product."*
+     *
+     * CERT-411's rule is UNTOUCHED and is now the one doing all the work:
+     * `propIsPresentedAsLive` is still false for the 480-hour specimen, so the
+     * card renders muted, with its age, and naming the outcome that is old.
+     * That was always the fallback this test's old comment said would catch the
+     * card "if rotation were ever loosened" — it has been, and it does.
+     */
     const ancient = freshLeaderStaleRunner(480);
     expect(propIsPresentedAsLive(ancient)).toBe(false);
-    expect(propIsDark(ancient)).toBe(true);
+    expect(propIsQuiet(ancient)).toBe(true);
     const html = render(<TournamentProps markets={[ancient]} draw="mens-singles" />);
-    expect(html).toContain('data-testid="props-empty"');
-    // UX-P145 wording. The property under test is CERT-411's, not the copy's:
-    // a card whose runner-up is twenty days old is dropped, never shown live.
-    expect(html).toContain("have not seen a new number on 1 question");
+    expect(html).not.toContain('data-testid="props-empty"');
+    expect(html).toContain('data-testid="prop-market"');
+    expect(html).toContain('data-live="false"');
+    expect(html).toContain('data-freshness="quiet"');
+    // With its age, and with the old outcome named — the number is never shown
+    // as current, which is the property CERT-411 bought.
+    expect(html).toContain("Last number 20 days ago");
+    expect(html).toContain("RUNNER");
   });
 
   it("an outcome the card does not PRINT cannot demote it", () => {

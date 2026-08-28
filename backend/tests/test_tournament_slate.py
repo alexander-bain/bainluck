@@ -615,13 +615,17 @@ def test_the_committed_register_answers_where_to_watch():
 # The curation bar (scripts/populate_tournament_props.py)
 # ---------------------------------------------------------------------------
 
-#: The two legs of the `second-major` combined card (UX-P151).
+#: The two members of the `second-major` template family (UX-P151 / UX-P154).
 #:
 #: Prepended to every dump by default, because the pass REFUSES to write at all
-#: when a combined card is missing a leg — a comparison card with one side is
+#: when a curated family is not detected — a comparison card with one side is
 #: not a smaller card, it is a wrong one. Without these rows every test in this
 #: section would fail on that refusal instead of on its own subject, which is a
 #: fixture problem masquerading as five findings.
+#:
+#: These are the REAL titles and outcome ids, read from production 2026-08-28.
+#: The detector works off the titles, so a fixture with made-up titles would
+#: prove nothing about whether the shipped card is found.
 COMBINED_LEG_ROWS = [
     [53796, "KXGRANDSLAM-CALC26", "kalshi", "Carlos Alcaraz: Grand Slam wins in 2026",
      "open", 848773, "2+ Grand Slam wins", "0.25"],
@@ -700,27 +704,43 @@ def test_the_props_pass_writes_a_register_that_still_validates(tmp_path):
     assert out["version"] == 3 and out["supersedes_version"] == 2
 
 
-# ── The combined card (UX-P151, Alex 2026-08-28) ─────────────────────────────
+# ── The combined card, BUILT BY THE SYSTEM (UX-P151 shape, UX-P154 mechanism) ─
 #
-# Alex, verbatim: *"ONE COMBINED CARD — 'Who wins a second major this year?' —
-# showing BOTH players' probabilities (Alcaraz 2+ majors, Sinner 2+ majors,
-# each from its own real Kalshi market)."*
+# Alex, 2026-08-28 ~10:45am PT, verbatim: *"ONE COMBINED CARD — 'Who wins a
+# second major this year?' — showing BOTH players' probabilities (Alcaraz 2+
+# majors, Sinner 2+ majors, each from its own real Kalshi market)."*
 #
-# The interesting property is not that the card exists — it is that the pass
-# cannot produce a HALF of it. Every prior shape of this question failed by
-# quietly losing a player: UX-P138's template cap deleted Alcaraz at render
-# time, and the hand edit that followed deleted him from the file. A card that
-# prints one man's number under "who wins" is the same defect wearing the new
-# shape, so the pass refuses instead.
+# Alex, reviewing what shipped for it: *"Was this a bespoke solution? I thought
+# we'd built tools to identify groups and surface them as groups. Why didn't any
+# of them trigger?"*
+#
+# It was, and UX-P154 replaced the hand-written legs with
+# `detect_template_families`. Two properties are now under test that were not
+# before, and they are the ones that make it systemic rather than typed out:
+#
+#   - the family is DETECTED from the market titles and outcome sets, so an
+#     arriving third subject joins the card with no edit anywhere;
+#   - a family nobody has written a question for STOPS THE PASS, so the next
+#     one cannot ship as repeated cards the way this one did twice.
+#
+# The older property survives unchanged: the pass cannot produce a HALF of the
+# card. Every prior shape of this question failed by quietly losing a player —
+# UX-P138's template cap deleted Alcaraz at render time and the hand edit that
+# followed deleted him from the file.
 
 
-def test_the_combined_card_carries_one_leg_per_market_and_no_single_answer(tmp_path):
+def test_the_combined_card_carries_one_row_per_member_and_no_single_answer(tmp_path):
     result, out = _run_props_script(tmp_path, [])
     assert result.returncode == 0, result.stderr
 
     card = next(p for p in out["props"] if p["key"] == "second-major")
     assert card["title"] == "Who wins a second major this year?"
-    assert [o["display_name"] for o in card["outcomes"]] == ["Alcaraz", "Sinner"]
+    # THE SOURCE'S OWN WORDS (Alex's item 4), derived from each market's title
+    # rather than curated. UX-P151 hand-wrote "Alcaraz" / "Sinner"; nothing
+    # downstream could check those against anything.
+    assert [o["display_name"] for o in card["outcomes"]] == [
+        "Carlos Alcaraz", "Jannik Sinner",
+    ]
     # Two markets, one card. This is the whole shape.
     assert [m["market_external_id"] for m in card["markets"]] == [
         "KXGRANDSLAM-CALC26", "KXGRANDSLAM-JSIN26",
@@ -728,60 +748,161 @@ def test_the_combined_card_carries_one_leg_per_market_and_no_single_answer(tmp_p
     assert {o["market_external_id"] for o in card["outcomes"]} == {
         "KXGRANDSLAM-CALC26", "KXGRANDSLAM-JSIN26",
     }
-    # NO single answer, by construction: two legs means no one outcome answers
-    # the question, so the renderer ranks rather than guessing a headline.
+    # NO single answer, by construction: a family has one candidate answer per
+    # member, so the renderer ranks rather than guessing a headline.
     assert all(o["is_answer"] is False for o in card["outcomes"])
-    # And the rename is traceable back to the source's own outcome name.
+    # The DETECTION is the evidence, and a reader of the register can check it
+    # against the market titles without running anything.
+    assert card["evidence"]["kind"] == "prop-census-family"
+    assert card["evidence"]["skeleton"] == "{} grand slam wins in 2026"
     assert [leg["source_outcome_name"] for leg in card["evidence"]["legs"]] == [
         "2+ Grand Slam wins", "2+ Grand Slam wins",
     ]
+    assert [leg["subject"] for leg in card["evidence"]["legs"]] == [
+        "Carlos Alcaraz", "Jannik Sinner",
+    ]
 
 
-def test_a_combined_card_missing_a_leg_refuses_the_whole_write(tmp_path):
-    """THE defect this shape exists to prevent, asserted as a refusal.
+def test_a_third_subject_joins_the_card_with_no_code_change(tmp_path):
+    """THE test of "by the system", and the one UX-P151 could not have passed.
 
-    One leg present is not a smaller card. It is "Who wins a second major?"
-    with one man under it, which reads as an answer and is not one.
+    A hand-written leg list notices nothing when the market opens a third
+    player's ladder — the card keeps printing two men beside a question about
+    all of them. Here the third row arrives in the dump and appears on the card,
+    with his own name, from nothing but the shared title shape.
     """
-    result, out = _run_props_script(
-        tmp_path,
-        [[53795, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 848769,
-          "2+ Grand Slam wins", "0.555"]],
-        with_combined_legs=False,
-    )
+    result, out = _run_props_script(tmp_path, [
+        [53797, "KXGRANDSLAM-NDJO26", "kalshi", "Novak Djokovic: Grand Slam wins in 2026",
+         "open", 848780, "2+ Grand Slam wins", "0.08"],
+    ])
+    assert result.returncode == 0, result.stderr
+
+    card = next(p for p in out["props"] if p["key"] == "second-major")
+    assert [o["display_name"] for o in card["outcomes"]] == [
+        "Carlos Alcaraz", "Jannik Sinner", "Novak Djokovic",
+    ]
+    # And he is NOT also a card of his own — one question, printed once.
+    assert [p["key"] for p in out["props"]] == ["second-major"]
+
+
+def test_a_detected_family_nobody_curated_stops_the_pass(tmp_path):
+    """The refusal that makes the detector worth having.
+
+    Two markets asking one question about two people, with no curated question
+    for the pair, would otherwise ship as the repetition Alex ruled out — or be
+    silently deleted, which is how this went wrong the first time. The pass
+    names the skeleton and the members so the fix is one line.
+    """
+    result, out = _run_props_script(tmp_path, [
+        [901, "KXSETS-A", "kalshi", "Aryna Sabalenka: sets dropped in 2026", "open",
+         9011, "3+ sets dropped", "0.40"],
+        [902, "KXSETS-B", "kalshi", "Iga Swiatek: sets dropped in 2026", "open",
+         9021, "3+ sets dropped", "0.55"],
+    ])
     assert result.returncode == 1
-    assert "KXGRANDSLAM-CALC26 is absent from the dump" in result.stderr
+    assert "template family" in result.stderr
+    assert "'{} sets dropped in 2026'" in result.stderr
+    assert "KXSETS-A" in result.stderr and "KXSETS-B" in result.stderr
     assert out is None, "a refused population pass must write nothing"
 
 
-def test_a_combined_leg_whose_outcome_was_renamed_refuses_the_write(tmp_path):
+def test_a_curated_family_the_detector_cannot_find_refuses_the_write(tmp_path):
+    """THE defect this shape exists to prevent, asserted as a refusal.
+
+    One member present is not a smaller card. It is "Who wins a second major?"
+    with one man under it, which reads as an answer and is not one. With only
+    Sinner's market in the dump there is no family to find, and the curated
+    question has nothing to attach to.
+    """
+    result, out = _run_props_script(
+        tmp_path,
+        [[53795, "KXGRANDSLAM-JSIN26", "kalshi", "Jannik Sinner: Grand Slam wins in 2026",
+          "open", 848769, "2+ Grand Slam wins", "0.555"]],
+        with_combined_legs=False,
+    )
+    assert result.returncode == 1
+    assert "are not present in this dump" in result.stderr
+    assert "{} grand slam wins in 2026" in result.stderr
+    assert out is None, "a refused population pass must write nothing"
+
+
+def test_a_member_whose_outcome_was_renamed_refuses_the_write(tmp_path):
     """A source renaming `2+ Grand Slam wins` must stop the pass, not silently
-    drop that man from the comparison."""
+    drop that man from the comparison.
+
+    The rename breaks the shared-outcome half of the detection — the two
+    markets no longer offer anything in common — so the family dissolves and
+    the curated question has nothing to attach to. Different refusal from
+    UX-P151's, same guarantee: no half a card.
+    """
     rows = [list(row) for row in COMBINED_LEG_ROWS]
     rows[0][6] = "Two or more Grand Slam wins"
     result, out = _run_props_script(tmp_path, rows, with_combined_legs=False)
     assert result.returncode == 1
-    assert "matched 0 rows in KXGRANDSLAM-CALC26" in result.stderr
+    assert "are not present in this dump" in result.stderr
     assert out is None
 
 
-def test_a_market_cannot_be_both_a_card_and_a_leg(tmp_path):
+def test_a_market_cannot_be_both_a_card_and_a_family_member(tmp_path):
     """The repetition Alex ruled out, arriving by a different door.
 
-    If `KXGRANDSLAM-JSIN26` were curated as its own card AND as a leg of the
+    If `KXGRANDSLAM-JSIN26` were curated as its own card AND detected into the
     combined one, the section would show the comparison and one of its halves
     again underneath. That is a curation mistake, and the pass names it rather
     than shipping both.
-    """
-    import scripts.populate_tournament_props as pop
 
-    legs = {leg["market_ext"] for spec in pop.COMBINED_CURATION.values()
-            for leg in spec["legs"]}
-    assert legs, "the combined curation is empty; this guard would pass vacuously"
-    assert not (legs & set(pop.CURATION)), (
-        "a market is curated as its own card and as a combined leg"
+    Asserted through the RUNNING PASS rather than against a static map, because
+    since UX-P154 the membership is detected — there is no list of legs left to
+    read, and a guard over the curation tables would be checking the wrong side
+    of the change.
+    """
+    import json as _json
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    script = (root / "scripts/populate_tournament_props.py").read_text()
+    # Curate one of the family's own markets as a standalone card.
+    patched = script.replace(
+        'CURATION: dict[str, dict] = {',
+        'CURATION: dict[str, dict] = {\n'
+        '    "KXGRANDSLAM-JSIN26": {"key": "sinner-majors", "title": "t", '
+        '"hook": "h", "draw": "mens-singles", "answer": "2+ Grand Slam wins"},',
+        1,
     )
-    assert not (legs & set(pop.ADVANCE_CURATION))
+    assert patched != script, "the CURATION anchor moved; re-point this guard"
+    (tmp_path / "patched.py").write_text(patched)
+
+    dump = {
+        "columns": ["market_id", "market_ext", "source", "market_name", "status",
+                    "outcome_id", "outcome_name", "current_probability"],
+        "rows": [list(row) for row in COMBINED_LEG_ROWS],
+        "truncated": False,
+    }
+    (tmp_path / "dump.json").write_text(_json.dumps(dump))
+    register = _json.loads(
+        (root / "data/tournament_registers/us-open-2026.json").read_text()
+    )
+    (tmp_path / "reg.json").write_text(_json.dumps(register))
+
+    import os as _os
+
+    # The script inserts ITS OWN parent's parent on `sys.path` to find `app`,
+    # and this copy lives in a tmp dir. `PYTHONPATH` puts the real backend root
+    # back rather than the tmp one.
+    env = {**_os.environ, "PYTHONPATH": str(root)}
+    result = subprocess.run(
+        [_sys.executable, str(tmp_path / "patched.py"),
+         "--register", str(tmp_path / "reg.json"), "--dump", str(tmp_path / "dump.json"),
+         "--observed-at", "2026-08-26T00:00:00+00:00",
+         "--version", "3", "--supersedes-version", "2",
+         "--out", str(tmp_path / "out.json")],
+        capture_output=True, text=True, cwd=str(root), env=env,
+    )
+    assert result.returncode == 1, result.stdout
+    assert "is curated as its own card AND is a member" in result.stderr
+    assert not (tmp_path / "out.json").exists()
 
 
 def test_every_retired_card_is_recorded_where_it_went(tmp_path):

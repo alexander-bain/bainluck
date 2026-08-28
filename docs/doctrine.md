@@ -819,10 +819,33 @@ wins a second major this year?' — showing BOTH players' probabilities."* Three
 queues had oscillated between deleting one player and printing the same question
 twice, because both readings assumed the unit was one card per market.
 
-*The limit:* composition is written by hand, subject by subject, where a person
-decided these two questions are the same question. It is not a similarity
-threshold, and nothing in it licenses a rule that merges items it noticed look
-alike — that is suppression again, with an extra step.
+*The limit, AS ORIGINALLY WRITTEN:* composition is written by hand, subject by
+subject, where a person decided these two questions are the same question. It is
+not a similarity threshold, and nothing in it licenses a rule that merges items
+it noticed look alike — that is suppression again, with an extra step.
+
+*⚠️ AMENDED BY RULING **145** (Alex, 2026-08-28), and the amendment is the
+operative text.* Alex, reading the hand-written version: *"Was this a bespoke
+solution? I thought we'd built tools to identify groups and surface them as
+groups. Why didn't any of them trigger?"*
+
+The limit above was drawn in the wrong place. It is true that a similarity
+threshold must not be allowed to DELETE — that is clause 25 and it is unchanged —
+but that says nothing about whether a machine may propose the composition. **The
+composition may be detected; what may not be detected is the QUESTION.** So:
+
+- **detection is systemic** — a family is found from the items themselves, and a
+  family nobody has written a question for STOPS THE PASS rather than shipping as
+  repetition or being guessed at;
+- **the sentence stays curated** — nothing infers what a combined question is
+  called;
+- **and the failure mode is inverted from suppression's.** A detector that is
+  wrong produces a visible card nobody asked for, which a person can see. A
+  suppressor that is wrong produces an absence, which nobody can.
+
+What the hand-written version could not do is notice a THIRD subject, and that is
+the concrete cost the amendment buys back: a leg list written on Tuesday keeps
+printing two names beside a question about all of them.
 
 ### 29. An attribution is a claim about evidence.
 
@@ -851,6 +874,96 @@ repetition, and what was removed was a player.
 
 *Sibling:* clause **1** — an inference and a measurement must not render as the
 same thing. This is that clause applied to authority rather than to data.
+
+### 30. A systemic shape gets a systemic solution; a bespoke one is a defect even when it is right.
+
+The tempting defence of a hand-written solution is that its output is correct.
+It usually is, on the day it is written. **The test is not whether the output is
+right today — it is whether the output is still right after the input changes in
+the ordinary way inputs change.**
+
+Two markets get a third sibling. A source renames an outcome. A second family
+lists. Each of those is ordinary, and against each of them a hand-written
+solution fails in the same characteristic way: **it does not fail. It keeps
+producing its old answer, confidently, about data that has moved.** That is
+strictly worse than an error, because an error is reported and a stale answer is
+rendered.
+
+So where a shape recurs, the shape is what gets solved, and the parts a machine
+cannot know — the wording, the editorial judgement, the name of a thing — are
+what a person supplies. The split is not "hard parts by hand"; it is
+**structure detected, meaning curated.**
+
+*Charter case (ruling **145**).* The combined second-major card was composed by a
+human writing down two tickers, the outcome to pull from each, and the label each
+row should print. Nothing was detected. Alex: *"Was this a bespoke solution? I
+thought we'd built tools to identify groups and surface them as groups. Why
+didn't any of them trigger?"*
+
+*The diagnostic that generalises past the case.* When something that should have
+triggered did not, there are only three places to look, and it is worth looking at
+all three because the first answer is usually incomplete: the DETECTOR did not
+recognise the shape; the detector ran and the RENDERER had no output for what it
+found; or the tool exists, works, and is **wired to a different surface**. All
+three were true at once here, which is why one fix would not have been enough.
+
+*Sibling:* clause **28**, which is this clause for one particular shape.
+
+### 31. A surface may say how old something is. It may not decide the reader would rather see nothing.
+
+Both are called "quality" and only one of them costs the reader something they
+cannot get back. **Presenting an old number as current is a defect; showing an
+old number that says it is old is a service** — and where the alternative places a
+reader could go do not carry the question at all, it is the whole of the value.
+
+The rule that follows: **freshness is a treatment, never a filter.** A surface may
+mute, may caption, may reorder, may say "we have not seen a new number in a
+month". Removing the item is a different act, and it is one the reader cannot
+detect, cannot undo and cannot even know happened.
+
+Two traps come with it:
+
+- **An inferred state may never justify a removal.** Inferring that something has
+  settled and then hiding it on that inference is a guess with no witness. Label
+  the inference at the strength of its evidence — *"looks decided"* — and let the
+  reader see the thing being described.
+- **An age is ambiguous until it names its own event.** "32 hours ago" invites
+  three readings — created, updated, last traded — so the label carries the noun,
+  and where the underlying fact cannot distinguish two causes, the copy states
+  what we know rather than the more useful thing we do not. *"We have not seen a
+  new number"* is a fact about us; *"nobody has traded this"* would be an
+  invention about them.
+
+*Charter case (ruling **146**).* A curated section on the live site was empty every
+day it existed, because all three of its questions were older than a
+forty-eight-hour boundary. Four queues improved the wording of the apology that
+appeared in their place before anyone questioned the removal.
+
+### 32. Interaction is part of the component, not part of the page.
+
+A surface that reuses a component's styling and reimplements how it is pressed
+has not reused the component — it has cloned it, and the clone will drift, because
+clones always do. The reader pays for that in the one currency they cannot get
+back: **knowing what will happen when they touch something.**
+
+Two obligations, and the second is what makes the first checkable:
+
+- **The whole card is the target.** A link *inside* a card, in a product where
+  cards are links, teaches the reader that this list is special. Where there is
+  nothing to navigate to, the card is inert — not pressable-looking and dead,
+  which is worse than plainly inert.
+- **The shared component marks itself.** *"This surface renders the shared
+  component"* is a claim about the DOM, and it is unanswerable from the DOM unless
+  the component emits its own marker. A guard asserts exactly one emitter exists.
+
+*Charter case (ruling **147**).* Alex, on a tournament match list that drew its own
+card and opened an accordion: *"it kinda feels like we're reinventing the event
+card inside the tournament product."*
+
+*And the corollary that catches the usual regression:* when an interaction is
+deleted, whatever lived behind it MOVED, and both ends need a guard — the
+positive where it landed, and the negative where it left. A moved feature
+otherwise loses exactly one of those halves and nobody notices which.
 
 # MECHANICAL SPECS — enforced by the Integrator, not judged by it
 
