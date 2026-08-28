@@ -13,6 +13,14 @@ Two ways this harness refuses rather than reporting a kill:
   mutation, not a kill — the source moved and the harness is measuring nothing;
 * a restore whose sha256 does not match the pristine copy aborts the whole run.
 
+The per-mutant `cp`/sha256 loop is this harness's own bookkeeping and is NOT the
+crash guard. That is `_mutation_guard.guarded_targets`, wrapped around the whole
+run: `try/finally` does not survive SIGTERM (Python's default disposition
+terminates without raising), which is how a mutant rode `bcdcd95f` into a branch
+for a full cycle. `tests/test_mutation_guard.py` pins both halves, and its
+`test_every_on_disk_harness_is_guarded` is what caught this file for opting out
+— on the first full-suite run of the branch that added it.
+
 Run from `backend/`:  python3 scripts/evals/league_rails_fence_mutations.py
 """
 
@@ -24,6 +32,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from _mutation_guard import guarded_targets  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[2]
 ROUTE = BACKEND / "app" / "routes" / "league_futures.py"
@@ -114,7 +124,7 @@ def _run_suite() -> tuple[int, str]:
     return proc.returncode, proc.stdout[-1200:]
 
 
-def main() -> int:
+def _main() -> int:
     baseline_code, baseline_tail = _run_suite()
     if baseline_code != 0:
         print("ABORT: the suite is not GREEN before mutating.")
@@ -189,6 +199,20 @@ def main() -> int:
         print(final_tail)
         return 3
     return 0 if not survived and not unapplied else 1
+
+
+def main() -> int:
+    """The crash guard, outside the per-mutant bookkeeping.
+
+    `_main`'s own `cp` + sha256 loop restores after each mutant and is the thing
+    that keeps mutant N from contaminating mutant N+1. It cannot help if the
+    process is killed mid-mutation, because its `finally` never runs under
+    SIGTERM. `guarded_targets` registers a signal handler and an on-disk
+    manifest so the next run — or `python3 scripts/evals/_mutation_guard.py
+    --recover` — puts the file back.
+    """
+    with guarded_targets([ROUTE], "/tmp/lat_p110_fence_guard_backups", "league_rails_fence"):
+        return _main()
 
 
 if __name__ == "__main__":
