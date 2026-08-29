@@ -98,12 +98,17 @@ Both were caught only because the ambiguity census PRINTS the families it
 refuses instead of silently dropping them. A parser that reports what it could
 not place is how a grammar gets debugged (gotcha #53).
 
-WHAT THIS MODULE DOES NOT DO. It never reads an outcome. Every function here is
-a function of names and prices, so the predicate cannot be fitted to
-``is_winner`` and a holdout tests stability rather than leakage. It writes
-nothing (gotcha #21). It is not a fifth ECE either — callers needing one use
-:func:`app.utils.ladder_coherence.cell_ece_pp`, which delegates to
-:mod:`app.utils.calibration_ece`.
+WHAT THIS MODULE DOES NOT DO. It writes nothing (gotcha #21). It is not a fifth
+ECE either — callers needing one use :func:`app.utils.ladder_coherence.cell_ece_pp`,
+which delegates to :mod:`app.utils.calibration_ece`.
+
+**THE LEAKAGE LINE, AND IT RUNS THROUGH THE MIDDLE OF THIS FILE.** Everything up
+to the CAL-P134 section is a function of names and prices only: the predicate
+cannot be fitted to ``is_winner``, so a holdout there tests stability rather
+than leakage. :func:`truth_reversals` and :func:`outcome_ladder_report` DO read
+the outcome, deliberately, and a rule built on them is a truth-ELIGIBILITY
+finding rather than a leakage-free exclusion — the distinction is argued at
+:func:`truth_reversals` and must travel with any number quoted from it.
 """
 
 from __future__ import annotations
@@ -540,3 +545,232 @@ def ladder_report(
             "assumed_year": DEFAULT_YEAR,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# CAL-P134 — the OUTCOME site as Kalshi actually writes it, and the TRUTH law.
+# ---------------------------------------------------------------------------
+#
+# WHY THIS SECTION EXISTS. Everything above was measured on Polymarket, where a
+# ladder rung is a market and the price is its YES leg. Folding ``--by mono``
+# over ``kalshi/economics`` — the cell where threshold ladders were most certain
+# to live — returned 46 families and one condemned pair, which reads as an
+# all-clear and is nothing of the kind. Kalshi does not write ``2400+`` and
+# mostly does not put the rung in the market name at all. It writes the whole
+# ladder inside one market's outcome list, in three shapes::
+#
+#     Above 410M          above $68.25          7,175 or above
+#
+# 4,621 of the 7,590 markets in that cell are all-cumulative in exactly this
+# sense. :func:`parse_plus_bracket` refuses every one of them, and the
+# ``MONO_ROWS_SQL`` pre-pass cannot even see them, because they have no leg
+# named ``yes``. The instrument reported its own blindness as a clean cell
+# (gotcha #53).
+#
+# The safety argument of :func:`outcome_ladder` is unchanged and is what makes
+# this extension legal: a market qualifies only when EVERY leg parses as a
+# cumulative threshold pointing the SAME WAY. A ``quantity`` market's legs are
+# usually mutually exclusive brackets (``<5``, ``5-6``, ``>16``) which partition
+# rather than nest, and a mixed or opposite-signed leg disqualifies the market
+# outright rather than widening the law.
+
+#: ``Above 410M``, ``above $68.25``, ``over 3.5%`` — the direction word LEADS.
+_CUMULATIVE_PRE_RE = re.compile(
+    rf"^\s*(?P<word>{_UP_WORDS}|{_DOWN_WORDS}){_NUM}\s*$", re.I)
+
+#: ``7,175 or above``, ``$25,600 or higher``, ``3.0% or less`` — the direction
+#: word TRAILS. This is the single most common leg shape in Kalshi economics and
+#: no grammar in this module saw it before CAL-P134.
+_CUMULATIVE_POST_RE = re.compile(
+    r"^\s*\$?\s*(?P<val>\d[\d,]*(?:\.\d+)?)\s?(?P<unit>bn|[kmbt])?\b%?\s*"
+    r"or\s+(?P<word>above|higher|more|greater|over|below|lower|less|under)\s*$", re.I)
+
+_POST_DOWN = {"below", "lower", "less", "under"}
+
+
+def parse_cumulative_leg(text: str | None) -> tuple[float, str] | None:
+    """An outcome leg that is a cumulative threshold: ``(value, direction)``.
+
+    Accepts the three shapes above plus the bare ``X+`` bracket the module
+    already knew, so a caller has one entry point and the older grammar keeps
+    its guards. Returns ``None`` for a range leg, a tail leg, a ``Yes``/``No``
+    or any prose — every one of which must disqualify its market rather than be
+    skipped, which is why this returns ``None`` instead of raising.
+    """
+    if not text:
+        return None
+    m = _CUMULATIVE_PRE_RE.match(text)
+    if m:
+        direction = INC if _DOWN_ONLY_RE.match(m.group("word")) else DEC
+        return _magnitude(m.group("val"), m.group("unit")), direction
+    m = _CUMULATIVE_POST_RE.match(text)
+    if m:
+        direction = INC if m.group("word").lower() in _POST_DOWN else DEC
+        return _magnitude(m.group("val"), m.group("unit")), direction
+    plus = parse_plus_bracket(text)
+    if plus is not None:
+        _, value, direction = plus
+        return value, direction
+    return None
+
+
+def cumulative_outcome_ladder(
+    outcomes: Sequence[Mapping[str, object]],
+    *,
+    name_key: str = "name",
+) -> tuple[list[tuple[float, Mapping[str, object]]], str] | None:
+    """``([(value, row), ...], direction)`` when the outcome list is ONE ladder.
+
+    The generalisation of :func:`outcome_ladder` past the bare ``X+`` leg, and
+    it keeps that function's whole discriminator: at least two legs, EVERY leg a
+    cumulative threshold, all legs pointing the same way, no duplicate rung
+    value. Rows are returned rather than a value->price map because the truth
+    law below needs ``is_winner`` and ``resolution_source`` off the same row and
+    must not re-derive which leg it came from.
+
+    A leg with no price is NOT excluded here — pricing is the caller's problem,
+    and dropping it at this layer would let a ladder qualify on a subset of its
+    own legs, which is how a partition silently changes population (lesson 14).
+    """
+    if len(outcomes) < 2:
+        return None
+    out: list[tuple[float, Mapping[str, object]]] = []
+    directions = set()
+    seen: set[float] = set()
+    for row in outcomes:
+        name = row.get(name_key)
+        parsed = parse_cumulative_leg(name if isinstance(name, str) else None)
+        if parsed is None:
+            return None
+        value, direction = parsed
+        rung = round(float(value), 6)
+        if rung in seen:
+            return None
+        seen.add(rung)
+        directions.add(direction)
+        out.append((rung, row))
+    if len(directions) != 1:
+        return None
+    return sorted(out), directions.pop()
+
+
+def truth_reversals(
+    ordered: Sequence[tuple[float, bool]], direction: str,
+) -> list[tuple[float, float]]:
+    """Consecutive rungs whose GRADED RESULTS contradict containment. Evidence.
+
+    This is the law the rest of the module does not have, and it is stronger
+    than the price law in a way worth stating plainly. A price reversal has a
+    defence — the book really was quoted like that, and calibration is exactly
+    the business of scoring quotes that were wrong. A *truth* reversal has none.
+    If the legs are cumulative thresholds over one quantity, the realized value
+    V settles all of them at once::
+
+        is_winner(above X)  ==  (V > X)
+
+    so on a descending family the graded results, read in ascending rung order,
+    can only be ``True … True False … False``. A ``False`` below a ``True`` means
+    **at least one of those two labels is wrong**, and no fact about the world
+    makes both correct. The curve is scoring that row against a label that
+    cannot be right.
+
+    ⚠️ THE PRICE LAW ABOVE IS LEAKAGE-FREE AND THIS ONE IS NOT. Everything
+    before this section is a function of names and prices only, which is what
+    lets a holdout there test stability rather than leakage. This function reads
+    ``is_winner``. A rule built on it is therefore NOT in that class and must
+    never be described as if it were: it is a truth-ELIGIBILITY finding of the
+    same kind as the pass2_loser poison — rows removed because their ground
+    truth is provably self-contradictory, not because of how they scored.
+    """
+    if direction not in (DEC, INC):
+        raise ValueError(f"direction must be {DEC!r} or {INC!r}, got {direction!r}")
+    out: list[tuple[float, float]] = []
+    for (low, low_w), (high, high_w) in zip(ordered, ordered[1:]):
+        broken = (not low_w and high_w) if direction == DEC else (low_w and not high_w)
+        if broken:
+            out.append((low, high))
+    return out
+
+
+def outcome_ladder_report(
+    markets: Mapping[object, Sequence[Mapping[str, object]]],
+    *,
+    name_key: str = "name",
+    price_key: str = "price",
+    winner_key: str = "is_winner",
+    source_key: str = "resolution_source",
+    authoritative: frozenset = frozenset(
+        {"api_settlement", "clean_resolution", "kalshi_api", "settlement"}),
+) -> dict:
+    """The OUTCOME site end to end: id partition plus the census behind it.
+
+    ``markets`` maps market id -> its outcome rows. The market id IS the family
+    here, so there is no key to collapse and none of the name site's ambiguity
+    machinery applies — the only way two ladders can merge is a duplicate rung
+    value, which :func:`cumulative_outcome_ladder` already refuses.
+
+    Returns ``truth_broken`` / ``price_broken`` / ``clean`` id sets and a census
+    split by resolution authority, because the split is the finding. Measured on
+    ``kalshi/economics``: 0.3% of all-authoritative ladders carry a truth
+    reversal against 22.2% of ladders containing a pass-2 guess — a 74x rate
+    difference established by logic alone, with no model and no price.
+
+    The three id sets are disjoint and ordered by severity: a ladder whose truth
+    is broken is never also reported as merely price-broken, because the wrong
+    label is the bigger claim and a caller sizing arms by addition must not
+    count it twice.
+    """
+    truth_broken: set = set()
+    price_broken: set = set()
+    clean: set = set()
+    census: dict[str, int] = {k: 0 for k in (
+        "markets_scanned", "markets_not_a_ladder", "ladders",
+        "ladders_under_two_graded_legs", "ladders_auth", "ladders_guess",
+        "truth_pairs_auth", "truth_reversal_pairs_auth", "ladders_truth_broken_auth",
+        "truth_pairs_guess", "truth_reversal_pairs_guess", "ladders_truth_broken_guess",
+        "price_pairs", "price_reversal_pairs", "ladders_price_broken",
+        "legs_truth_broken", "legs_price_broken", "legs_clean")}
+
+    for mid, outcomes in markets.items():
+        census["markets_scanned"] += 1
+        read = cumulative_outcome_ladder(list(outcomes), name_key=name_key)
+        if read is None:
+            census["markets_not_a_ladder"] += 1
+            continue
+        census["ladders"] += 1
+        ordered, direction = read
+        graded = [(v, r) for v, r in ordered if r.get(source_key)]
+        if len(graded) < 2:
+            census["ladders_under_two_graded_legs"] += 1
+            continue
+        band = ("auth" if all(r.get(source_key) in authoritative for _, r in graded)
+                else "guess")
+        census[f"ladders_{band}"] += 1
+        rev = truth_reversals([(v, bool(r.get(winner_key))) for v, r in graded],
+                              direction)
+        census[f"truth_pairs_{band}"] += len(graded) - 1
+        census[f"truth_reversal_pairs_{band}"] += len(rev)
+        if rev:
+            census[f"ladders_truth_broken_{band}"] += 1
+            census["legs_truth_broken"] += len(outcomes)
+            truth_broken.add(mid)
+            continue
+        priced = [(v, float(r[price_key])) for v, r in ordered
+                  if r.get(price_key) is not None]
+        if len(priced) < 2:
+            census["legs_clean"] += len(outcomes)
+            clean.add(mid)
+            continue
+        vio = monotonicity_violations({v: p for v, p in priced}, direction)
+        census["price_pairs"] += len(priced) - 1
+        census["price_reversal_pairs"] += len(vio)
+        if vio:
+            census["ladders_price_broken"] += 1
+            census["legs_price_broken"] += len(outcomes)
+            price_broken.add(mid)
+        else:
+            census["legs_clean"] += len(outcomes)
+            clean.add(mid)
+
+    return {"truth_broken": truth_broken, "price_broken": price_broken,
+            "clean": clean, "census": census}

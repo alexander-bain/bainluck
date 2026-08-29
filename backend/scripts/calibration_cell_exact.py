@@ -105,6 +105,7 @@ from app.utils.ladder_coherence import (  # noqa: E402
 from app.utils import ladder_monotonicity  # noqa: E402
 
 ladder_report = ladder_monotonicity.ladder_report
+outcome_ladder_report = ladder_monotonicity.outcome_ladder_report
 from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE  # noqa: E402
 
 #: The db-query row path's silent truncation point.
@@ -1027,14 +1028,108 @@ CASE WHEN d.market_id = ANY({_id_array(_MONO['drop'], lo, hi)})
 """, "", "")
 
 
+#: CAL-P134. The OUTCOME site as Kalshi writes it. ``MONO_ROWS_SQL`` keys on a
+#: leg literally named ``yes``, which is why ``--by mono`` read ``kalshi/economics``
+#: as 46 families: the cell's 4,621 cumulative ladders have no such leg. This
+#: pulls the legs themselves and, like the mono pre-pass, carries NO name filter
+#: — Python stays the only definition of a rung, so there is no Postgres
+#: rendering of the grammar to reconcile against later.
+TRUTH_ROWS_SQL = """
+SELECT fm.id AS market_id,
+       fo.name AS leg,
+       COALESCE(fo.calibration_probability, fo.opening_probability) AS price,
+       fo.is_winner,
+       fo.resolution_source
+FROM futures_markets fm
+JOIN futures_outcomes fo ON fo.market_id = fm.id
+WHERE fm.source = '{source}'
+  AND COALESCE(fm.llm_sport_category, 'uncategorized') = '{category}'
+  AND fm.id >= {lo} AND fm.id < {hi}
+"""
+
+#: Filled by :func:`truth_context` before the sweep starts.
+_TRUTH: dict | None = None
+
+
+def _pull_truth_rows(source: str, category: str, lo: int, hi: int,
+                     depth: int = 0) -> list:
+    """Every outcome leg in an id range, or a split. Same cap discipline as mono."""
+    sql = TRUTH_ROWS_SQL.format(source=source, category=category, lo=lo, hi=hi)
+    try:
+        r = db_query(sql, limit=ROW_CAP)
+    except QueryTimeout:
+        r = None
+    if r is not None and r["row_count"] < ROW_CAP:
+        return r["rows"]
+    if depth > 26 or hi - lo <= 1:
+        raise RuntimeError(f"truth pre-pass chunk {lo}-{hi} irreducible at depth {depth}")
+    mid = lo + (hi - lo) // 2
+    return (_pull_truth_rows(source, category, lo, mid, depth + 1)
+            + _pull_truth_rows(source, category, mid, hi, depth + 1))
+
+
+def truth_context(source: str, category: str, width: int) -> dict:
+    """Sweep the cell's outcome legs once and hand the shipped predicate all of them.
+
+    The verdict is ``ladder_monotonicity.outcome_ladder_report``; this function
+    never re-derives a rung, a direction or a reversal.
+    """
+    rng = db_query(
+        f"SELECT MIN(id) AS lo, MAX(id) AS hi FROM futures_markets "
+        f"WHERE source = '{source}'", limit=5)
+    lo, hi = rng["rows"][0]
+
+    rows: list = []
+    e = lo
+    n_chunks = 0
+    while e <= hi:
+        nxt = min(e + width, hi + 1)
+        n_chunks += 1
+        print(f"    truth pre-pass [{n_chunks}] ids {e}-{nxt} ({len(rows)} legs)",
+              file=sys.stderr, flush=True)
+        rows.extend(_pull_truth_rows(source, category, e, nxt))
+        e = nxt
+
+    markets: dict = {}
+    for mid, leg, price, win, rsrc in rows:
+        markets.setdefault(mid, []).append(
+            {"name": leg, "price": price, "is_winner": win,
+             "resolution_source": rsrc})
+    return outcome_ladder_report(markets)
+
+
+def truth_dim(lo: int, hi: int) -> tuple[str, str, str]:
+    """The dimension expression for ONE chunk, from the outcome-site verdict.
+
+    ⚠️ ``a_truth_reversed`` is NOT a leakage-free arm — it is selected using
+    ``is_winner``. It is here because a self-contradictory label set contains a
+    proven grading error, which is the pass2_loser argument, not the CAL-P133
+    one. ``b_price_reversed`` and ``c_ladder_clean`` are leakage-free, and
+    ``z_not_a_cumulative_ladder`` is the untouched control doctrine 18 grades a
+    row-dropping fix against.
+    """
+    if _TRUTH is None:  # pragma: no cover - main() fills it first
+        raise RuntimeError("truth_context() must run before the sweep")
+    return (f"""
+CASE WHEN d.market_id = ANY({_id_array(_TRUTH['truth_broken'], lo, hi)})
+          THEN 'a_truth_reversed'
+     WHEN d.market_id = ANY({_id_array(_TRUTH['price_broken'], lo, hi)})
+          THEN 'b_price_reversed'
+     WHEN d.market_id = ANY({_id_array(_TRUTH['clean'], lo, hi)})
+          THEN 'c_ladder_clean'
+     ELSE 'z_not_a_cumulative_ladder' END
+""", "", "")
+
+
 #: Dimensions whose expression depends on the chunk, and therefore cannot live
 #: in the static table below.
-PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim, "mono": mono_dim}
+PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim, "mono": mono_dim, "truth": truth_dim}
 
 #: The pre-pass each per-chunk dimension needs before the sweep can start.
 #: Keyed the same way, so adding a dimension to one table without the other is a
 #: KeyError at start-up rather than an empty partition at the end (gotcha #53).
-PER_CHUNK_CONTEXT = {"ladder": ladder_context, "mono": mono_context}
+PER_CHUNK_CONTEXT = {"ladder": ladder_context, "mono": mono_context,
+                     "truth": truth_context}
 
 #: name -> (key expression, extra JOINs, extra CTEs appended to the chain)
 DIMENSIONS = {
@@ -1247,15 +1342,17 @@ def main() -> int:
     ap.add_argument("--out")
     args = ap.parse_args()
 
-    global _LADDER, _MONO
+    global _LADDER, _MONO, _TRUTH
     ladder_census = None
     if args.by in PER_CHUNK_DIMENSIONS:
         context = PER_CHUNK_CONTEXT[args.by](
             args.source, args.category, args.width)
-        if args.by == "ladder":
-            _LADDER = context
-        else:
-            _MONO = context
+        # A table, not an if/else. The two-branch form silently routed a THIRD
+        # per-chunk dimension's context into ``_MONO``, which is an empty
+        # partition at the end rather than an error at the start — the same
+        # failure the PER_CHUNK_CONTEXT guard was added to stop.
+        _SLOT = {"ladder": "_LADDER", "mono": "_MONO", "truth": "_TRUTH"}
+        globals()[_SLOT[args.by]] = context
         ladder_census = context["census"]
         print(f"  {args.by.upper()} PRE-PASS — the shipped predicate, "
               f"whole cell, one sweep")

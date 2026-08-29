@@ -560,3 +560,241 @@ def test_the_rail_did_not_rebind_the_ou_ambiguous_families():
     cce = _rail()
     assert cce.ambiguous_families is ladder_coherence.ambiguous_families
     assert cce.ladder_report is not ladder_coherence.ambiguous_families
+
+
+# ---------------------------------------------------------------------------
+# CAL-P134 — the Kalshi OUTCOME-site grammar and the TRUTH law.
+#
+# Every leg string below is copied from a real ``kalshi/economics`` market. The
+# cell folded to "46 families, one condemned pair" under the pre-CAL-P134
+# grammar while 4,621 of its 7,590 markets were all-cumulative ladders, so these
+# guards exist to make that particular all-clear impossible to reproduce.
+# ---------------------------------------------------------------------------
+
+from app.utils.ladder_monotonicity import (  # noqa: E402
+    cumulative_outcome_ladder,
+    outcome_ladder_report,
+    parse_cumulative_leg,
+    truth_reversals,
+)
+
+_AUTH = "api_settlement"
+_GUESS = "pass2_guess"
+
+
+def _leg(name, price=None, win=False, src=_AUTH):
+    return {"name": name, "price": price, "is_winner": win, "resolution_source": src}
+
+
+@pytest.mark.parametrize("text,value,direction", [
+    # 'US SPR level for the week ending April 3, 2026'
+    ("Above 410M", 410_000_000.0, DEC),
+    # 'Silver price on Apr 7, 2026 at 5pm EDT?'
+    ("above $68.25", 68.25, DEC),
+    # 'US CPI inflation for May 30, 2026'
+    ("Above 2.14%", 2.14, DEC),
+    # the single most common Kalshi economics leg shape, and the one no
+    # grammar in this module saw before CAL-P134
+    ("7,175 or above", 7175.0, DEC),
+    ("$25,600 or higher", 25600.0, DEC),
+    ("3.0% or more", 3.0, DEC),
+    ("2400+", 2400.0, DEC),            # the pre-CAL-P134 form still parses
+    ("Below 410M", 410_000_000.0, INC),
+    ("2.5% or less", 2.5, INC),
+    ("under $70", 70.0, INC),
+])
+def test_parse_cumulative_leg_reads_the_shapes_kalshi_actually_writes(
+        text, value, direction):
+    assert parse_cumulative_leg(text) == (value, direction)
+
+
+@pytest.mark.parametrize("text", [
+    "Yes", "No", "", None,
+    "5-6", "2400-2450+", "$100 to $200",     # ranges partition, never nest
+    "<5", ">16",                             # tail legs of a bracket market
+    "Above 410M or below 400M",              # two rungs in one leg
+    "Trump", "Recession in 2026",            # prose
+])
+def test_parse_cumulative_leg_refuses_everything_that_is_not_one_rung(text):
+    assert parse_cumulative_leg(text) is None
+
+
+def test_the_measles_defect_cannot_come_back_through_the_new_grammar():
+    """``at least 2000 measles cases`` must not read ``m`` as MEGA.
+
+    The name-site parser learned this the expensive way; the leg-site parser is
+    anchored at both ends, so the whole-string match is what refuses it, and
+    this guard asserts the refusal rather than a corrected magnitude.
+    """
+    assert parse_cumulative_leg("at least 2000 measles cases") is None
+    assert parse_cumulative_leg("at least 2000") == (2000.0, DEC)
+
+
+def test_cumulative_outcome_ladder_reads_a_real_kalshi_market():
+    # market 29210105, 'AI sector performance on May 29, 2026'
+    legs = [_leg("Above 64.21", 0.99, True), _leg("Above 59.71", 0.02, True),
+            _leg("Above 61.21", 0.01, True), _leg("Above 62.71", 0.01, True)]
+    ordered, direction = cumulative_outcome_ladder(legs)
+    assert direction == DEC
+    assert [v for v, _ in ordered] == [59.71, 61.21, 62.71, 64.21]
+
+
+@pytest.mark.parametrize("legs", [
+    # a bracket market: partitions, never nests, and condemning it would be wrong
+    [_leg("<5"), _leg("5-6"), _leg(">16")],
+    # ONE prose leg disqualifies the whole market rather than being skipped
+    [_leg("Above 410M"), _leg("Above 411M"), _leg("Other")],
+    # opposite-signed legs are not one ladder
+    [_leg("Above 410M"), _leg("Below 400M")],
+    # a duplicate rung value is the outcome-site form of a key grouping two ladders
+    [_leg("Above 410M"), _leg("above $410M")],
+    [_leg("Above 410M")],                      # one leg is never a ladder
+    [],
+])
+def test_cumulative_outcome_ladder_refuses_anything_that_is_not_one_ladder(legs):
+    assert cumulative_outcome_ladder(legs) is None
+
+
+def test_a_priceless_leg_does_not_disqualify_the_ladder():
+    """Pricing is the caller's problem. Dropping an unpriced leg HERE would let
+    a ladder qualify on a subset of its own legs and silently change population."""
+    legs = [_leg("Above 1"), _leg("Above 2", 0.5), _leg("Above 3", 0.4)]
+    ordered, direction = cumulative_outcome_ladder(legs)
+    assert [v for v, _ in ordered] == [1.0, 2.0, 3.0]
+
+
+# --- the truth law ---------------------------------------------------------
+
+def test_truth_reversals_accepts_the_only_shape_a_realized_value_can_produce():
+    """V settles every rung at once, so DEC truth is True…True False…False."""
+    assert truth_reversals([(1.0, True), (2.0, True), (3.0, False)], DEC) == []
+    assert truth_reversals([(1.0, True), (2.0, True)], DEC) == []
+    assert truth_reversals([(1.0, False), (2.0, False)], DEC) == []
+
+
+def test_truth_reversals_names_the_pair_a_cert_has_to_argue_about():
+    # market 30784010, 'S&P price on Jun 2, 2026 at 4pm EDT?' — settled data
+    assert truth_reversals([(7000.0, False), (7025.0, True)], DEC) == [(7000.0, 7025.0)]
+
+
+def test_truth_reversals_flips_with_direction():
+    below = [(1.0, True), (2.0, False)]
+    assert truth_reversals(below, INC) == [(1.0, 2.0)]
+    assert truth_reversals(below, DEC) == []
+
+
+def test_truth_reversals_refuses_a_direction_it_was_not_given():
+    with pytest.raises(ValueError):
+        truth_reversals([(1.0, True), (2.0, False)], "sideways")
+
+
+def test_the_truth_law_is_documented_as_NOT_leakage_free():
+    """The one sentence that must never be dropped when this result is quoted.
+
+    Every other law in this module is a function of names and prices. This one
+    reads ``is_winner``, so a rule built on it is a truth-eligibility finding of
+    the pass2_loser kind, not an exclusion rule in the CAL-P133 class.
+    """
+    doc = truth_reversals.__doc__ or ""
+    assert "LEAKAGE-FREE AND THIS ONE IS NOT" in doc
+    assert "is_winner" in doc
+
+
+def test_outcome_ladder_report_splits_by_resolution_authority():
+    """The split IS the finding: measured 0.3% auth vs 22.2% guess-containing."""
+    markets = {
+        # authoritative and impossible: the easier rung lost, the harder one won
+        1: [_leg("Above 10", 0.6, False, _AUTH), _leg("Above 20", 0.5, True, _AUTH)],
+        # the same shape, but a guess is in the ladder
+        2: [_leg("Above 10", 0.6, False, _GUESS), _leg("Above 20", 0.5, True, _AUTH)],
+        # truth sound, prices reversed
+        3: [_leg("Above 10", 0.4, True, _AUTH), _leg("Above 20", 0.9, False, _AUTH)],
+        # clean
+        4: [_leg("Above 10", 0.9, True, _AUTH), _leg("Above 20", 0.4, False, _AUTH)],
+        # not a ladder at all
+        5: [_leg("Yes", 0.5, True, _AUTH), _leg("No", 0.5, False, _AUTH)],
+    }
+    r = outcome_ladder_report(markets)
+    assert r["truth_broken"] == {1, 2}
+    assert r["price_broken"] == {3}
+    assert r["clean"] == {4}
+    c = r["census"]
+    assert c["markets_scanned"] == 5
+    assert c["markets_not_a_ladder"] == 1
+    assert c["ladders_truth_broken_auth"] == 1
+    assert c["ladders_truth_broken_guess"] == 1
+    assert c["ladders_auth"] == 3 and c["ladders_guess"] == 1
+
+
+def test_the_three_outcome_site_arms_are_disjoint_so_a_caller_can_add_them():
+    markets = {
+        1: [_leg("Above 10", 0.4, False, _AUTH), _leg("Above 20", 0.9, True, _AUTH)],
+    }
+    r = outcome_ladder_report(markets)
+    # truth AND price are both broken here; severity order puts it in truth only
+    assert r["truth_broken"] == {1}
+    assert r["price_broken"] == set() and r["clean"] == set()
+
+
+def test_an_ungraded_leg_takes_no_part_because_is_winner_defaults_to_false():
+    """``is_winner`` is nullable DEFAULT false, so False is ambiguous. Only a leg
+    carrying a resolution_source may be read as a graded result."""
+    markets = {
+        1: [_leg("Above 10", 0.6, False, None), _leg("Above 20", 0.5, True, None)],
+    }
+    r = outcome_ladder_report(markets)
+    assert r["truth_broken"] == set()
+    assert r["census"]["ladders_under_two_graded_legs"] == 1
+
+
+def test_a_bracket_market_is_never_condemned_by_the_outcome_site():
+    """The whole safety argument. Brackets sum to one rather than falling, and a
+    monotonicity law applied to them would delete a correctly priced market."""
+    markets = {1: [_leg("<5", 0.2, False), _leg("5-6", 0.5, True),
+                   _leg(">16", 0.3, False)]}
+    r = outcome_ladder_report(markets)
+    assert r["truth_broken"] == r["price_broken"] == r["clean"] == set()
+    assert r["census"]["markets_not_a_ladder"] == 1
+
+
+def test_truth_is_registered_as_a_per_chunk_dimension():
+    cce = _rail()
+    assert "truth" in cce.PER_CHUNK_DIMENSIONS
+    assert "truth" in cce.PER_CHUNK_CONTEXT
+    assert "truth" not in cce.DIMENSIONS, "a pre-pass dimension is not a static one"
+
+
+def test_every_per_chunk_dimension_has_its_own_context_slot():
+    """The if/else that routed context by name held exactly TWO branches.
+
+    A third dimension took the ``else`` and overwrote ``_MONO`` — an empty
+    partition at the end of a fifteen-minute fold rather than an error at the
+    start. This asserts the slot table covers every registered dimension.
+    """
+    cce = _rail()
+    slots = {"ladder": "_LADDER", "mono": "_MONO", "truth": "_TRUTH"}
+    assert set(slots) == set(cce.PER_CHUNK_DIMENSIONS)
+    for name in slots.values():
+        assert hasattr(cce, name), f"{name} is not a module global"
+
+
+def test_the_truth_pre_pass_sql_carries_no_rung_grammar():
+    """Python stays the only definition of a rung, so there is nothing to
+    reconcile against a Postgres rendering later — the reason MONO_ROWS_SQL has
+    no name filter, applied to the leg-site pull."""
+    cce = _rail()
+    sql = cce.TRUTH_ROWS_SQL
+    for grammar_token in ("above", "at least", "or above", "O/U", "~", "+'"):
+        assert grammar_token not in sql, (
+            f"{grammar_token!r} in the pre-pass SQL would make Postgres a second "
+            "definition of the rung grammar")
+    # It must read the outcome columns the truth law needs, or the law silently
+    # grades every leg False (is_winner is nullable DEFAULT false).
+    assert "is_winner" in sql and "resolution_source" in sql
+
+
+def test_the_truth_dimension_names_its_own_leakage_status():
+    """A reader must not be able to quote this arm as if it were CAL-P133's."""
+    cce = _rail()
+    doc = cce.truth_dim.__doc__ or ""
+    assert "NOT a leakage-free arm" in doc
