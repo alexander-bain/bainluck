@@ -7556,22 +7556,133 @@ async def get_game_markets(
     event_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get game-level markets for an event (totals spectrum, player props, spreads).
+    """Game-level markets for an event (totals spectrum, player props, spreads).
 
-    Returns markets linked via FuturesMarket.event_id OR matching event teams
-    in game-prop markets.
+    This function is now the tier's CACHE POLICY; the build is
+    `_build_game_markets` below and is unchanged. #1587 / LAT-P121 — the reason
+    the second request of the event detail page cost 2.25 s was not the build,
+    it was that a 30-entry per-process dict was the only cache the tier had, so
+    almost every reader was the first one. Rationale, the three properties of
+    that dict, and why the mirror is age-bounded: `utils/game_markets_cache.py`.
+
+    Serve order, fastest first:
+
+      L1  in-memory dict  — same process, same 30 s rule. Kept: it is faster
+                            than a Redis round trip and it was never the defect.
+      L2  Redis primary   — SHARED across every worker and dyno. This is the new
+                            one, and it is what makes the second person to open
+                            a game anywhere not pay for it.
+      L2s Redis mirror    — served while young enough for the status, with ONE
+                            rebuild scheduled behind it.
+      build               — what every reader used to do.
     """
+    from app.utils import game_markets_cache as gmc
+
+    # L1 — in-memory (completed games cached indefinitely, live 30s).
+    cached = _read_game_markets_memo(event_id)
+    if cached is not None:
+        return cached
+
+    # L2 — the shared slot, and its mirror.
+    body, state = gmc.read(event_id)
+    if state == "live" and body is not None:
+        _write_game_markets_memo(event_id, gmc.source_status_of(body), body)
+        return body
+    if state == "stale_ok" and body is not None:
+        # Exactly one rebuild behind the mirror, fleet-wide-ish: single-flight is
+        # per process (`_STALE_REFRESH_INFLIGHT`), and the shared slot the
+        # rebuild publishes is what keeps the other processes from re-doing it
+        # once it lands.
+        if _serve_stale_and_refresh(
+            f"game_markets:{event_id}", lambda: _rebuild_game_markets(event_id)
+        ):
+            return body
+        # No running loop to refresh behind us — fall through and build, rather
+        # than serve stale with nothing coming to replace it.
+
+    response, source_status, market_ids = await _build_game_markets(event_id, db)
+    return await _publish_game_markets(
+        event_id, source_status, response, market_ids, db
+    )
+
+
+def _read_game_markets_memo(event_id: int):
+    """The L1 read. Extracted so the policy above reads as a ladder."""
     import time as _time
-    from app.models import FuturesOddsSnapshot
 
-    # Check in-memory cache (completed games cached indefinitely, live 30s)
-    now_ts = _time.time()
-    if event_id in _game_markets_cache:
-        cached_ts, cached_status, cached_response = _game_markets_cache[event_id]
-        is_final = cached_status in ("completed", "closed")
-        if is_final or (now_ts - cached_ts) < _GAME_MARKETS_LIVE_TTL:
-            return cached_response
+    entry = _game_markets_cache.get(event_id)
+    if entry is None:
+        return None
+    cached_ts, cached_status, cached_response = entry
+    is_final = cached_status in ("completed", "closed")
+    if is_final or (_time.time() - cached_ts) < _GAME_MARKETS_LIVE_TTL:
+        return cached_response
+    return None
+
+
+def _write_game_markets_memo(event_id: int, source_status, response) -> None:
+    """The L1 write, with its size bound. Behaviour unchanged."""
+    import time as _time
+
+    if len(_game_markets_cache) >= _GAME_MARKETS_MAX_SIZE:
+        oldest_key = min(_game_markets_cache, key=lambda k: _game_markets_cache[k][0])
+        del _game_markets_cache[oldest_key]
+    _game_markets_cache[event_id] = (_time.time(), str(source_status or ""), response)
+
+
+async def _publish_game_markets(
+    event_id: int, source_status, response, market_ids, db
+) -> dict:
+    """Stamp a fresh build and publish it to both cache levels.
+
+    Returns the ENVELOPED body — the same dict the route returns, so what a
+    reader gets from a build and what the next reader gets from Redis are the
+    same bytes plus one `availability`.
+    """
+    from app.utils import game_markets_cache as gmc
+
+    watermark = await gmc.compute_watermark(db, list(market_ids or []))
+    enveloped = gmc.stamp(
+        response, source_status=source_status, lifecycle_watermark=watermark
+    )
+    gmc.write(event_id, enveloped)
+    served = gmc.with_availability(enveloped, gmc.AVAILABILITY_LIVE)
+    _write_game_markets_memo(event_id, source_status, served)
+    return served
+
+
+async def _rebuild_game_markets(event_id: int) -> None:
+    """Rebuild one event's game markets behind a stale serve.
+
+    Opens its OWN session: the request's `AsyncSession` is not ours to hold past
+    the response (`_serve_stale_and_refresh`'s contract, and the reason that
+    helper takes a zero-arg coroutine function rather than a coroutine).
+    """
+    from app.services.database import async_session_maker
+
+    async with async_session_maker() as session:
+        response, source_status, market_ids = await _build_game_markets(
+            event_id, session
+        )
+        await _publish_game_markets(
+            event_id, source_status, response, market_ids, session
+        )
+
+
+async def _build_game_markets(
+    event_id: int,
+    db: AsyncSession,
+) -> tuple[dict, str, list]:
+    """Build the payload from scratch. Returns `(response, status, market_ids)`.
+
+    The second element is the RAW `Event.status`, which the cache needs and
+    cannot recover from the body — `response["status"]` is
+    `served_event_status`' presentation value. The third is what the payload was
+    assembled from, which is the watermark's input set.
+
+    Everything below this line is the pre-LAT-P121 route body, moved unchanged.
+    """
+    from app.models import FuturesOddsSnapshot
 
     # 1. Load event with sport
     result = await db.execute(
@@ -7735,7 +7846,11 @@ async def get_game_markets(
                 markets.append(m)
 
     if not markets:
-        return {"event_id": event_id, "totals": [], "player_props": [], "spreads": [], "matchups": [], "other": [], "pace": None, "props_script": []}
+        return (
+            {"event_id": event_id, "totals": [], "player_props": [], "spreads": [], "matchups": [], "other": [], "pace": None, "props_script": []},
+            event.status or "",
+            [],
+        )
 
     # 4. Load outcomes for all markets
     market_ids = [m.id for m in markets]
@@ -8352,13 +8467,11 @@ async def get_game_markets(
         "props_script": _build_props_script(player_props, event_is_finished),
     }
 
-    # Cache response (evict oldest if over size limit)
-    if len(_game_markets_cache) >= _GAME_MARKETS_MAX_SIZE:
-        oldest_key = min(_game_markets_cache, key=lambda k: _game_markets_cache[k][0])
-        del _game_markets_cache[oldest_key]
-    _game_markets_cache[event_id] = (now_ts, event.status or "", response)
-
-    return response
+    # Caching is the caller's job now (`_publish_game_markets`), so that a build
+    # reached through the stale-refresh path publishes through exactly the same
+    # writer as one reached through a request. Two writers for one tier is
+    # LAT-P001's defect and it is not being rebuilt here.
+    return response, event.status or "", market_ids
 
 
 _related_futures_cache: dict[int, tuple[float, str, dict]] = {}
