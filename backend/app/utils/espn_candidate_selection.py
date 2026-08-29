@@ -125,9 +125,10 @@ So the rule is now about **evidence**, not distance:
 
 ### The self-contradiction this resolves
 
-``prediction_market_matching._ticker_date_far_from_event`` — an independent
-guard on an independent rail — calls anything beyond **±3h** of a known start
-time a DIFFERENT game, in its own words "(separates doubleheaders ~5h apart)".
+``prediction_market_matching._ticker_date_conflicts_with_event`` — an
+independent guard on an independent rail — calls anything beyond **±3h** of a
+known start time a DIFFERENT game (Q439 retired the sibling helper this used to
+name; the ±3h is unchanged, only the instant it measures from was corrected).
 That ±3h is measured, not chosen: a 1,000-row systematic production sample
 (2026-08-12) put 744 linked MLB markets at exactly 0h once the ticker's Eastern
 clock was read correctly, and the ±3h rule reproduced the independently
@@ -185,9 +186,9 @@ MAX_CORROBORATED_SAME_GAME_SECONDS = MAX_ABSORPTION_SEPARATION_SECONDS
 #: to be the same game.
 #:
 #: This is the repository's own already-measured number, not a new one.
-#: ``prediction_market_matching._ticker_date_far_from_event`` treats ±3h around
+#: ``prediction_market_matching._EVENT_DATE_MAX_DIFF_HOURS`` treats ±3h around
 #: a known start time as "same game" and anything beyond as a DIFFERENT game,
-#: explicitly "(separates doubleheaders ~5h apart)". Its docstring block records
+#: separating doubleheaders ~5h apart. Its docstring block records
 #: the measurement: a 1,000-row systematic production sample (2026-08-12) put
 #: 744 linked MLB markets at exactly 0h once the ticker's Eastern clock was read
 #: correctly, and the ±3h rule reproduced the independently measured 24.4%

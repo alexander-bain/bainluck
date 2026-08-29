@@ -8,13 +8,17 @@ One guard per gap that Queue #210 Item 1 closed against the hot matching path
       just `…game`-suffixed ones (via `_is_game_winner_kalshi_prefix`).
   (c) Phase 1.5 re-link + the historical backfill both route through the
       duplicate-linkage guard (regression guard on the source).
-  (d) The Phase-2 date-mismatch unlink uses a shared HHMM-aware threshold
-      (`_ticker_date_far_from_event`) and runs over all linked markets.
+  (d) The Phase-2 date-mismatch unlink uses a shared HHMM-aware threshold and
+      runs over all linked markets. Q439 (#2214) retired the local helper this
+      gap originally named: the threshold is now `_ticker_date_conflicts_with_
+      event`, the SAME function the link path uses, because the old one read the
+      ticker's US Eastern clock as UTC and so unlinked every MLB game market on
+      every run. The tolerance did not move; the instant it is measured from did.
   (e) `WRONG_GAME_PREFIXES` covers NCAAMB / college basketball + esports.
 """
 
 import inspect
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -22,7 +26,7 @@ import pytest
 
 from app.tasks.prediction_market_matching import (
     _is_game_winner_kalshi_prefix,
-    _ticker_date_far_from_event,
+    _ticker_date_conflicts_with_event,
     _check_duplicate_kalshi_linkage,
     _find_event_by_sport_and_time,
     _phase15_revalidate,
@@ -175,33 +179,51 @@ class TestDuplicateGuardRoutedFromBypassPaths:
 
 # ── Gap (d): the shared HHMM-aware date threshold ───────────────────────────
 class TestTickerDateFarFromEvent:
+    """Q439: the threshold reads the ticker's clock as US Eastern.
+
+    These cases are the originals, re-expressed against the one surviving
+    decider. Where a case changed answer, it changed because the old answer was
+    computed from the wrong instant — not because the tolerance moved.
+    """
+
     def test_date_only_within_window(self):
         base = datetime(2026, 2, 21, tzinfo=timezone.utc)
-        assert _ticker_date_far_from_event(base, base) is False
+        assert _ticker_date_conflicts_with_event(base, base, "kxnbagame") is False
 
-    def test_date_only_next_day_is_far(self):
+    def test_date_only_two_days_apart_is_far(self):
         base = datetime(2026, 2, 21, tzinfo=timezone.utc)
-        assert _ticker_date_far_from_event(base + timedelta(hours=24), base) is True
+        far = datetime(2026, 2, 23, tzinfo=timezone.utc)
+        assert _ticker_date_conflicts_with_event(far, base, "kxnbagame") is True
+
+    def test_date_only_evening_rollover_is_the_same_game(self):
+        # A 7:30pm ET tip on Feb 21 is 00:30Z on Feb 22 — ~24h from a midnight-
+        # anchored date-only ticker. The retired ±18h rule called that a
+        # different game; on the Eastern calendar it is plainly the same one.
+        ticker = datetime(2026, 2, 21, tzinfo=timezone.utc)
+        commence = datetime(2026, 2, 22, 0, 30, tzinfo=timezone.utc)
+        assert _ticker_date_conflicts_with_event(ticker, commence, "kxnbagame") is False
 
     def test_hhmm_doubleheader_is_far(self):
         # With a start time, the tight ±3h window separates ~5h-apart games.
-        ec = datetime(2026, 2, 21, 18, 0, tzinfo=timezone.utc)
-        td = datetime(2026, 2, 21, 23, 30, tzinfo=timezone.utc)  # 5.5h later, HHMM
-        assert _ticker_date_far_from_event(td, ec) is True
+        # 1:05pm ET and 7:15pm ET on the same day: same teams, different games.
+        ec = datetime(2026, 2, 21, 18, 5, tzinfo=timezone.utc)   # 13:05 EST
+        td = datetime(2026, 2, 21, 19, 15, tzinfo=timezone.utc)  # 19:15 ET ticker
+        assert _ticker_date_conflicts_with_event(td, ec, "kxmlbgame") is True
 
     def test_hhmm_same_game_not_far(self):
+        # 13:00 ET is 18:00Z in February. The ticker names the game the event is.
         ec = datetime(2026, 2, 21, 18, 0, tzinfo=timezone.utc)
-        td = datetime(2026, 2, 21, 19, 30, tzinfo=timezone.utc)  # 1.5h, within ±3h
-        assert _ticker_date_far_from_event(td, ec) is False
+        td = datetime(2026, 2, 21, 13, 0, tzinfo=timezone.utc)
+        assert _ticker_date_conflicts_with_event(td, ec, "kxmlbgame") is False
 
     def test_missing_inputs_never_far(self):
         base = datetime(2026, 2, 21, tzinfo=timezone.utc)
-        assert _ticker_date_far_from_event(None, base) is False
-        assert _ticker_date_far_from_event(base, None) is False
+        assert _ticker_date_conflicts_with_event(None, base, "kxnbagame") is False
+        assert _ticker_date_conflicts_with_event(base, None, "kxnbagame") is False
 
     def test_naive_datetimes_handled(self):
         base = datetime(2026, 2, 21)  # naive
-        assert _ticker_date_far_from_event(base, base) is False
+        assert _ticker_date_conflicts_with_event(base, base, "kxnbagame") is False
 
 
 # ── Gap (e): the wrong-game prefix allowlist covers NCAAMB + esports ────────
