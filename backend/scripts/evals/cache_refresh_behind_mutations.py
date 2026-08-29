@@ -12,6 +12,13 @@ and the file is restored — SERIALLY. Never concurrently, and never while anoth
 pytest is in flight: `inspect.getsource` re-reads the file mid-run and a source
 edit under a running suite produces phantom failures that read as real reds.
 
+The `try/finally` in `main()` restores on an exception; it does NOT survive a
+SIGTERM or a SIGKILL, and a harness that dies between write and restore leaves a
+mutant sitting in `events.py`. `guarded_targets` is the shared primitive that
+closes that window (manifest + `--recover`), and `test_mutation_guard.py`'s
+`test_every_on_disk_harness_is_guarded` fails any on-disk harness without it —
+which is exactly how this one was caught, on its first full-suite run.
+
 Run:  python3 backend/scripts/evals/cache_refresh_behind_mutations.py
 Exit: 0 = every mutant killed. 1 = at least one survived. Anything else is the
       harness failing, not a verdict (gotcha #54).
@@ -22,6 +29,10 @@ from __future__ import annotations
 import pathlib
 import subprocess
 import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+from _mutation_guard import guarded_targets  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 TARGET = ROOT / "app" / "routes" / "events.py"
@@ -129,6 +140,13 @@ def _run_suite() -> int:
 
 
 def main() -> int:
+    with guarded_targets(
+        [TARGET], "/tmp/lat_p116_cache_refresh_guard_backups", "cache_refresh_behind"
+    ):
+        return _main()
+
+
+def _main() -> int:
     original = TARGET.read_text()
 
     baseline = _run_suite()

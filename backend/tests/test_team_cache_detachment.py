@@ -32,6 +32,7 @@ runs in the sandbox (see the no-local-Postgres constraint) while still using
 the genuine SQLAlchemy machinery rather than a hand-made stand-in.
 """
 
+import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -93,6 +94,31 @@ def _db_returning(teams: list[Team]) -> AsyncMock:
     db = AsyncMock()
     db.execute.return_value = result
     return db
+
+
+class _SessionMaker:
+    """An `async_session_maker` stand-in for the LAT-P116 refresh-behind path.
+
+    `_rebuild_team_lookup` opens its own session with `async with
+    async_session_maker() as s`. A bare `AsyncMock` cannot stand in for that:
+    its `__aenter__` returns a DIFFERENT auto-created mock, so `s` is not the
+    session the test configured and `s.execute(...).scalars()` yields a
+    coroutine rather than the rows. That failure is silent from the outside —
+    the rebuild raises, the handler logs it and leaves the cache alone, which
+    is correct behaviour and looks exactly like "the rebuild did not happen".
+    """
+
+    def __init__(self, db):
+        self._db = db
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return self._db
+
+    async def __aexit__(self, *_exc):
+        return False
 
 
 @pytest.fixture(autouse=True)
@@ -198,7 +224,7 @@ async def test_standings_context_also_survives_the_rollback():
     assert context["stakes"] == "Top seed matchup"
 
 
-async def test_the_next_requests_recover_through_the_real_feed_reader():
+async def test_the_next_requests_recover_through_the_real_feed_reader(monkeypatch):
     """The poisoning was PROCESS-WIDE and self-sustaining — pin recovery, not survival.
 
     Fable's addendum names the distinction this test exists for: proving that
@@ -286,7 +312,42 @@ async def test_the_next_requests_recover_through_the_real_feed_reader():
         _team(id=2, name="Atlanta Falcons", abbreviation="ATL", alternate_names=["Falcons"]),
     ]
     second_session = _persistent(rebuilt_rows)
-    await _build_team_lookup(_db_returning(rebuilt_rows), ["Carolina Panthers"])
+
+    # 🔴 LAT-P116 CHANGED WHICH SESSION REBUILDS, AND THIS TEST HAD TO FOLLOW IT.
+    #
+    # Past the TTL, `_build_team_lookup` no longer rebuilds on the CALLER's
+    # session — it serves the stale value and rebuilds behind the response on a
+    # session of its own, so a user never pays the 342-424 ms build (#2272).
+    # Driving the rebuild therefore means giving it the session it will actually
+    # open and letting the task run, instead of handing one to the caller.
+    #
+    # This does NOT weaken the #2107 guard; it points it at the path that could
+    # newly break it. The property under test is unchanged and is arguably more
+    # at risk now: the rebuild happens in a BACKGROUND task whose session closes
+    # the moment it finishes, so if `_shape_team_lookup` ever stopped snapshotting
+    # inside the `async with`, every cached row would be detached by construction
+    # rather than only after a rollback. The assertions below still prove the
+    # hazard is live (`DetachedInstanceError` on the rebuilt rows) and still
+    # prove the served requests survive it.
+    monkeypatch.setattr(
+        "app.services.database.async_session_maker",
+        _SessionMaker(_db_returning(rebuilt_rows)),
+    )
+
+    served_during_rebuild = await _build_team_lookup(
+        _db_returning([]), ["Carolina Panthers"]
+    )
+    assert served_during_rebuild["Carolina Panthers"].primary_color == "#0085CA", (
+        "the caller must be served the STALE value, not blocked on the rebuild "
+        "— that is the whole of #2272"
+    )
+
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if not events_module._STALE_REFRESH_INFLIGHT:
+            break
+    else:
+        raise AssertionError("the refresh-behind rebuild never completed")
 
     second_session.rollback()
     second_session.close()
