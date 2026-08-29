@@ -18,7 +18,7 @@ from sqlalchemy import or_, select, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Event, Sport
+from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db
 from app.utils.golf_evolution_market import (
     NON_CONTENDER_WINNER_RE,
@@ -1909,6 +1909,68 @@ def _filter_stale_tournaments(tournaments: list[dict], now: datetime) -> list[di
     return filtered
 
 
+# How many upcoming tournaments the golf page names. The DataGolf schedule runs to
+# the end of the season, so this bounds the DISPLAY, not the data.
+_MAX_UPCOMING = 10
+
+
+def _upcoming_from_schedule(
+    schedule: list[dict] | None,
+    now: datetime,
+    limit: int = _MAX_UPCOMING,
+) -> list[dict]:
+    """Name the tournaments that have not started yet, soonest first.
+
+    UX-P169. This section used to be built from the `events` table filtered to
+    `Sport.key ILIKE 'golf_%'`. Golf has SIX rows there in all of history, every
+    one of them `closed`, and they are props and mis-ingests, not tournaments:
+    "Hole-in-One vs Arnold Palmer Invitational", "U.S. Team Captain vs 2027 Ryder
+    Cup", and a Philippine BASKETBALL game (Phoenix Fuel Masters vs Timplados
+    Hotshots). So the section could only ever render nothing — which is what a
+    reader saw — or, if one of those rows had ever been in the future, nonsense.
+
+    The DataGolf schedule is the authority for what is coming, and it was already
+    loaded here and already serialized into the same payload as `pga_schedule`.
+
+    ⚠️ The schedule arrives GROUPED BY TOUR, not in date order. Fed through
+    unsorted a reader reads Sep, Oct, Nov, Dec, then Sep again. The sort is the
+    load-bearing line in this function, not a tidy-up.
+    """
+    if not schedule:
+        return []
+
+    dated: list[tuple[datetime, dict]] = []
+    for entry in schedule:
+        raw_start = entry.get("start_date")
+        if not raw_start:
+            continue
+        try:
+            start = datetime.fromisoformat(raw_start)
+        except (TypeError, ValueError):
+            continue
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if start <= now:
+            continue
+        tour_key = _datagolf_tour_to_key(entry.get("tour"))
+        dated.append((
+            start,
+            {
+                "key": entry.get("key"),
+                "name": entry.get("name"),
+                "start_date": entry.get("start_date"),
+                "end_date": entry.get("end_date"),
+                "venue": entry.get("venue") or None,
+                "location": entry.get("location") or None,
+                "tour": tour_key,
+                "tour_label": TOUR_DISPLAY_NAMES.get(tour_key) if tour_key else None,
+            },
+        ))
+
+    dated.sort(key=lambda pair: pair[0])
+    return [item for _, item in dated[:limit]]
+
+
 @router.get("")
 async def get_golf_cached(
     db: AsyncSession = Depends(get_db),
@@ -2155,31 +2217,9 @@ async def get_golf(
     all_movers.sort(key=lambda m: abs(m["movement_24h"]), reverse=True)
     biggest_movers = all_movers[:5]
 
-    # Upcoming events
-    events_query = (
-        select(Event)
-        .join(Sport, Event.sport_id == Sport.id)
-        .where(
-            Sport.key.ilike("golf_%"),
-            or_(
-                Event.status == "live",
-                Event.commence_time.between(now, now + timedelta(days=30)),
-                Event.commence_time.between(now - timedelta(hours=6), now),
-            ),
-        )
-        .order_by(Event.commence_time)
-        .limit(10)
-    )
-    events_result = await db.execute(events_query)
-    upcoming_events = [
-        {
-            "id": e.id,
-            "name": f"{e.home_team_name} vs {e.away_team_name}" if e.away_team_name else e.home_team_name,
-            "commence_time": e.commence_time.isoformat() if e.commence_time else None,
-            "status": e.status,
-        }
-        for e in events_result.scalars().all()
-    ]
+    # Upcoming tournaments — the DataGolf schedule, not the `events` table.
+    # See `_upcoming_from_schedule` for why the old source could never work.
+    upcoming_events = _upcoming_from_schedule(schedule, now)
 
     current_event = _find_current_event(tournaments, schedule_by_key, now)
 

@@ -28,6 +28,7 @@ import { EvolutionView } from "@/components/EvolutionView";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import TournamentCard from "@/components/TournamentCard";
 import { GolferRow } from "@/components/golf/GolferRow";
+import UpcomingTournaments from "@/components/golf/UpcomingTournaments";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
@@ -425,41 +426,8 @@ export default function GolfPage() {
               />
             ))}
 
-            {/* Schedule */}
-            {data.upcoming_events.length > 0 && (
-              <section>
-                <h2 className="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
-                  <span className="text-[#006747]">&#x1F4C5;</span>
-                  Upcoming Events
-                </h2>
-                <div className="space-y-2">
-                  {data.upcoming_events.map((event) => (
-                    <Link
-                      href={`/events/${event.id}`}
-                      key={event.id}
-                      className="bg-surface-card rounded-lg border border-surface-border p-3 flex items-center justify-between hover:shadow-card-hover hover:border-[#006747]/30 transition-all group"
-                    >
-                      <span className="text-sm text-text-primary group-hover:text-[#006747] transition-colors">
-                        {event.name}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        {event.commence_time && (
-                          <span className="text-xs text-text-muted">
-                            {new Date(event.commence_time).toLocaleDateString(
-                              "en-US",
-                              { weekday: "short", month: "short", day: "numeric" }
-                            )}
-                          </span>
-                        )}
-                        <span className="text-xs text-text-muted group-hover:text-[#006747] transition-colors">
-                          &rarr;
-                        </span>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              </section>
-            )}
+            {/* Schedule — see components/golf/UpcomingTournaments.tsx */}
+            <UpcomingTournaments events={data.upcoming_events} />
           </>
         )}
       </div>
