@@ -1,0 +1,38 @@
+{
+ "source": "polymarket",
+ "category": "entertainment",
+ "width": 1000000,
+ "by_key": {
+  "group_id": {
+   "clusters": 221,
+   "markets": 2967,
+   "markets_in_wide": 779,
+   "wide_clusters": 60,
+   "max_spread": 51530162,
+   "max_size": 42,
+   "pct_in_wide": 26.3,
+   "risk": "MODERATE"
+  },
+  "event_id": {
+   "clusters": 0,
+   "markets": 0,
+   "markets_in_wide": 0,
+   "wide_clusters": 0,
+   "max_spread": 0,
+   "max_size": 0,
+   "pct_in_wide": null,
+   "risk": "NO_CLUSTERS"
+  }
+ },
+ "worst_key": {
+  "clusters": 221,
+  "markets": 2967,
+  "markets_in_wide": 779,
+  "wide_clusters": 60,
+  "max_spread": 51530162,
+  "max_size": 42,
+  "pct_in_wide": 26.3,
+  "risk": "MODERATE"
+ },
+ "risk": "MODERATE"
+}

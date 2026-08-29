@@ -1,0 +1,38 @@
+{
+ "source": "kalshi",
+ "category": "football",
+ "width": 1000000,
+ "by_key": {
+  "group_id": {
+   "clusters": 0,
+   "markets": 0,
+   "markets_in_wide": 0,
+   "wide_clusters": 0,
+   "max_spread": 0,
+   "max_size": 0,
+   "pct_in_wide": null,
+   "risk": "NO_CLUSTERS"
+  },
+  "event_id": {
+   "clusters": 156,
+   "markets": 996,
+   "markets_in_wide": 317,
+   "wide_clusters": 38,
+   "max_spread": 33774121,
+   "max_size": 23,
+   "pct_in_wide": 31.8,
+   "risk": "MODERATE"
+  }
+ },
+ "worst_key": {
+  "clusters": 156,
+  "markets": 996,
+  "markets_in_wide": 317,
+  "wide_clusters": 38,
+  "max_spread": 33774121,
+  "max_size": 23,
+  "pct_in_wide": 31.8,
+  "risk": "MODERATE"
+ },
+ "risk": "MODERATE"
+}

@@ -1,0 +1,38 @@
+{
+ "source": "polymarket",
+ "category": "politics",
+ "width": 1000000,
+ "by_key": {
+  "group_id": {
+   "clusters": 413,
+   "markets": 4846,
+   "markets_in_wide": 1893,
+   "wide_clusters": 201,
+   "max_spread": 55895854,
+   "max_size": 72,
+   "pct_in_wide": 39.1,
+   "risk": "HIGH"
+  },
+  "event_id": {
+   "clusters": 0,
+   "markets": 0,
+   "markets_in_wide": 0,
+   "wide_clusters": 0,
+   "max_spread": 0,
+   "max_size": 0,
+   "pct_in_wide": null,
+   "risk": "NO_CLUSTERS"
+  }
+ },
+ "worst_key": {
+  "clusters": 413,
+  "markets": 4846,
+  "markets_in_wide": 1893,
+  "wide_clusters": 201,
+  "max_spread": 55895854,
+  "max_size": 72,
+  "pct_in_wide": 39.1,
+  "risk": "HIGH"
+ },
+ "risk": "HIGH"
+}
