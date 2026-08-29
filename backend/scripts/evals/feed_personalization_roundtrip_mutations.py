@@ -11,6 +11,25 @@ Discipline inherited from this lane's prior cycles and applied literally:
   that the write happened
 * the exit code is read by VALUE (gotcha #124): pytest ``1`` is a verdict,
   anything else is a story about the harness
+* the whole run is wrapped in ``guarded_targets`` — see below
+
+🔴 WHY ``try/finally`` WAS NOT ENOUGH, caught by our own gate rather than by me.
+
+This harness originally used a plain ``try/finally`` restore and
+``tests/test_mutation_guard.py::test_every_on_disk_harness_is_guarded`` failed
+it in the full suite. That gate is correct and the reason is specific: exit 143
+is **SIGTERM**, whose default disposition terminates the process outright, so no
+exception is raised and ``finally`` never runs. A harness relying on it writes
+the mutant to disk and reports nothing — which is exactly how mutation M3 of
+``typeahead_warmer_mutations.py`` once landed in commit ``bcdcd95f``, inside a
+file somebody had an unrelated reason to be editing.
+
+``_mutation_guard.guarded_targets`` converts the catchable signals into an
+exception so ``finally`` has something to run on, and drops a manifest so that
+even the uncatchable SIGKILL case **announces itself** instead of looking like
+an ordinary uncommitted edit. The per-mutation ``cp``/sha discipline below is
+kept on top of it: the guard protects against the process dying, the local
+checks protect against a restore that silently did not take.
 """
 
 from __future__ import annotations
@@ -22,9 +41,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _mutation_guard import guarded_targets  # noqa: E402
+
 BACKEND = Path(__file__).resolve().parents[2]
 TARGET = BACKEND / "app" / "routes" / "feed.py"
-BACKUP = BACKEND / ".p113-feed.py.bak"
+BACKUP = Path("/tmp/lat_p113_feed_backup.py")
 TESTS = "tests/test_feed_personalization_roundtrips_p113.py"
 
 # (id, description, old, new, tests that MUST go red)
@@ -109,7 +130,7 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def main() -> int:
+def _run() -> int:
     pristine_sha = _sha(TARGET)
     shutil.copy2(TARGET, BACKUP)
     assert filecmp.cmp(TARGET, BACKUP, shallow=False), "backup did not take"
@@ -158,8 +179,10 @@ def main() -> int:
     finally:
         shutil.copy2(BACKUP, TARGET)
         ok = filecmp.cmp(TARGET, BACKUP, shallow=False) and _sha(TARGET) == pristine_sha
-        BACKUP.unlink(missing_ok=True)
         print(f"\nFINAL RESTORE: {'VERIFIED' if ok else 'FAILED'} sha={_sha(TARGET)}")
+        # The backup is left on disk for `guarded_targets` to restore from if
+        # this process is killed between here and its own restore. The guard
+        # cleans it up; deleting it here would remove the only breadcrumb.
 
     print("\n==== SUMMARY ====")
     killed = 0
@@ -171,6 +194,16 @@ def main() -> int:
         print(f"    {note}")
     print(f"\n{killed}/{len(MUTATIONS)} mutants killed")
     return 0 if killed == len(MUTATIONS) else 1
+
+
+def main() -> int:
+    """Every mutation runs inside the shared restore guard.
+
+    See the module docstring for why `try/finally` alone is not sufficient and
+    which failure case (SIGKILL) is still uncatchable by anything.
+    """
+    with guarded_targets((TARGET,), BACKUP, "lat_p113_feed_personalization"):
+        return _run()
 
 
 if __name__ == "__main__":
