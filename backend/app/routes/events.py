@@ -5623,6 +5623,18 @@ async def get_trending_searches():
         return {"trending": []}
 
 
+#: The size of the zero-state suggestion window on `/search`.
+#:
+#: LAT-P124: this was three separate `8` literals — the slice that builds the
+#: response and the `break` in every section's loop. They were already the same
+#: number by coincidence of authorship; the skip added in `search_suggestions`
+#: makes them the same number by REQUIREMENT, because a section is skipped
+#: exactly when its loop would have broken on its first iteration. Naming the
+#: constant is what stops a later edit moving one of them and turning a
+#: provable no-op into silent truncation.
+_MAX_SUGGESTIONS = 8
+
+
 @router.get("/search-suggestions")
 async def search_suggestions(
     db: AsyncSession = Depends(get_db),
@@ -5633,6 +5645,45 @@ async def search_suggestions(
     recent upsets, popular championship markets.
     """
     from app.utils.highlights import LEAGUE_TIERS
+
+    # LAT-P124/#2285: THE CACHE THIS ROUTE ALREADY TRIED TO WRITE, MADE REAL.
+    #
+    # The `setex` at the bottom of this function referenced `_cache_key` and
+    # `_json`, and NEITHER NAME EXISTED in this scope. The block is a copy of
+    # `team_progression`'s WRITE half without its HEAD half — the head is where
+    # the import, the key and the READ live — and the bare `except Exception:
+    # pass` around it turned the resulting `NameError` into silence. So the
+    # cache never wrote, there was never a read path at all, and every visitor
+    # to `/search` paid the whole build.
+    #
+    # That is not an inference. Three consecutive production reads two seconds
+    # apart, slug `d9b76e9b`, measured **12.2s / 14.5s / 7.5s** against a
+    # measured 0.32s transport floor. A 60s cache that worked would have made
+    # reads two and three free; they were not. No cache at all is the only
+    # shape that fits.
+    #
+    # The key is SHARED and unparameterised because the answer is: this
+    # endpoint takes no argument, reads no principal, and every section below
+    # is keyed on `now()` alone. One slot serves the fleet.
+    #
+    # 🔴 THE TTL STAYS 60s BECAUSE THE PAYLOAD CARRIES A RENDERED COUNTDOWN.
+    # `label` is baked at build time — "Tips off in 12 min", "Starts in 2h" —
+    # so a mirror older than a minute prints a minute count that is wrong. A
+    # longer TTL would buy latency with a formatting lie, which is the trap
+    # LAT-P122 and LAT-P123 both named on the surface next door. 60s is the TTL
+    # the original (dead) write chose; it is KEPT, not widened, and the reason
+    # it cannot be widened is written here so the next reader does not have to
+    # rediscover it from a wrong minute count in production.
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+    _cache_key = "bainluck:search_suggestions:v1"
+    try:
+        _rc = get_redis_client()
+        _cached = _rc.get(_cache_key)
+        if _cached:
+            return _json.loads(_cached)
+    except Exception:
+        pass
 
     now = datetime.now(timezone.utc)
     suggestions: list[dict] = []
@@ -5649,6 +5700,20 @@ async def search_suggestions(
 
     def _shorter_team(home: str, away: str) -> str:
         return home if len(home) <= len(away) else away
+
+    def _window_full() -> bool:
+        """True once no later section can change the response.
+
+        🔴 THIS PREDICATE AND THE ``break`` INSIDE EVERY SECTION'S LOOP MUST BE
+        THE SAME TEST, and that identity is what makes the skips below
+        answer-identical rather than answer-similar. Each section's only effect
+        on the response is a ``_add`` call inside a ``for`` whose FIRST
+        statement is this same comparison; when it already holds on entry, the
+        loop breaks on its first iteration and the section's rows are read,
+        discarded, and paid for. Pinned in both directions by
+        ``test_route_search_suggestions_cold_p124.py``.
+        """
+        return len(suggestions) >= _MAX_SUGGESTIONS
 
     # Helper: tier 1-2 sport keys
     tier_12_keys = {k for k, t in LEAGUE_TIERS.items() if t <= 2}
@@ -5700,7 +5765,7 @@ async def search_suggestions(
             odds_map = {row[0]: row[1] for row in odds_result.all()}
 
             for ev in live_events:
-                if len(suggestions) >= 8:
+                if len(suggestions) >= _MAX_SUGGESTIONS:
                     break
                 hp = odds_map.get(ev.id)
                 if hp is None:
@@ -5747,9 +5812,15 @@ async def search_suggestions(
             .order_by(Event.commence_time.asc())
             .limit(10)
         )
-        soon_result = await db.execute(soon_q)
-        for ev in soon_result.scalars().all():
-            if len(suggestions) >= 8:
+        # LAT-P124: skipped when the window is already full — see `_window_full`.
+        # Section 1 is deliberately NOT guarded: it runs against an empty
+        # `suggestions`, so a guard there is a branch that can never be taken.
+        soon_rows = []
+        if not _window_full():
+            soon_result = await db.execute(soon_q)
+            soon_rows = soon_result.scalars().all()
+        for ev in soon_rows:
+            if len(suggestions) >= _MAX_SUGGESTIONS:
                 break
             minutes = int((ev.commence_time - now).total_seconds() / 60)
             if minutes < 60:
@@ -5776,9 +5847,45 @@ async def search_suggestions(
             .options(selectinload(FuturesOutcome.market))
             .limit(5)
         )
-        movers_result = await db.execute(movers_q)
-        for outcome in movers_result.scalars().all():
-            if len(suggestions) >= 8:
+        # 🔴 LAT-P124/#2285: THIS IS THE ONE THAT MATTERS — 99.5% OF THE REQUEST.
+        #
+        # `ORDER BY abs(probability_change_24h) DESC` cannot be served by any
+        # index on `futures_outcomes` (the only one that mentions the column,
+        # `ix_fo_market_movement`, leads with `market_id`), so Postgres reads the
+        # whole table and sorts it to keep FIVE rows. Production
+        # `EXPLAIN (ANALYZE, BUFFERS)`, slug `d9b76e9b`:
+        #
+        #     Limit -> Nested Loop -> Gather Merge -> Sort -> parallel Seq Scan
+        #       futures_outcomes: 116,462 rows kept, 1,808,454 Rows Removed by Filter
+        #       Sort: external merge, 4,352 kB to DISK on the worker
+        #       146,437 shared blocks (~1.14 GB), 5 rows out
+        #
+        # Against the other four sections, measured the same way and the same
+        # day: 94 blocks, ~272, 346, and section 5 which cannot run at all (see
+        # below). Read the BLOCKS, not the milliseconds — two reads of this same
+        # statement reported 1,833 ms and 13,099 ms as the buffer cache warmed,
+        # while the block count moved by 15 (146,452 vs 146,437).
+        #
+        # And on the read that motivated this change, all eight slots were
+        # already filled by section 2, so those 1.14 GB bought nothing at all.
+        # Skipping the statement when the window is full is not an
+        # approximation: the loop below breaks on its first iteration in exactly
+        # that case, so the rows were being read and then discarded.
+        #
+        # The permanent form is an expression index —
+        # `CREATE INDEX ON futures_outcomes (abs(probability_change_24h) DESC)
+        #  WHERE probability_change_24h IS NOT NULL` — which would make the
+        # unskippable case cheap too. That is DDL and the migration slot is
+        # Integrator-owned (ruling 080): REQUESTED and parked as P124-1, NOT
+        # taken here. Until it lands, the cache above is what bounds the reader
+        # who arrives when sections 1 and 2 came up short: this degrades to
+        # slow once a minute, never to wrong.
+        movers_rows = []
+        if not _window_full():
+            movers_result = await db.execute(movers_q)
+            movers_rows = movers_result.scalars().all()
+        for outcome in movers_rows:
+            if len(suggestions) >= _MAX_SUGGESTIONS:
                 break
             change = outcome.probability_change_24h
             direction = "Surging" if change > 0 else "Falling"
@@ -5812,9 +5919,13 @@ async def search_suggestions(
             .order_by(Event.commence_time.desc())
             .limit(20)
         )
-        upsets_result = await db.execute(upsets_q)
-        for ev in upsets_result.scalars().all():
-            if len(suggestions) >= 8:
+        # LAT-P124: skipped when the window is already full — see `_window_full`.
+        upsets_rows = []
+        if not _window_full():
+            upsets_result = await db.execute(upsets_q)
+            upsets_rows = upsets_result.scalars().all()
+        for ev in upsets_rows:
+            if len(suggestions) >= _MAX_SUGGESTIONS:
                 break
             home_won = ev.home_score > ev.away_score
             if home_won and ev.opening_home_probability < 0.40:
@@ -5829,6 +5940,24 @@ async def search_suggestions(
         pass
 
     # --- 5. Popular championship markets (tier 1, open) ---
+    #
+    # 🔴 LAT-P124/#2286 FINDING, REPORTED AND DELIBERATELY NOT FIXED HERE: THIS
+    # SECTION HAS NEVER PRODUCED A SUGGESTION. `FuturesMarket.outcome_count`
+    # does not exist — there is no such column on the model and no such name
+    # anywhere in `app/` — so the `.order_by(...)` below raises `AttributeError`
+    # while the statement is still being BUILT, before any round trip, and the
+    # bare `except Exception: pass` swallows it. Every request has taken that
+    # path for as long as the code has existed.
+    #
+    # It is left alone on purpose. Making a section that has never run start
+    # running CHANGES THE RESPONSE — new suggestions appear on a user-facing
+    # surface — and choosing what "popular" should order by is a product call,
+    # not a latency one. This queue ships a cost change, so the finding is filed
+    # (#2286) and pinned by a guard test that goes RED the day the attribute
+    # appears, rather than repaired inside a queue that cannot grade it.
+    #
+    # It costs no round trip, so it is not part of the latency defect. The skip
+    # below is still applied for uniformity with sections 2-4.
     try:
         champ_q = (
             select(FuturesMarket)
@@ -5839,9 +5968,12 @@ async def search_suggestions(
             .order_by(FuturesMarket.outcome_count.desc().nulls_last())
             .limit(5)
         )
-        champ_result = await db.execute(champ_q)
-        for market in champ_result.scalars().all():
-            if len(suggestions) >= 8:
+        champ_rows = []
+        if not _window_full():
+            champ_result = await db.execute(champ_q)
+            champ_rows = champ_result.scalars().all()
+        for market in champ_rows:
+            if len(suggestions) >= _MAX_SUGGESTIONS:
                 break
             # Extract a short query from the market name
             name = market.name
@@ -5850,7 +5982,12 @@ async def search_suggestions(
     except Exception:
         pass
 
-    _response = {"suggestions": suggestions[:8]}
+    _response = {"suggestions": suggestions[:_MAX_SUGGESTIONS]}
+    # LAT-P124: unchanged text, and for the first time it EXECUTES — `_cache_key`,
+    # `_json` and `get_redis_client` are all bound at the top of this function
+    # now. The `except Exception: pass` stays, because a Redis outage must not
+    # take the suggestion chips down; what changes is that it is no longer
+    # catching a `NameError` on every single request.
     try:
         _rc = get_redis_client()
         _rc.setex(_cache_key, 60, _json.dumps(_response, default=str))
