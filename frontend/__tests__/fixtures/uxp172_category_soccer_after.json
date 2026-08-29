@@ -1,0 +1,993 @@
+{
+ "items": [
+  {
+   "type": "event",
+   "score": 98,
+   "reason": "Virtually even",
+   "headline": "Overtime",
+   "data": {
+    "id": 15290740,
+    "external_id": "ff4818bd73fa63c0a1e4c98e50c7a2e5",
+    "sport": "soccer_epl",
+    "sport_name": "EPL",
+    "home_team": "Bournemouth",
+    "away_team": "Everton",
+    "commence_time": "2026-08-29T14:00:00+00:00",
+    "status": "live",
+    "home_score": 0,
+    "away_score": 0,
+    "win_probability_sources": {
+     "betting": {
+      "value": 0.537,
+      "updated_at": "2026-08-29T14:31:32.475845+00:00"
+     },
+     "betting_book_count": 7
+    },
+    "espn": {
+     "game_clock": "32'",
+     "period": "32'",
+     "broadcast": "Peacock"
+    },
+    "current_odds": {
+     "home_probability": 0.537,
+     "away_probability": 0.463,
+     "home_rendered_percent": 54,
+     "away_rendered_percent": 46
+    },
+    "opening_odds": {
+     "home_probability": 0.5963,
+     "away_probability": 0.4037,
+     "favorite": "home"
+    },
+    "highlight": {
+     "label": "Overtime"
+    },
+    "event_tags": [
+     "class:international",
+     "ei:quiet",
+     "gender:men",
+     "importance:regular_season",
+     "league:epl",
+     "level:professional",
+     "signal:close_matchup",
+     "signal:very_close",
+     "sport:soccer",
+     "status:live",
+     "tier:1",
+     "timing:national_tv",
+     "timing:weekend"
+    ],
+    "temporal_badge": "Live",
+    "sport_label": "EPL",
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "sources_agree": false,
+     "has_closing_line": false
+    },
+    "home_team_data": {
+     "team_id": 14203,
+     "slug": null,
+     "primary_color": "#f42727",
+     "secondary_color": "#0000CC",
+     "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/349.png",
+     "logo_large": "https://a.espncdn.com/i/teamlogos/soccer/500/349.png",
+     "record": "12-16-7",
+     "abbreviation": "BOU"
+    },
+    "away_team_data": {
+     "team_id": 136,
+     "slug": "everton",
+     "primary_color": "#0606fa",
+     "secondary_color": "#ffffff",
+     "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/368.png",
+     "logo_large": "https://a.espncdn.com/i/teamlogos/soccer/500/368.png",
+     "record": "1-0-0",
+     "abbreviation": "EVE"
+    }
+   }
+  },
+  {
+   "type": "event",
+   "score": 90,
+   "reason": "Won as 45% underdog",
+   "headline": "Recent upset",
+   "data": {
+    "id": 15290844,
+    "external_id": "158624c402dc0df65b74a05c241ddb19",
+    "sport": "soccer_poland_ekstraklasa",
+    "sport_name": "Ekstraklasa - Poland",
+    "home_team": "Radomiak Radom",
+    "away_team": "Cracovia Krak\u00f3w",
+    "commence_time": "2026-08-29T10:15:00+00:00",
+    "status": "completed",
+    "home_score": 2,
+    "away_score": 1,
+    "win_probability_sources": {
+     "betting": {
+      "value": 0.9908,
+      "updated_at": "2026-08-29T12:10:14.894413+00:00"
+     },
+     "betting_book_count": 5
+    },
+    "current_odds": {
+     "home_probability": 0.9908,
+     "away_probability": 0.0092,
+     "home_rendered_percent": 99,
+     "away_rendered_percent": 1
+    },
+    "opening_odds": {
+     "home_probability": 0.4476,
+     "away_probability": 0.5524,
+     "favorite": "away"
+    },
+    "highlight": {
+     "label": "Recent upset"
+    },
+    "ei": {
+     "score": 63,
+     "label": "Engaging"
+    },
+    "pulse": {
+     "score": 63,
+     "label": "Engaging"
+    },
+    "event_tags": [
+     "class:other",
+     "ei:engaging",
+     "gender:men",
+     "importance:regular_season",
+     "level:professional",
+     "signal:blowout",
+     "signal:favorite_switched",
+     "signal:line_moving",
+     "signal:upset",
+     "sport:soccer",
+     "status:completed",
+     "tier:4",
+     "timing:weekend"
+    ],
+    "temporal_badge": null,
+    "sport_label": "EKSTRAKLASA",
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "sources_agree": false,
+     "has_closing_line": false
+    }
+   }
+  },
+  {
+   "type": "event",
+   "score": 90,
+   "reason": "Won as 47% underdog",
+   "headline": "Recent upset",
+   "data": {
+    "id": 15290845,
+    "external_id": "701de6c804f6918dc41faeffc7491665",
+    "sport": "soccer_japan_j_league",
+    "sport_name": "J League",
+    "home_team": "Nagoya Grampus",
+    "away_team": "Fagiano Okayama",
+    "commence_time": "2026-08-29T10:00:00+00:00",
+    "status": "completed",
+    "home_score": 2,
+    "away_score": 1,
+    "win_probability_sources": {
+     "betting": {
+      "value": 0.9949,
+      "updated_at": "2026-08-29T12:02:15.066778+00:00"
+     },
+     "betting_book_count": 5
+    },
+    "current_odds": {
+     "home_probability": 0.9949,
+     "away_probability": 0.0051,
+     "home_rendered_percent": 99,
+     "away_rendered_percent": 1
+    },
+    "opening_odds": {
+     "home_probability": 0.4664,
+     "away_probability": 0.5336,
+     "favorite": "away"
+    },
+    "highlight": {
+     "label": "Recent upset"
+    },
+    "ei": {
+     "score": 60,
+     "label": "Competitive"
+    },
+    "pulse": {
+     "score": 60,
+     "label": "Competitive"
+    },
+    "event_tags": [
+     "class:other",
+     "ei:engaging",
+     "gender:men",
+     "importance:regular_season",
+     "level:professional",
+     "signal:blowout",
+     "signal:favorite_switched",
+     "signal:line_moving",
+     "signal:upset",
+     "sport:soccer",
+     "status:completed",
+     "tier:4",
+     "timing:weekend"
+    ],
+    "temporal_badge": null,
+    "sport_label": "LEAGUE",
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "sources_agree": false,
+     "has_closing_line": false
+    }
+   }
+  },
+  {
+   "type": "futures",
+   "score": 82,
+   "reason": "New favorite: Spain (22%) now leads 2027 FIFA Women's World Cup Champion",
+   "headline": "New favorite: Spain (22%)",
+   "context_summary": "New favorite: Spain (22%)",
+   "data": {
+    "id": 56775503,
+    "name": "2027 FIFA Women's World Cup Champion",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "soccer",
+    "source": "kalshi",
+    "source_count": 1,
+    "sources": [
+     "kalshi"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2027-08-09T02:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 210850495,
+      "name": "Spain",
+      "probability": 0.216,
+      "rank": 1,
+      "movement": null
+     },
+     {
+      "id": 210850496,
+      "name": "USA",
+      "probability": 0.1631,
+      "rank": 2,
+      "movement": null
+     },
+     {
+      "id": 210850498,
+      "name": "England",
+      "probability": 0.0769,
+      "rank": 3,
+      "movement": null
+     }
+    ],
+    "outcome_count": 32,
+    "canonical_market_key": "soccer:FIFA_WC:championship:2027",
+    "group_id": "kalshi:KXWCW-27",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Spain",
+       "probability": 0.216,
+       "movement": 0.0
+      },
+      {
+       "label": "USA",
+       "probability": 0.1631,
+       "movement": 0.0
+      },
+      {
+       "label": "England",
+       "probability": 0.0769,
+       "movement": 0.0
+      },
+      {
+       "label": "Brazil",
+       "probability": 0.0671,
+       "movement": 0.0
+      },
+      {
+       "label": "Japan",
+       "probability": 0.0342,
+       "movement": 0.0
+      },
+      {
+       "label": "Germany",
+       "probability": 0.0306,
+       "movement": null
+      },
+      {
+       "label": "France",
+       "probability": 0.028,
+       "movement": null
+      },
+      {
+       "label": "Colombia",
+       "probability": 0.0276,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 24,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/30986212/pexels-photo-30986212.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.3529,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 30.59,
+    "interestingness_reasons": [
+     "decisive_but_not_settled"
+    ],
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:soccer",
+     "tier:1"
+    ],
+    "story_key": "story:fifa_world_cup"
+   }
+  },
+  {
+   "type": "event",
+   "score": 78,
+   "reason": "Starting soon \u2014 close matchup",
+   "headline": "Close matchup",
+   "data": {
+    "id": 15290718,
+    "external_id": "931ebda6d25d5a326182b4d9aaef50a3",
+    "sport": "soccer_spain_la_liga",
+    "sport_name": "La Liga - Spain",
+    "home_team": "Levante",
+    "away_team": "Real Betis",
+    "commence_time": "2026-08-29T15:00:00+00:00",
+    "status": "scheduled",
+    "home_score": null,
+    "away_score": null,
+    "win_probability_sources": {
+     "betting": {
+      "value": 0.4064,
+      "updated_at": "2026-08-29T14:23:04.611075+00:00"
+     },
+     "betting_book_count": 8
+    },
+    "current_odds": {
+     "home_probability": 0.4064,
+     "away_probability": 0.5936,
+     "home_rendered_percent": 41,
+     "away_rendered_percent": 59
+    },
+    "opening_odds": {
+     "home_probability": 0.4064,
+     "away_probability": 0.5936,
+     "favorite": "away"
+    },
+    "highlight": {
+     "label": "Close matchup"
+    },
+    "event_tags": [
+     "class:international",
+     "gender:men",
+     "importance:regular_season",
+     "league:la_liga",
+     "level:professional",
+     "signal:close_matchup",
+     "signal:starting_soon",
+     "sport:soccer",
+     "status:scheduled",
+     "tier:1",
+     "timing:national_tv",
+     "timing:weekend"
+    ],
+    "temporal_badge": null,
+    "sport_label": "LIGA",
+    "confidence_tier": "low",
+    "confidence_score": 0.3529,
+    "confidence_signals": {
+     "sources_agree": false,
+     "has_closing_line": false
+    },
+    "home_team_data": {
+     "team_id": 2207,
+     "slug": "levante",
+     "primary_color": "#C8142F",
+     "secondary_color": "#000000",
+     "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/1538.png",
+     "logo_large": "https://a.espncdn.com/i/teamlogos/soccer/500/1538.png",
+     "record": "0-1-1",
+     "abbreviation": "LEV"
+    },
+    "away_team_data": {
+     "team_id": 2194,
+     "slug": "real-betis",
+     "primary_color": "#288A00",
+     "secondary_color": "#0A422D",
+     "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/244.png",
+     "logo_large": "https://a.espncdn.com/i/teamlogos/soccer/500/244.png",
+     "record": "2-0-0",
+     "abbreviation": "BET"
+    }
+   }
+  },
+  {
+   "type": "event",
+   "score": 78,
+   "reason": "",
+   "headline": null,
+   "data": {
+    "id": 15290887,
+    "external_id": "feafb731d0307bc91a58e18187aa2eab",
+    "sport": "soccer_epl",
+    "sport_name": "EPL",
+    "home_team": "Liverpool",
+    "away_team": "Nottingham Forest",
+    "commence_time": "2026-08-29T11:30:00+00:00",
+    "status": "closed",
+    "home_score": 2,
+    "away_score": 2,
+    "win_probability_sources": {
+     "betting": {
+      "value": 0.7046,
+      "updated_at": "2026-08-29T13:41:06.057141+00:00"
+     },
+     "betting_book_count": 4
+    },
+    "current_odds": {
+     "home_probability": 0.7046,
+     "away_probability": 0.2954,
+     "home_rendered_percent": 70,
+     "away_rendered_percent": 30
+    },
+    "opening_odds": {
+     "home_probability": 0.8149,
+     "away_probability": 0.1851,
+     "favorite": "home"
+    },
+    "ei": {
+     "score": 71,
+     "label": "Exciting"
+    },
+    "pulse": {
+     "score": 71,
+     "label": "Exciting"
+    },
+    "event_tags": [
+     "class:international",
+     "ei:exciting",
+     "gender:men",
+     "importance:regular_season",
+     "league:epl",
+     "level:professional",
+     "sport:soccer",
+     "status:closed",
+     "tier:1",
+     "timing:weekend"
+    ],
+    "temporal_badge": null,
+    "sport_label": "EPL",
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "sources_agree": false,
+     "has_closing_line": false
+    },
+    "away_team_data": {
+     "team_id": 14533,
+     "slug": null,
+     "primary_color": "#c8102e",
+     "secondary_color": "#132257",
+     "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/393.png",
+     "logo_large": "https://a.espncdn.com/i/teamlogos/soccer/500/393.png",
+     "record": "11-11-16",
+     "abbreviation": "NFO"
+    }
+   }
+  },
+  {
+   "type": "event",
+   "score": 75,
+   "reason": "Won as 20% underdog",
+   "headline": "Recent upset",
+   "data": {
+    "id": 15290776,
+    "external_id": "79c34a357b906050a47b65db9116288a",
+    "sport": "soccer_poland_ekstraklasa",
+    "sport_name": "Ekstraklasa - Poland",
+    "home_team": "Legia Warszawa",
+    "away_team": "\u015al\u0105sk Wroc\u0142aw",
+    "commence_time": "2026-08-28T18:30:00+00:00",
+    "status": "completed",
+    "home_score": 1,
+    "away_score": 1,
+    "win_probability_sources": {
+     "betting": {
+      "value": 0.0129,
+      "updated_at": "2026-08-28T20:31:27.845248+00:00"
+     },
+     "betting_book_count": 5
+    },
+    "current_odds": {
+     "home_probability": 0.0129,
+     "away_probability": 0.9871,
+     "home_rendered_percent": 1,
+     "away_rendered_percent": 99
+    },
+    "opening_odds": {
+     "home_probability": 0.8025,
+     "away_probability": 0.1975,
+     "favorite": "home"
+    },
+    "highlight": {
+     "label": "Recent upset"
+    },
+    "ei": {
+     "score": 50,
+     "label": "Steady"
+    },
+    "pulse": {
+     "score": 50,
+     "label": "Steady"
+    },
+    "event_tags": [
+     "class:other",
+     "ei:competitive",
+     "gender:men",
+     "importance:regular_season",
+     "level:professional",
+     "signal:blowout",
+     "signal:favorite_switched",
+     "signal:line_moving",
+     "signal:upset",
+     "sport:soccer",
+     "status:completed",
+     "tier:4"
+    ],
+    "temporal_badge": null,
+    "sport_label": "EKSTRAKLASA",
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "sources_agree": false,
+     "has_closing_line": false
+    }
+   }
+  },
+  {
+   "type": "event",
+   "score": 75,
+   "reason": "Won as 37% underdog",
+   "headline": "Recent upset",
+   "data": {
+    "id": 15291283,
+    "external_id": "70ba2e884c08f1fd488e711c13f1bd17",
+    "sport": "soccer_turkey_super_league",
+    "sport_name": "Turkey Super League",
+    "home_team": "Genclerbirligi SK",
+    "away_team": "Erzurum BB",
+    "commence_time": "2026-08-28T18:30:00+00:00",
+    "status": "completed",
+    "home_score": 1,
+    "away_score": 1,
+    "win_probability_sources": {
+     "betting": {
+      "value": 0.4649,
+      "updated_at": "2026-08-28T20:31:29.873577+00:00"
+     },
+     "betting_book_count": 4
+    },
+    "current_odds": {
+     "home_probability": 0.4649,
+     "away_probability": 0.5351,
+     "home_rendered_percent": 46,
+     "away_rendered_percent": 54
+    },
+    "opening_odds": {
+     "home_probability": 0.6296,
+     "away_probability": 0.3705,
+     "favorite": "home"
+    },
+    "highlight": {
+     "label": "Recent upset"
+    },
+    "ei": {
+     "score": 61,
+     "label": "Engaging"
+    },
+    "pulse": {
+     "score": 61,
+     "label": "Engaging"
+    },
+    "event_tags": [
+     "class:other",
+     "ei:engaging",
+     "gender:men",
+     "importance:regular_season",
+     "level:professional",
+     "signal:close_matchup",
+     "signal:favorite_switched",
+     "signal:line_moving",
+     "signal:upset",
+     "signal:very_close",
+     "sport:soccer",
+     "status:completed",
+     "tier:4"
+    ],
+    "temporal_badge": null,
+    "sport_label": "LEAGUE",
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "sources_agree": false,
+     "has_closing_line": false
+    }
+   }
+  },
+  {
+   "type": "futures",
+   "score": 74,
+   "reason": "Multiple ranking changes in 2030 FIFA World Cup Champion",
+   "headline": "Multiple ranking changes",
+   "context_summary": "Multiple ranking changes; Spain leads at 12%",
+   "data": {
+    "id": 56775477,
+    "name": "2030 FIFA World Cup Champion",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "soccer",
+    "source": "kalshi",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2031-01-15T03:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 210850304,
+      "name": "Spain",
+      "probability": 0.1235,
+      "rank": 1,
+      "movement": null
+     },
+     {
+      "id": 210850305,
+      "name": "France",
+      "probability": 0.1185,
+      "rank": 2,
+      "movement": null
+     },
+     {
+      "id": 210850308,
+      "name": "England",
+      "probability": 0.0705,
+      "rank": 3,
+      "movement": null
+     }
+    ],
+    "outcome_count": 82,
+    "canonical_market_key": "soccer:FIFA_WC:championship:2030",
+    "group_id": "kalshi:KXWC-30",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Spain",
+       "probability": 0.1235,
+       "movement": 0.0
+      },
+      {
+       "label": "France",
+       "probability": 0.1185,
+       "movement": 0.0
+      },
+      {
+       "label": "England",
+       "probability": 0.0705,
+       "movement": 0.0
+      },
+      {
+       "label": "Brazil",
+       "probability": 0.0605,
+       "movement": 0.0
+      },
+      {
+       "label": "Argentina",
+       "probability": 0.0555,
+       "movement": -0.0005
+      },
+      {
+       "label": "Germany",
+       "probability": 0.0455,
+       "movement": null
+      },
+      {
+       "label": "Portugal",
+       "probability": 0.0405,
+       "movement": null
+      },
+      {
+       "label": "Italy",
+       "probability": 0.0365,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 74,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/38546953/pexels-photo-38546953.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 40.22,
+    "interestingness_reasons": [
+     "multi_source"
+    ],
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:soccer",
+     "tier:1"
+    ],
+    "story_key": "story:fifa_world_cup"
+   }
+  },
+  {
+   "type": "event",
+   "score": 73,
+   "reason": "",
+   "headline": "Overtime",
+   "data": {
+    "id": 15290889,
+    "external_id": "374dd92785cc06d6514d275515219c44",
+    "sport": "soccer_epl",
+    "sport_name": "EPL",
+    "home_team": "Coventry City",
+    "away_team": "Hull City",
+    "commence_time": "2026-08-29T14:00:00+00:00",
+    "status": "live",
+    "home_score": 0,
+    "away_score": 0,
+    "win_probability_sources": {
+     "betting": {
+      "value": 0.7317,
+      "updated_at": "2026-08-29T14:31:32.540896+00:00"
+     },
+     "betting_book_count": 7
+    },
+    "espn": {
+     "game_clock": "32'",
+     "period": "32'",
+     "broadcast": "USA Net, Universo"
+    },
+    "current_odds": {
+     "home_probability": 0.7317,
+     "away_probability": 0.2683,
+     "home_rendered_percent": 73,
+     "away_rendered_percent": 27
+    },
+    "opening_odds": {
+     "home_probability": 0.7363,
+     "away_probability": 0.2637,
+     "favorite": "home"
+    },
+    "highlight": {
+     "label": "Overtime"
+    },
+    "event_tags": [
+     "class:international",
+     "ei:flat",
+     "gender:men",
+     "importance:regular_season",
+     "league:epl",
+     "level:professional",
+     "sport:soccer",
+     "status:live",
+     "tier:1",
+     "timing:weekend"
+    ],
+    "temporal_badge": "Live",
+    "sport_label": "EPL",
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "sources_agree": false,
+     "has_closing_line": false
+    }
+   }
+  },
+  {
+   "type": "event",
+   "score": 73,
+   "reason": "Won as 40% underdog",
+   "headline": "Recent upset",
+   "data": {
+    "id": 15290904,
+    "external_id": "88f6e98e0a411a087ad525ca91bf5765",
+    "sport": "soccer_efl_champ",
+    "sport_name": "Championship",
+    "home_team": "Wrexham AFC",
+    "away_team": "Birmingham City",
+    "commence_time": "2026-08-28T19:00:00+00:00",
+    "status": "completed",
+    "home_score": 1,
+    "away_score": 2,
+    "win_probability_sources": {
+     "betting": {
+      "value": 0.0044,
+      "updated_at": "2026-08-28T20:58:20.273452+00:00"
+     },
+     "betting_book_count": 5
+    },
+    "current_odds": {
+     "home_probability": 0.0044,
+     "away_probability": 0.9956,
+     "home_rendered_percent": 0,
+     "away_rendered_percent": 100
+    },
+    "opening_odds": {
+     "home_probability": 0.6018,
+     "away_probability": 0.3982,
+     "favorite": "home"
+    },
+    "highlight": {
+     "label": "Recent upset"
+    },
+    "ei": {
+     "score": 70,
+     "label": "Engaging"
+    },
+    "pulse": {
+     "score": 70,
+     "label": "Engaging"
+    },
+    "event_tags": [
+     "class:international",
+     "ei:exciting",
+     "gender:men",
+     "importance:regular_season",
+     "league:efl_champ",
+     "level:professional",
+     "signal:blowout",
+     "signal:favorite_switched",
+     "signal:line_moving",
+     "signal:upset",
+     "sport:soccer",
+     "status:completed",
+     "tier:3"
+    ],
+    "temporal_badge": null,
+    "sport_label": "CHAMP",
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "sources_agree": false,
+     "has_closing_line": false
+    }
+   }
+  },
+  {
+   "type": "event",
+   "score": 73,
+   "reason": "Won as 20% underdog",
+   "headline": "Recent upset",
+   "data": {
+    "id": 15291075,
+    "external_id": "946273bdad401ca89b719298ab36aefb",
+    "sport": "soccer_netherlands_eredivisie",
+    "sport_name": "Dutch Eredivisie",
+    "home_team": "Groningen",
+    "away_team": "Fortuna Sittard",
+    "commence_time": "2026-08-28T18:00:00+00:00",
+    "status": "completed",
+    "home_score": 2,
+    "away_score": 3,
+    "win_probability_sources": {
+     "betting": {
+      "value": 0.003,
+      "updated_at": "2026-08-28T20:02:48.386112+00:00"
+     },
+     "betting_book_count": 5
+    },
+    "current_odds": {
+     "home_probability": 0.003,
+     "away_probability": 0.997,
+     "home_rendered_percent": 0,
+     "away_rendered_percent": 100
+    },
+    "opening_odds": {
+     "home_probability": 0.7975,
+     "away_probability": 0.2025,
+     "favorite": "home"
+    },
+    "highlight": {
+     "label": "Recent upset"
+    },
+    "ei": {
+     "score": 65,
+     "label": "Engaging"
+    },
+    "pulse": {
+     "score": 65,
+     "label": "Engaging"
+    },
+    "event_tags": [
+     "class:international",
+     "ei:engaging",
+     "gender:men",
+     "importance:regular_season",
+     "league:eredivisie",
+     "level:professional",
+     "signal:blowout",
+     "signal:favorite_switched",
+     "signal:line_moving",
+     "signal:upset",
+     "sport:soccer",
+     "status:completed",
+     "tier:3"
+    ],
+    "temporal_badge": null,
+    "sport_label": "EREDIVISIE",
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "sources_agree": false,
+     "has_closing_line": false
+    }
+   }
+  }
+ ],
+ "total": 12,
+ "limit": 50,
+ "offset": 0,
+ "has_more": false,
+ "cache": {
+  "status": "miss",
+  "built_at": 1788013969.3452919,
+  "ttl_seconds": 60,
+  "stale_ttl_seconds": 300,
+  "live": false
+ }
+}

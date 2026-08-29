@@ -3192,8 +3192,10 @@ async def search_events(
         try:
             tag_list = _json.loads(tags)
             if isinstance(tag_list, list) and tag_list:
+                from app.utils.jsonb_containment import jsonb_contains
+
                 event_scope_conditions.append(
-                    Event.event_tags.op("@>")(cast(_json.dumps(tag_list), JSONB))
+                    jsonb_contains(Event.event_tags, tag_list)
                 )
         except (ValueError, TypeError):
             pass
