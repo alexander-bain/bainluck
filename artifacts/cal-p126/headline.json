@@ -1,0 +1,31 @@
+{
+ "generated_at": "2026-08-29T00:36:47.978149+00:00",
+ "published_closing": 1.89,
+ "published_opening": 1.54,
+ "reproduced_closing": 1.89,
+ "reproduced_opening": 1.54,
+ "reproduction_exact": true,
+ "dedup_closing": 2.31,
+ "dedup_opening": 1.62,
+ "delta_closing": 0.42,
+ "delta_opening": 0.08,
+ "outcomes_published": 913851,
+ "outcomes_dedup": 760430.6,
+ "substituted": 240,
+ "untouched": 1723,
+ "rail_only": [],
+ "cells": [
+  "kalshi/baseball",
+  "kalshi/basketball",
+  "kalshi/football",
+  "kalshi/hockey",
+  "kalshi/soccer",
+  "polymarket/basketball",
+  "polymarket/cricket",
+  "polymarket/economics",
+  "polymarket/entertainment",
+  "polymarket/golf",
+  "polymarket/politics",
+  "polymarket/weather"
+ ]
+}
