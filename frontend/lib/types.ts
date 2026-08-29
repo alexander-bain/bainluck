@@ -215,8 +215,20 @@ export interface EventDetailResponse extends Event {
    */
   hero_probability?: number;
   hero_probability_away?: number;
-  /** "blend" when the aggregate exists, "opening" when only the opening line does. */
-  hero_probability_source?: "blend" | "opening";
+  /**
+   * "blend" when the aggregate exists, "opening" when only the opening line does,
+   * "settled" when the game is over and the hero is the RESULT (Q441/#1495).
+   *
+   * "settled" is deliberately a new word rather than a reused "blend": every read
+   * site that means "a live blended price" gates on the literal string "blend", so
+   * a resolved result labelled "blend" would render as "Live · Bain Luck blend" on
+   * a finished game. It is set only for `status='completed'` with a real completion
+   * timestamp — never for `closed`, whose scores are frozen mid-game and invert the
+   * winner (backend/app/utils/settled_hero.py carries the measurement).
+   */
+  hero_probability_source?: "blend" | "opening" | "settled";
+  /** Present only alongside `hero_probability_source === "settled"`. */
+  hero_settled_result?: "home" | "away" | "draw";
   bookmaker_odds?: BookmakerOddsDetail[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */

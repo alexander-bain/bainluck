@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { EventDetailResponse } from "@/lib/types";
-import { buildShareUrl, formatShareProbability, truncateShareText } from "@/lib/share";
+import { buildShareUrl } from "@/lib/share";
+import { buildEventShareCopy, withSiteSuffix } from "@/lib/eventShareMeta";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.bainluck.com").replace(/\/$/, "");
 
@@ -19,18 +20,6 @@ async function fetchEvent(id: string): Promise<EventDetailResponse | null> {
   }
 }
 
-function statusLabel(event: EventDetailResponse): string {
-  if (event.status === "live") return "Live now";
-  if (event.status === "completed" || event.status === "closed") return "Final";
-  const start = new Date(event.commence_time);
-  if (Number.isNaN(start.getTime())) return "Upcoming";
-  return start.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-}
-
 export async function generateMetadata({
   params,
 }: {
@@ -45,17 +34,15 @@ export async function generateMetadata({
     };
   }
 
-  const homeProbability = formatShareProbability(event.current_odds?.home_probability);
-  const awayProbability = formatShareProbability(event.current_odds?.away_probability);
+  // Q441/#1495: a settled event leads with the RESULT, not with the last price
+  // captured before the final whistle. The copy decision lives in a pure module so
+  // it is testable without a browser; this layout only wires it.
   const matchup = `${event.away_team} vs ${event.home_team}`;
-  const title = homeProbability && awayProbability
-    ? `${matchup}: ${event.home_team} ${homeProbability}, ${event.away_team} ${awayProbability} | Bain Luck`
-    : `${matchup} Odds | Bain Luck`;
-  const description = truncateShareText(
-    homeProbability && awayProbability
-      ? `${statusLabel(event)}. Bain Luck gives ${event.home_team} a ${homeProbability} win probability and ${event.away_team} a ${awayProbability} win probability.`
-      : `${statusLabel(event)}. Follow ${matchup} with probability-first odds on Bain Luck.`
-  );
+  const { title, description } = buildEventShareCopy(event);
+  // The root layout's metadata template is `%s | Bain Luck`, so `title` must NOT
+  // carry a suffix — appending one here is what printed `| Bain Luck | Bain Luck`
+  // on every event page. og:/twitter: bypass the template and so add it explicitly.
+  const socialTitle = withSiteSuffix(title);
   const url = buildShareUrl(`/events/${event.id}`);
   const image = buildShareUrl(`/events/${event.id}/opengraph-image`);
 
@@ -64,7 +51,7 @@ export async function generateMetadata({
     description,
     alternates: { canonical: url },
     openGraph: {
-      title,
+      title: socialTitle,
       description,
       url,
       siteName: "Bain Luck",
@@ -73,7 +60,7 @@ export async function generateMetadata({
     },
     twitter: {
       card: "summary_large_image",
-      title,
+      title: socialTitle,
       description,
       images: [image],
     },
