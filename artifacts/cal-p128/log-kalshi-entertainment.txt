@@ -1,0 +1,85 @@
+    [1/60] ids 171-1000171 (0s elapsed)
+    [2/60] ids 1000171-2000171 (2s elapsed)
+    [3/60] ids 2000171-3000171 (2s elapsed)
+    [4/60] ids 3000171-4000171 (3s elapsed)
+    [5/60] ids 4000171-5000171 (4s elapsed)
+    [6/60] ids 5000171-6000171 (5s elapsed)
+    [7/60] ids 6000171-7000171 (6s elapsed)
+    [8/60] ids 7000171-8000171 (7s elapsed)
+    [9/60] ids 8000171-9000171 (8s elapsed)
+    [10/60] ids 9000171-10000171 (11s elapsed)
+    [11/60] ids 10000171-11000171 (12s elapsed)
+    [12/60] ids 11000171-12000171 (13s elapsed)
+    [13/60] ids 12000171-13000171 (14s elapsed)
+    [14/60] ids 13000171-14000171 (17s elapsed)
+    [15/60] ids 14000171-15000171 (18s elapsed)
+    [16/60] ids 15000171-16000171 (19s elapsed)
+    [17/60] ids 16000171-17000171 (21s elapsed)
+    [18/60] ids 17000171-18000171 (22s elapsed)
+    [19/60] ids 18000171-19000171 (23s elapsed)
+    [20/60] ids 19000171-20000171 (23s elapsed)
+    [21/60] ids 20000171-21000171 (25s elapsed)
+    [22/60] ids 21000171-22000171 (26s elapsed)
+    [23/60] ids 22000171-23000171 (27s elapsed)
+    [24/60] ids 23000171-24000171 (28s elapsed)
+    [25/60] ids 24000171-25000171 (28s elapsed)
+    [26/60] ids 25000171-26000171 (29s elapsed)
+    [27/60] ids 26000171-27000171 (33s elapsed)
+    [28/60] ids 27000171-28000171 (34s elapsed)
+    [29/60] ids 28000171-29000171 (35s elapsed)
+    [30/60] ids 29000171-30000171 (36s elapsed)
+    [31/60] ids 30000171-31000171 (37s elapsed)
+    [32/60] ids 31000171-32000171 (38s elapsed)
+    [33/60] ids 32000171-33000171 (39s elapsed)
+    [34/60] ids 33000171-34000171 (40s elapsed)
+    [35/60] ids 34000171-35000171 (41s elapsed)
+    [36/60] ids 35000171-36000171 (42s elapsed)
+    [37/60] ids 36000171-37000171 (43s elapsed)
+    [38/60] ids 37000171-38000171 (43s elapsed)
+    [39/60] ids 38000171-39000171 (44s elapsed)
+    [40/60] ids 39000171-40000171 (44s elapsed)
+    [41/60] ids 40000171-41000171 (45s elapsed)
+    [42/60] ids 41000171-42000171 (46s elapsed)
+    [43/60] ids 42000171-43000171 (46s elapsed)
+    [44/60] ids 43000171-44000171 (46s elapsed)
+    [45/60] ids 44000171-45000171 (47s elapsed)
+    [46/60] ids 45000171-46000171 (47s elapsed)
+    [47/60] ids 46000171-47000171 (48s elapsed)
+    [48/60] ids 47000171-48000171 (48s elapsed)
+    [49/60] ids 48000171-49000171 (49s elapsed)
+    [50/60] ids 49000171-50000171 (49s elapsed)
+    [51/60] ids 50000171-51000171 (50s elapsed)
+    [52/60] ids 51000171-52000171 (51s elapsed)
+    [53/60] ids 52000171-53000171 (51s elapsed)
+    [54/60] ids 53000171-54000171 (52s elapsed)
+    [55/60] ids 54000171-55000171 (55s elapsed)
+    [56/60] ids 55000171-56000171 (56s elapsed)
+    [57/60] ids 56000171-57000171 (59s elapsed)
+    [58/60] ids 57000171-58000171 (60s elapsed)
+    [59/60] ids 58000171-59000171 (61s elapsed)
+    [60/60] ids 59000171-59750188 (62s elapsed)
+kalshi/entertainment   (cluster sigma, 66s sweep, 2000 resamples, seed 20260829)
+  curve generated 2026-08-29T00:36:47.978149+00:00  population q268
+
+  SELF-CHECK — the producer's own chain against the payload it produced
+    exact replica    n=   8471  ECE=  5.12  gap=  +0.87
+    payload          n=   8355  ECE=  5.21  gap=  +1.07
+    delta            n=   +116 (+1.39%)  ECE=-0.09  gap=-0.20
+
+  CLUSTERS — one published row's independent unit is its MARKET
+    published rows            8471
+    distinct markets          1559
+    rows per market           5.43
+
+  SIGMA — class C_exchange_standalone, bar 3.0 pp, ECE 5.12 pp, excess +2.12 pp
+    basis                                 SE pp    sigma
+    row grain (the board today)           0.543     3.90
+    market grain (perfect-corr bound)     1.266     1.67
+    cluster bootstrap (MEASURED)          0.489     4.34
+
+    bootstrap ECE 95% interval  [4.21, 6.14] pp
+    design effect (SE_boot/SE_row)^2  0.81
+
+  VERDICT  ESTABLISHED — measured sigma 4.34 against SIGMA_GATE 2.0
+
+  wrote artifacts/cal-p128/sigma-kalshi-entertainment.json

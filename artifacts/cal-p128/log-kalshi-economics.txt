@@ -1,0 +1,86 @@
+    [1/60] ids 171-1000171 (0s elapsed)
+    [2/60] ids 1000171-2000171 (3s elapsed)
+    [3/60] ids 2000171-3000171 (5s elapsed)
+    [4/60] ids 3000171-4000171 (6s elapsed)
+    [5/60] ids 4000171-5000171 (7s elapsed)
+    [6/60] ids 5000171-6000171 (8s elapsed)
+    [7/60] ids 6000171-7000171 (9s elapsed)
+    [8/60] ids 7000171-8000171 (12s elapsed)
+    [9/60] ids 8000171-9000171 (17s elapsed)
+    [10/60] ids 9000171-10000171 (26s elapsed)
+    [11/60] ids 10000171-11000171 (51s elapsed)
+    [12/60] ids 11000171-12000171 (60s elapsed)
+    [13/60] ids 12000171-13000171 (70s elapsed)
+    [14/60] ids 13000171-14000171 (98s elapsed)
+    [15/60] ids 14000171-15000171 (104s elapsed)
+    [16/60] ids 15000171-16000171 (104s elapsed)
+    [17/60] ids 16000171-17000171 (113s elapsed)
+    [18/60] ids 17000171-18000171 (115s elapsed)
+    [19/60] ids 18000171-19000171 (116s elapsed)
+    [20/60] ids 19000171-20000171 (116s elapsed)
+    [21/60] ids 20000171-21000171 (118s elapsed)
+    [22/60] ids 21000171-22000171 (118s elapsed)
+    [23/60] ids 22000171-23000171 (119s elapsed)
+    [24/60] ids 23000171-24000171 (119s elapsed)
+    [25/60] ids 24000171-25000171 (120s elapsed)
+    [26/60] ids 25000171-26000171 (121s elapsed)
+    [27/60] ids 26000171-27000171 (122s elapsed)
+    [28/60] ids 27000171-28000171 (123s elapsed)
+    [29/60] ids 28000171-29000171 (125s elapsed)
+    [30/60] ids 29000171-30000171 (126s elapsed)
+    [31/60] ids 30000171-31000171 (127s elapsed)
+    [32/60] ids 31000171-32000171 (129s elapsed)
+    [33/60] ids 32000171-33000171 (130s elapsed)
+    [34/60] ids 33000171-34000171 (131s elapsed)
+    [35/60] ids 34000171-35000171 (132s elapsed)
+    [36/60] ids 35000171-36000171 (133s elapsed)
+    [37/60] ids 36000171-37000171 (133s elapsed)
+    [38/60] ids 37000171-38000171 (134s elapsed)
+    [39/60] ids 38000171-39000171 (134s elapsed)
+    [40/60] ids 39000171-40000171 (135s elapsed)
+    [41/60] ids 40000171-41000171 (135s elapsed)
+    [42/60] ids 41000171-42000171 (136s elapsed)
+    [43/60] ids 42000171-43000171 (136s elapsed)
+    [44/60] ids 43000171-44000171 (137s elapsed)
+    [45/60] ids 44000171-45000171 (137s elapsed)
+    [46/60] ids 45000171-46000171 (137s elapsed)
+    [47/60] ids 46000171-47000171 (138s elapsed)
+    [48/60] ids 47000171-48000171 (138s elapsed)
+    [49/60] ids 48000171-49000171 (139s elapsed)
+    [50/60] ids 49000171-50000171 (139s elapsed)
+    [51/60] ids 50000171-51000171 (140s elapsed)
+    [52/60] ids 51000171-52000171 (140s elapsed)
+    [53/60] ids 52000171-53000171 (140s elapsed)
+    [54/60] ids 53000171-54000171 (143s elapsed)
+    [55/60] ids 54000171-55000171 (146s elapsed)
+    [56/60] ids 55000171-56000171 (146s elapsed)
+    [57/60] ids 56000171-57000171 (227s elapsed)
+    [58/60] ids 57000171-58000171 (234s elapsed)
+    [59/60] ids 58000171-59000171 (253s elapsed)
+    [60/60] ids 59000171-59750188 (325s elapsed)
+kalshi/economics   (cluster sigma, 335s sweep, 2000 resamples, seed 20260829)
+  curve generated 2026-08-29T00:36:47.978149+00:00  population q268
+
+  SELF-CHECK — the producer's own chain against the payload it produced
+    exact replica    n=  29397  ECE=  5.17  gap=  -0.55
+    payload          n=  28613  ECE=  5.29  gap=  -0.47
+    delta            n=   +784 (+2.74%)  ECE=-0.12  gap=-0.08
+
+  CLUSTERS — one published row's independent unit is its MARKET
+    published rows           29397
+    distinct markets          2058
+    rows per market          14.28
+
+  SIGMA — class C_exchange_standalone, bar 3.0 pp, ECE 5.17 pp, excess +2.17 pp
+    basis                                 SE pp    sigma
+    row grain (the board today)           0.292     7.44
+    market grain (perfect-corr bound)     1.102     1.97
+    cluster bootstrap (MEASURED)          0.393     5.52
+
+    bootstrap ECE 95% interval  [4.40, 5.94] pp
+    design effect (SE_boot/SE_row)^2  1.82
+
+  VERDICT  ESTABLISHED — measured sigma 5.52 against SIGMA_GATE 2.0
+           the board reads 7.44; the cell survives the correction with margin to spare
+
+  wrote artifacts/cal-p128/sigma-kalshi-economics.json

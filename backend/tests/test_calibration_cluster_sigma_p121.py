@@ -157,6 +157,14 @@ SHIPPED_DIMENSIONS = {
     "none": ("'all'", "", ""),
     "age": ("AGE_EXPR", "AGE_JOIN", ""),
     "series": ("SERIES_EXPR", "SERIES_JOIN", ""),
+    # Added to the RAIL by CAL-P127. It belongs here, not in the "added by
+    # this module" set below: `calibration_cluster_sigma` still contributes
+    # exactly `marketid`. CAL-P127 registered it without extending this pinned
+    # copy, which turned `test_this_module_adds_exactly_one_dimension_and_no_more`
+    # red on the program branch — a guard accusing the wrong file. Listing it
+    # here also puts `golfround` under the rebinding guard below, which is
+    # where a new rail dimension wants to be anyway.
+    "golfround": ("GOLFROUND_EXPR", "GOLFROUND_JOIN", ""),
     "shape": ("SHAPE_EXPR", "SHAPE_JOIN", ""),
     "sumband": ("SUMBAND_EXPR", "SUMBAND_JOIN", "SUMBAND_PRE"),
     "pair": ("PAIR_EXPR", "PAIR_JOIN", ""),

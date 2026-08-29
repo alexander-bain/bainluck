@@ -1,0 +1,86 @@
+    [1/60] ids 112847-1112847 (0s elapsed)
+    [2/60] ids 1112847-2112847 (2s elapsed)
+    [3/60] ids 2112847-3112847 (3s elapsed)
+    [4/60] ids 3112847-4112847 (5s elapsed)
+    [5/60] ids 4112847-5112847 (6s elapsed)
+    [6/60] ids 5112847-6112847 (7s elapsed)
+    [7/60] ids 6112847-7112847 (9s elapsed)
+    [8/60] ids 7112847-8112847 (12s elapsed)
+    [9/60] ids 8112847-9112847 (15s elapsed)
+    [10/60] ids 9112847-10112847 (24s elapsed)
+    [11/60] ids 10112847-11112847 (25s elapsed)
+    [12/60] ids 11112847-12112847 (27s elapsed)
+    [13/60] ids 12112847-13112847 (32s elapsed)
+    [14/60] ids 13112847-14112847 (34s elapsed)
+    [15/60] ids 14112847-15112847 (39s elapsed)
+    [16/60] ids 15112847-16112847 (39s elapsed)
+    [17/60] ids 16112847-17112847 (40s elapsed)
+    [18/60] ids 17112847-18112847 (45s elapsed)
+    [19/60] ids 18112847-19112847 (46s elapsed)
+    [20/60] ids 19112847-20112847 (47s elapsed)
+    [21/60] ids 20112847-21112847 (48s elapsed)
+    [22/60] ids 21112847-22112847 (50s elapsed)
+    [23/60] ids 22112847-23112847 (51s elapsed)
+    [24/60] ids 23112847-24112847 (52s elapsed)
+    [25/60] ids 24112847-25112847 (53s elapsed)
+    [26/60] ids 25112847-26112847 (53s elapsed)
+    [27/60] ids 26112847-27112847 (55s elapsed)
+    [28/60] ids 27112847-28112847 (55s elapsed)
+    [29/60] ids 28112847-29112847 (56s elapsed)
+    [30/60] ids 29112847-30112847 (57s elapsed)
+    [31/60] ids 30112847-31112847 (60s elapsed)
+    [32/60] ids 31112847-32112847 (62s elapsed)
+    [33/60] ids 32112847-33112847 (65s elapsed)
+    [34/60] ids 33112847-34112847 (67s elapsed)
+    [35/60] ids 34112847-35112847 (68s elapsed)
+    [36/60] ids 35112847-36112847 (102s elapsed)
+    [37/60] ids 36112847-37112847 (216s elapsed)
+    [38/60] ids 37112847-38112847 (217s elapsed)
+    [39/60] ids 38112847-39112847 (217s elapsed)
+    [40/60] ids 39112847-40112847 (218s elapsed)
+    [41/60] ids 40112847-41112847 (218s elapsed)
+    [42/60] ids 41112847-42112847 (218s elapsed)
+    [43/60] ids 42112847-43112847 (219s elapsed)
+    [44/60] ids 43112847-44112847 (219s elapsed)
+    [45/60] ids 44112847-45112847 (220s elapsed)
+    [46/60] ids 45112847-46112847 (220s elapsed)
+    [47/60] ids 46112847-47112847 (220s elapsed)
+    [48/60] ids 47112847-48112847 (221s elapsed)
+    [49/60] ids 48112847-49112847 (221s elapsed)
+    [50/60] ids 49112847-50112847 (221s elapsed)
+    [51/60] ids 50112847-51112847 (222s elapsed)
+    [52/60] ids 51112847-52112847 (222s elapsed)
+    [53/60] ids 52112847-53112847 (223s elapsed)
+    [54/60] ids 53112847-54112847 (224s elapsed)
+    [55/60] ids 54112847-55112847 (225s elapsed)
+    [56/60] ids 55112847-56112847 (225s elapsed)
+    [57/60] ids 56112847-57112847 (226s elapsed)
+    [58/60] ids 57112847-58112847 (228s elapsed)
+    [59/60] ids 58112847-59112847 (237s elapsed)
+    [60/60] ids 59112847-59753139 (244s elapsed)
+polymarket/basketball   (cluster sigma, 249s sweep, 2000 resamples, seed 20260829)
+  curve generated 2026-08-29T00:36:47.978149+00:00  population q268
+
+  SELF-CHECK — the producer's own chain against the payload it produced
+    exact replica    n=   8426  ECE=  4.14  gap=  +3.51
+    payload          n=  13135  ECE=  4.24  gap=  +2.96
+    delta            n=  -4709 (-35.85%)  ECE=-0.10  gap=+0.55
+
+  CLUSTERS — one published row's independent unit is its MARKET
+    published rows            8426
+    distinct markets          1527
+    rows per market           5.52
+
+  SIGMA — class B_exchange_contest, bar 3.0 pp, ECE 4.14 pp, excess +1.14 pp
+    basis                                 SE pp    sigma
+    row grain (the board today)           0.545     2.09
+    market grain (perfect-corr bound)     1.280     0.89
+    cluster bootstrap (MEASURED)          0.824     1.38
+
+    bootstrap ECE 95% interval  [3.02, 6.21] pp
+    design effect (SE_boot/SE_row)^2  2.29
+
+  VERDICT  NOT ESTABLISHED — measured sigma 1.38 against SIGMA_GATE 2.0
+           the board reads 2.09 on the same ECE — the cell is over its bar on the point estimate and this sample cannot distinguish it from the bar
+
+  wrote artifacts/cal-p128/sigma-polymarket-basketball.json
