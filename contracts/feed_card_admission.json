@@ -143,6 +143,22 @@
       ]
     },
     {
+      "path": "frontend/components/RelatedByTag.tsx",
+      "symbol": "RENDERABLE",
+      "why": [
+        "A per-surface RENDERER allowlist, not the content-based admission rule. It",
+        "answers 'does this related-items row know how to DRAW this item type',",
+        "never 'does this item carry enough to be worth a card' — that question was",
+        "already settled server-side before the item arrived.",
+        "UX-P177 made it an allowlist because the list was INVERTED: `event`",
+        "rendered, `tournament` returned null, and every other type fell through to",
+        "the futures branch. `concept` and `bundle` carry no numeric `id`, so the",
+        "'More MMA' section on 251 mma + 163 motorsports futures detail pages",
+        "rendered four `/futures/undefined` links. Guarded by",
+        "`frontend/__tests__/capture/relatedByTagConceptCapture.test.tsx`."
+      ]
+    },
+    {
       "path": "backend/scripts/evals/nonfutures_envelope_renderability_contract.py",
       "symbol": "evaluate",
       "why": [

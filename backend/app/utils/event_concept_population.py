@@ -45,7 +45,7 @@ rather than trusting that measurement to hold (`event_concept_warmer.py`).
 from __future__ import annotations
 
 import logging
-from typing import Any, NamedTuple
+from typing import Any, Collection, NamedTuple
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +135,72 @@ PROJECTION_BY_CATEGORY: dict[str, tuple[str, ...]] = {
 }
 
 
-def _source_applies(aliases: tuple[str, ...], sport_filter: str | None) -> bool:
-    """A source runs when there is no filter, or the filter names it."""
-    return not sport_filter or sport_filter in aliases
+#: The `sport:` tag prefix the feed's static tag filter uses.
+SPORT_TAG_PREFIX = "sport:"
+
+#: Every alias that names a concept source, the `all` wildcard excluded.
+#:
+#: DERIVED from `CONCEPT_SOURCES`, and that is the whole point. `routes/feed.py`
+#: decided whether a `sport:`-tagged feed build should run the concept tier from
+#: its own hand-written `{"sport:mma", "sport:motorsports", "sport:f1"}` — a
+#: second copy of the vocabulary below, and it had already lost `cycling`, so a
+#: cycling surface skipped the tier that holds the grand tours. That is the
+#: exact trap this module was created for, one file over.
+CONCEPT_SPORT_ALIASES: frozenset[str] = frozenset(
+    alias for source in CONCEPT_SOURCES for alias in source.aliases if alias != "all"
+)
+
+
+def concept_filter_for_tags(
+    tags: Collection[str] | None,
+) -> tuple[bool, tuple[str, ...] | None]:
+    """Translate a feed build's static tags into a concept-tier filter.
+
+    Returns ``(skip, sport_filter)``:
+
+    * **no `sport:` tags** -> ``(False, None)``. The unfiltered feed; every
+      source runs, exactly as before.
+    * **tags naming at least one source** -> ``(False, (alias, …))``. ONLY those
+      sources run. This is the half that was missing: the gate in `feed.py`
+      admitted the build and then handed the builder no filter at all, so the
+      tier was gated by the sport tag and never filtered by it.
+    * **tags naming none of them** -> ``(True, None)``. The concept tier has
+      nothing to add to a soccer page, so it is skipped rather than built and
+      discarded — which is what the old gate got right and is preserved here.
+
+    Measured on production 2026-08-29, before the fix: `?tags=["sport:mma"]`
+    returned 16 concepts of which 5 were foreign (1 cycling + 4 F1), and
+    `?tags=["sport:motorsports"]` returned the *same 16*, of which 12 were.
+    `?tags=["sport:cycling"]` returned 0 — the missing-alias half of the same
+    defect, on the one surface where the Vuelta belongs.
+    """
+    named = {
+        t[len(SPORT_TAG_PREFIX) :]
+        for t in tags or ()
+        if t.startswith(SPORT_TAG_PREFIX)
+    }
+    if not named:
+        return False, None
+    applicable = tuple(sorted(named & CONCEPT_SPORT_ALIASES))
+    return (False, applicable) if applicable else (True, None)
+
+
+def _source_applies(
+    aliases: tuple[str, ...], sport_filter: str | Collection[str] | None
+) -> bool:
+    """A source runs when there is no filter, or the filter names it.
+
+    `sport_filter` is a single alias or a collection of them — a feed build can
+    carry more than one `sport:` tag and there is no single alias that says "MMA
+    or motorsports". A collection matches when ANY entry names the source, which
+    is the same OR the single-string form has always run against the source's
+    own alias tuple.
+    """
+    if not sport_filter:
+        return True
+    if isinstance(sport_filter, str):
+        return sport_filter in aliases
+    return any(f in aliases for f in sport_filter)
 
 
 async def select_open_markets(
@@ -225,7 +288,7 @@ async def prefetch_open_markets(
 async def list_all_concepts(
     db: Any,
     *,
-    sport_filter: str | None = None,
+    sport_filter: str | Collection[str] | None = None,
     statuses: tuple[str, ...] = LISTED_STATUSES,
 ) -> list[dict]:
     """Enumerate the concept tier. Best-effort per source, never raises.
