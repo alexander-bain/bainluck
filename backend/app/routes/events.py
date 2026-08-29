@@ -54,7 +54,6 @@ from app.utils.search_match_class import (
     PROMINENT_SPORT_KEYS as _SEARCH_PROMINENT_SPORT_KEYS,
     Evidence as _SearchEvidence,
 )
-from app.utils.prediction_market_matching import is_kalshi_game_ticker
 from app.utils.feed_market_quality import has_no_real_price
 
 # #921 slice 2: placeholder/TBD-team markets have no information to show on an

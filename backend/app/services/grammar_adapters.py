@@ -60,7 +60,7 @@ from app.utils.prediction_market_matching import (
 )
 from app.utils.sport_keys import (
     get_sport_key_from_ticker,
-    is_kalshi_game_ticker,
+    is_kalshi_game_level_ticker,
 )
 
 # A mention with an unknown kind is still a mention (it satisfies the ≥1-mention
@@ -292,7 +292,7 @@ def annotate_kalshi(
     mentions: list[Optional[EntityMention]] = []
 
     sport_key = get_sport_key_from_ticker(event_ticker)
-    is_game = is_kalshi_game_ticker(event_ticker)
+    is_game = is_kalshi_game_level_ticker(event_ticker)
     ticker_prefix = _kalshi_prefix(event_ticker)
     competition = sport_key
 
