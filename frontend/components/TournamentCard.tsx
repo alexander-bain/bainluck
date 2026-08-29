@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
+import { formatProbability } from "@/lib/api";
 import type { GolfTournament, GolfLeaderboardPlayer } from "@/lib/types";
 
 // L2-78 Item 2 — golf-default flip. FLIPPED TRUE in Queue #213: Alex ruled the
@@ -172,7 +173,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                       <span key={o.name} className="text-[11px] text-text-primary">
                         {o.name}{" "}
                         <span className="font-semibold tabular-nums">
-                          {(o.probability * 100).toFixed(0)}%
+                          {formatProbability(o.probability)}
                         </span>
                       </span>
                     ))}
@@ -277,7 +278,7 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
                       <span key={o.name} className="text-[11px] text-text-primary">
                         {o.name}{" "}
                         <span className="font-semibold tabular-nums">
-                          {(o.probability * 100).toFixed(0)}%
+                          {formatProbability(o.probability)}
                         </span>
                       </span>
                     ))}
