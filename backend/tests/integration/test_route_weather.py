@@ -496,6 +496,110 @@ class TestWeatherRain:
         assert resp.status_code == 405
 
 
+class TestMonthlyRainCarriesItsOwnPeriod:
+    """UX-P170 — a monthly row says which month it is about.
+
+    The card used to title itself from the reader's clock (`new Date()
+    .getMonth()`), but the dedup in `get_rain` keeps the LATEST resolving
+    market per city. On 2026-08-29 the only monthly market to survive the
+    7-day freshness gate was `Rain in NYC in Nov 2026?` — so a November
+    market was rendered under an "August rainfall" heading. The month has to
+    travel with the row; it cannot be inferred at render time.
+    """
+
+    async def test_period_is_parsed_off_the_market_name(self, client, mock_db):
+        now = datetime.now(timezone.utc)
+        mock_db.execute.side_effect = [
+            _query_result([]),
+            _query_result([
+                _market(
+                    market_id=1101,
+                    name="Rain in NYC in Nov 2026?",
+                    source="kalshi",
+                    outcomes=[_outcome("Yes", 0.0, outcome_id=11010)],
+                    resolution_date=now + timedelta(days=100),
+                )
+            ]),
+        ]
+
+        body = (await client.get("/api/weather/rain")).json()
+        assert len(body["monthly"]) == 1
+        item = body["monthly"][0]
+        assert item["city"] == "NYC"
+        assert item["period"] == "Nov 2026"
+
+    async def test_period_follows_the_market_the_dedup_actually_kept(self, client, mock_db):
+        """Two months for one city: the surviving row's period is the kept one."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.side_effect = [
+            _query_result([]),
+            _query_result([
+                _market(
+                    market_id=1102,
+                    name="Rain in NYC in Sep 2026?",
+                    source="kalshi",
+                    outcomes=[_outcome("Yes", 0.40, outcome_id=11020)],
+                    resolution_date=now + timedelta(days=10),
+                ),
+                _market(
+                    market_id=1103,
+                    name="Rain in NYC in Dec 2026?",
+                    source="kalshi",
+                    outcomes=[_outcome("Yes", 0.55, outcome_id=11030)],
+                    resolution_date=now + timedelta(days=100),
+                ),
+            ]),
+        ]
+
+        body = (await client.get("/api/weather/rain")).json()
+        # Dedup keeps the latest resolution date per city — so the period the
+        # reader is shown must be December's, not September's.
+        assert len(body["monthly"]) == 1
+        assert body["monthly"][0]["period"] == "Dec 2026"
+
+    async def test_period_is_none_when_the_name_does_not_carry_one(self, client, mock_db):
+        """The key is always present, so the client never reads `undefined`."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.side_effect = [
+            _query_result([]),
+            _query_result([
+                _market(
+                    market_id=1104,
+                    name="Rain in the Pacific Northwest in general?",
+                    source="kalshi",
+                    outcomes=[_outcome("Yes", 0.31, outcome_id=11040)],
+                    resolution_date=now + timedelta(days=30),
+                )
+            ]),
+        ]
+
+        body = (await client.get("/api/weather/rain")).json()
+        assert len(body["monthly"]) == 1
+        assert "period" in body["monthly"][0]
+        assert body["monthly"][0]["period"] is None
+
+    async def test_every_monthly_row_declares_the_key(self, client, mock_db):
+        now = datetime.now(timezone.utc)
+        mock_db.execute.side_effect = [
+            _query_result([]),
+            _query_result([
+                _market(
+                    market_id=1105 + i,
+                    name=f"Rain in {city} in Aug 2026?",
+                    source="kalshi",
+                    outcomes=[_outcome("Yes", 0.5, outcome_id=11050 + i)],
+                    resolution_date=now + timedelta(days=18),
+                )
+                for i, city in enumerate(["NYC", "Miami", "Denver"])
+            ]),
+        ]
+
+        body = (await client.get("/api/weather/rain")).json()
+        assert len(body["monthly"]) == 3
+        assert all(r["period"] == "Aug 2026" for r in body["monthly"])
+        assert {r["city"] for r in body["monthly"]} == {"NYC", "Miami", "Denver"}
+
+
 # ============================================================================
 # 4. Events — GET /api/weather/events
 # ============================================================================

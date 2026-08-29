@@ -696,18 +696,22 @@ async def get_rain(db: AsyncSession):
     monthly_result = await db.execute(monthly_query)
     monthly_markets: list[FuturesMarket] = list(monthly_result.scalars().all())
 
-    # Dedup by city — keep the market with the latest resolution date per city
-    city_best: dict[str, tuple] = {}  # city -> (resolution_date, market)
+    # Dedup by city — keep the market with the latest resolution date per city.
+    # The period ("Aug 2026") is carried through: a city's surviving market is
+    # not necessarily the current month's, so the card cannot infer the month
+    # from the clock — it has to be told which month each row is actually about.
+    city_best: dict[str, tuple] = {}  # city -> (resolution_date, market, period)
     for m in monthly_markets:
-        city_match = re.search(r"Rain in (.+?) in \w+ \d{4}", m.name, re.I)
+        city_match = re.search(r"Rain in (.+?) in (\w+ \d{4})", m.name, re.I)
         city_name = city_match.group(1).strip() if city_match else m.name
+        period = city_match.group(2).strip() if city_match else None
         res_date = m.resolution_date
         existing = city_best.get(city_name)
         if not existing or (res_date and (not existing[0] or res_date > existing[0])):
-            city_best[city_name] = (res_date, m)
+            city_best[city_name] = (res_date, m, period)
 
     monthly_rain = []
-    for city_name, (_, m) in city_best.items():
+    for city_name, (_, m, period) in city_best.items():
         prob = _get_yes_probability(m)
         delta = 0
         best_prob = 0.0
@@ -722,6 +726,7 @@ async def get_rain(db: AsyncSession):
 
         monthly_rain.append({
             "city": city_name,
+            "period": period,
             "prob": prob,
             "src": _market_source(m),
             "delta24h": delta,
