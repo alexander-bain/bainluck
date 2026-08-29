@@ -133,6 +133,74 @@ def _market_row(market: FuturesMarket) -> dict | None:
     }
 
 
+# Outcome-name prefixes that mark a CUMULATIVE threshold ladder rather than a
+# partition into mutually exclusive brackets. Each row of such a ladder is an
+# independent "at or above X" probability (gotcha #17), so the rows are NOT a
+# distribution: they legitimately sum well over 100% and must never be
+# normalized or rescaled against each other.
+#
+# The temporal forms belong here for the same reason: "Before Jan 1, 2028" is
+# a deadline the market either clears or doesn't, and the rungs nest. Every
+# prefix below is attested in the open economics pool — a first-word census on
+# 2026-08-29 counted 798 markets on "above", 44 on "before" and 16 on "below".
+_CUMULATIVE_PREFIXES = (
+    "above ",
+    "at least ",
+    "more than ",
+    "over ",
+    "greater than ",
+    "below ",
+    "before ",
+)
+
+
+def _is_cumulative_ladder(market: FuturesMarket) -> bool:
+    """True when a multi-outcome market's rows are cumulative thresholds."""
+    outcomes = list(market.outcomes)
+    if len(outcomes) < 2:
+        return False
+    marked = sum(
+        1
+        for o in outcomes
+        if (o.name or "").strip().lower().startswith(_CUMULATIVE_PREFIXES)
+    )
+    return marked >= 2 and marked == len(outcomes)
+
+
+def _distribution_row(market: FuturesMarket) -> dict | None:
+    """Render a multi-outcome market that ``_market_row`` refuses.
+
+    ``_market_row`` returns None above five outcomes, which silently drops
+    priced markets out of the sections that only render Market rows. This
+    keeps them by serving their shape instead: a cumulative threshold ladder
+    stays raw (see ``_CUMULATIVE_PREFIXES``), a partition is normalized into
+    brackets. Returns None when nothing is priced.
+    """
+    outcomes = list(market.outcomes)
+    if len(outcomes) <= 5:
+        return None
+    if not any(float(o.current_probability or 0) > 0 for o in outcomes):
+        return None
+
+    if _is_cumulative_ladder(market):
+        kind = "ladder"
+        rows = [
+            [round(float(o.current_probability or 0) * 100, 1), o.name or ""]
+            for o in _outcomes_sorted(market)
+        ]
+    else:
+        kind = "brackets"
+        rows = _brackets_from_outcomes(market)
+
+    return {
+        "q": market.name,
+        "kind": kind,
+        "rows": rows,
+        "src": _source(market),
+        "market_id": market.id,
+    }
+
+
 def _brackets_from_outcomes(market: FuturesMarket, normalize: bool = True) -> list[list]:
     """Convert multi-outcome market to [[prob, label], ...] brackets.
 
@@ -605,6 +673,10 @@ async def get_economics(db: AsyncSession):
     # --- Trade & Government ---
     trade_rows = [r for m in trade_markets if (r := _market_row(m))]
     gov_rows = [r for m in gov_markets if (r := _market_row(m))]
+    # Government markets are overwhelmingly multi-outcome (spending ladders,
+    # deficit brackets), which _market_row refuses — leaving the section
+    # rendering an empty card under a header that claimed `count` markets.
+    gov_distributions = [d for m in gov_markets if (d := _distribution_row(m))]
 
     # Cross-source spotlight
     cross_source = find_cross_source_markets(
@@ -664,6 +736,7 @@ async def get_economics(db: AsyncSession):
             "government": {
                 "count": len(gov_markets),
                 "markets": gov_rows[:8],
+                "distributions": gov_distributions[:6],
             },
         },
         "by_source": {

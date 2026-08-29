@@ -1740,6 +1740,21 @@ export interface EconThemeSimple {
   markets: EconMarketRow[];
 }
 
+/** A multi-outcome market too wide for a Market row.
+ *  `kind: "ladder"` rows are independent cumulative thresholds and legitimately
+ *  sum over 100%; `kind: "brackets"` rows are a normalized partition. */
+export interface EconDistribution {
+  q: string;
+  kind: "ladder" | "brackets";
+  rows: [number, string][];
+  src: string;
+  market_id: number;
+}
+
+export interface EconThemeGovernment extends EconThemeSimple {
+  distributions: EconDistribution[];
+}
+
 export interface EconThemeHousing {
   count: number;
   mortgage_brackets: number[][];
@@ -1758,7 +1773,7 @@ export interface EconData {
     energy: EconThemeEnergy;
     housing: EconThemeHousing;
     trade: EconThemeSimple;
-    government: EconThemeSimple;
+    government: EconThemeGovernment;
   };
   by_source: { kalshi: number; polymarket: number };
 }
