@@ -1,0 +1,38 @@
+{
+ "source": "polymarket",
+ "category": "economics",
+ "width": 1000000,
+ "by_key": {
+  "group_id": {
+   "clusters": 1176,
+   "markets": 12705,
+   "markets_in_wide": 1425,
+   "wide_clusters": 97,
+   "max_spread": 55160469,
+   "max_size": 41,
+   "pct_in_wide": 11.2,
+   "risk": "MODERATE"
+  },
+  "event_id": {
+   "clusters": 0,
+   "markets": 0,
+   "markets_in_wide": 0,
+   "wide_clusters": 0,
+   "max_spread": 0,
+   "max_size": 0,
+   "pct_in_wide": null,
+   "risk": "NO_CLUSTERS"
+  }
+ },
+ "worst_key": {
+  "clusters": 1176,
+  "markets": 12705,
+  "markets_in_wide": 1425,
+  "wide_clusters": 97,
+  "max_spread": 55160469,
+  "max_size": 41,
+  "pct_in_wide": 11.2,
+  "risk": "MODERATE"
+ },
+ "risk": "MODERATE"
+}

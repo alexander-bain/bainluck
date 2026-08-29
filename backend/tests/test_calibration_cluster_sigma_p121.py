@@ -174,6 +174,12 @@ SHIPPED_DIMENSIONS = {
     # guard below red against the wrong file. Caught by running the SIBLING
     # suites, which is CAL-P128's lesson and the only thing that finds it.
     "slotratio": ("SLOTRATIO_EXPR", "SLOTRATIO_JOIN", "SUMBAND_PRE"),
+    # Added to the RAIL by CAL-P131, third time in a row for the same reason.
+    # CAL-P127 predicted it, CAL-P130 hit it anyway, and this entry is written
+    # in the same commit as the registration rather than after the sibling
+    # suite went red. `calibration_cluster_sigma` still contributes exactly
+    # `marketid`.
+    "bandratio": ("BANDRATIO_EXPR", "BANDRATIO_JOIN", "BANDRATIO_PRE"),
     "pair": ("PAIR_EXPR", "PAIR_JOIN", ""),
     "pairtype": ("PAIRTYPE_EXPR", "PAIR_JOIN", ""),
     "pairsum": ("PAIRSUM_EXPR", "PAIRSUM_JOIN", "SUMBAND_PRE"),

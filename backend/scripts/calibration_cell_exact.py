@@ -372,6 +372,104 @@ CASE WHEN ({SLOTS_EXPR}) IS NULL AND fm2.name ~* 'make[[:space:]]+the[[:space:]]
      ELSE 'e_ratio_gt_4' END
 """
 
+#: CAL-P131 — the DECLARED-PARTITION price sum, for `polymarket/economics`
+#: (rank 15). The third instrument in the ``sumband`` succession, and the second
+#: one on the rail that a shipping exclusion rule is allowed to read.
+#:
+#: WHY ``sumband`` CANNOT ANSWER THIS CELL EITHER, AND FOR A NEW REASON.
+#: ``sumband`` bands the published sum against 1 and splits the cell with
+#: ``sh.mw`` — how many outcomes actually WON. Both halves of that are wrong
+#: here:
+#:
+#:   * ``polymarket/economics`` is dominated by NESTED THRESHOLD LADDERS —
+#:     *"Will Apple (AAPL) close above $255 / $260 / $265 ... on August 5?"*.
+#:     The rungs are not mutually exclusive, so their prices are NOT a
+#:     distribution: a coherent thirteen-rung ladder sums to the EXPECTED
+#:     NUMBER OF RUNGS THAT HIT, anywhere in ``[0, 13]``. ``sumband`` reads that
+#:     as ``d_sum_5_15`` and condemns 53% of the cell for being arithmetically
+#:     correct. This is gotcha #23 arriving through a different door than golf's
+#:     (CAL-P130): golf's independent binaries share ONE slot count declared in
+#:     the market name; a ladder's rungs are NESTED and declare no slot count at
+#:     all.
+#:   * ``sh.mw`` is the realized win count, so every rule ``sumband`` admits is
+#:     leakage — it selects resolved markets by their resolution. CAL-P130 made
+#:     this the standing test and it disqualifies ``field1``/``bundle`` outright.
+#:
+#: THE QUANTITY THAT IS ACTUALLY COHERENT OR NOT, AND WHERE IT IS DECLARED.
+#: Golf declares its coherent sum in the MARKET name ("Top 10" → 10). Economics
+#: declares its coherent sum in the OUTCOME names, through their GRAMMAR: a
+#: market whose legs read ``<$6,400`` / ``$6,400-$6,500`` / ... / ``>$7,300`` has
+#: said, in its own text, that it is a partition of the real line — mutually
+#: exclusive and exhaustive — so its prices must sum to 1 and a sum of 1.96 is a
+#: defect of the market, not a forecast that turned out wrong. A market whose
+#: legs read ``$255``, ``$260``, ``$265`` has said no such thing.
+#:
+#: So the test is: DOES THE MARKET DECLARE A PARTITION, and if so, does it sum
+#: like one. Both readings come from the leg names and the published prices.
+#:
+#: 🔴 EXHAUSTIVENESS IS REQUIRED, NOT ASSUMED. A run of interior bands with no
+#: open-ended tail (``<x`` low and ``>y`` high) is mutually exclusive but NOT
+#: exhaustive, and its coherent sum is some unknown number below 1. Those
+#: markets are separated into ``z_not_exhaustive`` rather than banded, for the
+#: same reason CAL-P130 separated ``z_cut``: a dimension must not invent the
+#: quantity it claims to measure.
+#:
+#: 🔴 EVERY INPUT IS KNOWN AT PUBLISH TIME. Leg names and published prices, and
+#: nothing else — no ``mw``, no ``is_winner``, no resolution column.
+#: ``test_the_expression_never_reads_a_realized_winner`` pins it, and it is the
+#: guard to keep if the others are ever trimmed.
+#:
+#: THE BANDS ARE THE SAME FOUR ``slotratio`` USES — 1/4, 3/4, 4/3, 4, symmetric
+#: in log space around 1 — deliberately, so the two tables can be read against
+#: each other, and fixed before the fold ran (lesson 13).
+#:
+#: ``|full`` vs ``|part`` IS A CROSS, NOT A GATE. A partition whose legs did not
+#: all reach the curve publishes a sum that is mechanically short of 1 through
+#: no fault of the market's pricing, and folding those rows into the ratio bands
+#: unlabelled would let a liquidity artifact read as an incoherence. Making it a
+#: SUFFIX rather than an early ``CASE`` arm keeps both readings visible: the
+#: partial partitions are still banded, and any rule over the partition can be
+#: scored with them in or out.
+BANDLEG_INTERIOR = (
+    r"'^[$]?[0-9][0-9,.]*[[:space:]]*[-–][[:space:]]*[$]?[0-9]'"
+)
+BANDLEG_TAIL = r"'^[<>]'"
+BANDRATIO_PRE = SUMBAND_PRE + """,
+bandlegs AS (
+    SELECT fo9.market_id,
+           COUNT(*) AS bl_legs,
+           COUNT(*) FILTER (WHERE btrim(fo9.name) ~ """ + BANDLEG_TAIL + """
+                               OR btrim(fo9.name) ~ """ + BANDLEG_INTERIOR + """
+                           ) AS bl_bands,
+           COUNT(*) FILTER (WHERE btrim(fo9.name) ~ '^<') AS bl_low,
+           COUNT(*) FILTER (WHERE btrim(fo9.name) ~ '^>') AS bl_high
+    FROM futures_outcomes fo9
+    WHERE fo9.market_id IN (SELECT market_id FROM market_info)
+    GROUP BY fo9.market_id
+),
+publegs AS (
+    SELECT market_id, COUNT(*) AS pub_legs FROM deduped GROUP BY market_id
+)"""
+BANDRATIO_JOIN = """
+LEFT JOIN msums ms ON ms.market_id = d.market_id
+LEFT JOIN bandlegs bl ON bl.market_id = d.market_id
+LEFT JOIN publegs pl ON pl.market_id = d.market_id
+"""
+BANDRATIO_EXPR = """
+CASE WHEN bl.bl_legs IS NULL OR bl.bl_legs < 3 THEN 'z_not_a_partition'
+     WHEN bl.bl_bands < bl.bl_legs THEN 'z_not_a_partition'
+     WHEN bl.bl_low = 0 OR bl.bl_high = 0 THEN 'z_not_exhaustive'
+     WHEN ms.msum IS NULL THEN 'z_no_sum'
+     ELSE (CASE WHEN ms.msum < 0.25    THEN 'a_sum_lt_0.25'
+                WHEN ms.msum < 0.75    THEN 'b_sum_0.25_0.75'
+                WHEN ms.msum <= 1.3333 THEN 'c_sum_coherent'
+                WHEN ms.msum <= 4      THEN 'd_sum_1.33_4'
+                ELSE 'e_sum_gt_4' END)
+          || (CASE WHEN pl.pub_legs IS NULL OR pl.pub_legs < bl.bl_legs
+                        THEN '|part' ELSE '|full' END)
+     END
+"""
+
 #: CAL-P117 — the Over/Under PAIR dimension, for `polymarket/baseball`.
 #:
 #: Rank 1 of the board is not a bundle cell: it is two-leg Over/Under quantity
@@ -761,6 +859,7 @@ DIMENSIONS = {
     "shape": (SHAPE_EXPR, SHAPE_JOIN, ""),
     "sumband": (SUMBAND_EXPR, SUMBAND_JOIN, SUMBAND_PRE),
     "slotratio": (SLOTRATIO_EXPR, SLOTRATIO_JOIN, SUMBAND_PRE),
+    "bandratio": (BANDRATIO_EXPR, BANDRATIO_JOIN, BANDRATIO_PRE),
     "pair": (PAIR_EXPR, PAIR_JOIN, ""),
     "pairtype": (PAIRTYPE_EXPR, PAIR_JOIN, ""),
     "pairsum": (PAIRSUM_EXPR, PAIRSUM_JOIN, SUMBAND_PRE),
