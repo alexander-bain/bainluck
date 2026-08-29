@@ -90,6 +90,22 @@ def _matches(clause, row: dict) -> bool:
             return value is not None and bool(_ilike_to_regex(bound).match(value))
         if clause.operator is operators.in_op:
             return value in tuple(bound)
+        # LAT-P132 added the `[low, high)` range bound beside every
+        # `external_id ILIKE`, so this evaluator has to model ordering too.
+        #
+        # 🔴 It models `C` collation — Python compares code points — and
+        # production collates `en_US.UTF-8`. The two disagree on exactly one
+        # thing that matters here: case. `'kxmlb-26' < 'KXMLC'` is TRUE in
+        # en_US (case is a tertiary difference) and FALSE in C (`k` = 0x6b >
+        # `K` = 0x4b). Fixtures therefore use canonical-case ids, which is what
+        # the whole-table census found the fleet to contain, and the
+        # collation-sensitive half of the claim is proved in
+        # `external_id_prefix_range`'s docstring and measured on production —
+        # NOT asserted here, where it could only be asserted wrongly.
+        if clause.operator is operators.ge:
+            return value is not None and value >= bound
+        if clause.operator is operators.lt:
+            return value is not None and value < bound
         raise AssertionError(f"unhandled operator {clause.operator!r}")
     raise AssertionError(f"unhandled clause node {type(clause).__name__}")
 

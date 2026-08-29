@@ -2903,6 +2903,141 @@ def _league_pattern_to_ilike(pattern_str: str) -> str:
     return sql_pattern.replace("\\", "").strip()
 
 
+#: Characters an ``external_id`` prefix may contain for the range bound below to
+#: be emitted. Deliberately narrow: every configured prefix is an ASCII ticker or
+#: sport key, and a prefix outside this alphabet is a decision for a human, not a
+#: default.
+_PREFIX_SAFE_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-."
+)
+
+#: Last characters whose successor is NOT alphanumeric. ``'z' + 1`` is ``'{'``,
+#: ``'9' + 1`` is ``':'`` — both punctuation, and this database collates
+#: ``en_US.UTF-8``, which IGNORES punctuation at the primary level. A bound ending
+#: in punctuation therefore does not mean what it looks like it means, so no bound
+#: is emitted at all and the prefix falls back to the bare ``ILIKE``.
+_PREFIX_UNINCREMENTABLE = frozenset("zZ9")
+
+
+def external_id_prefix_range(prefix: str) -> tuple[str, str] | None:
+    """A ``[low, high)`` range that PROVABLY contains every ``ILIKE 'prefix%'``
+    match, or ``None`` when no such range can be constructed.
+
+    ``None`` means "no safe bound" and the caller must fall back to the bare
+    ``ILIKE`` — a slow query is a correct query; a wrong bound is a missing grid
+    column.
+
+    🔴 **The low bound drops the prefix's last character on purpose, and that is
+    what makes this a proof instead of a census.** LAT-P129 measured this exact
+    20× win, wrote ``external_id >= 'KXMLB' AND < 'KXMLC'``, and **rejected it**:
+    this database collates ``en_US.UTF-8``, *a range is only a prefix in ``C``
+    collation*, and "same rows today is a coincidence, not an equality"
+    (P129-3, parked NEEDS ALEX behind ``text_pattern_ops`` + a migration slot).
+    That objection is correct and it is answered here rather than argued around:
+
+    * **``low = prefix[:-1]``.** Every string that starts with ``prefix`` (in any
+      case) carries at least one more *non-ignorable* character than
+      ``prefix[:-1]`` — namely ``prefix[-1]``, which this function guarantees is
+      ASCII alphanumeric. So its PRIMARY weight sequence strictly extends the low
+      bound's, and it is greater at the primary level, where no case, accent or
+      punctuation tie-break can reach it. ``>= 'KXMLB'`` is NOT safe in the same
+      way: glibc sorts lowercase before uppercase at the tertiary level, so a
+      hypothetical ``'kxmlb'`` row would sort BELOW ``'KXMLB'`` and be silently
+      dropped. ``'KXML'`` has no such case.
+    * **``high = prefix[:-1] + succ(prefix[-1])``**, where ``succ`` is refused
+      unless it stays inside the same ASCII class (``z``/``Z``/``9`` are refused
+      because ``'{'``/``'['``/``':'`` are punctuation, which ``en_US.UTF-8``
+      IGNORES at the primary level — a bound that does not mean what it looks
+      like). Within a class every collation orders ``b < c``, so a string
+      starting with ``prefix`` differs from ``high`` at that character's primary
+      weight and is strictly less.
+
+    Neither bound is a claim about today's rows, which is exactly what P129-3
+    could not say. A whole-table census is kept as corroboration, not as the
+    argument (2026-08-29, all 25 ``(source, prefix)`` pairs configured by all 14
+    league configs): **zero** rows match ``ILIKE prefix%`` while falling outside
+    the TIGHTER ``[prefix, high)`` range — 54,120 matching Kalshi rows and 9
+    matching Odds API rows. The shipped range is a strict superset of the one
+    censused (same ``high``, lower ``low``), so zero there implies zero here. A
+    direct re-census under the shipped bounds completed 3 of its 6 chunks —
+    27,077 matches, 0 out of range — and the other 3 were **statement_timeout,
+    a story about the harness and not a difference** (P129's own lesson).
+    """
+    if len(prefix) < 2:
+        # A one-character prefix would leave `low = ''`, which bounds nothing and
+        # scans the index from the start. Refuse rather than emit a useless range.
+        return None
+    if any(ch not in _PREFIX_SAFE_CHARS for ch in prefix):
+        return None
+    last = prefix[-1]
+    if not last.isalnum() or last in _PREFIX_UNINCREMENTABLE:
+        return None
+    stem = prefix[:-1]
+    return stem, stem + chr(ord(last) + 1)
+
+
+def _external_id_prefix_condition(prefix: str):
+    """``external_id`` matches ``prefix``, expressed so an index can serve it.
+
+    🔴 **The ``ILIKE`` is retained and is still the authority.** The two range
+    terms are added, never substituted: the result set is
+    ``range ∩ ILIKE``, so the only way this can change an answer is by the range
+    EXCLUDING a row the ``ILIKE`` matches. That is the property the census below
+    measured, and the property the guard suite pins the shape of.
+
+    Why a range at all — measured on production 2026-08-29, the
+    ``ncaa-basketball`` candidate scan:
+
+    ``EXPLAIN (ANALYZE, BUFFERS)`` on the EXACT predicate this builder emits,
+    production 2026-08-29, three leagues, ILIKE-only vs ILIKE+range:
+
+    ================  ==========  ==========  =========  ==================
+    league            OLD ms      NEW ms      rows        heap blocks
+    ================  ==========  ==========  =========  ==================
+    ncaa-basketball   **24,465**  **984**     12 = 12    73,644 -> 161
+    nba               **22,804**  **586**     9,042 = 9,042  74,137 -> 5,033
+    ncaa-football     926         1,171       13 = 13    314 -> 314
+    ================  ==========  ==========  =========  ==================
+
+    🔴 **Row counts are IDENTICAL in every pair**, including NBA's 9,042 — an
+    equivalence measured on a large result set, not inferred from a 12-row one.
+    ``ncaa-football`` is the honest null: its arms were already index-served, the
+    heap block count does not move, and 926 -> 1,171 ms is trigram-scan variance,
+    not a regression. ``mlb`` and ``wnba`` could NOT be measured this way: their
+    name patterns render ``'%AL+:East|West|Central%'``, and ``:East`` inside the
+    admin ``db-query`` rail's ``text()`` parses as a bind parameter (gotcha #45).
+    That is an instrument limit, not a production one — SQLAlchemy binds the
+    pattern as a parameter on the real path.
+
+    The in-request reading agrees with the bench: ``/api/playoffs/ncaa-basketball
+    ?top=11`` served ``wall=21558 ms; db=20980; app=578; q=26; maxq=16159`` —
+    ``maxq`` IS this scan.
+
+    ``external_id ILIKE 'KXMARMADROUND%'`` is not index-usable in ANY form —
+    ``ILIKE`` never uses a btree, and this database collates ``en_US.UTF-8`` so
+    even ``LIKE`` would need ``text_pattern_ops`` (parked P129-3: DDL, a
+    migration slot, gotcha #31). So the planner served the id-space arm from
+    ``ix_futures_markets_source`` — *the whole of Kalshi*, 266K rows — and
+    rechecked every one of them in the heap. **P129 stopped the 911K-row
+    sequential scan; this is the 266K-row remainder it left behind.** A range is
+    a plain comparison, so ``uq_futures_source_external`` — ``(source,
+    external_id)``, already on the table — serves it as an index scan.
+    **No DDL, no migration slot, so P129-3's Alex gate does not apply to this
+    form.** The bounds' safety is argued in ``external_id_prefix_range``; the
+    ``ILIKE`` staying conjoined is what makes an over-wide bound harmless.
+    """
+    ilike = FuturesMarket.external_id.ilike(f"{prefix}%")
+    bounds = external_id_prefix_range(prefix)
+    if bounds is None:
+        return ilike
+    low, high = bounds
+    return and_(
+        FuturesMarket.external_id >= low,
+        FuturesMarket.external_id < high,
+        ilike,
+    )
+
+
 def _build_grid_market_filters(config: LeagueConfig):
     """Build the grid's candidate-market filters: ``(with_status, bare)``.
 
@@ -2944,13 +3079,20 @@ def _build_grid_market_filters(config: LeagueConfig):
     conjoined with a ``source`` equality, so a future source that starts minting
     the other's id shape fails a test rather than silently dropping a grid
     column.
+
+    🔴 **Source-scoping was necessary and not sufficient.** It stopped the 911K
+    sequential scan and left a 266K one: ``source = 'kalshi'`` was the only term
+    in the id-space arm an index could serve, so the planner bitmapped the whole
+    of Kalshi and rechecked 265,961 rows in the heap to return 90. See
+    ``_external_id_prefix_condition`` for the range bound that closes it — and
+    for the measured proof that the bound drops nothing.
     """
     # Paths A and B.1 — one AND-group per id space, each scoped to its source.
     id_space_conditions = []
     for attr, source in GRID_ID_SPACE_SOURCE.items():
         prefixes = getattr(config, attr, None) or []
         prefix_conditions = [
-            FuturesMarket.external_id.ilike(f"{prefix}%") for prefix in prefixes
+            _external_id_prefix_condition(prefix) for prefix in prefixes
         ]
         if prefix_conditions:
             id_space_conditions.append(
