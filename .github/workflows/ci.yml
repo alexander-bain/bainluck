@@ -405,6 +405,37 @@ jobs:
             exit 1
           fi
 
+      - name: tag-counts statements execute (real Postgres)
+        # LAT-P114 / #2267. `/api/feed/tag-counts` returned a plain-text 500 on
+        # every request from the day it was written (c536d738, 2026-03-01), so
+        # `/categories` rendered "Failed to load categories" for its entire
+        # existence. `GROUP BY category` named an output alias that the real
+        # `futures_markets.category` column shadows; PostgreSQL resolves the
+        # input column first, leaving the selected COALESCE ungrouped:
+        #
+        #   GroupingError: column "futures_markets.llm_sport_category" must
+        #   appear in the GROUP BY clause or be used in an aggregate function
+        #
+        # ~19,000 tests were green throughout, and they had to be — the
+        # statement is valid SQL naming only real identifiers, and the thing
+        # that rejects it is the SERVER's name-resolution rule. No mock, no
+        # recording double and no source assertion has one. This gate needs the
+        # service container.
+        #
+        # Two-armed like the gates above: it captures the statements the
+        # handler actually issues (never a copy, which would go on passing
+        # while the route drifted) AND executes the pre-fix statement, which is
+        # required to fail. A green run therefore means red-first was proved,
+        # not that nothing objected. Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_tag_counts_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/tagcounts.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/tagcounts.txt; then
+            echo "::error::tag-counts real-Postgres gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
