@@ -47,6 +47,26 @@ maximum of that set, not the median, so halving it moves the published number by
 real and the statistic is blind to it. Ruling 137 anticipated exactly this by keeping cold search
 in the opening headline set as its own row — that row is where this lands.
 
+### The close reading, and what it demonstrates about the instrument
+
+```
+NEEDLE: latency 19 ms @ 2026-08-29T05:19:28Z      (unchanged from open)
+DIAG:   latency-build REFUSED — 2/7 cold members, 2/3 surfaces (unchanged)
+```
+
+Same slug `606bd84b` (uptime 1,366 s at open, 3,903 s at close). **This branch is not deployed, so
+neither reading measures it** — both describe master.
+
+🔴 **`search_cold` moved 206.0 ms → 532.0 ms (max 1,728 ms) on IDENTICAL CODE, 42 minutes apart,
+and the needle did not move by one millisecond.** A 2.6x swing on the one member that is reliably
+cold, fully absorbed by a median over seven. That is not a criticism of option c — the equal-weighted
+form exists precisely because a raw pool moved 25 % on sample mix alone (ruling 127) — but it is the
+sharpest available demonstration that **this lane's headline number cannot see the surface this lane
+is working on.** Recorded here so a future reader does not read `19 → 19` as "nothing happened".
+
+Per ruling 127, the 206 and 532 figures are the same instrument on the same slug and ARE comparable
+with each other; neither is comparable with any pre-option-c cold number.
+
 ---
 
 ## 1. What ships
@@ -185,8 +205,8 @@ candidate.
 
 | gate | result |
 |---|---|
-| full suite | *(recorded in the report — one run, exit code read by value)* |
-| collect reconciliation | branch **21,391**; master + 11 new tests |
+| full suite | **21,206 passed / 0 failed / 124 skipped / 61 xfailed**, ONE run (854.76 s), **EXIT CODE 0 READ BY VALUE** |
+| collect reconciliation | 21,206 + 124 + 61 = **21,391 = collected, exactly**. Master **21,380 → 21,391 (+11)**, measured on BOTH sides (master collected in a throwaway worktree, not inferred), and `test_search_cache_refresh_behind.py` collects exactly 11 |
 | mutation battery | **10/10 killed** (`cache_refresh_behind_mutations.py`) |
 | mutation residue | **CLEAN exit 0** — 158 needles, 420 broad checks |
 | ruff | **ZERO NEW** — finding set diffed against master's own copy, byte-identical (46 = 46) |
@@ -210,7 +230,32 @@ candidate.
 
 **Repaired by fixing the assertions, not by deleting the mutants** (LAT-P115's M7 rule).
 
-⚠️ **A first full-suite run was stopped at 8 % on purpose.** A stale `#2271` reference was still in
+🔴 **THE FIRST COMPLETED FULL SUITE WENT RED ON TWO GUARDS AND BOTH WERE MINE.** `2 failed, 21,204
+passed` — recorded here rather than folded away, because what they caught is the useful part.
+
+1. **`test_mutation_guard::test_every_on_disk_harness_is_guarded`.** The new battery mutates
+   `events.py` with only a `try/finally`, which does not survive a SIGTERM — a killed run leaves a
+   mutant sitting in the tree. Wired to the shared `guarded_targets` primitive (manifest +
+   `--recover`) like every other on-disk harness. **That guard exists exactly to stop a new harness
+   quietly opting out, and it worked on this one's first full-suite run.**
+2. **`test_team_cache_detachment::test_the_next_requests_recover_through_the_real_feed_reader`** —
+   the #2107 guard. This change moves *which session* rebuilds the team cache, so the test's
+   scaffolding (hand a session to the caller, expect a rebuild) was asserting on a rebuild that no
+   longer runs there. **Repointed at the real path rather than relaxed**, and the guard comes out
+   stronger: the rebuild now happens in a background task whose session closes the moment it
+   finishes, so if `_shape_team_lookup` ever stopped snapshotting inside the `async with`, every
+   cached row would be detached **by construction** rather than only after a rollback. Both original
+   arms survive — the hazard is still proven live on the rebuilt rows, the served requests still
+   survive it — plus a new assertion that the caller is served the stale value instead of blocking,
+   which is the ship itself.
+
+   ⚠️ A bare `AsyncMock` cannot stand in for `async with async_session_maker()`: its `__aenter__`
+   returns a *different* auto-created mock, so the rebuild raised `'coroutine' object has no
+   attribute 'all'`, the handler logged it and left the cache intact — **correct behaviour that
+   looks exactly like a rebuild that never happened**. A real async-CM stand-in makes that
+   impossible to mistake for the feature.
+
+⚠️ **An earlier full-suite run was stopped at 8 % on purpose.** A stale `#2271` reference was still in
 the source — #2271 had been taken by the calibration lane between drafting and committing — and a
 green number from a tree nobody will push is a gate proving something about the wrong commit.
 Re-taken rather than reported.
