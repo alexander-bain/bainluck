@@ -2,7 +2,8 @@
 
 **Pillar:** DISCOVER · **Ship:** opening Discover on a brand-new install stops
 spending most of the request loading personalization the server then throws
-away.
+away. · **Issue:** #2266 (its own defect — #2265 is LAT-P112's warm-beat gap on
+the same surface, and piggybacking would have buried this one).
 
 Cycle 85. Ran from Fable's runner directive
 `runner-inbox/latency/018-coldpath-conveyor.md`, staged under Alex's standing
@@ -143,6 +144,38 @@ anyone. That kills M3, and it will kill the next one of its shape.
 
 Second battery: **8/8 killed**, exit 0, final restore VERIFIED by sha256.
 
+🔴 **The first full run was genuinely RED — 1 failed, exit 1 — it was mine, and
+the gate was right.** This is the cycle's third finding and the second one a
+gate found rather than I did.
+
+`tests/test_mutation_guard.py::test_every_on_disk_harness_is_guarded` rejected
+the battery above for restoring with a plain `try/finally`. The reason is
+specific and I had not thought about it: **exit 143 is SIGTERM, whose default
+disposition terminates the process outright.** No exception is raised, so
+`finally` never runs — a harness relying on it writes the mutant to disk and
+reports nothing. That is exactly how mutation M3 of
+`typeahead_warmer_mutations.py` once landed in commit `bcdcd95f`, hidden inside
+a file somebody had an unrelated reason to be editing.
+
+Fixed by wrapping the run in `_mutation_guard.guarded_targets`, which converts
+the catchable signals into an exception so `finally` has something to run on,
+and writes a manifest so that even the uncatchable SIGKILL case **announces
+itself** rather than looking like an ordinary uncommitted edit. The harness also
+stopped unlinking its own backup — that file is the guard's breadcrumb, and
+deleting it removed the only evidence a dead run would have left.
+
+**The two runs reconcile exactly:** 20,887 passed + 1 failed = 20,888 = 21,065
+collected − 116 skipped − 61 xfailed.
+
+**The transferable part:** a `cp`-backup-and-restore battery *feels* safe
+because it is written defensively, and it is safe against every failure the
+author is imagining — exceptions, assertions, a bad pattern. It is not safe
+against the process simply being told to stop, which is the failure that
+actually happened to this repo. The per-mutation `cp` + sha256 discipline is
+kept on top of the guard, because the two protect against different things: the
+guard against the process dying, the local checks against a restore that
+silently did not take.
+
 * **ruff: ZERO NEW.** `feed.py`'s finding set is **byte-identical** to master's
   own copy (12 pre-existing, compared set-to-set and not by count). The three
   new/changed script and test files: *All checks passed*.
@@ -173,6 +206,14 @@ Second battery: **8/8 killed**, exit 0, final restore VERIFIED by sha256.
   `_seeded_session` in `test_feed_inert_principal_share_p089.py` has the same
   shape and the same blind spot. Any test in this family that believes it is
   checking a predicate is checking a table name.
+* **P113-4 — two of this battery's eight replacements are under the residue
+  scanner's `MIN_LITERAL` (24 chars).** `pins = []` and `favorites = []` are too
+  generic to search for without false positives, so Pass B excludes them and
+  says so. They are cleared by Pass A (needle-still-present), so coverage is not
+  silently narrowed — but a harness whose mutations are mostly short literals
+  would be scanned much more weakly than its "CLEAN" line suggests. Worth a look
+  at whether `MIN_LITERAL` should force a *distinctive* replacement rather than
+  drop the pair from the broad sweep.
 
 ---
 
