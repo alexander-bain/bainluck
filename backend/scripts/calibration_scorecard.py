@@ -92,6 +92,13 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# The MEASURED sigma ledger (CAL-P128). Imported, never re-implemented, and
+# deliberately one-way: the ledger imports nothing from this file, so
+# `calibration_cluster_sigma` can keep importing BOTH without a cycle.
+import calibration_sigma_ledger as sigma_ledger  # noqa: E402
+
 # --------------------------------------------------------------------------
 # THE FINISH LINE. Three numbers, each derived rather than chosen.
 # --------------------------------------------------------------------------
@@ -375,7 +382,100 @@ VERDICT_UNDER_SIGMA = "OVER_BAR_UNESTABLISHED"
 VERDICT_EXEMPT = "EXEMPT_BELOW_MIN_N"
 
 
-def score(payload: dict) -> dict:
+#: Basis labels for a cell's sigma. A sigma on this board is now one of two
+#: different quantities and they must never share a column unlabelled
+#: (CAL-P127 lesson 10: a proof and an estimate do not belong in the same one).
+SIGMA_BASIS_ROW = "binomial_row_estimate"
+SIGMA_BASIS_MEASURED = "measured_cluster_bootstrap"
+
+
+def _attach_measured_sigma(cell: dict, ledger: dict | None, pop: str | None) -> None:
+    """Overlay the measured cluster-bootstrap sigma onto a scored cell.
+
+    WHY THIS REPORTS AND DOES NOT DECIDE
+    ------------------------------------
+    It would be one line to make ``verdict`` key off the measured sigma, and on
+    the evidence that is the correct end state: ``SIGMA_GATE`` is a ratified
+    rule about *standard errors*, the row-grain SE is a documented estimate of
+    that quantity, and a measurement of the same quantity beats an estimate of
+    it. Substituting one for the other honours the ratified rule rather than
+    changing it.
+
+    But the substitution moves ``cells_at_bar`` -- the NEEDLE, the one number
+    the program is steered by and the one Alex reads. Moving a lane's headline
+    metric as a side effect of an instrument landing is precisely how a board
+    starts flattering itself, and this program has been bitten by that already
+    (16-CAL: the published 1.89 should be 2.31). A finding that shortens the
+    queue deserves more suspicion than one that lengthens it, not less.
+
+    So the measured sigma lands as a SEPARATE column with its own verdict,
+    where it is visible on the board itself instead of buried in a handoff
+    paragraph, and the flip is Alex's call. Everything needed to make that call
+    is on the page; nothing has moved under him.
+
+    STALE ENTRIES ARE DROPPED, NOT DOWNGRADED
+    -----------------------------------------
+    A bootstrap SE describes one specific set of rows. When the producer
+    restages, the entry describes a population nobody is looking at. Such an
+    entry is reported as ``STALE`` and contributes NO sigma -- gotcha #53: the
+    ledger returning a number is not the number applying here.
+
+    A ``POPULATION_DIVERGENCE`` entry is the subtler case and it gets the
+    subtler treatment: its numbers ARE shown, because they are the only
+    measurement of that cell anyone has, but it is counted as neither
+    established nor refuted. When the rail and the payload disagree about how
+    many rows the cell has, the SE and the excess describe different
+    populations and their ratio is not a sigma of either.
+
+    Which side is wrong is NOT decided here and must not be guessed. On
+    ``polymarket/basketball`` -- 0.641, and the only cell this sweep would
+    otherwise have removed -- the payload is the inflated side: CAL-P126
+    measured it 43.44% phantom, 13,116 rows for 7,419 distinct outcomes. On
+    ``polymarket/hockey`` (0.780) there is no phantom measurement and no
+    warrant for assuming the same cause.
+    """
+    cell["sigma_basis"] = SIGMA_BASIS_ROW
+    if not ledger:
+        return
+    entry, status = sigma_ledger.lookup(ledger, cell["source"], cell["category"], pop)
+    cell["sigma_ledger_status"] = status
+    if status not in (sigma_ledger.STATUS_FRESH, sigma_ledger.STATUS_POPULATION_DIVERGENCE):
+        return
+    se = entry.get("se_bootstrap_pp")
+    if not se:
+        return
+    # The PAYLOAD excess over the MEASURED SE -- the documented basis shift,
+    # spelled out in the ledger's own docstring.
+    sigma_m = round(cell["excess_pp"] / se, 2)
+    cell["sigma_measured"] = sigma_m
+    cell["se_measured_pp"] = round(se, 4)
+    cell["variance_ratio_vs_board"] = entry.get("variance_ratio_vs_board")
+    cell["effective_n"] = entry.get("effective_n")
+    cell["exact_coverage"] = entry.get("exact_coverage")
+    cell["measured_at_population"] = entry.get("population_version")
+    if status == sigma_ledger.STATUS_POPULATION_DIVERGENCE:
+        # Reported above, decides nothing. No `measured_verdict` at all rather
+        # than a hedged one: a verdict field that sometimes means "probably" is
+        # how a caveat gets counted as a result two sessions later.
+        return
+    if cell["verdict"] == VERDICT_EXEMPT:
+        cell["measured_verdict"] = VERDICT_EXEMPT
+    elif cell["excess_pp"] <= 0:
+        cell["measured_verdict"] = VERDICT_PASS
+    elif sigma_m >= SIGMA_GATE:
+        cell["measured_verdict"] = VERDICT_QUEUED
+    else:
+        cell["measured_verdict"] = VERDICT_UNDER_SIGMA
+
+
+def score(payload: dict, ledger: dict | None = None) -> dict:
+    """Score the published payload.
+
+    ``ledger`` is the MEASURED sigma ledger (CAL-P128). It is reported and it
+    does NOT decide anything. See :func:`_attach_measured_sigma` for why that
+    separation is deliberate rather than timid.
+    """
+    pop = payload.get("population_version")
     cells = []
     for c in fold(payload):
         n, ece = c["n"], c["ece"]
@@ -418,12 +518,27 @@ def score(payload: dict) -> dict:
                 "verdict": verdict,
             }
         )
+    for c in cells:
+        _attach_measured_sigma(c, ledger, pop)
     cells.sort(key=lambda c: (-c["excess_outcomes"], -c["n"]))
 
     material = [c for c in cells if c["verdict"] != VERDICT_EXEMPT]
     queued = [c for c in cells if c["verdict"] == VERDICT_QUEUED]
     unestablished = [c for c in cells if c["verdict"] == VERDICT_UNDER_SIGMA]
     headline = payload.get("mce_closing_line")
+
+    # The measured-sigma overlay, counted rather than described. These are
+    # REPORTING counts: `cells_queued` above is untouched.
+    # `measured` counts only cells whose measurement is allowed to DECIDE.
+    # A POPULATION_DIVERGENCE cell has a sigma_measured and no measured_verdict, and it
+    # is counted in its own bucket so it can never be silently read as either.
+    measured = [c for c in queued if c.get("measured_verdict") is not None]
+    refuted = [c for c in measured if c["measured_verdict"] == VERDICT_UNDER_SIGMA]
+    low_cov = [
+        c
+        for c in queued
+        if c.get("sigma_ledger_status") == sigma_ledger.STATUS_POPULATION_DIVERGENCE
+    ]
 
     return {
         "generated_at": payload.get("generated_at"),
@@ -463,6 +578,22 @@ def score(payload: dict) -> dict:
             # queued — which is the same test `done` applies, so the lane's one
             # glanceable number and this page's verdict can never disagree.
             "cells_at_bar": len(material) - len(queued),
+        },
+        # REPORTING ONLY — see `_attach_measured_sigma`. None of these feed
+        # `cells_at_bar`, `done`, or any verdict. They exist so the size of the
+        # pending question is on the board rather than in a handoff note.
+        "measured_sigma": {
+            "queued_cells_measured": len(measured),
+            "queued_cells_unmeasured": len(queued) - len(measured) - len(low_cov),
+            "queued_cells_low_coverage": len(low_cov),
+            "low_coverage_cells": [c["cell"] for c in low_cov],
+            "queued_cells_refuted": len(refuted),
+            "refuted_cells": [c["cell"] for c in refuted],
+            "refuted_excess_outcomes": sum(c["excess_outcomes"] for c in refuted),
+            # What the needle WOULD read if the gate were applied to the
+            # measured SE wherever one exists. Named `_if_applied` because it
+            # is a projection, not a reading.
+            "cells_at_bar_if_applied": len(material) - len(queued) + len(refuted),
         },
         "per_class": {
             klass: {
@@ -646,19 +777,61 @@ def render_markdown(result: dict, history: list[dict]) -> str:
             f"| `{klass}` | **{p['bar_pp']}** | {p['cells']} | {p['at_bar']} | "
             f"{p['queued']} | {p['outcomes']:,} |"
         )
+    ms = result.get("measured_sigma") or {}
+    if ms.get("queued_cells_low_coverage"):
+        L.append(
+            f"- ⚠️ **{ms['queued_cells_low_coverage']} queued cell(s) have a "
+            f"measured sigma that is NOT allowed to decide** — the exact rail "
+            f"and the payload disagree about the cell's population by more "
+            f"than {round((1 - sigma_ledger.COVERAGE_BAND[0]) * 100)}%, so the SE "
+            f"and the excess are not measurements of the same rows: "
+            f"{', '.join(ms['low_coverage_cells'])}. Which side is inflated is "
+            "a per-cell question — basketball is 43.44% phantom (CAL-P126)."
+        )
+    if ms.get("queued_cells_measured"):
+        L.append(
+            f"- measured sigma on **{ms['queued_cells_measured']}** of the "
+            f"{c['cells_queued']} queued cells "
+            f"({ms['queued_cells_unmeasured']} still on the row-grain estimate) "
+            f"— **{ms['queued_cells_refuted']} of the measured cells "
+            f"{'is' if ms['queued_cells_refuted'] == 1 else 'are'} NOT "
+            f"established** at the ratified gate "
+            f"({ms['refuted_excess_outcomes']:,} excess-outcomes). The needle "
+            f"would read **{ms['cells_at_bar_if_applied']}/{c['cells_material']}** "
+            "if the gate were applied to the measured SE. It is NOT applied — "
+            "the verdict column below is unchanged, pending Alex."
+        )
     L.append("")
     L.append(
-        "| # | cell | class | ECE pp | n | gap pp | bar | excess pp | sigma | excess-outcomes |"
+        "| # | cell | class | ECE pp | n | gap pp | bar | excess pp | sigma | "
+        "sigma meas | var ratio | eff n | excess-outcomes |"
     )
-    L.append("|--:|---|---|--:|--:|--:|--:|--:|--:|--:|")
+    L.append("|--:|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
     for i, cell in enumerate(
         [x for x in result["cells"] if x["verdict"] == VERDICT_QUEUED], 1
     ):
+        # An unmeasured cell prints "—", never a number. Filling this column
+        # with the row-grain figure would put a proof and an estimate in the
+        # same column, which is the defect the column was added to expose.
+        sm = cell.get("sigma_measured")
+        if sm is None:
+            sm_txt, deff_txt, eff_txt = "—", "—", "—"
+        else:
+            if cell.get("measured_verdict") is None:
+                # POPULATION_DIVERGENCE: shown in parentheses, which is the render's way
+                # of saying this number is evidence and not a verdict.
+                sm_txt = f"({sm:.2f})⚠️"
+            else:
+                sm_txt = f"{sm:.2f}" + (" 🔴" if sm < SIGMA_GATE else "")
+            deff = cell.get("variance_ratio_vs_board")
+            eff = cell.get("effective_n")
+            deff_txt = "—" if deff is None else f"{deff:.2f}"
+            eff_txt = "—" if eff is None else f"{eff:,}"
         L.append(
             f"| {i} | `{cell['cell']}` | {cell['class'][0]} | {cell['ece']:.2f} | "
             f"{cell['n']:,} | {cell['gap']:+.2f} | {cell['bar_pp']} | "
-            f"{cell['excess_pp']:+.2f} | {cell['sigma']:.1f} | "
-            f"{cell['excess_outcomes']:,} |"
+            f"{cell['excess_pp']:+.2f} | {cell['sigma']:.1f} | {sm_txt} | "
+            f"{deff_txt} | {eff_txt} | {cell['excess_outcomes']:,} |"
         )
     return "\n".join(L)
 
@@ -680,6 +853,16 @@ def main() -> int:
     ap.add_argument("--record", action="store_true")
     ap.add_argument("--history", default=str(DEFAULT_HISTORY))
     ap.add_argument("--out", help="write the full JSON result here")
+    ap.add_argument(
+        "--sigma-ledger",
+        default=str(sigma_ledger.LEDGER_PATH),
+        help="measured cluster-bootstrap SEs (CAL-P128). Reported, not applied.",
+    )
+    ap.add_argument(
+        "--no-sigma-ledger",
+        action="store_true",
+        help="score with the row-grain estimate alone, as before CAL-P128",
+    )
     args = ap.parse_args()
 
     if args.live:
@@ -694,7 +877,13 @@ def main() -> int:
         print(json.dumps(check, indent=2)[:4000], file=sys.stderr)
         return 1
 
-    result = score(payload)
+    # A ledger that fails its own coherence check RAISES rather than being
+    # skipped. A scorecard that silently drops the measured column because a
+    # file was malformed reports the old, too-optimistic board under the new
+    # heading — the exact shape of gotcha #53.
+    ledger = None if args.no_sigma_ledger else sigma_ledger.load(args.sigma_ledger)
+
+    result = score(payload, ledger)
     result["self_check"] = {
         "ok": True,
         "detail": [

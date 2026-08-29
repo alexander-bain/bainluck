@@ -1,0 +1,29 @@
+{
+ "source": "kalshi",
+ "category": "tech",
+ "width": 1000000,
+ "by_key": {
+  "group_id": {
+   "clusters": 0,
+   "markets": 0,
+   "markets_in_wide": 0,
+   "wide_clusters": 0,
+   "max_spread": 0,
+   "max_size": 0,
+   "pct_in_wide": null,
+   "risk": "NO_CLUSTERS"
+  },
+  "event_id": {
+   "clusters": 0,
+   "markets": 0,
+   "markets_in_wide": 0,
+   "wide_clusters": 0,
+   "max_spread": 0,
+   "max_size": 0,
+   "pct_in_wide": null,
+   "risk": "NO_CLUSTERS"
+  }
+ },
+ "worst_key": null,
+ "risk": "NO_CLUSTERS"
+}

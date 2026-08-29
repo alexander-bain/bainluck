@@ -1,0 +1,38 @@
+{
+ "source": "polymarket",
+ "category": "hockey",
+ "width": 1000000,
+ "by_key": {
+  "group_id": {
+   "clusters": 500,
+   "markets": 3878,
+   "markets_in_wide": 3607,
+   "wide_clusters": 464,
+   "max_spread": 34501234,
+   "max_size": 17,
+   "pct_in_wide": 93.0,
+   "risk": "SEVERE"
+  },
+  "event_id": {
+   "clusters": 427,
+   "markets": 3781,
+   "markets_in_wide": 3725,
+   "wide_clusters": 418,
+   "max_spread": 34501234,
+   "max_size": 45,
+   "pct_in_wide": 98.5,
+   "risk": "SEVERE"
+  }
+ },
+ "worst_key": {
+  "clusters": 427,
+  "markets": 3781,
+  "markets_in_wide": 3725,
+  "wide_clusters": 418,
+  "max_spread": 34501234,
+  "max_size": 45,
+  "pct_in_wide": 98.5,
+  "risk": "SEVERE"
+ },
+ "risk": "SEVERE"
+}

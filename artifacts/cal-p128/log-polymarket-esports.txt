@@ -1,0 +1,86 @@
+    [1/60] ids 112847-1112847 (0s elapsed)
+    [2/60] ids 1112847-2112847 (2s elapsed)
+    [3/60] ids 2112847-3112847 (3s elapsed)
+    [4/60] ids 3112847-4112847 (5s elapsed)
+    [5/60] ids 4112847-5112847 (6s elapsed)
+    [6/60] ids 5112847-6112847 (7s elapsed)
+    [7/60] ids 6112847-7112847 (9s elapsed)
+    [8/60] ids 7112847-8112847 (22s elapsed)
+    [9/60] ids 8112847-9112847 (46s elapsed)
+    [10/60] ids 9112847-10112847 (70s elapsed)
+    [11/60] ids 10112847-11112847 (75s elapsed)
+    [12/60] ids 11112847-12112847 (102s elapsed)
+    [13/60] ids 12112847-13112847 (122s elapsed)
+    [14/60] ids 13112847-14112847 (129s elapsed)
+    [15/60] ids 14112847-15112847 (257s elapsed)
+    [16/60] ids 15112847-16112847 (258s elapsed)
+    [17/60] ids 16112847-17112847 (259s elapsed)
+    [18/60] ids 17112847-18112847 (419s elapsed)
+    [19/60] ids 18112847-19112847 (448s elapsed)
+    [20/60] ids 19112847-20112847 (463s elapsed)
+    [21/60] ids 20112847-21112847 (480s elapsed)
+    [22/60] ids 21112847-22112847 (529s elapsed)
+    [23/60] ids 22112847-23112847 (598s elapsed)
+    [24/60] ids 23112847-24112847 (647s elapsed)
+    [25/60] ids 24112847-25112847 (656s elapsed)
+    [26/60] ids 25112847-26112847 (674s elapsed)
+    [27/60] ids 26112847-27112847 (748s elapsed)
+    [28/60] ids 27112847-28112847 (797s elapsed)
+    [29/60] ids 28112847-29112847 (849s elapsed)
+    [30/60] ids 29112847-30112847 (882s elapsed)
+    [31/60] ids 30112847-31112847 (944s elapsed)
+    [32/60] ids 31112847-32112847 (997s elapsed)
+    [33/60] ids 32112847-33112847 (1023s elapsed)
+    [34/60] ids 33112847-34112847 (1069s elapsed)
+    [35/60] ids 34112847-35112847 (1084s elapsed)
+    [36/60] ids 35112847-36112847 (1108s elapsed)
+    [37/60] ids 36112847-37112847 (1115s elapsed)
+    [38/60] ids 37112847-38112847 (1135s elapsed)
+    [39/60] ids 38112847-39112847 (1138s elapsed)
+    [40/60] ids 39112847-40112847 (1139s elapsed)
+    [41/60] ids 40112847-41112847 (1140s elapsed)
+    [42/60] ids 41112847-42112847 (1140s elapsed)
+    [43/60] ids 42112847-43112847 (1141s elapsed)
+    [44/60] ids 43112847-44112847 (1141s elapsed)
+    [45/60] ids 44112847-45112847 (1141s elapsed)
+    [46/60] ids 45112847-46112847 (1142s elapsed)
+    [47/60] ids 46112847-47112847 (1142s elapsed)
+    [48/60] ids 47112847-48112847 (1143s elapsed)
+    [49/60] ids 48112847-49112847 (1143s elapsed)
+    [50/60] ids 49112847-50112847 (1143s elapsed)
+    [51/60] ids 50112847-51112847 (1144s elapsed)
+    [52/60] ids 51112847-52112847 (1144s elapsed)
+    [53/60] ids 52112847-53112847 (1145s elapsed)
+    [54/60] ids 53112847-54112847 (1145s elapsed)
+    [55/60] ids 54112847-55112847 (1146s elapsed)
+    [56/60] ids 55112847-56112847 (1147s elapsed)
+    [57/60] ids 56112847-57112847 (1150s elapsed)
+    [58/60] ids 57112847-58112847 (1199s elapsed)
+    [59/60] ids 58112847-59112847 (1293s elapsed)
+    [60/60] ids 59112847-59753139 (1436s elapsed)
+polymarket/esports   (cluster sigma, 1500s sweep, 2000 resamples, seed 20260829)
+  curve generated 2026-08-29T00:36:47.978149+00:00  population q268
+
+  SELF-CHECK — the producer's own chain against the payload it produced
+    exact replica    n=  14242  ECE=  7.15  gap=  +5.82
+    payload          n=  14053  ECE=  7.59  gap=  +6.02
+    delta            n=   +189 (+1.34%)  ECE=-0.44  gap=-0.20
+
+  CLUSTERS — one published row's independent unit is its MARKET
+    published rows           14242
+    distinct markets          4591
+    rows per market           3.10
+
+  SIGMA — class B_exchange_contest, bar 3.0 pp, ECE 7.15 pp, excess +4.15 pp
+    basis                                 SE pp    sigma
+    row grain (the board today)           0.419     9.91
+    market grain (perfect-corr bound)     0.738     5.62
+    cluster bootstrap (MEASURED)          0.461     9.00
+
+    bootstrap ECE 95% interval  [6.24, 8.09] pp
+    design effect (SE_boot/SE_row)^2  1.21
+
+  VERDICT  ESTABLISHED — measured sigma 9.00 against SIGMA_GATE 2.0
+           the board reads 9.91; the cell survives the correction with margin to spare
+
+  wrote artifacts/cal-p128/sigma-polymarket-esports.json

@@ -1,0 +1,38 @@
+{
+ "source": "polymarket",
+ "category": "golf",
+ "width": 1000000,
+ "by_key": {
+  "group_id": {
+   "clusters": 43,
+   "markets": 3690,
+   "markets_in_wide": 58,
+   "wide_clusters": 1,
+   "max_spread": 2436754,
+   "max_size": 157,
+   "pct_in_wide": 1.6,
+   "risk": "LOW"
+  },
+  "event_id": {
+   "clusters": 0,
+   "markets": 0,
+   "markets_in_wide": 0,
+   "wide_clusters": 0,
+   "max_spread": 0,
+   "max_size": 0,
+   "pct_in_wide": null,
+   "risk": "NO_CLUSTERS"
+  }
+ },
+ "worst_key": {
+  "clusters": 43,
+  "markets": 3690,
+  "markets_in_wide": 58,
+  "wide_clusters": 1,
+  "max_spread": 2436754,
+  "max_size": 157,
+  "pct_in_wide": 1.6,
+  "risk": "LOW"
+ },
+ "risk": "LOW"
+}

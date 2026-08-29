@@ -194,6 +194,49 @@ CASE WHEN fm2.commence_time IS NULL THEN 'z_no_commence'
 SERIES_JOIN = "LEFT JOIN futures_markets fm2 ON fm2.id = d.market_id"
 SERIES_EXPR = "SPLIT_PART(fm2.external_id, '-', 1)"
 
+#: CAL-P127 — the ROUND-SCOPE x QUESTION-FAMILY cross, for `kalshi/golf` (rank 9).
+#:
+#: ``series`` folds this cell into 65 arms, which is past ``rule_search``'s
+#: ``MAX_CLASSES`` — so the searcher refuses it, and the only thing left is to
+#: read the table and pick the bad-looking rows by hand. That is an exhaustive
+#: search for an overfit performed by a human instead of a loop, and lesson 7
+#: exists because a hand-picked subset cannot support "no rule exists".
+#:
+#: So the 65 arms are collapsed on the two properties the Kalshi ticker actually
+#: encodes, and on nothing else:
+#:
+#:   scope    does the ticker name a ROUND (``R<n>``)? ``KXPGAR1TOP10`` does,
+#:            ``KXPGATOP10`` does not. This is the difference between "top 10
+#:            after 18 holes" and "top 10 at the end of the tournament".
+#:   family   what is being asked — a TOP-N cut (``...TOP<n>``), the round or
+#:            tournament LEAD (``...LEAD``), or anything else.
+#:
+#: WHY THE ROUND TEST IS ``R[0-9]`` AND NOT ``R``. Three of this cell's series
+#: carry an R that is not a round: ``KXPGAROUNDSCORE``, ``KXPGAROUNDLOW`` and
+#: ``KXOWGRRANK``. Requiring a DIGIT after the R separates them, and the guard
+#: suite pins all three by name — an enumeration written by reading one source's
+#: titles is complete for that source and silently partial for every other
+#: (gotcha #129), so the test is structural and the counterexamples are frozen.
+#:
+#: WHY THE FAMILY TEST IS ANCHORED. ``TOP[0-9]+$`` and ``LEAD$`` are anchored to
+#: the END of the series token so that a future ``KXPGATOP10MARGIN`` — a margin
+#: prop that merely mentions a cut — does not silently join the TOP-N arm and
+#: dilute whatever verdict this partition supports.
+#:
+#: This is a PARTITION, not a rule. Every row lands in exactly one of six arms
+#: and no arm is privileged; which arms (if any) a rule should drop is decided
+#: by ``calibration_rule_search`` over the whole 2^6 lattice, scored on a
+#: holdout, not by this expression.
+GOLFROUND_JOIN = SERIES_JOIN
+GOLFROUND_EXPR = """
+CASE WHEN SPLIT_PART(fm2.external_id, '-', 1) ~ 'R[0-9]'
+     THEN 'round' ELSE 'tourney' END
+|| '|' ||
+CASE WHEN SPLIT_PART(fm2.external_id, '-', 1) ~ 'TOP[0-9]+$' THEN 'topn'
+     WHEN SPLIT_PART(fm2.external_id, '-', 1) ~ 'LEAD$'      THEN 'lead'
+     ELSE 'other' END
+"""
+
 #: Terminal market shape, on the same basis ``market_result_shape`` uses.
 #:
 #: The ``market_id IN (SELECT market_id FROM market_info)`` conjunct is NOT
@@ -649,6 +692,7 @@ DIMENSIONS = {
     "none": ("'all'", "", ""),
     "age": (AGE_EXPR, AGE_JOIN, ""),
     "series": (SERIES_EXPR, SERIES_JOIN, ""),
+    "golfround": (GOLFROUND_EXPR, GOLFROUND_JOIN, ""),
     "shape": (SHAPE_EXPR, SHAPE_JOIN, ""),
     "sumband": (SUMBAND_EXPR, SUMBAND_JOIN, SUMBAND_PRE),
     "pair": (PAIR_EXPR, PAIR_JOIN, ""),
@@ -777,6 +821,40 @@ def pool(by_key: dict) -> dict:
     return out
 
 
+#: How many times :func:`fetch_payload` re-asks after a 429, and how long it
+#: waits between tries. The public rate limit is 60 requests/minute and a whole-
+#: cell sweep spends most of that budget on ``db-query`` chunks, so the payload
+#: fetch — which happens AFTER the sweep — routinely arrives as the 61st request
+#: in the window. Sixty-five seconds is one full window plus slack.
+#:
+#: WHY A RETRY AND NOT A CACHE. The self-check's whole warrant is that the
+#: payload it compares against is the one the site is serving now; a cached
+#: payload would let a stale curve silently certify a fold of a newer one.
+#: WHY BOUNDED AND LOUD. A throttle that is swallowed reads as "the cell is
+#: empty" (gotcha #53); a throttle that is retried forever reads as a hang. On
+#: exhaustion this re-raises the 429 unchanged, so the failure is still a
+#: harness story told in the harness's own words (gotcha #124).
+PAYLOAD_RETRIES = 3
+PAYLOAD_BACKOFF_S = 65
+
+
+def fetch_payload() -> dict:
+    """``GET /api/calibration``, re-asking a bounded number of times on 429."""
+    base = os.environ["BAINLUCK_API"].rstrip("/")
+    for attempt in range(PAYLOAD_RETRIES):
+        try:
+            with urllib.request.urlopen(f"{base}/api/calibration", timeout=120) as fh:
+                return json.loads(fh.read().decode())
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 or attempt == PAYLOAD_RETRIES - 1:
+                raise
+            print(f"    payload fetch throttled (429), retry "
+                  f"{attempt + 1}/{PAYLOAD_RETRIES - 1} in {PAYLOAD_BACKOFF_S}s",
+                  flush=True)
+            time.sleep(PAYLOAD_BACKOFF_S)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def payload_cell(source: str, category: str) -> tuple[int, float | None, float | None, dict]:
     """The published cell, folded from the served payload's own buckets.
 
@@ -784,9 +862,7 @@ def payload_cell(source: str, category: str) -> tuple[int, float | None, float |
     a rail that is not shown to reproduce is a parallel rail wearing the
     published curve's name.
     """
-    base = os.environ["BAINLUCK_API"].rstrip("/")
-    with urllib.request.urlopen(f"{base}/api/calibration", timeout=120) as fh:
-        d = json.loads(fh.read().decode())
+    d = fetch_payload()
     bins: dict[int, dict] = defaultdict(lambda: {"n": 0, "w": 0, "sp": 0.0})
     for r in d["buckets"]:
         if r["source"] == source and r["category"] == category:

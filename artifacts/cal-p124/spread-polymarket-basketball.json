@@ -1,0 +1,38 @@
+{
+ "source": "polymarket",
+ "category": "basketball",
+ "width": 1000000,
+ "by_key": {
+  "group_id": {
+   "clusters": 717,
+   "markets": 21288,
+   "markets_in_wide": 19824,
+   "wide_clusters": 559,
+   "max_spread": 30995800,
+   "max_size": 120,
+   "pct_in_wide": 93.1,
+   "risk": "SEVERE"
+  },
+  "event_id": {
+   "clusters": 635,
+   "markets": 20297,
+   "markets_in_wide": 19640,
+   "wide_clusters": 522,
+   "max_spread": 35343436,
+   "max_size": 247,
+   "pct_in_wide": 96.8,
+   "risk": "SEVERE"
+  }
+ },
+ "worst_key": {
+  "clusters": 635,
+  "markets": 20297,
+  "markets_in_wide": 19640,
+  "wide_clusters": 522,
+  "max_spread": 35343436,
+  "max_size": 247,
+  "pct_in_wide": 96.8,
+  "risk": "SEVERE"
+ },
+ "risk": "SEVERE"
+}
