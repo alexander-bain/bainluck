@@ -288,7 +288,10 @@ its own decision.
 
 ## 6. Gates
 
-- **Full suite** — see §6a. `EXIT CODE` read BY VALUE (gotcha #124).
+- **Full suite, final code tree (`e3054517`): `20,894 passed / 0 failed / 116 skipped /
+  61 xfailed`, ONE run, 850.27 s, EXIT CODE 0 read BY VALUE** (gotcha #124). An earlier run
+  on the pre-option-c tree was green at **20,887 / 849.49 s / exit 0**, and the two
+  reconcile exactly: `20,887 + 7` new `test_needle_latency.py` cases = `20,894`.
 - 🔴 **The first full run was GENUINELY RED, and it was right.** Three failures in
   `tests/test_mutation_guard.py`, all one finding: the new
   `league_rails_fence_mutations.py` writes to disk without `guarded_targets`, and the
@@ -504,3 +507,40 @@ A set-precedence bug was found and fixed while wiring the refusal message: on se
 tighter than `|`, so `set(POOL) | {"cold search"} - served` evaluates as
 `POOL | (X - served)` and listed every surface as missing including the two that were
 served. Pinned by `test_the_needle_refusal_names_only_the_surfaces_actually_missing`.
+
+---
+
+## 12. Master moved under this cycle, and one of my own commands went to the wrong tree
+
+**`origin/master` went `67e2585c` → `f0b512b8` during this session:** `program/latency-94`
+(LAT-P109) merged. **`program/latency-95` is now the only unmerged latency branch**, and
+every claim in §the-token was re-derived against the new tip rather than copied:
+
+- `HEAD` is **not** an ancestor of `origin/master` @ `f0b512b8`.
+- merge-tree vs the NEW master: **exit 0, tree `bb20f58d`, 0 conflicts.**
+- `git diff 67e2585c origin/master` over all five files this branch shares with anything is
+  **EMPTY** — the merge touched none of them, so the measurements above still describe the
+  merged result.
+
+### 🔴 And a mistake worth writing down, because the recovery is the lesson
+
+A shell block in this session ran `git add -A && git commit` with its working directory in
+**`~/bainluck`, the shared master checkout**, not in this worktree. The two `python3`
+heredocs above it were newline-separated rather than `&&`-chained, so when the second one
+raised `FileNotFoundError` the git commands ran anyway.
+
+It committed to local `master` and swept up **four files belonging to other lanes** —
+`.gitignore`, `RESTOCK-ux-011-price-sweep-ruling-138.md`, an untracked `YOUR-TURN.md`, and
+an iOS entitlements edit.
+
+**Nothing was pushed and nothing was lost.** `git reset --mixed 65b86bc7^` moved local
+master back to `67e2585c` and returned all four files to the working tree in exactly their
+prior state (two modified, two untracked) — `--mixed`, deliberately, because `--hard` would
+have destroyed another lane's uncommitted work to tidy up my own error.
+
+Gotcha #51 says every write-shaped git verb takes `-C`, and it says `-C` pins the DIRECTORY.
+This is the failure mode it describes, reached by a path it does not: not a `cd` that went
+wrong, but an `&&` chain that was not one. **The rule that would have caught it is the
+narrower one: a write-shaped git verb gets `-C <worktree>` every time, unconditionally —
+not "when the cwd is in doubt", because the cwd being in doubt is exactly the state you
+cannot detect from inside the command that is about to be wrong.**
