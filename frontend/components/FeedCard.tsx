@@ -5,7 +5,8 @@ import Link from "next/link";
 import Image from "next/image";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GolfTournament } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
-import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { renderedDuelPercents, renderedCardPercents, cardSumReason } from "@/lib/renderedPercent";
+import { cardSumExplanation } from "@/lib/cardSum";
 import { eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
@@ -569,6 +570,47 @@ function FuturesFeedCard({
   const leader = data.top_outcomes?.[0];
   const leaderProb = leader?.probability;
 
+  // ── #2088 criterion 3: the card rule, on the surface a reader actually reads ──
+  //
+  // This list is where a two-outcome market prints BOTH of its numbers — the
+  // Discover futures card shows only the hero leader, so the pair, and therefore
+  // the sum, is visible here (`/categories/*`, `/sports`, `/my-stuff`) and not
+  // there. Until now every row rounded independently: `Math.round(p * 100)`,
+  // inline, which is the fourth copy of the rule #2060 exists to replace and the
+  // one place it had never reached.
+  //
+  // MEASURED ON THE DEPLOYED FEED 2026-08-29 across every pair-printing surface:
+  // 7 distinct two-outcome cards, of which SIX are wrong today — `Which party will
+  // win the U.S. House?` (85 + 16) and `Will Neuralink's valuation hit (HIGH)
+  // $47.5B` (73 + 28) print 101, and four more print an unexplained non-100
+  // (83, 51, 41, 22). Only `Will Netanyahu visit New York City by...?` (52 + 48)
+  // is already right, and it correctly gains nothing.
+  //
+  // The served reason WINS, including when it is null ("checked, and they do total
+  // 100"). The fallback keys on the KEY BEING ABSENT rather than on the value being
+  // falsy — `?? derive()` would re-derive on every correct card and make the
+  // server's answer decorative. Same discipline as `LabelingCard`.
+  const printedOutcomes = leaderFirstSlice(data.top_outcomes ?? [], 3);
+  const fallbackPercents = renderedCardPercents(
+    printedOutcomes.map((o) => o.probability)
+  );
+  const sumExplanation = cardSumExplanation(
+    "card_sum_reason" in data
+      ? data.card_sum_reason
+      : cardSumReason(printedOutcomes.map((o) => o.probability))
+  );
+  // The headline's own percent, looked up BY IDENTITY rather than by position:
+  // `leader` is `top_outcomes[0]` (unsorted) while `printedOutcomes` is
+  // leader-first, so the two indices are not the same list. `leaderFirst` returns
+  // the original row objects, so `indexOf` is exact. Null when the headline is not
+  // among the printed rows at all, which leaves `formatProbability` on its
+  // pre-existing behaviour rather than inventing a number.
+  const heroPercent = !leader
+    ? null
+    : "rendered_percent" in leader
+      ? leader.rendered_percent
+      : (fallbackPercents[printedOutcomes.indexOf(leader)] ?? null);
+
   // Category emoji
   const catKey = data.llm_sport_category ?? "";
   const catEmoji = catKey ? getEmojiForCategory(catKey) : "📊";
@@ -672,8 +714,14 @@ function FuturesFeedCard({
 
           {leader && leaderProb !== null && (
             <div className="flex-shrink-0 text-right">
+              {/* Queue 283's invariant, kept: ONE outcome never renders two
+                  different numbers on one card. The row below now prints the
+                  card-rule percent, so the headline must take the SAME integer
+                  rather than rounding the probability again — otherwise a pair
+                  summing to 0.99 shows 57% here and 58% one line down. Same
+                  `{ rendered }` channel the event card already uses. */}
               <div className="font-mono text-sm font-bold text-text-primary">
-                {formatProbability(leaderProb)}
+                {formatProbability(leaderProb, { rendered: heroPercent })}
               </div>
               <div className="flex items-center justify-end gap-1 text-[11px] text-text-muted truncate max-w-[100px]">
                 {isNonSports && leader && (
@@ -697,7 +745,15 @@ function FuturesFeedCard({
           <div className="mt-2 pt-2 border-t border-surface-border/50 space-y-1.5">
             {/* #1526: leader-first before truncating — i === 0 is styled as
                 THE favorite below, so an unsorted slice bolds an also-ran. */}
-            {leaderFirstSlice(data.top_outcomes, 3).map((outcome, i) => (
+            {printedOutcomes.map((outcome, i) => {
+              // #2060/#2088: the served percent wins; `fallbackPercents` is the
+              // pre-#2088 payload's answer and is computed over the SAME
+              // leader-first slice, so index i lines up either way.
+              const pct =
+                "rendered_percent" in outcome
+                  ? outcome.rendered_percent
+                  : fallbackPercents[i];
+              return (
               <div key={outcome.id} className="flex items-center gap-2">
                 <span
                   title={outcome.name}
@@ -708,19 +764,32 @@ function FuturesFeedCard({
                       "Rica" and "…World Cup?" into "Cup?". */}
                   {outcome.name}
                 </span>
-                <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden" role="progressbar" aria-valuenow={Math.round((outcome.probability ?? 0) * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${outcome.name} probability`}>
+                {/* The bar WIDTH stays on the raw probability — it is a length,
+                    not a printed number — but `aria-valuenow` is the number that
+                    is printed, so a screen reader hears the card, not a second
+                    rounding of it. */}
+                <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden" role="progressbar" aria-valuenow={pct ?? undefined} aria-valuemin={0} aria-valuemax={100} aria-label={`${outcome.name} probability`}>
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`}
                     style={{ width: `${(outcome.probability ?? 0) * 100}%` }}
                   />
                 </div>
-                {outcome.probability !== null && (
+                {pct !== null && pct !== undefined && (
                   <span className="font-mono tabular-nums text-[11px] font-bold text-text-primary w-8 text-right">
-                    {Math.round(outcome.probability * 100)}%
+                    {pct}%
                   </span>
                 )}
               </div>
-            ))}
+              );
+            })}
+            {sumExplanation && (
+              <p
+                className="text-[10px] text-text-muted leading-relaxed pt-0.5"
+                data-testid="card-sum-explanation"
+              >
+                {sumExplanation}
+              </p>
+            )}
           </div>
         )}
 
