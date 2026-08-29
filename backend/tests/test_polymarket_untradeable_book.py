@@ -125,7 +125,21 @@ class TestResolveDeclinesThePhantom:
 
 
 class TestRealTradeBeatsAWideBook:
-    """Somebody actually transacted — that is a belief, whatever the quotes say."""
+    """Somebody actually transacted — that is a belief, whatever the quotes say.
+
+    AMENDED BY Q428 (2026-08-28), and the amendment is to these specimens, not
+    to the claim. "Somebody actually transacted" is a statement about the
+    PRESENT; ``lastTradePrice`` carries no time, so the shipped rule asserted it
+    rather than checking it. On the US Open bracket grid that unbounded
+    exception published Novak Djokovic at 71% to reach the round of 16 above
+    79% to reach the quarter-final, off one $5 trade against a 7c/98c book.
+
+    The resolver now requires Gamma's ``volume24hr`` to be positive before the
+    trade may beat the book. These two specimens were drawn from markets that
+    WERE being traded, so they carry that field now and go on asserting exactly
+    what they always meant; each is paired with its untraded twin below, which
+    is the case that was silently riding on them.
+    """
 
     def test_wide_book_with_a_real_last_trade_keeps_the_trade_price(self):
         m = _market(
@@ -133,8 +147,21 @@ class TestRealTradeBeatsAWideBook:
             best_bid=0.01,
             best_ask=0.99,
             last_trade_price=0.17,
+            volume_24h=1_200.0,
         )
         assert _resolve_market_probability(m) == pytest.approx(0.17)
+
+    def test_the_same_book_with_no_trade_in_24h_is_declined(self):
+        """Q428's twin of the test above. Identical quotes, identical last
+        trade, nobody transacting today — so there is no present-tense belief
+        for the trade to represent and the wide book is all that is left."""
+        m = _market(
+            outcome_prices=[0.50, 0.50],
+            best_bid=0.01,
+            best_ask=0.99,
+            last_trade_price=0.17,
+        )
+        assert _resolve_market_probability(m) is None
 
     def test_the_trade_price_is_used_not_the_phantom_midpoint(self):
         m = _market(
@@ -142,8 +169,24 @@ class TestRealTradeBeatsAWideBook:
             best_bid=0.02,
             best_ask=0.94,
             last_trade_price=0.06,
+            volume_24h=340.0,
         )
         assert _resolve_market_probability(m) == pytest.approx(0.06)
+
+    def test_the_phantom_midpoint_is_not_used_as_a_consolation_prize(self):
+        """Declining the stale trade must not fall through to 0.48.
+
+        The midpoint is the thing #1578 exists to refuse; a recency test that
+        ended in "well, use the midpoint then" would have re-shipped the exact
+        cohort that asserts 50% and wins twice in 1,580.
+        """
+        m = _market(
+            outcome_prices=[0.48, 0.52],
+            best_bid=0.02,
+            best_ask=0.94,
+            last_trade_price=0.06,
+        )
+        assert _resolve_market_probability(m) is None
 
     def test_degenerate_trade_prices_are_not_a_fallback(self):
         for bad in (0.0, 1.0):
