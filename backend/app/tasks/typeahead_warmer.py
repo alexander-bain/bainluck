@@ -138,10 +138,15 @@ The signature was unmistakable once looked at. Production, 2026-08-21::
     world cup 5414   red sox 5411   celtics 5403   yankees 5400   patriots 5399
 
 A spread of 15 across the top five is a round-robin process, not a human
-distribution — real traffic over the same period runs 102, 101, 95, 90, 82.
+distribution — the log's own head over the same period runs 102, 101, 95, 90, 82.
+
+⚠️ LAT-P117 (2026-08-29): that contrast was read as zset-machine vs log-human,
+and only the first half was true. The log's 102/101/95/90 head is ALSO machine —
+the Flow Sentinel's nightly gold set (see `_QUERY_LOG_SHARE` below for the
+measurement). The zset diagnosis stands; "so the log is the honest one" does not.
 
 The user-visible cost, measured the same morning at a 15.6h post-deploy horizon:
-the top four real queries by 30-day volume are ``masters winner`` (102),
+the top four queries by 30-day volume are ``masters winner`` (102),
 ``stanley cup`` (101), ``world series`` (95), ``nba champion`` (90), and three of
 those four were COLD at 4.0s, 4.9s and 5.2s against a <150ms budget. ``world
 series`` was warm at 0.25s for no better reason than that it was also locked into
@@ -492,7 +497,31 @@ async def _head_from_query_log(session, limit: int) -> list[str]:
 #:
 #: * `search_query_logs` is written ONLY by `/search` (`_log_search_query`), which
 #:   the warmer never calls. It is time-windowed by its own query (30 days) and
-#:   records SUBMITTED intent. Nothing in this system can pollute it.
+#:   records SUBMITTED intent.
+#:
+#:   🔴 **"Nothing in this system can pollute it" — THAT SENTENCE USED TO BE HERE
+#:   AND IT IS FALSE.** Measured 2026-08-29 (LAT-P117): of 4,257 rows in the
+#:   30-day window, **13 are attested** (a `session_id` or a `user_id`) and
+#:   **4,244 are not** — the table is 99.7 % machine. The polluter is not a
+#:   warmer, which is why the #1866 suppression above does not catch it: the
+#:   **Flow Sentinel** (`tasks/flow_sentinel.py`, nightly 07:10 UTC) submits its
+#:   33-query `GOLD_SET` + `GOLD_SET_TOP1` over **HTTP** via `httpx`, so the
+#:   in-process `_suppress_search_log` ContextVar cannot reach it. The signature
+#:   is arithmetic, not correlation: hour 07 UTC is the single largest hour for
+#:   the whole head, at exactly 30 rows / 30 days for a term in ONE gold set and
+#:   exactly 60 for `masters winner`, which is in BOTH. **18 of the top 25 terms
+#:   are literally gold-set entries.** So this arm's guaranteed half is elected
+#:   by our own nightly checklist.
+#:
+#:   IT IS STILL NOT REMOVED, AND THAT IS A FINDING RATHER THAN AN OMISSION. On
+#:   a site with ~13 real searches a month there is no demand signal to replace
+#:   it with: the attested head is **7 queries**, several of them (`orenburg`,
+#:   `bridesmaid`, `pregnancy`) other harnesses' probes, so filtering this arm to
+#:   attested rows would cut it 20 -> ~7 and — because `_blend_heads`' share is a
+#:   FLOOR and the zset arm reads empty in production — would warm FEWER terms
+#:   than today. The gold set is, by accident, a defensible warm list: it was
+#:   chosen to be representative user intents. Parked P117-2 with the numbers;
+#:   do not "fix" this without a demand signal to put in its place.
 #: * `search:trending:24h` is written by `/typeahead`, which the warmer DOES call
 #:   — it was a closed loop until the suppression in `routes/events.py` landed.
 #:   Its scores were also all-time rather than 24h, because the route

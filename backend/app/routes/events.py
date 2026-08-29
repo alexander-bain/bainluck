@@ -2765,6 +2765,66 @@ _suppress_search_log: contextvars.ContextVar[bool] = contextvars.ContextVar(
 )
 
 
+#: The four arrays a `/search` answer can arrive in. Frozen as a literal rather
+#: than "every list in the payload" for the same reason the needle's pool is: a
+#: predicate would silently re-define "answered" the next time this route grows
+#: a section, and nobody would see it happen.
+#:
+#: `futures_families` is deliberately ABSENT and its absence is load-bearing. A
+#: family is a COMPOSITION of markets that are already in `futures` — the web
+#: page's `familyShownIds` filters the family's members back out of the flat
+#: list precisely so nothing double-renders — so counting families too would
+#: count the same markets twice and inflate the very column this fix exists to
+#: make honest.
+_SEARCH_ANSWER_SECTIONS = ("teams", "event_concepts", "futures")
+
+
+def _answered_result_count(payload: dict) -> int:
+    """How many things this search actually put in front of the person.
+
+    🔴 LAT-P117: `pagination.total_results` COUNTS ONE SECTION OF FOUR, and for
+    the whole futures half of search that section is empty. Measured on
+    production 2026-08-29 over the 30-day log: **27 of the top 40 logged queries
+    had NEVER recorded a non-zero `result_count`** — and every one of them
+    answers fine. `stanley cup` -> 0 events but 2 futures + 1 family;
+    `lebron james` -> 0 events, 10 futures, 2 families; `trump approval` -> 10
+    futures; `nba mvp` -> 6. The Flow Sentinel independently grades `stanley
+    cup` as FOUND (`GOLD_SET` Q09) while this column called it empty 108 times.
+
+    WHY THAT COLUMN BEING WRONG IS A LATENCY BUG AND NOT AN ANALYTICS ONE.
+    `search_query_logs` elects what the warmers warm. "Stop warming the queries
+    that come up empty" is the single most obvious refinement anyone reaches for
+    against this table — it is principled, it is one predicate, and applied to
+    the column as it was it would have pruned 27 of the 40 warm slots. Those 27
+    are futures-answering queries, and the futures/outcome arm is **59.9 % of
+    the cold-search build** (LAT-P116), so the cleanup would have evicted from
+    the warm head exactly the queries whose cold path costs the most, while
+    looking like a tidy-up. That is gotcha #53 wearing a number: an absent
+    section and an empty answer must never read the same.
+
+    The definition is TAKEN FROM THE PRODUCT rather than invented here — it is
+    the condition the search page itself uses to decide whether to render the
+    zero-state (`frontend/app/search/page.tsx`: `!hasEvents && !hasFutures &&
+    !hasTeams && !hasEventConcepts`). One definition of "answered", read off the
+    surface that shows it, so the log and the screen cannot disagree.
+
+    Events contribute `pagination.total_results` (their true, paginated total —
+    `results` is one 25-row page of it); the other three are unpaginated, so
+    they contribute their lengths.
+    """
+    total = 0
+    pagination = payload.get("pagination")
+    if isinstance(pagination, dict):
+        events_total = pagination.get("total_results")
+        if isinstance(events_total, int):
+            total += max(0, events_total)
+    for section in _SEARCH_ANSWER_SECTIONS:
+        rows = payload.get(section)
+        if isinstance(rows, list):
+            total += len(rows)
+    return total
+
+
 def _record_search_query(payload: dict, *, q: str, request: Request, current_user) -> None:
     """Log one answered search. Called from BOTH of `search_events`' exits.
 
@@ -2793,8 +2853,13 @@ def _record_search_query(payload: dict, *, q: str, request: Request, current_use
         return
     try:
         results = payload.get("results") or []
+        # LAT-P117: still the EVENT id, and deliberately not widened to "the top
+        # thing of any kind". `top_result_id` carries no type discriminator, so
+        # writing a `futures_markets` id into it would make the column ambiguous
+        # across two tables — a worse defect than the null it replaces. Parked
+        # (P117-1) as a schema question, not smuggled in behind a count fix.
         _top_id = results[0].get("id") if results else None
-        _total = (payload.get("pagination") or {}).get("total_results")
+        _total = _answered_result_count(payload)
         # #243 Item 2: attribute signed-in searches via the optional-auth dep
         # (request.state.user_id is never set for this route); fall back to the
         # middleware state for any other path that does populate it.
