@@ -333,10 +333,27 @@ function EventFeedCard({
   // Date/time for finished events (staleness context)
   const finishedTime = isFinished ? formatFinishedDate(data.commence_time) : null;
 
-  // Opening odds context for live games
+  // Opening odds context for live games.
+  //
+  // UX-P166 — this prints BOTH sides of one question in fixed positions, so it is
+  // a duel and not two numbers that happen to sit together. Rounding them
+  // independently printed 101 whenever the opening line landed on a half-percent,
+  // and the opening line lands there constantly: measured on production
+  // 2026-08-29 over every event carrying one, ALL 24,117 are complement pairs and
+  // 207 print 101 (115 completed, 91 closed, 1 live at the time of measurement).
+  // Zero print 99 — the one-directional skew of the half-cent grid, same
+  // signature as the `current_odds` strip UX-P114 fixed above.
+  //
+  // Not a served value: the three `opening_odds` serializers publish the two
+  // floats and no rendered percent, so the local contract fallback IS the
+  // decision here rather than a stand-in for one.
+  const [openedAwayPct, openedHomePct] = renderedDuelPercents(
+    data.opening_odds?.away_probability,
+    data.opening_odds?.home_probability,
+  );
   const openedContext =
-    (isLive || isFinished) && data.opening_odds?.home_probability != null && data.opening_odds?.away_probability != null
-      ? `Opened ${Math.round(data.opening_odds.home_probability * 100)}/${Math.round(data.opening_odds.away_probability * 100)}`
+    (isLive || isFinished) && openedHomePct !== null && openedAwayPct !== null
+      ? `Opened ${openedHomePct}/${openedAwayPct}`
       : null;
 
   // For the probability bar: finished events show opening odds, others show current

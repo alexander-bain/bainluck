@@ -15,6 +15,7 @@ import { isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images"
 import { teamColorStyle } from "@/lib/teamColors";
 import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
@@ -96,6 +97,18 @@ export default function EventCard({
   };
   const odds = event.current_odds;
   const opening = event.opening_odds;
+
+  // UX-P166 — the live footer's "Opened 62/38" prints both sides of one question
+  // in fixed positions, which makes it a duel. Rounding the two independently
+  // printed 101 whenever the opening line landed on a half-percent: measured on
+  // production 2026-08-29, 207 of 24,117 events carrying an opening line do, and
+  // none print 99. The away side is derived as `1 - home` when absent, exactly as
+  // before, which is precisely what makes the pair an exact complement and the
+  // both-sides-round-up case reachable.
+  const [openedAwayPct, openedHomePct] = renderedDuelPercents(
+    opening?.away_probability ?? (opening ? 1 - opening.home_probability : null),
+    opening?.home_probability,
+  );
 
   // Determine which probability to display based on game status
   let homeProb: number | null;
@@ -427,9 +440,9 @@ export default function EventCard({
                 <span className="text-text-muted">
                   Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
                 </span>
-              ) : isLive && opening ? (
+              ) : isLive && opening && openedHomePct !== null && openedAwayPct !== null ? (
                 <span className="text-text-muted">
-                  Opened <span className="font-mono text-text-secondary">{Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}</span>
+                  Opened <span className="font-mono text-text-secondary">{openedHomePct}/{openedAwayPct}</span>
                 </span>
               ) : null}
               {event.espn?.broadcast && (
