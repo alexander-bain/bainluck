@@ -1,0 +1,105 @@
+{
+  "_provenance": {
+    "market_id": 112903,
+    "market_name": "Which party will win the House in 2026?",
+    "queue": "UX-P163",
+    "db_read_utc": "2026-08-29",
+    "db_source": "admin db-query: SELECT id,name,current_probability FROM futures_outcomes WHERE market_id=112903",
+    "detail_endpoint": "GET /api/futures/112903 served 0.855 / 0.145 / 1.0 at the same moment",
+    "before_matches_live_feed": "GET /api/feed?limit=100 served 0.4275 / 0.0725 / 0.5"
+  },
+  "db_outcomes": [
+    {
+      "id": 69758617,
+      "name": "Party C",
+      "current_probability": 1.0
+    },
+    {
+      "id": 69758614,
+      "name": "Other",
+      "current_probability": 1.0
+    },
+    {
+      "id": 69758615,
+      "name": "Party A",
+      "current_probability": 1.0
+    },
+    {
+      "id": 69758618,
+      "name": "Party D",
+      "current_probability": 1.0
+    },
+    {
+      "id": 69758620,
+      "name": "Party F",
+      "current_probability": 1.0
+    },
+    {
+      "id": 69758616,
+      "name": "Party B",
+      "current_probability": 1.0
+    },
+    {
+      "id": 69758619,
+      "name": "Party E",
+      "current_probability": 1.0
+    },
+    {
+      "id": 1626008,
+      "name": "Democratic Party",
+      "current_probability": 0.855
+    },
+    {
+      "id": 1626009,
+      "name": "Republican Party",
+      "current_probability": 0.145
+    }
+  ],
+  "served_before": {
+    "top_outcomes": [
+      {
+        "id": 1626008,
+        "name": "Democratic Party",
+        "probability": 0.4275,
+        "rank": 1,
+        "rendered_percent": 43
+      },
+      {
+        "id": 1626009,
+        "name": "Republican Party",
+        "probability": 0.0725,
+        "rank": 2,
+        "rendered_percent": 7
+      },
+      {
+        "id": 69758614,
+        "name": "Other",
+        "probability": 0.5,
+        "rank": 3,
+        "rendered_percent": 50
+      }
+    ],
+    "card_sum_reason": null,
+    "display_scale": 2.0
+  },
+  "served_after": {
+    "top_outcomes": [
+      {
+        "id": 1626008,
+        "name": "Democratic Party",
+        "probability": 0.855,
+        "rank": 1,
+        "rendered_percent": 86
+      },
+      {
+        "id": 1626009,
+        "name": "Republican Party",
+        "probability": 0.145,
+        "rank": 2,
+        "rendered_percent": 14
+      }
+    ],
+    "card_sum_reason": null,
+    "display_scale": 1.0
+  }
+}
