@@ -241,6 +241,89 @@ describe("UX-P179 · the banner prints the day the data states, in every zone", 
   });
 });
 
+describe("UX-P179 · a calendar date is a DAY when it is compared, not just printed", () => {
+  /**
+   * The second symptom of the same root. `end_date` is the tournament's last
+   * DAY, stamped at midnight UTC. Comparing `now` against that raw instant
+   * retired the tournament at the START of its final day — measured on the
+   * shipped payload, the banner read "🏌️ Just Finished" from
+   * 2026-08-30T00:01:00Z, i.e. 5:01pm PT on the SATURDAY, and kept saying it for
+   * the whole of Sunday's final round, with the date dropped entirely.
+   *
+   * These are absolute instants, so they assert identically in every zone.
+   */
+  const cases: Array<[string, string]> = [
+    ["2026-08-27T00:00:00Z", "This Week"], // the Thursday, the moment it opens
+    ["2026-08-29T20:39:00Z", "This Week"], // Saturday afternoon
+    ["2026-08-30T00:01:00Z", "This Week"], // ⚠️ read "Just Finished" before
+    ["2026-08-30T12:00:00Z", "This Week"], // ⚠️ Sunday, the final round
+    ["2026-08-30T23:59:00Z", "This Week"], // ⚠️ the last minute of the last day
+    ["2026-08-31T00:00:00Z", "Just Finished"], // the day after — over
+    ["2026-09-02T12:00:00Z", "Just Finished"],
+  ];
+
+  for (const [now, expected] of cases) {
+    it(`at ${now} the banner says "${expected}"`, () => {
+      const text = at(new Date(now), () =>
+        visibleText(render(CurrentEventBanner, CURRENT)),
+      );
+      expect(text).toContain(expected);
+    });
+  }
+
+  it("the window opens ON the start day, not the day before", () => {
+    // The pre-start branch prints the bare range; the in-window branch adds the
+    // weekday. So the SHAPE of the label is what says which branch ran, and it
+    // is the only thing that can catch a boundary that opens early.
+    const eve = at(new Date("2026-08-26T12:00:00Z"), () =>
+      visibleText(render(CurrentEventBanner, CURRENT)),
+    );
+    expect(eve).toContain("Aug 27 – Aug 30");
+    expect(eve).not.toContain("Sun, Aug 30");
+
+    const opened = at(new Date("2026-08-27T00:00:00Z"), () =>
+      visibleText(render(CurrentEventBanner, CURRENT)),
+    );
+    expect(opened).toContain("Aug 27 – Sun, Aug 30");
+  });
+
+  it("the window keeps printing its dates through the whole final day", () => {
+    // "Just Finished" also drops the date, so the regression removed the days
+    // as well as mislabelling the status.
+    const text = at(new Date("2026-08-30T12:00:00Z"), () =>
+      visibleText(render(CurrentEventBanner, CURRENT)),
+    );
+    expect(text).toContain("Aug 27 – Sun, Aug 30");
+  });
+
+  it("the legacy component really did retire it a day early", () => {
+    // The instrument, shown failing. Without this the case above is a claim.
+    const text = at(new Date("2026-08-30T12:00:00Z"), () =>
+      visibleText(render(CurrentEventBannerLegacy, CURRENT)),
+    );
+    expect(text).toContain("Just Finished");
+    expect(text).not.toContain("Aug 30");
+  });
+
+  it("a one-day event is live for its own day and no longer", () => {
+    const oneDay: GolfCurrentEvent = {
+      ...CURRENT,
+      start_date: "2026-09-05T00:00:00+00:00",
+      end_date: "2026-09-05T00:00:00+00:00",
+    };
+    expect(
+      at(new Date("2026-09-05T18:00:00Z"), () =>
+        visibleText(render(CurrentEventBanner, oneDay)),
+      ),
+    ).toContain("This Week");
+    expect(
+      at(new Date("2026-09-06T00:00:00Z"), () =>
+        visibleText(render(CurrentEventBanner, oneDay)),
+      ),
+    ).toContain("Just Finished");
+  });
+});
+
 describe("UX-P179 · the pin is asserted at the CALL, so TZ=UTC can see it too", () => {
   it("every date the banner formats is pinned to UTC", () => {
     const options = dateFormatOptions(() =>
@@ -367,9 +450,14 @@ describe("UX-P179 · the page's four renderers of these values now agree", () =>
 describe("UX-P179 · CONTROL — the extraction changed no markup and no branch", () => {
   /**
    * The banner moved out of the route file so a test could render it at all.
-   * Under `TZ=UTC` the pin is a no-op, so legacy and shipped must be BYTE
-   * IDENTICAL there — that is what proves the move carried nothing with it.
-   * Outside UTC they must differ, and only in the date.
+   * Under `TZ=UTC` the pin is a no-op, so at any clock where the boundary fix
+   * does not apply, legacy and shipped must be BYTE IDENTICAL — that is what
+   * proves the move itself carried nothing with it.
+   *
+   * ⚠️ Stated precisely, because this queue ships TWO changes: the three clocks
+   * below are all clocks at which the un-pinned legacy and the fixed component
+   * choose the SAME branch, so any difference there would be the move. The one
+   * clock where they must DIFFER is asserted separately, immediately after.
    */
   const inUTC = Intl.DateTimeFormat().resolvedOptions().timeZone === "UTC";
 
@@ -385,6 +473,14 @@ describe("UX-P179 · CONTROL — the extraction changed no markup and no branch"
         at(now, () => render(CurrentEventBannerLegacy, CURRENT)),
       );
     }
+  });
+
+  it("...and they DIFFER on the final day, which is the boundary fix", () => {
+    // Zone-independent: an absolute instant on the tournament's last day.
+    const now = new Date("2026-08-30T12:00:00Z");
+    expect(at(now, () => render(CurrentEventBanner, CURRENT))).not.toBe(
+      at(now, () => render(CurrentEventBannerLegacy, CURRENT)),
+    );
   });
 
   it("every non-date branch is untouched: status, venue, count, favorite", () => {

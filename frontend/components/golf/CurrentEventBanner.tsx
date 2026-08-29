@@ -21,6 +21,11 @@ import type { GolfCurrentEvent, FuturesOutcomeHistory } from "@/lib/types";
  * `components/TournamentCard.tsx` (`getUTCMonth`/`getUTCDate`), and
  * `app/categories/golf/tournaments/[slug]/page.tsx` (`timeZone: "UTC"`, three
  * places). This banner was the sole outlier of the four.
+ *
+ * ⚠️ AND THE SAME FIELD IS A DATE WHEN IT IS COMPARED, NOT ONLY WHEN IT IS
+ * PRINTED. `end_date` is the last DAY. Comparing `now` against the raw midnight
+ * instant retired the tournament at the START of its final day; the window now
+ * closes when that day is over. Same root, two symptoms — see `endOfLastDay`.
  */
 export default function CurrentEventBanner({
   event,
@@ -42,10 +47,16 @@ export default function CurrentEventBanner({
   if (event.start_date && event.end_date) {
     const start = new Date(event.start_date);
     const end = new Date(event.end_date);
-    if (now >= start && now <= end) {
+    // ⚠️ `end_date` is a CALENDAR DATE at midnight UTC — the tournament's last
+    // DAY, not the instant it stops. Comparing `now` against that instant
+    // declared a Sunday finish over at 00:00 UTC on the Sunday, i.e. 5pm PT on
+    // the SATURDAY, so this banner read "🏌️ Just Finished" for the whole of the
+    // final round. The window closes when the last day is over.
+    const endOfLastDay = new Date(end.getTime() + 86400000);
+    if (now >= start && now < endOfLastDay) {
       statusLabel = "This Week";
       dateLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} \u2013 ${end.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`;
-    } else if (now > end) {
+    } else if (now >= endOfLastDay) {
       statusLabel = "Just Finished";
     } else {
       const daysUntil = Math.ceil(

@@ -1,20 +1,25 @@
 /**
  * UX-P179 artifact rig — renders `artifacts-ux-p179/golf-current-event.html`.
  *
- * Four panels, all real React renders of real components on ONE verbatim
+ * Six panels, all real React renders of real components on ONE verbatim
  * production payload (`__tests__/fixtures/uxp179_golf_before.json`, the body of
- * `GET /api/golf` read 2026-08-29), with the clock frozen mid-tournament at
- * 2026-08-29T20:39:00Z:
+ * `GET /api/golf` read 2026-08-29). Every panel states its own frozen clock,
+ * because three different clocks are needed and a panel whose moment is implicit
+ * is a panel the reader has to guess at:
  *
  *   BEFORE    `__tests__/fixtures/uxp179GolfCurrentEventBannerLegacy.tsx` — the
- *             verbatim pre-fix banner, `git show b79130bd:` of the route file.
- *             A render of the code that shipped, not a drawing of it. It is the
- *             only way to show the defect at all, because the fixed component
- *             can no longer produce a day-early date.
- *   AFTER     the shipped `components/golf/CurrentEventBanner.tsx`.
+ *             verbatim pre-fix banner, `git show b79130bd:` of the route file,
+ *             at 2026-08-29T20:39:00Z. A render of the code that shipped, not a
+ *             drawing of it. It is the only way to show the defect at all,
+ *             because the fixed component cannot produce a day-early date.
+ *   AFTER     the shipped `components/golf/CurrentEventBanner.tsx`, same clock.
  *   CONTRA    the `TournamentCard` for the SAME tournament — a component that
  *             already read these values in UTC, and that sat further down the
  *             SAME page saying a different thing than the banner above it.
+ *             At 2026-08-25T12:00:00Z; the panel's note says why.
+ *   SUNDAY    the second symptom of the same root, at 2026-08-30T12:00:00Z:
+ *             BEFORE says "Just Finished" during the final round and drops the
+ *             dates; AFTER says "This Week" and keeps them.
  *   CONTROL   an untouched `TournamentCard` for a tournament that is not live,
  *             rendered with nothing adjusted, to show the sibling renderer as
  *             the page actually serves it.
@@ -76,6 +81,12 @@ const DURING = new Date("2026-08-29T20:39:00Z");
  * window. Same two values, a different moment; the panel's note says so.
  */
 const PRE = new Date("2026-08-25T12:00:00Z");
+/**
+ * Midday on the tournament's final round. `end_date` is `2026-08-30T00:00:00Z`,
+ * so the pre-fix banner had already retired the tournament — at 00:01Z, i.e.
+ * 5:01pm PT on the SATURDAY — and said "Just Finished" for the whole of Sunday.
+ */
+const SUNDAY = new Date("2026-08-30T12:00:00Z");
 
 function at<T>(now: Date, fn: () => T): T {
   jest.useFakeTimers({ now });
@@ -127,7 +138,7 @@ const describeInLosAngeles =
 describeInLosAngeles(
   `UX-P179 artifact (needs TZ=America/Los_Angeles, saw ${RESOLVED_TZ})`,
   () => {
-    it("renders the four panels and asserts what each one must show", () => {
+    it("renders the six panels and asserts what each one must show", () => {
       // ── preconditions, proven before anything is written ──
       expect(RESOLVED_TZ).toBe("America/Los_Angeles");
       expect(CURRENT.name).toBe("Tour Championship");
@@ -140,6 +151,8 @@ describeInLosAngeles(
       const after = at(DURING, () => banner(CurrentEventBanner, CURRENT));
       const contra = at(PRE, () => card(notLive(TOUR_CHAMPIONSHIP)));
       const control = at(DURING, () => card(NOT_LIVE));
+      const sundayBefore = at(SUNDAY, () => banner(CurrentEventBannerLegacy, CURRENT));
+      const sundayAfter = at(SUNDAY, () => banner(CurrentEventBanner, CURRENT));
 
       // ── BEFORE must show the defect, or this artifact is a strawman ──
       const beforeText = visibleText(before);
@@ -165,6 +178,14 @@ describeInLosAngeles(
       // ── CONTROL: an untouched sibling row, nothing adjusted ──
       expect(visibleText(control)).toContain("Sep 3–6");
 
+      // ── SUNDAY: the second symptom of the same root ──
+      const sundayBeforeText = visibleText(sundayBefore);
+      expect(sundayBeforeText).toContain("Just Finished");
+      expect(sundayBeforeText).not.toContain("Aug 30");
+      const sundayAfterText = visibleText(sundayAfter);
+      expect(sundayAfterText).toContain("This Week");
+      expect(sundayAfterText).toContain("Aug 27 – Sun, Aug 30");
+
       const panel = (title: string, note: string, markup: string) => `
       <section>
         <h2>${title}</h2>
@@ -189,8 +210,9 @@ describeInLosAngeles(
 <body>
 <h1>UX-P179 — the golf page stops ending the Tour Championship a day early</h1>
 <p class="sub">Every panel is a real React render in <code>TZ=America/Los_Angeles</code> — the zone a
-US reader is in, and the only zone in which this defect is visible at all. The clock is frozen at
-<code>2026-08-29T20:39:00Z</code>, mid-tournament. BEFORE is
+US reader is in, and the only zone in which the day-early date is visible at all. Three clocks are
+used and each panel names its own; the first two are frozen at <code>2026-08-29T20:39:00Z</code>,
+mid-tournament. BEFORE is
 <code>__tests__/fixtures/uxp179GolfCurrentEventBannerLegacy.tsx</code>, the verbatim pre-fix banner
 sliced out of <code>b79130bd</code>; AFTER, CONTRA and CONTROL are shipped components. All four read
 one verbatim production <code>/api/golf</code> body captured 2026-08-29. Nothing here is assembled by
@@ -211,6 +233,16 @@ ${panel(
   contra,
 )}
 ${panel(
+  "BEFORE — the same banner on Sunday, the final round",
+  'The second symptom of the same root, and the louder one. <code>end_date</code> is <code>2026-08-30T00:00:00+00:00</code> — the tournament&rsquo;s last <b>day</b>. Comparing <code>now</code> against that raw instant retired it at <b>00:01Z, i.e. 5:01pm PT on the Saturday</b>, so the banner read <b>&ldquo;🏌️ Just Finished&rdquo;</b> for the whole of Sunday&rsquo;s final round — and dropped the dates entirely while it did. Rendered here at <code>2026-08-30T12:00:00Z</code>.',
+  sundayBefore,
+)}
+${panel(
+  "AFTER — the window closes when the last day is over",
+  'The same instant, the shipped component: <b>This Week</b>, dates intact. A calendar date is a DAY when it is compared, not only when it is printed — so the window now ends at <code>end + 24h</code>. Both symptoms are one root and they ship together, because either one alone leaves the banner wrong about this tournament.',
+  sundayAfter,
+)}
+${panel(
   "CONTROL — an untouched sibling row",
   'The Omega European Masters, rendered exactly as <code>/api/golf</code> serves it with nothing adjusted: <b>Sep 3–6</b>, correct in Los Angeles because this renderer never asked the reader&rsquo;s clock. A repair that moved dates by a day, or that changed the shape of these labels, would break this panel.',
   control,
@@ -226,6 +258,7 @@ ${panel(
       // is worse than no file.
       const written = fs.readFileSync(file, "utf8");
       expect(written).toContain("Aug 26 – Sat, Aug 29");
+      expect(written).toContain("Just Finished");
       expect(written).toContain("Aug 27 – Sun, Aug 30");
       expect(written).toContain("Aug 27–30");
       expect(written).toContain("Sep 3–6");
