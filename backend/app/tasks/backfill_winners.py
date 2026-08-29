@@ -7103,9 +7103,12 @@ def _part_c_calibration_sql() -> str:
 
     Part C is the arm that made this defect a LIVE one rather than a historical
     one. Part A fills a row once and never looks at it again, but Part C runs
-    every beat over every ``cal = opening`` row and OVERWRITES it — so for four
-    weeks it kept promoting post-settlement quotes into the published curve
-    while the row's own opening sat there, correct and ignored.
+    every beat over every ``cal = opening`` row and OVERWRITES it, so it kept
+    promoting post-settlement quotes into the published curve while the row's
+    own opening sat there, correct and ignored. That is the mechanism behind the
+    forward signature CAL-P117 measured and could not explain — 1,525 of M1's
+    1,739 props rows in the NEW half. How long it ran is not measured here and
+    is deliberately not asserted.
     """
     return f"""
                         WITH stuck AS (
