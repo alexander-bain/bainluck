@@ -174,6 +174,16 @@ class _FakeRedis:
     def delete(self, key):
         self.deleted.append(key)
         self.store.pop(key, None)
+        self.ttls.pop(key, None)
+
+    # LAT-P134: the route's cache WRITE. The fake needs it because the warmer
+    # now verifies that the TTL actually moved — "it returned" is not "it wrote"
+    # (gotcha #53) — so a stub route that returns without writing is no longer a
+    # neutral stand-in for the real one. Ruling 072: the fake agrees with Redis.
+    def setex(self, key, seconds, value):
+        self.store[key] = value.encode() if isinstance(value, str) else value
+        self.ttls[key] = int(seconds)
+        return True
 
     # LAT-P060: the refresh-ahead path reads TTLs. Redis `ttl` is three-valued
     # and the fake reproduces all three, because the code's whole point is that
@@ -184,15 +194,26 @@ class _FakeRedis:
         return -2 if key not in self.store else -1
 
 
-def _ok_route():
+def _ok_route(rc=None, ttl=65):
     """A `/typeahead` stand-in that succeeds and asserts nothing.
 
     The debug-flag contract has its own dedicated tests above; these cadence
     tests need a route that simply returns, so a failure here is unambiguously
     about the cadence and not about the route stub.
+
+    🔴 LAT-P134: IT NOW WRITES, because the real route does. `_warm_one` verifies
+    that the cache TTL actually moved before it will report `warmed`, so a stub
+    that returns without writing is a stub of a BROKEN route — every cadence test
+    using it would report `no_write` and the pass would go `partial` for a reason
+    that has nothing to do with cadence. Ruling 072 again: a fake that agrees
+    with the code instead of with the real thing proves only self-consistency.
+    `rc=None` keeps the old non-writing behaviour for the one place that wants
+    to observe a route that fails to write.
     """
 
     async def _route(*, q, debug_evidence, debug_timing, db):
+        if rc is not None:
+            rc.setex(warmer._CACHE_KEY_PREFIX + q, ttl, "{}")
         return {"suggestions": [], "query": q}
 
     return _route
@@ -640,36 +661,43 @@ class TestNotLoadBearing:
 
 
 class TestRefreshAheadActuallyRefreshes:
-    async def test_a_near_expiry_entry_is_DROPPED_BEFORE_the_route_is_called(self):
-        """The ordering IS the fix, and the wrong order is worse than no fix.
+    async def test_a_near_expiry_entry_is_REBUILT_OVER_AND_NEVER_DROPPED(self):
+        """🔴 LAT-P134 REPLACED THE MECHANISM THIS TEST USED TO PIN.
 
-        Drop-then-call makes the route miss, recompute and write a fresh 45s
-        TTL. Call-then-drop would evict the entry the route had just written,
-        leaving the head permanently cold — a warmer that actively un-warms.
-        Both orderings "call delete once and call the route once", so a test
-        that only counted calls would pass on the catastrophic one.
+        This asserted `delete` then `route`, because the route writes its cache
+        only on the miss path and a DELETE was the only way to make it rebuild.
+        Measured on production `8ca1e2ed`: from that DELETE until the route's
+        `setex`, the key is ABSENT, and a real user typing the term pays a full
+        build. 70 samples on `celtics`/`lakers` — both warm head terms — p50
+        18-19ms with **6 (8.6%) at 2,000-3,689ms**, spaced at the pass period.
+
+        So the ordering question is gone with the delete. What replaces it is
+        stronger and is what this test now pins: the entry is never removed at
+        all, and the route is told to bypass its cache READ (never its WRITE) so
+        the old answer is served continuously until the new one lands.
         """
         order = []
         rc = _FakeRedis(ttls={"bainluck:typeahead:red sox": 12})
 
-        def _delete(key):
-            order.append(("delete", key))
-            rc.store.pop(key, None)
-
         async def _route(*, q, debug_evidence, debug_timing, db):
-            order.append(("route", q))
+            from app.routes.events import _force_cache_rebuild
+
+            order.append(("route", q, _force_cache_rebuild.get()))
+            rc.setex(warmer._CACHE_KEY_PREFIX + q, 65, "{}")
             return {"suggestions": [], "query": q}
 
-        rc.delete = _delete
         with patch("app.routes.events.typeahead_search", _route), _patch_redis(rc):
             result = await warmer._warm_one(_FakeSession(), "red sox")
 
-        assert order == [
-            ("delete", "bainluck:typeahead:red sox"),
-            ("route", "red sox"),
-        ], f"drop must precede the route call, got {order}"
+        assert rc.deleted == [], (
+            "the entry was deleted; that hole is the defect LAT-P134 removed"
+        )
+        assert order == [("route", "red sox", True)], (
+            "the route must run exactly once, with the rebuild forced, got "
+            f"{order}"
+        )
         assert result["reason"] == "warmed"
-        assert result["dropped"] is True
+        assert result["rebuilt"] is True
 
     async def test_a_genuinely_fresh_entry_is_skipped_and_SAYS_SO(self):
         """`fresh` is its own reason, never folded into `warmed`.
@@ -692,7 +720,7 @@ class TestRefreshAheadActuallyRefreshes:
             result = await warmer._warm_one(_FakeSession(), "red sox")
 
         assert result["reason"] == "fresh"
-        assert result["dropped"] is False
+        assert result["rebuilt"] is False
         assert called == [], "a fresh entry must not be recomputed"
         assert rc.deleted == [], "a fresh entry must not be dropped"
 
@@ -706,22 +734,16 @@ class TestRefreshAheadActuallyRefreshes:
         """
         rc = _FakeRedis(ttls={"bainluck:typeahead:x y": warmer.REFRESH_AHEAD_SECONDS})
 
-        async def _route(**kw):
-            return {"suggestions": []}
-
-        with patch("app.routes.events.typeahead_search", _route), _patch_redis(rc):
+        with patch("app.routes.events.typeahead_search", _ok_route(rc)), _patch_redis(rc):
             result = await warmer._warm_one(_FakeSession(), "x y")
 
         assert result["reason"] == "warmed"
-        assert result["dropped"] is True
+        assert result["rebuilt"] is True
 
     async def test_no_key_means_rebuild_and_does_NOT_issue_a_pointless_delete(self):
         rc = _FakeRedis()  # ttl -> -2 for anything unknown
 
-        async def _route(**kw):
-            return {"suggestions": []}
-
-        with patch("app.routes.events.typeahead_search", _route), _patch_redis(rc):
+        with patch("app.routes.events.typeahead_search", _ok_route(rc)), _patch_redis(rc):
             result = await warmer._warm_one(_FakeSession(), "red sox")
 
         assert result["reason"] == "warmed"
@@ -729,19 +751,23 @@ class TestRefreshAheadActuallyRefreshes:
         assert rc.deleted == [], "nothing was cached; there is nothing to drop"
 
     async def test_a_key_with_no_expiry_is_rebuilt_not_treated_as_immortal(self):
-        """-1 and -2 are opposite answers and must not collapse (gotcha #53)."""
+        """-1 and -2 are opposite answers and must not collapse (gotcha #53).
+
+        LAT-P134: the assertion flipped from "it was deleted" to "it was NEVER
+        deleted". A key with no expiry is a bug to correct, and the correction is
+        the overwrite — the `setex` supplies the missing expiry without the entry
+        ever going absent.
+        """
         rc = _FakeRedis()
         rc.store["bainluck:typeahead:red sox"] = b"{}"  # present, ttl -> -1
 
-        async def _route(**kw):
-            return {"suggestions": []}
-
-        with patch("app.routes.events.typeahead_search", _route), _patch_redis(rc):
+        with patch("app.routes.events.typeahead_search", _ok_route(rc)), _patch_redis(rc):
             result = await warmer._warm_one(_FakeSession(), "red sox")
 
         assert result["ttl_before"] == warmer._TTL_NO_EXPIRY
         assert result["reason"] == "warmed"
-        assert rc.deleted == ["bainluck:typeahead:red sox"]
+        assert result["ttl_after"] == 65, "the overwrite must supply the missing expiry"
+        assert rc.deleted == []
 
     async def test_an_unreadable_redis_rebuilds_rather_than_declaring_everything_fresh(self):
         """Fails toward doing the work, exactly as `_acquire_run_lock` does.
@@ -765,7 +791,13 @@ class TestRefreshAheadActuallyRefreshes:
         with patch("app.routes.events.typeahead_search", _route), _patch_redis(rc):
             result = await warmer._warm_one(_FakeSession(), "red sox")
 
-        assert result["reason"] == "warmed", "must not skip on an unreadable TTL"
+        # LAT-P134: `warmed_unverified`, not `warmed`. The same broken `ttl()`
+        # that made `ttl_before` None also makes the post-write re-read None, and
+        # an unreadable instrument must say so rather than claim a verified
+        # write. It is still `ok` — a Redis blink is not a warmer defect, and
+        # collapsing the two is the conflation gotcha #53 names.
+        assert result["reason"] == "warmed_unverified", "must not skip on an unreadable TTL"
+        assert result["ok"] is True
         assert result["ttl_before"] is None
         assert called == ["red sox"]
 
@@ -823,8 +855,12 @@ class TestConcurrencyIsRealAndBounded:
         """
         rc = _FakeRedis()
 
-        async def _route(**kw):
+        async def _route(*, q, **kw):
             await asyncio.sleep(0.05)
+            # LAT-P134: writes, because the real route does and `_warm_one` now
+            # checks. Without it every result is `no_write` and `completed` is 0
+            # for a reason that has nothing to do with overlap.
+            rc.setex(warmer._CACHE_KEY_PREFIX + q, 65, "{}")
             return {"suggestions": []}
 
         session = _FakeSession()
@@ -845,9 +881,10 @@ class TestConcurrencyIsRealAndBounded:
     async def test_width_one_is_still_correct(self):
         """The degenerate case stays valid; concurrency is not load-bearing."""
         rc = _FakeRedis()
-
-        async def _route(**kw):
-            return {"suggestions": []}
+        # LAT-P134: the stub WRITES, because `_warm_one` now verifies the TTL
+        # moved. A non-writing stub reports `no_write` and this test would fail
+        # on a fact about the stub, not about concurrency.
+        _route = _ok_route(rc)
 
         session = _FakeSession()
         with patch("app.routes.events.typeahead_search", _route), \
@@ -949,11 +986,8 @@ class TestTheSummaryCanTellWorkFromTheAppearanceOfWork:
             "bainluck:typeahead:stale one": 3,
         })
 
-        async def _route(**kw):
-            return {"suggestions": []}
-
         session = _FakeSession()
-        with patch("app.routes.events.typeahead_search", _route), \
+        with patch("app.routes.events.typeahead_search", _ok_route(rc)), \
                 _patch_session(session), _patch_redis(rc):
             summary = await warmer._warm_typeahead(
                 queries=["fresh one", "stale one"], concurrency=2
@@ -963,6 +997,17 @@ class TestTheSummaryCanTellWorkFromTheAppearanceOfWork:
         assert summary["fresh"] == 1
         assert summary["warmed"] == 2, "both are OK outcomes; only one did work"
         assert summary["refresh_ahead_s"] == warmer.REFRESH_AHEAD_SECONDS
+        # LAT-P134: the stale one was rebuilt OVER, never removed. Without this
+        # the test passes on a warmer that deletes and rebuilds, which is the
+        # behaviour that cost users 2-3.7s on head terms.
+        #
+        # Filtered to RESPONSE-cache keys on purpose: releasing the run lock is
+        # a DELETE this pass must keep making, and a bare `rc.deleted == []`
+        # would be asserting the lock leaks.
+        cache_deletes = [
+            k for k in rc.deleted if k.startswith(warmer._CACHE_KEY_PREFIX)
+        ]
+        assert cache_deletes == []
 
     async def test_a_skipped_run_carries_the_same_keys_as_a_real_one(self):
         """A consumer must never branch on `terminal` to know a field exists."""
@@ -1156,7 +1201,7 @@ class TestThePassCanStateItsOwnCadence:
         session = _FakeSession()
 
         with _patch_redis(redis), _patch_session(session), \
-                patch("app.routes.events.typeahead_search", _ok_route()):
+                patch("app.routes.events.typeahead_search", _ok_route(redis)):
             summary = await warmer._warm_typeahead(queries=["red sox"])
 
         assert summary["terminal"] == "complete"
@@ -1176,7 +1221,7 @@ class TestThePassCanStateItsOwnCadence:
         session = _FakeSession()
 
         with _patch_redis(redis), _patch_session(session), \
-                patch("app.routes.events.typeahead_search", _ok_route()):
+                patch("app.routes.events.typeahead_search", _ok_route(redis)):
             summary = await warmer._warm_typeahead(queries=["red sox"])
 
         assert summary["terminal"] == "complete"
@@ -1199,7 +1244,7 @@ class TestThePassCanStateItsOwnCadence:
         session = _FakeSession()
 
         with _patch_redis(redis), _patch_session(session), \
-                patch("app.routes.events.typeahead_search", _ok_route()):
+                patch("app.routes.events.typeahead_search", _ok_route(redis)):
             summary = await warmer._warm_typeahead(queries=["red sox"])
 
         assert summary["terminal"] == "complete", (
@@ -1214,7 +1259,7 @@ class TestThePassCanStateItsOwnCadence:
         session = _FakeSession()
 
         with _patch_redis(redis), _patch_session(session), \
-                patch("app.routes.events.typeahead_search", _ok_route()):
+                patch("app.routes.events.typeahead_search", _ok_route(redis)):
             await warmer._warm_typeahead(queries=["red sox"])
 
         assert warmer._LAST_PASS_START_KEY in redis.store, (
@@ -1241,7 +1286,7 @@ class TestThePassCanStateItsOwnCadence:
         session = _FakeSession()
 
         with _patch_redis(redis), _patch_session(session), \
-                patch("app.routes.events.typeahead_search", _ok_route()):
+                patch("app.routes.events.typeahead_search", _ok_route(redis)):
             summary = await warmer._warm_typeahead(
                 queries=["gone", "immortal", "stale"]
             )
