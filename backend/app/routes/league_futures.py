@@ -26,6 +26,7 @@ from app.routes.events import (
 from app.services import get_db
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.game_state import normalize_live_game_state
+from app.utils.lifecycle import served_event_status
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
     AVAILABILITY_EMPTY,
@@ -410,7 +411,18 @@ def _format_game_brief(
             if getattr(event, "completed_at", None)
             else None
         ),
-        "status": event.status,
+        # Q438: through the lifecycle invariant, not raw. This is the SHARED
+        # event card's status, so a raw read here puts a LIVE badge on every
+        # surface that draws the card. Measured on production 2026-08-29:
+        # `/api/leagues/americanfootball_nfl` served 15292756 (Colts vs Lions,
+        # kickoff 17:00Z) and 15292757 (Titans vs Bears, 22:00Z) as `"live"`
+        # hours before either kicked off, while `/api/events` — which already
+        # routed through this helper — served the same two rows as `scheduled`.
+        # One row, two answers, and the one the league page drew was the wrong
+        # one. Admin/debug surfaces deliberately keep the raw value.
+        "status": served_event_status(
+            event.status, event.commence_time, datetime.now(timezone.utc)
+        ),
         "home_score": event.home_score,
         "away_score": event.away_score,
         "home_win_probability": home_prob,
