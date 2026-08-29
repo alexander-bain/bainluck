@@ -847,8 +847,9 @@ def report(snap: dict) -> int:
             )
     else:
         print(
-            "   search COLD: NOT RUN (--with-search opts in; the origin header "
-            "means it no longer writes search_query_logs — LAT-P118)"
+            "   search COLD: NOT RUN (--with-search opts in; it sends the "
+            "LAT-P118 origin header, so it writes no search_query_logs row on a "
+            "slug that honours one)"
         )
         met = False
 
@@ -878,8 +879,9 @@ def report(snap: dict) -> int:
         "X-Bainluck-Origin, 0 votes into search:trending:24h"
     )
     print(
-        f"   /api/events/search     {r['search']:>4d} — 0 search_query_logs rows "
-        "(X-Bainluck-Origin: harness, LAT-P118); no cache bypass"
+        f"   /api/events/search     {r['search']:>4d} — X-Bainluck-Origin: harness SENT "
+        "(LAT-P118); 0 search_query_logs rows on a slug that HONOURS it, one row each "
+        "until then. What the client sent, not what the server did. No cache bypass."
     )
     print(f"   /api/health            {r['health']:>4d}")
     if snap.get("stats_before"):
@@ -910,8 +912,8 @@ def main() -> int:
     ap.add_argument(
         "--with-search",
         action="store_true",
-        help="also measure cold /api/events/search — no longer writes "
-        "search_query_logs (LAT-P118 origin header)",
+        help="also measure cold /api/events/search — sends the LAT-P118 origin "
+        "header, so it writes no search_query_logs row on a slug that honours it",
     )
     ap.add_argument(
         "--stats-before",

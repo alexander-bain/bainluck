@@ -612,12 +612,15 @@ def report(snap: dict, nd: dict, uw: dict | None = None) -> int:
     )
     print(f"   other tab endpoints    {r.get('other', 0):>4d} — read-only")
     print(
-        f"   /api/events/search     {r['search']:>4d} — 0 `search_query_logs` rows "
-        "(LAT-P118: `X-Bainluck-Origin: harness`). Forced on: cold search is graded."
+        f"   /api/events/search     {r['search']:>4d} — `X-Bainluck-Origin: harness` "
+        "SENT on every one (LAT-P118); 0 `search_query_logs` rows once that ship is "
+        "deployed, one row each until then. This line reports what the CLIENT sent, "
+        "not what the server did. Forced on: cold search is graded."
     )
     print(
         f"   /api/events/typeahead  {r['typeahead']:>4d} — debug_timing AND origin, "
-        "0 votes into search:trending:24h. Measured by the snapshot, NOT in the pool."
+        "0 votes into search:trending:24h (debug_timing alone already guaranteed that "
+        "on any slug). Measured by the snapshot, NOT in the pool."
     )
     print(f"   /api/health            {r['health']:>4d}")
     if snap.get("stats_before"):
