@@ -25,6 +25,25 @@ the championship boards, so the candidates are the remaining seven:
     KXGRANDSLAM-CALC26       Alcaraz calendar slam
     KXGRANDSLAM-JSIN26       Sinner calendar slam
 
+**THE NATIONALITY SWEEP (Q443, Alex's women's-curation ruling 2026-08-28).**
+That Day-1 list was a nine-market census taken before the draw, and it is the
+reason the women's tab shipped empty: not one of the nine is a women's question
+this section may ask.  Re-run as a SWEEP rather than a lookup — all 6,000 open
+Kalshi events paginated and filtered on ticker and title, 2026-08-29 — the
+US-Open-relevant open universe is 30 events, and the ones this list did not
+have are:
+
+    KXWTANATSTAGE-26QF       American women to reach the quarterfinals   PRICED
+    KXWTANATSTAGE-26SF       American women to reach the semifinals      UNQUOTED
+    KXATPNATSTAGE-26FIN      American men to reach the final             PRICED
+    KXATPNATSTAGE-26QF/SF    American men, earlier rounds                PRICED
+
+A sweep and not a lookup is the point: the nationality series were reachable by
+exactly the query that was never run, and a nine-market census recorded their
+absence as the universe.  Everything else the sweep returned is either an
+outright field (the boards), a per-player advance ladder (the grid, UX-P139),
+or off-tournament (ATP #1 on Dec 31, Djokovic's retirement).
+
 Input is one `/api/admin/db-query` dump, in the shape that endpoint returns:
 
     SELECT fm.id   AS market_id,
@@ -40,7 +59,8 @@ Input is one `/api/admin/db-query` dump, in the shape that endpoint returns:
      WHERE fm.external_id IN ('KXATPCOMPETE-26USOALC','KXATPCOMPETE-26USOSIN',
                               'KXATPGRANDSLAM-26','KXATPGRANDSLAMFIELD-26',
                               'KXWTAGRANDSLAM-26','KXGRANDSLAM-CALC26',
-                              'KXGRANDSLAM-JSIN26')
+                              'KXGRANDSLAM-JSIN26','KXWTANATSTAGE-26QF',
+                              'KXATPNATSTAGE-26FIN')
        AND fm.status = 'open'
      ORDER BY fm.external_id, fo.current_probability DESC NULLS LAST;
 
@@ -79,6 +99,9 @@ from app.utils.tournament_register import (  # noqa: E402
 #: single answering outcome, and the page ranks instead of printing a headline.
 #: The script REFUSES a curation whose named answer is absent from the dump —
 #: silently producing an unanswered card is how a wrong number gets shipped.
+#:
+#: ``outcomes`` (optional) pins a SUBSET of the market's legs. See
+#: :func:`main` for why a subset is a curation decision and not a filter.
 CURATION: dict[str, dict] = {
     # RETITLED 2026-08-25 (UX-P134) against the census. The old title was "Can
     # Sinner complete the calendar slam?" and this market cannot answer it: its
@@ -93,6 +116,23 @@ CURATION: dict[str, dict] = {
         "hook": "He already has one in 2026. The next chance is this fortnight.",
         "draw": "mens-singles",
         "answer": "2+ Grand Slam wins",
+        # THE LADDER'S OTHER TWO RUNGS ARE NOT REFRESHABLE, MEASURED (Q443).
+        # `1+ Grand Slam wins` is graded (`is_winner` TRUE, Kalshi `finalized`
+        # / `result: yes`) and `_write_prices` refuses a settled outcome by
+        # design — gotcha #21, a settled book stops quoting and re-pricing it
+        # can only corrupt resolved state. `3+ Grand Slam wins` is worse: the
+        # venue DELISTED it. `KXGRANDSLAM-JSIN26` carried three legs when this
+        # curation was written and carries two today, so `-3` can never appear
+        # in a price payload again and its row is frozen at a 2026-07-24 1%.
+        #
+        # Both were pinned, so the card's freshness AND held two contributors
+        # nothing is permitted or able to refresh. That is the producer /
+        # renderer lockstep #2199 fixed on the CLOCK, one level down on the
+        # POPULATION: the page demanded a live reading from rows the rail is
+        # forbidden to write. Neither leg is printed (the card prints its
+        # answer), so pinning them bought a permanent dark contributor and no
+        # information.
+        "outcomes": ["2+ Grand Slam wins"],
     },
     # Same retitle, same reason. Alcaraz's ladder does carry "All 4 Grand Slam
     # wins" (1%), so a calendar-slam card would at least be answerable here —
@@ -104,6 +144,21 @@ CURATION: dict[str, dict] = {
         "hook": "The other half of the men's duopoly, chasing the same thing.",
         "draw": "mens-singles",
         "answer": "2+ Grand Slam wins",
+        # RESTORED TO THE REGISTER 2026-08-29 (Q443) on Alex's ruling 6 of
+        # 2026-08-27, verbatim: "alcaraz-second-major and sinner-second-major
+        # are DIFFERENT PLAYERS and must both render ... I'd love to see both."
+        # UX-P139 had de-curated it a day earlier as "one question with two
+        # names in it"; the ruling post-dates that and overrules it, so the
+        # register carries both again. The render-side near-duplicate rule that
+        # still collapses them by template family is `program/ux-122`'s to key
+        # per player — not this lane's file, and not a reason to keep the
+        # question out of the register.
+        #
+        # Same subset reasoning as Sinner's ladder: `3+ Grand Slam wins` is
+        # graded no at the venue and `All 4 Grand Slam wins` is not listed
+        # there at all — one settled leg and one delisted one, neither
+        # printable and neither refreshable.
+        "outcomes": ["2+ Grand Slam wins"],
     },
     "KXATPCOMPETE-26USOSIN": {
         "key": "sinner-competes",
@@ -112,29 +167,119 @@ CURATION: dict[str, dict] = {
         "draw": "mens-singles",
         "answer": "Yes",
     },
+    # ── THE WOMEN'S SECTION (Q443, Alex's ruling of 2026-08-28) ─────────────
+    #
+    # "Register edit adding non-advance women's questions — Sabalenka
+    # back-to-back, first-time major winner, all-American final — PLUS the
+    # nationality props once the discovery fix lands."  The discovery fix
+    # landed (Q426), so all five nationality series are in the database with
+    # prices.  What follows is that ruling, curated against what the venues
+    # actually quote rather than against what the wording hoped for; the two
+    # directions with no market behind them are in DECLINED, named, not
+    # quietly dropped.
+    "KXWTAGRANDSLAM-26": {
+        "key": "sabalenka-title-defence",
+        "title": "Can Sabalenka go back-to-back?",
+        # Every clause measured, not recalled. She won the 2025 US Open (the
+        # settled Polymarket field 33520 resolves her leg YES). The US Open is
+        # the last major of the calendar year, and her 2026 leg is still
+        # `active` — so on this market "wins a major in 2026" and "wins this
+        # tournament" are now the same event, and the hook says so rather than
+        # letting the title quietly assume it.
+        "hook": "She won here last year — and with the US Open the last major of 2026, this market is now exactly that question.",
+        "draw": "womens-singles",
+        "answer": "Aryna Sabalenka",
+        # ONE LEG OF A SEVENTEEN-NAME FIELD. UX-P135 declined this whole market
+        # for a reason that was true of the FIELD and is not true of this leg:
+        # "its leaders are already-settled 99s". They still are — Rybakina .99
+        # and Andreeva .99, one of them graded — which is exactly why the card
+        # pins neither. A field whose top rows are decided facts is a dull row
+        # wearing a probability; one contender's own leg, at .235 and moving,
+        # is a question.
+        "outcomes": ["Aryna Sabalenka"],
+    },
+    "KXWTANATSTAGE-26QF": {
+        "key": "usa-women-quarterfinal-count",
+        "title": "Can three American women reach the quarterfinals?",
+        "hook": "One market for the whole American contingent, priced from one right through seven.",
+        "draw": "womens-singles",
+        # THE RUNG IS THE CURATION. The ladder runs 1+ through 7+; `1+` at .895
+        # is an announcement and `7+` at .03 is a lottery ticket. `3+` is the
+        # rung the market itself cannot separate, and picking it here rather
+        # than at render time is the answer rule (UX-P134) doing its job — the
+        # renderer's old "biggest number" would have printed 90% under this
+        # question.
+        "answer": "3+ Americans",
+        "outcomes": ["3+ Americans"],
+    },
+    "KXATPNATSTAGE-26FIN": {
+        "key": "usa-men-final-berth",
+        # ALEX SAID "ALL-AMERICAN FINAL"; THE VENUE ONLY LISTS ONE RUNG.
+        # `KXATPNATSTAGE-26FIN` carries a single leg, `1+ Americans` — there is
+        # no `2+`, so "both finalists American" is not a question anybody
+        # quotes. This is the same direction at the depth the market supports,
+        # and the title says the weaker thing rather than the title saying the
+        # stronger one over the weaker one's number.
+        "title": "Will an American reach the men's final?",
+        "hook": "The market prices the American men as a group, not one at a time.",
+        "draw": "mens-singles",
+        # `Yes` and not `1+ Americans`: the venue's own `yes_sub_title` is the
+        # latter but our ingest stored the former, and the curation names the
+        # outcome as WE hold it. The first run of this pass named the venue's
+        # label and the script refused it, which is that refusal earning its
+        # keep on its author.
+        "answer": "Yes",
+    },
 }
 
 #: Curated OUT, with the reason, because a silent omission is indistinguishable
 #: from an oversight and this section's whole claim is that the bar was applied.
 #:
-#: `KXATPGRANDSLAM-26` / `KXWTAGRANDSLAM-26` — "Who will win *a* Grand Slam in
-#: 2026?", resolving 2027-01-07. Two defects, either one disqualifying. (1) It
-#: is a SEASON question, not a US Open question: it stays open through the
-#: Australian Open five months after this tournament ends. (2) Its leaders are
-#: already-settled 99s — Sinner .99, Zverev .99, Alcaraz .97 on the men's side,
-#: Rybakina .99 and Andreeva .99 on the women's — because those players have
+#: `KXATPGRANDSLAM-26` — "Who will win *a* Grand Slam in 2026?", resolving
+#: 2027-01-07. Two defects, either one disqualifying. (1) It is a SEASON
+#: question, not a US Open question: it stays open through the Australian Open
+#: five months after this tournament ends. (2) Its leaders are already-settled
+#: 99s — Sinner .99, Zverev .99, Alcaraz .97 — because those players have
 #: already won a major this year. A "prop" whose top rows are decided facts is
-#: a dull row wearing a probability. These were curated IN by UX-P132 under the
-#: titles "Will anyone win the men's/women's calendar slam?", which the markets
-#: do not ask; that misdescription is the third reason.
+#: a dull row wearing a probability. It was curated IN by UX-P132 under the
+#: title "Will anyone win the men's calendar slam?", which the market does not
+#: ask; that misdescription is the third reason. Its women's twin
+#: `KXWTAGRANDSLAM-26` carried the identical objection and is now curated IN as
+#: ONE LEG — see `sabalenka-title-defence` above; the objection was to the
+#: field, and a single contender's leg is a different object.
 #:
 #: `KXATPGRANDSLAMFIELD-26` — "any man other than Alcaraz and Sinner", Yes at
 #: .99. Already happened. Never curated in; recorded so the next pass does not
 #: rediscover it as a candidate.
 DECLINED: dict[str, str] = {
     "KXATPGRANDSLAM-26": "season-long field resolving 2027-01-07; leaders already settled at .97-.99",
-    "KXWTAGRANDSLAM-26": "season-long field resolving 2027-01-07; leaders already settled at .99",
     "KXATPGRANDSLAMFIELD-26": "already resolved in substance (Yes .99); not a US Open question",
+    # ── THE NATIONALITY SWEEP'S REMAINDER (Q443) ────────────────────────────
+    # Three of the five series the sweep found are declined, and each for its
+    # own reason rather than for one blanket one.
+    #
+    # `KXWTANATSTAGE-26SF` is the interesting refusal: it EXISTS and it is
+    # UNQUOTABLE. All three legs read 0 open interest, 0 volume, no trade, and
+    # a 0.02/0.90 book, so `_kalshi_yes_probability`'s spread guard refuses
+    # every one of them — which is why the market holds zero outcome rows in
+    # our database despite having been ingested. Curating it would put a
+    # question on the page with nothing under it, and the refusal upstream is
+    # the same guard that stops us fabricating a .46 midpoint out of an
+    # untradeable book (#181).
+    "KXWTANATSTAGE-26SF": (
+        "exists and is unquotable — all three legs 0 open interest, 0 volume, "
+        "no trade, 0.02/0.90 book, so the Kalshi spread guard refuses them and "
+        "we hold no outcome rows for it"
+    ),
+    "KXATPNATSTAGE-26QF": (
+        "real and priced, but three 'how many Americans reach X' cards is the "
+        "repeating template ruling 8 forbids; one nationality question per draw "
+        "— the men keep the final, the women keep the quarterfinals"
+    ),
+    "KXATPNATSTAGE-26SF": (
+        "real and priced, and declined for the same repeating-template reason "
+        "as KXATPNATSTAGE-26QF; the men's nationality question is the final"
+    ),
     # CURATED OUT 2026-08-26 (UX-P135), having been curated IN by UX-P134.
     # "Will Alcaraz actually play?" was measured at Yes .905 and 808.7h old —
     # 33.7 days without a reading, the oldest thing in the section. The draw
@@ -292,8 +437,48 @@ def main() -> int:
             skipped.append(market_ext)
             continue
 
-        answer_name = spec.get("answer")
         names = [str(r["outcome_name"]) for r in market_rows]
+
+        # THE SUBSET (Q443). A curated question may be answered by ONE leg of a
+        # market that also carries legs the question does not ask — Sabalenka's
+        # leg of a seventeen-name field, one rung of a seven-rung ladder.
+        #
+        # This is a CURATION decision and not a filter, and the difference is
+        # what it costs to get wrong. A pinned outcome is an identity the price
+        # rail must keep fresh (`registered_market_ids` -> the registered arm of
+        # `futures_price_refresh`) and the card's freshness is the AND over its
+        # priced legs, so every leg pinned for decoration is a leg that can dark
+        # the card. Two of them already did: `KXGRANDSLAM-JSIN26`'s `1+` is
+        # graded and the rail refuses to re-price a settled outcome, and its
+        # `3+` was delisted by the venue outright — so the card asked for a live
+        # reading from two rows nothing was permitted or able to write, and
+        # rendered dark on an answer leg that was forty minutes old.
+        #
+        # REFUSED LOUDLY when a pinned name is not in the dump, for the same
+        # reason the answer refusal below exists: a curation that no longer
+        # matches its market is a decision to re-make, not a shape to absorb. A
+        # subset that drops its own answer falls through to that refusal.
+        #
+        # Deliberately the SAME sentence as the answer refusal — "is not an
+        # outcome of this market" — because they are one class of refusal with
+        # two entry points, and a second wording is a second thing for a reader
+        # (and for a guard) to learn.
+        pinned = spec.get("outcomes")
+        if pinned is not None:
+            absent = [name for name in pinned if name not in names]
+            if absent:
+                for name in absent:
+                    print(
+                        f"REFUSED {market_ext}: curated outcome {name!r} is not "
+                        f"an outcome of this market. Present: {names}",
+                        file=sys.stderr,
+                    )
+                return 1
+            keep = set(pinned)
+            market_rows = [r for r in market_rows if str(r["outcome_name"]) in keep]
+            names = [str(r["outcome_name"]) for r in market_rows]
+
+        answer_name = spec.get("answer")
         if answer_name is not None and answer_name not in names:
             # REFUSE, loudly. The alternative is a card with a question and no
             # answer, which the renderer would fall back to ranking — quietly
