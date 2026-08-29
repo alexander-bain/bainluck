@@ -11981,6 +11981,7 @@ from app.utils.outcome_display import (  # noqa: E402
     is_field_outcome as _is_field_outcome,
     normalize_display_probs as _normalize_search_outcome_probs,
     leader_pick_order as _leader_pick_order,
+    drop_dominant_field_outcomes as _drop_dominant_field_outcomes,
 )
 
 
@@ -12023,6 +12024,23 @@ def _build_search_top_outcomes(
     # (golf make-cut/top-N) — that squashed an honest 87% make-cut to ~20% in search.
     _normalize_search_outcome_probs(
         out, mutually_exclusive=getattr(market, "mutually_exclusive", True)
+    )
+    # UX-P164: search is the OTHER half of the #993 pair and it had the identical
+    # defect — measured live 2026-08-29, `/api/events/search?q=which party will win
+    # the house` served `Democratic Party 0.855 | Republican Party 0.145 | Other
+    # 1.0`, byte-for-byte what `/api/futures/112903` served. Demotion alone cannot
+    # help here either: this list is already sliced to `limit`, so "the end" is
+    # inside the dropdown. Fixing only the detail page would have moved the
+    # disagreement between two surfaces instead of ending it — the exact failure
+    # this module exists to prevent, and UX-P162's lesson applied before it bites.
+    #
+    # Placed AFTER normalization for the same reason as the detail serializer:
+    # `_FIELD_DOMINANT_MIN` judges the number RENDERED, so a field row that the
+    # #23 squeeze brings below the threshold is real information and survives.
+    # This can return `limit - 1` rows; that is honest — a dropdown showing four
+    # real answers beats four real answers plus a no-bid ask printed as 100%.
+    out = _drop_dominant_field_outcomes(
+        out, lambda o: o.get("name"), lambda o: o.get("probability")
     )
     return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
 

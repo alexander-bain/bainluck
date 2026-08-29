@@ -3629,6 +3629,7 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         is_placeholder_outcome_name,
         normalize_display_probs,
         leader_pick_order,
+        drop_dominant_field_outcomes,
     )
 
     valid_outcomes = [
@@ -3665,6 +3666,42 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
     normalize_display_probs(
         outcomes, mutually_exclusive=getattr(market, "mutually_exclusive", True)
     )
+    # UX-P164: concept derivation reads the count this serializer saw BEFORE the
+    # display drop, deliberately. `derive_market_concept_key` forwards it to the
+    # combat adapters, which gate on `n_outcomes == 2` (`event_combat.py:245`,
+    # `:356`) — so letting a DISPLAY rule feed it would let a dropped field row
+    # flip a 3-outcome market into a fight-shaped one and invent a breadcrumb.
+    # Display and identity are separate questions; this keeps the identity answer
+    # bit-identical to today's.
+    #
+    # Captured HERE, not off `sorted_outcomes`: `normalize_display_probs` can
+    # itself shorten the list (#1201 strips a run of exact-0.5 untraded midpoints
+    # in place), so the pre-drop length is the only one that reproduces today's
+    # `len(outcomes)` at this call site.
+    concept_outcome_count = len(outcomes)
+
+    # UX-P164 (#993's own opening sentence, still true here): demotion is not
+    # enough on a SHORT list. `leader_pick_order` pushes a dominant field row to
+    # "the end", which keeps it out of a top-N slot only while the list is longer
+    # than N — and the detail page renders the WHOLE list, so "the end" is always
+    # on the page. Measured live 2026-08-29, `/api/futures/112903` ("Which party
+    # will win the House in 2026?") served exactly `Democratic Party 0.855 |
+    # Republican Party 0.145 | Other 1.0`: a no-bid ask (gotcha #17/#19) printed
+    # as "Other 100%" under two real answers, which is verbatim the defect #993
+    # opened on and the one surface it was never fixed on.
+    #
+    # Ordering is deliberate and load-bearing in BOTH directions:
+    #   - AFTER `normalize_display_probs`, because `_FIELD_DOMINANT_MIN` is
+    #     documented as judging the number RENDERED, not the raw price. A field
+    #     row that normalization squeezes below the threshold "genuinely carries
+    #     most of the probability mass" and is INFORMATION — it must survive.
+    #   - BEFORE `leader_pick_order`, so the two can never disagree about which
+    #     rows they mean; both key off the same `_FIELD_DOMINANT_MIN`.
+    # `drop_dominant_field_outcomes` NEVER EMPTIES, so an all-field market still
+    # renders its list rather than a silent zero-outcome page.
+    outcomes = drop_dominant_field_outcomes(
+        outcomes, lambda o: o.get("name"), lambda o: o.get("probability")
+    )
     leader_pick_order(outcomes)
 
     # B7 (L2-91): the up-link mesh. Resolve this market's event-concept key
@@ -3688,7 +3725,7 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
             market.external_id,
             market.name,
             market.llm_sport_category,
-            len(outcomes),
+            concept_outcome_count,  # UX-P164: pre-drop; see note above
         )
         hub_slug = derive_market_hub_slug(market.llm_sport_category)
         # L2-94: fallbacks below the hub — themed section page then hub-less sport
