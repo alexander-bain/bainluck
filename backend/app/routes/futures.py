@@ -806,10 +806,41 @@ async def list_futures_categories(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Lightweight category counts for the Search tab category grid.
+    Category counts for the Search tab category grid.
 
-    Single GROUP BY query, no outcome loading. Returns [{key, count}].
+    Returns `{categories: [{key, count}], total}` plus the cache envelope.
+
+    🔴 THE DOCSTRING THAT USED TO BE HERE SAID "Lightweight ... Single GROUP BY
+    query" AND IT WAS MEASURED AT 1,586 ms, EVERY TIME, FOR EVERY VISITOR.
+    Single-statement is true; lightweight was a claim about a shape, not about a
+    cost. The statement reads 39,014 shared blocks — the two negated `ILIKE`s
+    are unindexable — and sorts 21,439 rows to group into 42. This tier had no
+    cache at all, so the grid on `/search` cost that scan on every single load.
+
+    The serve ladder is now: shared slot → its 24 h mirror (age-bounded, with one
+    rebuild behind it) → build. Policy, and the numbers behind it, live in
+    `app/utils/futures_categories_cache.py`.
     """
+    from app.utils import futures_categories_cache as fcc
+    from app.utils.event_concept_cache import serve_stale_and_refresh
+
+    body, state = fcc.read()
+    if state == "live" and body is not None:
+        return body
+    if state == "stale_ok" and body is not None:
+        # Exactly one rebuild behind the mirror, fleet-wide: the lock is in Redis,
+        # not in a process-global set, so `WEB_CONCURRENCY=2` x N dynos still
+        # produces one build for one expiry.
+        if serve_stale_and_refresh(fcc.keys(), _rebuild_futures_categories):
+            return body
+        # No running loop to refresh behind us — fall through and build, rather
+        # than serve stale with nothing coming to replace it.
+
+    return _publish_futures_categories(await _build_futures_categories(db))
+
+
+async def _build_futures_categories(db: AsyncSession) -> dict:
+    """Build the census from scratch. The pre-LAT-P122 route body, unchanged."""
     now = datetime.now(timezone.utc)
 
     query = (
@@ -846,6 +877,32 @@ async def list_futures_categories(
         "categories": categories,
         "total": sum(r["count"] for r in categories),
     }
+
+
+def _publish_futures_categories(response: dict) -> dict:
+    """Stamp a fresh build, publish it, and return what the reader gets.
+
+    Returns the ENVELOPED body — the same dict the next reader will get out of
+    Redis plus one `availability`, so a build and a hit are the same bytes.
+    """
+    from app.utils import futures_categories_cache as fcc
+
+    enveloped = fcc.stamp(response)
+    fcc.write(enveloped)
+    return fcc.with_availability(enveloped, fcc.AVAILABILITY_LIVE)
+
+
+async def _rebuild_futures_categories() -> None:
+    """Rebuild the census behind a stale serve.
+
+    Opens its OWN session: the request's `AsyncSession` is not ours to hold past
+    the response, and that is why `serve_stale_and_refresh` takes a zero-arg
+    coroutine FUNCTION rather than a coroutine.
+    """
+    from app.services.database import async_session_maker
+
+    async with async_session_maker() as session:
+        _publish_futures_categories(await _build_futures_categories(session))
 
 
 @router.get("/faceted")
