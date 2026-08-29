@@ -23,9 +23,18 @@ def _count_result(total):
     return result
 
 
-def _markets_result(markets):
+def _page_result(markets, total=None):
+    """The ONE query /browse now issues: rows of ``(FuturesMarket, total)``.
+
+    ``total`` comes from ``count(*) OVER ()`` riding the page scan, so every
+    row carries the same population size. Defaults to ``len(markets)`` — the
+    honest value when the page holds the whole population.
+    """
+    if total is None:
+        total = len(markets)
+    rows = [(market, total) for market in markets]
     result = MagicMock()
-    result.scalars.return_value.unique.return_value.all.return_value = markets
+    result.unique.return_value.all.return_value = rows
     return result
 
 
@@ -132,8 +141,7 @@ class TestFuturesBrowseEndpoint:
 
     async def test_mocked_page_sets_has_more_from_total_and_offset(self, client, mock_db):
         mock_db.execute.side_effect = [
-            _count_result(12),
-            _markets_result([_market(1)]),
+            _page_result([_market(1)], total=12),
         ]
 
         resp = await client.get("/api/futures/browse?limit=5&offset=5")
@@ -147,8 +155,7 @@ class TestFuturesBrowseEndpoint:
 
     async def test_mocked_last_page_has_more_false(self, client, mock_db):
         mock_db.execute.side_effect = [
-            _count_result(12),
-            _markets_result([_market(3)]),
+            _page_result([_market(3)], total=12),
         ]
 
         resp = await client.get("/api/futures/browse?limit=5&offset=10")
@@ -179,8 +186,7 @@ class TestFuturesBrowseEndpoint:
             ],
         )
         mock_db.execute.side_effect = [
-            _count_result(1),
-            _markets_result([market]),
+            _page_result([market], total=1),
         ]
 
         resp = await client.get("/api/futures/browse")
@@ -203,35 +209,32 @@ class TestFuturesBrowseEndpoint:
             }
         ]
 
-    async def test_category_and_search_params_are_applied_to_count_and_page_queries(
+    async def test_category_and_search_params_are_applied_to_the_page_query(
         self,
         client,
         mock_db,
     ):
         mock_db.execute.side_effect = [
-            _count_result(0),
-            _markets_result([]),
+            _page_result([]),
         ]
 
         resp = await client.get("/api/futures/browse?category=politics&q=Senate")
 
         assert resp.status_code == 200
-        assert mock_db.execute.call_count == 2
-        for call in mock_db.execute.call_args_list:
-            compiled = call.args[0].compile()
-            assert "politics" in compiled.params.values()
-            assert "%Senate%" in compiled.params.values()
+        assert mock_db.execute.call_count == 1
+        compiled = mock_db.execute.call_args_list[0].args[0].compile()
+        assert "politics" in compiled.params.values()
+        assert "%Senate%" in compiled.params.values()
 
     async def test_page_query_orders_by_resolution_date_ascending(self, client, mock_db):
         mock_db.execute.side_effect = [
-            _count_result(0),
-            _markets_result([]),
+            _page_result([]),
         ]
 
         resp = await client.get("/api/futures/browse")
 
         assert resp.status_code == 200
-        page_query = mock_db.execute.call_args_list[1].args[0]
+        page_query = mock_db.execute.call_args_list[0].args[0]
         compiled_sql = str(page_query.compile()).lower()
         assert "order by futures_markets.resolution_date asc nulls last" in compiled_sql
 
