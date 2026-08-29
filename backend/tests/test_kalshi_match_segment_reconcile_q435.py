@@ -496,10 +496,31 @@ class TestReconcileKalshiMatchSegments:
 
         assert len(session.updates) == 1
         written = {c.name for c in dict(session.updates[0]._values)}
-        assert written == {"event_id", "updated_at"}
+        assert written == {"event_id"}
         assert "is_winner" not in written
         assert "calibration_probability" not in written
         assert "commence_time" not in written  # gotcha #14 — Kalshi's own close time stays
+
+    async def test_the_reconcile_does_not_forge_a_poll_stamp(self):
+        """#2024. `futures_markets.updated_at` is read by live consumers as
+        "the poller ran" — `routes/playoffs.py` DROPS an outcome from the grid
+        on a stale stamp. A link move observed no price and ran no poll, so
+        stamping it would forge one. `tests/test_futures_stamp_semantics.py`
+        reds on any new writer; this asserts the same thing from the other side,
+        so the omission cannot be undone as a "fix" without both going red."""
+        session = _FakeSession(
+            markets=[
+                _Row(1, "KXATPMATCH-26AUG30BUBWOL", 15293809),
+                _Row(2, "KXATPSETWINNER-26AUG30BUBWOL-1", None),
+            ],
+            provenance={15293809: "odds_api"},
+        )
+        await _reconcile_kalshi_match_segments(session)
+
+        written = {c.name for c in dict(session.updates[0]._values)}
+        assert "updated_at" not in written
+        assert "last_updated" not in written
+        assert "volume_updated_at" not in written
 
     async def test_sport_id_rides_the_link_when_the_target_has_one(self):
         session = _FakeSession(

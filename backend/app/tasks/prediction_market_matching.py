@@ -1353,7 +1353,18 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
             # `sport_id` rides the link, exactly as `_set_market_sport_fields`
             # does on a fresh one: a market pointing at event X while tagged
             # with the twin's sport row is the same split-brain one column down.
-            values = {"event_id": target, "updated_at": func.now()}
+            #
+            # `updated_at` is deliberately NOT stamped, and the omission is the
+            # considered answer rather than an oversight — see #2024 and
+            # `tests/test_futures_stamp_semantics.py`, which reds on any new
+            # writer of it. That column's LIVE consumers read it as "the poller
+            # ran" (`routes/playoffs.py` DROPS an outcome from the playoff grid
+            # on a stale stamp) and, in one place, as "this price is fresh". A
+            # link move is neither: no price was observed and no poll happened,
+            # so stamping it would forge a poll under a column the repo has
+            # already declared ambiguous. Nothing needs it either — this
+            # reconciliation is verified by `event_id`, not by a timestamp.
+            values = {"event_id": target}
             if target in sport_ids:
                 values["sport_id"] = sport_ids[target]
             await session.execute(
