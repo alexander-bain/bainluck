@@ -67,6 +67,16 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
         ("ADHERENCE_MUTANTS", "needle", "replacement", "ADHERENCE"),
         ("REDIS_MUTANTS", "needle", "replacement", "REDIS_STATE"),
     ],
+    # LAT-P119 (#2085) — the FIRST harness whose targets are not Python:
+    # TypeScript, TSX and Swift. Pass A was already file-type agnostic (it reads
+    # each declared target directly); Pass B was not, and see `_files` for the
+    # narrowing that fixed. Placed at its alphabetical position, per LAT-P115's
+    # note two entries below.
+    "event_hero_duel_percent_mutations": [
+        ("RESOLVER_MUTATIONS", "needle", "replacement", "RESOLVER"),
+        ("COMPONENT_MUTATIONS", "needle", "replacement", "COMPONENT"),
+        ("VIEW_MUTATIONS", "needle", "replacement", "VIEW"),
+    ],
     "feed_personalization_roundtrip_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "feed_prewarm_absent_shape_net_mutations": [("MUTATIONS", 3, 4, 1)],
     # LAT-P115. Placed at its alphabetical position rather than at the head of
@@ -182,11 +192,31 @@ def harvest() -> tuple[list[Pair], list[str]]:
     return pairs, unknown
 
 
-def _files(base: str, all_tracked: bool) -> list[Path]:
+def _suffixes(pairs: list[Pair]) -> list[str]:
+    """The file extensions Pass B must sweep, DERIVED from the declared targets.
+
+    🔴 LAT-P119. This was hardcoded to `*.py`, and for eleven harnesses that was
+    the whole truth. The twelfth mutates `.ts`, `.tsx` and `.swift`, and the
+    scan went on printing a clean Pass B line over a scope that structurally
+    could not contain its mutants — the silent-narrowing failure this scanner's
+    own docstring refuses. Deriving the globs from `SHAPES` means the next
+    harness in a new language widens the sweep by existing, rather than by
+    somebody remembering.
+
+    `.py` is always included: Pass B's job is to catch a mutant COPIED outside
+    its declared target, and the likeliest place for that is a Python file even
+    when the target is not one.
+    """
+    found = {p.target.suffix for p in pairs if p.target.suffix}
+    return sorted(found | {".py"})
+
+
+def _files(base: str, all_tracked: bool, suffixes: list[str]) -> list[Path]:
+    globs = [f"*{s}" for s in suffixes]
     if all_tracked:
-        cmd = ["git", "-C", str(REPO), "ls-files", "--", "*.py"]
+        cmd = ["git", "-C", str(REPO), "ls-files", "--", *globs]
     else:
-        cmd = ["git", "-C", str(REPO), "diff", "--name-only", f"{base}...HEAD", "--", "*.py"]
+        cmd = ["git", "-C", str(REPO), "diff", "--name-only", f"{base}...HEAD", "--", *globs]
     out = subprocess.run(cmd, capture_output=True, text=True)
     if out.returncode != 0:
         # EXIT 2, NOT 1 — this is the harness failing, not a finding.
@@ -281,8 +311,12 @@ def main() -> int:
     # and the count of what was excluded is printed rather than swallowed.
     scannable = [p for p in pairs if len(p.repl.strip()) >= MIN_LITERAL]
     skipped = len(pairs) - len(scannable)
-    files = _files(args.base, args.all_tracked)
-    scope = "all tracked .py" if args.all_tracked else f"changed .py vs {args.base}"
+    suffixes = _suffixes(pairs)
+    files = _files(args.base, args.all_tracked, suffixes)
+    kinds = " ".join(suffixes)
+    scope = (
+        f"all tracked {kinds}" if args.all_tracked else f"changed {kinds} vs {args.base}"
+    )
 
     print()
     print(f"PASS B — broad sweep: {len(scannable)} literals x {len(files)} files ({scope})")
