@@ -1304,11 +1304,19 @@ export interface GolfMover {
   probability: number;
 }
 
+// UX-P169: a scheduled tournament, not an `events` row. The old shape was
+// `{id, name, commence_time, status}` fed from the `events` table, which holds
+// six closed golf rows in all of history — the list was always empty. These
+// come from the DataGolf schedule and so have no event id to link to.
 export interface GolfUpcomingEvent {
-  id: number;
+  key: string | null;
   name: string;
-  commence_time: string | null;
-  status: string;
+  start_date: string | null;
+  end_date: string | null;
+  venue: string | null;
+  location: string | null;
+  tour: string | null;
+  tour_label: string | null;
 }
 
 export interface GolfCurrentEvent {
