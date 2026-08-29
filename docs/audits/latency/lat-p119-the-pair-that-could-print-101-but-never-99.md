@@ -91,7 +91,7 @@ percent prints an em-dash — so the fix cannot be quietly undone by a caller.
 | ruff | both changed `.py` files clean; master's copy of `scan_mutation_residue.py` also clean — the new file adds **zero** findings |
 | `npm run contract` (**a CI gate**, `ci.yml:531`) | **484 pass / 0 fail, EXIT 0** — and 484/0/exit 0 on **master** too, so the count is unchanged rather than merely green |
 | backend, scoped | `test_mutation_guard.py` + `test_startup.py` — **13 passed, EXIT 0**, including `test_every_on_disk_harness_is_guarded` |
-| backend, full | see the READY token — launched, starved by two sibling lanes' concurrent suites, and **stated unfinished rather than inferred from the scoped pass** |
+| backend, full | **21,211 passed / 0 failed / 124 skipped / 61 xfailed, 851.68 s — EXIT CODE 0 READ BY VALUE**; 21,211 + 124 + 61 = **21,396 = collect, exactly**, and **21,396 is master's own collect**, so **+0** — which is right: this branch adds no backend test file |
 
 `migration_slot: none` — no DDL, no index, no schema change.
 `beat_schedule_change: FALSE` — no beat file, no Celery task, no config var.
