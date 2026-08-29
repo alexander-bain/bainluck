@@ -47,6 +47,9 @@ export type RainDay = {
 
 export type MonthlyRain = {
   city: string;
+  /** The month the market resolves for ("Nov 2026"). Not the current month —
+   *  a city's surviving row can be any future month, so the card is told. */
+  period?: string | null;
   prob: number;
   src: Source;
   delta24h?: number;
