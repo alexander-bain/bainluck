@@ -276,13 +276,33 @@ class TestTheRepositoryAgreesWithItselfAboutDistinctGames:
     """One codebase, one answer to "are these two records the same game?"."""
 
     def test_name_only_authority_never_exceeds_the_doubleheader_boundary(self):
-        from app.tasks.prediction_market_matching import _ticker_date_far_from_event
-
         # The independent guard's HHMM window. Discovered by measurement, not
         # by taste (1,000-row production sample, 2026-08-12).
+        #
+        # Q439 (#2214) retired `_ticker_date_far_from_event`, which this pin
+        # used to read the window off. That deletion does NOT move the boundary:
+        # the ±3h came from a sample measured *"once the ticker's Eastern clock
+        # was read correctly"* — the sentence this file already quotes — and the
+        # deleted helper was the one that never did the reading. The window is
+        # now pinned to the named constant instead of to a function, so the next
+        # correction on that rail cannot silently drag this gate with it.
+        from app.tasks.prediction_market_matching import (
+            _EVENT_DATE_MAX_DIFF_HOURS,
+            _ticker_date_conflicts_with_event,
+        )
+
+        assert _EVENT_DATE_MAX_DIFF_HOURS == 3
+
+        # And the surviving decider still answers the boundary the same way.
+        # 13:00 ET is 18:00Z in February; the ticker clock is Eastern.
         base = datetime(2026, 2, 21, 18, 0, tzinfo=UTC)
-        assert _ticker_date_far_from_event(base + timedelta(hours=3, minutes=1), base)
-        assert not _ticker_date_far_from_event(base + timedelta(hours=2, minutes=59), base)
+        ticker = datetime(2026, 2, 21, 13, 0, tzinfo=UTC)
+        assert _ticker_date_conflicts_with_event(
+            ticker + timedelta(hours=3, minutes=1), base, "kxmlbgame"
+        )
+        assert not _ticker_date_conflicts_with_event(
+            ticker + timedelta(hours=2, minutes=59), base, "kxmlbgame"
+        )
 
         assert MAX_SAME_GAME_SECONDS <= 3 * 3600, (
             "the espn_id authorization gate believes a pair is the same game "

@@ -183,20 +183,32 @@ WRONG_GAME_PREFIXES = frozenset({
 })
 
 
-def _ticker_date_far_from_event(ticker_date, event_commence) -> bool:
-    """True when a Kalshi ticker's game date is far enough from the event's
-    commence_time to be a DIFFERENT game.
-
-    HHMM-aware (#210 Item 1d): ±3h when the ticker carries a start time
-    (separates doubleheaders ~5h apart), ±18h for date-only tickers. Returns
-    False when either input is missing (no signal to unlink on).
-    """
-    if not ticker_date or not event_commence:
-        return False
-    d = ticker_date if ticker_date.tzinfo else ticker_date.replace(tzinfo=timezone.utc)
-    ec = event_commence if event_commence.tzinfo else event_commence.replace(tzinfo=timezone.utc)
-    max_diff_hours = 3 if (d.hour or d.minute) else 18
-    return abs((d - ec).total_seconds()) / 3600 > max_diff_hours
+# ── DELETED (Q439, #2214): _ticker_date_far_from_event ───────────────────────
+# It answered "is this ticker's game the same game as this event?" by comparing
+# the ticker's wall clock to the event's UTC commence AS IF THE TICKER WERE UTC.
+# It is not — a Kalshi game ticker embeds the game's US EASTERN date and start
+# time, which the block below already says, in this file, with the measurement
+# attached. #1811 corrected the arm that DECIDES A LINK
+# (_ticker_date_conflicts_with_event) and left the two arms that DECIDE AN
+# UNLINK on the uncorrected helper, so the same module answered one question
+# two ways and the inverse operation won.
+#
+# What that cost, measured on production 2026-08-29 — the day this was deleted:
+#   * 44 of 44 open KXMLBGAME rows unlinked. Every one had a real event, and
+#     every one was 4h (EDT) outside a ±3h window centred on the wrong instant.
+#   * 45 of 48 MLB games commencing within 36h carried no `kalshi` key in
+#     `win_probability_sources` — the game card showed no Kalshi price.
+#   * 44 of 44 open KXMLSGAME rows unlinked on the date-only arm: a midnight-
+#     anchored ticker sits ~24h from an evening kickoff's UTC commence, which
+#     the old ±18h rule called a different game.
+# The link-rate metric did not show it, because the settled backfill re-links
+# these rows once the game is over. The gap was only ever visible while the
+# game was worth watching.
+#
+# There is now ONE decider: _ticker_date_conflicts_with_event. Its ±3h HHMM
+# tolerance is unchanged and is still the number the ESPN identity rail
+# (app/utils/espn_candidate_selection) pins itself to; only the instant the
+# tolerance is measured FROM has moved.
 
 
 # ── #1811: ticker-date vs CANDIDATE-EVENT date ───────────────────────────────
@@ -224,10 +236,16 @@ def _ticker_date_far_from_event(ticker_date, event_commence) -> bool:
 # is wrong. So the date guard now covers EVERY Kalshi ticker class that carries
 # a parseable ticker date, not just game winners.
 #
-# ── Why this arm does NOT reuse _ticker_date_far_from_event verbatim ─────────
-# That helper compares the ticker's wall clock to the event's UTC commence as
-# if the ticker were UTC. It is not: a Kalshi game ticker embeds the game's US
-# EASTERN date and start time. MEASURED (1,000-row systematic sample of linked
+# ── Why the ticker's clock must be converted before it is compared ───────────
+# Q439 (#2214): what follows was written to explain why this arm did not reuse
+# `_ticker_date_far_from_event`. That helper is now DELETED, because the two
+# unlink arms it still drove were the reason MLB never carried a live Kalshi
+# price — this paragraph named the bug and the codebase kept it anyway. The
+# measurement below is unchanged and is now the ONE rule.
+#
+# The retired helper compared the ticker's wall clock to the event's UTC
+# commence as if the ticker were UTC. It is not: a Kalshi game ticker embeds the
+# game's US EASTERN date and start time. MEASURED (1,000-row systematic sample of linked
 # MLB Kalshi markets, production, 2026-08-12):
 #   * ticker HHMM read as UTC  → modal delta is -4h (i.e. OUTSIDE the ±3h
 #     window); the helper's rule would refuse 98.0% of currently-linked MLB
@@ -336,6 +354,28 @@ def _event_date_max_diff_hours(prefix: str) -> int:
     return _EVENT_DATE_MAX_DIFF_HOURS
 
 
+def ticker_start_utc(ticker_date):
+    """The real UTC instant a Kalshi ticker's HHMM names, or None.
+
+    ``extract_game_date_from_ticker`` returns the ticker's wall clock stamped
+    with ``tzinfo=UTC`` — a carrier, not a claim. The clock is US EASTERN. This
+    is the ONE place that conversion happens, so a caller cannot half-apply it.
+
+    Returns None when there is nothing to convert: no ticker date, a date-only
+    ticker (midnight — there is no start time to place), or no tz database. A
+    None means "no instant available", never "midnight UTC".
+    """
+    if not ticker_date or _KALSHI_TICKER_TZ is None:
+        return None
+    if not (ticker_date.hour or ticker_date.minute):
+        return None  # date-only: compare Eastern CALENDAR DAYS instead
+    return (
+        ticker_date.replace(tzinfo=None)
+        .replace(tzinfo=_KALSHI_TICKER_TZ)
+        .astimezone(timezone.utc)
+    )
+
+
 def _ticker_date_conflicts_with_event(
     ticker_date, event_commence, prefix: str = "",
 ) -> bool:
@@ -357,14 +397,13 @@ def _ticker_date_conflicts_with_event(
         else event_commence.replace(tzinfo=timezone.utc)
     )
     # extract_game_date_from_ticker returns midnight for a date-only ticker, so
-    # this is the same has-HHMM heuristic _ticker_date_far_from_event uses. A
-    # literal 00:00 start would read as date-only and fall to the LOOSER rule —
-    # it fails open, which is the safe direction.
-    has_hhmm = bool(ticker_date.hour or ticker_date.minute)
+    # `ticker_start_utc` returning None IS the has-HHMM test. A literal 00:00
+    # start would read as date-only and fall to the LOOSER rule — it fails open,
+    # which is the safe direction.
     naive = ticker_date.replace(tzinfo=None)
+    start_utc = ticker_start_utc(ticker_date)
 
-    if has_hhmm:
-        start_utc = naive.replace(tzinfo=_KALSHI_TICKER_TZ).astimezone(timezone.utc)
+    if start_utc is not None:
         diff_hours = abs((start_utc - ec).total_seconds()) / 3600
         return diff_hours > _event_date_max_diff_hours(prefix)
 
@@ -1539,11 +1578,15 @@ async def _match_prediction_markets(limit: int = 500):
         #
         # #210 Item 1d: this loop runs over EVERY linked market in EVERY group
         # (not just the dedup primary + blend-feeding tickers the Phase-2 primary
-        # loop below covers), and uses the SAME precise HHMM-aware threshold via
-        # _ticker_date_far_from_event (±3h with a start time, ±18h date-only)
-        # instead of the old flat 30h — so same-day doubleheader mislinks
-        # (~5h apart) are caught too. The prefix allowlist (WRONG_GAME_PREFIXES)
-        # is module-level (#210 Item 1e) and combat is skipped defensively.
+        # loop below covers), so same-day doubleheader mislinks (~5h apart) are
+        # caught too. The prefix allowlist (WRONG_GAME_PREFIXES) is module-level
+        # (#210 Item 1e) and combat is skipped defensively.
+        #
+        # Q439 (#2214): the threshold is now _ticker_date_conflicts_with_event —
+        # the SAME function the link path uses, so this arm and its inverse can
+        # no longer disagree. It reads the ticker's clock as US Eastern, which is
+        # what it is; the previous helper read it as UTC and therefore unlinked
+        # every MLB game market it was ever shown, 4h out, every run.
         stats["funnel"].setdefault("phase2_multi_game_unlinked", 0)
         for key, group in list(all_per_event_source.items()):
             if key[1] != "kalshi" or not group:
@@ -1565,9 +1608,14 @@ async def _match_prediction_markets(limit: int = 500):
                 if is_combat_fight_ticker(m.external_id):
                     continue
                 td = extract_game_date_from_ticker(m.external_id)
-                if not _ticker_date_far_from_event(td, ec):
+                if not _ticker_date_conflicts_with_event(td, ec, prefix):
                     continue
-                d = td if td.tzinfo else td.replace(tzinfo=timezone.utc)
+                # Report the diff from the instant the decision was made on, not
+                # from the raw ticker stamp — a log line that disagrees with the
+                # rule it explains is how this bug survived twelve days.
+                d = ticker_start_utc(td) or (
+                    td if td.tzinfo else td.replace(tzinfo=timezone.utc)
+                )
                 diff_hours = abs((d - ec).total_seconds()) / 3600
                 logger.warning(
                     "Phase 2 wrong-game unlink: %s (date=%s) is %.0fh from event %d (date=%s) — unlinking",
@@ -1633,14 +1681,24 @@ async def _match_prediction_markets(limit: int = 500):
                     # Combat fights are exempt: they are disambiguated by fighter
                     # names (no same-card double-header), and their date-only
                     # ticker (e.g. 26JUL11) legitimately sits up to ~28h from the
-                    # event's UTC commence (gotcha #14 — Kalshi close-time ≠ start),
-                    # which the ±18h date-only threshold would wrongly unlink.
+                    # event's UTC commence (gotcha #14 — Kalshi close-time ≠ start).
+                    #
+                    # Q439 (#2214): decided by _ticker_date_conflicts_with_event,
+                    # the same function the link path uses — the ticker's clock is
+                    # US Eastern, and reading it as UTC unlinked every MLB game
+                    # market on every run.
                     ticker_date = extract_game_date_from_ticker(market.external_id)
+                    _prefix = _kalshi_prefix(market.external_id)
                     if (
                         not is_combat_fight_ticker(market.external_id)
-                        and _ticker_date_far_from_event(ticker_date, market.event_commence_time)
+                        and _ticker_date_conflicts_with_event(
+                            ticker_date, market.event_commence_time, _prefix
+                        )
                     ):
-                        _td = ticker_date if ticker_date.tzinfo else ticker_date.replace(tzinfo=timezone.utc)
+                        _td = ticker_start_utc(ticker_date) or (
+                            ticker_date if ticker_date.tzinfo
+                            else ticker_date.replace(tzinfo=timezone.utc)
+                        )
                         _ec = market.event_commence_time if market.event_commence_time.tzinfo else market.event_commence_time.replace(tzinfo=timezone.utc)
                         logger.warning(
                             "Phase 2 date mismatch: %s ticker=%s event=%s (diff=%.0fh) — unlinking",
@@ -1882,10 +1940,31 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
     # use an asymmetric window: -6h to +30h. Ticker dates are US calendar
     # dates stored as UTC midnight, but US evening games (7-11 PM ET) fall
     # on the NEXT UTC day (00:00-04:00 UTC). A symmetric ±18h missed these.
-    reference_time = game_date_override or market.commence_time or now
+    #
+    # Q439 (#2214): the ±3h window is centred on the ticker's REAL instant, not
+    # on its Eastern wall clock read as UTC. Measured on production 2026-08-29,
+    # `KXMLBGAME-26AUG291610KCCLE` — a 16:10 EDT first pitch, i.e. 20:10Z — was
+    # searched over 13:10Z..19:10Z and returned ZERO candidates while its event
+    # sat one hour past the end of the window. Every MLB game ticker failed the
+    # same way, in both directions of the year: EDT is 4h and EST is 5h, and the
+    # window is 3h. Only the CENTRE moves; the tolerance is untouched, because
+    # ±3h is the measured doubleheader-separating number the ESPN identity rail
+    # also pins itself to.
+    ticker_start = (
+        ticker_start_utc(game_date_override)
+        if game_date_override and getattr(market, "source", None) == "kalshi"
+        else None
+    )
+    # The instant proximity is SCORED from, too — a candidate 4h out of a wrong
+    # centre is 0h out of the right one, and the score decides which of two
+    # same-teams rows the market lands on.
+    scoring_ref = ticker_start or game_date_override
+    reference_time = ticker_start or game_date_override or market.commence_time or now
     if game_date_override:
-        has_time = game_date_override.hour != 0 or game_date_override.minute != 0
-        if has_time:
+        if ticker_start is not None:
+            time_start = reference_time - timedelta(hours=3)
+            time_end = reference_time + timedelta(hours=3)
+        elif game_date_override.hour != 0 or game_date_override.minute != 0:
             time_start = reference_time - timedelta(hours=3)
             time_end = reference_time + timedelta(hours=3)
         else:
@@ -1916,7 +1995,7 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
     )
     candidates = event_result.scalars().unique().all()
 
-    result = _score_candidates(candidates, matchup, market, now, game_date_override)
+    result = _score_candidates(candidates, matchup, market, now, scoring_ref)
     if result:
         return result
 
@@ -1943,7 +2022,7 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
         )
         broad_candidates = event_result.scalars().unique().all()
 
-        result = _score_candidates(broad_candidates, matchup, market, now, game_date_override)
+        result = _score_candidates(broad_candidates, matchup, market, now, scoring_ref)
         if result:
             logger.info(
                 "Broad fallback matched %s '%s' → event %d (time window bypass)",
