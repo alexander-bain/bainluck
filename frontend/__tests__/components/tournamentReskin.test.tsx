@@ -20,6 +20,10 @@
  * "shows three" is satisfied by a component that can never expand.
  */
 
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -121,6 +125,109 @@ function board(count: number, overrides: Partial<TournamentBoardData> = {}): Tou
 const render = (node: React.ReactElement) => renderToStaticMarkup(node);
 const count = (html: string, needle: string) =>
   (html.match(new RegExp(needle, "g")) ?? []).length;
+
+// ---------------------------------------------------------------------------
+// THE BACKEND-PRODUCED SPECIMEN (CERT-433 G1)
+//
+// The CERT-430 block below used to build its card from a local literal that
+// spelled out `price_state: "dark"` and `unpriced_legs`. CERT-433 killed that
+// proof: deleting the backend rule that PRODUCES those fields left this suite
+// green, because the fixture already contained the repaired answer. A fixture
+// that hardcodes the repaired payload cannot fail when its producer is deleted.
+//
+// THE ROOT IS ONE LAYER DEEPER THAN "THE FIXTURE WAS HARDCODED", and it is why
+// re-typing the fixture would not have been enough. The two layers are
+// REDUNDANT, NOT COUPLED: they reach the same verdict from DIFFERENT fields.
+// `build_props` grades the card from its declared legs and publishes
+// `price_state`; `propIsPresentedAsLive` never reads `price_state` at all and
+// re-derives completeness from `legs` plus the null probabilities. So even a
+// perfectly backend-produced payload leaves the render assertions green when
+// the backend rule is deleted — the renderer does not read the field that
+// changed. Two rules that agree today and share no input can drift apart with
+// nothing going red.
+//
+// So this file does two things it did not do before: it renders a payload the
+// BACKEND ACTUALLY PRODUCED, and it asserts the two layers AGREE about it.
+//
+// Spawning python3 is deliberate and is the only way to make that assertion
+// honest here. `jest.setup.network.js` blocks the network, not `child_process`,
+// and the producer is pure: no database, no network, no third-party import, a
+// literal clock. It runs under a bare interpreter on a CI runner that never
+// installed our Python requirements.
+//
+// IT MUST NEVER SKIP. A specimen that quietly opts out when the interpreter is
+// missing is the same defect one level up — "it returned" is not "it worked"
+// (gotcha #53). Every failure below throws.
+// ---------------------------------------------------------------------------
+
+const REPO_ROOT = join(__dirname, "..", "..", "..");
+const SPECIMEN_PRODUCER = join(
+  "backend",
+  "scripts",
+  "emit_comparison_specimen.py"
+);
+
+interface ComparisonSpecimen {
+  produced_by: string;
+  now: string;
+  legs: { alcaraz: string; sinner: string };
+  cases: Record<"incomplete" | "complete", PropMarket & { price_state: string }>;
+}
+
+function produceComparisonSpecimen(): ComparisonSpecimen {
+  const script = join(REPO_ROOT, SPECIMEN_PRODUCER);
+  if (!existsSync(script)) {
+    throw new Error(
+      `the CERT-430 specimen producer is missing at ${SPECIMEN_PRODUCER}. ` +
+        "This suite renders what the backend builds; it must not fall back to a " +
+        "literal, because a literal is what CERT-433 blocked."
+    );
+  }
+  let stdout: string;
+  try {
+    stdout = execFileSync("python3", [script], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env: { ...process.env, PYTHONPATH: join(REPO_ROOT, "backend") },
+      timeout: 60_000,
+    });
+  } catch (error) {
+    const detail = error as { stderr?: string | Buffer; message?: string };
+    throw new Error(
+      `could not run ${SPECIMEN_PRODUCER}: ${detail.message ?? error}\n` +
+        `${detail.stderr ?? ""}`
+    );
+  }
+  const parsed = JSON.parse(stdout) as ComparisonSpecimen;
+  // Shape, not values. A producer that emitted `{}` would otherwise turn every
+  // assertion below into a comparison against `undefined`, which reads as a
+  // confusing render bug rather than as a broken producer.
+  expect(parsed.produced_by).toBe(
+    "backend/app/utils/tournament_slate.py:build_props"
+  );
+  for (const key of ["incomplete", "complete"] as const) {
+    expect(Array.isArray(parsed.cases?.[key]?.outcomes)).toBe(true);
+  }
+  return parsed;
+}
+
+const SPECIMEN = produceComparisonSpecimen();
+
+/** The card the backend published for one case, as the route would serve it. */
+const producedComparison = (which: "incomplete" | "complete"): PropMarket =>
+  SPECIMEN.cases[which];
+
+/**
+ * Does the BACKEND's published grade claim this card is current?
+ *
+ * `price_state` is the backend's whole answer to "may this be presented as
+ * live", and it is the field the deleted contributor moves. Reading it here is
+ * what couples the two layers: the renderer's own answer is computed from
+ * different inputs, so asserting the two agree is a real cross-layer check
+ * rather than a restatement of either rule.
+ */
+const backendPresentsAsLive = (which: "incomplete" | "complete"): boolean =>
+  SPECIMEN.cases[which].price_state === "live";
 
 /**
  * The chart's props at their DEFAULT selection (UX-P137, ruling 6).
@@ -932,31 +1039,35 @@ describe("curated props", () => {
   // several declared markets prints every declared subject, is never live while
   // one of them is missing, and SAYS which one is missing.
 
+  // THE CARD IS NO LONGER TYPED OUT HERE. It is whatever
+  // `backend/app/utils/tournament_slate.py:build_props` publishes for CERT-430's
+  // executed scenario — Alcaraz's leg unpriced, Sinner's fresh at .555 — fetched
+  // by the module-scope producer at the top of this file. See the block there
+  // for why a literal could not hold this proof (CERT-433).
   const comparison = (alcarazProbability: number | null) =>
-    market({
-      key: "second-major",
-      title: "Who wins a second major this year?",
-      hook: null,
-      answer_entity_key: null,
-      legs: 2,
-      unpriced_legs: alcarazProbability === null ? ["KXGRANDSLAM-CALC26"] : [],
-      price_state: alcarazProbability === null ? "dark" : "live",
-      outcomes: [
-        {
-          ...outcome("second-major:carlos-alcaraz", 0.25, true, 1),
-          display_name: "Carlos Alcaraz",
-          probability: alcarazProbability,
-          probability_is_live: alcarazProbability !== null,
-          observed_at: alcarazProbability === null ? null : "2026-08-25T11:00:00+00:00",
-          age_hours: alcarazProbability === null ? null : 1,
-          price_state: alcarazProbability === null ? "dark" : "live",
-        },
-        {
-          ...outcome("second-major:jannik-sinner", 0.555, true, 1),
-          display_name: "Jannik Sinner",
-        },
-      ],
-    });
+    producedComparison(alcarazProbability === null ? "incomplete" : "complete");
+
+  it("SPECIMEN: the backend's grade and the rendered card agree, and both say NO", () => {
+    // THE CROSS-LAYER KILL (CERT-433 G1). Everything else in this block is
+    // computed by the renderer from `legs` and the null probability, so it stays
+    // green when the backend rule is deleted. This assertion does not: the
+    // backend's own published grade is on the left, the renderer's independent
+    // answer is on the right, and the specimen is the case where they must both
+    // refuse. Delete `contributors.append(None)` in `build_props` and the left
+    // side flips to live while the right side does not — red, here, in this
+    // block, which is what the fixture could never do.
+    expect(propIsPresentedAsLive(producedComparison("incomplete"))).toBe(
+      backendPresentsAsLive("incomplete")
+    );
+    expect(backendPresentsAsLive("incomplete")).toBe(false);
+    // The backend also NAMES the missing leg. A payload that graded the card
+    // correctly but published no `unpriced_legs` would leave the page unable to
+    // say which subject it is missing.
+    expect(producedComparison("incomplete").unpriced_legs).toEqual([
+      SPECIMEN.legs.alcaraz,
+    ]);
+    expect(producedComparison("incomplete").legs).toBe(2);
+  });
 
   it("SPECIMEN: one fresh leg cannot publish a live one-player comparison", () => {
     const card = comparison(null);
@@ -995,6 +1106,14 @@ describe("curated props", () => {
     const card = comparison(0.25);
     expect(propIncompleteComparison(card)).toBeNull();
     expect(propIsPresentedAsLive(card)).toBe(true);
+    // THE NON-VACUITY CONTROL for the kill above. A producer that always
+    // emitted a dark card, or a backend rule that darkened every comparison,
+    // would satisfy the specimen and quietly destroy the section. So the same
+    // agreement is asserted in the other direction, on the same producer, and
+    // this side must read LIVE.
+    expect(backendPresentsAsLive("complete")).toBe(true);
+    expect(propIsPresentedAsLive(card)).toBe(backendPresentsAsLive("complete"));
+    expect(card.unpriced_legs).toEqual([]);
 
     const html = render(<TournamentProps markets={[card]} draw="mens-singles" />);
     expect(html).toContain('data-live="true"');
@@ -1002,6 +1121,55 @@ describe("curated props", () => {
     expect(html).not.toContain('data-testid="prop-incomplete"');
     expect(html).not.toContain("No number yet");
     expect(count(html, 'data-testid="prop-field-row"')).toBe(2);
+  });
+
+  it("writes the CERT-430 card as the reader sees it, and asserts its own content", () => {
+    // The artifact for this queue, from the SHIPPED component and a payload the
+    // BACKEND built. Both panels are the same card: the one whose second leg
+    // never priced, and the control where it did.
+    const incomplete = render(
+      <TournamentProps markets={[producedComparison("incomplete")]} draw="mens-singles" />
+    );
+    const complete = render(
+      <TournamentProps markets={[producedComparison("complete")]} draw="mens-singles" />
+    );
+
+    // The rig refuses to emit a file that does not show the behaviour it claims.
+    expect(incomplete).toContain("Carlos Alcaraz");
+    expect(incomplete).toContain("No number yet");
+    expect(incomplete).toContain('data-incomplete="true"');
+    expect(complete).toContain('data-incomplete="false"');
+    expect(complete).not.toContain("No number yet");
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("fs");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const path = require("path");
+    const out = process.env.UXP174_ARTIFACT_DIR;
+    if (!out) return; // opt-in; the assertions above are the gate
+    fs.mkdirSync(out, { recursive: true });
+    fs.writeFileSync(
+      path.join(out, "cert430-comparison-card.html"),
+      `<!doctype html><meta charset="utf-8">
+<title>UX-P174 — the CERT-430 comparison card</title>
+<body style="font-family:system-ui;margin:0;padding:24px;background:#fff">
+<h1 style="font:600 18px system-ui">UX-P174 — CERT-430 / CERT-433</h1>
+<p style="color:#666;font:14px system-ui;max-width:74ch">
+Both panels are the shipped <code>components/tournament/TournamentProps.tsx</code>,
+rendering a payload built by the production
+<code>app/utils/tournament_slate.py:build_props</code> and handed over by
+<code>backend/scripts/emit_comparison_specimen.py</code> — not by a fixture.
+That is the repair CERT-433 withheld the token for: the card below used to be
+typed out by hand with the repaired answer already in it, so deleting the
+backend rule that produces it left this suite green.</p>
+<h2 style="font:600 15px system-ui">THE SPECIMEN — Alcaraz's leg never priced
+(<code>price_state: ${producedComparison("incomplete").price_state}</code>)</h2>
+<div style="border:1px solid #ddd;padding:16px;border-radius:8px">${incomplete}</div>
+<h2 style="font:600 15px system-ui">THE CONTROL — both legs quoted
+(<code>price_state: ${producedComparison("complete").price_state}</code>)</h2>
+<div style="border:1px solid #ddd;padding:16px;border-radius:8px">${complete}</div>
+</body>`
+    );
   });
 
   it("a card the register declared MORE legs for than it delivered rows says so", () => {
