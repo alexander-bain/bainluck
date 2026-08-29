@@ -41,6 +41,7 @@ COVERED = (
     "test_calibration_mode_price_source_scope_pg.py",
     "test_calibration_mode_price_source_scope_peers_pg.py",
     "test_create_wave_insert_bind_contract.py",
+    "test_feed_static_tag_filter_pg.py",
     "test_kalshi_cliff_bind_contract.py",
 )
 

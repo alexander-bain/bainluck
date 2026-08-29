@@ -29,7 +29,6 @@ from sqlalchemy import (
     or_,
     func,
     case,
-    cast,
     column,
     exists,
     literal,
@@ -39,7 +38,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, load_only, selectinload
-from sqlalchemy.dialects.postgresql import JSONB
 
 from app.dependencies.auth import get_optional_user
 # Admission bounds for the shared candidate base live WITH the base (they exist
@@ -5467,10 +5465,10 @@ async def _score_events(
     # Push static tags to SQL via GIN containment index (@>)
     # Only for tags that don't change after event creation (sport, league, tier, etc.)
     if static_tag_filter:
-        import json as _json_mod
+        from app.utils.jsonb_containment import jsonb_contains
 
         candidate_conditions.append(
-            Event.event_tags.op("@>")(cast(_json_mod.dumps(static_tag_filter), JSONB))
+            jsonb_contains(Event.event_tags, static_tag_filter)
         )
 
     query = (
@@ -6721,12 +6719,10 @@ def _discover_candidate_pool_specs(
         )
 
     if static_tag_filter:
-        import json as _json_mod
+        from app.utils.jsonb_containment import jsonb_contains
 
         id_filters.append(
-            FuturesMarket.market_tags.op("@>")(
-                cast(_json_mod.dumps(static_tag_filter), JSONB)
-            )
+            jsonb_contains(FuturesMarket.market_tags, static_tag_filter)
         )
 
     # Pool 1: sports futures (capped — tier-ordered so best surface first).
