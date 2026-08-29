@@ -301,6 +301,44 @@ def tennis_status(status: str | None, resolution_date, now) -> str:
     return "upcoming"
 
 
+#: The four Grand Slams. Tennis's majors are a CLOSED, stable set — unlike golf's
+#: (which the source data flags for us) or combat's (which `card_label` derives
+#: from numbering), there is nothing upstream to read, so the vocabulary is the
+#: implementation. Roland Garros and the French Open are the same tournament under
+#: two names and BOTH spellings are live in the corpus (measured 2026-08-29: two
+#: separate winner markets, one per source), so both must be recognized.
+_SLAM_PATTERNS: tuple[re.Pattern, ...] = (
+    re.compile(r"\baustralian\s+open\b", re.I),
+    re.compile(r"\b(?:french\s+open|roland\s+garros)\b", re.I),
+    re.compile(r"\bwimbledon\b", re.I),
+    re.compile(r"\bus\s+open\b", re.I),
+)
+
+
+def tennis_is_major(name: str | None) -> bool:
+    """True when a tennis tournament name is one of the four Grand Slams.
+
+    Both tennis concept sites hardcoded `is_major: False`, so `/hub/tennis`'s
+    "★ Marquee" chip and `EventHeader`'s "Major" chip could never render for
+    tennis — the US Open included, measured live 2026-08-29 (0 of 12 hub cards
+    flagged, and 0 of 48 across all five hubs). Tennis was the only one of the
+    four hub listers with no mechanism to express a major at all.
+
+    ⚠️ The ` vs ` guard is not defensive padding — it is the measured population.
+    A census of tennis-categorized winner markets the same day returned 14 rows,
+    of which **three are football**: "Huddersfield vs Wimbledon: First Half
+    Winner", "Wimbledon vs Newport", "Wimbledon vs Reading". AFC Wimbledon is a
+    football club and those rows carry `llm_sport_category = 'tennis'`. A bare
+    `%Wimbledon%` substring test badges a football match as a Grand Slam. Both
+    call sites happen to gate on `is_winner_field` first, which excludes them
+    today — this predicate does not inherit that gate and must not rely on it.
+    """
+    n = name or ""
+    if re.search(r"\bvs\.?\b", n, re.I):
+        return False
+    return any(p.search(n) for p in _SLAM_PATTERNS)
+
+
 async def list_tennis_tournament_concepts(
     db: AsyncSession,
     *,
@@ -314,7 +352,10 @@ async def list_tennis_tournament_concepts(
     `TennisEventAdapter.build_event` resolves to (it also canonicalizes on the
     richest winner market — L2-65). Read-only, best-effort.
 
-    Returns {key, name, domain, status, start_date, is_major, entry_count}.
+    Returns {key, name, domain, status, start_date, end_date, is_major, entry_count}.
+    `start_date` is always None — no tennis source gives a tournament START — and
+    `end_date` carries the group's resolution date (the winner's own when it has
+    one, else the earliest a sibling rendering knows).
     """
     from datetime import datetime, timezone
 
@@ -409,15 +450,31 @@ async def list_tennis_tournament_concepts(
                 "name": winner.name,
                 "domain": "tennis",
                 "status": status,
-                # The GROUP's date, not the winner's own — see the block above.
-                # ⚠️ This key is misnamed: it carries `resolution_date`, which is
-                # when the winner market RESOLVES, i.e. at or after the tournament
-                # ENDS. That is a separate defect (UX-P178) and is deliberately NOT
-                # fixed here; what matters for this ship is that it is the value the
-                # card PRINTS, so serving the group's date is what keeps the
-                # surviving Montreal card from losing the date it had before.
-                "start_date": (end_at.isoformat() if end_at is not None else None),
-                "is_major": False,
+                # `resolution_date` is when the WINNER MARKET RESOLVES — i.e. at or
+                # after the tournament ENDS. It was being served as `start_date`,
+                # so /hub/tennis printed a future date under a pulsing LIVE dot
+                # (measured 2026-08-29: 4 such cards) while `build_event` below
+                # served that IDENTICAL value as `end_date` with `start_date: None`.
+                # One click apart, two opposite meanings for one timestamp. The
+                # adapter's reading is the correct one, so the rail adopts it and
+                # the two layers now agree. Tennis was the only one of the four hub
+                # listers doing this: ufc/boxing serve `latest_commence` and golf
+                # serves `start_date or commence_time` — all genuine starts.
+                # We have no tournament start date for tennis, and a date we do not
+                # have is absent, never guessed.
+                #
+                # ⚠️ `end_date` carries `end_at` — the GROUP's date computed above —
+                # and NOT `winner.resolution_date`. UX-P178 was authored against a
+                # tree where the two were the same expression; UX-P182 (the parent
+                # commit) made them different, and on exactly the card that matters.
+                # "ATP 1000 Montreal: Winner" wins its group on draw size with
+                # `resolution_date = NULL`, so reading the winner's own field here
+                # would hand the survivor a null date — re-breaking the ship its own
+                # parent commit exists to deliver, one line after fixing the key's
+                # name. The group's date is the one the card must print.
+                "start_date": None,
+                "end_date": (end_at.isoformat() if end_at is not None else None),
+                "is_major": tennis_is_major(winner.name),
                 "entry_count": _real_count(winner),
                 "_sort": end_at,
             }
@@ -672,7 +729,7 @@ class TennisEventAdapter:
                 ),
                 "venue": None,
                 "location": None,
-                "is_major": False,
+                "is_major": tennis_is_major(winner.name),
             },
             "primary": {
                 "kind": "winner_field",

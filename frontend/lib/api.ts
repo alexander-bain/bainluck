@@ -1606,6 +1606,10 @@ export interface HubUpcoming {
   domain: string;
   status: "upcoming" | "live" | "settled" | string;
   start_date: string | null;
+  /** When the tournament ENDS. The tennis rail has no start date to serve (its
+   *  only date is the winner market's resolution), so it serves this instead of
+   *  mislabelling an end as a start. Absent on domains that know a real start. */
+  end_date?: string | null;
   is_major: boolean;
   fight_count?: number | null;
 }

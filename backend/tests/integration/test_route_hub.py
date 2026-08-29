@@ -242,6 +242,34 @@ class TestHubUpcoming:
         assert "main_event_id" not in card
         assert "latest_commence" not in card
 
+    async def test_end_date_survives_the_serializer(self, client, monkeypatch):
+        """UX-P178. `_serialize_concept` is an ALLOWLIST, so a key a lister starts
+        emitting is dropped unless it is named there — silently, with the rail
+        still 200-ing and the card just quietly missing its date. The tennis rail
+        serves its tournament's END here (it has no start to give), so this is the
+        difference between "Ends Sun, Sep 13" and "TBD" on every tennis card."""
+        import app.routes.hub as hub
+
+        async def _fake_lister(db, *, limit=20):
+            return [{
+                "key": "event:tennis:2026-mens-us-open-winner-tennis",
+                "name": "2026 Men’s US Open Winner (Tennis)",
+                "domain": "tennis",
+                "status": "live",
+                "start_date": None,
+                "end_date": "2026-09-13T00:00:00+00:00",
+                "is_major": True,
+                "entry_count": 23,  # internal — must be dropped
+            }]
+
+        monkeypatch.setitem(hub._UPCOMING_LISTERS, "tennis", _fake_lister)
+
+        card = (await client.get("/api/hub/tennis")).json()["upcoming"][0]
+        assert card["end_date"] == "2026-09-13T00:00:00+00:00"
+        assert card["start_date"] is None
+        assert card["is_major"] is True
+        assert "entry_count" not in card  # the allowlist still allowlists
+
     async def test_far_future_upcoming_card_capped(self, client, monkeypatch):
         """L2-101 Item 2: a combat card ~1yr out is dropped from the rail (it sorts
         marquee-first and otherwise pads /hub/mma), while a soon card survives."""

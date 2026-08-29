@@ -175,6 +175,40 @@ class TestTennisEventAdapter:
         assert abs(sum(c["probability"] for c in comps) - 1.0) < 0.02
         assert body["sections"][0]["type"] == "winner"
 
+    async def test_a_slam_is_flagged_major_through_the_route(self, client, mock_db):
+        """UX-P178: `is_major` was hardcoded False here, so `EventHeader`'s "Major"
+        chip could never render for tennis — Wimbledon included. This drives the
+        REAL route, so it fails if the adapter stops calling `tennis_is_major`."""
+        from tests.integration.test_route_weather import _query_result
+        mock_db.execute.return_value = _query_result([_tennis_winner_market()])
+
+        resp = await client.get("/api/event/event:tennis:2026-wimbledon-winner")
+        assert resp.status_code == 200
+        assert resp.json()["event"]["is_major"] is True
+
+    async def test_a_non_slam_is_not_flagged_major(self, client, mock_db):
+        """The control, and it carries the weight: a fix that flags EVERY tennis
+        tournament major passes the assertion above and makes the chip meaningless."""
+        from tests.integration.test_route_weather import _query_result
+        m = _tennis_winner_market()
+        m.name = "Cincinnati Open: Winner"
+        mock_db.execute.return_value = _query_result([m])
+
+        resp = await client.get("/api/event/event:tennis:cincinnati-open-winner")
+        assert resp.status_code == 200
+        assert resp.json()["event"]["is_major"] is False
+
+    async def test_the_slam_date_is_served_as_an_end_not_a_start(self, client, mock_db):
+        """The adapter's reading of `resolution_date` — an END — is the correct one,
+        and it is what the /hub/tennis rail was changed to agree with. Pinned here so
+        the agreement cannot be broken from this side either."""
+        from tests.integration.test_route_weather import _query_result
+        mock_db.execute.return_value = _query_result([_tennis_winner_market()])
+
+        body = (await client.get("/api/event/event:tennis:2026-wimbledon-winner")).json()
+        assert body["event"]["start_date"] is None
+        assert body["event"]["end_date"] is not None
+
     async def test_tennis_no_markets_404(self, client, mock_db):
         from tests.integration.test_route_weather import _query_result
         mock_db.execute.return_value = _query_result([])
