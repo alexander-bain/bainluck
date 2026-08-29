@@ -44,6 +44,7 @@ from app.utils.event_concept_cache import (
     cache_keys,
     release_refresh_lock,
 )
+from app.utils.proven_duplicates import not_a_proven_duplicate
 from app.utils.sport_keys import SPORT_HIERARCHY
 
 logger = logging.getLogger(__name__)
@@ -262,6 +263,13 @@ def upcoming_games_query(sport_key: str, now: datetime):
         .where(
             Sport.key == sport_key,
             upcoming_rail_condition(now),
+            # #2263: THE rail that made this visible. Read on 2026-08-29, the MLB
+            # page printed Dodgers–Tigers, Marlins–Nationals and Padres–Rays TWICE
+            # each — 3 of its 8 slots spent on second copies of a game already
+            # above them. A row the registry PROVED duplicates another does not
+            # get a slot. The proof is written at
+            # `event_registry._proven_duplicates`; this only declines to print.
+            not_a_proven_duplicate(),
         )
         .order_by(
             case((Event.status == "live", 0), else_=1),
@@ -350,6 +358,13 @@ def recent_results_query(sport_key: str, now: datetime):
             # pushed off the page. Widening this condition is the same
             # disappearance aimed at the other population.
             settled_rail_condition(now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)),
+            # #2263, as on the upcoming rail. Placed INSIDE the fence with the
+            # other filters, which is where the fence's own measurement says the
+            # filtering happens — it runs to completion before the sort either
+            # way, so this adds a predicate to a scan that was already reading
+            # these rows and does not change the plan shape the table above
+            # measured. The largest inner set across all 29 leagues is 470 rows.
+            not_a_proven_duplicate(),
         )
         .offset(literal_column("0"))
         .subquery()

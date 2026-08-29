@@ -63,6 +63,7 @@ from sqlalchemy import Select, String, and_, case, func, or_, select
 
 from app.models import Event, Sport
 from app.utils.event_completion import EVENT_SUSPENDED
+from app.utils.proven_duplicates import not_a_proven_duplicate
 
 # Status tiers.  These integers are PARTITION LABELS and quota keys, not a
 # display order — the caller applies its own `ORDER BY` after this pass — which
@@ -411,7 +412,20 @@ def event_candidate_ids(where_clauses) -> Select:
     window, sport filter, tag containment.  They are applied *inside* the window
     pass on purpose: quotas computed over an unfiltered pool would hand a
     filtered request the wrong slice.
+
+    #2263: proven duplicates are dropped here too, and that is a DIFFERENT guard
+    from the collapse below rather than a widening of it.  The collapse fuses
+    rows that are byte-identical on ``(sport, home, away, commence_time)``; the
+    twins #2263 found differ by ONE MINUTE and by ``"St.Louis"`` vs
+    ``"St. Louis"``, so the partition never groups them and the flagship surface
+    printed both.  Near-miss aliases remain out of scope for the collapse exactly
+    as this module's header says — the difference is that a proven duplicate is
+    not a near-miss guess.  It was established at the write side, by ESPN's own
+    fixture resolving onto two of our rows, and this reads the finding rather
+    than re-deriving it.
     """
+    where_clauses = [*where_clauses, not_a_proven_duplicate()]
+
     collapsed = _collapsed_subquery(where_clauses, "feed_event_candidates_collapsed")
 
     ranked = (
