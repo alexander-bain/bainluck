@@ -463,6 +463,18 @@ d("native implements the duel rule, and the widget consumes it instead", () => {
     // here is caught before someone runs xcodebuild by hand. Four surfaces draw
     // the pair; each must either read the served percents or go through
     // `renderedDuelPercents`, and none may round the two sides independently.
+    //
+    // 🔴 LAT-P120 (#2279) — THIS CHECK USED TO REQUIRE THE DEFECT. Its second half
+    // asserted `awayRenderedPercent ??` and `homeRenderedPercent ??` — a coalesce
+    // PER SIDE — on every surface, as proof that the served value was preferred.
+    // Per side is exactly the shape that prints a served value beside a locally
+    // derived one when a payload carries one field and not the other, which is
+    // the 101 this contract exists to close, arriving from the other direction.
+    // So the shape that was mandated here is the shape #2279 was filed about, and
+    // that is why it survived on three surfaces: the guard was holding it in
+    // place. What the old check was really reaching for — "preferred, not
+    // computed and ignored" — is asserted below without prescribing the mechanism
+    // that breaks it.
     const surfaces = [
       "ios/Bain Luck/Bain Luck/Components/DiscoverEventCard.swift",
       "ios/Bain Luck/Bain Luck/Components/RelatedByTagView.swift",
@@ -485,19 +497,32 @@ d("native implements the duel rule, and the widget consumes it instead", () => {
     for (const rel of surfaces) {
       const code = codeOf(readFileSync(join(REPO_ROOT, rel), "utf8"));
       // The shared fallback, so a pre-deploy or cached payload still sums to 100.
-      expect([rel, "fallback", /renderedDuelPercents\s*\(/.test(code)]).toEqual([
+      // Reached EITHER directly or through `duelPercents`, which is the pair
+      // decision defined in this same contract arm (`RenderedPercent.swift`) and
+      // whose entire else-branch is a call to `renderedDuelPercents`. A check
+      // that names only the inner call is a check an extraction breaks while the
+      // behaviour is intact — the failure LAT-P119 hit on `npm run contract`.
+      expect([
         rel,
         "fallback",
-        true,
-      ]);
-      // The served value PREFERRED over it, on EACH side independently — `??`
-      // proves it is the first choice rather than a variable computed and ignored.
+        /renderedDuelPercents\s*\(/.test(code) || /duelPercents\s*\(/.test(code),
+      ]).toEqual([rel, "fallback", true]);
+      // The served values PREFERRED over it, and taken as a PAIR. Both sides are
+      // still checked — the mutation that dropped the away side and passed on the
+      // home side's `??` is still killed — but the required shape is now
+      // both-or-neither rather than one coalesce per side.
       for (const side of ["away", "home"] as const) {
         const field = `${side}RenderedPercent`;
-        expect([rel, side, new RegExp(`${field}\\s*\\n?\\s*\\?\\?`).test(code)]).toEqual([
+        expect([rel, side, new RegExp(`${field}\\b`).test(code)]).toEqual([
           rel,
           side,
           true,
+        ]);
+        // 🔴 And the per-side coalesce is now BANNED where it was once required.
+        expect([rel, side, new RegExp(`${field}\\s*\\n?\\s*\\?\\?`).test(code)]).toEqual([
+          rel,
+          side,
+          false,
         ]);
       }
     }

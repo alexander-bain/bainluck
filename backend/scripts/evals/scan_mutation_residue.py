@@ -86,6 +86,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # append lands when nobody looks. Sorted insertion is not tidiness here, it
     # is the thing that stops the next cycle resolving this same hunk.
     "futures_movers_warm_mutations": [("MUTATIONS", "needle", "replacement", "WARM")],
+    # LAT-P120. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above. Its targets are `.swift`, so Pass B's
+    # hardcoded `*.py` glob cannot reach them — the harness carries its own
+    # sha256 residue check at exit until that glob is derived from the declared
+    # targets (written, waiting on `program/latency-104`).
+    "ios_duel_percent_served_pair_mutations": [("MUTANTS", 3, 4, 2)],
     "offline_rerank_fidelity_mutations": [("MUTATIONS", 3, 4, 1)],
     "outcome_evidence_class_mutations": [("MUTATIONS", 3, 4, 1)],
     # LAT-P118. Alphabetical, for the reason spelled out under
