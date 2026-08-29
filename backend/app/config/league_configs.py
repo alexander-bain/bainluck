@@ -304,7 +304,7 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
 
 WNCAA_BASKETBALL_CONFIG = LeagueConfig(
     slug="ncaa-women-basketball",
-    name="Women's NCAA Tournament 2026",
+    name="Women's NCAA Tournament 2027",
     sport_category="basketball",
     sport_keys=["basketball_wncaab"],
     stage_key="ncaa_women_basketball",
@@ -361,7 +361,15 @@ WNCAA_BASKETBALL_CONFIG = LeagueConfig(
     region_split=False,
     trend_hours=72,
     max_teams=68,
-    season_pattern="2026",
+    # The 2026 women's tournament finished in April 2026; the only WNCAAB market
+    # carrying live prices is Kalshi's KXWMARMAD-27 ("Women's 2027 College
+    # Basketball Champion", 35 priced outcomes). Because that name carries its
+    # year, a season_pattern of "2026" made _is_future_season_market drop the one
+    # market with data, and the grid served columns=[] teams=0 behind the
+    # "No championship odds available yet" empty state — a false claim.
+    # The 2026 markets this now treats as past season are all resolved and five
+    # months stale, so the outcome-level staleness cutoff already excluded them.
+    season_pattern="2027",
 )
 
 NFL_CONFIG = LeagueConfig(

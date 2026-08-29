@@ -1,0 +1,974 @@
+{
+  "league": "ncaa-women-basketball",
+  "name": "Women's NCAA Tournament 2027",
+  "season": "2027",
+  "columns": [
+    {
+      "key": "championship",
+      "label": "Champion",
+      "order": 4
+    }
+  ],
+  "trend_chart": {
+    "timeline": [],
+    "outcomes": [],
+    "column": "championship",
+    "top": 10
+  },
+  "teams": [
+    {
+      "name": "South Carolina",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.295,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.295,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "UConn",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.23,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.23,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": -0.025,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "USC",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.215,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.215,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Nebraska",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.19,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.19,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Michigan St.",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.19,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.19,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Texas",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.075,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.075,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Tennessee",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.05,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.05,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Stanford",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.05,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.05,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "UCLA",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.045,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.045,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "LSU",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.04,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.04,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Duke",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.04,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.04,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Oklahoma",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.04,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.04,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Michigan",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.035,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.035,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "North Carolina",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.021,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.021,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Ole Miss",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.02,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.02,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Notre Dame",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.02,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.02,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "TCU",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.02,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.02,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Ohio St.",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.019,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.019,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Utah",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.019,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.019,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "West Virginia",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.019,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.019,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Washington",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.019,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.019,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Oregon",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.019,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.019,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Kentucky",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.019,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.019,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Baylor",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.019,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.019,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "North Carolina St.",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.019,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.019,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Maryland",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.019,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.019,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Minnesota",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.018,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.018,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Louisville",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.015,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.015,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Iowa",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.015,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.015,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Texas Tech",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.012,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.012,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Villanova",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.011,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.011,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Alabama",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.01,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.01,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Grand Canyon",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.009,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.009,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "SMU",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.009,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.009,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    },
+    {
+      "name": "Iowa St.",
+      "short_name": null,
+      "team_id": null,
+      "logo_url": null,
+      "primary_color": null,
+      "secondary_color": null,
+      "record": null,
+      "conference": null,
+      "division": null,
+      "region": null,
+      "seed": null,
+      "cells": {
+        "championship": {
+          "merged_probability": 0.009,
+          "sources": [
+            {
+              "source": "kalshi",
+              "probability": 0.009,
+              "market_name": "Women's 2027 College Basketball Champion"
+            }
+          ],
+          "trend_24h": 0.0,
+          "state": "live"
+        }
+      }
+    }
+  ],
+  "grouped_teams": null,
+  "movers": [],
+  "movers_degraded": false,
+  "team_count": 35,
+  "last_updated": "2026-08-29 13:54:09.154792+00:00",
+  "sources_available": [
+    "kalshi"
+  ],
+  "championship_market_id": null
+}
