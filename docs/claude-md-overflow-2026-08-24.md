@@ -155,3 +155,348 @@ Direct production spot-check of the 13 feed-surfaced game events (via `/api/even
 | `tests/integration/test_route_entertainment.py` | Entertainment themes, empty DB defaults, HTTP methods | May 18 |
 | `tests/integration/test_route_feedback.py` | Bug report submission, optional fields, minimal body | May 18 |
 
+
+---
+
+# Second trim — 2026-08-28
+
+The 2026-08-24 trim left CLAUDE.md at 39,549 characters: 451 below the 40,000-char tool read
+limit, i.e. one paragraph from silent truncation again. Alex ruled a second trim, with the ship
+stated as **CLAUDE.md safely under its ceiling with real headroom (>= 4,000 characters free) and
+ZERO operating rules lost**.
+
+Same discipline as the first trim, and the same guarantee: **prose moved, rules kept.** Every
+block below is narrative, rationale, an example, an enumeration whose authority is code, or a
+duplicate of text that survives elsewhere in the file. Each was extracted **mechanically** from
+`git show b8ee7e14:CLAUDE.md` (the 39,549-char file this trim replaced) by exact-substring slice —
+no block below was retyped, and each was verified absent from the trimmed file at extraction time.
+The captions are the only authored text.
+
+`backend/tests/test_claude_md_size.py` now guards both halves of the ship: the size ceiling, and
+the fact that each fragment below still lives here and no longer lives in CLAUDE.md.
+
+---
+
+## `## PROGRESS, NOT MEASUREMENT` — the rationale sentences behind "a measurement is not progress"
+
+```text
+The failure this rule exists to stop is the one where a program
+measures, files, re-measures, re-files, and certifies its own instruments for weeks while the
+product does not change — every step defensible, every artifact real, and nothing shipped. Rigour
+is not the problem; rigour aimed at the instrument instead of the ship is.
+```
+
+---
+
+## `## PROGRESS, NOT MEASUREMENT` — the parked-measurement bullet's closing gloss
+
+```text
+Parked is a real state — the finding is true, it was paid for, and it comes back when a ship
+  needs it.
+```
+
+---
+
+## `## PROGRESS, NOT MEASUREMENT` — THE RIDER RULE's canonical example, its reason clause, and Alex's verbatim constraint
+
+```text
+Canonical example: the
+US Open register — identity architecture built FOR a page a person opens, not a register built
+first and pointed at a page later. **Architecture-only programs are forbidden**, however good the
+architecture, because the thing being deferred is the only thing anyone outside this repo can see.
+Alex's constraint, verbatim: *"I don't want to spend several more months creating beautiful
+architecture while simultaneously being embarrassed that I still don't have a product to show
+anyone."*
+```
+
+---
+
+## `## The #1 Technical Challenge: Semantic Matching` — the Grid Sentinel's self-check clause
+
+```text
+, and carries a sampled ground-truth self-check (merged prob inside its own source envelope)
+```
+
+---
+
+## `## Linked Reference Docs` — why one ruling per file
+
+```text
+(separate files share no append region — two lanes banking the same day cannot conflict)
+```
+
+---
+
+## `## Tech Stack` — the watch-surface clause (kept in Product Priorities #6, so removed here as a duplicate)
+
+```text
+. Watch app is the top secondary surface (P7)
+```
+
+---
+
+## `## Tech Stack` — Key External Services with monthly costs
+
+```text
+**Key External Services:** The Odds API (~$119/mo, 5M quota — monitor), Kalshi (free, key), Polymarket (free), StatPal (~$99/mo), DataGolf (~$30/mo), MLB Stats API (free), ESPN (free, undocumented), OpenAI GPT-4o-mini (~$10/mo), Pexels (200 req/hr), TMDB (client-side, `frontend/lib/tmdb.ts`), Firebase Auth (Google + Apple Sign-In).
+```
+
+---
+
+## `## Development Workflow` — the single-test example command
+
+```text
+`cd backend && python3 -m pytest tests/test_feed_scoring.py::TestFeedBaseScoring::test_live_nba -v`
+```
+
+---
+
+## `## Development Workflow` — Key Admin URLs (every line of it also appears in the Quick Reference, so it was a duplicate)
+
+### Key Admin URLs
+```
+https://bainluck.com/admin              — Operations dashboard
+https://api.bainluck.com/docs           — API docs (Swagger)
+curl -H "Authorization: Bearer $ADMIN_TOKEN" https://api.bainluck.com/api/admin/prediction-markets/link-rate  — Link rate health
+```
+
+---
+
+## `## Project Structure` — the ASCII tree (replaced by the same content as one prose paragraph)
+
+```
+bainluck/
+├── backend/
+│   ├── app/
+│   │   ├── main.py              # FastAPI entry point
+│   │   ├── models/models.py     # SQLAlchemy models (30 models)
+│   │   ├── routes/              # API endpoints
+│   │   ├── services/            # External API clients + event_registry.py
+│   │   ├── config/              # win_prob_sources.py, league_configs.py
+│   │   ├── tasks/               # Celery tasks (27 modules)
+│   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
+│   ├── alembic/                 # Database migrations
+│   └── tests/                   # pytest suites (~19,000 items)
+├── frontend/
+│   ├── app/                     # Next.js app router (30+ pages)
+│   ├── components/              # React components
+│   └── lib/                     # API client, types, utilities
+├── ios/Bain Luck/               # SwiftUI app (all Apple platforms)
+└── docs/                        # Documentation
+```
+
+---
+
+## `## Core Architecture` — Discover Feed Ranking's pipeline shape
+
+```text
+: multiple candidate pools → scoring with futures highlights → quality caps/diversity
+```
+
+---
+
+## `## Core Architecture` — Cross-Source Market Matching's near-match thresholds
+
+```text
+ (Jaccard ≥ 0.72, containment ≥ 0.85, numeric/direction guards)
+```
+
+---
+
+## `## Core Architecture` — Themed Dashboard Pages, the full shared pattern
+
+```text
+**Themed Dashboard Pages** (politics, entertainment, weather, economics): shared pattern — backend route classifies `FuturesMarket` by `llm_sport_category` + ticker prefixes into sub-themes; `_classify_kind()` assigns rendering hints; `_group_threshold_markets()` builds heatmap groups; frontend CSS-module pages with typed data.
+```
+
+---
+
+## `## Core Architecture` — iOS Authentication's restore/revocation behaviour
+
+```text
+ Silent Google restore on expiry; Apple revocation checked on foreground.
+```
+
+---
+
+## `## Core Architecture` — the Calibration Pipeline's frontend sentence
+
+```text
+ Frontend `/calibration` with ECE + trading-activity section.
+```
+
+---
+
+## `## Core Architecture` — Rage Shake's payload and auto-diagnosis detail
+
+```text
+shake / `Cmd+Shift+F` → screenshot + app state → `POST /api/feedback/bug-report` → `/admin/bug-reports` with auto-diagnosis (P0-P3, category, ready-made prompt).
+```
+
+---
+
+## `## Core Architecture` — the Push Notifications #2118 consequence clause
+
+```text
+, or the verdict is contaminated
+```
+
+---
+
+## `## Product Priorities` — the Work tracking line (a near-verbatim duplicate of the first line of `## GitHub Issues + Project Workflow`)
+
+```text
+**Work tracking**: GitHub Issues is the ONLY source of priority and status. `docs/PRODUCT-BRAIN.md` holds the standing judgment behind staging calls. Docs never carry ordering.
+```
+
+---
+
+## `## Agent Execution Lanes` — the mission bus's out-of-band-override sentence
+
+```text
+ Alex pastes into those windows only for out-of-band overrides.
+```
+
+---
+
+## `## Quota Guard System` — the per-tier polling cadences (`SPORT_POLLING_TIERS` is the authority)
+
+```text
+Sport-tier polling: Tier 1 (NBA/NHL/MLB/NFL/NCAAB) 32s live us+us2; Tier 2 64s us; Tier 3 128s us — config in `SPORT_POLLING_TIERS`. Discovery: Tier 1 every 15 min, Tier 2 every 30 min.
+```
+
+---
+
+## `### Frontend Design System` — the enumerated token list (`globals.css` is the authority)
+
+```text
+(`bg-surface-card`, `text-text-primary`, `text-text-secondary`, `text-text-muted`, `border-surface-border`, `text-accent-live`, `text-accent-brand`, `text-accent-danger`)
+```
+
+---
+
+## `## Database Schema (Key Tables)` — the annotated table block (`backend/app/models/models.py` is the authority)
+
+```
+events              — Games with teams, scores, EI, win_probability_sources (JSONB)
+odds_snapshots      — Historical odds per bookmaker (write-time dedup)
+win_prob_snapshots  — Multi-source win probability history
+futures_markets     — Championship/award/prop markets (market_tier, event_id, image_url, hook_description)
+futures_outcomes    — Individual outcomes within markets
+teams               — Team data (ESPN colors/logos, rosters, alternate_names)
+team_identity_mapping — Cross-source team identity index
+user_predictions    — Higher/Lower guesses
+user_seen_markets   — Feed dedup tracking
+users               — Firebase Auth users
+settlement_captures / event_provider_anchors — settlement-truth capture + provider id anchor channel (#1946)
+```
+
+---
+
+## `## Sport Key Architecture` — the per-map entry counts
+
+```text
+Maps: `SPORT_LEAGUE_MAP` (28), `KALSHI_TICKER_TO_SPORT_KEY` (~150), `KALSHI_FUTURES_TICKER_TO_SPORT_KEY` (~250), `SPORT_PREFIX_TO_LLM_CATEGORY` (11).
+```
+
+---
+
+## `## Gotchas Hot List` — the header's Hot-List-vs-catalog collision example
+
+```text
+ (Hot List 44 is clock-branching test anchors; catalog 44 is EOM quota forecasting)
+```
+
+---
+
+## Gotcha #32 — why a duplicate beats a wrong absorption
+
+```text
+ — a duplicate is visible and reversible, a wrong absorption is neither
+```
+
+---
+
+## Gotcha #32 — the NO_ANCHOR_CHANNEL parenthetical
+
+```text
+ (`NO_ANCHOR_CHANNEL` — no provider id column exists)
+```
+
+---
+
+## Gotcha #35 — why a measured constant beats a prose day count
+
+```text
+ — a predicate cannot consume a range written in prose
+```
+
+---
+
+## Gotcha #51 — the closing indictment
+
+```text
+ — the one call the incidents never made
+```
+
+---
+
+## Gotcha #52 — how a rebase-orphaned commit hides
+
+```text
+ — committed work orphaned by a correct-looking rebase hides behind a clean `git status`
+```
+
+---
+
+## `## CI Test Coverage` — the enumerated suite list (`docs/quality-audit.md` carries the canonical table)
+
+```text
+CI guard suites cover: startup imports (`test_startup.py`), Celery beat wiring (`test_tasks_wiring.py`), Alembic heads/orphans (`test_alembic.py`), the frontend ESLint+typecheck gates, route contracts for every major surface (`tests/integration/test_route_*.py`), feed scoring/demotion/dismiss-propagation/personalization, cross-source matching, futures highlights allowlists, rate limiting, auth contracts, and the ruling-ledger/gotcha-numbering integrity gates.
+```
+
+---
+
+## `## Session Startup: Health Check` — the enumerated check list (`.claude/commands/health.md` is the definition)
+
+```text
+ — Sentry, Heroku, CI, Celery queues, quota, link rates, grids, calibration, latency, feed quality
+```
+
+---
+
+## `### Credential handling` — the `~/.claude/.env` bootstrap lines Alex runs
+
+If `~/.claude/.env` doesn't exist, ask Alex to run:
+```bash
+echo 'export BAINLUCK_API="https://api.bainluck.com"' >> ~/.claude/.env
+echo "export ADMIN_TOKEN=$(heroku config:get ADMIN_TOKEN -a bainluck)" >> ~/.claude/.env
+```
+
+---
+
+## `## Quick Reference` — the surface/API link rows (re-expressed as three prose lines, same destinations)
+
+```text
+| Discover feed (default) | https://bainluck.com (also /discover) |
+| Sports feed | https://bainluck.com/sports |
+| Prediction stats | https://bainluck.com/discover/stats |
+| Admin dashboard | https://bainluck.com/admin |
+| Category pages | /weather · /politics · /entertainment · /economics · /calibration |
+| Calibration API | `GET /api/calibration` (public, 1h cache) |
+| Backfill status | `GET /api/admin/backfill-winners/status` |
+| Privacy policy | https://bainluck.com/privacy |
+| Category APIs | `GET /api/weather/*` · `/api/politics` · `/api/entertainment` · `/api/leagues/{sport_key}` |
+| Hook coverage | `GET /api/admin/hook-coverage` |
+| Grid health audit | `GET /api/admin/audit/all` (Bearer $ADMIN_TOKEN) |
+| Link rate health | `GET /api/admin/prediction-markets/link-rate` (Bearer $ADMIN_TOKEN) |
+| Ad-hoc SQL (read-only) | `POST /api/admin/db-query` (Bearer $ADMIN_TOKEN, body: `{"sql":"...","limit":500}`) |
+```
+
+---
+
+## `## Quick Reference` — the db-query plan-size cap
+
+```text
+; plans capped 256 KiB with a `truncated` verdict
+```
