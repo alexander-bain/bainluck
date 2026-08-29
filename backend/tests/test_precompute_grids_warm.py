@@ -20,7 +20,16 @@ class _FakeCM:
 
 
 async def test_precompute_grids_warms_golf():
-    grid_mock = AsyncMock(return_value={"teams": [], "columns": []})
+    # LAT-P131: this mock used to return `{"teams": [], "columns": []}`. That
+    # payload was incidental to the #901 assertion (golf is warmed) and is now
+    # load-bearing in the opposite direction: the warm publish asks the route's
+    # own `_grid_payload_usable` whether what it built is worth storing, and an
+    # empty grid is exactly what that predicate refuses. A realistic payload
+    # keeps this test testing #901 instead of accidentally testing the new
+    # empty guard — which has its own tests in test_precompute_grids_budget.py.
+    grid_mock = AsyncMock(
+        return_value={"teams": [{"name": "Team A"}], "columns": [{"key": "championship"}]}
+    )
     redis_mock = MagicMock()
 
     with patch("app.tasks.redis_state.get_redis_client", return_value=redis_mock), \

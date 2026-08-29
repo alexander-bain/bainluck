@@ -350,7 +350,67 @@ async def _publish_discover_candidate_base():
 
 
 GRID_WARM_TIMEOUT_S = 120
-GRID_WARM_LEAGUES = ["mlb", "nba", "nhl", "golf"]
+
+#: ONE wall for the whole grids section (LAT-P131), the shape LAT-P100 already
+#: gave the feed prewarm pass. Before this the section had a per-league ceiling
+#: and no pass bound at all, so its worst case was `120 x len(GRID_WARM_LEAGUES)`
+#: — 480 s against the task's own `soft_time_limit=300`. That was survivable only
+#: because the list was four leagues long and none of them actually hit the
+#: ceiling; it is not survivable at thirteen, and "lengthen the list and hope"
+#: is exactly the move P128-2 refused to make without a budget.
+#:
+#: 180 s is sized from measurement, not taste. The hourly report for the run at
+#: 2026-08-29T17:26:25Z shows the five non-grid sections costing **49.5 s**
+#: (politics 17.3, entertainment 10.6, economics 11.3, weather 8.8, golf 1.5),
+#: so 49.5 + 180 = **229.5 s worst case against a 300 s soft limit** — and the
+#: typical pass is ~131 s of measured build, not 180. The margin is deliberate:
+#: `time_limit=360` is a SIGKILL and gotcha "task_time_limit is HARD" says an
+#: overrun is not a slow run, it is an untracked death.
+GRID_WARM_PASS_BUDGET_S = 180.0
+
+#: Every league with a grid config, ordered by MEASURED build cost, ascending.
+#:
+#: Measured 2026-08-29 on production against `/api/playoffs/{slug}?top=11` —
+#: cache-INELIGIBLE (`cache_eligible = not debug and hours is None and top == 10`)
+#: so it forces the rebuild, while `trend_hours = hours or config.trend_hours`
+#: keeps the build byte-for-byte the one the warm beat asks for. An earlier pass
+#: used `?hours=168`, which bypasses the cache too but OVERRIDES the league's own
+#: trend window — a different build, and therefore not this number:
+#:
+#:   la-liga 0.41 · champions-league 0.62 · bundesliga 0.65 · epl 1.19 ·
+#:   nhl 2.45 · mls 4.19 · ncaa-women-basketball 7.44 · wnba 7.66 · nba 8.54 ·
+#:   nfl 8.6-25.3 (variable) · ncaa-football 14.76 · golf 15.94 · mlb 24.61
+#:
+#: 🔴 The ordering is an OPTIMISATION and the budget is the INVARIANT — do not
+#: swap them round. `_prewarm_target_deadline` guarantees every league at least
+#: `GRID_WARM_PASS_BUDGET_S / N` = 13.8 s in EVERY order; ascending cost merely
+#: buys the expensive tail the slack the cheap head did not spend (mlb, last,
+#: is offered ~102 s against a measured 53.4 s on the beat). Costs rot, so the
+#: per-league `duration_s` in the run report is the instrument for re-deriving
+#: this order — not a re-read of this comment.
+#:
+#: 🔴 `ncaa-basketball` is DELIBERATELY ABSENT and its absence is the finding,
+#: not an oversight. It is the one league that cannot be built at all: 25.36 s
+#: to `unfinished=1`, of which 17.87 s is `app` and not `db`, and Sentry carries
+#: 7 of its "timed out and no last-good payload is available" 503s in the last
+#: 24 h. Warming it would spend up to 120 s an hour to publish nothing. Its 503
+#: is a real user-visible defect with its own ship (parked P131-1); a warm list
+#: is not the place to hide a page that does not build.
+GRID_WARM_LEAGUES = [
+    "la-liga",
+    "champions-league",
+    "bundesliga",
+    "epl",
+    "nhl",
+    "mls",
+    "ncaa-women-basketball",
+    "wnba",
+    "nba",
+    "nfl",
+    "ncaa-football",
+    "golf",
+    "mlb",
+]
 
 # Where the run report lands for the read-only admin rail. One key, overwritten
 # per run, TTL well past the hourly beat so a missed beat reads as STALE rather
@@ -1285,7 +1345,7 @@ async def _prewarm_live_feed_shapes():
 
 
 async def _precompute_grids(report: dict | None = None):
-    """Pre-warm championship grid caches for MLB, NBA, NHL, Golf.
+    """Pre-warm championship grid caches for every league that can be built.
 
     #901: golf was missing from this warm list, so `/playoffs/golf` read an
     unwarmed `bainluck:category:playoffs:golf` key on every load → cold rebuild
@@ -1300,9 +1360,52 @@ async def _precompute_grids(report: dict | None = None):
     the task ran out of budget" were indistinguishable from the outside. That
     ambiguity is precisely why the MLB grid could sit cold for days. Nothing here
     tunes a time limit; it makes the limits' effects visible first.
+
+    🔴 **LAT-P131 (P128-2): nine leagues were never warmed, and the request path
+    is the only thing that had ever built them.** ``GRID_WARM_LEAGUES`` was
+    ``["mlb","nba","nhl","golf"]``, so `/playoffs/nfl`, `/playoffs/ncaa-football`,
+    `/playoffs/mls`, `/playoffs/epl`, `/playoffs/bundesliga`, `/playoffs/wnba` and
+    the rest were warm only for as long as some earlier visitor's own rebuild
+    survived — 3900 s in the fresh key, then 24 h in the labelled ``:stale``
+    mirror, and then nothing. The first visitor after that paid the whole build
+    on a route whose wall is 25 s, measured on production 2026-08-29:
+    **ncaa-football 12.45 s, wnba 6.83 s, ncaa-women-basketball 7.83 s** cold on
+    the ordinary path. **NFL straddles the wall** — three cache-bypassing
+    rebuilds in a row returned 25.30 s/**503**, 8.65 s/200, 14.02 s/200, and two
+    earlier ones returned **500** at 20.3 s each, which is not the 25 s wall at
+    all but the database's own ``statement_timeout`` surfacing as a
+    ``QueryCanceledError``. A week before the NFL season, that is the page.
+
+    The warm beat is not a nicety for these leagues, it is the thing that makes
+    them work: it builds under ``GRID_WARM_TIMEOUT_S`` — **five times the
+    request's 25 s** — so the background job absorbs the variance that the
+    request path can only report as a 500 or a 503.
+
+    Two properties had to come with the widening, and neither is decoration:
+
+    * **A pass budget.** Thirteen leagues under a per-league ceiling and no pass
+      bound is a worst case of 1,560 s inside a task whose ``soft_time_limit`` is
+      300. ``GRID_WARM_PASS_BUDGET_S`` bounds the section, and
+      ``_prewarm_target_deadline`` divides what is LEFT by what is LEFT TO DO, so
+      gotcha #34 cannot bite: every league is guaranteed at least
+      ``budget / N`` in every order, and a league that finishes early hands its
+      unspent time to the ones behind it. A league the budget never reached
+      records ``budget_exhausted`` — **not** ``not_attempted`` and **not**
+      ``timeout``, because #1484's entire point was that "never reached" and
+      "tried and failed" must not look alike from the outside.
+    * **An empty build never overwrites a good grid.** The publish now asks
+      ``_grid_payload_usable`` — *the route's own read-side predicate* — whether
+      the thing it is about to store is worth serving. It matters because the
+      writer sets BOTH keys, including the 24 h ``:stale`` mirror: publishing a
+      transiently-empty build would replace a working grid with one the reader
+      then refuses as a fallback, turning a healthy page into a live rebuild —
+      and for a league like NFL a live rebuild is the 503. Three leagues build
+      empty today out of season (la-liga, champions-league,
+      ncaa-women-basketball, all 0 teams / 0 columns when measured), so this is
+      the ordinary case for a widened list, not a hypothetical.
     """
     from app.tasks.base import get_task_session
-    from app.routes.playoffs import get_playoff_grid
+    from app.routes.playoffs import get_playoff_grid, _grid_payload_usable
     from app.tasks.redis_state import get_redis_client
     import asyncio
     import time as _time
@@ -1315,41 +1418,78 @@ async def _precompute_grids(report: dict | None = None):
     if report is not None:
         report["grid_leagues"] = leagues
         report["grid_warm_timeout_s"] = GRID_WARM_TIMEOUT_S
+        report["grid_pass_budget_s"] = GRID_WARM_PASS_BUDGET_S
 
-    for slug in GRID_WARM_LEAGUES:
+    budget_left = float(GRID_WARM_PASS_BUDGET_S)
+    for index, slug in enumerate(GRID_WARM_LEAGUES):
+        # The per-league ceiling still applies; the pass budget can only ever
+        # make a deadline SMALLER. Whichever binds, it is the one recorded.
+        share = _prewarm_target_deadline(budget_left, len(GRID_WARM_LEAGUES) - index)
+        deadline_s = min(float(GRID_WARM_TIMEOUT_S), share)
+        if deadline_s <= 0:
+            leagues[slug] = {
+                "outcome": "budget_exhausted",
+                "pass_budget_s": GRID_WARM_PASS_BUDGET_S,
+            }
+            logger.error(
+                "Grid warm SKIPPED for %s — the %.0fs pass budget was spent "
+                "before it was reached (LAT-P131)",
+                slug, GRID_WARM_PASS_BUDGET_S,
+            )
+            continue
+
         started = _time.monotonic()
         leagues[slug] = {"outcome": "started"}
         try:
             async with get_task_session() as session:
                 result = await asyncio.wait_for(
                     get_playoff_grid(slug, hours=None, top=10, debug=False, db=session),
-                    timeout=GRID_WARM_TIMEOUT_S,
+                    timeout=deadline_s,
                 )
-                payload = json.dumps(result, default=str)
-                cache_key = f"bainluck:category:playoffs:{slug}"
-                rc.setex(cache_key, 3600, payload)
-                rc.setex(f"{cache_key}:stale", 86400, payload)
-                warmed.append(slug)
-                leagues[slug] = {
-                    "outcome": "ok",
-                    "duration_s": round(_time.monotonic() - started, 1),
-                    "teams": len(result.get("teams") or []),
-                    "columns": len(result.get("columns") or []),
-                }
-                logger.info(
-                    "Warmed %s grid in %.1fs (%d teams)",
-                    slug, leagues[slug]["duration_s"], leagues[slug]["teams"],
-                )
+                # Publish only what the READER would accept as last-good. See the
+                # docstring: this write owns the 24h `:stale` mirror too, so an
+                # empty payload here does not merely fail to help — it removes
+                # the fallback the route falls back to.
+                if not _grid_payload_usable(result):
+                    leagues[slug] = {
+                        "outcome": "empty",
+                        "duration_s": round(_time.monotonic() - started, 1),
+                        "teams": len(result.get("teams") or [])
+                        if isinstance(result, dict) else 0,
+                        "columns": len(result.get("columns") or [])
+                        if isinstance(result, dict) else 0,
+                    }
+                    logger.warning(
+                        "Grid warm for %s built an unusable/empty payload in "
+                        "%.1fs — keeping last-good (LAT-P131)",
+                        slug, leagues[slug]["duration_s"],
+                    )
+                else:
+                    payload = json.dumps(result, default=str)
+                    cache_key = f"bainluck:category:playoffs:{slug}"
+                    rc.setex(cache_key, 3600, payload)
+                    rc.setex(f"{cache_key}:stale", 86400, payload)
+                    warmed.append(slug)
+                    leagues[slug] = {
+                        "outcome": "ok",
+                        "duration_s": round(_time.monotonic() - started, 1),
+                        "teams": len(result.get("teams") or []),
+                        "columns": len(result.get("columns") or []),
+                    }
+                    logger.info(
+                        "Warmed %s grid in %.1fs (%d teams)",
+                        slug, leagues[slug]["duration_s"], leagues[slug]["teams"],
+                    )
         except asyncio.TimeoutError:
             leagues[slug] = {
                 "outcome": "timeout",
                 "duration_s": round(_time.monotonic() - started, 1),
-                "timeout_s": GRID_WARM_TIMEOUT_S,
+                "timeout_s": round(deadline_s, 1),
             }
             logger.error(
-                "Grid warm TIMEOUT for %s after %ss — the request path will "
+                "Grid warm TIMEOUT for %s after %.1fs — the request path will "
                 "rebuild cold and may degrade (#1484)",
-                slug, GRID_WARM_TIMEOUT_S,
+                slug, deadline_s,
             )
         except Exception as exc:
             leagues[slug] = {
@@ -1358,6 +1498,15 @@ async def _precompute_grids(report: dict | None = None):
                 "error": str(exc)[:200],
             }
             logger.exception("Failed to precompute %s grid", slug)
+        finally:
+            # Charge the pass for the wall time actually spent, whatever the
+            # outcome. A `finally` and not four call sites: a league that raises
+            # spends the budget exactly as a league that succeeds does, and the
+            # one debt the budget must never miss is the expensive failure.
+            budget_left = max(0.0, budget_left - (_time.monotonic() - started))
+
+    if report is not None:
+        report["grid_budget_left_s"] = round(budget_left, 1)
     return warmed
 
 
