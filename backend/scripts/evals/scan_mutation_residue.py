@@ -136,6 +136,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
 # from a harness that later grew a `write_text` on a real file; a constant in
 # the harness is edited by the person doing the growing.
 DISK_FREE: frozenset[str] = frozenset({
+    # LAT-P123. Alphabetical, and deliberately here rather than in `SHAPES`:
+    # every mutant is a source STRING `exec`'d into a throwaway module, so
+    # there is no backup to restore and a SIGKILL can leave nothing behind.
+    # Placing it here rather than at the head of `SHAPES` also keeps this
+    # branch off the hunk seven consecutive latency branches have collided on.
+    "browse_single_scan_mutations",
     "tag_counts_group_by_mutations",
 })
 

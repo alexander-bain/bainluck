@@ -746,21 +746,46 @@ async def browse_futures(
     if q:
         base_filters.append(FuturesMarket.name.ilike(f"%{q}%"))
 
-    # Count total
-    count_query = select(func.count(FuturesMarket.id)).where(*base_filters)
-    total = (await db.execute(count_query)).scalar() or 0
-
-    # Fetch page
+    # ONE scan, not two. `total` used to be a separate COUNT over `base_filters`
+    # — and the page query below scans exactly the same rows, because
+    # `ORDER BY resolution_date` has to see all of them before it can take a
+    # page. Measured on production 2026-08-29: `category=politics` was 8,410
+    # shared blocks twice, and the uncategorised call 38,990 blocks twice
+    # (~305 MB, the negated ILIKEs are unindexable — ruling 080 / P122-4).
+    # `count(*) OVER ()` rides the scan the sort already pays for: the plan
+    # gains a WindowAgg above the same Bitmap Heap Scan and the second scan
+    # disappears. The window is evaluated before LIMIT/OFFSET, so `total` is
+    # the EXACT same integer the COUNT returned — this is a cost change, not
+    # a precision change. The counts are printed to the user ("(6,611)",
+    # "Load more (N remaining)"), so an approximation would have been a
+    # formatting lie shipped as a latency win.
     query = (
-        select(FuturesMarket)
+        select(FuturesMarket, func.count().over().label("browse_total"))
         .options(selectinload(FuturesMarket.outcomes))
         .where(*base_filters)
         .order_by(FuturesMarket.resolution_date.asc().nulls_last())
         .limit(limit)
         .offset(offset)
     )
-    result = await db.execute(query)
-    markets = result.scalars().unique().all()
+    # `list()` and not a bare Result: an empty page must be falsy here, and it
+    # is the empty page that decides whether the fallback below runs.
+    rows = list((await db.execute(query)).unique().all())
+    markets = [row[0] for row in rows]
+
+    if rows:
+        total = int(rows[0][1])
+    elif offset:
+        # No rows AND a non-zero offset: the window function never ran, so it
+        # cannot tell us the size of the population. That is the one case the
+        # single scan does not answer, so pay for the COUNT here — off the hot
+        # path, because `has_more` stops the UI from ever asking for a page
+        # past the end. Reporting 0 instead would tell a reader who hand-typed
+        # an offset that the category is empty.
+        count_query = select(func.count(FuturesMarket.id)).where(*base_filters)
+        total = (await db.execute(count_query)).scalar() or 0
+    else:
+        # Offset 0 and no rows: the population really is empty. No query needed.
+        total = 0
 
     items = []
     for market in markets:
