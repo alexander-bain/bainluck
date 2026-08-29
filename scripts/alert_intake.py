@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import os
+import pathlib
 import sys
 import textwrap
 import urllib.error
@@ -20,9 +22,74 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+# --- Canonical taxonomy -------------------------------------------------------
+# This script runs on a bare GitHub Actions runner (`python3 scripts/alert_intake.py`
+# after a plain checkout — see .github/workflows/alert-intake.yml). Nothing is pip
+# installed, so it cannot `from app.utils.issue_labels import ...`: that would run
+# `backend/app/utils/__init__.py`, which imports the whole utility surface. The
+# canonical module itself imports nothing, so it is loaded DIRECTLY BY PATH — one
+# source of truth, zero dependencies.
+#
+# If the load ever fails, the rail still files, at the ratified default. Losing a
+# production alert because a label helper moved would be a far worse trade than
+# filing it one tier off, and `_FALLBACK_PRIORITY` is pinned equal to
+# `issue_labels.DEFAULT_PRIORITY` by
+# backend/tests/test_issue_filing_taxonomy.py::test_alert_intake_fallback_matches_canonical_default.
+_FALLBACK_PRIORITY = "priority:p2"
+
+
+def _load_issue_labels() -> Any | None:
+    path = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "backend" / "app" / "utils" / "issue_labels.py"
+    )
+    try:
+        spec = importlib.util.spec_from_file_location("bainluck_issue_labels", path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"no loader for {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception as exc:  # pragma: no cover - defensive, exercised by the test
+        print(f"WARNING: canonical issue taxonomy unavailable ({exc}); "
+              f"falling back to {_FALLBACK_PRIORITY}", file=sys.stderr)
+        return None
+
+
+_ISSUE_LABELS = _load_issue_labels()
+
+
+def _priority(severity: object = None) -> str:
+    """Never returns an empty string — an alert always gets a priority label."""
+    if _ISSUE_LABELS is None:
+        return _FALLBACK_PRIORITY
+    return _ISSUE_LABELS.priority_label(severity)
+
+
+# Both intake families are born at the ratified alert-intake default (Alex
+# 2026-07-27: "priority is earned at triage, not stamped at birth") rather than at
+# whatever their source vocabulary calls itself.
+#
+# For Sentry that is a deliberate refusal to read `level` as a severity: Sentry's
+# DEFAULT level is `error`, so mapping error→P1 would stamp P1 on essentially every
+# production alert. That is precisely the "template P1 noise" the Board Sentinel
+# caps at a 35% share of open alert-intake issues — the rail would manufacture the
+# condition another sentinel exists to flag. Only an explicitly-set `fatal` escalates.
+_SENTRY_ESCALATIONS = {"fatal": "priority:p1"}
+
 DEFAULT_LABELS = ["alert-intake", "needs-agent"]
-SENTRY_LABELS = DEFAULT_LABELS + ["prod-error", "sentry"]
-GITHUB_ACTIONS_LABELS = DEFAULT_LABELS + ["ci-failure", "github-actions"]
+SENTRY_LABELS = DEFAULT_LABELS + [
+    "prod-error", "sentry", "area:backend", "type:bug",
+]
+GITHUB_ACTIONS_LABELS = DEFAULT_LABELS + [
+    "ci-failure", "github-actions", "area:infra", "type:ops", _priority(),
+]
+
+
+def sentry_labels_for(level: object) -> list[str]:
+    """Labels for one Sentry alert — P1 only for an explicit `fatal`, else P2."""
+    priority = _SENTRY_ESCALATIONS.get(str(level or "").strip().lower()) or _priority()
+    return SENTRY_LABELS + [priority]
 
 
 @dataclass(frozen=True)
@@ -298,7 +365,7 @@ def sentry_alerts() -> list[AlertIssue]:
                 key=f"sentry:{short_id}",
                 title=f"[Alert] Sentry {short_id}: {title}",
                 body=body,
-                labels=SENTRY_LABELS,
+                labels=sentry_labels_for(level),
             )
         )
     return alerts

@@ -23,6 +23,10 @@ target 0 unless noted):
   4. parked/blocked issues sitting in Inbox — a blocked card belongs out of intake.
   5. any open issue missing every ``area:*`` label (board-wide, minus a tiny explicit
      meta allowlist) — an un-routed card.
+  5b. any open issue missing every ``priority:*`` label (board-wide, minus
+     ``taxonomy-exempt``) — `BOARD-TAXONOMY.md` invariant 1. Added by Q434 as the
+     guard for the class it closed: every filing rail now stamps a priority at
+     creation, so a fresh alert-intake card here means a rail regressed.
   6. label ↔ Status parity for blocked / parked / needs-user, in both directions.
   7. ``needs-agent`` on a blocked/parked card — it can't be picked up.
   8. any open issue absent from the Project board — an untracked routing defect.
@@ -341,6 +345,42 @@ def check_missing_area_label(issues: list[dict]) -> list[dict]:
     return out
 
 
+def check_missing_priority_label(issues: list[dict]) -> list[dict]:
+    """Any open issue carrying no ``priority:*`` label (`BOARD-TAXONOMY.md` invariant
+    1), excepting ``taxonomy-exempt`` (the program parents).
+
+    This is the guard for the class Q434 closed. Every filing rail now derives a
+    priority at creation time, so a NEW alert-intake card appearing here means a rail
+    regressed — it is not an ordinary triage backlog item, it is a filing bug, and the
+    detail says which. A human-filed card missing a priority is the same lint
+    violation but a different owner, so the two are distinguished in the text rather
+    than in two checks.
+
+    Note this deliberately does NOT read ``parked`` as exempt even though
+    `BOARD-TAXONOMY.md` gives parked a P3 family default: a default is what a rail
+    should have STAMPED, not permission to leave the label off.
+    """
+    out = []
+    for i in issues:
+        labels = _labels(i)
+        if "taxonomy-exempt" in labels:
+            continue
+        if any(str(label).startswith("priority:") for label in labels):
+            continue
+        scope = (
+            "a filing rail regressed — every rail derives one at creation (Q434)"
+            if _is_intake(i)
+            else "assign one at triage"
+        )
+        out.append({
+            "check": "missing_priority_label",
+            "issue": i.get("number"),
+            "detail": f"#{i.get('number')} '{(i.get('title') or '')[:60]}' has no "
+                      f"priority:* label — {scope}",
+        })
+    return out
+
+
 def check_label_status_parity(issues: list[dict]) -> list[dict]:
     """Routing label ↔ Project Status drift, in both directions (Queue #265):
       * a card with a ``blocked``/``parked``/``needs-user`` label that is NOT in the
@@ -515,6 +555,7 @@ def classify_board(
     real += check_duplicate_fingerprints(issues)
     real += check_template_p1_share(issues)
     real += check_missing_area_label(issues)
+    real += check_missing_priority_label(issues)
     real += check_needs_agent_conflict(issues)
 
     # Project-column-dependent checks: REAL when we have column data, else UNKNOWN.

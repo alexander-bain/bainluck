@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from app.routes.admin_utils import _check_admin_secret
+from app.utils.issue_labels import ensure_taxonomy, priority_label
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,14 @@ _GH_ISSUE_URL = "https://github.com/alexander-bain/bainluck/issues/{}"
 
 # Map the two severity vocabularies the cockpit uses (watchdog P0..P3, LLM
 # diagnosis critical/warning/info) onto a priority label.
+#
+# This deliberately stays a LOCAL override rather than folding into
+# ``app.utils.issue_labels.SEVERITY_TO_PRIORITY``: the canonical table reads
+# "critical" as P0 (a Sentry ``fatal``-class word), while here it is an LLM's
+# adjective about a cockpit signal and has always meant P1. Silently promoting that
+# to "drop everything" is an escalation nobody asked for, so the dialect keeps its
+# own reading and only the *fallback* is canonical — a severity this table does not
+# know now resolves through :func:`priority_label` instead of producing no label.
 _SEVERITY_TO_PRIORITY = {
     "p0": "priority:p0",
     "p1": "priority:p1",
@@ -41,6 +50,11 @@ _SEVERITY_TO_PRIORITY = {
     "warning": "priority:p2",
     "info": "priority:p3",
 }
+
+# Cockpit taps are operational signals about the running system; a caller-supplied
+# ``area:``/``type:`` in ``body.labels`` still wins (``ensure_taxonomy`` is additive).
+_COCKPIT_DEFAULT_AREA = "area:infra"
+_COCKPIT_DEFAULT_TYPE = "type:bug"
 
 
 class FileIssueRequest(BaseModel):
@@ -138,12 +152,16 @@ def file_issue(
         }
 
     labels = ["alert-intake", "needs-agent"]
-    prio = _SEVERITY_TO_PRIORITY.get((body.severity or "").strip().lower())
-    if prio:
-        labels.append(prio)
+    labels.append(
+        _SEVERITY_TO_PRIORITY.get((body.severity or "").strip().lower())
+        or priority_label(body.severity)
+    )
     for lbl in body.labels:
         if lbl and lbl not in labels:
             labels.append(lbl)
+    labels = ensure_taxonomy(
+        labels, area=_COCKPIT_DEFAULT_AREA, type_=_COCKPIT_DEFAULT_TYPE
+    )
 
     full_body = (body.body or "").strip()
     full_body += (

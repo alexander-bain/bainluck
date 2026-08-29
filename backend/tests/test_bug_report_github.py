@@ -100,9 +100,14 @@ class TestBuildLabels:
         assert "area:backend" in labels
 
     def test_unknown_category(self):
+        """Q434 INVERTED THIS ASSERTION DELIBERATELY. It used to require that an
+        unmapped category produce NO ``area:*`` label, which is precisely the
+        un-routed card BOARD-TAXONOMY invariant 1 forbids and board lint counts. A
+        rage shake is a report from a person looking at a screen, so an unmapped
+        category routes to the surface rather than to nothing."""
         labels = build_labels("other", "P2")
         assert "bug-report" in labels
-        assert not any(l.startswith("area:") for l in labels)
+        assert "area:frontend" in labels
 
     def test_none_category(self):
         labels = build_labels(None, "P3")
