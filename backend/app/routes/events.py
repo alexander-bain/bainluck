@@ -8747,6 +8747,9 @@ async def _build_game_markets(
     return response, event.status or "", market_ids
 
 
+# The L1. Kept as-is: it is faster than a Redis round trip and it was never the
+# defect (LAT-P136 / P127-2 — the defect is that it was the ONLY cache the tier
+# had; see `utils/related_futures_cache.py` for the ten-event cold measurement).
 _related_futures_cache: dict[int, tuple[float, str, dict]] = {}
 _RELATED_FUTURES_LIVE_TTL = 60
 _RELATED_FUTURES_MAX_SIZE = 30
@@ -8758,21 +8761,181 @@ async def get_related_futures(
     debug: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get futures markets related to the teams in this event.
+    """Futures markets related to the teams in this event — the CACHE POLICY.
 
-    Uses direct name matching on outcome names within sport-matching markets,
-    eliminating dependency on pre-computed team_id links. Sport matching uses
-    three strategies (OR): external_id prefix, llm_sport_category, and sport_id.
+    The build is `_build_related_futures` below and is unchanged. LAT-P136
+    closes LAT-P127's parked **P127-2**: the reason a person waited a measured
+    p50 of **5,891 ms** (ten distinct events off the live feed, first touch
+    each, max 8,807 ms) was not the build, it was that a 30-entry per-process
+    dict was the only cache the tier had, so almost every reader was the first
+    one. Rationale, the three properties of that dict, and why the mirror's age
+    ceiling is imported rather than chosen: `utils/related_futures_cache.py`.
+
+    This is the same shape LAT-P121 fixed for `/game-markets` one door up this
+    file, and it deliberately reads the same way.
+
+    Serve order, fastest first:
+
+      L1  in-memory dict  — same process, same 60 s rule. Kept: it is faster
+                            than a Redis round trip and it was never the defect.
+      L2  Redis primary   — SHARED across every worker and dyno. This is the new
+                            one, and it is what makes the second person to open
+                            a game anywhere not pay for it.
+      L2s Redis mirror    — served while young enough for the status, with ONE
+                            rebuild scheduled behind it.
+      build               — what every reader used to do.
+
+    `debug=1` bypasses every level, in both directions: it did so before this
+    ship (the L1 read was `if not debug`) and it must keep doing so, because the
+    `_debug` block it adds must never be published to a normal reader — the same
+    rule LAT-P050/LAT-P054 wrote for the typeahead cache.
     """
+    from app.utils import related_futures_cache as rfc
+
+    if debug:
+        response, source_status, market_ids, _cacheable = (
+            await _build_related_futures(event_id, db, debug=True)
+        )
+        return response
+
+    # L1 — in-memory (completed games cached indefinitely, live 60 s).
+    cached = _read_related_futures_memo(event_id)
+    if cached is not None:
+        return cached
+
+    # L2 — the shared slot, and its mirror.
+    body, state = rfc.read(event_id)
+    if state == "live" and body is not None:
+        _write_related_futures_memo(event_id, rfc.source_status_of(body), body)
+        return body
+    if state == "stale_ok" and body is not None:
+        # Exactly one rebuild behind the mirror, fleet-wide-ish: single-flight is
+        # per process (`_STALE_REFRESH_INFLIGHT`), and the shared slot the
+        # rebuild publishes is what keeps the other processes from re-doing it
+        # once it lands.
+        if _serve_stale_and_refresh(
+            f"related_futures:{event_id}", lambda: _rebuild_related_futures(event_id)
+        ):
+            return body
+        # No running loop to refresh behind us — fall through and build, rather
+        # than serve stale with nothing coming to replace it.
+
+    response, source_status, market_ids, cacheable = await _build_related_futures(
+        event_id, db
+    )
+    if not cacheable:
+        # An `empty` exit. NOT published, and that is carried across from the
+        # pre-LAT-P136 behaviour rather than newly decided: the old dict was
+        # written only at the bottom of the build, so the four early exits have
+        # never been cached. Publishing them now would make an event whose
+        # futures have not been ingested yet answer "no futures" for a TTL after
+        # they appear — a content change smuggled inside a latency change.
+        return response
+    return await _publish_related_futures(
+        event_id, source_status, response, market_ids, db
+    )
+
+
+def _read_related_futures_memo(event_id: int):
+    """The L1 read. Extracted so the policy above reads as a ladder."""
     import time as _time
-    _now = _time.time()
-    if not debug and event_id in _related_futures_cache:
-        _cached_at, _cached_status, _cached_resp = _related_futures_cache[event_id]
-        _ttl = _RELATED_FUTURES_LIVE_TTL
-        if _cached_status in ("completed", "closed") or _now - _cached_at < _ttl:
-            return _cached_resp
 
+    entry = _related_futures_cache.get(event_id)
+    if entry is None:
+        return None
+    cached_at, cached_status, cached_response = entry
+    if cached_status in ("completed", "closed"):
+        return cached_response
+    if (_time.time() - cached_at) < _RELATED_FUTURES_LIVE_TTL:
+        return cached_response
+    return None
+
+
+def _write_related_futures_memo(event_id: int, source_status, response) -> None:
+    """The L1 write, with its size bound. Behaviour unchanged."""
+    import time as _time
+
+    if len(_related_futures_cache) >= _RELATED_FUTURES_MAX_SIZE:
+        oldest = min(_related_futures_cache, key=lambda k: _related_futures_cache[k][0])
+        del _related_futures_cache[oldest]
+    _related_futures_cache[event_id] = (_time.time(), str(source_status or ""), response)
+
+
+async def _publish_related_futures(
+    event_id: int, source_status, response, market_ids, db
+) -> dict:
+    """Stamp a fresh build and publish it to both cache levels.
+
+    Returns the ENVELOPED body — the same dict the route returns, so what a
+    reader gets from a build and what the next reader gets from Redis are the
+    same bytes plus one `availability`.
+    """
+    from fastapi.encoders import jsonable_encoder
+
+    from app.utils import related_futures_cache as rfc
+
+    watermark = await rfc.compute_watermark(db, list(market_ids or []))
+    # 🔴 ENCODE BEFORE STORING, AND SERVE WHAT WAS STORED — LAT-P121's rule,
+    # and this payload needs it more than its sibling did. The tier's codec is
+    # `json.dumps(payload, default=str)`, so any value that is not natively JSON
+    # survives the Redis round trip as `str(value)`, and this body carries
+    # `resolution_date` isoformat strings beside raw values from `box_score` and
+    # the league-context grid. `jsonable_encoder` is what FastAPI was already
+    # going to apply to whatever this route returned, so running it here changes
+    # nothing on the wire and makes the codec lossless by construction: what is
+    # stored, what is served now and what is served an hour from now are one
+    # dict. Without it the first reader gets one shape and every subsequent
+    # reader another, and `write_payload` swallows its own failures so a
+    # genuinely unencodable value would disable this cache SILENTLY.
+    enveloped = jsonable_encoder(
+        rfc.stamp(response, source_status=source_status, lifecycle_watermark=watermark)
+    )
+    rfc.write(event_id, enveloped)
+    served = rfc.with_availability(enveloped, rfc.AVAILABILITY_LIVE)
+    _write_related_futures_memo(event_id, source_status, served)
+    return served
+
+
+async def _rebuild_related_futures(event_id: int) -> None:
+    """Rebuild one event's related futures behind a stale serve.
+
+    Opens its OWN session: the request's `AsyncSession` is not ours to hold past
+    the response (`_serve_stale_and_refresh`'s contract, and the reason that
+    helper takes a zero-arg coroutine function rather than a coroutine).
+    """
+    from app.services.database import async_session_maker
+
+    async with async_session_maker() as session:
+        response, source_status, market_ids, cacheable = (
+            await _build_related_futures(event_id, session)
+        )
+        if not cacheable:
+            # The mirror we are refreshing behind is a REAL answer; an `empty`
+            # rebuild must not overwrite it, for the same reason a failed
+            # rebuild leaves the value alone. Leaving it to age out under the
+            # ceiling degrades to slow, never to wrong.
+            return
+        await _publish_related_futures(
+            event_id, source_status, response, market_ids, session
+        )
+
+
+async def _build_related_futures(
+    event_id: int,
+    db: AsyncSession,
+    debug: bool = False,
+) -> tuple[dict, str, list, bool]:
+    """Build the payload from scratch. Returns `(resp, status, market_ids, cacheable)`.
+
+    The second element is the RAW `Event.status`, which the cache needs and
+    cannot recover from the body — the four `empty` exits below do not carry
+    `event_status` at all. The third is what the payload was assembled from,
+    which is the watermark's input set. The fourth says whether the caller may
+    publish it: `False` on every `empty` exit, because those have never been
+    cached and this ship does not change what is cached, only where.
+
+    Everything below this line is the pre-LAT-P136 route body, moved unchanged.
+    """
     from app.utils.team_linking import compute_relevance_score
     from app.utils.market_label_normalization import (
         normalize_market_label,
@@ -8805,7 +8968,7 @@ async def get_related_futures(
     # 2. Determine sport family for filtering
     event_sport_key = event.sport.key if event.sport else None
     if not event_sport_key:
-        return empty
+        return empty, event.status or "", [], False
 
     sport_prefix = event_sport_key.split("_")[0]  # e.g., "basketball", "americanfootball"
     llm_category = _SPORT_PREFIX_TO_LLM_CATEGORY.get(sport_prefix, sport_prefix)
@@ -9019,7 +9182,7 @@ async def get_related_futures(
     # into the home/away classification flow. They belong to the matchup
     # (both teams), not one side.
     if not sport_market_ids and not series_market_ids:
-        return empty
+        return empty, event.status or "", [], False
 
     # Apply gender name filter to exclude cross-gender markets
     if gender_market_name_filter and sport_market_ids:
@@ -9169,7 +9332,7 @@ async def get_related_futures(
         )
 
     if not match_conditions:
-        return empty
+        return empty, event.status or "", [], False
 
     # 5. Query matching outcomes with their markets
     outcomes_result = await db.execute(
@@ -9183,7 +9346,7 @@ async def get_related_futures(
     outcomes = outcomes_result.scalars().all()
 
     if not outcomes:
-        return empty
+        return empty, event.status or "", [], False
 
     # 6. Classify each outcome as home or away
     # Priority: team_id (reliable for player outcomes) > name matching (team outcomes)
@@ -9702,12 +9865,16 @@ async def get_related_futures(
             "away_patterns": away_team_patterns,
         }
 
-    if len(_related_futures_cache) >= _RELATED_FUTURES_MAX_SIZE:
-        oldest = min(_related_futures_cache, key=lambda k: _related_futures_cache[k][0])
-        del _related_futures_cache[oldest]
-    _related_futures_cache[event_id] = (_now, event.status or "", resp)
-
-    return resp
+    # Caching is the caller's job now (`_publish_related_futures`), so that a
+    # build reached through the stale-refresh path publishes through exactly the
+    # same writer as one reached through a request. Two writers for one tier is
+    # LAT-P001's defect and it is not being rebuilt here.
+    return (
+        resp,
+        event.status or "",
+        season_market_ids + game_prop_ids + series_market_ids,
+        True,
+    )
 
 
 @router.get("/{event_id}/team-progression")
