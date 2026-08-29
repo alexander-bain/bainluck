@@ -1,0 +1,1708 @@
+{
+  "_source": "GET https://api.bainluck.com/api/hub/{competition} \u2014 pulled 2026-08-29 (US Open week). Trimmed to what the page renders: real section keys, real counts, first 3 real market rows per section, first 3 real upcoming rows. `before_headers` is what the DEPLOYED page prints for this payload, computed with the shipped SECTION_META + earnsSectionHeader(>=2 items, >=2 sections).",
+  "hubs": {
+    "boxing": {
+      "competition": "boxing",
+      "label": "Boxing",
+      "title": "Boxing",
+      "emoji": "\ud83e\udd4a",
+      "blurb": "Upcoming fight cards, method-and-round props, and title odds \u2014 every market translated into plain probabilities.",
+      "sport_key": "boxing_boxing",
+      "tier": "present",
+      "total_markets": 0,
+      "section_sizes": {},
+      "upcoming_count": 17,
+      "upcoming": [
+        {
+          "key": "event:boxing:26aug29",
+          "name": "Brandon Mejia Mosqueda vs Edwin Palomares",
+          "domain": "boxing",
+          "status": "upcoming",
+          "start_date": "2026-08-29T23:45:00+00:00",
+          "is_major": false,
+          "fight_count": 17
+        },
+        {
+          "key": "event:boxing:26aug30",
+          "name": "Mauricio Lara vs Carlos Ornelas",
+          "domain": "boxing",
+          "status": "upcoming",
+          "start_date": "2026-08-30T02:45:00+00:00",
+          "is_major": false,
+          "fight_count": 6
+        },
+        {
+          "key": "event:boxing:26sep02",
+          "name": "Daiya Kira vs Carlos Canizales",
+          "domain": "boxing",
+          "status": "upcoming",
+          "start_date": "2026-09-02T06:00:00+00:00",
+          "is_major": false,
+          "fight_count": 1
+        }
+      ],
+      "sections": {},
+      "before_headers": [
+        {
+          "where": "upcoming rail",
+          "header": "Upcoming Cards",
+          "over": 17
+        }
+      ]
+    },
+    "esports": {
+      "competition": "esports",
+      "label": "Esports",
+      "title": "Esports",
+      "emoji": "\ud83c\udfae",
+      "blurb": "Tournament and season titles across League of Legends, Counter-Strike, Valorant, and Dota \u2014 every market translated into plain probabilities.",
+      "sport_key": "esports",
+      "tier": "full",
+      "total_markets": 194,
+      "section_sizes": {
+        "futures": 84,
+        "matches": 98,
+        "awards": 6,
+        "more_markets": 6
+      },
+      "upcoming_count": 0,
+      "upcoming": [],
+      "sections": {
+        "futures": [
+          {
+            "id": 58112488,
+            "name": "VCT Partnership 2027: Pacific",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 4,
+            "outcome_count": 17,
+            "top_outcomes": [
+              {
+                "id": 215727869,
+                "name": "Paper Rex",
+                "probability": 0.925,
+                "opening_probability": 0.845,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 215727854,
+                "name": "T1",
+                "probability": 0.68,
+                "opening_probability": 0.665,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 215727859,
+                "name": "ZETA DIVISION",
+                "probability": 0.655,
+                "opening_probability": 0.255,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 215727855,
+                "name": "Gen.G",
+                "probability": 0.605,
+                "opening_probability": 0.48,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": null,
+            "external_id": "792938",
+            "resolution_date": null,
+            "group_id": "polymarket:792938",
+            "section": "futures"
+          },
+          {
+            "id": 59334217,
+            "name": "BLAST Open Porto 2026: To Make Playoffs",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 4,
+            "outcome_count": 16,
+            "top_outcomes": [
+              {
+                "id": 220631696,
+                "name": "Spirit",
+                "probability": 0.765,
+                "opening_probability": 0.78,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 220631697,
+                "name": "Vitality",
+                "probability": 0.755,
+                "opening_probability": 0.755,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 220631698,
+                "name": "Falcons",
+                "probability": 0.71,
+                "opening_probability": 0.71,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 220631699,
+                "name": "FURIA",
+                "probability": 0.655,
+                "opening_probability": 0.685,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "esports::make_playoffs:2026",
+            "external_id": "882749",
+            "resolution_date": "2026-08-31T23:59:00+00:00",
+            "group_id": "polymarket:882749",
+            "section": "futures"
+          },
+          {
+            "id": 38277421,
+            "name": "Southeast Asia Qualifier: Qualify to The International",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 4,
+            "outcome_count": 13,
+            "top_outcomes": [
+              {
+                "id": 164244507,
+                "name": "Carstensz Esports",
+                "probability": 0.5,
+                "opening_probability": null,
+                "rank": 4,
+                "movement_24h": 0.075,
+                "team_id": null
+              },
+              {
+                "id": 164244502,
+                "name": "InterActive Philippines",
+                "probability": 0.5,
+                "opening_probability": null,
+                "rank": 1,
+                "movement_24h": 0.04,
+                "team_id": null
+              },
+              {
+                "id": 164244495,
+                "name": "Other",
+                "probability": 0.5,
+                "opening_probability": null,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 164244500,
+                "name": "Execration",
+                "probability": 0.5,
+                "opening_probability": null,
+                "rank": 3,
+                "movement_24h": 0.035,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": null,
+            "external_id": "602063",
+            "resolution_date": null,
+            "group_id": "polymarket:602063",
+            "section": "futures"
+          }
+        ],
+        "matches": [
+          {
+            "id": 58328331,
+            "name": "Will Mathis Serrier Qualify for the EWC Chess main event?",
+            "source": "polymarket",
+            "category": "game_prop",
+            "market_tier": 5,
+            "outcome_count": 2,
+            "top_outcomes": [
+              {
+                "id": 216408884,
+                "name": "No",
+                "probability": 0.745,
+                "opening_probability": 0.745,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 216408883,
+                "name": "Yes",
+                "probability": 0.255,
+                "opening_probability": 0.255,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": null,
+            "external_id": "0xa2284ba306ecb12f387e20b6b16a1fab09ac891771b2a9f3defbfffbf505aa6b",
+            "resolution_date": null,
+            "group_id": "polymarket:797949",
+            "section": "matches"
+          },
+          {
+            "id": 58328319,
+            "name": "Will Jonathan Tayar Qualify for the EWC Chess main event?",
+            "source": "polymarket",
+            "category": "game_prop",
+            "market_tier": 5,
+            "outcome_count": 2,
+            "top_outcomes": [
+              {
+                "id": 216408860,
+                "name": "No",
+                "probability": 0.745,
+                "opening_probability": 0.745,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 216408859,
+                "name": "Yes",
+                "probability": 0.255,
+                "opening_probability": 0.255,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": null,
+            "external_id": "0x170c1db7338250ac3a930efab4a2026f9c05dd8272e2b3a98e23b833226e1ef3",
+            "resolution_date": null,
+            "group_id": "polymarket:797949",
+            "section": "matches"
+          },
+          {
+            "id": 57787032,
+            "name": "Will Vladi Penta in LEC Summer Split 2026?",
+            "source": "polymarket",
+            "category": "game_prop",
+            "market_tier": 5,
+            "outcome_count": 2,
+            "top_outcomes": [
+              {
+                "id": 214496912,
+                "name": "No",
+                "probability": 0.745,
+                "opening_probability": 0.5,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 214496911,
+                "name": "Yes",
+                "probability": 0.255,
+                "opening_probability": 0.5,
+                "rank": 1,
+                "movement_24h": 0.2,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "esports::game_prop:2026",
+            "external_id": "0x9a5b825ac6bedb8483543b9ce0376c0ef6148bef6cf9469581289d8dcb758ad8",
+            "resolution_date": null,
+            "group_id": "polymarket:778978",
+            "section": "matches"
+          }
+        ],
+        "awards": [
+          {
+            "id": 58512514,
+            "name": "LEC Summer Split 2026: MVP",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 3,
+            "outcome_count": 50,
+            "top_outcomes": [
+              {
+                "id": 217082959,
+                "name": "Lospa",
+                "probability": 0.14,
+                "opening_probability": 0.25,
+                "rank": 1,
+                "movement_24h": -0.11,
+                "team_id": null
+              },
+              {
+                "id": 217082960,
+                "name": "Razork",
+                "probability": 0.14,
+                "opening_probability": 0.25,
+                "rank": 2,
+                "movement_24h": -0.11,
+                "team_id": null
+              },
+              {
+                "id": 217082961,
+                "name": "Vladi",
+                "probability": 0.14,
+                "opening_probability": 0.25,
+                "rank": 3,
+                "movement_24h": -0.11,
+                "team_id": null
+              },
+              {
+                "id": 217082962,
+                "name": "BrokenBlade",
+                "probability": 0.14,
+                "opening_probability": 0.25,
+                "rank": 4,
+                "movement_24h": -0.11,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "esports::mvp:2026",
+            "external_id": "806378",
+            "resolution_date": null,
+            "group_id": "polymarket:806378",
+            "section": "awards"
+          },
+          {
+            "id": 57450390,
+            "name": "Blast Bounty 2026 Season 2: MVP",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 3,
+            "outcome_count": 40,
+            "top_outcomes": [
+              {
+                "id": 213165961,
+                "name": "donk",
+                "probability": 0.79,
+                "opening_probability": 0.255,
+                "rank": 1,
+                "movement_24h": 0.53,
+                "team_id": null
+              },
+              {
+                "id": 213165943,
+                "name": "Neityu",
+                "probability": 0.247,
+                "opening_probability": 0.255,
+                "rank": 2,
+                "movement_24h": -0.003,
+                "team_id": null
+              },
+              {
+                "id": 213165949,
+                "name": "vsm",
+                "probability": 0.214,
+                "opening_probability": 0.255,
+                "rank": 3,
+                "movement_24h": -0.036,
+                "team_id": null
+              },
+              {
+                "id": 213165936,
+                "name": "xertioN",
+                "probability": 0.2135,
+                "opening_probability": 0.255,
+                "rank": 4,
+                "movement_24h": -0.0415,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "esports::mvp:2026",
+            "external_id": "766182",
+            "resolution_date": null,
+            "group_id": "polymarket:766182",
+            "section": "awards"
+          },
+          {
+            "id": 13886735,
+            "name": "Sports Emmy Award for Outstanding ESports Championship Coverage?",
+            "source": "kalshi",
+            "category": "entertainment",
+            "market_tier": 3,
+            "outcome_count": 5,
+            "top_outcomes": [
+              {
+                "id": 89617252,
+                "name": "2025 Call of Duty League Championship Weekend",
+                "probability": 0.99,
+                "opening_probability": 0.185,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 89617251,
+                "name": "League of Legends Worlds 2025 Final",
+                "probability": 0.37,
+                "opening_probability": 0.39,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 89617254,
+                "name": "2025 Apex Legends Global Series Championship",
+                "probability": 0.19,
+                "opening_probability": 0.175,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 89617253,
+                "name": "VALORANT Champions 2025 Grand Final",
+                "probability": 0.16,
+                "opening_probability": 0.185,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "esports::championship:2027",
+            "external_id": "KXSPORTSEMMY-26OUT",
+            "resolution_date": "2027-05-27T14:00:00+00:00",
+            "group_id": "kalshi:KXSPORTSEMMY-26OUT",
+            "section": "awards"
+          }
+        ],
+        "more_markets": [
+          {
+            "id": 57441809,
+            "name": "Team to Qualify for Worlds 2026?",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 56,
+            "top_outcomes": [
+              {
+                "id": 213140109,
+                "name": "Hanwha Life Esports",
+                "probability": 0.96,
+                "opening_probability": 0.95,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 213140110,
+                "name": "BILIBILI GAMING",
+                "probability": 0.955,
+                "opening_probability": 0.81,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 213140111,
+                "name": "Gen.G Esports",
+                "probability": 0.945,
+                "opening_probability": 0.845,
+                "rank": 3,
+                "movement_24h": 0.01,
+                "team_id": null
+              },
+              {
+                "id": 213140113,
+                "name": "G2 Esports",
+                "probability": 0.935,
+                "opening_probability": 0.86,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": null,
+            "external_id": "766197",
+            "resolution_date": null,
+            "group_id": "polymarket:766197",
+            "section": "more_markets"
+          },
+          {
+            "id": 57441772,
+            "name": "LPL 2026 Split 3: Team to Make Grand Finals",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 12,
+            "top_outcomes": [
+              {
+                "id": 213139916,
+                "name": "BILIBILI GAMING",
+                "probability": 0.69,
+                "opening_probability": 0.745,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 213139915,
+                "name": "Anyone's Legend",
+                "probability": 0.45,
+                "opening_probability": 0.255,
+                "rank": 2,
+                "movement_24h": 0.14,
+                "team_id": null
+              },
+              {
+                "id": 213139924,
+                "name": "TOP ESPORTS",
+                "probability": 0.395,
+                "opening_probability": 0.385,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 213139922,
+                "name": "Xi'an Team WE",
+                "probability": 0.195,
+                "opening_probability": 0.255,
+                "rank": 4,
+                "movement_24h": -0.005,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": null,
+            "external_id": "766212",
+            "resolution_date": null,
+            "group_id": "polymarket:766212",
+            "section": "more_markets"
+          },
+          {
+            "id": 57441781,
+            "name": "LCS 2026 Summer Split: Team to Make Grand Finals",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 8,
+            "top_outcomes": [
+              {
+                "id": 213139941,
+                "name": "LYON",
+                "probability": 0.71,
+                "opening_probability": 0.255,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 213139942,
+                "name": "Team Liquid",
+                "probability": 0.445,
+                "opening_probability": 0.26,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 213139943,
+                "name": "Cloud9",
+                "probability": 0.275,
+                "opening_probability": 0.255,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 213139944,
+                "name": "FlyQuest",
+                "probability": 0.215,
+                "opening_probability": 0.255,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": null,
+            "external_id": "766208",
+            "resolution_date": null,
+            "group_id": "polymarket:766208",
+            "section": "more_markets"
+          }
+        ]
+      },
+      "before_headers": [
+        {
+          "where": "section futures",
+          "header": "Tournament Winners",
+          "over": 84
+        },
+        {
+          "where": "section matches",
+          "header": "Fight Markets",
+          "over": 98
+        },
+        {
+          "where": "section awards",
+          "header": "Awards",
+          "over": 6
+        },
+        {
+          "where": "section more_markets",
+          "header": "More Markets",
+          "over": 6
+        }
+      ]
+    },
+    "golf": {
+      "competition": "golf",
+      "label": "Golf",
+      "title": "Golf",
+      "emoji": "\u26f3",
+      "blurb": "Upcoming tournaments \u2014 majors and tour events \u2014 with winner fields, top-finish props, and matchups translated into plain probabilities.",
+      "sport_key": "golf_pga",
+      "tier": "standard",
+      "total_markets": 15,
+      "section_sizes": {
+        "awards": 1,
+        "season_stats": 5,
+        "more_markets": 9
+      },
+      "upcoming_count": 3,
+      "upcoming": [
+        {
+          "key": "event:golf:tour-championship",
+          "name": "Tour Championship",
+          "domain": "golf",
+          "status": "upcoming",
+          "start_date": "2026-08-27T00:00:00+00:00",
+          "is_major": false,
+          "fight_count": null
+        },
+        {
+          "key": "event:golf:husqvarna-british-masters",
+          "name": "Husqvarna British Masters",
+          "domain": "golf",
+          "status": "upcoming",
+          "start_date": "2026-08-27T00:00:00+00:00",
+          "is_major": false,
+          "fight_count": null
+        },
+        {
+          "key": "event:golf:golfers-to-win-a-pga-tour-major-in-2027",
+          "name": "Golfers To Win A Pga Tour Major In 2027",
+          "domain": "golf",
+          "status": "upcoming",
+          "start_date": "2028-01-14T15:00:00+00:00",
+          "is_major": false,
+          "fight_count": null
+        }
+      ],
+      "sections": {
+        "awards": [
+          {
+            "id": 110747,
+            "name": "PGA Award for Best Televised or Streamed Motion Picture?",
+            "source": "kalshi",
+            "category": "entertainment",
+            "market_tier": 3,
+            "outcome_count": 6,
+            "top_outcomes": [
+              {
+                "id": 1612065,
+                "name": "John Candy: I Like Me",
+                "probability": 0.995,
+                "opening_probability": 0.32,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 1612069,
+                "name": "Tie",
+                "probability": 0.25,
+                "opening_probability": 0.005,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 1612064,
+                "name": "Bridget Jones: Mad About the Boy",
+                "probability": 0.005,
+                "opening_probability": 0.57,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 1612068,
+                "name": "Mountainhead",
+                "probability": 0.005,
+                "opening_probability": 0.025,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "golf:PGA:entertainment:2027",
+            "external_id": "KXPGAAWARDS-26-TVM",
+            "resolution_date": "2027-02-28T15:00:00+00:00",
+            "group_id": "kalshi:KXPGAAWARDS-26-TVM",
+            "section": "awards"
+          }
+        ],
+        "season_stats": [
+          {
+            "id": 59700139,
+            "name": "Husqvarna British Masters hosted by Sir Nick Faldo End of Round 2 Leader",
+            "source": "kalshi",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 13,
+            "top_outcomes": [
+              {
+                "id": 222338956,
+                "name": "Sam Bairstow",
+                "probability": 0.42,
+                "opening_probability": null,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 222338957,
+                "name": "Jack Buchanan",
+                "probability": 0.42,
+                "opening_probability": null,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 222338958,
+                "name": "Todd Clements",
+                "probability": 0.42,
+                "opening_probability": null,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 222338959,
+                "name": "Ugo Coussaud",
+                "probability": 0.41,
+                "opening_probability": null,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "golf:PGA:championship:2026",
+            "external_id": "KXDPWORLDTOURR2LEAD-HUBMHBSNF26",
+            "resolution_date": "2026-09-13T00:00:00+00:00",
+            "group_id": "kalshi:KXDPWORLDTOURR2LEAD-HUBMHBSNF26",
+            "section": "season_stats"
+          },
+          {
+            "id": 59700138,
+            "name": "Husqvarna British Masters hosted by Sir Nick Faldo End of Round 3 Leader",
+            "source": "kalshi",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 1,
+            "top_outcomes": [
+              {
+                "id": 222338955,
+                "name": "Keita Nakajima",
+                "probability": 0.02,
+                "opening_probability": null,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "golf:PGA:championship:2026",
+            "external_id": "KXDPWORLDTOURR3LEAD-HUBMHBSNF26",
+            "resolution_date": "2026-09-13T00:00:00+00:00",
+            "group_id": "kalshi:KXDPWORLDTOURR3LEAD-HUBMHBSNF26",
+            "section": "season_stats"
+          },
+          {
+            "id": 59514417,
+            "name": "DP World Tour: British Masters First Round Leader",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 0,
+            "top_outcomes": [],
+            "canonical_market_key": "golf:PGA:championship:2026",
+            "external_id": "904536",
+            "resolution_date": "2026-08-31T03:59:00+00:00",
+            "group_id": "polymarket:904536",
+            "section": "season_stats"
+          }
+        ],
+        "more_markets": [
+          {
+            "id": 56775495,
+            "name": "Golfers to win a PGA Tour Major in 2027 ",
+            "source": "kalshi",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 112,
+            "top_outcomes": [
+              {
+                "id": 214439069,
+                "name": "Scottie Scheffler",
+                "probability": 0.545,
+                "opening_probability": 0.54,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 214439070,
+                "name": "Rory McIlroy",
+                "probability": 0.405,
+                "opening_probability": 0.395,
+                "rank": 2,
+                "movement_24h": -0.01,
+                "team_id": null
+              },
+              {
+                "id": 214439071,
+                "name": "Jon Rahm",
+                "probability": 0.265,
+                "opening_probability": 0.265,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 214439072,
+                "name": "Ludvig Aberg",
+                "probability": 0.225,
+                "opening_probability": 0.22,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "golf:PGA:championship:2027",
+            "external_id": "KXGOLFMAJOR-27",
+            "resolution_date": "2028-01-14T15:00:00+00:00",
+            "group_id": "kalshi:KXGOLFMAJOR-27",
+            "section": "more_markets"
+          },
+          {
+            "id": 52755548,
+            "name": "Golfers to win a PGA Tour Major before 2030 ",
+            "source": "kalshi",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 60,
+            "top_outcomes": [
+              {
+                "id": 198631426,
+                "name": "Ryan Fox",
+                "probability": 0.99,
+                "opening_probability": null,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 198631467,
+                "name": "Miles Russell",
+                "probability": 0.97,
+                "opening_probability": null,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 198631468,
+                "name": "Jackson Koivun",
+                "probability": 0.97,
+                "opening_probability": null,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 198631451,
+                "name": "Andrew Novak",
+                "probability": 0.6,
+                "opening_probability": null,
+                "rank": 5,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "golf:PGA:championship:2030",
+            "external_id": "KXGOLFMAJOR-30",
+            "resolution_date": "2030-07-07T14:00:00+00:00",
+            "group_id": "kalshi:KXGOLFMAJOR-30",
+            "section": "more_markets"
+          },
+          {
+            "id": 31169677,
+            "name": "\"Masters of the Universe\" Opening Weekend Box Office",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 5,
+            "top_outcomes": [
+              {
+                "id": 142818712,
+                "name": "27-30m",
+                "probability": 0.966,
+                "opening_probability": 0.255,
+                "rank": 1,
+                "movement_24h": 0.005,
+                "team_id": null
+              },
+              {
+                "id": 142818714,
+                "name": "30-33m",
+                "probability": 0.0135,
+                "opening_probability": 0.41,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 142818715,
+                "name": "33-36m",
+                "probability": 0.002,
+                "opening_probability": 0.405,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 142818716,
+                "name": "<27m",
+                "probability": 0.0005,
+                "opening_probability": 0.26,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "golf:PGA:championship:",
+            "external_id": "552897",
+            "resolution_date": null,
+            "group_id": "polymarket:552897",
+            "section": "more_markets"
+          }
+        ]
+      },
+      "before_headers": [
+        {
+          "where": "upcoming rail",
+          "header": "Upcoming Cards",
+          "over": 3
+        },
+        {
+          "where": "section season_stats",
+          "header": "Fighter Stats",
+          "over": 5
+        },
+        {
+          "where": "section more_markets",
+          "header": "More Markets",
+          "over": 9
+        }
+      ]
+    },
+    "mma": {
+      "competition": "mma",
+      "label": "MMA",
+      "title": "Mixed Martial Arts",
+      "emoji": "\ud83e\udd4a",
+      "blurb": "Upcoming UFC cards, fight props, and title odds \u2014 every market translated into plain probabilities.",
+      "sport_key": "mma_mixed_martial_arts",
+      "tier": "standard",
+      "total_markets": 44,
+      "section_sizes": {
+        "matches": 28,
+        "more_markets": 16
+      },
+      "upcoming_count": 15,
+      "upcoming": [
+        {
+          "key": "event:ufc:26aug29",
+          "name": "Fight Night: Nurmagomedov vs Song",
+          "domain": "ufc",
+          "status": "upcoming",
+          "start_date": "2026-08-29T23:40:00+00:00",
+          "is_major": false,
+          "fight_count": 13
+        },
+        {
+          "key": "event:ufc:26sep01",
+          "name": "MMA: McCracken vs Sanchez",
+          "domain": "ufc",
+          "status": "upcoming",
+          "start_date": "2026-09-01T23:20:00+00:00",
+          "is_major": false,
+          "fight_count": 3
+        },
+        {
+          "key": "event:ufc:26sep05",
+          "name": "Chatman vs Wint",
+          "domain": "ufc",
+          "status": "upcoming",
+          "start_date": "2026-09-05T23:20:00+00:00",
+          "is_major": false,
+          "fight_count": 18
+        }
+      ],
+      "sections": {
+        "matches": [
+          {
+            "id": 59692172,
+            "name": "UFC Fight Night: Xiao Long vs. Francesco Nuzzi (Bantamweight, Prelims)",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 5,
+            "top_outcomes": [
+              {
+                "id": 222295270,
+                "name": "Xiao Long vs. Francesco Nuzzi",
+                "probability": 0.605,
+                "opening_probability": 0.61,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 222295271,
+                "name": "O/U 2.5 Rounds",
+                "probability": 0.545,
+                "opening_probability": 0.555,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 222295272,
+                "name": "Fight to Go the Distance?",
+                "probability": 0.495,
+                "opening_probability": 0.505,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 222334457,
+                "name": "Long to win by KO/TKO?",
+                "probability": 0.11,
+                "opening_probability": 0.11,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "mma:UFC:championship:2026",
+            "external_id": "926631",
+            "resolution_date": "2026-08-30T03:59:59.999000+00:00",
+            "group_id": "polymarket:926631",
+            "section": "matches"
+          },
+          {
+            "id": 59043148,
+            "name": "UFC Fight Night: Song Yadong vs. Umar Nurmagomedov (Bantamweight, Main Card)",
+            "source": "polymarket",
+            "category": "game_prop",
+            "market_tier": 5,
+            "outcome_count": 2,
+            "top_outcomes": [
+              {
+                "id": 219148132,
+                "name": "No",
+                "probability": 0.785,
+                "opening_probability": 0.795,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 219148131,
+                "name": "Yes",
+                "probability": 0.215,
+                "opening_probability": 0.205,
+                "rank": 1,
+                "movement_24h": 0.005,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": null,
+            "external_id": "0xa5b5a2d00cfaa7c7ec06b8ee7eda763245447437ccf560fab7fceb550c1c3ba0",
+            "resolution_date": "2026-08-30T03:59:59.999000+00:00",
+            "group_id": "polymarket:856051",
+            "section": "matches"
+          },
+          {
+            "id": 59444430,
+            "name": "UFC Fight Night: Dan Hooker vs. Salahdine Parnasse (Lightweight, Main Card)",
+            "source": "polymarket",
+            "category": "game_prop",
+            "market_tier": 5,
+            "outcome_count": 2,
+            "top_outcomes": [
+              {
+                "id": 221227265,
+                "name": "No",
+                "probability": 0.785,
+                "opening_probability": 0.79,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 221227264,
+                "name": "Yes",
+                "probability": 0.215,
+                "opening_probability": 0.21,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": null,
+            "external_id": "0x7ff9b0dcc91cd7e19d645a903f36eb0e7eb2589a941bdf54de306c0899b88bce",
+            "resolution_date": "2026-09-06T03:59:59.999000+00:00",
+            "group_id": "polymarket:892086",
+            "section": "matches"
+          }
+        ],
+        "more_markets": [
+          {
+            "id": 34151477,
+            "name": "UFC: Who will Gabriel Bonfim Fight Next?",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 16,
+            "top_outcomes": [
+              {
+                "id": 152136719,
+                "name": "Fighter G",
+                "probability": 0.5,
+                "opening_probability": null,
+                "rank": 5,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 152136722,
+                "name": "Fighter H",
+                "probability": 0.5,
+                "opening_probability": null,
+                "rank": 8,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 152136724,
+                "name": "Fighter A",
+                "probability": 0.5,
+                "opening_probability": null,
+                "rank": 10,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 152136725,
+                "name": "Fighter I",
+                "probability": 0.5,
+                "opening_probability": null,
+                "rank": 11,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "mma:UFC:championship:2027",
+            "external_id": "573779",
+            "resolution_date": "2027-06-02T03:59:00+00:00",
+            "group_id": "polymarket:573779",
+            "section": "more_markets"
+          },
+          {
+            "id": 38244521,
+            "name": "UFC: Ilia Topuria Next Fight",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 9,
+            "top_outcomes": [
+              {
+                "id": 164148308,
+                "name": "Paddy Pimblett",
+                "probability": 0.575,
+                "opening_probability": null,
+                "rank": 1,
+                "movement_24h": -0.01,
+                "team_id": null
+              },
+              {
+                "id": 164148309,
+                "name": "Fighter D",
+                "probability": 0.5,
+                "opening_probability": null,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 164148310,
+                "name": "Fighter C",
+                "probability": 0.5,
+                "opening_probability": null,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 164148311,
+                "name": "Fighter E",
+                "probability": 0.5,
+                "opening_probability": null,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "mma:UFC:championship:",
+            "external_id": "601394",
+            "resolution_date": null,
+            "group_id": "polymarket:601394",
+            "section": "more_markets"
+          },
+          {
+            "id": 22251758,
+            "name": "UFC: Who Will Arnold Allen Fight Next? ",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 7,
+            "top_outcomes": [
+              {
+                "id": 114494339,
+                "name": "Yair Rodriguez",
+                "probability": 0.51,
+                "opening_probability": 0.45,
+                "rank": 1,
+                "movement_24h": 0.025,
+                "team_id": null
+              },
+              {
+                "id": 114494343,
+                "name": "Youssef Zalal",
+                "probability": 0.435,
+                "opening_probability": null,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 114494342,
+                "name": "Lerone Murphy",
+                "probability": 0.43,
+                "opening_probability": 0.335,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 114494341,
+                "name": "Jean Silva",
+                "probability": 0.43,
+                "opening_probability": null,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "mma:UFC:championship:2027",
+            "external_id": "495473",
+            "resolution_date": "2027-05-17T00:00:00+00:00",
+            "group_id": "polymarket:495473",
+            "section": "more_markets"
+          }
+        ]
+      },
+      "before_headers": [
+        {
+          "where": "upcoming rail",
+          "header": "Upcoming Cards",
+          "over": 15
+        },
+        {
+          "where": "section matches",
+          "header": "Fight Markets",
+          "over": 28
+        },
+        {
+          "where": "section more_markets",
+          "header": "More Markets",
+          "over": 16
+        }
+      ]
+    },
+    "tennis": {
+      "competition": "tennis",
+      "label": "Tennis",
+      "title": "Tennis",
+      "emoji": "\ud83c\udfbe",
+      "blurb": "Upcoming slams and tour events with winner fields, matchups, and props \u2014 every market translated into plain probabilities.",
+      "sport_key": "tennis_atp",
+      "tier": "standard",
+      "total_markets": 135,
+      "section_sizes": {
+        "matches": 103,
+        "more_markets": 32
+      },
+      "upcoming_count": 12,
+      "upcoming": [
+        {
+          "key": "event:tennis:wta-washington-winner",
+          "name": "WTA Washington Winner",
+          "domain": "tennis",
+          "status": "live",
+          "start_date": "2026-09-05T14:00:00+00:00",
+          "is_major": false,
+          "fight_count": null
+        },
+        {
+          "key": "event:tennis:wta-toronto-winner",
+          "name": "WTA Toronto Winner",
+          "domain": "tennis",
+          "status": "live",
+          "start_date": "2026-09-12T15:00:00+00:00",
+          "is_major": false,
+          "fight_count": null
+        },
+        {
+          "key": "event:tennis:2026-women-s-us-open-winner-tennis",
+          "name": "2026 Women\u2019s US Open Winner (Tennis)",
+          "domain": "tennis",
+          "status": "live",
+          "start_date": "2026-09-13T00:00:00+00:00",
+          "is_major": false,
+          "fight_count": null
+        }
+      ],
+      "sections": {
+        "matches": [
+          {
+            "id": 59182138,
+            "name": "Jaime Faria vs Lorenzo Musetti: Total Games",
+            "source": "kalshi",
+            "category": "game_prop",
+            "market_tier": 5,
+            "outcome_count": 3,
+            "top_outcomes": [
+              {
+                "id": 219836065,
+                "name": "Over 17.5 games",
+                "probability": 0.665,
+                "opening_probability": 0.665,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 219836066,
+                "name": "Over 22.5 games",
+                "probability": 0.465,
+                "opening_probability": 0.465,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 219836067,
+                "name": "Over 27.5 games",
+                "probability": 0.28,
+                "opening_probability": 0.28,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "tennis::championship:2026",
+            "external_id": "KXATPGTOTAL-26AUG19FARMUS",
+            "resolution_date": "2026-09-02T20:20:00+00:00",
+            "group_id": "kalshi:KXATPGTOTAL-26AUG19FARMUS",
+            "section": "matches"
+          },
+          {
+            "id": 59182232,
+            "name": "Nuno Borges vs Brandon Nakashima: Total Games",
+            "source": "kalshi",
+            "category": "game_prop",
+            "market_tier": 5,
+            "outcome_count": 3,
+            "top_outcomes": [
+              {
+                "id": 219836759,
+                "name": "Over 19.5 games",
+                "probability": 0.68,
+                "opening_probability": 0.68,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 219836760,
+                "name": "Over 24.5 games",
+                "probability": 0.465,
+                "opening_probability": 0.465,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 219836761,
+                "name": "Over 29.5 games",
+                "probability": 0.27,
+                "opening_probability": 0.27,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "tennis::championship:2026",
+            "external_id": "KXATPGTOTAL-26AUG19BORNAK",
+            "resolution_date": "2026-09-02T19:10:00+00:00",
+            "group_id": "kalshi:KXATPGTOTAL-26AUG19BORNAK",
+            "section": "matches"
+          },
+          {
+            "id": 59182978,
+            "name": "Alexander Zverev vs Tommy Paul: Total Games",
+            "source": "kalshi",
+            "category": "game_prop",
+            "market_tier": 5,
+            "outcome_count": 3,
+            "top_outcomes": [
+              {
+                "id": 219839307,
+                "name": "Over 17.5 games",
+                "probability": 0.73,
+                "opening_probability": 0.73,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 219839308,
+                "name": "Over 22.5 games",
+                "probability": 0.525,
+                "opening_probability": 0.525,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 219839309,
+                "name": "Over 27.5 games",
+                "probability": 0.325,
+                "opening_probability": 0.325,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "tennis::championship:2026",
+            "external_id": "KXATPGTOTAL-26AUG19ZVEPAU",
+            "resolution_date": "2026-09-02T15:00:00+00:00",
+            "group_id": "kalshi:KXATPGTOTAL-26AUG19ZVEPAU",
+            "section": "matches"
+          }
+        ],
+        "more_markets": [
+          {
+            "id": 59556807,
+            "name": "US Open 2026: To Reach the Final (Men's Singles)",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 44,
+            "top_outcomes": [
+              {
+                "id": 221668036,
+                "name": "Carlos Alcaraz",
+                "probability": 0.375,
+                "opening_probability": 0.37,
+                "rank": 1,
+                "movement_24h": 0.005,
+                "team_id": null
+              },
+              {
+                "id": 221651165,
+                "name": "Alexander Zverev",
+                "probability": 0.19,
+                "opening_probability": 0.19,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 221651166,
+                "name": "Novak Djokovic",
+                "probability": 0.175,
+                "opening_probability": 0.175,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 221651167,
+                "name": "Ben Shelton",
+                "probability": 0.135,
+                "opening_probability": 0.135,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "tennis::championship:2026",
+            "external_id": "910152",
+            "resolution_date": "2026-09-12T23:59:00+00:00",
+            "group_id": "polymarket:910152",
+            "section": "more_markets"
+          },
+          {
+            "id": 59556733,
+            "name": "US Open 2026: To Reach Semifinals (Men's Singles)",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 44,
+            "top_outcomes": [
+              {
+                "id": 221650988,
+                "name": "Carlos Alcaraz",
+                "probability": 0.575,
+                "opening_probability": 0.485,
+                "rank": 1,
+                "movement_24h": 0.085,
+                "team_id": null
+              },
+              {
+                "id": 221650989,
+                "name": "Alexander Zverev",
+                "probability": 0.47,
+                "opening_probability": 0.47,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 221650990,
+                "name": "Novak Djokovic",
+                "probability": 0.315,
+                "opening_probability": 0.315,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 221650991,
+                "name": "Felix Auger-Aliassime",
+                "probability": 0.225,
+                "opening_probability": 0.22,
+                "rank": 4,
+                "movement_24h": null,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "tennis::championship:2026",
+            "external_id": "910171",
+            "resolution_date": "2026-09-10T23:59:00+00:00",
+            "group_id": "polymarket:910171",
+            "section": "more_markets"
+          },
+          {
+            "id": 59556819,
+            "name": "US Open 2026: To Reach Quarterfinals (Men's Singles)",
+            "source": "polymarket",
+            "category": "championship",
+            "market_tier": 5,
+            "outcome_count": 44,
+            "top_outcomes": [
+              {
+                "id": 221651252,
+                "name": "Carlos Alcaraz",
+                "probability": 0.775,
+                "opening_probability": 0.78,
+                "rank": 1,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 221651253,
+                "name": "Alexander Zverev",
+                "probability": 0.67,
+                "opening_probability": 0.68,
+                "rank": 2,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 221651254,
+                "name": "Novak Djokovic",
+                "probability": 0.58,
+                "opening_probability": 0.585,
+                "rank": 3,
+                "movement_24h": null,
+                "team_id": null
+              },
+              {
+                "id": 221651256,
+                "name": "Ben Shelton",
+                "probability": 0.505,
+                "opening_probability": 0.36,
+                "rank": 4,
+                "movement_24h": 0.005,
+                "team_id": null
+              }
+            ],
+            "canonical_market_key": "tennis::championship:2026",
+            "external_id": "910151",
+            "resolution_date": "2026-09-09T23:59:00+00:00",
+            "group_id": "polymarket:910151",
+            "section": "more_markets"
+          }
+        ]
+      },
+      "before_headers": [
+        {
+          "where": "upcoming rail",
+          "header": "Upcoming Cards",
+          "over": 12
+        },
+        {
+          "where": "section matches",
+          "header": "Fight Markets",
+          "over": 103
+        },
+        {
+          "where": "section more_markets",
+          "header": "More Markets",
+          "over": 32
+        }
+      ]
+    }
+  }
+}

@@ -342,3 +342,113 @@ class TestHubPropSplit:
         # The fight is not in props
         assert 2 not in {m["id"] for m in sections.get("matches", [])}
         assert 1 not in prop_ids
+
+
+# ============================================================================
+# UX-P167 (#2167) — the section vocabulary is served per competition
+# ============================================================================
+
+
+class TestHubSectionVocabulary:
+    """`/hub/tennis` printed "Fight Markets" over 103 tennis markets.
+
+    The heading map lived in the page as one competition-blind object written
+    when MMA was the only hub, so MMA's words rendered on every hub the generic
+    page grew afterwards. Measured live 2026-08-29, during US Open week — the
+    payloads are banked at `backend/tests/fixtures/uxp167_hub_vocabulary.json`:
+
+        /hub/tennis    "FIGHT MARKETS"    over 103 tennis markets
+                       "UPCOMING CARDS"   over 12 tournaments
+        /hub/esports   "FIGHT MARKETS"    over  98 esports markets
+        /hub/golf      "FIGHTER STATS"    over   5 golf markets
+                       "UPCOMING CARDS"   over  3 tournaments
+
+    The words now travel in the payload beside `label`/`title`/`blurb`, and only
+    the sport-SPECIFIC ones do: combat overrides, everyone else sends `{}` and
+    the client falls back to a neutral default. Both directions are asserted
+    (gotcha #43) — combat must KEEP its vocabulary, and a hub that is not a
+    combat sport must carry none of it.
+    """
+
+    # The words that may only ever reach a combat hub. Asserted against served
+    # VALUES for named keys, never as a bare substring sweep over the whole
+    # body — an over-broad `not in` fails on a correct file (UX-P164/165).
+    COMBAT_WORDS = ("Fight", "Fighter", "Cards")
+
+    async def test_combat_hubs_keep_their_vocabulary(self, client):
+        """The fix must not flatten MMA and boxing into generic words."""
+        for slug in ("mma", "boxing"):
+            body = (await client.get(f"/api/hub/{slug}")).json()
+            labels = body["section_labels"]
+            assert labels["matches"] == "Fight Markets", slug
+            assert labels["props"] == "Fight Props", slug
+            assert labels["season_stats"] == "Fighter Stats", slug
+            assert body["upcoming_label"] == "Upcoming Cards", slug
+
+    async def test_non_combat_hubs_carry_no_fight_vocabulary(self, client):
+        """golf / tennis / esports: the three hubs that rendered it wrong."""
+        for slug in ("golf", "tennis", "esports"):
+            body = (await client.get(f"/api/hub/{slug}")).json()
+            # An empty override map is the declaration, not an omission: it says
+            # "this competition has no words of its own", which is what makes the
+            # client's neutral default the intended reading rather than a guess.
+            assert body["section_labels"] == {}, slug
+            assert body["upcoming_label"] == "Upcoming Tournaments", slug
+            for word in self.COMBAT_WORDS:
+                assert word not in body["upcoming_label"], (slug, word)
+
+    async def test_every_configured_hub_declares_both_fields(self, client):
+        """Vacuity companion: a hub added later cannot skip the declaration and
+        silently inherit whatever the client happens to default to."""
+        from app.routes.hub import HUB_CONFIGS
+
+        assert len(HUB_CONFIGS) >= 5, "the census below covered five hubs"
+        seen = 0
+        for slug in HUB_CONFIGS:
+            body = (await client.get(f"/api/hub/{slug}")).json()
+            assert isinstance(body["section_labels"], dict), slug
+            assert isinstance(body["upcoming_label"], str), slug
+            assert body["upcoming_label"], slug
+            seen += 1
+        assert seen == len(HUB_CONFIGS)
+
+    async def test_only_combat_configs_override_section_labels(self, client):
+        """The override map is opt-IN, so silence can never mean another sport's
+        word. Reading the configs directly, not the responses, so a hub whose
+        sections happen to be empty today is still covered."""
+        from app.routes.hub import HUB_CONFIGS
+
+        overriding = {s for s, c in HUB_CONFIGS.items() if c.section_labels}
+        assert overriding == {"mma", "boxing"}, overriding
+
+    async def test_fixture_records_what_production_served(self):
+        """The BEFORE side, re-derived rather than asserted from prose: the
+        banked payloads plus the SHIPPED chrome rule (a header needs >= 2 items
+        and >= 2 sections) must reproduce the five wrong headings."""
+        import json
+        import pathlib
+
+        fixture = json.loads(
+            (
+                pathlib.Path(__file__).resolve().parents[1]
+                / "fixtures"
+                / "uxp167_hub_vocabulary.json"
+            ).read_text()
+        )
+        wrong = {
+            (slug, b["header"], b["over"])
+            for slug, hub in fixture["hubs"].items()
+            for b in hub["before_headers"]
+            if any(w in b["header"] for w in TestHubSectionVocabulary.COMBAT_WORDS)
+        }
+        assert wrong == {
+            ("tennis", "Fight Markets", 103),
+            ("tennis", "Upcoming Cards", 12),
+            ("esports", "Fight Markets", 98),
+            ("golf", "Fighter Stats", 5),
+            ("golf", "Upcoming Cards", 3),
+            # mma / boxing are the control: their fight words were correct.
+            ("mma", "Fight Markets", 28),
+            ("mma", "Upcoming Cards", 15),
+            ("boxing", "Upcoming Cards", 17),
+        }, wrong
