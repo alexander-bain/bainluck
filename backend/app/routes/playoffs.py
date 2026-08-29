@@ -30,6 +30,7 @@ from app.utils.tournament_stages import classify_market_stage, get_stages_for_sp
 from app.utils.static_divisions import lookup_division as _static_lookup_division
 from app.utils.grid_register import GridRegister, load_register
 from app.utils.odds_math import devig_consensus
+from app.utils.regex_to_ilike import regex_to_ilike
 
 logger = logging.getLogger(__name__)
 
@@ -2647,6 +2648,45 @@ _GRID_MENS_LEAGUES = ("ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "
 _GRID_WOMENS_LEAGUES = ("wnba", "ncaa-women-basketball")
 
 
+def _build_league_name_conditions(config) -> list:
+    """SQL prefilter for Path B.2 — league name patterns pushed down as ILIKE.
+
+    Exists so the grid does not have to load every market in a sport category
+    before deciding league membership. The authoritative decision is still
+    ``_market_passes_league_filter``, which re-applies the real regexes, so
+    this filter has exactly one obligation: **be a SUPERSET of the patterns,
+    never narrower.**
+
+    The converter this replaced was narrower — fatally so. It stripped ``\\b``
+    and ``\\s`` in a single pass, so ``\\s+`` had already lost its ``\\s`` by the
+    time the ``\\s+ → %`` rule ran and was left as a bare ``+``. Every
+    multi-word pattern therefore compiled to an impossible literal
+    (``\\bLa\\s+Liga\\b`` → ``%La+Liga%``). ``ILIKE`` is total on text, so the
+    condition was simply false for every row: no error, no warning, no log
+    line. Leagues reachable only by name (la-liga, champions-league, and EPL's
+    Champion column) rendered a tidy "no championship odds available yet" over
+    markets that were open, tier-1 and freshly priced.
+    """
+    conditions: list = []
+    for pattern_str in (config.league_name_patterns or []):
+        sql_pattern = regex_to_ilike(pattern_str)
+        if not sql_pattern:
+            # Nothing literal survived, so this pattern cannot be pushed down.
+            # Dropping it would NARROW the prefilter and hide rows the real
+            # regex would have accepted, so widen to the whole category and let
+            # Python decide.
+            return [FuturesMarket.llm_sport_category == config.sport_category]
+        conditions.append(
+            and_(
+                FuturesMarket.llm_sport_category == config.sport_category,
+                FuturesMarket.name.ilike(f"%{sql_pattern}%"),
+            )
+        )
+    if not conditions:
+        return [FuturesMarket.llm_sport_category == config.sport_category]
+    return conditions
+
+
 def _market_passes_league_filter(name: str, external_id: str, config) -> bool:
     """Decide whether a market belongs in ``config``'s playoff grid.
 
@@ -2799,24 +2839,7 @@ async def get_playoff_grid(
                 sport_conditions.append(FuturesMarket.external_id.ilike(f"{pfx}%"))
 
         # Path B.2: Match by llm_sport_category + league name patterns (Polymarket).
-        # Push league name filter to SQL via ILIKE to avoid loading ALL category markets.
-        category_conditions = []
-        if config.league_name_patterns:
-            for pattern_str in config.league_name_patterns:
-                # Convert regex to SQL ILIKE: \bNBA\b → %NBA%, \bPro\s+Basketball\b → %Pro%Basketball%
-                sql_pattern = re.sub(r"\\[bs]", "", pattern_str)
-                sql_pattern = re.sub(r"\\s\+|\\s\*", "%", sql_pattern)
-                sql_pattern = re.sub(r"[()?\[\]^$]", "", sql_pattern)
-                sql_pattern = sql_pattern.replace("\\", "").strip()
-                if sql_pattern:
-                    category_conditions.append(
-                        and_(
-                            FuturesMarket.llm_sport_category == config.sport_category,
-                            FuturesMarket.name.ilike(f"%{sql_pattern}%"),
-                        )
-                    )
-        if not category_conditions:
-            category_conditions.append(FuturesMarket.llm_sport_category == config.sport_category)
+        category_conditions = _build_league_name_conditions(config)
 
         # Ticker-prefixed markets (Kalshi/OddsAPI) can be resolved (e.g., division
         # winners after regular season). Category-matched (Polymarket) stay open/closed

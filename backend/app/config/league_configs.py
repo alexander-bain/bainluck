@@ -370,6 +370,10 @@ NFL_CONFIG = LeagueConfig(
     sport_category="football",
     sport_keys=["americanfootball_nfl"],
     external_id_prefixes=["KXNFL"],
+    # "Who will host the 2031 Pro Football Championship?" is a stadium-award
+    # market, not a title market — it matches \bPro\s+Football\b and would land
+    # cities in the Champion column.
+    external_id_exclude_prefixes=["KXSBHOST"],
     stage_key="football",
     league_name_patterns=[
         r"\bNFL\b",
@@ -432,6 +436,10 @@ MLB_CONFIG = LeagueConfig(
     sport_keys=["baseball_mlb"],
     stage_key="baseball",
     external_id_prefixes=["KXMLB"],
+    # "Pro Baseball Championship Series Matchup" asks which two teams REACH the
+    # World Series, not who wins it — it matches \bPro\s+Baseball\b and would
+    # put matchup pairs in the Champion column.
+    external_id_exclude_prefixes=["KXTEAMSINWS"],
     league_name_patterns=[
         r"\bMLB\b",
         r"\bWorld\s+Series\b",
@@ -613,6 +621,19 @@ NCAA_FOOTBALL_CONFIG = LeagueConfig(
         r"\bCollege\s+Football\b",
         r"\bFBS\b",
     ],
+    # This grid has make_playoffs / semifinal / championship columns and no
+    # conference column, so a conference title has nowhere honest to go — the
+    # stage fallback drops it in `championship`, next to national-title odds.
+    # FCS is a different division entirely.
+    league_exclude_patterns=[
+        r"\b(?:AAC|ACC|Big\s*12|Big\s*Ten|MAC|Mountain\s+West|Pac-?12|SEC|Sun\s+Belt|C-?USA|Conference\s+USA)\s+Championship\b",
+        r"\bFCS\b",
+        # "Will <team> Make the 2027 CFP National Championship" is odds to REACH
+        # the final, not to win it. There is no `final` column here, and the
+        # stage fallback files it under `championship`, where it would overstate
+        # every team's title odds.
+        r"\bMake\b.*\bNational\s+Championship\b",
+    ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoff", order=1),
         GridColumn(key="semifinal", label="Semifinal", order=2),
@@ -675,6 +696,12 @@ EPL_CONFIG = LeagueConfig(
         r"\bScottish\b",
         r"\bRussian\b",
         r"\bUkrainian\b",
+        # Until the ILIKE prefilter was repaired these three could never reach
+        # the Python matcher, so "<somewhere else>'s Premier League" was
+        # excluded only in principle. They are real open markets today.
+        r"\bCaribbean\b",
+        r"\bKazakhstan\b",
+        r"\bLanka\b",
         r"\bEFL\b",
         r"\bChampionship\b(?!.*League)",
         r"\bLeague One\b",
@@ -884,6 +911,11 @@ GOLF_CONFIG = LeagueConfig(
         r"\bU\.?S\.?\s+Open\b",
         r"\bOpen\s+Championship\b",
         r"\bGolf\b",
+    ],
+    # "U.S. Open: First Time Winner?" is a yes/no prop about the field, not a
+    # golfer's odds to win — it matches the `win` column's \bWinner\b rule.
+    league_exclude_patterns=[
+        r"\bFirst\s+Time\s+Winner\b",
     ],
     columns=[
         GridColumn(key="make_cut", label="Make Cut", order=1, sequential=True),

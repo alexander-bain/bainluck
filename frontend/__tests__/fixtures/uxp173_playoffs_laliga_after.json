@@ -1,0 +1,897 @@
+{
+ "league": "la-liga",
+ "name": "La Liga 2025-26",
+ "season": "2025-26",
+ "columns": [
+  {
+   "key": "relegation",
+   "label": "Relegated",
+   "order": 1,
+   "sequential": false,
+   "market_id": 56775508,
+   "market_ids": [
+    56775508
+   ],
+   "resolved": false
+  },
+  {
+   "key": "top_4",
+   "label": "Top 4",
+   "order": 2,
+   "sequential": false,
+   "market_id": 59164806,
+   "market_ids": [
+    59164806
+   ],
+   "resolved": false
+  },
+  {
+   "key": "championship",
+   "label": "Champion",
+   "order": 3,
+   "sequential": false,
+   "market_id": 31834308,
+   "market_ids": [
+    31834308
+   ],
+   "resolved": false
+  }
+ ],
+ "trend_chart": {
+  "timeline": [],
+  "outcomes": [],
+  "column": "championship",
+  "top": 10
+ },
+ "teams": [
+  {
+   "name": "Barcelona",
+   "short_name": "Barcelona",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.565,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.565,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.075,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.075,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Real Madrid",
+   "short_name": "Madrid",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.425,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.425,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.09,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.09,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Atletico Madrid",
+   "short_name": "Madrid",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.025,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.025,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.23,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.23,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.81,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.81,
+       "market_name": "La Liga Top 4 Finishers"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Real Sociedad",
+   "short_name": "Sociedad",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.02,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.02,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.99,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.99,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.23,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.23,
+       "market_name": "La Liga Top 4 Finishers"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Celta Vigo",
+   "short_name": "Vigo",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.47,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.47,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Valencia",
+   "short_name": "Valencia",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.48,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.48,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.19,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.19,
+       "market_name": "La Liga Top 4 Finishers"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Sevilla",
+   "short_name": "Sevilla",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Getafe",
+   "short_name": "Getafe",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.28,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.28,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Osasuna",
+   "short_name": "Osasuna",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.28,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.28,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Alaves",
+   "short_name": "Alaves",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.26,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.26,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Deportivo De La Coruna",
+   "short_name": "Coruna",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.04,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.04,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Levante",
+   "short_name": "Levante",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.43,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.43,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Rayo Vallecano",
+   "short_name": "Vallecano",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.5,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.5,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Elche",
+   "short_name": "Elche",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.45,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.45,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Villarreal",
+   "short_name": "Villarreal",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.44,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.44,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.385,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.385,
+       "market_name": "La Liga Top 4 Finishers"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Malaga",
+   "short_name": "Malaga",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.35,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.35,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Espanyol",
+   "short_name": "Espanyol",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.54,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.54,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Athletic Bilbao",
+   "short_name": "Bilbao",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.49,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.49,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.2,
+       "market_name": "La Liga Top 4 Finishers"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Betis",
+   "short_name": "Betis",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.45,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.45,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.36,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.36,
+       "market_name": "La Liga Top 4 Finishers"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Racing Santander",
+   "short_name": "Santander",
+   "team_id": null,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "championship": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "La Liga Champion"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    },
+    "relegation": {
+     "merged_probability": 0.45,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.45,
+       "market_name": "La Liga Relegation"
+      }
+     ],
+     "trend_24h": null,
+     "state": "live"
+    }
+   }
+  }
+ ],
+ "grouped_teams": null,
+ "movers": [],
+ "movers_degraded": false,
+ "team_count": 20,
+ "last_updated": "2026-08-29T15:19:23.058481+00:00",
+ "sources_available": [
+  "kalshi"
+ ],
+ "championship_market_id": 31834308
+}
