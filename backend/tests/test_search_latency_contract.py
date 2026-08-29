@@ -563,7 +563,10 @@ class TestBudgetCannotStarveAHealthyStage:
         from app.routes import events
 
         src = inspect.getsource(events.search_events)
-        futures_at = src.find("futures_result = await db.execute(futures_query)")
+        # LAT-P111 re-pointed the anchor: the execute moved into
+        # `_fetch_futures_window`, so the call site is now what the re-arm must
+        # precede. The property guarded is unchanged.
+        futures_at = src.find("await _fetch_futures_window(")
         assert futures_at > 0, "futures stage not found — update this guard"
 
         window = src[:futures_at]
@@ -573,6 +576,30 @@ class TestBudgetCannotStarveAHealthyStage:
         # ...and the re-arm is close to the stage, not left far upstream.
         assert src[rearm:futures_at].count("await db.execute(") <= 1, (
             "another query runs between the re-arm and the futures stage"
+        )
+
+    def test_the_second_futures_query_rearms_the_bound_too(self):
+        """LAT-P111: the tier split made the futures stage TWO statements.
+
+        The whole point of the LAT-P005 re-arm is that a later query must not
+        inherit a bound chosen for an earlier, cheaper one. The outcome-arm
+        query is now exactly that — it runs after the tier<=1 query has already
+        spent part of the budget, and it is the EXPENSIVE half. A re-arm that
+        covered only the first statement would restore the original defect
+        inside the stage that was fixed for it.
+        """
+        import inspect
+
+        from app.routes import events
+
+        src = inspect.getsource(events._fetch_futures_window)
+        outcome_at = src.find("candidates_in([outcome_arm])")
+        assert outcome_at > 0, "outcome-arm query not found — update this guard"
+
+        rearm = src[:outcome_at].rfind("_apply_search_statement_timeout(db, deadline)")
+        assert rearm > 0, (
+            "the outcome-arm query does not re-arm the statement timeout — it is "
+            "running on whatever the tier<=1 query left behind"
         )
 
 
@@ -618,7 +645,12 @@ class TestFuturesRecallArmsAreUnionedNotOred:
         )
 
     def test_recall_arms_are_combined_with_a_union(self):
-        assert "union(*_futures_arm_selects)" in SEARCH_CODE, (
+        # LAT-P111 re-pointed the ANCHOR, not the assertion. The arms are still
+        # UNIONed; the construction moved into `_futures_candidates_in` so the
+        # full arm set and the tier-ordered subsets share one builder. Combining
+        # them with a top-level OR is still the failure, and the sibling test
+        # above still catches it.
+        assert "union(*_selects)" in SEARCH_CODE, (
             "the UNION of the futures recall arms is gone — if the arms are "
             "combined some other way, re-point this guard deliberately"
         )

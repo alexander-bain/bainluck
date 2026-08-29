@@ -139,7 +139,12 @@ def test_the_tier_key_sorts_ahead_of_the_rank():
     for `fed`), so a tier applied after the rank never breaks the tie it exists to
     break.
     """
-    order_by = SEARCH_CODE[SEARCH_CODE.index("futures_query = ("):]
+    # LAT-P111 re-pointed the anchor: the statement is built by
+    # `_futures_window_query(...)` now, so that ONE ORDER BY is shared by the
+    # full query and the tier-ordered subsets. The property is unchanged, and it
+    # got MORE load-bearing — the tier split is only answer-identical because
+    # tier sorts first.
+    order_by = SEARCH_CODE[SEARCH_CODE.index("def _futures_window_query("):]
     order_by = order_by[order_by.index(".order_by("):]
 
     tier_at = order_by.index("_futures_name_tier")
