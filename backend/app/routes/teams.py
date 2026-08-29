@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Team, Event, Sport, FuturesMarket, FuturesOutcome, TeamIdentityMapping
 from app.services import get_db
 from app.utils import season_windows
+from app.utils.proven_duplicates import not_a_proven_duplicate
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,9 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             base_event_filter,
             Event.status.in_(["live", "scheduled"]),
             Event.commence_time >= now - timedelta(hours=2),
+            # #2263: one game, one card. A row the registry proved is a second
+            # copy of another row is not a second fixture on this team's schedule.
+            not_a_proven_duplicate(),
         )
         .order_by(
             case((Event.status == "live", 0), else_=1),
@@ -97,6 +101,7 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             # was orphaned from recent games (only 1 of 2 surfaced).
             Event.status.in_(["completed", "closed"]),
             Event.commence_time >= now - timedelta(days=30),
+            not_a_proven_duplicate(),  # #2263, as above
         )
         .order_by(Event.commence_time.desc())
         .limit(5)

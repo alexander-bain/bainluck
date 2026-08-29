@@ -57,6 +57,7 @@ from app.services.anchor_channel import (
 )
 from app.utils.espn_helpers import commence_correction_inverts_completion
 from app.utils.name_normalization import names_match
+from app.utils.provider_anchor_keys import SCALAR_DERIVED_ID_COLUMNS
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +319,7 @@ async def find_or_create_event(
                 raise ValueError(f"Unknown sport key: {identity.sport_key}")
 
             # Steps 1-3: Try to find existing event
-            event = await _find_existing(session, identity, sport_id)
+            event, also_matched = await _find_existing(session, identity, sport_id)
             if event:
                 attached_new = _attach_claim(event, identity.claim)
                 _update_fields_by_priority(event, identity)
@@ -339,6 +340,13 @@ async def find_or_create_event(
                         attached_new
                         or identity.claim.source in _SOURCES_WITHOUT_ID_COLUMN
                     ),
+                )
+                # #2263: the same fixture resolved onto other rows too. Record
+                # the ones that survive `_proven_duplicates`, which fires only on
+                # the Step 3 path and only on a genuine multi-match — for every
+                # other outcome `also_matched` is empty and this is a no-op.
+                await _record_proven_duplicates(
+                    session, event, also_matched, identity
                 )
                 return event, False
 
@@ -414,13 +422,20 @@ async def _find_existing(
     session: AsyncSession,
     identity: EventIdentity,
     sport_id: int,
-) -> Optional[Event]:
-    """Find an existing event via the 3-step cascade."""
+) -> tuple[Optional[Event], list[Event]]:
+    """Find an existing event via the 3-step cascade.
+
+    Returns ``(event, also_matched)``. ``also_matched`` is the Step 3 runners-up
+    — other rows this claim's fixture resolved onto — and is EMPTY for every
+    other outcome, because only Step 3 looks at more than one row. It is
+    evidence, not a second answer: the caller binds to ``event`` and to nothing
+    else (#2263).
+    """
 
     # Step 1: Exact source ID lookup
     event = await _find_by_source_id(session, identity.claim)
     if event:
-        return event
+        return event, []
 
     # Step 2: Cross-source ID — the anchor channel (#2213, queue 413).
     #
@@ -441,7 +456,7 @@ async def _find_existing(
     # namespace-qualified, and an unrecognised namespace yields no key at all.
     anchored_event = await _find_by_anchor(session, identity, sport_id)
     if anchored_event:
-        return anchored_event
+        return anchored_event, []
 
     # Step 3: Structured match — sport + date + teams.
     #
@@ -458,18 +473,18 @@ async def _find_existing(
             identity.claim.source, identity.home_team_name,
             identity.away_team_name, identity.commence_time.isoformat(),
         )
-        return None
+        return None, []
 
-    event = await _find_by_structured_match(
+    matches = await _structured_matches(
         session, sport_id,
         identity.home_team_name, identity.away_team_name,
         identity.commence_time,
         claim=identity.claim,
     )
-    if event:
-        return event
+    if matches:
+        return matches[0], list(matches[1:])
 
-    return None
+    return None, []
 
 
 async def _find_by_source_id(
@@ -642,7 +657,41 @@ async def _find_by_structured_match(
     *,
     claim: EventClaim,
 ) -> Optional[Event]:
-    """Step 3: Find event by sport + date + team names — ID-ANCHORED CLAIMS ONLY.
+    """Step 3, the winner only — see :func:`_structured_matches` for the rest.
+
+    Kept as the single-answer face of the matcher because every existing caller
+    and test wants exactly that. The cascade itself calls
+    :func:`_structured_matches`, because the runners-up are evidence (#2263) and
+    this signature has nowhere to put them.
+    """
+    matches = await _structured_matches(
+        session, sport_id, home_team, away_team, commence_time, claim=claim
+    )
+    return matches[0] if matches else None
+
+
+async def _structured_matches(
+    session: AsyncSession,
+    sport_id: int,
+    home_team: str,
+    away_team: str,
+    commence_time: datetime,
+    *,
+    claim: EventClaim,
+) -> list[Event]:
+    """Step 3: Find events by sport + date + team names — ID-ANCHORED CLAIMS ONLY.
+
+    Returns EVERY name-matching candidate, closest-in-time first, rather than
+    only the winner. The extra rows are not a widening of absorption authority —
+    the caller still binds to ``[0]`` and to nothing else. They are the answer to
+    a question the matcher has always been able to answer and has always thrown
+    away: *did this provider's fixture resolve onto more than one of our rows?*
+
+    #2263: on the 2026-08-29 MLB slate it resolved onto two rows for 10 of 17
+    fixtures, and the loser — a bare StatPal twin one minute earlier, no espn_id
+    and no sources at all — was discarded here, silently, once, and never
+    reconsidered. A duplicate that the one join ruling 048 preserves has already
+    proven is not a duplicate anyone should have to re-derive from a census.
 
     ``claim`` is REQUIRED and keyword-only: this matcher may not be invoked without
     stating whose claim it is acting on, and it raises on an unanchored one. The
@@ -661,7 +710,7 @@ async def _find_by_structured_match(
     """
     if not claim.schedule_derived:
         raise AssertionError(
-            "ruling 048: _find_by_structured_match reached with an unanchored "
+            "ruling 048: _structured_matches reached with an unanchored "
             f"{claim.source} claim ({claim.source_id!r}). An id-less claim never "
             "absorbs — it creates. Do not add a bypass here; if this provider can "
             "dereference its id against its own schedule, set schedule_derived on "
@@ -691,9 +740,14 @@ async def _find_by_structured_match(
     )
     candidates = candidates_result.scalars().all()
 
-    # Score all name-matching candidates and pick the closest by time.
+    # Score all name-matching candidates, closest by time first.
     # This handles doubleheaders: Game 1 at 1 PM and Game 2 at 7 PM both
-    # match by team names, but the closer one wins.
+    # match by team names, but the closer one wins — and, since #2263, the
+    # further one is RETURNED rather than dropped, so the caller can see that a
+    # second row answered and decide what that means. Deciding is the caller's
+    # job precisely because "another row matched" and "another row is the same
+    # game" are different claims: the doubleheader is the case where they come
+    # apart, and `_proven_duplicates` is where that distinction is drawn.
     matches = []
     for candidate in candidates:
         matched = False
@@ -710,11 +764,176 @@ async def _find_by_structured_match(
             time_diff = abs((commence_time - candidate.commence_time).total_seconds())
             matches.append((time_diff, candidate))
 
-    if matches:
-        matches.sort(key=lambda x: x[0])
-        return matches[0][1]
+    matches.sort(key=lambda x: x[0])
+    return [candidate for _, candidate in matches]
 
-    return None
+
+#: How far apart two rows may sit and still be the SAME fixture written twice.
+#:
+#: This is the constant that separates #2263's twin from a doubleheader, so it
+#: is set from both sides rather than from taste:
+#:
+#: * The twin, measured. Every one of the 10 pairs on the 2026-08-29 MLB slate
+#:   is exactly ONE MINUTE apart — the two writers disagree about the published
+#:   minute, and nothing else. The whole observed population is at 60s.
+#: * The doubleheader, from the schedule. Two games between the same clubs on
+#:   one day are separated by a full game plus a turnaround: MLB's traditional
+#:   doubleheader starts game two ~30 minutes after game one ENDS, and a split
+#:   doubleheader is ticketed as two sessions hours apart. There is no format in
+#:   which two real same-pair fixtures start within half an hour of each other.
+#:
+#: 30 minutes therefore sits ~30x above the defect and far below the nearest
+#: legitimate case. It is deliberately NOT tuned to the observed 60s: a bound
+#: that only just covers today's specimen fails silently the first time a writer
+#: disagrees by two minutes instead of one.
+#:
+#: THE FALSIFIER: if a real doubleheader is ever tagged by this, the bound is
+#: wrong and must be argued down from the schedule, not nudged. The guard test
+#: `test_a_doubleheader_partner_is_never_a_proven_duplicate` is what would catch
+#: it before production does.
+_SAME_FIXTURE_MAX_SEPARATION = timedelta(minutes=30)
+
+
+def _claim_id_value(event: Event, source: str) -> Optional[str]:
+    """The id `event` holds for `source`, or None when it holds none.
+
+    Reads the map `provider_anchor_keys` already publishes rather than
+    restating it. A private copy here would be a second list of which column
+    belongs to which provider, and the failure mode of the two disagreeing is
+    silent: this function would answer None for a row that IS bound, every
+    runner-up would look unbound, and the guard would start over-tagging.
+    """
+    column = SCALAR_DERIVED_ID_COLUMNS.get(source)
+    if not column:
+        return None
+    # `__dict__.get`, not `getattr`: this runs inside the registry's sync
+    # section and an unloaded attribute would trigger a lazy load there.
+    return event.__dict__.get(column)
+
+
+#: The columns `_has_substance` needs in order to answer at all.
+_SUBSTANCE_COLUMNS = ("home_score", "away_score", "win_probability_sources")
+
+
+def _has_substance(event: Event) -> bool:
+    """Does this row carry anything a user could read off it?
+
+    A score, or a probability from any source. Deliberately NOT "has a team id"
+    or "has a name" — those are identity, and every row has them.
+
+    FAILS CLOSED, and that is the whole reason this is not two inline `or`s.
+    The read is `__dict__.get` rather than `getattr` because a `getattr` on an
+    expired attribute triggers a lazy load in a sync context (memory:
+    feedback_orm_lazy_load) — but `__dict__.get` on an attribute that is merely
+    NOT LOADED returns None, which is indistinguishable from "the column is
+    genuinely empty". Those two answers point opposite ways: an empty column
+    means TAG, and an unloaded one means WE DO NOT KNOW.
+
+    On today's path they are always loaded — the candidates come from a
+    `select(Event)` a few statements earlier in the same transaction, and only a
+    commit or a rollback expires them. So this branch is unreachable now and is
+    here for the refactor that moves the load: if the attribute is missing, this
+    says "has substance", the caller declines to tag, and the duplicate survives
+    to be caught tomorrow. The other failure — quietly reading unloaded as empty
+    — drops a real game off the product, and nothing would report it.
+    """
+    loaded = event.__dict__
+    if any(column not in loaded for column in _SUBSTANCE_COLUMNS):
+        logger.warning(
+            "Event %s was not fully loaded when judged for #2263 duplication "
+            "(missing %s) — treating it as substantial so it is NOT tagged",
+            loaded.get("id"),
+            [c for c in _SUBSTANCE_COLUMNS if c not in loaded],
+        )
+        return True
+
+    if loaded["home_score"] is not None:
+        return True
+    if loaded["away_score"] is not None:
+        return True
+    return bool(loaded["win_probability_sources"])
+
+
+def _proven_duplicates(
+    winner: Event,
+    also_matched: list[Event],
+    claim: EventClaim,
+) -> list[Event]:
+    """Which runners-up are the SAME GAME as `winner`, provably.
+
+    Pure, and separate from the write for that reason: this is the judgement,
+    and a judgement that can only be exercised against a database is a judgement
+    nobody can read.
+
+    "The matcher returned it" is NOT the standard. The matcher's job is to pick a
+    winner, and it will happily return the other half of a doubleheader as a
+    runner-up. What is being asserted here is much narrower — that a row is the
+    same fixture as the winner, written a second time — so every one of these
+    must hold:
+
+    1. **The claim is id-anchored** (ruling 048 arm B). Only a provider that can
+       dereference its own id against its own schedule gets to say two of our
+       rows are its one fixture. Today that is ESPN alone.
+    2. **The winner actually holds the claim's id.** If `_attach_claim` refused
+       because the winner already carries a DIFFERENT id for this provider, then
+       this fixture is not that row's game and the whole match is suspect. Assert
+       nothing.
+    3. **The candidate holds NO id for this provider.** A row that answers to a
+       different fixture of the same provider is a different game and says so.
+       This is the guard that a bound doubleheader partner trips.
+    4. **The candidate is within `_SAME_FIXTURE_MAX_SEPARATION`** of the winner,
+       and carries no substance of its own — no score, no probability. Together
+       these describe #2263's twin exactly: a bare row a minute away. An unbound
+       doubleheader partner that is hours away fails the first; one that has been
+       priced fails the second.
+
+    Under-tagging is the intended failure direction. A duplicate we miss stays
+    visible and stays fixable; a distinct game we tag is a game the product
+    stops showing.
+    """
+    if not claim.schedule_derived:
+        return []
+    if _claim_id_value(winner, claim.source) != claim.source_id:
+        return []
+    if winner.commence_time is None:
+        return []
+
+    proven = []
+    for candidate in also_matched:
+        if candidate.id == winner.id:
+            continue
+        if _claim_id_value(candidate, claim.source) is not None:
+            continue
+        if candidate.commence_time is None:
+            continue
+        separation = abs(candidate.commence_time - winner.commence_time)
+        if separation > _SAME_FIXTURE_MAX_SEPARATION:
+            continue
+        if _has_substance(candidate):
+            continue
+        proven.append(candidate)
+    return proven
+
+
+async def _record_proven_duplicates(
+    session: AsyncSession,
+    winner: Event,
+    also_matched: list[Event],
+    identity: EventIdentity,
+) -> None:
+    """Tag every runner-up `_proven_duplicates` accepts.
+
+    This is a LABEL and nothing else — the same one `_tag_duplicate_of` already
+    writes for an anchor `COLLISION`, reached by the other road. Nothing is
+    deleted, nothing is repointed, and both rows stay addressable, because
+    applying a repair from a detection is how a wrong detection becomes data
+    loss (gotcha #21). What consumes the label is the read side: a row proven to
+    duplicate another stops being printed as a second card.
+    """
+    if not also_matched:
+        return
+    for duplicate in _proven_duplicates(winner, also_matched, identity.claim):
+        await _tag_duplicate_of(session, duplicate.id, winner.id)
 
 
 def _attach_claim(event: Event, claim: EventClaim) -> bool:

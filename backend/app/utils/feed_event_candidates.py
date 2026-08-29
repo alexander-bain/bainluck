@@ -62,6 +62,7 @@ from __future__ import annotations
 from sqlalchemy import Select, String, and_, case, func, or_, select
 
 from app.models import Event, Sport
+from app.utils.proven_duplicates import not_a_proven_duplicate
 
 # Status tiers, in the priority order the feed has always used.
 TIER_LIVE = 0
@@ -173,7 +174,19 @@ def event_candidate_ids(where_clauses) -> Select:
     window, sport filter, tag containment.  They are applied *inside* the window
     pass on purpose: quotas computed over an unfiltered pool would hand a
     filtered request the wrong slice.
+
+    #2263: proven duplicates are dropped here too, and that is a DIFFERENT guard
+    from the collapse below rather than a widening of it.  The collapse fuses
+    rows that are byte-identical on ``(sport, home, away, commence_time)``; the
+    twins #2263 found differ by ONE MINUTE and by ``"St.Louis"`` vs
+    ``"St. Louis"``, so the partition never groups them and the flagship surface
+    printed both.  Near-miss aliases remain out of scope for the collapse exactly
+    as this module's header says — the difference is that a proven duplicate is
+    not a near-miss guess.  It was established at the write side, by ESPN's own
+    fixture resolving onto two of our rows, and this reads the finding rather
+    than re-deriving it.
     """
+    where_clauses = [*where_clauses, not_a_proven_duplicate()]
     dedup_partition = [
         Event.sport_id,
         Event.home_team_name,

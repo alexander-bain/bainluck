@@ -562,9 +562,23 @@ def test_extra_conditions_do_not_break_the_or_precedence():
     # The OR group is wrapped, and the extra condition is ANDed OUTSIDE it.
     assert "WHERE (events.status = 'live'" in sql
     assert ") AND sports.key ILIKE" in sql
-    # And with no extra condition there is nothing to wrap, so the bare form
-    # (which relies on SQL's AND-binds-tighter-than-OR precedence) still holds.
-    assert "WHERE events.status = 'live'" in _pg_sql()
+
+    # #2263: the caller-passed conditions are no longer the only ones. The
+    # function appends the proven-duplicate guard unconditionally, so there is
+    # ALWAYS something ANDed alongside the OR group and the bare unwrapped form
+    # this used to assert can no longer occur.
+    #
+    # That is a strengthening, not a loss. The bare form was safe only because
+    # AND binds tighter than OR — correct, but a property of the dialect rather
+    # than of the statement. Now both groups are explicitly parenthesised, which
+    # is what the test is really for: whatever else is ANDed on, the candidate
+    # OR must stay one unit. Asserted on the guard-only call, which is the case
+    # that used to produce the bare form.
+    guard_only = _pg_sql([])
+    assert "(events.event_tags IS NULL OR " in guard_only
+    both = _pg_sql(_candidate_conditions())
+    assert "WHERE (events.status = 'live'" in both
+    assert ") AND (events.event_tags IS NULL OR " in both
 
 
 def test_the_quota_case_carries_the_declared_numbers():
