@@ -182,7 +182,8 @@ above. The flap itself is untouched and remains real: `patriots` is an events qu
 
 | gate | result |
 |---|---|
-| full suite | **PENDING — see the report; ONE run, exit code read BY VALUE** |
+| full suite | **21,221 passed / 0 failed / 124 skipped / 61 xfailed**, 851.99 s, **EXIT CODE 0 READ BY VALUE** |
+| collect | **21,406** = 21,221 + 124 + 61, **exact**; master 21,396 → **+10** (enumerated *and* measured) |
 | smoke (`test_startup.py`) | **4 passed, EXIT 0** |
 | targeted (`test_search_latency_contract.py`) | **102 passed, EXIT 0** (7 new) |
 | mutants | **7/7 killed** |
@@ -191,6 +192,16 @@ above. The flap itself is untouched and remains real: `patriots` is an events qu
 | `migration_slot` | **none** — no DDL, no index, no schema change |
 | `beat_schedule_change` | **FALSE** — no beat file touched, no Celery task added, no config var |
 | scope | **backend only**, 4 files |
+
+### ⚠️ The first full run's exit code was LOST, and it was re-run rather than argued
+
+The first suite was launched detached with `nohup … &`, so only its summary line survived — the
+**exit code value was never captured**. That summary is complete and unambiguous, and none of the
+abort codes gotcha #54 warns about (2, 5, 127, 137, 143) can produce a summary line with a real
+duration at all. **But that is an inference, not a reading**, and inferring an exit code is the
+precise thing this lane does not accept. The suite was re-run with `; echo "PYTEST EXIT CODE: $?"`
+appended: **exit 0**, identical counts (21,221 / 124 / 61), 851.99 s against 849.78 s. Two runs
+corroborating, and the number in the table is the read one.
 
 ### 🔴 A gate lied, and it was a stale build artifact
 
