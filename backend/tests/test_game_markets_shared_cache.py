@@ -446,6 +446,34 @@ async def test_the_L1_entry_and_the_served_body_are_the_same_bytes():
 
 
 @pytest.mark.asyncio
+async def test_a_non_json_value_survives_the_round_trip_identically():
+    """The codec is `json.dumps(..., default=str)`, so a datetime comes back as
+    `"2026-08-29 09:00:00+00:00"` where FastAPI's encoder writes an ISO `T`.
+
+    Without encoding before storing, the FIRST reader of a game would get one
+    shape and every subsequent reader another — in exactly the values nobody
+    looks at. So the build path must serve what the cache path will serve.
+    """
+    rc = _FakeRedis()
+    when = datetime(2026, 8, 29, 9, 0, tzinfo=timezone.utc)
+
+    async def _fake_build(event_id, db):
+        payload = _body(event_id)
+        payload["totals"] = [{"market_name": "O/U 8.5", "as_of": when}]
+        return payload, "live", []
+
+    with patch.object(gmc, "get_client", return_value=rc), patch.object(
+        events_route, "_build_game_markets", _fake_build
+    ):
+        built = await events_route.get_game_markets(7, _Session())
+        events_route._game_markets_cache.clear()
+        from_redis = await events_route.get_game_markets(7, _Session())
+
+    assert built == from_redis
+    assert built["totals"][0]["as_of"] == "2026-08-29T09:00:00+00:00"
+
+
+@pytest.mark.asyncio
 async def test_a_dead_redis_costs_a_build_and_never_a_500():
     """Every Redis helper on this path is best-effort by construction."""
 

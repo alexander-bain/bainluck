@@ -7639,11 +7639,28 @@ async def _publish_game_markets(
     reader gets from a build and what the next reader gets from Redis are the
     same bytes plus one `availability`.
     """
+    from fastapi.encoders import jsonable_encoder
+
     from app.utils import game_markets_cache as gmc
 
     watermark = await gmc.compute_watermark(db, list(market_ids or []))
-    enveloped = gmc.stamp(
-        response, source_status=source_status, lifecycle_watermark=watermark
+    # 🔴 ENCODE BEFORE STORING, AND SERVE WHAT WAS STORED. The tier's codec is
+    # `json.dumps(payload, default=str)`, so any value that is not natively JSON
+    # survives the Redis round trip as `str(value)` — a datetime would come back
+    # `"2026-08-29 09:00:00+00:00"` where FastAPI's own encoder writes
+    # `"2026-08-29T09:00:00+00:00"`. The first reader would then get one shape
+    # and every subsequent reader another, in exactly the values nobody looks at,
+    # and `write_payload` swallows its own failures so a genuinely unencodable
+    # value would disable this cache SILENTLY.
+    #
+    # `jsonable_encoder` is what FastAPI was already going to apply to whatever
+    # this route returned, so running it here changes nothing on the wire and
+    # makes the codec lossless by construction: what is stored, what is served
+    # now, and what is served an hour from now are one dict.
+    enveloped = jsonable_encoder(
+        gmc.stamp(
+            response, source_status=source_status, lifecycle_watermark=watermark
+        )
     )
     gmc.write(event_id, enveloped)
     served = gmc.with_availability(enveloped, gmc.AVAILABILITY_LIVE)

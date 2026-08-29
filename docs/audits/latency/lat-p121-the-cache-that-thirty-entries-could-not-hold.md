@@ -4,9 +4,9 @@
 every visitor** (#1587) — the second request of the page where the probability a person came for
 actually lives, and one of the four north-star tasks.
 
-Branch `program/latency-106`, cut from **CURRENT master `e15c2aa4`** (which is master *after*
+Branch `program/latency-106` @ `77871d24`, cut from **CURRENT master `e15c2aa4`** (which is master *after*
 `program/latency-104` merged mid-session — see "master moved" below). `migration_slot: none`,
-`beat_schedule_change: FALSE`, no config var, no DDL, no frontend, no native. Four files.
+`beat_schedule_change: FALSE`, no config var, no DDL, no frontend, no native. Six files.
 
 ---
 
@@ -43,7 +43,7 @@ That is the same shape LAT-P021 fixed for `/api/event/{key}` (#1107) and that #1
 open, for `hub.py`. The sentence from #1651 is the one that applies here without modification:
 *while a miss costs a build, a slow enough build has no exit via user traffic.*
 
-## 🔴 The serve-stale helper this needed was already in the file, three lines above the dict
+## 🔴 The serve-stale helper this needed was already in the file, forty lines above the dict
 
 `_serve_stale_and_refresh` — strong task refs, in-flight single-flight, a `_STALE_SERVE_CEILING`,
 its own session for the rebuild — was shipped by LAT-P116 into `routes/events.py` and sits at line
@@ -94,6 +94,21 @@ And the default when the stored status is missing is **not-final**, i.e. the SHO
 failure mode of a missing field has to be a rebuild; if it were `completed`, a four-hour-old mirror
 of a game in progress would be served. That is mutant **M2**, and it is killed.
 
+## 🔴 The tier's codec is lossy, and the writer swallows its own failures
+
+`encode_payload` is `json.dumps(payload, default=str)`. Any value that is not natively JSON survives
+the Redis round trip as `str(value)` — a datetime comes back `"2026-08-29 09:00:00+00:00"` where
+FastAPI's own encoder writes `"2026-08-29T09:00:00+00:00"`. So the **first** reader of a game would
+get one shape and every reader after them another, in exactly the values nobody looks at. And
+because `write_payload` swallows its own exceptions and logs, a genuinely unencodable value would
+disable this cache **silently** — a latency fix that quietly does nothing is worse than no fix,
+because nobody goes back to look.
+
+Fixed by running `jsonable_encoder` before the store. That is what FastAPI was going to apply to
+whatever this route returned anyway, so nothing on the wire changes, and it makes the codec lossless
+by construction: **what is stored, what is served now, and what is served an hour from now are one
+dict.** Mutant **M15** removes it and the guard kills it on a datetime.
+
 ## The freshness rule is carried across verbatim, and a test says so
 
 `FRESH_TTL_LIVE == _GAME_MARKETS_LIVE_TTL` is asserted, not just written. This ship changes *who can
@@ -105,18 +120,21 @@ winner backfill so a payload cannot go on claiming a prop is ungraded long after
 
 ## Gates
 
-* `tests/test_game_markets_shared_cache.py` — **34 tests**, all asserting shape, TTL or CALL COUNT,
+* `tests/test_game_markets_shared_cache.py` — **35 tests**, all asserting shape, TTL or CALL COUNT,
   none asserting wall clock, so they are deterministic in CI.
-* Scoped: **171 passed, exit 0** (the new file plus the three pre-existing game-markets suites plus
+* Scoped: **172 passed, exit 0** (the new file plus the three pre-existing game-markets suites plus
   `test_mutation_guard.py`).
-* **14/14 mutants killed**, 0 survived, 0 harness failures — and the battery prints its
+* **15/15 mutants killed**, 0 survived, 0 harness failures — and the battery prints its
   **denominator before the first verdict**, which is LAT-P120's finding paid forward: that cycle's
   battery reported `11/11 killed` over a table a third of whose entries had silently failed to
   append.
 * Residue scanner **CLEAN, exit 0**.
 * `ruff`: the two new Python files clean; `events.py` **44 = master's own 44, measured** (`ruff` on
   `git show origin/master:...` piped to `--stdin-filename`), so **+0**.
-* Full backend suite and its collect-delta: see the report.
+* Full backend suite: **21,475 passed / 0 failed / 124 skipped / 61 xfailed, 913.49 s, EXIT CODE 0
+  READ BY VALUE**. 21,475 + 124 + 61 = **21,660**, and master `e15c2aa4`'s own collect is
+  **21,625, MEASURED** in a throwaway worktree -> **21,660 = 21,625 + 35, exactly**. Backend delta
+  **+35**, all of it this cycle's one new test file, enumerated AND measured.
 * No frontend or native file is touched, so neither client gate is claimed.
 
 ## ⚠️ Master moved mid-session, and the branch was re-cut rather than rebased

@@ -148,6 +148,19 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         'CACHE_PREFIX = "bainluck:event_concept:"',
     ),
     (
+        "M15",
+        "store the un-encoded dict — the first reader and the next get different shapes",
+        ROUTE,
+        """    enveloped = jsonable_encoder(
+        gmc.stamp(
+            response, source_status=source_status, lifecycle_watermark=watermark
+        )
+    )""",
+        """    enveloped = gmc.stamp(
+        response, source_status=source_status, lifecycle_watermark=watermark
+    )""",
+    ),
+    (
         "M14",
         "no loop to refresh behind us, serve stale anyway — fail-OPEN",
         ROUTE,
