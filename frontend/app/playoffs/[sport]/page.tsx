@@ -13,6 +13,7 @@ import {
   useScrollDepth,
   useEngagementTime,
 } from "@/hooks";
+import type { ApiError } from "@/lib/api";
 import type {
   ChampionshipGridResponse,
   ChampionshipGridTeam,
@@ -588,6 +589,37 @@ export default function PlayoffGridPage({
   // a retryable error instead.
   const gridTimedOut = gridData?.error === "timeout";
 
+  // UX-P175: when the route FAILS it says why, and the page used to throw that
+  // away. `/api/playoffs/{slug}` raises 503 with the sentence
+  //
+  //     "Playoff grid for 'la-liga' timed out and no last-good payload is
+  //      available. This is a degraded state, not an empty league."
+  //
+  // written precisely so a reader is not left thinking the league has no
+  // markets, and `apiFetch` deliberately preserves it (see its comment at
+  // lib/api.ts:154 — "that's what lets a page render an honest state rather
+  // than a generic 'Failed to load'"). This page then rendered the generic
+  // "Failed to load" anyway. Measured over 14 days of Sentry: 9 such 503s
+  // across 6 of the 14 slugs, 7 of them on 2026-08-29 alone.
+  //
+  // Prefer the server's sentence, but ONLY when the server actually supplied
+  // one. `apiFetch` synthesizes `message = "API error: 503"` when `detail` is
+  // absent or non-string, and showing a reader a bare status code is worse
+  // than the generic line, not better — so key on `detail`, not on `message`.
+  const serverDetail = (gridError as ApiError | undefined)?.detail;
+  const gridErrorMessage =
+    typeof serverDetail === "string" && serverDetail.trim()
+      ? serverDetail
+      : "Failed to load championship grid. Please try again.";
+
+  // #1484 published two honesty flags and this page read neither, so a grid
+  // built from a FAILED live rebuild rendered identically to a fresh one. The
+  // backend grades the two causes differently and so does the reader-facing
+  // copy: `degraded` is a real defect and says so; a routine between-warms
+  // `stale` serve gets a timestamp in the footer and no alarm.
+  const gridDegraded = gridData?.degraded === true;
+  const gridStale = gridData?.stale === true && !gridDegraded;
+
   // Fetch golf schedule (only for golf)
   const { data: golfSchedule } = useSWR(
     slug === "golf" ? "golf-schedule" : null,
@@ -730,9 +762,30 @@ export default function PlayoffGridPage({
         {/* Loading */}
         {isLoading && <SkeletonGrid count={6} />}
 
-        {/* Error */}
-        {gridError && (
-          <ErrorMessage message="Failed to load championship grid. Please try again." />
+        {/* Error — the server's own sentence when it supplied one (UX-P175) */}
+        {gridError && <ErrorMessage message={gridErrorMessage} />}
+
+        {/* #1484 degraded serve: the live rebuild failed and these numbers are
+            standing in for a measurement that could not be made. Distinct from
+            the error above (that grid is absent; this one is present but old)
+            and from the routine `stale` footer note below. */}
+        {!gridError && gridDegraded && (
+          <div
+            data-testid="grid-degraded-notice"
+            className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+          >
+            <p className="text-sm font-medium text-text-primary">
+              These odds are from an earlier build
+            </p>
+            <p className="text-xs text-text-secondary mt-0.5">
+              The live rebuild for {league.label} did not finish, so the grid
+              below is the last complete one we have
+              {gridData?.last_updated
+                ? ` (${formatGridTimestamp(gridData.last_updated)})`
+                : ""}
+              . Probabilities may have moved since.
+            </p>
+          </div>
         )}
 
         {/* #901: server-side rebuild timed out (HTTP 200 {error:"timeout"}) */}
@@ -843,11 +896,41 @@ export default function PlayoffGridPage({
             {gridData.sources_available.length} source
             {gridData.sources_available.length !== 1 ? "s" : ""}
             {conferenceFilter && ` \u00B7 Showing ${conferenceFilter}`}
+            {/* #1484 routine last-good serve. Real, complete, just not this
+                minute's build \u2014 a timestamp, deliberately not an alarm. Five of
+                the fourteen grids carried `stale` in a single production sweep
+                on 2026-08-29, so anything louder would cry wolf. */}
+            {gridStale && gridData.last_updated && (
+              <> &middot; as of {formatGridTimestamp(gridData.last_updated)}</>
+            )}
           </p>
         )}
       </div>
     </main>
   );
+}
+
+/**
+ * Render a grid build time for a reader.
+ *
+ * `timeZone` is pinned EXPLICITLY and the zone is printed. An unpinned
+ * `toLocaleString` renders in the runtime's zone, which under CI's `TZ=UTC` is
+ * indistinguishable from a correct pin and diverges silently everywhere else —
+ * the class that read 7-of-22 red under `TZ=America/Los_Angeles` and 22 green
+ * under `TZ=UTC`. This stamp exists to tell someone how old a degraded grid is,
+ * so an ambiguous one would defeat its only purpose.
+ */
+function formatGridTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
+  })} UTC`;
 }
 
 // ---------------------------------------------------------------------------

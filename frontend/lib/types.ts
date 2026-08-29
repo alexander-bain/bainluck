@@ -1653,6 +1653,24 @@ export interface ChampionshipGridResponse {
    *  exceeds the 25s wait_for — the frontend must treat this as an error, not
    *  an empty/infinite-skeleton state. */
   error?: string;
+  /** #1484 truthful degradation. The route labels a last-good serve rather than
+   *  passing it off as this minute's build, and it grades the two causes
+   *  differently — see `_mark_last_good` in `routes/playoffs.py`:
+   *
+   *  * `stale` alone (`stale_reason: "cache_miss"`) is ROUTINE — the fresh key
+   *    was cold between warms, so the bounded last-good key answered. The grid
+   *    is real and complete, just not this minute's. Worth a timestamp, never
+   *    an alarm: three healthy grids carry it on an ordinary deploy.
+   *  * `degraded` (`degraded_reason: "timeout"`) is a REAL DEFECT — the live
+   *    build FAILED and old numbers are standing in for a measurement that
+   *    could not be made. It must read as one.
+   *
+   *  Both were published and neither was read, so a degraded grid rendered
+   *  identically to a fresh one (UX-P175). */
+  stale?: boolean;
+  stale_reason?: string;
+  degraded?: boolean;
+  degraded_reason?: string;
 }
 
 /** Team Progression types (event detail → championship grid row) */

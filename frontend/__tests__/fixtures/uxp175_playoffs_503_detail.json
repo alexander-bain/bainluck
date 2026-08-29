@@ -1,0 +1,5 @@
+{
+ "slug": "la-liga",
+ "detail": "Playoff grid for 'la-liga' timed out and no last-good payload is available. This is a degraded state, not an empty league.",
+ "status": 503
+}
