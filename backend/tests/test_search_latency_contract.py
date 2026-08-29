@@ -258,6 +258,145 @@ def test_dispatch_survives_having_no_running_loop():
 
 
 # ---------------------------------------------------------------------------
+# LAT-P117 — `result_count` counts THE ANSWER, not one section of it.
+#
+# The shapes below are production payloads, 2026-08-29, not invented fixtures:
+# `stanley cup` -> 0 events / 2 futures / 1 family; `red sox` -> total_results 57
+# across 25-row pages. Measured that morning, 27 of the top 40 logged queries had
+# never recorded a non-zero count while answering fine — because the column read
+# `pagination.total_results`, which counts the `results` array alone.
+# ---------------------------------------------------------------------------
+
+
+def _payload(*, events_total=0, n_results=0, teams=0, concepts=0,
+             futures=0, families=0):
+    """A `/search` body with the four answer sections independently settable."""
+    return {
+        "query": "q",
+        "teams": [{"id": i} for i in range(teams)],
+        "event_concepts": [{"slug": str(i)} for i in range(concepts)],
+        "results": [{"id": 1000 + i} for i in range(n_results)],
+        "futures": [{"id": 2000 + i} for i in range(futures)],
+        "futures_families": [{"id": 3000 + i} for i in range(families)],
+        "pagination": {"page": 1, "per_page": 25, "total_results": events_total},
+    }
+
+
+def test_a_futures_only_answer_is_not_recorded_as_an_empty_search():
+    """THE REGRESSION THIS EXISTS FOR. `stanley cup`'s real production shape.
+
+    108 rows in the 30-day log, every one of them `result_count = 0`, for a query
+    the Flow Sentinel independently grades as FOUND (`GOLD_SET` Q09). Anything
+    that prunes the warm head by "did it come up empty" would have evicted it.
+    """
+    stanley_cup = _payload(events_total=0, n_results=0, futures=2, families=1)
+    assert events_route._answered_result_count(stanley_cup) == 2, (
+        "a search answered entirely by futures is being logged as zero again — "
+        "the column is back to counting one section of four"
+    )
+
+
+def test_an_answer_that_is_genuinely_empty_still_records_zero():
+    """Fails closed. The column must keep its ability to say 'nothing matched',
+    or the fix would trade a false-empty for a false-answered and the head
+    election would lose the signal in the other direction."""
+    assert events_route._answered_result_count(_payload()) == 0
+
+
+def test_events_contribute_their_paginated_total_not_one_page():
+    """`red sox`: 57 matching events served 25 to a page. Counting `len(results)`
+    would under-report every multi-page answer by the page size."""
+    red_sox = _payload(events_total=57, n_results=25)
+    assert events_route._answered_result_count(red_sox) == 57
+
+
+def test_families_are_never_counted_on_top_of_the_futures_they_compose():
+    """A family is a COMPOSITION of markets already present in `futures` — the web
+    page filters its members back out of the flat list so nothing double-renders.
+    Counting both would inflate the very column this fix exists to make honest."""
+    # Same 10 futures, described by 0, 2 and 5 families: the count cannot move.
+    counts = {
+        events_route._answered_result_count(
+            _payload(futures=10, families=f)
+        )
+        for f in (0, 2, 5)
+    }
+    assert counts == {10}, (
+        f"family composition changed the answer count ({sorted(counts)}) — "
+        "`futures_families` has been added to the counted sections"
+    )
+
+
+def test_every_section_the_zero_state_checks_is_counted():
+    """One definition of 'answered', taken from the product.
+
+    The search page renders its zero-state on
+    `!hasEvents && !hasFutures && !hasTeams && !hasEventConcepts`. If the log
+    counted fewer sections than that, a search the SCREEN calls answered would be
+    logged as empty — which is exactly the bug, one section at a time.
+    """
+    for section, kwargs in (
+        ("events", {"events_total": 3}),
+        ("teams", {"teams": 3}),
+        ("event_concepts", {"concepts": 3}),
+        ("futures", {"futures": 3}),
+    ):
+        assert events_route._answered_result_count(_payload(**kwargs)) == 3, (
+            f"{section} does not contribute to the logged answer count, so a "
+            f"search answered only by {section} logs as empty"
+        )
+
+
+@pytest.mark.parametrize("payload", [
+    {},
+    {"pagination": None, "futures": None},
+    {"pagination": {"total_results": None}, "futures": "not-a-list"},
+    {"pagination": {"total_results": -5}},
+])
+def test_a_malformed_payload_never_raises_into_search(payload):
+    """Instrumentation never breaks search. A negative total is clamped rather
+    than subtracted from the other sections."""
+    assert events_route._answered_result_count(payload) >= 0
+
+
+def test_the_recorder_logs_the_whole_answer_and_not_total_results():
+    """Pins the WIRING, not just the helper. The helper being right is worthless
+    if the recorder still reads `pagination.total_results` directly — that is the
+    shape the bug had, and it is one edit away from returning.
+    """
+    captured = {}
+
+    class _Req:
+        headers = {}
+        cookies = {}
+
+        class state:
+            pass
+
+        def __init__(self):
+            self.headers = {}
+            self.cookies = {}
+
+    original = events_route._dispatch_search_log
+    events_route._dispatch_search_log = lambda **kw: captured.update(kw)
+    try:
+        events_route._record_search_query(
+            _payload(events_total=0, futures=2, families=1),
+            q="stanley cup",
+            request=_Req(),
+            current_user=None,
+        )
+    finally:
+        events_route._dispatch_search_log = original
+
+    assert captured.get("query") == "stanley cup"
+    assert captured.get("result_count") == 2, (
+        "the recorder is not routing through `_answered_result_count` — a "
+        f"futures-only answer dispatched result_count={captured.get('result_count')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 1e — the request must be bounded (no SUCCESS_AFTER_DEADLINE / H12 503)
 # ---------------------------------------------------------------------------
 

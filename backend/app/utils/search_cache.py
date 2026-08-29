@@ -22,11 +22,21 @@ a property of the distribution, not of the index — a second, better-tuned inde
 would land in the same place.
 
 So the lever moves from "make the scan cheaper" to "do not run the scan". The
-head of the real ``/search`` distribution is small, measured, and stable: the
+head of the ``/search`` distribution is small, measured, and stable: the
 30-day top rows in ``search_query_logs`` were ``masters winner`` (102),
 ``stanley cup`` (101), ``world series`` (95), ``nba champion`` (90). Those are
-by definition the queries asked most often, so caching their answers removes the
-work for exactly the traffic the index could not help. ``app/tasks/
+the queries SUBMITTED most often, so caching their answers removes the
+work for exactly the traffic the index could not help.
+
+⚠️ LAT-P117 (2026-08-29): "by definition the queries asked most often" used to
+stand where that last sentence does, and it does not survive measurement — those
+four rows are the Flow Sentinel's nightly gold set, not people
+(`tasks/typeahead_warmer.py`, ``_QUERY_LOG_SHARE``, carries the numbers). This
+module's argument is UNHARMED, and the distinction is worth keeping straight:
+caching is justified by what is SUBMITTED, because a submitted query costs the
+same scan whoever submitted it. Head ELECTION is the thing that needs the query
+to have come from a person, and that is why ``search_head_warmer`` elects
+through an attestation filter and this module does not have one. ``app/tasks/
 search_head_warmer.py`` keeps them resident; this module is the contract both
 that warmer and the route read the key from.
 
