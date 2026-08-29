@@ -2,7 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { fetchGolfData, fetchFuturesHistory, fetchProgression } from "@/lib/api";
+import {
+  fetchGolfData,
+  fetchFuturesHistory,
+  fetchProgression,
+  formatProbability,
+} from "@/lib/api";
 import type {
   GolfResponse,
   GolfTournament,
@@ -22,8 +27,8 @@ import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import TournamentCard from "@/components/TournamentCard";
+import { GolferRow } from "@/components/golf/GolferRow";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import { sourceHex } from "@/lib/sourceColors";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
 
@@ -551,7 +556,7 @@ function CurrentEventBanner({
               {topGolfers[0].name}
             </p>
             <p className="text-[#006747] font-mono text-sm">
-              {Math.round(topGolfers[0].probability * 100)}%
+              {formatProbability(topGolfers[0].probability)}
             </p>
           </div>
         )}
@@ -854,7 +859,9 @@ function MoversStrip({ movers }: { movers: GolfMover[] }) {
       <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 md:mx-0 md:px-0">
         {movers.map((mover, i) => {
           const isUp = mover.movement_24h > 0;
-          const pct = Math.round(mover.probability * 100);
+          // `delta` is a MOVEMENT in points, not a probability — the floor does
+          // not apply to it and it is left exactly as it was (UX-P048 owns that
+          // conversion class separately).
           const delta = Math.abs(Math.round(mover.movement_24h * 100));
 
           return (
@@ -879,7 +886,7 @@ function MoversStrip({ movers }: { movers: GolfMover[] }) {
                   {mover.tournament_name}
                 </span>
                 <span className="text-xs font-mono text-text-secondary">
-                  {pct}%
+                  {formatProbability(mover.probability)}
                 </span>
               </div>
             </div>
@@ -890,181 +897,6 @@ function MoversStrip({ movers }: { movers: GolfMover[] }) {
   );
 }
 
-// ============================================================================
-// Movement Badge
-// ============================================================================
-
-function MovementBadge({ movement }: { movement: number | null }) {
-  if (movement === null || Math.abs(movement) < 0.005) return null;
-  const isUp = movement > 0;
-  const delta = Math.abs(Math.round(movement * 100));
-  return (
-    <span
-      className={`text-[10px] font-medium px-1 py-0.5 rounded ${
-        isUp
-          ? "text-green-400 bg-green-400/10"
-          : "text-red-400 bg-red-400/10"
-      }`}
-    >
-      {isUp ? "\u25B2" : "\u25BC"}
-      {delta}%
-    </span>
-  );
-}
-
-// ============================================================================
-// Golfer Row
-// ============================================================================
-
-function GolferRow({
-  golfer,
-  tournamentKey,
-  showSourceBreakdown,
-}: {
-  golfer: GolfGolfer;
-  tournamentKey: string;
-  showSourceBreakdown?: boolean;
-}) {
-  const pct = Math.round(golfer.probability * 100);
-  const barWidth = Math.max(pct, 2);
-  const isLeader = golfer.rank === 1;
-  const sourceCount = Object.keys(golfer.sources).length;
-
-  // Compute model-vs-market divergence
-  const modelProb = golfer.sources["datagolf_model"];
-  const marketProbs = Object.entries(golfer.sources)
-    .filter(([k]) => SOURCE_META[k]?.type === "market")
-    .map(([, v]) => v);
-  const avgMarketProb =
-    marketProbs.length > 0
-      ? marketProbs.reduce((a, b) => a + b, 0) / marketProbs.length
-      : null;
-  const divergence =
-    modelProb != null && avgMarketProb != null
-      ? modelProb - avgMarketProb
-      : null;
-  const hasDivergence = divergence != null && Math.abs(divergence) > 0.03;
-
-  return (
-    <div>
-      <div className="flex items-center gap-2">
-        <span
-          className={`text-xs font-mono w-5 text-right ${
-            isLeader ? "text-[#006747] font-bold" : "text-text-muted"
-          }`}
-        >
-          {golfer.rank}
-        </span>
-        <span
-          className={`text-sm flex-1 truncate ${
-            isLeader ? "text-text-primary font-medium" : "text-text-secondary"
-          }`}
-        >
-          {golfer.name}
-        </span>
-        {hasDivergence && (
-          <span
-            className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-              divergence! > 0
-                ? "bg-amber-500/15 text-amber-400"
-                : "bg-blue-500/15 text-blue-400"
-            }`}
-            title={`DataGolf model ${divergence! > 0 ? "higher" : "lower"} than market consensus by ${Math.round(Math.abs(divergence!) * 100)}%`}
-          >
-            {divergence! > 0 ? "Model +" : "Model "}
-            {Math.round(divergence! * 100)}%
-          </span>
-        )}
-        <MovementBadge movement={golfer.movement_24h} />
-        <span className="text-sm font-mono text-text-primary w-10 text-right">
-          {pct}%
-        </span>
-        {sourceCount > 1 && (
-          <SourceDots sources={golfer.sources} />
-        )}
-      </div>
-      <div className="ml-7 mr-16 mt-0.5 mb-0.5">
-        <div className="h-1 bg-surface-elevated rounded-full overflow-hidden">
-          <div
-            className="h-full rounded-full transition-all"
-            style={{
-              width: `${barWidth}%`,
-              backgroundColor: isLeader ? "#006747" : "#2d8659",
-              opacity: isLeader ? 1 : 0.6,
-            }}
-          />
-        </div>
-      </div>
-      {showSourceBreakdown && sourceCount > 1 && (
-        <div className="ml-7 mb-1 flex flex-wrap gap-x-3 gap-y-0.5">
-          {Object.entries(golfer.sources)
-            .sort(([, a], [, b]) => b - a)
-            .map(([source, prob]) => {
-              const meta = SOURCE_META[source];
-              return (
-                <span key={source} className="text-[10px] text-text-muted">
-                  {source === "odds_api"
-                    ? "Sportsbooks"
-                    : source === "kalshi"
-                      ? "Kalshi"
-                      : source === "polymarket"
-                        ? "Polymarket"
-                        : source === "datagolf_model"
-                          ? "DG Model"
-                          : source}
-                  {meta?.type === "model" && (
-                    <span className="ml-0.5 text-amber-400/70 text-[9px]">M</span>
-                  )}
-                  : {Math.round(prob * 100)}%
-                </span>
-              );
-            })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
-// Source Dots
-// ============================================================================
-
-/** Source metadata: type (model vs market). Colors come from the one registry. */
-const SOURCE_META: Record<string, { color: string; type: "model" | "market" }> = {
-  odds_api: { color: sourceHex("odds_api"), type: "market" },
-  kalshi: { color: sourceHex("kalshi"), type: "market" },
-  polymarket: { color: sourceHex("polymarket"), type: "market" },
-  datagolf_model: { color: sourceHex("datagolf_model"), type: "model" },
-};
-
-const SOURCE_LABELS: Record<string, string> = {
-  odds_api: "Sportsbooks",
-  kalshi: "Kalshi",
-  polymarket: "Polymarket",
-  datagolf_model: "DG Model",
-};
-
-function SourceDots({ sources }: { sources: Record<string, number> }) {
-  return (
-    <div className="flex gap-1 items-center">
-      {Object.keys(sources).map((s) => {
-        const meta = SOURCE_META[s];
-        const label = SOURCE_LABELS[s] || s;
-        const pct = (sources[s] * 100).toFixed(1);
-        return (
-          <span
-            key={s}
-            title={`${label}: ${pct}%`}
-            className={`w-1.5 h-1.5 rounded-full inline-block cursor-help ${
-              meta?.type === "model" ? "ring-1 ring-amber-400/50" : ""
-            }`}
-            style={{ backgroundColor: meta?.color || "#6b7280" }}
-          />
-        );
-      })}
-    </div>
-  );
-}
 
 // (Local TournamentCard removed — using shared @/components/TournamentCard)
 
