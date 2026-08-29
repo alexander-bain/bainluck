@@ -1190,6 +1190,197 @@ async def _relink_collapsed_game_markets(session) -> int:
         return 0
 
 
+#: Hard cap on the Kalshi tennis rows pulled for segment reconciliation. The
+#: source+status+prefix filter already bounds this to the high hundreds
+#: (measured 2026-08-29: 706 open ATP/WTA rows); the cap is here so a Kalshi
+#: series explosion cannot turn a bounded scan into an unbounded one.
+MAX_KALSHI_SEGMENT_ROWS = 5000
+
+#: A `commence_time_source` of this value means the time was DERIVED FROM THE
+#: TICKER because nothing better existed — an auto-created row, midnight UTC,
+#: with names parsed out of a market title ("Wu" / "Walton"). Any other non-null
+#: provenance means the event came from a real schedule (`odds_api`, `espn`,
+#: `statpal`), which is what the draw register and the tournament page point at.
+_TICKER_DERIVED_COMMENCE_SOURCE = "kalshi_ticker"
+
+
+def _choose_segment_event(event_ids, provenance: dict) -> tuple:
+    """Pick the ONE event a tennis match segment's markets should all sit on.
+
+    Returns ``(event_id, reason)``; ``event_id`` is ``None`` when the choice is
+    ambiguous, in which case nothing moves and the reason is counted.
+
+    * One candidate → it wins, and nothing is moved off anything.
+    * Several candidates → the one whose ``commence_time_source`` is NOT
+      ticker-derived wins, because that row came from a real schedule and is the
+      row the draw register and the event page already point at. This is the
+      whole rule: a Kalshi auto-create is the duplicate, never the survivor.
+    * Several candidates and none (or more than one) schedule-derived → REFUSE.
+      Two ticker-derived twins are indistinguishable on evidence, and picking by
+      row order would be a coin flip dressed as a reconciliation.
+    """
+    ids = sorted({int(e) for e in event_ids if e})
+    if not ids:
+        return None, "no_anchor"
+    if len(ids) == 1:
+        return ids[0], "single"
+    scheduled = [
+        eid for eid in ids
+        if provenance.get(eid) not in (None, _TICKER_DERIVED_COMMENCE_SOURCE)
+    ]
+    if len(scheduled) == 1:
+        return scheduled[0], "schedule_derived"
+    return None, "ambiguous"
+
+
+async def _reconcile_kalshi_match_segments(session) -> dict:
+    """Q435: every market on ONE Kalshi tennis match resolves to ONE event.
+
+    ═══ THE BUG THIS CLOSES ═══
+
+    Kalshi prices a tennis match through several of its OWN events, one per
+    series, all carrying the same match segment in the ticker. Our matcher
+    treats each as an independent game market, so they scatter. Measured on
+    production 2026-08-29, `KXATPMATCH-26AUG30BUBWOL` and its four siblings:
+
+        KXATPMATCH-26AUG30BUBWOL       -> event 15293809  (odds_api, 15:00Z)
+        KXATPSETWINNER-…BUBWOL-1/2/3   -> event 15295024  (kalshi_ticker, 00:00Z)
+        KXATPEXACTMATCH-…BUBWOL        -> event 15295024
+        KXATPGTOTAL-…BUBWOL-T22        -> (nothing)
+
+    The US Open draw register pins 15293809, so `/api/events/15293809/game-
+    markets` returned the winner and NOTHING ELSE, while the four props rendered
+    perfectly on 15295024 — an event page with no route to it. The page was not
+    missing the data. It was pointed at the wrong one of two rows for one match.
+
+    ═══ WHY THIS IS ID-ANCHORED AND NOT A LOOSENING ═══
+
+    `kalshi_match_segment_key` READS Kalshi's own event segment out of the
+    ticker: same source, same key, parsed (ruling 048 arm A). No name is
+    compared, no time window is opened, and no event row is absorbed into
+    another — the twin survives, it simply stops holding markets that belong to
+    the match the register named. That is exactly the "id-keyed reconciliation
+    drains the duplicate" clause, executed.
+
+    Two operations, both idempotent and write-on-change:
+
+    * **ADOPT** — a market with no event joins the one its own segment already
+      resolved to. Purely additive; nothing is unlinked.
+    * **CONVERGE** — a segment spanning two events moves onto the
+      schedule-derived one (see `_choose_segment_event`). Refuses when the
+      choice is not forced.
+
+    Only `event_id` moves. `is_winner`, `calibration_probability` and every
+    `futures_outcomes` column are untouched (gotcha #21): the settlements were
+    always right, only the link was wrong. `commence_time` is deliberately NOT
+    rewritten either — unlike #944's relink these markets keep Kalshi's own
+    close time, which the rest of the pipeline already reads as such (gotcha
+    #14).
+    """
+    from app.models.models import FuturesMarket, Event
+    from app.utils.prediction_market_matching import kalshi_match_segment_key
+
+    stats = {
+        "candidates": 0, "segments": 0, "adopted": 0,
+        "converged": 0, "ambiguous": 0, "no_anchor": 0,
+    }
+    try:
+        rows = (
+            await session.execute(
+                select(
+                    FuturesMarket.id,
+                    FuturesMarket.external_id,
+                    FuturesMarket.event_id,
+                )
+                .where(
+                    FuturesMarket.source == "kalshi",
+                    FuturesMarket.status == "open",
+                    or_(
+                        FuturesMarket.external_id.like("KXATP%"),
+                        FuturesMarket.external_id.like("KXWTA%"),
+                    ),
+                )
+                .order_by(FuturesMarket.id)
+                .limit(MAX_KALSHI_SEGMENT_ROWS)
+            )
+        ).all()
+        stats["candidates"] = len(rows)
+
+        # ONE definition of "same match" — the pure helper, in Python. Writing
+        # the segment split a second time in SQL is how the two drift.
+        segments: dict[str, list] = {}
+        for row in rows:
+            key = kalshi_match_segment_key(row.external_id)
+            if key:
+                segments.setdefault(key, []).append(row)
+        stats["segments"] = len(segments)
+        if not segments:
+            return stats
+
+        # Provenance for every candidate event, in one bounded read.
+        candidate_event_ids = {
+            int(r.event_id)
+            for members in segments.values() for r in members if r.event_id
+        }
+        provenance: dict[int, str] = {}
+        sport_ids: dict[int, int] = {}
+        if candidate_event_ids:
+            for eid, src, sport_id in (
+                await session.execute(
+                    select(Event.id, Event.commence_time_source, Event.sport_id)
+                    .where(Event.id.in_(candidate_event_ids))
+                )
+            ).all():
+                provenance[int(eid)] = src
+                if sport_id:
+                    sport_ids[int(eid)] = int(sport_id)
+
+        moves: dict[int, list[int]] = {}
+        for members in segments.values():
+            target, reason = _choose_segment_event(
+                [r.event_id for r in members], provenance,
+            )
+            if target is None:
+                stats["ambiguous" if reason == "ambiguous" else "no_anchor"] += 1
+                continue
+            for row in members:
+                if row.event_id == target:
+                    continue
+                moves.setdefault(target, []).append(row.id)
+                stats["adopted" if row.event_id is None else "converged"] += 1
+
+        for target, market_ids in moves.items():
+            # `sport_id` rides the link, exactly as `_set_market_sport_fields`
+            # does on a fresh one: a market pointing at event X while tagged
+            # with the twin's sport row is the same split-brain one column down.
+            values = {"event_id": target, "updated_at": func.now()}
+            if target in sport_ids:
+                values["sport_id"] = sport_ids[target]
+            await session.execute(
+                update(FuturesMarket)
+                .where(FuturesMarket.id.in_(market_ids))
+                .values(**values)
+            )
+        if moves:
+            await session.commit()
+            logger.info(
+                "Kalshi match-segment reconcile (Q435): %d adopted, %d converged "
+                "across %d segments (%d ambiguous, %d without an anchor)",
+                stats["adopted"], stats["converged"], stats["segments"],
+                stats["ambiguous"], stats["no_anchor"],
+            )
+        return stats
+    except Exception as e:
+        logger.error("Kalshi match-segment reconcile error: %s", e)
+        # Same posture as #944's relink: an aborted transaction must not poison
+        # the shared session for the caller's next phase.
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        return stats
+
+
 async def _phase15_revalidate(
     session, stats: dict, now: datetime, _time_remaining,
 ) -> None:
@@ -1466,6 +1657,13 @@ async def _match_prediction_markets(limit: int = 500):
         # event (commence_time = resolution date). Idempotent + write-on-change,
         # so this is both the forward-fix and the one-shot historical relink.
         stats["funnel"]["game_markets_relinked"] = await _relink_collapsed_game_markets(session)
+
+        # Q435: converge every market on one Kalshi tennis match onto one event.
+        # Runs AFTER the relink so a market this run has just moved to its
+        # correct-date event is already where its segment siblings can see it.
+        stats["funnel"]["kalshi_segment_reconcile"] = (
+            await _reconcile_kalshi_match_segments(session)
+        )
 
         # ── Phase 2: Write win_prob_snapshots for active linked markets ────
         #
@@ -2306,6 +2504,21 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     )
 
     if not matchup or not matchup.team_a:
+        return None
+
+    # Q435: a PROP about a tennis match may not invent the match. This is the
+    # writer that produced event 15295024 — a second row for Bublik v Wolf,
+    # created by a set-winner market while the register's own event already
+    # existed — and every prop that followed rendered on the twin. The prop is
+    # not absorbed anywhere; it waits for its match segment to resolve.
+    from app.utils.prediction_market_matching import is_kalshi_tennis_prop_ticker
+
+    if market.source == "kalshi" and is_kalshi_tennis_prop_ticker(market.external_id):
+        logger.debug(
+            "Refusing auto-create from tennis prop %s (Q435) — a prop is not "
+            "evidence that a match exists",
+            market.external_id,
+        )
         return None
 
     # Clean team names: strip sport name prefixes ("Ice Hockey USA" → "USA")
