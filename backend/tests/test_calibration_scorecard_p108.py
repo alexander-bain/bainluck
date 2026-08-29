@@ -18,13 +18,19 @@ import pytest
 
 from scripts.calibration_scorecard import (
     BAR_PP,
+    CLASS_A,
+    CLASS_B,
+    CLASS_BARS_PP,
+    CLASS_C,
     MIN_CELL_N,
     SIGMA_GATE,
     VERDICT_EXEMPT,
     VERDICT_PASS,
     VERDICT_QUEUED,
     VERDICT_UNDER_SIGMA,
+    bar_for,
     fold,
+    needle,
     record,
     score,
     self_check,
@@ -160,6 +166,109 @@ class TestVerdicts:
         assert cell["excess_outcomes"] == pytest.approx(2.0 * 50_000, rel=0.02)
 
 
+class TestTheBarIsPerCohort:
+    """CAL-P115 — Alex ratified A 2.5 / B 3.0 / C 3.0 by MC on 2026-08-28, and
+    this is where the ratification is actually LIVE. ``score()`` is what renders
+    the page, so a test that only exercises the side-by-side renderer in
+    ``calibration_threshold_table.py`` would have stayed green through the whole
+    day this repo spent ratified-in-prose and rendering the old bar.
+    """
+
+    def _score_one(self, source, category, n, ece_pp):
+        winners = int(round(n * (0.5 - ece_pp / 100)))
+        return score(
+            {
+                "buckets": [_bucket(source, category, 5, n, winners, 0.50)],
+                "mce_closing_line": 1.0,
+            }
+        )["cells"][0]
+
+    def test_the_ratified_bars_are_the_numbers_alex_ruled(self):
+        """A ratified threshold a lane can move without a second MC is not
+        ratified. Changing one requires deleting this line."""
+        assert CLASS_BARS_PP == {CLASS_A: 2.5, CLASS_B: 3.0, CLASS_C: 3.0}
+
+    def test_bar_for_is_structural_not_numeric(self):
+        # odds_api* is class A whatever the sport — the class is about how the
+        # PRICE is formed, so a cell can never drift class as its numbers move.
+        assert bar_for("odds_api_bookmaker", "icehockey_nhl") == 2.5
+        assert bar_for("odds_api_totals", "baseball_mlb") == 2.5
+        assert bar_for("kalshi", "football") == BAR_PP        # exchange, contest
+        assert bar_for("polymarket", "politics") == BAR_PP    # exchange, standalone
+
+    def test_the_same_ece_is_queued_in_class_A_and_passes_in_class_C(self):
+        """RED-first, and the whole decision in two rows.
+
+        2.8 pp sits BETWEEN the two bars: +0.3 over class A, −0.2 under the
+        reader bar. n is 150,000 because the sigma gate is not suspended for
+        this test — a 0.3 pp excess only clears 2σ at that size (2.32σ), and a
+        specimen that failed the gate instead of the bar would prove nothing
+        about which bar was applied. If these two ever return the same verdict,
+        the ratification has been un-wired and the page is back to a flat bar
+        under a per-cohort headline."""
+        a = self._score_one("odds_api_bookmaker", "icehockey_nhl", 150_000, 2.8)
+        c = self._score_one("polymarket", "politics", 150_000, 2.8)
+        assert a["bar_pp"] == 2.5 and a["verdict"] == VERDICT_QUEUED
+        assert c["bar_pp"] == 3.0 and c["verdict"] == VERDICT_PASS
+
+    def test_each_cell_carries_the_bar_that_judged_it(self):
+        """A queued row that prints only its excess cannot be checked without
+        knowing which of three bars produced it."""
+        cell = self._score_one("odds_api", "basketball_nba", 50_000, 5.0)
+        assert cell["class"] == CLASS_A
+        assert cell["bar_pp"] == 2.5
+        assert cell["excess_pp"] == pytest.approx(2.5, abs=0.05)
+
+    def test_thresholds_no_longer_publish_a_single_bar_pp(self):
+        """Removed rather than repointed. A consumer still reading
+        ``thresholds['bar_pp']`` would now be reading one of three bars as
+        though it were the bar — a silently-wrong threshold, where a KeyError
+        is a story someone has to read (gotcha #53)."""
+        thresholds = score(
+            {"buckets": CANCELLING_BUCKETS, "mce_closing_line": 1.0}
+        )["thresholds"]
+        assert "bar_pp" not in thresholds
+        assert thresholds["class_bars_pp"] == CLASS_BARS_PP
+        assert thresholds["reader_bar_pp"] == BAR_PP
+
+    def test_cells_at_bar_is_material_minus_queued(self):
+        """The NEEDLE numerator and the DONE verdict must come off the same
+        count, or Fable copies a number the page disagrees with."""
+        result = score(
+            {
+                # 2.8 pp each — between the two bars, at 2.32 sigma.
+                "buckets": [
+                    _bucket("odds_api_bookmaker", "icehockey_nhl", 5, 150_000, 70_800, 0.50),
+                    _bucket("polymarket", "politics", 5, 150_000, 70_800, 0.50),
+                ],
+                "mce_closing_line": 1.0,
+            }
+        )
+        c = result["counts"]
+        assert c["cells_material"] == 2
+        assert c["cells_queued"] == 1
+        assert c["cells_at_bar"] == 1
+        assert needle(result).startswith("NEEDLE: calibration 1/2 cells-at-bar @ ")
+
+    def test_per_class_breakdown_partitions_the_material_cells(self):
+        result = score(
+            {
+                "buckets": [
+                    _bucket("odds_api", "basketball_nba", 5, 20_000, 9_500, 0.50),
+                    _bucket("kalshi", "football", 5, 20_000, 9_500, 0.50),
+                    _bucket("kalshi", "tech", 5, 20_000, 9_500, 0.50),
+                    _bucket("kalshi", "tiny", 5, 100, 47, 0.50),  # exempt
+                ],
+                "mce_closing_line": 1.0,
+            }
+        )
+        per_class = result["per_class"]
+        assert sum(p["cells"] for p in per_class.values()) == 3
+        assert sum(p["at_bar"] + p["queued"] for p in per_class.values()) == 3
+        assert per_class[CLASS_A]["bar_pp"] == 2.5
+        assert per_class[CLASS_A]["outcomes"] == 20_000
+
+
 class TestDoneVerdict:
     def test_not_done_while_a_cell_is_queued(self):
         result = score(
@@ -222,6 +331,63 @@ class TestHistoryCannotFakeATrend:
         record(self._result("2026-08-27T16:33:50Z"), path)
         assert record(self._result("2026-08-27T17:33:50Z"), path) == "recorded"
         assert len(path.read_text().strip().splitlines()) == 2
+
+    def test_the_same_curve_at_a_NEW_bar_banks_a_new_point(self, tmp_path):
+        """The one case the stall guard must NOT swallow.
+
+        2026-08-28's `20:37Z` curve was banked at the flat 3.0 pp bar hours
+        before Alex's ratification was wired. Keyed on the curve alone, the
+        ratified re-score of that same curve — the needle series' FIRST point —
+        would have been silently refused as a duplicate, and the series would
+        have opened at a number nothing in the file could explain."""
+        path = tmp_path / "history.jsonl"
+        flat = self._result("2026-08-28T20:37:41Z")
+        flat["thresholds"] = dict(flat["thresholds"], class_bars_pp={
+            CLASS_A: 3.0, CLASS_B: 3.0, CLASS_C: 3.0
+        })
+        assert record(flat, path) == "recorded"
+        assert record(self._result("2026-08-28T20:37:41Z"), path) == "recorded"
+        assert len(path.read_text().strip().splitlines()) == 2
+        # ...and the stall guard is untouched: same curve AND same bars.
+        assert (
+            record(self._result("2026-08-28T20:37:41Z"), path)
+            == "duplicate_curve_generated_at"
+        )
+
+    def test_a_pre_ratification_line_is_keyed_as_the_flat_bar_it_used(self, tmp_path):
+        """The six points already in ``history.jsonl`` carry no ``thresholds``
+        key — they predate it. They must read as the flat bar they were actually
+        scored against, so a ratified re-score of the same curve is a new point
+        and a flat re-score of it is still a duplicate."""
+        path = tmp_path / "history.jsonl"
+        path.write_text(
+            json.dumps({
+                "generated_at": "2026-08-27T16:33:50Z",
+                "counts": {"cells_material": 49, "cells_queued": 19},
+            })
+            + "\n"
+        )
+        # ratified re-score of that curve: a NEW reading, banked
+        assert record(self._result("2026-08-27T16:33:50Z"), path) == "recorded"
+        # a FLAT re-score of it is still the stalled-producer duplicate
+        flat = self._result("2026-08-27T16:33:50Z")
+        flat["thresholds"] = dict(flat["thresholds"], class_bars_pp={
+            CLASS_A: 3.0, CLASS_B: 3.0, CLASS_C: 3.0
+        })
+        assert record(flat, path) == "duplicate_curve_generated_at"
+
+    def test_banked_point_says_which_bar_scored_it(self, tmp_path):
+        """The series changes DEFINITION on 2026-08-28: points before the
+        ratification were scored at a flat 3.0, points after at 2.5/3.0/3.0.
+
+        A trend line drawn across a threshold change that its own datapoints
+        cannot describe is a chart lying about its units — the same failure as
+        the wall-clock keying above, one level up."""
+        path = tmp_path / "history.jsonl"
+        record(self._result("2026-08-28T20:37:41Z"), path)
+        banked = json.loads(path.read_text().strip())
+        assert banked["thresholds"]["class_bars_pp"] == CLASS_BARS_PP
+        assert banked["counts"]["cells_at_bar"] is not None
 
     def test_banked_point_carries_material_cells_only(self, tmp_path):
         path = tmp_path / "history.jsonl"

@@ -1,0 +1,79 @@
+{
+  "by_class": {
+    "bundle_multiwin": {
+      "ece": 12.68,
+      "gap": -11.32,
+      "n": 958
+    },
+    "field_1win": {
+      "ece": 4.41,
+      "gap": 3.77,
+      "n": 199
+    },
+    "single": {
+      "ece": 24.21,
+      "gap": -24.21,
+      "n": 50
+    },
+    "void_0win": {
+      "ece": 34.73,
+      "gap": 34.73,
+      "n": 11
+    }
+  },
+  "category": "tech",
+  "replica": {
+    "ece": 10.75,
+    "gap": -8.97,
+    "n": 1218
+  },
+  "rules": {
+    "bundle_multiwin": {
+      "NEW": {
+        "after": {
+          "ece": 7.8,
+          "gap": 0.54,
+          "n": 110
+        },
+        "before": {
+          "ece": 11.14,
+          "gap": -7.53,
+          "n": 472
+        },
+        "dropped": {
+          "ece": 13.57,
+          "gap": -9.98,
+          "n": 362
+        }
+      },
+      "OLD": {
+        "after": {
+          "ece": 5.24,
+          "gap": -0.91,
+          "n": 150
+        },
+        "before": {
+          "ece": 11.81,
+          "gap": -9.87,
+          "n": 746
+        },
+        "dropped": {
+          "ece": 13.55,
+          "gap": -12.13,
+          "n": 596
+        }
+      },
+      "dropped": {
+        "ece": 12.68,
+        "gap": -11.32,
+        "n": 958
+      },
+      "kept": {
+        "ece": 3.8,
+        "gap": -0.3,
+        "n": 260
+      }
+    }
+  },
+  "source": "kalshi"
+}

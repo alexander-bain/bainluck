@@ -54,9 +54,16 @@ the same run.
 
 WHAT "DONE" MEANS — thresholds are declared here, in code, once
 -----------------------------------------------------------------
-See :data:`BAR_PP`, :data:`MIN_CELL_N`, :data:`SIGMA_GATE`. Each carries its
-derivation. They are proposals for Alex to ratify; changing one is a one-line
-change here and the scorecard re-renders.
+See :data:`CLASS_BARS_PP`, :data:`MIN_CELL_N`, :data:`SIGMA_GATE`. Each carries
+its derivation. Alex ratified the per-cohort bar by MC on 2026-08-28 (A 2.5 pp /
+B 3.0 pp / C 3.0 pp); changing one is a one-line change here and the scorecard
+re-renders.
+
+Ratification added a clause that no script can evaluate and this one therefore
+does not pretend to: at 49/49, **Alex eyeballs the calibration page and confirms
+it is up to standard**, and his sign-off is the final gate. ``done`` below is the
+MEASURED half of that conjunction, which is why it is named ``done`` and not
+``fixed``.
 
 Usage::
 
@@ -65,10 +72,12 @@ Usage::
     python3 backend/scripts/calibration_scorecard.py --live --markdown
 
 ``--record`` appends the run to ``artifacts/calibration-scorecard/history.jsonl``,
-keyed on the payload's own ``generated_at``. Re-running against a STALE payload
-(the producer has been stalling — see ``producer.stalled``) therefore cannot
-mint a second datapoint for the same curve, which would otherwise draw a
-flat trend line out of one measurement repeated.
+keyed on ``(the payload's own generated_at, the class bars it was scored at)``.
+Re-running against a STALE payload (the producer has been stalling — see
+``producer.stalled``) therefore cannot mint a second datapoint for the same
+curve at the same bars, which would otherwise draw a flat trend line out of one
+measurement repeated. A re-score of the same curve at a DIFFERENT finish line
+is a different reading and does bank — see :func:`_point_key`.
 """
 
 from __future__ import annotations
@@ -87,7 +96,8 @@ from typing import Iterable
 # THE FINISH LINE. Three numbers, each derived rather than chosen.
 # --------------------------------------------------------------------------
 
-#: Per-cell published ECE bar, in percentage points.
+#: The READER-ACTIONABILITY bar, in percentage points — the default every class
+#: gets, and the bar classes B and C actually carry.
 #:
 #: 3.0 pp is the bar the calibration program has already been ranking against
 #: for four weeks (``SUBCOHORT_DIAGNOSIS.md`` ranks on ``n x (ece - 3)``), so
@@ -97,7 +107,87 @@ from typing import Iterable
 #: It is also defensible on its own: a 3 pp error means a market we publish at
 #: 60% comes in between 57% and 63%, which is inside the width a reader can
 #: reasonably act on. Below that the number is not what is wrong with the page.
+#:
+#: **This is no longer the whole finish line.** Until 2026-08-28 it was the flat
+#: bar for every cell; Alex's ratification of :data:`CLASS_BARS_PP` holds class A
+#: tighter. It is kept under its own name for three reasons: it is still the bar
+#: two of the three classes carry, it is the ceiling no class may exceed (see
+#: ``test_no_class_is_looser_than_the_reader_bar``), and it is the INCUMBENT the
+#: threshold table renders the ratification against, so the one-cell cost of the
+#: decision stays reproducible instead of becoming a claim about a deleted
+#: constant.
 BAR_PP = 3.0
+
+# --------------------------------------------------------------------------
+# THE PER-COHORT BAR — ratified by Alex, MC, 2026-08-28 ~1:15pm PT.
+#
+# Class assignment is STRUCTURAL — it is about how the PRICE IS FORMED — and is
+# decided by ``(source, category)`` alone, so a cell can never drift between
+# classes as its numbers move. The derivation is deliberately EXTERNAL to
+# today's measurement: the obvious alternative, "the bar is the class's 25th
+# percentile", is circular, because the bar then moves every time a cell
+# improves and the program can never arrive.
+#
+# Full argument and side-by-side: ``artifacts/cal-p112/THRESHOLD-TABLE-PROPOSAL.md``
+# and section 1b of ``CALIBRATION-SCORECARD.md``. Re-render the classes with
+# ``python3 backend/scripts/calibration_threshold_table.py --live --markdown``.
+# --------------------------------------------------------------------------
+
+#: Categories that are a scheduled contest with a fixed, near-term settlement.
+#: Used only to split EXCHANGE cells into B and C; ``odds_api*`` is class A
+#: whatever its category, because the class is about the price, not the sport.
+GAME_CATEGORIES: frozenset[str] = frozenset({
+    "baseball", "basketball", "soccer", "hockey", "football", "tennis", "golf",
+    "cricket", "esports", "mma", "motorsports", "table_tennis", "boxing",
+    "cycling", "horse_racing", "lacrosse", "rugby", "chess",
+})
+
+CLASS_A = "A_multibook_consensus"
+CLASS_B = "B_exchange_contest"
+CLASS_C = "C_exchange_standalone"
+
+#: RATIFIED per-cohort bars, pp (Alex, MC, 2026-08-28). Only class A departs
+#: from the reader bar, and only for a structural reason — see CLASS_RATIONALE.
+CLASS_BARS_PP: dict[str, float] = {
+    CLASS_A: 2.5,
+    CLASS_B: BAR_PP,
+    CLASS_C: BAR_PP,
+}
+
+CLASS_RATIONALE: dict[str, str] = {
+    CLASS_A: (
+        "Devigged consensus of many bookmakers. The published price is an "
+        "average of independent estimates, so its idiosyncratic quoting error "
+        "is structurally smaller than a single order book's — the one external "
+        "reason to hold a class tighter than reader-actionability requires. "
+        "These cells also carry the game cards, the most-read surface."
+    ),
+    CLASS_B: (
+        "Single-venue exchange price on a scheduled contest. Real order book, "
+        "near-term settlement, no averaging across venues. Reader "
+        "actionability sets the bar and nothing about the class earns a "
+        "departure from it."
+    ),
+    CLASS_C: (
+        "Single-venue exchange price on a standalone or long-horizon question. "
+        "Thin books and distant settlement raise the VARIANCE of a cell's "
+        "estimate, which the sigma gate already prices; they do not license a "
+        "larger BIAS. The class's own cells prove 3.0 pp reachable — "
+        "polymarket/weather 1.64 pp, kalshi/politics 2.12 pp on the 2026-08-28 20:37Z curve."
+    ),
+}
+
+
+def classify(source: str, category: str) -> str:
+    """The cohort class of a published cell. Structural, never numeric."""
+    if (source or "").startswith("odds_api"):
+        return CLASS_A
+    return CLASS_B if category in GAME_CATEGORIES else CLASS_C
+
+
+def bar_for(source: str, category: str) -> float:
+    """The ratified bar this cell is scored against, in pp."""
+    return CLASS_BARS_PP[classify(source, category)]
 
 #: Cells smaller than this are MATERIAL-EXEMPT: measured, listed, never queued.
 #:
@@ -120,9 +210,10 @@ MIN_CELL_N = 1000
 #: queue that was really a 6-item one. Chasing a point estimate that the sample
 #: cannot distinguish from the bar burns a cycle per cell and moves nothing.
 #:
-#: 2.0 sigma is the conventional two-sided 95% threshold, and on this payload it
-#: cuts the material over-bar list from 30 cells to 19 — so it is doing real
-#: work, not decorating the table.
+#: 2.0 sigma is the conventional two-sided 95% threshold, and on the 2026-08-28
+#: `20:37Z` payload it cuts the material over-bar list from 32 cells to 20 at the
+#: ratified bars (30 to 19 at the pre-ratification flat bar) — so it is doing
+#: real work, not decorating the table.
 SIGMA_GATE = 2.0
 
 #: Standard error of a cell's ECE in pp, as a function of n.
@@ -290,7 +381,9 @@ def score(payload: dict) -> dict:
         n, ece = c["n"], c["ece"]
         if ece is None:
             continue
-        excess = round(ece - BAR_PP, 2)
+        klass = classify(c["source"], c["category"])
+        bar = CLASS_BARS_PP[klass]
+        excess = round(ece - bar, 2)
         se = cell_se_pp(n)
         sigma = round(excess / se, 2) if se else None
         if n < MIN_CELL_N:
@@ -309,6 +402,13 @@ def score(payload: dict) -> dict:
                 "ece": ece,
                 "n": n,
                 "gap": c["gap"],
+                # The bar travels WITH the cell. A queued row that prints only
+                # its excess cannot be checked without knowing which of three
+                # bars produced it, and the whole class of failure this
+                # ratification is guarding against is a threshold that has
+                # quietly moved out from under a published number.
+                "class": klass,
+                "bar_pp": bar,
                 "excess_pp": excess,
                 "sigma": sigma,
                 # Excess-outcomes: how much wrongness this cell puts in front of
@@ -339,8 +439,13 @@ def score(payload: dict) -> dict:
         "availability": payload.get("availability"),
         "producer_stalled": (payload.get("producer") or {}).get("stalled"),
         "producer_beats_missed": (payload.get("producer") or {}).get("beats_missed"),
+        # `bar_pp` is deliberately ABSENT and not renamed in place: until the
+        # 2026-08-28 ratification this key held THE bar, and a consumer that
+        # keeps reading it would now be reading one of three. A KeyError is a
+        # story; a silently-wrong threshold is gotcha #53.
         "thresholds": {
-            "bar_pp": BAR_PP,
+            "class_bars_pp": dict(CLASS_BARS_PP),
+            "reader_bar_pp": BAR_PP,
             "min_cell_n": MIN_CELL_N,
             "sigma_gate": SIGMA_GATE,
             "headline_target_pp": HEADLINE_TARGET_PP,
@@ -354,7 +459,31 @@ def score(payload: dict) -> dict:
             "cells_unestablished": len(unestablished),
             "cells_exempt": len(cells) - len(material),
             "queued_excess_outcomes": sum(c["excess_outcomes"] for c in queued),
+            # The NEEDLE numerator. A material cell is "at bar" iff it is not
+            # queued — which is the same test `done` applies, so the lane's one
+            # glanceable number and this page's verdict can never disagree.
+            "cells_at_bar": len(material) - len(queued),
         },
+        "per_class": {
+            klass: {
+                "bar_pp": CLASS_BARS_PP[klass],
+                "cells": sum(1 for c in material if c["class"] == klass),
+                "at_bar": sum(
+                    1
+                    for c in material
+                    if c["class"] == klass and c["verdict"] != VERDICT_QUEUED
+                ),
+                "queued": sum(
+                    1
+                    for c in material
+                    if c["class"] == klass and c["verdict"] == VERDICT_QUEUED
+                ),
+                "outcomes": sum(c["n"] for c in material if c["class"] == klass),
+            }
+            for klass in CLASS_BARS_PP
+        },
+        # The MEASURED half of FIXED. The other half is Alex's eyeball on the
+        # page at 49/49 (ratification, 2026-08-28) and no script can assert it.
         "done": len(queued) == 0
         and headline is not None
         and headline <= HEADLINE_TARGET_PP,
@@ -362,25 +491,62 @@ def score(payload: dict) -> dict:
     }
 
 
+def needle(result: dict) -> str:
+    """The lane's ONE number, per ``.claude/handoff/NEEDLE-SPEC.md``.
+
+    Lives here rather than in the threshold table because the scorecard is the
+    live instrument: a needle emitted by a side-by-side renderer could drift
+    from the page's own verdict, and this is the number Fable copies.
+    """
+    c = result["counts"]
+    return (
+        f"NEEDLE: calibration {c['cells_at_bar']}/{c['cells_material']} "
+        f"cells-at-bar @ {result['generated_at']}"
+    )
+
+
 # --------------------------------------------------------------------------
 # History
 # --------------------------------------------------------------------------
 
 
-def record(result: dict, path: Path) -> str:
-    """Append one datapoint, keyed on the payload's own ``generated_at``.
+def _point_key(point: dict) -> tuple:
+    """A datapoint's identity: the CURVE it measured and the BARS it used.
 
-    Dedup is on the CURVE's identity, not the run's clock, because the producer
-    stalls: on 2026-08-20 fourteen hourly samples all carried the same
-    ``generated_at`` (17:17:43Z). Keying on wall-clock would have drawn a
-    fourteen-point flat line out of one measurement — a trend chart that
-    invents stability from a frozen producer.
+    Not the wall clock, because the producer stalls: on 2026-08-20 fourteen
+    hourly samples all carried the same ``generated_at`` (17:17:43Z), and
+    keying on the clock would have drawn a fourteen-point flat line out of one
+    measurement.
+
+    The bars are in the key because a re-score of the same curve at a DIFFERENT
+    finish line is a different reading, not a repeat — which is exactly what
+    2026-08-28's `20:37Z` curve is, banked once at the flat 3.0 pp bar before
+    Alex's ratification was wired and once at 2.5/3.0/3.0 after. Keying on the
+    curve alone would have silently refused the ratified reading and left the
+    series' first needle point missing. The stall guard is untouched: same
+    curve AND same bars is still a duplicate.
+
+    Points banked before the ratification carry no ``thresholds`` key at all;
+    they are keyed as the flat bar they were actually scored against, never as
+    "unknown", so the pre-ratification history cannot collide with a re-score.
+    """
+    thresholds = point.get("thresholds") or {}
+    bars = thresholds.get("class_bars_pp")
+    if not bars:
+        bars = {k: BAR_PP for k in CLASS_BARS_PP}
+    return (point.get("generated_at"), tuple(sorted(bars.items())))
+
+
+def record(result: dict, path: Path) -> str:
+    """Append one datapoint, keyed on ``(generated_at, class bars)``.
+
+    See :func:`_point_key` for why the key is that pair and not the wall clock.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    key = result.get("generated_at")
+    key = _point_key(result)
     if path.exists():
         for line in path.read_text().splitlines():
-            if line.strip() and json.loads(line).get("generated_at") == key:
+            if line.strip() and _point_key(json.loads(line)) == key:
                 return "duplicate_curve_generated_at"
     point = {
         k: result[k]
@@ -391,6 +557,12 @@ def record(result: dict, path: Path) -> str:
             "headline_mce_closing_line",
             "availability",
             "producer_stalled",
+            # Banked with every point since the 2026-08-28 ratification, because
+            # the series changes DEFINITION on that date: points before it were
+            # scored at a flat 3.0 and points after at 2.5/3.0/3.0. A trend line
+            # across a threshold change that the datapoints cannot describe is a
+            # chart that lies about its own units.
+            "thresholds",
             "counts",
             "done",
         )
@@ -445,22 +617,47 @@ def render_markdown(result: dict, history: list[dict]) -> str:
         f"{result['producer_beats_missed']})"
     )
     c = result["counts"]
+    bars = result["thresholds"]["class_bars_pp"]
+    L.append(
+        f"- ratified per-cohort bars **A {bars[CLASS_A]} / B {bars[CLASS_B]} / "
+        f"C {bars[CLASS_C]} pp** (Alex, MC, 2026-08-28)"
+    )
     L.append(
         f"- **{c['cells_queued']} cells over bar and established** "
         f"({c['queued_excess_outcomes']:,} excess-outcomes) | "
         f"{c['cells_pass']} pass | {c['cells_unestablished']} over-bar-unestablished | "
         f"{c['cells_exempt']} exempt (n < {MIN_CELL_N})"
     )
-    L.append(f"- **DONE: {'YES' if result['done'] else 'NO'}**")
+    L.append(
+        f"- **cells at bar {c['cells_at_bar']}/{c['cells_material']}** — "
+        f"**DONE (measured): {'YES' if result['done'] else 'NO'}**"
+    )
+    L.append(
+        "- FIXED also requires **Alex's eyeball on the calibration page at "
+        f"{c['cells_material']}/{c['cells_material']}** — his sign-off is the "
+        "final gate, not the number alone."
+    )
     L.append("")
-    L.append("| # | cell | ECE pp | n | gap pp | excess pp | sigma | excess-outcomes |")
-    L.append("|--:|---|--:|--:|--:|--:|--:|--:|")
+    L.append("| class | bar pp | cells | at bar | queued | outcomes |")
+    L.append("|---|--:|--:|--:|--:|--:|")
+    for klass in (CLASS_A, CLASS_B, CLASS_C):
+        p = result["per_class"][klass]
+        L.append(
+            f"| `{klass}` | **{p['bar_pp']}** | {p['cells']} | {p['at_bar']} | "
+            f"{p['queued']} | {p['outcomes']:,} |"
+        )
+    L.append("")
+    L.append(
+        "| # | cell | class | ECE pp | n | gap pp | bar | excess pp | sigma | excess-outcomes |"
+    )
+    L.append("|--:|---|---|--:|--:|--:|--:|--:|--:|--:|")
     for i, cell in enumerate(
         [x for x in result["cells"] if x["verdict"] == VERDICT_QUEUED], 1
     ):
         L.append(
-            f"| {i} | `{cell['cell']}` | {cell['ece']:.2f} | {cell['n']:,} | "
-            f"{cell['gap']:+.2f} | {cell['excess_pp']:+.2f} | {cell['sigma']:.1f} | "
+            f"| {i} | `{cell['cell']}` | {cell['class'][0]} | {cell['ece']:.2f} | "
+            f"{cell['n']:,} | {cell['gap']:+.2f} | {cell['bar_pp']} | "
+            f"{cell['excess_pp']:+.2f} | {cell['sigma']:.1f} | "
             f"{cell['excess_outcomes']:,} |"
         )
     return "\n".join(L)
@@ -525,10 +722,14 @@ def main() -> int:
             [c for c in result["cells"] if c["verdict"] == VERDICT_QUEUED], 1
         ):
             print(
-                f"{i:3d}. {cell['cell']:42s} ece={cell['ece']:6.2f} n={cell['n']:>8,} "
-                f"gap={cell['gap']:+7.2f} sigma={cell['sigma']:6.1f} "
+                f"{i:3d}. {cell['cell']:42s} [{cell['class'][0]}] "
+                f"ece={cell['ece']:6.2f} n={cell['n']:>8,} "
+                f"gap={cell['gap']:+7.2f} bar={cell['bar_pp']:.1f} "
+                f"sigma={cell['sigma']:6.1f} "
                 f"excess-outcomes={cell['excess_outcomes']:>8,}"
             )
+    print()
+    print(needle(result))
     return 0
 
 
