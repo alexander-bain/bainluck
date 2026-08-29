@@ -486,39 +486,78 @@ def _build_movers_query(limit: int, *, pooled: bool):
     ).limit(limit)
 
 
-@router.get("/movers")
-async def get_futures_movers(
-    hours: int = Query(24, description="Timeframe for movement calculation"),
-    limit: int = Query(20, description="Number of movers to return"),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Get outcomes with biggest probability changes.
+#: The route's own write-through TTL, unchanged from LAT-P108. A reader that
+#: cold-builds keeps the answer for a minute; the WARMER (below) writes a longer
+#: one, and the two are deliberately different numbers — see
+#: `app/tasks/futures_movers_warm.py` for why a reader's TTL and a producer's
+#: are not the same question.
+MOVERS_ROUTE_TTL_SECONDS = 60
 
-    Useful for discovering betting line movement and market sentiment shifts.
+
+def movers_cache_key(hours: int, limit: int) -> str:
+    """The Redis key for one `(hours, limit)` shape. ONE minter, one format.
+
+    LAT-P115. The warmer writes the key the route reads, so the format cannot
+    live in two places: a producer that mints `movers:24:10` while the consumer
+    reads `movers:24:0010` warms nothing and reports success — gotcha #53's
+    shape, and the reason `hub_cache_keys` / `league_cache_keys` exist next door
+    rather than being re-spelled inside their refresh tasks.
+
+    `limit` is clamped by the CALLER before it reaches here, so this function is
+    a pure format and the clamp has exactly one home (`_clamp_movers_limit`).
+    """
+    return f"bainluck:movers:{hours}:{limit}"
+
+
+async def build_and_cache_movers(
+    hours: int,
+    limit: int,
+    db: AsyncSession,
+    redis=None,
+    *,
+    ttl: int = MOVERS_ROUTE_TTL_SECONDS,
+) -> dict:
+    """Build one movers payload and write it to its cache key. Never raises on Redis.
+
+    LAT-P115 extracted this from the route body so that `update_max_movement` —
+    the 10-minute task that WRITES the very column this answer is ranked by — can
+    publish the answer instead of leaving every reader to derive it.
+
+    🔴 THE EXTRACTION IS THE POINT, not a tidy-up. The alternative was a warmer
+    that re-implements the payload, and a warmed payload that differs from the
+    served one by a single key is worse than no warmer at all: it is a wrong
+    answer served fast, to the only client that exists, with the cache hiding it.
+    `timeframe_hours` alone is strip-unsafe in shipped iOS (see below) — a second
+    copy of this dict is one refactor away from omitting it and crashing every
+    build in the wild.
+
+    The route passes no `ttl` and therefore keeps LAT-P108's 60 s exactly.
     """
     import json as _json
-    from app.tasks.redis_state import get_redis_client
-
-    # Clamped BEFORE the cache key so an unbounded `limit` can neither sort the
-    # whole outcome table nor mint an unbounded number of Redis keys.
-    limit = _clamp_movers_limit(limit)
-
-    cache_key = f"bainluck:movers:{hours}:{limit}"
-    try:
-        redis = get_redis_client()
-        cached = redis.get(cache_key)
-        if cached:
-            return _json.loads(cached)
-    except Exception:
-        pass
 
     query = _build_movers_query(limit, pooled=_MOVERS_POOLED)
 
     result = await db.execute(query)
     outcomes = result.unique().scalars().all()
 
-    response = {
+    response = _movers_payload(outcomes, hours)
+
+    if redis is not None:
+        try:
+            redis.setex(
+                movers_cache_key(hours, limit),
+                ttl,
+                _json.dumps(response, default=str),
+            )
+        except Exception:
+            pass
+
+    return response
+
+
+def _movers_payload(outcomes, hours: int) -> dict:
+    """Shape the response. The ONLY place this dict is spelled."""
+    return {
         "movers": [
             {
                 "outcome_id": o.id,
@@ -553,12 +592,39 @@ async def get_futures_movers(
         "timeframe_hours": hours,
     }
 
+
+@router.get("/movers")
+async def get_futures_movers(
+    hours: int = Query(24, description="Timeframe for movement calculation"),
+    limit: int = Query(20, description="Number of movers to return"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get outcomes with biggest probability changes.
+
+    Useful for discovering betting line movement and market sentiment shifts.
+    """
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+
+    # Clamped BEFORE the cache key so an unbounded `limit` can neither sort the
+    # whole outcome table nor mint an unbounded number of Redis keys.
+    limit = _clamp_movers_limit(limit)
+
+    redis = None
     try:
-        redis.setex(cache_key, 60, _json.dumps(response, default=str))
+        redis = get_redis_client()
+        cached = redis.get(movers_cache_key(hours, limit))
+        if cached:
+            return _json.loads(cached)
     except Exception:
         pass
 
-    return response
+    # `redis` stays None if the client could not be built, and
+    # `build_and_cache_movers` then skips the write rather than raising a
+    # NameError into its own bare `except` — which is what the inlined version
+    # did, silently, on every Redis outage.
+    return await build_and_cache_movers(hours, limit, db, redis)
 
 
 @router.get("/live/{sport_key}")
