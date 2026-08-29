@@ -88,6 +88,8 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
         ("CENSUS_MUTATIONS", "needle", "replacement", "CENSUS"),
         ("SERVE_STALE_MUTATIONS", "needle", "replacement", "CONCEPT_CACHE"),
     ],
+    # LAT-P127. Alphabetical, for the reason spelled out in the next entry.
+    "futures_detail_sources_cache_mutations": [("MUTANTS", 2, 3, "ROUTE")],
     # LAT-P115. Placed at its alphabetical position rather than at the head of
     # the dict: six consecutive latency branches have now collided on the two
     # lines directly under `admin_auth_gate_mutations`, because that is where an

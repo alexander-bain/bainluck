@@ -181,9 +181,13 @@ class TestFuturesMarketDetail:
             ],
         )
         ts = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        # TWO executes, not three. The `SELECT DISTINCT bookmaker` that used to
+        # sit between these was removed as redundant: `bookmakers` is now derived
+        # from the breakdown rows, which know every name the DISTINCT could have
+        # returned. The `body["bookmakers"]` assertion below is unchanged and is
+        # what proves the derivation agrees with the query it replaced.
         mock_db.execute.side_effect = [
             _result_scalar_one_or_none(market),
-            _result_all([("Kalshi",), ("Polymarket",)]),
             # source_breakdown: latest per (outcome, bookmaker) with rn=1
             _result_all([(2, "Kalshi", 0.62, ts), (2, "Polymarket", 0.66, ts)]),
         ]
