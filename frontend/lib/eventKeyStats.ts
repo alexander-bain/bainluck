@@ -11,9 +11,11 @@ import type {
   EventHistoryResponse,
   EventDetailResponse,
   ActiveChartPoint,
+  CurrentOdds,
   ScoringPlay,
 } from "@/lib/types";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import { renderedDuelPercents } from "@/lib/renderedPercent";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -281,6 +283,23 @@ export interface ResolvedProbability {
   probSourceLabel: string | null;
   openingHomeProb: number | null;
   openingAwayProb: number | null;
+  // #2085 — the WHOLE PERCENTS the hero prints for the pair above, decided
+  // together. Every pair this function can return is an exact complement by
+  // construction on the backend (`1 - home`, at four separate sites), so
+  // rounding the two sides independently prints 101 whenever `home * 100` lands
+  // on a half-percent — 34 of 414 scheduled/live events, measured 2026-08-21.
+  // It can print 101; it can never print 99.
+  //
+  // These are the numbers to PRINT. `homeProb`/`awayProb` are unchanged and
+  // remain the numbers to reason with — the chart's right edge, the trend
+  // delta and `data-probability` all still read them.
+  homePct: number | null;
+  awayPct: number | null;
+  // The same decision for the "Opened away – home" line, which draws
+  // `opening_odds` and derives its away side the same way (routes/events.py's
+  // `opening_away_probability or round(1 - home, 4)`).
+  openingHomePct: number | null;
+  openingAwayPct: number | null;
 }
 
 /**
@@ -325,6 +344,58 @@ export function chartAxisToHomeProb(axisValue: number): number {
 }
 
 /**
+ * #2085 — fold the printed percents onto a resolved pair, at the ONE place that
+ * knows which source the pair actually came from.
+ *
+ * 🔴 THE SERVED PERCENTS DESCRIBE `current_odds` AND NOTHING ELSE, AND ON THIS
+ * PAGE THAT IS USUALLY NOT THE PAIR ON SCREEN. `FeedCard` may read
+ * `current_odds.{home,away}_rendered_percent` unconditionally, and says so in a
+ * comment, because the feed card renders `current_odds` whenever it renders a
+ * pair at all. The event page does not: a LIVE game's hero is
+ * `hero_probability` / `hero_probability_away`, a settled one is `opening_odds`,
+ * and a blend-less live game falls through to `history[]`. Copying the feed's
+ * one-liner here would print `current_odds`' rounding beside the BLEND's
+ * probability — a mismatched pair, served confidently. So the served values are
+ * taken only on the branches that read `odds`, and `fromCurrentOdds` records
+ * that at the branch rather than being inferred afterwards.
+ *
+ * BOTH SERVED VALUES OR NEITHER. They are one decision; taking a served away
+ * beside a locally-derived home re-opens the 101 from the other direction. An
+ * older deploy that carries one and not the other therefore falls back whole.
+ */
+function withRenderedPercents(
+  resolved: Omit<
+    ResolvedProbability,
+    "homePct" | "awayPct" | "openingHomePct" | "openingAwayPct"
+  >,
+  odds: CurrentOdds | undefined,
+  fromCurrentOdds: boolean,
+): ResolvedProbability {
+  const [localAwayPct, localHomePct] = renderedDuelPercents(
+    resolved.awayProb,
+    resolved.homeProb,
+  );
+  const servedAway = fromCurrentOdds ? odds?.away_rendered_percent : null;
+  const servedHome = fromCurrentOdds ? odds?.home_rendered_percent : null;
+  const bothServed = servedAway != null && servedHome != null;
+
+  // The opening line has no served pair at any deploy — `opening_odds` carries
+  // only the two probabilities — so it is always decided locally.
+  const [openingAwayPct, openingHomePct] = renderedDuelPercents(
+    resolved.openingAwayProb,
+    resolved.openingHomeProb,
+  );
+
+  return {
+    ...resolved,
+    awayPct: bothServed ? servedAway : localAwayPct,
+    homePct: bothServed ? servedHome : localHomePct,
+    openingAwayPct,
+    openingHomePct,
+  };
+}
+
+/**
  * Determine the probability to display based on game status.
  *
  *   - Scheduled: current betting consensus
@@ -346,6 +417,11 @@ export function resolveProbability(
   let probSourceLabel: string | null = null;
   const openingHomeProb = opening?.home_probability ?? null;
   const openingAwayProb = opening?.away_probability ?? null;
+  // #2085 — set by the branch that reads `odds`, so `withRenderedPercents` can
+  // tell whether the served pair describes the pair being returned. A later
+  // branch that OVERRIDES the pair must clear it; that is the whole reason this
+  // is a mutable flag beside the values rather than a test on the values.
+  let fromCurrentOdds = false;
 
   // UX-P042 (#1640). Decided ONCE, up front, so the win_prob_history fallback below
   // cannot quietly re-introduce the number this branch declined to assert.
@@ -360,6 +436,7 @@ export function resolveProbability(
     } else {
       homeProb = odds?.home_probability ?? null;
       awayProb = odds?.away_probability ?? null;
+      fromCurrentOdds = true;
     }
   } else if (isLive) {
     // Live: THE BLEND IS THE HERO (L2-163 Item 2b, Alex ruling). The chart draws
@@ -405,18 +482,27 @@ export function resolveProbability(
           ? event.hero_probability_away
           : 1 - blendPoint;
       probSourceLabel = "Live · Bain Luck blend";
-      return {
-        homeProb,
-        awayProb,
-        probSourceLabel,
-        openingHomeProb,
-        openingAwayProb,
-      };
+      // 🔴 #2085 — `fromCurrentOdds` stays FALSE here on purpose. This pair is
+      // the BLEND (`hero_probability` / `hero_probability_away`), which the
+      // backend derives as `round(1 - agg, 6)` and serves with no rendered
+      // percents of its own. `current_odds` is a different, lagging pair.
+      return withRenderedPercents(
+        {
+          homeProb,
+          awayProb,
+          probSourceLabel,
+          openingHomeProb,
+          openingAwayProb,
+        },
+        odds,
+        false,
+      );
     }
 
     // No blend yet — show current odds, cross-checked against history
     homeProb = odds?.home_probability ?? null;
     awayProb = odds?.away_probability ?? null;
+    fromCurrentOdds = true;
     const count = odds?.bookmaker_count ?? 0;
 
     if (historyData?.history && historyData.history.length > 0) {
@@ -437,6 +523,11 @@ export function resolveProbability(
           homeProb = historyHome;
           awayProb =
             latestValidHistory.away_probability ?? 1 - historyHome;
+          // #2085 — the pair has been REPLACED by a history row. The served
+          // percents describe the `current_odds` pair this branch just
+          // overrode, and the override only fires when the two differ by more
+          // than 5 points, so keeping them would print a number off by five.
+          fromCurrentOdds = false;
           if (historyBookmakers > 0) {
             probSourceLabel = `Live · ${historyBookmakers} sportsbook${historyBookmakers !== 1 ? "s" : ""}`;
           }
@@ -461,6 +552,7 @@ export function resolveProbability(
     // Scheduled: current betting consensus
     homeProb = odds?.home_probability ?? null;
     awayProb = odds?.away_probability ?? null;
+    fromCurrentOdds = true;
     const count = odds?.bookmaker_count ?? 0;
     if (count > 0) {
       probSourceLabel = `${count} sportsbook${count !== 1 ? "s" : ""}`;
@@ -485,6 +577,9 @@ export function resolveProbability(
   ) {
     homeProb = lastChartPoint.homeProb;
     awayProb = lastChartPoint.awayProb;
+    // #2085 — a chart point, not `current_odds`. Same override rule as the
+    // history branch above.
+    fromCurrentOdds = false;
     const wpSources = historyData?.win_prob_sources;
     if (wpSources && Object.keys(wpSources).length > 0) {
       const sourceNames = Object.keys(wpSources).map((s) =>
@@ -500,7 +595,11 @@ export function resolveProbability(
     }
   }
 
-  return { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb };
+  return withRenderedPercents(
+    { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb },
+    odds,
+    fromCurrentOdds,
+  );
 }
 
 // ---------------------------------------------------------------------------
