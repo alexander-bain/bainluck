@@ -2133,6 +2133,7 @@ def digest_external_feature_requests_task(self):
         from app.tasks.bug_report_github import (
             GITHUB_TOKEN, create_github_issue, format_digest_body, is_owner_email,
         )
+        from app.utils.issue_labels import priority_label
         from app.models.models import BugReport
         from sqlalchemy import select, update as sa_update
         from datetime import datetime as _dt, timedelta as _td, timezone as _tz
@@ -2176,8 +2177,20 @@ def digest_external_feature_requests_task(self):
             week_label = now.strftime("%Y-%m-%d")
             body = format_digest_body(reports, week_label)
             title = f"Weekly external feature-request digest — {week_label} ({len(reports)})"
+            # A weekly roll-up of external feature requests is a P3 by family
+            # (BOARD-TAXONOMY "digest"/parked tier) — it is a reading queue, not a
+            # defect. Before Q434 it carried no priority and no area at all, so every
+            # digest was born failing board lint's priority+area invariant.
             issue_number, _ = create_github_issue(
-                title, body, ["alert-intake", "type:feature", "reporter:external"]
+                title,
+                body,
+                [
+                    "alert-intake",
+                    "type:feature",
+                    "reporter:external",
+                    "area:frontend",
+                    priority_label(family="digest"),
+                ],
             )
 
             # stamp each report's backlog_ref to the digest so it is not

@@ -14,6 +14,8 @@ import re
 
 import httpx
 
+from app.utils.issue_labels import ensure_taxonomy, priority_label
+
 logger = logging.getLogger(__name__)
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
@@ -30,6 +32,21 @@ CATEGORY_TO_AREA = {
     "performance": "area:backend",
     "feature_request": "area:frontend",
 }
+
+# A rage shake that arrives with no category — or one we have not mapped — is still
+# a report from a person looking at a screen, so it routes to the surface rather
+# than to nothing. Before Q434 an unmapped category produced an issue with NO
+# ``area:*`` at all, which board lint counts as an un-routed card.
+DEFAULT_BUG_REPORT_AREA = "area:frontend"
+
+# Category → ``type:*``. `BOARD-TAXONOMY.md` invariant 1 wants a type on every open
+# issue and this rail emitted none, so every rage-shake issue was born failing the
+# lint. A feature request is not a bug even when it arrives through the bug channel.
+CATEGORY_TO_TYPE = {
+    "feature_request": "type:feature",
+    "performance": "type:perf",
+}
+DEFAULT_BUG_REPORT_TYPE = "type:bug"
 
 SEVERITY_TO_PRIORITY = {
     "P0": "priority:p0",
@@ -164,13 +181,19 @@ def should_file_individual_issue(category: str | None, is_owner: bool) -> bool:
 def build_labels(
     category: str | None, severity: str, is_owner: bool = False
 ) -> list[str]:
+    """The labels a rage-shake issue is born with — priority, area AND type, always.
+
+    ``compute_severity`` only ever returns P0–P3, so the old ``if priority:`` guard
+    looked total; it was not, because ``build_labels`` is public and a caller passing
+    any other severity string produced an unprioritized issue with no error. The
+    priority now resolves through the canonical mapping, which has no ``None``
+    branch (an unrecognised severity lands on the ratified P2 default).
+    """
+    cat = category or ""
     labels = ["bug-report", "needs-agent"]
-    area = CATEGORY_TO_AREA.get(category or "")
-    if area:
-        labels.append(area)
-    priority = SEVERITY_TO_PRIORITY.get(severity)
-    if priority:
-        labels.append(priority)
+    labels.append(CATEGORY_TO_AREA.get(cat) or DEFAULT_BUG_REPORT_AREA)
+    labels.append(priority_label(severity))
+    labels.append(CATEGORY_TO_TYPE.get(cat) or DEFAULT_BUG_REPORT_TYPE)
     # #885: provenance — owner vs external reporter
     labels.append("reporter:owner" if is_owner else "reporter:external")
     return labels
@@ -291,6 +314,16 @@ def format_digest_body(reports: list[dict], week_label: str) -> str:
 
 
 def create_github_issue(title: str, body: str, labels: list[str]) -> tuple[int, str]:
+    """Create a GitHub issue. **Every backend filing rail funnels through here**, so
+    this is where the taxonomy floor is enforced: an issue can never be POSTed
+    without a ``priority:*`` label.
+
+    Each rail still derives its OWN priority from its own severity — that is the
+    meaningful signal and it wins. This call only supplies the ratified P2 default
+    when a rail supplied nothing, which is what happened for the weekly digest and
+    for any cockpit filing whose severity field was blank. Enforcing it at the one
+    chokepoint rather than in each of the eight callers is deliberate: a rail added
+    next month inherits the floor without anyone remembering to."""
     resp = httpx.post(
         f"https://api.github.com/repos/{REPO}/issues",
         headers={
@@ -298,7 +331,7 @@ def create_github_issue(title: str, body: str, labels: list[str]) -> tuple[int, 
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         },
-        json={"title": title, "body": body, "labels": labels},
+        json={"title": title, "body": body, "labels": ensure_taxonomy(labels)},
         timeout=30,
     )
     resp.raise_for_status()

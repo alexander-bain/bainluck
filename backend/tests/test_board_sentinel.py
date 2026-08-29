@@ -256,7 +256,11 @@ def test_counts_scan_full_open_population_not_just_alerts():
 # classify + verdict
 # --------------------------------------------------------------------------
 def test_classify_green_clean_board():
-    issues = [_iss(10, labels=("alert-intake", "area:infra", "needs-agent"),
+    # Q434: a clean card now needs a priority too — `check_missing_priority_label`
+    # makes BOARD-TAXONOMY invariant 1 ("priority+area+type") enforceable, and a
+    # fixture that means "clean" has to satisfy the invariant it is standing in for.
+    issues = [_iss(10, labels=("alert-intake", "area:infra", "needs-agent",
+                               "priority:p2"),
                    column="In Progress")]
     c = bs.classify_board(issues, NOW, columns_available=True, project_numbers={10})
     assert c["real"] == []
@@ -283,7 +287,7 @@ def test_classify_mixed_red():
 
 
 def test_classify_unknown_when_columns_unavailable():
-    issues = [_iss(10, labels=("alert-intake", "area:infra"))]
+    issues = [_iss(10, labels=("alert-intake", "area:infra", "priority:p2"))]
     c = bs.classify_board(issues, NOW, columns_available=False, project_numbers={10})
     assert c["real"] == []
     assert any(u["check"] == "inbox_column_checks" for u in c["unknown"])
@@ -291,7 +295,8 @@ def test_classify_unknown_when_columns_unavailable():
 
 
 def test_classify_unknown_when_project_membership_unavailable():
-    issues = [_iss(10, labels=("alert-intake", "area:infra"), column="In Progress")]
+    issues = [_iss(10, labels=("alert-intake", "area:infra", "priority:p2"),
+                   column="In Progress")]
     c = bs.classify_board(issues, NOW, columns_available=True, project_numbers=None)
     assert c["real"] == []
     assert any(u["check"] == "project_membership" for u in c["unknown"])
@@ -801,7 +806,8 @@ class TestRunBoardSentinel:
         return asyncio.run(bs._run_board_sentinel(file_issues=False, now=NOW))
 
     def test_run_green(self, monkeypatch):
-        issues = [_iss(10, labels=("alert-intake", "area:infra", "needs-agent"),
+        issues = [_iss(10, labels=("alert-intake", "area:infra", "needs-agent",
+                                   "priority:p2"),
                        column="In Progress")]
         stats = self._run(monkeypatch, issues, columns_available=True)
         assert stats["verdict"] == "green"

@@ -202,9 +202,31 @@ function decide(state) {
   return { action: ACTIONS.NO_OP, reason_codes: [], new_episode: false };
 }
 
+/**
+ * The labels every browser-audit issue is born with.
+ *
+ * It lives here, beside the pure decision layer, so the contract suite can pin it —
+ * it used to be a bare literal inside `scripts/file-sweep-findings.js`, the
+ * side-effecting shell that no test loads, and it carried NO `priority:*`. The two
+ * issues the rail filed on 2026-08-28 (#2249, #2250) both arrived unprioritized and
+ * both show up in board lint's `missing-priority` list.
+ *
+ * `priority:p3` is not a guess: `BOARD-TAXONOMY.md` states the family default in so
+ * many words — "Family defaults: parked -> p3, Browser-audit -> p3". A sweep finding
+ * is a standing observation about a journey, and it earns a promotion at triage.
+ */
+const FILING_LABELS = [
+  "type:bug",
+  "area:frontend",
+  "alert-intake",
+  "program:ux",
+  "priority:p3",
+];
+
 module.exports = {
   ACTIONS,
   CONTINUOUS_GREEN_RUNS_TO_CLOSE,
+  FILING_LABELS,
   SAFE_FINGERPRINT,
   INFRA_ASSERTIONS,
   canonicalUrl,

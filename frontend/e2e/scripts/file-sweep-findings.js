@@ -17,10 +17,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
-const { ACTIONS, findingsFromManifest, decide } = require("../helpers/sweepFiling");
+const {
+  ACTIONS,
+  FILING_LABELS: LABELS,
+  findingsFromManifest,
+  decide,
+} = require("../helpers/sweepFiling");
 
 const MARKER_KEY = "browser-sweep-fingerprint";
-const LABELS = ["type:bug", "area:frontend", "alert-intake", "program:ux"];
 const ROOT = process.env.AUDIT_ARTIFACT_ROOT || "audit-artifacts";
 const RUN_URL = process.env.AUDIT_RUN_URL || "";
 const HEAD_SHA = process.env.AUDIT_HEAD_SHA || "";

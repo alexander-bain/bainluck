@@ -39,6 +39,22 @@ Filing defaults to ``priority:p2``. A sentinel that wants P1/P0 passes it in its
 an existing issue, so a human-prioritized issue is never silently downgraded by a
 later P2-default re-observation (it is only commented on).
 
+**The default is enforced on the caller's list too, not just on ours.**
+``DEFAULT_LABELS`` only ever applied when a sentinel passed no ``labels`` at all, and
+every sentinel passes its own — so the P2 default protected nobody. Since Q434 the
+rail runs whatever the caller supplied through
+:func:`app.utils.issue_labels.ensure_taxonomy` and guarantees two things on create:
+
+  * a ``priority:*`` label (the caller's if it set one, else P2 per the ratified
+    2026-07-27 filing default), so no future sentinel can file an unprioritized
+    issue by forgetting a list entry;
+  * the ``alert-intake`` source label, because this rail's OWN dedup source is the
+    open ``alert-intake`` list. Two sentinels were filing without it
+    (``tournament_register_sentinel``, the calibration publish gate), which means
+    their issues were invisible to ``fetch_open_alert_issues`` and re-filed on every
+    run — the exact duplicate class the rail exists to prevent, arrived at from the
+    label side instead of the search-index side.
+
 Read-only against production data — the rail files/updates GitHub metadata only,
 never touches market data.
 """
@@ -50,10 +66,26 @@ from typing import Any, Callable
 
 import httpx
 
+from app.utils.issue_labels import ensure_taxonomy
+
 logger = logging.getLogger(__name__)
 
 # Default labels for a freshly-filed sentinel issue (P2 per Queue #258 policy).
 DEFAULT_LABELS = ["alert-intake", "needs-agent", "area:infra", "priority:p2"]
+
+# The dedup source (``fetch_open_alert_issues``) lists issues by this label, so an
+# issue filed without it is invisible to its own sentinel on the next run.
+SOURCE_LABEL = "alert-intake"
+
+
+def filing_labels(labels: list[str] | None) -> list[str]:
+    """The label list a create actually uses: the caller's, with the source label
+    and a ``priority:*`` guaranteed. Pure, so a test can pin what each rail emits
+    without reaching GitHub."""
+    resolved = list(labels) if labels else list(DEFAULT_LABELS)
+    if SOURCE_LABEL not in resolved:
+        resolved.insert(0, SOURCE_LABEL)
+    return ensure_taxonomy(resolved)
 
 # Pagination cap for the open ``alert-intake`` list. Reaching the cap on a still-full
 # final page means the read is TRUNCATED → ``ok=False`` (UNKNOWN), never a false
@@ -408,7 +440,7 @@ def reconcile_issue(
                     )
                     return result
         try:
-            number, node_id = gh.create_github_issue(title, body, labels or DEFAULT_LABELS)
+            number, node_id = gh.create_github_issue(title, body, filing_labels(labels))
         except Exception as exc:
             logger.error("sentinel_filing: issue creation failed (%s): %s", fingerprint, exc)
             result.update(action="error", error=str(exc)[:200])
