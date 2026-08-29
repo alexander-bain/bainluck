@@ -307,6 +307,71 @@ CASE WHEN sh.mw = 0 THEN 'void'
 || '|' ||
 """ + SUMBAND_ONLY_EXPR
 
+#: CAL-P130 — the SLOT-NORMALIZED price sum, for `polymarket/golf` (rank 12).
+#:
+#: WHY ``sumband`` CANNOT ANSWER THIS CELL. ``sumband`` bands the raw published
+#: sum against constants (1.15, 2, 5, 15) that encode one assumption: a market
+#: is a PARTITION, so a coherent sum is ~1. CAL-P127 recorded that this premise
+#: is backwards in golf — "will player X finish top 10" is an INDEPENDENT
+#: BINARY, and a hundred of them priced against ten slots legitimately sum to
+#: ten (gotcha #23). Every subset that clears the bar over ``sumband``,
+#: ``pairsum``, ``policy`` and ``shape`` on this cell clears it by deleting the
+#: ``sum > 15`` band — 60-82% of the cell, and structurally the wrong rows.
+#:
+#: THE QUANTITY THAT IS ACTUALLY COHERENT OR NOT. A golf field market DECLARES
+#: its own slot count in its own name: "... Winner" offers one slot, "... Top 5"
+#: five, "... Top 20" twenty. So the coherent sum is not 1, it is N, and the
+#: scale-free statement of the defect is the RATIO ``msum / N``. CAL-P129 found
+#: the same defect on ``kalshi/entertainment`` in the special case N = 1 (a
+#: one-winner field whose prices sum past 1.15); this is that finding's general
+#: form, and the N = 1 arm below is exactly CAL-P129's ``field1|*``.
+#:
+#: 🔴 THE SLOT COUNT IS READ FROM THE NAME, NEVER FROM THE REALIZATION. The
+#: rail's ``shape``/``sumband`` dimensions classify on ``mw`` — how many
+#: outcomes actually WON — which is legitimate for diagnosis and is LEAKAGE for
+#: a shipping exclusion rule: it would decide which resolved markets count by
+#: what they resolved to. Every input here (``fm2.name``, published prices) is
+#: known at publish time, so a rule keyed on this dimension can be evaluated
+#: before a winner exists.
+#:
+#: THE BANDS ARE SYMMETRIC IN LOG SPACE AROUND 1 AND WERE FIXED BEFORE THE FOLD
+#: RAN — 1/4, 3/4, 4/3, 4. Lesson 13: a correction expected to run one way runs
+#: both ways, so the banding must be able to SEE both ways.
+#:
+#: ⚠️ AND ON THIS CELL IT DOES NOT, WHICH IS ITSELF THE MEASUREMENT. Raw markets
+#: DO under-sum badly — "Puerto Rico Open Top 10" publishes a sum of 0.50 against
+#: ten declared slots, a ratio of 0.05 — but in the PUBLISHED population
+#: ``a_ratio_lt_0.25`` holds ZERO rows and ``b_ratio_0.25_0.75`` holds 60 (0.9%).
+#: The low tail is almost entirely filtered out before the curve sees it. So on
+#: ``polymarket/golf`` the defect really is one-directional, and that is a fact
+#: about the published cell rather than an assumption baked into the bands —
+#: which is the only reason it is safe to say (lesson 6: a population a rule is
+#: designed on is not the population it will run on, and the two are checked
+#: here rather than conflated).
+#:
+#: ``z_cut`` is separated rather than banded: "To Make the Cut" declares no
+#: number, the cut size is a property of the weekend, and guessing it would be
+#: this dimension inventing the quantity it claims to measure. A row a rule
+#: cannot see must not be scored as if it could.
+SLOTS_EXPR = """
+CASE WHEN fm2.name ~* 'top[[:space:]]+[0-9]+[[:space:]]*$'
+          THEN (SUBSTRING(fm2.name FROM 'op[[:space:]]+([0-9]+)[[:space:]]*$'))::numeric
+     WHEN fm2.name ~* 'winner[[:space:]]*$' THEN 1
+     ELSE NULL END
+"""
+SLOTRATIO_JOIN = SERIES_JOIN + "\nLEFT JOIN msums ms ON ms.market_id = d.market_id"
+SLOTRATIO_EXPR = f"""
+CASE WHEN ({SLOTS_EXPR}) IS NULL AND fm2.name ~* 'make[[:space:]]+the[[:space:]]+cut'
+          THEN 'z_cut_no_declared_n'
+     WHEN ({SLOTS_EXPR}) IS NULL THEN 'z_no_declared_n'
+     WHEN ms.msum IS NULL THEN 'z_no_sum'
+     WHEN ms.msum / ({SLOTS_EXPR}) < 0.25  THEN 'a_ratio_lt_0.25'
+     WHEN ms.msum / ({SLOTS_EXPR}) < 0.75  THEN 'b_ratio_0.25_0.75'
+     WHEN ms.msum / ({SLOTS_EXPR}) <= 1.3333 THEN 'c_ratio_coherent'
+     WHEN ms.msum / ({SLOTS_EXPR}) <= 4    THEN 'd_ratio_1.33_4'
+     ELSE 'e_ratio_gt_4' END
+"""
+
 #: CAL-P117 — the Over/Under PAIR dimension, for `polymarket/baseball`.
 #:
 #: Rank 1 of the board is not a bundle cell: it is two-leg Over/Under quantity
@@ -695,6 +760,7 @@ DIMENSIONS = {
     "golfround": (GOLFROUND_EXPR, GOLFROUND_JOIN, ""),
     "shape": (SHAPE_EXPR, SHAPE_JOIN, ""),
     "sumband": (SUMBAND_EXPR, SUMBAND_JOIN, SUMBAND_PRE),
+    "slotratio": (SLOTRATIO_EXPR, SLOTRATIO_JOIN, SUMBAND_PRE),
     "pair": (PAIR_EXPR, PAIR_JOIN, ""),
     "pairtype": (PAIRTYPE_EXPR, PAIR_JOIN, ""),
     "pairsum": (PAIRSUM_EXPR, PAIRSUM_JOIN, SUMBAND_PRE),

@@ -167,6 +167,13 @@ SHIPPED_DIMENSIONS = {
     "golfround": ("GOLFROUND_EXPR", "GOLFROUND_JOIN", ""),
     "shape": ("SHAPE_EXPR", "SHAPE_JOIN", ""),
     "sumband": ("SUMBAND_EXPR", "SUMBAND_JOIN", "SUMBAND_PRE"),
+    # Added to the RAIL by CAL-P130, for the same reason and in the same place
+    # as `golfround` above — this module still contributes exactly `marketid`.
+    # CAL-P127's note predicted this exact re-occurrence and it duly re-occurred:
+    # registering a rail dimension without extending this pinned copy turns the
+    # guard below red against the wrong file. Caught by running the SIBLING
+    # suites, which is CAL-P128's lesson and the only thing that finds it.
+    "slotratio": ("SLOTRATIO_EXPR", "SLOTRATIO_JOIN", "SUMBAND_PRE"),
     "pair": ("PAIR_EXPR", "PAIR_JOIN", ""),
     "pairtype": ("PAIRTYPE_EXPR", "PAIR_JOIN", ""),
     "pairsum": ("PAIRSUM_EXPR", "PAIRSUM_JOIN", "SUMBAND_PRE"),

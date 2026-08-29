@@ -1,0 +1,1 @@
+{"classes": ["tourney|other"], "total": {"n": 6443, "ece": 5.39, "gap": 3.82}, "bar": 3.0, "floor_rows": 1, "searched": 1, "passing": [], "ranked": [{"keep": ["tourney|other"], "n": 6443, "ece": 5.39, "gap": 3.82, "dropped": 0, "dropped_pct": 0.0}]}
