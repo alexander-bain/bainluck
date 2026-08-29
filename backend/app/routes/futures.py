@@ -2213,24 +2213,21 @@ async def get_futures_market(
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
 
-    # Get distinct bookmakers that have contributed odds for this market
+    # The provenance half — which books contributed, and their latest price per
+    # outcome — is the whole cost of this endpoint and it is the only half that
+    # is cached. `market` and its outcomes were just read fresh above and are
+    # formatted below from those rows, so the hero and the outcome ladder cannot
+    # be served stale by this cache: they were never in it.
     outcome_ids = [o.id for o in market.outcomes]
     bookmakers = []
     source_breakdown = []
     if outcome_ids:
-        bookmakers_result = await db.execute(
-            select(FuturesOddsSnapshot.bookmaker)
-            .where(FuturesOddsSnapshot.outcome_id.in_(outcome_ids))
-            .distinct()
-            .order_by(FuturesOddsSnapshot.bookmaker)
+        bookmakers, source_breakdown = await _load_market_sources(
+            db, market_id, outcome_ids
         )
-        bookmakers = [row[0] for row in bookmakers_result.all()]
-
-        if len(bookmakers) > 1:
-            source_breakdown = await _get_source_breakdown(db, outcome_ids)
 
     detail = _format_market_detail(market, bookmakers)
-    if source_breakdown:
+    if len(bookmakers) > 1 and source_breakdown:
         detail["source_breakdown"] = source_breakdown
     return detail
 
@@ -3361,6 +3358,118 @@ _GARBAGE_OUTCOME_RE = re.compile(r"^player\s+[A-Z]{1,3}$", re.I)
 
 SOURCE_DISAGREEMENT_THRESHOLD_PP = 5
 SOURCE_STALENESS_DAYS = 7
+
+#: TTL for the cached provenance half of `GET /api/futures/{market_id}`.
+#:
+#: The data underneath is written by `poll-futures-every-4h` and
+#: `refresh-stale-futures-prices-hourly`, so it moves on a 1-4 HOUR cadence and
+#: 300 s is 12-48x faster than the thing it caches. This is deliberately NOT the
+#: "TTL must outlive the refill cadence" number from #901 — that rule is about a
+#: WARMED key going cold in the gap between warms, and nothing warms this one.
+#: There is no warmer and no new beat entry: this is a pure on-demand cache, so
+#: the only thing the TTL buys is a staleness budget, and a short one is safer.
+MARKET_SOURCES_TTL_S = 300
+
+
+def market_sources_cache_key(market_id: int) -> str:
+    """Redis key for one market's cached bookmaker/source-breakdown pair."""
+    return f"bainluck:futures:detail-sources:{market_id}"
+
+
+def _restore_source_breakdown(rows: list[dict]) -> list[dict]:
+    """Undo the one lossy step in the JSON round-trip: ``outcomes`` dict keys.
+
+    🔴 #1587's LESSON, IN THE ONE PLACE IT APPLIES HERE. `_get_source_breakdown`
+    keys ``outcomes`` by ``outcome_id`` — an INT — and `json.dumps` turns every
+    dict key into a string. On the wire the two are indistinguishable, because
+    FastAPI stringifies int keys as well, so a hit and a miss would have shipped
+    byte-identical HTTP for as long as nobody looked. But the cache would have
+    been storing something that is not what it serves, and the next reader to
+    consume this in-process — a warmer, a diff harness, an `assert hit == miss`
+    — would have found a difference that no HTTP test could see. Restore the
+    ints here so the cached object equals the computed object, not merely its
+    rendering.
+    """
+    restored = []
+    for row in rows:
+        row = dict(row)
+        row["outcomes"] = {int(k): v for k, v in (row.get("outcomes") or {}).items()}
+        restored.append(row)
+    return restored
+
+
+async def _load_market_sources(
+    db: AsyncSession, market_id: int, outcome_ids: list[int]
+) -> tuple[list[str], list[dict]]:
+    """Return ``(bookmakers, source_breakdown)`` for one market's outcomes.
+
+    🔴 THIS USED TO BE TWO FULL SCANS OF THE SAME ROWS, AND THE SECOND ONE WAS
+    FREE ALL ALONG. The handler ran ``SELECT DISTINCT bookmaker`` to learn which
+    books had contributed, then ran the window query in `_get_source_breakdown`
+    over the identical row set. The two answers are the same set by
+    construction: `bookmaker` is NOT NULL in production, so a book appears in
+    the DISTINCT iff it has at least one snapshot iff it has an ``rn = 1`` row
+    for some outcome. The breakdown already knows every name the DISTINCT could
+    return, so the DISTINCT is derived here instead of re-scanned.
+
+    ⚠️ The breakdown is now computed for single-bookmaker markets too, where it
+    previously did not run at all. That costs exactly the scan it replaced (one
+    either way), and the caller still attaches ``source_breakdown`` only when
+    there is more than one book — the response shape is unchanged in both
+    directions.
+
+    WHY THIS IS WORTH A CACHE AT ALL, IN ONE MEASURED SENTENCE. NFL Super Bowl
+    Winner (market 86832) has 32 outcomes and **189,312 snapshot rows**; the
+    window query sorts all of them to keep the ~256 that are current, twice, on
+    every single request, which measured **3.4-5.6 s of database time** in
+    production on 2026-08-29. MLB World Series Winner (market 1): 30 outcomes,
+    131,807 rows, 2.1-2.9 s.
+
+    ✅ WHAT A STALE ENTRY CAN AND CANNOT SAY. Every row it carries reports its
+    own real ``captured_at`` and its own ``stale`` flag, both computed from the
+    snapshot's own timestamp. A cached row can therefore be up to
+    `MARKET_SOURCES_TTL_S` old, but it CANNOT misreport how old its data is —
+    freshness is a field in the payload, not a property of the cache. That is
+    what makes caching a deliberate source-comparison surface honest.
+
+    Redis is best-effort in both directions: an unreachable cache degrades to
+    computing the answer, never to failing the page.
+    """
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+
+    cache_key = market_sources_cache_key(market_id)
+    redis = None
+    try:
+        redis = get_redis_client()
+        cached = redis.get(cache_key)
+        if cached:
+            payload = _json.loads(cached)
+            return (
+                payload["bookmakers"],
+                _restore_source_breakdown(payload["source_breakdown"]),
+            )
+    except Exception:
+        logger.debug("futures detail source cache read failed", exc_info=True)
+
+    source_breakdown = await _get_source_breakdown(db, outcome_ids)
+    # `_get_source_breakdown` already sorts by source, so this is the same
+    # ordering the `ORDER BY bookmaker` it replaces produced.
+    bookmakers = [s["source"] for s in source_breakdown]
+
+    if redis is not None:
+        try:
+            redis.set(
+                cache_key,
+                _json.dumps(
+                    {"bookmakers": bookmakers, "source_breakdown": source_breakdown}
+                ),
+                ex=MARKET_SOURCES_TTL_S,
+            )
+        except Exception:
+            logger.debug("futures detail source cache write failed", exc_info=True)
+
+    return bookmakers, source_breakdown
 
 
 async def _get_source_breakdown(

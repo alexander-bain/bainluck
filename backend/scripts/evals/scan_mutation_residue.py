@@ -80,6 +80,8 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     ],
     "feed_personalization_roundtrip_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "feed_prewarm_absent_shape_net_mutations": [("MUTATIONS", 3, 4, 1)],
+    # LAT-P127. Alphabetical, for the reason spelled out in the next entry.
+    "futures_detail_sources_cache_mutations": [("MUTANTS", 2, 3, "ROUTE")],
     # LAT-P115. Placed at its alphabetical position rather than at the head of
     # the dict: six consecutive latency branches have now collided on the two
     # lines directly under `admin_auth_gate_mutations`, because that is where an
