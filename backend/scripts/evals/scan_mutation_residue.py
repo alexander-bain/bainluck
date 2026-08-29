@@ -115,6 +115,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     "league_context_grid_cache_mutations": [("MUTANTS", 2, 3, "SERVICE")],
     "offline_rerank_fidelity_mutations": [("MUTATIONS", 3, 4, 1)],
     "outcome_evidence_class_mutations": [("MUTATIONS", 3, 4, 1)],
+    # LAT-P136. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above. Two targets in one table (the route
+    # ladder and the policy module) carried per-entry at index 1 — the same
+    # shape as its sibling `game_markets_shared_cache_mutations`, because the
+    # defect it pins is that the two halves have to AGREE.
+    "related_futures_shared_cache_mutations": [("MUTANTS", 3, 4, 1)],
     # LAT-P118. Alphabetical, for the reason spelled out under
     # `futures_movers_warm_mutations` above — an append at the head of this dict
     # is what six consecutive latency branches have collided on.
