@@ -633,6 +633,82 @@ def get_client():
 
 
 # ---------------------------------------------------------------------------
+# Serve-stale: hand back the mirror, put exactly one rebuild behind it
+# ---------------------------------------------------------------------------
+
+#: Strong references to the refresh tasks in flight. `asyncio` holds only a weak
+#: reference to a bare `create_task` result, so without this set a rebuild can be
+#: garbage-collected mid-flight and the mirror never gets replaced — the failure
+#: mode where serve-stale quietly becomes serve-stale-forever.
+_REFRESH_TASKS: set = set()
+
+
+def serve_stale_and_refresh(keys: ConceptCacheKeys, rebuild, rc=None) -> bool:
+    """Kick `rebuild()` onto the loop and tell the caller it may serve the mirror.
+
+    Returns True when the stale value may be served (a rebuild is now running, or
+    another process already holds the lock and one is running there). Returns
+    False when the caller must build synchronously — there is no running loop, so
+    nothing could run behind the response and serving stale would mean serving it
+    forever.
+
+    `rebuild` is a ZERO-ARG coroutine function that opens its OWN session. The
+    request's `AsyncSession` is not the caller's to hold past the response, and
+    reusing it is how a background task ends up writing into a closed session.
+
+    WHY THIS LIVES HERE AND NOT IN A ROUTE. `routes/events.py` grew a
+    `_serve_stale_and_refresh` for LAT-P116 and LAT-P121 found the tier forty
+    lines below it ignoring it — "a fix scoped to the surface that surfaced the
+    bug is how a class survives its own repair". Ruling 005 makes this module the
+    policy home for cache-envelope tiers, so the second customer puts the helper
+    here rather than making a third copy.
+
+    AND IT IS SINGLE-FLIGHT ACROSS THE FLEET, not just this process. The route
+    copy guards with a process-global `set`, which admits one rebuild per Uvicorn
+    worker per dyno — with `WEB_CONCURRENCY=2` that is already 2N rebuilds for one
+    expiry. This takes `acquire_refresh_lock`, so the whole fleet produces one.
+    The lock is released by owner token in a `finally` (#1678 finding 1: an
+    unconditional delete lets a non-holder release somebody else's lock).
+    """
+    import asyncio
+
+    client = rc if rc is not None else get_client()
+    token = acquire_refresh_lock(client, keys)
+    if token is None:
+        # Somebody already holds it — either another process is rebuilding, or
+        # Redis is unreachable. Both are "do not start a second one"; the mirror
+        # is still the right answer and the lock's own TTL bounds the wait.
+        return client is not None
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop (sync test harness, script import). Nothing can run behind the
+        # caller, so refuse — and give the lock back rather than parking it for
+        # REFRESH_LOCK_TTL on a rebuild that was never started.
+        release_refresh_lock(client, keys, token)
+        return False
+
+    async def _run() -> None:
+        try:
+            await rebuild()
+        except Exception as exc:  # noqa: BLE001
+            # Leave the existing value ALONE. A failed rebuild must not poison the
+            # cache; the mirror's own age ceiling is what stops a persistent
+            # failure being invisible.
+            logger.warning(
+                "cache refresh-behind failed for %s: %s", keys.primary, exc
+            )
+        finally:
+            release_refresh_lock(client, keys, token)
+
+    task = loop.create_task(_run())
+    _REFRESH_TASKS.add(task)
+    task.add_done_callback(_REFRESH_TASKS.discard)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # The shared build path — one implementation for the route and the warmer
 # ---------------------------------------------------------------------------
 

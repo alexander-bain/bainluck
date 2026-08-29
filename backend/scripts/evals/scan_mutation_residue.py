@@ -80,6 +80,14 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     ],
     "feed_personalization_roundtrip_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "feed_prewarm_absent_shape_net_mutations": [("MUTATIONS", 3, 4, 1)],
+    # LAT-P122. Alphabetical, for the reason spelled out one entry below. Two
+    # modules under one guard file — the tier's own policy and the serve-stale
+    # primitive this ship moved into the shared policy home — so two tables with
+    # two target constants, the `duration_sample_window_mutations` shape.
+    "futures_categories_census_mutations": [
+        ("CENSUS_MUTATIONS", "needle", "replacement", "CENSUS"),
+        ("SERVE_STALE_MUTATIONS", "needle", "replacement", "CONCEPT_CACHE"),
+    ],
     # LAT-P115. Placed at its alphabetical position rather than at the head of
     # the dict: six consecutive latency branches have now collided on the two
     # lines directly under `admin_auth_gate_mutations`, because that is where an
@@ -264,6 +272,23 @@ def _files(base: str, all_tracked: bool, suffixes: list[str]) -> list[Path]:
     return [p for p in paths if p.is_file()]
 
 
+def _base_already_has(base: str, rel: str, literal: str) -> bool:
+    """Did `rel` contain `literal` at `base`? Then it is not this branch's residue.
+
+    Fails CLOSED: an unreadable base blob (a file this branch ADDED, a base that
+    cannot be resolved) returns False, so the candidate stays a finding. A
+    baseline lookup that cannot answer must not be the thing that clears a hit.
+    """
+    out = subprocess.run(
+        ["git", "-C", str(REPO), "show", f"{base}:{rel}"],
+        capture_output=True,
+        text=True,
+    )
+    if out.returncode != 0:
+        return False
+    return literal in out.stdout
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--base", default="origin/master")
@@ -345,16 +370,45 @@ def main() -> int:
         )
 
     hits: list[str] = []
+    preexisting: list[str] = []
     for path in files:
         try:
             text = path.read_text()
         except (UnicodeDecodeError, OSError):
             continue
+        rel = str(path.relative_to(REPO))
         for pair in scannable:
             if pair.repl in text and pair.needle not in text:
-                hits.append(f"{path.relative_to(REPO)}  <-  {pair}")
+                if _base_already_has(args.base, rel, pair.repl):
+                    preexisting.append(f"{rel}  <-  {pair}")
+                    continue
+                hits.append(f"{rel}  <-  {pair}")
 
     print()
+    if preexisting:
+        # 🔴 LAT-P122. Pass B's question is "was a mutant COPIED out of its
+        # target by this branch", and it was answering "does this literal appear
+        # here" — which is a different question whenever a replacement is,
+        # verbatim, a real line of some other module.
+        #
+        # The instance: `game_markets_shared_cache:M13` replaces game-markets'
+        # `CACHE_PREFIX` with `"bainluck:event_concept:"`, and that string is the
+        # genuine, shipped constant at the top of `event_concept_cache.py`. It
+        # went unseen only because Pass B sweeps CHANGED files and nothing had
+        # changed that file since the harness landed. The first branch to touch
+        # it — this one — turned the gate red on a line master already had.
+        #
+        # So the comparison is against the BASE. A literal already present in the
+        # same file at `base` cannot be residue this branch left; it predates
+        # every mutant run. Named and COUNTED rather than filtered in silence,
+        # because a scan that quietly narrows its own scope is the failure this
+        # file's docstring refuses.
+        print(
+            f"  {len(preexisting)} literal(s) matched a replacement but are "
+            f"ALREADY in that file at {args.base} — pre-existing source, not residue:"
+        )
+        for p in preexisting:
+            print(f"     {p}")
     if hits:
         print(f"🔴 RESIDUE: {len(hits)} candidate mutant(s) outside a declared target")
         for h in hits:
