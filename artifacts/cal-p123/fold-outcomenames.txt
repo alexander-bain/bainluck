@@ -1,0 +1,14 @@
+polymarket/cricket   (--by outcomenames, width 1000000, 77s)
+  curve generated 2026-08-29T00:36:47.978149+00:00  population q268
+
+  SELF-CHECK — the producer's own chain against the payload it produced
+    exact replica    n=   3246  ECE=  8.15  gap=  -4.67
+    payload          n=   3252  ECE=  8.11  gap=  -4.61
+    delta            n=     -6 (-0.18%)  ECE=+0.04  gap=-0.06
+
+  class                    n   share     ECE      gap
+  c_distinct            2821   86.9%    7.33    -2.93
+  a_undifferentiated     337   10.4%   17.93   -16.56
+  b_partly_duplicated      55    1.7%    18.0     -0.2
+  d_lone_outcome          33    1.0%   39.42   -39.42
+

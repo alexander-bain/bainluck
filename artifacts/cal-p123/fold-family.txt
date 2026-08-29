@@ -1,0 +1,17 @@
+polymarket/cricket   (--by family, width 1000000, 105s)
+  curve generated 2026-08-29T00:36:47.978149+00:00  population q268
+
+  SELF-CHECK — the producer's own chain against the payload it produced
+    exact replica    n=   3246  ECE=  8.15  gap=  -4.67
+    payload          n=   3252  ECE=  8.11  gap=  -4.61
+    delta            n=     -6 (-0.18%)  ECE=+0.04  gap=-0.06
+
+  class                    n   share     ECE      gap
+  z_no_dash_suffix      1124   34.6%   14.65   -12.36
+  Toss Match Double      693   21.3%    5.88    +0.05
+  Team Top Batter        676   20.8%    7.11    -0.33
+  Most Sixes             625   19.3%    6.89    -0.49
+  Completed match?        55    1.7%   19.33   -12.75
+  Who wins the toss?      48    1.5%    8.06    +8.06
+  More Markets            25    0.8%   35.12    -18.2
+

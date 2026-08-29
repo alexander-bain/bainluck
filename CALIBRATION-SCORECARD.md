@@ -962,7 +962,7 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 | 7 | `odds_api_bookmaker/baseball_mlb_preseason` | A | 8.24 | 3,253 | −7.67 | **2.5** | +5.74 | 6.5 | 18,672 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 217 games behind these rows, so the board’s σ counts one outcome ~15.0x. **σ = 1.69, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
 | 8 | `kalshi/entertainment` | C | 5.21 | 8,355 | +1.07 | 3.0 | +2.21 | 4.0 | 18,465 | ✅ **named and measured (CAL-P122, §6i)** — the exit-exam's settlement-timing lead is refuted cell-wide (`moved` 4.96 vs `unmoved` 6.37). 4.7% of the cell is a class that **cannot contain a loss**: `clean_vms`' `has_winner >= 1` drops **432 authoritative graded losses** and keeps 395 winners. **The honest cell is 6.30 on n 8,850**, and the σ shortcut would have demoted it (1.74σ bound vs **4.66σ measured**) | **ZERO — and NO RULE IS BANKED.** Every passing policy deletes the filtered class; the same rule on the corrected population reads 5.75 and fails. **Alex: 12-CAL + 13-CAL (HOLD RULE E2)** |
 | 9 | `kalshi/golf` | B | 3.88 | 20,500 | +3.72 | 3.0 | +0.88 | 2.5 | 18,040 | ⚠️ `golf_placeholder_filter` live since 07-09 | **shipped, insufficient** |
-| 10 | `polymarket/cricket` | B | 8.11 | 3,252 | −4.61 | 3.0 | +5.11 | 5.8 | 16,618 | ✅ diagnosed 2026-08-09 (exit-exam item 3) | **diagnosed, no rule built** |
+| 10 | `polymarket/cricket` | B | 8.11 | 3,252 | −4.61 | 3.0 | +5.11 | **8.5** | 16,618 | ✅ **named, measured, and PROVEN UNREPAIRABLE (CAL-P123, §6j)** — both partitions searched exhaustively: **0 of 127 family subsets and 0 of 1,844 price-sum subsets clear the bar**; best rule that exists is 4.96 pp. 10.4% is undifferentiated containers (a writer bug), and the **2,821-row well-formed residue is 7.33** — the venue, not our pipeline. σ **8.48 measured** (deff 0.48), the highest on this rail | **ZERO — and NO RULE CAN BE BANKED.** Not a shortfall: an enumerable proof. **Alex: 14-CAL** |
 | 11 | `polymarket/basketball` | B | 4.24 | 13,135 | +2.96 | 3.0 | +1.24 | 2.8 | 16,287 | ❌ none | **not started** |
 | 12 | `polymarket/golf` | B | 5.45 | 6,463 | +3.92 | 3.0 | +2.45 | 3.9 | 15,834 | ⚠️ as #9 | **shipped, insufficient** |
 | 13 | `odds_api_bookmaker/icehockey_nhl` | A | 3.89 | 8,658 | +3.04 | **2.5** | +1.39 | 2.6 | 12,035 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 495 games behind these rows, so the board’s σ counts one outcome ~17.5x. **σ = 0.62, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
@@ -978,10 +978,22 @@ By source: **polymarket 9 cells / 263,728** · **odds_api_bookmaker 6 / 82,345**
 
 **Scoreboard: 0 of 20 cells crossed off. 2 are RULED and landable (ranks 1 and 2) and 3 more are
 designed but unruled (ranks 3, 6 and 17) — all five worth 0.00 pp today. 3 have a shipped rule that
-did not clear the cell. 2 have a measured rule that was refused. 9 have no rule at all.** Those five
+did not clear the cell. 2 have a measured rule that was refused, and **1 (rank 10) is proven to
+admit no rule at all — a new and stronger status than "refused", and the first of its kind on this
+board (§6j). 8 have no rule at all.** Those five
 cells carry **239,384 excess-outcomes** — 50.0% of the board's uncorrected 478,677, and **60.4% of
 the 396,332 that survive CAL-P120's σ correction** — and every one of them lands the day the freeze
 lifts.
+
+> 🔴 **CAL-P123 banked nothing either, and it is the first cell PROVEN to admit no rule (§6j).**
+> Rank 10 was searched exhaustively on two partitions — **0 of 1,971 candidate exclusion rules
+> clear the bar**, the best that exists is 4.96 pp, and the 2,821-row well-formed residue sits at
+> 7.33. That is not a queue running out of ideas; it is an enumerable proof, and it makes cricket
+> the first cell whose error is **the venue's rather than our pipeline's**. Two consecutive cells
+> have now banked nothing while the owed column grew — 12-CAL gained the evidence that settles it
+> (the lone-claim filter fires on Polymarket too, 33/33 winners) and **14-CAL is new**. The banked
+> column stays at five designs and 239,384 excess-outcomes. *A board that only ever finds
+> removable errors has not yet met a cell where the market is simply wrong; this is that cell.*
 
 > 🔴 **CAL-P122 is the first queue to work a cell and bank NOTHING, on purpose (§6i).** Rank 8's
 > best measured policy lands it at **1.27 pp** — and the identical predicate scored against the
@@ -1952,6 +1964,110 @@ row path rate-limits at 60/min and a 429 mid-sweep reads as a small class. **CAL
 the `bundle` half (4,286 rows, 50.9%, two-sided bucket error, `KXARTISTSTREAMS` alone 1,048 rows at
 16.4 / −7.89 and the cell's largest single error mass). Not a rule candidate until somebody reads
 it.
+
+---
+
+## 6j. RANK 10 — CAL-P123, and the first cell PROVEN to admit no rule
+
+**No rule is banked here, and unlike §6i the refusal is exhaustive rather than a judgment call.**
+Two independent partitions of `polymarket/cricket` were searched *completely* — all 127 non-empty
+subsets of its name families, and all 1,844 subsets of its shape × price-sum classes retaining ≥300
+rows. **Not one of the 1,971 candidate exclusion rules brings the cell under the 3.0 pp bar.** Full
+document: `artifacts/cal-p123/RULE-DESIGN-polymarket-cricket.md`.
+
+### The rail had no way to name a Polymarket family, and that is why rank 10 sat for twenty days
+
+Rail reproduction **3,246 / 8.15 / −4.67** against the payload's **3,252 / 8.11 / −4.61** —
+**−0.18%**, the tightest Polymarket run this rail has produced. 🔴 **Lesson 3 did not bite, and
+that is the finding**: the standing "5–6% short on Polymarket" budget (soccer −5.06%, baseball
+−5.7%) is **not a property of the source**. Budget for the shortfall; do not assume it, or a queue
+discounts a true Polymarket claim by 5%.
+
+Lesson 5 could not be run as written. `SERIES_EXPR` is `SPLIT_PART(fm2.external_id, '-', 1)` —
+on Kalshi the series ticker, **on Polymarket the numeric Gamma event id**. `--by series` returned
+**1,148 classes, 1,086 of them one row**: the row list with extra steps. Polymarket keeps the
+family in the market NAME, after the last `` - ``, so `calibration_family_fold.py` (new, 27 guards,
+composed onto the same chain — it registers dimensions into `calibration_cell_exact.DIMENSIONS`
+rather than building a second rail) adds `family`, `familyclean`, `outcomenames` and `familynames`.
+**Every Polymarket cell left on this board needs it; there are eight of them.**
+
+`calibration_cluster_sigma`, 2,000 resamples, seeded: **8.48σ measured**, bootstrap CI
+[7.39, 9.74] pp, 3,246 rows / 1,086 markets, **design effect 0.48** — a fourth distinct value
+(1.79 / 0.76 / 0.76 / 0.48), four cells, both directions. Highest σ of any cell folded on this rail.
+
+### Every family fails, pooled and on both holdout halves
+
+Holdout at `market_id 22658573`, row-balanced from `cluster_rows` (1,622 / 1,624):
+
+| family | n | share | ECE | gap | OLD | NEW |
+|---|--:|--:|--:|--:|--:|--:|
+| `z_no_dash_suffix` | 1,124 | 34.6% | 14.65 | −12.36 | 14.34 | 15.42 |
+| `Toss Match Double` | 693 | 21.3% | **5.88** | +0.05 | 6.69 | 6.68 |
+| `Team Top Batter` | 676 | 20.8% | 7.11 | −0.33 | 6.58 | 7.94 |
+| `Most Sixes` | 625 | 19.3% | 6.89 | −0.49 | 7.09 | 7.14 |
+| `Completed match?` | 55 | 1.7% | 19.33 | −12.75 | — | 19.33 |
+| `Who wins the toss?` | 48 | 1.5% | 8.06 | +8.06 | — | 8.06 |
+| `More Markets` | 25 | 0.8% | 35.12 | −18.20 | 47.24 | 29.41 |
+
+The best family in the cell is 5.88 pp. The exhaustive searches:
+
+```
+family partition       0 of   127 subsets under 3.0   best 5.45 pp, keeps 766 of 3,246 (23.6%)
+shape x price-sum      0 of 1,844 subsets under 3.0   best 4.96 pp, keeps 2,298 (70.8%)
+```
+
+**4.96 pp is the best exclusion rule that exists for this cell.** It is 1.65x the bar, it deletes
+29% of the cell, and it cannot be stated in a sentence a reader would accept. RULE E's structural
+test is no help either: it removes 946 rows and the cell does not move, because **the clean
+remainder it hands back — a true partition that realized one winner, 64.6% of the cell — is itself
+at 5.75.** A cell whose control fails cannot be repaired by deleting its dirty rows.
+
+### 🔴 Two mechanisms, both named, and the second one is the venue
+
+`--by outcomenames` (new; `COUNT(DISTINCT name)` per market, deliberately not a truncation-length
+test) finds Polymarket's nested sub-markets (gotcha #18) flattened into one `futures_market` with
+the container's name copied onto every outcome — three prices summing to 1.655 under three
+identical labels, **nothing saying which side each price is for.** Real, one-sided, a writer bug —
+and **10.4% of the cell.** Remove it, the lone claims and the duplicated labels, all 425 rows, and
+the remaining **2,821 well-formed rows sit at 7.33.**
+
+That residue is the finding. **`polymarket/cricket` is the first cell on this board where the
+evidence says the MARKET is miscalibrated rather than our pipeline** — and it is exactly why no
+rule exists. 61.4% of the cell (`Toss Match Double`, `Team Top Batter`, `Most Sixes`) carries gaps
+of **+0.05, −0.33, −0.49** against ECEs of 5.88, 7.11, 6.89: prices right on average, wrong bucket
+by bucket. **Two-sided error, the honest kind, invisible to every gap-driven fold this lane runs.**
+
+### 🔴 12-CAL is NOT Kalshi-specific, and this settles it
+
+`d_lone_outcome` / `single` / `market_type = 'unshaped'` — three folds, the same 33 rows:
+**n=33, winners=33, losers=0, mean price 0.6058, and every bucket from the 30s up is 100%
+winners.** That is not a forecast record, it is a filter. CAL-P122 found 395/395 on
+`kalshi/entertainment` and could not say whether it was a Kalshi quirk; it is not.
+**`clean_vms.has_winner >= 1` is evaluated over the virtual market and is source-agnostic** — an
+ungrouped single-outcome market publishes if and only if it won, on both venues. 12-CAL is
+curve-wide.
+
+It does not change this verdict and the bound is stated rather than assumed: at 1.0% of the cell,
+restoring the dropped losses moves it within **[7.5, 9.0] pp** under the most extreme assumptions
+either way. Lesson 6's hazard is that a *passing* rule fails on the corrected population; here
+there is no passing rule to invalidate, which is why the ~90-minute Polymarket census is parked
+rather than run.
+
+### Owed, and parked
+
+**14-CAL (new)** — cricket is 8.15 pp, 8.48σ, 16,618 excess-outcomes, and proven unrepairable.
+Three options, **(a) rule it a DISCLOSED KNOWN-BAD cell and leave every row on the curve**
+recommended: it costs 0.00 pp and gives the page a second truthful category — *"we measured this
+and the venue is wrong"* as distinct from *"our pipeline mangled this."* (b) exclude the whole cell
+— buys ~0.2 pp, deletes a sport, and breaks the pattern that every exclusion on this board names a
+*population defect*. (c) take the 4.96 pp rule — recorded only so the option is on the page.
+
+**Parked, not dropped. CAL-P123-1** — the exact missing-loser census on the 33-row lone-claim class;
+bounded above as immaterial, run it after 12-CAL is decided. **CAL-P123-2** — the two-sided error
+in the three big families, 1,994 rows, 61.4% of the cell. With CAL-P122-2 that is **two cells on two
+venues saying the same thing: the residual on this board, after every population defect is removed,
+is two-sided bucket error that no gap-driven fold can see.** That is a question about what
+instrument this board is missing, and it is bigger than either cell.
 
 ---
 
