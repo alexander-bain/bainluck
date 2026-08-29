@@ -1341,13 +1341,17 @@ async def _build_golf_grid_from_datagolf(
         # Build grids for all tours in parallel-ish fashion
         tours = ["pga", "euro", "kft", "opp", "alt"]
         events = []
+        # One candidate load for the whole build. Every tour and every upcoming
+        # major below issued this same query and filtered its result differently
+        # in Python; three active tours therefore paid for it three times.
+        candidates = GolfCandidateMarkets(db, config)
 
         # Track which tournament is the current PGA event (to avoid duplication)
         current_pga_event_name = None
 
         for tour in tours:
             event_grid = await _build_golf_tour_grid(
-                service, tour, config, db, trend_hours, top,
+                service, tour, config, db, trend_hours, top, candidates=candidates,
             )
             if event_grid:
                 events.append(event_grid)
@@ -1405,6 +1409,7 @@ async def _build_golf_grid_from_datagolf(
                         db=db,
                         trend_hours=trend_hours,
                         top=top,
+                        candidates=candidates,
                     )
                     if major_grid:
                         # Insert major events at the front (before non-PGA tours)
@@ -1544,8 +1549,115 @@ async def _lookup_datagolf_outcome_ids(
     return dg_outcome_lookup
 
 
+# ---------------------------------------------------------------------------
+# Golf candidate markets — one query per grid build, and one that uses an index
+# ---------------------------------------------------------------------------
+
+# ``FuturesMarket.external_id`` is not one id space. It is one column holding
+# several, and which one a row holds is decided entirely by ``source`` —
+# ``models.py`` says so out loud: "sport_key or event_ticker". Golf's
+# ``config.sport_keys`` ("golf_pga", "golf_masters", …) are Odds API sport keys,
+# so only ``odds_api`` rows can ever match them. There are twelve of those in the
+# whole table.
+#
+# Leaving that unsaid is what made the golf grid a seq scan. An OR across two
+# columns with no composite index is a decision to read the whole table:
+# Postgres stopped trying and read all 911,284 rows to return 96, once per tour.
+# Naming the source turns each branch into its own index scan under a BitmapOr.
+# Measured on production 2026-08-29 against the exact SQL this builds:
+# 6,122 ms / 50,364 blocks off disk -> 483 ms / 1,346 blocks, identical 96 rows.
+_GOLF_SPORT_KEY_ID_SPACE_SOURCE = "odds_api"
+
+
+def _build_golf_candidate_filters(config: LeagueConfig) -> list:
+    """WHERE clauses selecting every golf market the tour grids can draw on.
+
+    Pure — a config in, SQLAlchemy clauses out, no session and no I/O. The
+    defect this replaces had exactly one symptom, a query plan: it selected the
+    right rows, so a results test passes against it and a timing test merely
+    gets slower on a bad day. The guard suite therefore asserts the *shape* of
+    what is sent to Postgres, and it can only do that if building the shape is
+    separable from running it.
+    """
+    sport_key_prefixes = [
+        FuturesMarket.external_id.ilike(f"{sk}%") for sk in (config.sport_keys or [])
+    ]
+    # The category branch is deliberately NOT source-scoped. ``llm_sport_category``
+    # is written for kalshi and polymarket rows too, and they are where all 96
+    # candidates actually come from — the sport-key branch contributes rows only
+    # from the twelve-row odds_api space. Scoping both spaces to one source would
+    # be faster still, silent, and would empty the grid. See the second-door test.
+    category_branch = FuturesMarket.llm_sport_category == "golf"
+    if not sport_key_prefixes:
+        market_filter = category_branch
+    else:
+        market_filter = or_(
+            and_(
+                FuturesMarket.source == _GOLF_SPORT_KEY_ID_SPACE_SOURCE,
+                or_(*sport_key_prefixes),
+            ),
+            category_branch,
+        )
+    return [
+        market_filter,
+        FuturesMarket.status != "resolved",
+        FuturesMarket.source != "datagolf",
+    ]
+
+
+async def _load_golf_candidate_markets(db: AsyncSession, config: LeagueConfig) -> list:
+    """Load the golf candidate market set (markets + outcomes) in one query."""
+    stmt = (
+        select(FuturesMarket)
+        .where(*_build_golf_candidate_filters(config))
+        .options(selectinload(FuturesMarket.outcomes))
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().unique().all())
+
+
+class GolfCandidateMarkets:
+    """Request-scoped lazy holder for the golf candidate set.
+
+    Every tour grid and every upcoming-major grid in a single build issued the
+    *identical* query — same config, same category, nothing tour-dependent in the
+    SQL — and then filtered the identical 96 rows differently in Python. Three
+    active tours meant three full scans inside a 25 s request budget.
+
+    Deliberately an instance, not a module-level dict: it holds live ORM rows
+    bound to one build's session, and gotcha #6 is that a module-global cache
+    must never do that. Lazy, so an off-season build where no tour has an event
+    still issues no query at all. ``loads`` is public so the guard suite can
+    assert "one query across three tours" without monkeypatching the session.
+    """
+
+    __slots__ = ("_db", "_config", "_markets", "loads")
+
+    def __init__(self, db: AsyncSession, config: LeagueConfig):
+        self._db = db
+        self._config = config
+        self._markets: list | None = None
+        self.loads = 0
+
+    async def get(self) -> list:
+        if self._markets is None:
+            self._markets = await _load_golf_candidate_markets(self._db, self._config)
+            self.loads += 1
+        return self._markets
+
+
+async def _resolve_golf_candidates(
+    db: AsyncSession, config: LeagueConfig, candidates: "GolfCandidateMarkets | None",
+) -> list:
+    """Use the build's shared candidate set, or load one if called standalone."""
+    if candidates is not None:
+        return await candidates.get()
+    return await _load_golf_candidate_markets(db, config)
+
+
 async def _query_tournament_db_markets(
     db: AsyncSession, config: LeagueConfig, tournament_name: str, tour: str,
+    candidates: "GolfCandidateMarkets | None" = None,
 ) -> list:
     """Query and filter DB markets (Kalshi/Polymarket/Odds API) for a golf tournament."""
     _GOLF_STOPWORDS = {
@@ -1568,20 +1680,7 @@ async def _query_tournament_db_markets(
     )
     freshness_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
 
-    sport_conditions = [
-        FuturesMarket.external_id.ilike(f"{sk}%") for sk in config.sport_keys
-    ]
-    stmt = (
-        select(FuturesMarket)
-        .where(
-            or_(*sport_conditions, FuturesMarket.llm_sport_category == "golf"),
-            FuturesMarket.status != "resolved",
-            FuturesMarket.source != "datagolf",
-        )
-        .options(selectinload(FuturesMarket.outcomes))
-    )
-    result = await db.execute(stmt)
-    all_db_markets = result.scalars().unique().all()
+    all_db_markets = await _resolve_golf_candidates(db, config, candidates)
 
     def _market_matches(market) -> bool:
         name_lower = (market.name or "").lower()
@@ -1816,6 +1915,7 @@ async def _build_golf_tour_grid(
     db: AsyncSession,
     trend_hours: int,
     top: int,
+    candidates: "GolfCandidateMarkets | None" = None,
 ) -> dict | None:
     """Build a single tour's event grid from DataGolf data."""
     tour_label = _TOUR_LABELS.get(tour, tour.upper())
@@ -1863,7 +1963,7 @@ async def _build_golf_tour_grid(
                     tour, sum(len(v) for v in dg_outcome_lookup.values()))
 
         db_markets = await _query_tournament_db_markets(
-            db, config, current_event.event_name or "", tour,
+            db, config, current_event.event_name or "", tour, candidates=candidates,
         )
 
         # 4. Match outcomes to grid
@@ -2005,6 +2105,7 @@ async def _build_upcoming_golf_event_grid(
     db: AsyncSession,
     trend_hours: int,
     top: int,
+    candidates: "GolfCandidateMarkets | None" = None,
 ) -> dict | None:
     """Build a golf grid for an upcoming tournament using DB markets only.
 
@@ -2033,25 +2134,9 @@ async def _build_upcoming_golf_event_grid(
         tournament_name, search_tokens,
     )
 
-    # Query DB for markets matching this tournament
-    sport_conditions = [
-        FuturesMarket.external_id.ilike(f"{sk}%")
-        for sk in config.sport_keys
-    ]
-    category_condition = FuturesMarket.llm_sport_category == "golf"
-    market_filter = or_(*sport_conditions, category_condition)
-
-    stmt = (
-        select(FuturesMarket)
-        .where(
-            market_filter,
-            FuturesMarket.status != "resolved",
-            FuturesMarket.source != "datagolf",
-        )
-        .options(selectinload(FuturesMarket.outcomes))
-    )
-    result = await db.execute(stmt)
-    all_db_markets = result.scalars().unique().all()
+    # Same candidate set as every tour grid in this build — identical SQL, only
+    # the Python-side tournament filter below differs.
+    all_db_markets = await _resolve_golf_candidates(db, config, candidates)
 
     # Filter to markets matching this tournament
     def matches_tournament(market_name: str) -> bool:
