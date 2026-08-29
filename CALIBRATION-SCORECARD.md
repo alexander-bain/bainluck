@@ -957,30 +957,49 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 | 2 | `kalshi/economics` | C | 5.29 | 28,613 | −0.47 | 3.0 | +2.29 | 7.8 | 65,524 | ✅ **named, designed AND RULED (CAL-P114 §6b, Alex 2026-08-28 option b)** — 99.7% cumulative index ladders; rules E+E2+E3 → 2.61 pp PASS, **approved with disclosure** | **ZERO** — ruled, unbuilt (disclosure surface BUILT, §6d) |
 | 3 | `polymarket/esports` | B | 7.59 | 14,053 | +6.02 | 3.0 | +4.59 | 10.9 | 64,503 | ✅ **named and designed (CAL-P112, §6a; re-checked on the exact rail, CAL-P114)** — the 1-winner tail `esports_multi_bundle_filter` cannot reach | **ZERO** — designed, unbuilt |
 | 4 | `polymarket/soccer` | B | 3.42 | 106,803 | +2.16 | 3.0 | +0.42 | 2.8 | 44,857 | ❌ **none — the named mechanism was measured on the published cell and REFUSED (CAL-P118, §6e)**; O/U ladder coherence reaches 7.4% of the cell and moves it **+0.03 pp, worse on both holdout halves** | **ZERO** — and no longer designed |
-| 5 | `odds_api_bookmaker/basketball_nba` | A | 5.18 | 10,186 | +1.03 | **2.5** | +2.68 | 5.4 | 27,298 | ❌ none | **not started** |
-| 6 | `kalshi/crypto` | C | 7.60 | 4,565 | +1.84 | 3.0 | +4.60 | 6.2 | 20,999 | ❌ none | **not started** |
-| 7 | `odds_api_bookmaker/baseball_mlb_preseason` | A | 8.24 | 3,253 | −7.67 | **2.5** | +5.74 | 6.5 | 18,672 | ❌ none | **not started** |
+| 5 | `odds_api_bookmaker/basketball_nba` | A | 5.18 | 10,186 | +1.03 | **2.5** | +2.68 | 5.4 | 27,298 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 573 games behind these rows, so the board’s σ counts one outcome ~17.8x. **σ = 1.28, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
+| 6 | `kalshi/crypto` | C | 7.60 | 4,565 | +1.84 | 3.0 | +4.60 | 6.2 | 20,999 | ✅ **named and designed (CAL-P121, §6h)** — the cell is **99.5% metal**, not crypto — gold/silver/lithium/nickel threshold ladders the LLM relabelled (exactly 1 of 4,566 rows is a cryptocurrency market) — and 99.9% is `bundle_multiwin`. **RULE C** = one tuple on rank 2's already-ruled allowlist → removes 4,563 of 4,566 rows | **ZERO** — designed, unbuilt; the rule **deletes the cell** (3 rows → absence) |
+| 7 | `odds_api_bookmaker/baseball_mlb_preseason` | A | 8.24 | 3,253 | −7.67 | **2.5** | +5.74 | 6.5 | 18,672 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 217 games behind these rows, so the board’s σ counts one outcome ~15.0x. **σ = 1.69, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
 | 8 | `kalshi/entertainment` | C | 5.21 | 8,355 | +1.07 | 3.0 | +2.21 | 4.0 | 18,465 | ⚠️ partial (exit-exam item 3: settlement-timing rival UNKNOWN) | **not started** |
 | 9 | `kalshi/golf` | B | 3.88 | 20,500 | +3.72 | 3.0 | +0.88 | 2.5 | 18,040 | ⚠️ `golf_placeholder_filter` live since 07-09 | **shipped, insufficient** |
 | 10 | `polymarket/cricket` | B | 8.11 | 3,252 | −4.61 | 3.0 | +5.11 | 5.8 | 16,618 | ✅ diagnosed 2026-08-09 (exit-exam item 3) | **diagnosed, no rule built** |
 | 11 | `polymarket/basketball` | B | 4.24 | 13,135 | +2.96 | 3.0 | +1.24 | 2.8 | 16,287 | ❌ none | **not started** |
 | 12 | `polymarket/golf` | B | 5.45 | 6,463 | +3.92 | 3.0 | +2.45 | 3.9 | 15,834 | ⚠️ as #9 | **shipped, insufficient** |
-| 13 | `odds_api_bookmaker/icehockey_nhl` | A | 3.89 | 8,658 | +3.04 | **2.5** | +1.39 | 2.6 | 12,035 | ❌ none | **NEW — entered on the ratified class-A bar** |
-| 14 | `odds_api_bookmaker/basketball_wncaab` | A | 6.05 | 3,382 | −0.35 | **2.5** | +3.55 | 4.1 | 12,006 | ❌ none | **not started** |
+| 13 | `odds_api_bookmaker/icehockey_nhl` | A | 3.89 | 8,658 | +3.04 | **2.5** | +1.39 | 2.6 | 12,035 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 495 games behind these rows, so the board’s σ counts one outcome ~17.5x. **σ = 0.62, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
+| 14 | `odds_api_bookmaker/basketball_wncaab` | A | 6.05 | 3,382 | −0.35 | **2.5** | +3.55 | 4.1 | 12,006 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 583 games behind these rows, so the board’s σ counts one outcome ~5.8x. **σ = 1.72, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
 | 15 | `polymarket/economics` | C | 3.90 | 12,882 | +0.14 | 3.0 | +0.90 | 2.0 | 11,594 | ⚠️ CAL-P114 measured it as the cell RULE T breaks if the bundle allowlist is keyed on category alone (3.91 → 17.75) | **not started** |
 | 16 | `polymarket/hockey` | B | 7.36 | 2,281 | +0.66 | 3.0 | +4.36 | 4.2 | 9,945 | ❌ none | **not started** |
 | 17 | `kalshi/tech` | C | 10.96 | 1,203 | −9.35 | 3.0 | +7.96 | 5.5 | 9,576 | ✅ **named and designed (CAL-P112, §6a)** — 79% cumulative-threshold ladder rows | **ZERO** — designed, unbuilt |
-| 18 | `odds_api_bookmaker/basketball_wnba` | A | 4.81 | 3,135 | −0.07 | **2.5** | +2.31 | 2.6 | 7,242 | ❌ none | **not started** |
+| 18 | `odds_api_bookmaker/basketball_wnba` | A | 4.81 | 3,135 | −0.07 | **2.5** | +2.31 | 2.6 | 7,242 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 300 games behind these rows, so the board’s σ counts one outcome ~10.4x. **σ = 0.80, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
 | 19 | `polymarket/tech` | C | 4.91 | 2,779 | −0.85 | 3.0 | +1.91 | 2.0 | 5,308 | ✅ measured on the exact rail (CAL-P114) — RULE T moves it 5.04 → 4.80, **refused**: 707 rows, below the materiality floor | **measured, rule refused** |
-| 20 | `odds_api_bookmaker/basketball_euroleague` | A | 5.39 | 1,762 | −4.53 | **2.5** | +2.89 | 2.4 | 5,092 | ❌ none | **not started** |
+| 20 | `odds_api_bookmaker/basketball_euroleague` | A | 5.39 | 1,762 | −4.53 | **2.5** | +2.89 | 2.4 | 5,092 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 162 games behind these rows, so the board’s σ counts one outcome ~10.9x. **σ = 0.74, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
 
 By source: **polymarket 9 cells / 263,728** · **odds_api_bookmaker 6 / 82,345** · **kalshi 5 / 132,604**.
 
-**Scoreboard: 0 of 20 cells crossed off. 2 are RULED and landable (ranks 1 and 2) and 2 more are
-designed but unruled (ranks 3 and 17) — all four worth 0.00 pp today. 3 have a shipped rule that did
-not clear the cell. 2 have a measured rule that was refused. 10 have no rule at all.** Those four
-cells carry **218,385 of the board's 478,677 excess-outcomes, 45.6%**, and every one of them lands
-the day the freeze lifts.
+**Scoreboard: 0 of 20 cells crossed off. 2 are RULED and landable (ranks 1 and 2) and 3 more are
+designed but unruled (ranks 3, 6 and 17) — all five worth 0.00 pp today. 3 have a shipped rule that
+did not clear the cell. 2 have a measured rule that was refused. 9 have no rule at all.** Those five
+cells carry **239,384 excess-outcomes** — 50.0% of the board's uncorrected 478,677, and **60.4% of
+the 396,332 that survive CAL-P120's σ correction** — and every one of them lands the day the freeze
+lifts.
+
+> **CAL-P121 added rank 6 to the banked column, and it is the first banked design whose rule
+> *deletes* its cell rather than repairing it** (4,563 of 4,566 rows; 3 survive, below the floor).
+> `kalshi/tech` was already headed for the same outcome at 260 rows, but at 4,563 this needs Alex's
+> eyes and it is item 1 of §6h's owed list. The mechanism is not the one the cell's name implies:
+> **`kalshi/crypto` is 99.5% gold and silver, and exactly one of its 4,566 rows is a
+> cryptocurrency market.**
+
+> 🔴 **CAL-P120: the six `odds_api_bookmaker` rows above should not be on this table at all, and the
+> σ column is why.** Every one of them publishes one GAME as ten to eighteen bookmaker-rows carrying
+> a byte-identical outcome, so `cell_se_pp(n) = 50/sqrt(n)` is fed a row count that overstates the
+> independent sample by 5.8–17.8x. Re-measured at game grain, **all six fall under the 2.0 σ gate**
+> (0.62 – 1.72) and belong on the *"over bar but NOT established — do not work these"* list below.
+> **The point estimates barely move** — rank 5 goes 5.18 → 5.32 pp — so this is not "these cells are
+> fine", it is "this board cannot tell them from their bar", which is the exact condition
+> `SIGMA_GATE` was added to catch. Corrected board: **14 queued cells / 396,332 excess-outcomes**,
+> and ranks 5, 7, 13, 14, 18 and 20 stop consuming conveyor cycles. Full measurement, the instrument
+> that had to be built first, and the two counter-arguments answered with numbers: **§6g**.
 
 > **CAL-P118 moved rank 4 out of the designed column, and that is the second time a ✅ on this table
 > has not survived contact with its own cell.** Rank 1's two mechanisms were worth −0.53 pp
@@ -1561,6 +1580,240 @@ as the market's miscalibration, deliberately and disclosed.
 
 Queue 022's item 3 is the return path — *"the excluded rows return as good data and CAL's exclusion
 empties itself."* **That report is the trigger to remove the allowlist entry and re-score the cell.**
+
+---
+
+## 6g. RANK 5, and the five cells behind it — CAL-P120 measured them out of the queue
+
+**Verdict: no rule is owed on any `odds_api_bookmaker` cell, and the reason is the board's own σ
+column.** Full document: `artifacts/cal-p120/RULE-DESIGN-odds-api-bookmaker-six-cells.md`.
+This changes **no published row** — not the curve, not the headline, not a filter. It changes which
+cells this board says are worth a cycle.
+
+### The instrument had to be built first, and its absence was not a scoping bug
+
+The exact rail does not return a wrong answer on this cell — it crashes in `sweep()` on
+`MIN(id)`/`MAX(id)` returning `NULL`. Measured 2026-08-29, the entire `source` domain of
+`futures_markets` is `polymarket` (644,038) · `kalshi` (255,104) · `datagolf` (330) · `odds_api` (12).
+**There are zero `odds_api_bookmaker` rows in it.** All three instruments of the CAL-P112/114/117/118
+family fold the `futures_markets`-rooted population chain, so **none of them can reach this source at
+all**, and no `--source` string fixes that.
+
+This source arrives by a different road: `backfill_winners._precompute_bookmaker_calibration()` runs
+one self-contained statement over `events` + `odds_snapshots`, aggregates to
+`(bucket_idx, category)`, and writes Redis `bainluck:bookmaker_calibration`; the producer reads that
+key in Phase 3 Query 5 and republishes it. **The rows are aggregated before the producer sees them.**
+
+New: `backend/scripts/calibration_bookmaker_cell_fold.py`, 21 guards / 7 mutations / 7 reds.
+
+### It is the first rail on this board that reproduces its cell EXACTLY
+
+```
+odds_api_bookmaker/basketball_nba  (--grain bucket --check-payload)
+  fold      n=10,186  ECE=5.18 pp  gap=+1.03 pp
+  published n=10,186  ECE=5.18 pp  gap=+1.03 pp
+  DRIFT     rows +0 (+0.00%)  ECE -0.00 pp   ✅ every bucket reproduces exactly
+```
+
+Against `polymarket/baseball` at **−5.7% of rows** (§6c) and `polymarket/soccer` at **−5.06% rows /
+−0.53 pp** (§6e). The reason is structural: every grouping in this statement is per-event, and the
+chunking is on `commence_time`, which partitions events — so chunk edges cannot perturb a value, the
+way `virtual_market`'s cross-market ≥3 test can on `fm.id` chunks. And there is no staged mosaic to
+disagree with.
+
+**Its one non-reproduction is evidence too.** `basketball_wnba` reads **+66 rows (+2.11%)**, and every
+disagreeing bucket is an *addition* — none lost a row. WNBA's season is live; NBA's ended 2026-06-14
+and reproduces to the row. **Dead seasons reproduce exactly, live seasons only grow** — the opposite
+of the Polymarket case, where rows went missing in both directions.
+
+### The finding: the outcome is counted 17.78 times
+
+Rank 5 publishes 10,186 outcomes from **573 games** — median **18 books per game**. Within a game:
+
+* **`won` is byte-identical across all 18 rows** — it is `(eb.home_score > eb.away_score)`, a function
+  of `event_id` alone. Intra-cluster correlation on the response is **exactly 1, by construction**.
+* **`prob` is nearly identical too** — median inter-book SD **0.0068** (0.68 pp), median range
+  0.0258, and **403 of 573 games (70.3%) have all ~18 books inside one decile bucket**.
+
+Design effect `1 + (m−1)ρ` with `ρ=1` collapses to `m`. **Effective n = 10,186/17.78 = 573 games.**
+
+| | n used | se | excess | σ |
+|---|--:|--:|--:|--:|
+| board today | 10,186 book-rows | 0.495 pp | +2.68 | **5.4 — QUEUED** |
+| per game | 573 games | 2.089 pp | +2.68 | **1.28 — not established** |
+
+**The point estimate is not what moves.** Re-folded one row per game: **ECE 5.32 pp** (from 5.18),
+gap +1.01 (from +1.03). Replication does not create the error — it creates the *confidence*. This is
+not "the cell is fine"; it is "the sample cannot tell it from its bar", which is precisely what
+`SIGMA_GATE` exists to catch: *"chasing a point estimate that the sample cannot distinguish from the
+bar burns a cycle per cell and moves nothing."*
+
+**The holdout split says it without any variance theory** (CAL-P117 lesson 2): OLD 286 games ECE 6.24
+gap **+3.32**, NEW 287 games ECE 4.86 gap **−1.28**. *The gap reverses sign.* A mechanism does not
+change direction halfway through a season. And the two scariest-looking buckets dissolve: b0 is not
+"170 rows, 0 winners, p=4.5e-7" — it is **10 games**, P(0 of 10) = **0.42**; b9 is **22 games**,
+P = 0.16.
+
+### All six, and not one survives
+
+| cell | pub n | games | repl | ECE | excess | σ board | **σ per game** |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| `basketball_nba` | 10,186 | 573 | 17.8x | 5.18 | +2.68 | 5.42 | **1.28** |
+| `baseball_mlb_preseason` | 3,253 | 217 | 15.0x | 8.24 | +5.74 | 6.55 | **1.69** |
+| `icehockey_nhl` | 8,658 | 495 | 17.5x | 3.89 | +1.39 | 2.58 | **0.62** |
+| `basketball_wncaab` | 3,382 | 583 | 5.8x | 6.05 | +3.55 | 4.13 | **1.72** |
+| `basketball_wnba` | 3,135 | 300 | 10.4x | 4.81 | +2.31 | 2.58 | **0.80** |
+| `basketball_euroleague` | 1,762 | 162 | 10.9x | 5.39 | +2.89 | 2.43 | **0.74** |
+
+Their halves are correspondingly unstable — `icehockey_nhl` reads **1.31 then 7.34** (its OLD half is
+*below the bar*), `baseball_mlb_preseason` **3.91 then 14.09**. A cell whose halves read 1.31 and 7.34
+has no stable ECE for a rule to be designed against.
+
+### 🔴 "But `50/sqrt(n)` is already conservative" — measured, and it is off by 3x or more
+
+The convention's docstring promises *"a cell this gate clears is clear by at least the margin
+shown."* **That is false on this source.** Conservatism bought by assuming p=0.5, against the
+deflation clustering actually needs:
+
+| cell | conservatism | deflation needed |
+|---|--:|--:|
+| `basketball_nba` | 1.18x | **4.22x** |
+| `baseball_mlb_preseason` | 1.04x | **3.87x** |
+| `icehockey_nhl` | 1.02x | **4.18x** |
+| `basketball_wncaab` | 1.19x | **2.41x** |
+| `basketball_wnba` | 1.13x | **3.23x** |
+| `basketball_euroleague` | 1.09x | **3.30x** |
+
+p=0.5 is a *within-row* effect worth 1.02–1.19x; clustering is a *between-row* effect needing
+2.41–4.22x, pointing the other way. The promise holds for `futures_markets` sources, where one row is
+one market. It was never checked against a source that publishes one game eighteen times.
+
+**Owed to the renderer:** `calibration_scorecard.py` needs a per-source effective-n so the σ column
+stops counting a game eighteen times. Until it has one, **the σ column on any `odds_api_bookmaker`
+row must be read as ~4x too large.** Corrected board: **20 → 14 queued cells, 478,677 → 396,332
+excess-outcomes.**
+
+### 🔴 The larger thing this uncovers is Alex's, and this lane stops at naming it
+
+The same replication that inflates σ also **weights the published headline**. `odds_api_bookmaker` is
+**96,026 of 913,851 published outcomes (10.5%)** — on the order of **~5–6 thousand real games counted
+ten to eighteen times each**, where every other source publishes about one row per question.
+
+This lane does not touch it, for two reasons. **It cuts against us:** this source's own MCE is
+**1.43**, below the published **1.89**, so it is currently pulling the headline *down* and
+de-weighting it would likely make the number **worse** — exactly the change a lane must never make
+quietly on its own initiative, in either direction. **And it is a producer-weighting question**, with
+the producer frozen under ruling 009. **YOUR-TURN item 10**, parked as **CAL-P120-1**; the settling
+measurement — `mce_closing_line` recomputed with this source de-replicated to game grain — is a
+measurement-lane job under ruling 134 and should run *before* anyone rules, not after.
+
+---
+
+## 6h. RANK 6 pre-built — CAL-P121, and the cell is 99.5% metal
+
+Full document: **`artifacts/cal-p121/RULE-DESIGN-kalshi-crypto.md`**. Designed, benched on the
+producer's own chain, holdout-split, **not built, worth 0.00 pp today.**
+
+### The two cheap checks CAL-P120 paid for, run first
+
+**The rail reaches it, and better than it has reached anything.** `futures_markets` holds 255,104
+`kalshi` rows, and `calibration_cell_exact` reproduces this cell at **4,566 / 7.61 / +1.83** against
+the payload's 4,565 / 7.60 / +1.84 — **+0.02%**, against +0.55% on `kalshi/economics` and −5.7% on
+`polymarket/baseball`.
+
+**The σ correction was measured, and it does NOT rescue this cell.** CAL-P120's correction is a
+*dedup* and does not transfer: eighteen bookmaker rows are byte-identical copies, but a threshold
+ladder's rungs carry different prices and different outcomes and cannot collapse without inventing a
+price. So a new instrument — **`backend/scripts/calibration_cluster_sigma.py`**, 41 guards and
+10 mutations / 10 reds, read-only, one added dimension on the proven rail and no re-implementation — resamples the cell's
+**markets** and recomputes its own ECE, 2,000 times, seeded.
+
+### 🔴 It answers criterion 3 (PARKED CAL-P114-3) and criterion 6 (CAL-P120-2) together, and the answer is that the error has NO FIXED DIRECTION
+
+| cell | rows | markets | rows/mkt | σ_row (board) | σ_market (bound) | **σ measured** | design effect |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| `kalshi/economics` | 29,046 | 2,032 | 14.29 | 7.60 | 2.01 | **5.68** | **1.79** |
+| `kalshi/crypto` | 4,566 | 625 | 7.31 | 6.23 | 2.31 | **7.14** | **0.76** |
+
+*(`kalshi/economics` reads 29,046 / 5.23 here against §6b's 28,738 / 5.29 — same rail, same cell,
+**population drift** between the two sweeps; nothing has shipped into the producer since 2026-08-13
+and the σ ordering is not sensitive to it.)*
+
+**CAL-P114 §3a's estimate was pessimistic by 2.5x** — it predicted ~2.3σ for `kalshi/economics` and
+the measured answer is 5.68σ, because substituting the market count assumes perfect within-market
+correlation, which is a bound and not a measurement. And **on `kalshi/crypto` the direction
+reverses**: design effect **0.76 < 1**, so `50/√n` is *conservative* there. `cell_se_pp` is the
+maximum-variance (p = 0.5) SE and this cell's mass sits in the 0–10% and 90–100% deciles, which
+outweighs its clustering.
+
+So **`50/√n` is wrong in both directions and which one dominates is a per-cell empirical fact.** No
+single re-definition of the denominator is right: substituting the market count would have demoted
+`kalshi/economics` to 2.01σ, a hair over the gate, on an assumption the measurement refutes.
+**Neither cell changes verdict**, which is the reassuring half — the gate has been robust to its own
+bad denominator so far. **Recommendation to Alex: do not redefine criterion 3 — report the pair**,
+via an `effective_n` / `design_effect` column on the already-queued cells only, fed by this
+instrument. That is a measurement-lane job under ruling 134 and it is not staged here.
+
+### The cell is 99.5% metal, and exactly ONE of its 4,566 rows is cryptocurrency
+
+97.6% is gold and silver (`KXSILVERH` 35.5%, `KXGOLDH` 33.3%, `KXGOLDD` 10.5%, `KXSILVERD` 7.6%,
+`KXGOLDW` 6.0%, `KXSILVERW` 2.4%, `KXGOLDMON` 2.3%); with `KXLITHIUMW` and `KXNICKELW` it is
+**99.5% metals**, 4,545 of 4,566 rows. Of the 21 rows left, 14 are a company metric about a crypto
+*exchange*, 6 are earnings-call quotes, and **one row — 0.02% — is an actual cryptocurrency
+market** (`KXHYPE15M`, *"HYPE Up or Down — 15 minutes"*). `tasks/kalshi.py:654-658` skips crypto at
+ingest by design, but it fires on the category assigned **at ingest** and this whole cohort arrived
+as `other` — which is how 4,545 metals markets and one Hyperliquid contract ended up behind a label
+that says `crypto`. These markets arrived as
+`category='other'` — no ticker prefix matches, no name rule matches — and were **relabelled `crypto`
+afterwards** by the LLM pass in `tasks/futures.py`, because `services/llm.py:248 SPORT_CATEGORIES`
+has `crypto` and `economics` and **no `commodities`**. A model given no correct bucket picks the
+nearest asset-price attractor. Same shape as the motorsports misclassification: **classify
+positively**.
+
+> 🔴 **HAZARD — do not "clean up" rank 6 with the button that exists.** `tasks/retention.py:299`
+> `_cleanup_crypto_impl` DELETEs markets, outcomes and snapshots `WHERE llm_sport_category =
+> 'crypto'`, exposed at `routes/admin_data_quality.py:306`. It is not on the beat schedule, which is
+> why these rows are alive. **Its predicate is exactly the label that is wrong**: pressing it would
+> permanently destroy 3,922 gold, silver, palladium, copper, lithium and nickel markets and all their
+> history. If the relabel ships, that task's predicate must be re-derived before it is ever run.
+
+### RULE C, and it deletes the cell
+
+99.9% of the cell is `bundle_multiwin`; 91.1% sits in markets whose published prices sum above 1.15.
+**RULE C** is one tuple — `(kalshi, crypto)` — on the allowlist Alex already ruled for rank 2 (§6d).
+No new predicate, no new threshold, no new payload key, and it inherits the
+`nonexclusive_bundle_filter` disclosure surface that is already built and green on this branch.
+
+| policy | n | ECE | verdict |
+|---|--:|--:|---|
+| A_today (control) | 4,566 | 7.61 | +4.61 over bar, 20,999 excess-outcomes |
+| **C — allowlist add** | **3** | 30.50 | **removes 4,563 rows; the cell becomes an absence** |
+
+Both arms of the ruled gate condemn the same rows — every `sum ≤ 1.15` row here also realized ≥2
+winners — so **there is no version of this rule that leaves a material cell behind.** Holdout on the
+published cell's own median (`market_id 57,542,638`, 2,278 / 2,288): **OLD 6.46, NEW 10.73, no sign
+reversal, the later half worse**, and **every class in both halves is over the bar** (OLD's best
+6.80, NEW's best 9.59). There is no slice a narrower rule could have kept.
+
+### 🔴 Three things this cell adds that generalise past it
+
+1. **A cohort-scoped exclusion keyed on a label is switched off the day someone repairs the label.**
+   §6b concluded the allowlist must be keyed on `(source, category)` and that is still right — but if
+   the relabel ships and these rows become `kalshi/commodities`, an allowlist holding
+   `(kalshi, crypto)` stops reaching them and **rank 6 reappears under a new name at 7.6 pp with no
+   rule attached.** C must seed both tuples, and §8 of the rule doc specs a guard that reds when any
+   `kalshi` cell over its bar is >95% `bundle_multiwin` and off the allowlist.
+2. **Two of this cell's three defects are OURS, and RULE C hides both.** `poll_kalshi_markets` runs
+   every two hours (`crontab(minute=45, hour="*/2")`) and two thirds of this cell is **hourly**
+   markets: 65.9% of its closing lines are 1–4 h stale, and the hourly series read 10.87 against the
+   daily series' 4.61 on the same asset and shape. Supported, **not established** — the age fold is
+   non-monotone and this page will not upgrade it. **PARKED CAL-P121-2**, and it is not
+   metals-specific.
+3. **CAL-P117's coin-flip class is not confined to Polymarket.** `--by cpdrift` finds
+   `a_forced_to_half` at **170 rows / 36.32 pp** here, on Kalshi, and it is **growing across the
+   holdout split** (68 @ 31.91 → 102 @ 39.26). Lane1's writer-repair queue should be told this cohort
+   exists. Separately, `z_no_cp_fallback` — the rows using ruling 103's `opening_probability`
+   fallback — is the **best-calibrated class in the cell** at 2.38 pp, under the bar, on both halves.
 
 ---
 

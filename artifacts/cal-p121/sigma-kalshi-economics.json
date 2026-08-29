@@ -1,0 +1,40 @@
+{
+  "source": "kalshi",
+  "category": "economics",
+  "seconds": 481.3,
+  "boot": 2000,
+  "seed": 20260829,
+  "payload": {
+    "n": 28613,
+    "ece": 5.29,
+    "gap": -0.47,
+    "generated_at": "2026-08-29T00:36:47.978149+00:00",
+    "population_version": "q268"
+  },
+  "exact": {
+    "n": 29046,
+    "ece": 5.23,
+    "gap": -0.48
+  },
+  "klass": "C_exchange_standalone",
+  "bar": 3.0,
+  "excess": 2.23,
+  "clusters": 2032,
+  "rows_per_cluster": 14.294,
+  "se": {
+    "row": 0.2933775232280761,
+    "market": 1.1091956367701423,
+    "bootstrap": 0.39257469508440085
+  },
+  "sigma": {
+    "row": 7.601127637396969,
+    "market": 2.010465896253901,
+    "bootstrap": 5.680447639450031
+  },
+  "bootstrap_ci": [
+    4.47,
+    6.02
+  ],
+  "sigma_gate": 2.0,
+  "established": true
+}
