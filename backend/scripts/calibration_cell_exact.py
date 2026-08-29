@@ -91,6 +91,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.tasks.precompute_calibration import (  # noqa: E402
     _calibration_population_ctes,
 )
+from app.utils.ladder_coherence import (  # noqa: E402
+    ambiguous_families,
+    incoherent_families,
+    ladder_family_key,
+    parse_ou_line,
+    read_ladders,
+)
 from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE  # noqa: E402
 
 #: The db-query row path's silent truncation point.
@@ -456,6 +463,187 @@ CASE WHEN fm4.name ILIKE '%player props%' AND ms.msum > 1.15 THEN 'p'
      ELSE 'n' END
 """
 
+#: CAL-P118 — the LADDER dimension, for `polymarket/soccer` (rank 4).
+#:
+#: The board carries this cell as "✅ O/U ladder coherence (CAL-P106/107)". That
+#: claim has never been evaluated against the published cell: CAL-P106 measured
+#: 5,708 legs of ``soccer/quantity`` — 5.3% of the published cell's 106,803 —
+#: and §7 of the scorecard turned that into a −0.28 pp prediction by ARITHMETIC.
+#: CAL-P117 found exactly this pattern on rank 1 and the arithmetic was wrong by
+#: a factor. So this dimension exists to replace the prediction with a fold.
+#:
+#: THE PREDICATE IS IMPORTED, NOT RESTATED. ``incoherent_families`` and its
+#: helpers come from ``app.utils.ladder_coherence`` — the module a shipping
+#: caller would use — and the fold never re-derives a family key or a violation.
+#: The module's own docstring says the SQL rendering it also carries is UNPROVEN
+#: against the Python and that measurement must be driven from the Python side
+#: until a whole-population differential exists; that instruction is obeyed here
+#: rather than argued with, which is why the verdict is computed in Python and
+#: only the ANSWER (a set of market ids) is pushed back into SQL.
+#:
+#: WHY A PRE-PASS AND NOT A WINDOW. A ladder family is a set of markets sharing
+#: a name modulo the rung, and market ids inside one family are NOT guaranteed
+#: contiguous. A window computed inside a chunked fold would evaluate some
+#: families on a partial rung set and silently under-condemn — the same class of
+#: error ``--edge-check`` exists to catch, but arriving through the dimension
+#: instead of through ``virtual_market``. The pre-pass sweeps the whole cell
+#: once, at its own chunk width, so the verdict for a family never depends on
+#: where a boundary fell. Each fold chunk then receives only the ids inside its
+#: own range, which is why the arrays stay small.
+LADDER_ROWS_SQL = """
+SELECT fm.id AS market_id,
+       MAX(fm.name) AS name,
+       MAX(CASE WHEN lower(btrim(fo.name)) = 'over'
+                THEN COALESCE(fo.calibration_probability, fo.opening_probability)
+           END) AS over_price
+FROM futures_markets fm
+JOIN futures_outcomes fo ON fo.market_id = fm.id
+WHERE fm.source = '{source}'
+  AND COALESCE(fm.llm_sport_category, 'uncategorized') = '{category}'
+  AND fm.name ~ 'O/U[[:space:]]+[0-9]'
+  AND fm.id >= {lo} AND fm.id < {hi}
+GROUP BY fm.id
+"""
+
+#: A chunk whose id array would make the statement longer than this is SPLIT
+#: rather than sent. The row path has no documented body limit, so the failure
+#: it would produce is an unclassified 4xx — and an unclassified 4xx in a
+#: chunked sweep reads as "this range is empty" (gotcha #53).
+MAX_SQL_CHARS = 60_000
+
+#: Filled by :func:`ladder_context` before the sweep starts. Three disjoint id
+#: sets plus the census that produced them.
+_LADDER: dict | None = None
+
+
+def _pull_ladder_rows(source: str, category: str, lo: int, hi: int,
+                      depth: int = 0) -> list:
+    """Every O/U-bearing market in an id range, or a split."""
+    sql = LADDER_ROWS_SQL.format(source=source, category=category, lo=lo, hi=hi)
+    try:
+        r = db_query(sql, limit=ROW_CAP)
+    except QueryTimeout:
+        r = None
+    if r is not None and r["row_count"] < ROW_CAP:
+        return r["rows"]
+    if depth > 18 or hi - lo <= 1:
+        raise RuntimeError(f"ladder pre-pass chunk {lo}-{hi} irreducible at depth {depth}")
+    mid = lo + (hi - lo) // 2
+    return (_pull_ladder_rows(source, category, lo, mid, depth + 1)
+            + _pull_ladder_rows(source, category, mid, hi, depth + 1))
+
+
+def ladder_partition(recs: list) -> dict:
+    """Split ``{market_id, name, over_price}`` records into the rule's three classes.
+
+    Pure, so the arm a market lands in is testable without production. The
+    verdict itself is not computed here — ``incoherent_families`` and
+    ``ambiguous_families`` are the shipped functions and this only reads which
+    bucket each market's family fell into.
+
+    A market with no Over price or no rung token takes no part at all: the
+    predicate cannot place it in a ladder, and a row a rule cannot see must not
+    be reported as a row the rule kept (gotcha #53).
+    """
+    usable = [r for r in recs
+              if ladder_family_key(r["name"]) is not None
+              and parse_ou_line(r["name"]) is not None
+              and r["over_price"] is not None]
+
+    ladders = read_ladders(usable)
+    ambiguous = ambiguous_families(ladders)
+    condemned = incoherent_families(usable)
+
+    drop, amb_ids, coherent = set(), set(), set()
+    for r in usable:
+        key = ladder_family_key(r["name"])
+        if key in condemned:
+            drop.add(r["market_id"])
+        elif key in ambiguous:
+            amb_ids.add(r["market_id"])
+        else:
+            coherent.add(r["market_id"])
+
+    singletons = sum(1 for v in ladders.values() if len(v["rungs"]) < 2)
+    return {
+        "drop": drop, "ambiguous": amb_ids, "coherent": coherent,
+        "census": {
+            "ou_markets_scanned": len(recs),
+            "ou_markets_usable": len(usable),
+            "no_over_price": len(recs) - len(usable),
+            "families": len(ladders),
+            "families_singleton": singletons,
+            "families_ambiguous": len(ambiguous),
+            "families_condemned": len(condemned),
+            "markets_drop": len(drop),
+            "markets_ambiguous": len(amb_ids),
+            "markets_coherent": len(coherent),
+        },
+    }
+
+
+def ladder_context(source: str, category: str, width: int) -> dict:
+    """Sweep the cell once and hand the shipped predicate its whole population.
+
+    Returns the three id sets the dimension partitions on, and a census that is
+    printed rather than summarised — ``ambiguous`` in particular is the rule's
+    own fail-toward-keeping guard and a run where it swallowed the cell would
+    otherwise look like a rule that found nothing.
+    """
+    rng = db_query(
+        f"SELECT MIN(id) AS lo, MAX(id) AS hi FROM futures_markets "
+        f"WHERE source = '{source}'", limit=5)
+    lo, hi = rng["rows"][0]
+
+    rows: list = []
+    e = lo
+    n_chunks = 0
+    while e <= hi:
+        nxt = min(e + width, hi + 1)
+        n_chunks += 1
+        print(f"    ladder pre-pass [{n_chunks}] ids {e}-{nxt}",
+              file=sys.stderr, flush=True)
+        rows.extend(_pull_ladder_rows(source, category, e, nxt))
+        e = nxt
+
+    # The predicate's own input shape: name + Over price, one row per rung.
+    return ladder_partition(
+        [{"market_id": r[0], "name": r[1], "over_price": r[2]} for r in rows])
+
+
+def _id_array(ids: set, lo: int, hi: int) -> str:
+    inside = sorted(i for i in ids if lo <= i < hi)
+    if not inside:
+        return "ARRAY[]::bigint[]"
+    return "ARRAY[" + ",".join(str(i) for i in inside) + "]::bigint[]"
+
+
+def ladder_dim(lo: int, hi: int) -> tuple[str, str, str]:
+    """The dimension expression for ONE chunk, from the pre-pass verdict.
+
+    Four arms, and the last two are the controls the rule has to survive:
+    ``c_ladder_coherent`` is the population the rule KEEPS and its error is what
+    the cell looks like after the rule ships; ``z_not_a_ladder`` is the part of
+    the cell the mechanism cannot touch at all, and doctrine 18 says a
+    row-dropping fix is graded on exactly that.
+    """
+    if _LADDER is None:  # pragma: no cover - main() fills it first
+        raise RuntimeError("ladder_context() must run before the sweep")
+    return (f"""
+CASE WHEN d.market_id = ANY({_id_array(_LADDER['drop'], lo, hi)})
+          THEN 'a_drop_incoherent'
+     WHEN d.market_id = ANY({_id_array(_LADDER['ambiguous'], lo, hi)})
+          THEN 'b_ambiguous_kept'
+     WHEN d.market_id = ANY({_id_array(_LADDER['coherent'], lo, hi)})
+          THEN 'c_ladder_coherent'
+     ELSE 'z_not_a_ladder' END
+""", "", "")
+
+
+#: Dimensions whose expression depends on the chunk, and therefore cannot live
+#: in the static table below.
+PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim}
+
 #: name -> (key expression, extra JOINs, extra CTEs appended to the chain)
 DIMENSIONS = {
     "none": ("'all'", "", ""),
@@ -475,7 +663,10 @@ DIMENSIONS = {
 
 
 def cell_sql(source: str, category: str, lo: int, hi: int, dim: str) -> str:
-    expr, join, pre = DIMENSIONS[dim]
+    if dim in PER_CHUNK_DIMENSIONS:
+        expr, join, pre = PER_CHUNK_DIMENSIONS[dim](lo, hi)
+    else:
+        expr, join, pre = DIMENSIONS[dim]
     pop = _calibration_population_ctes(
         market_info_extra=(
             f"AND fm.source = '{source}' "
@@ -501,10 +692,15 @@ def collect(source: str, category: str, lo: int, hi: int, dim: str,
     """Fold one id range, splitting on BOTH failure modes of the row path.
 
     Truncation and statement-timeout are the same bug wearing two faces: the
-    range is too big. Only one of them is loud.
+    range is too big. Only one of them is loud. A per-chunk dimension adds a
+    third face — a statement too long to send — and it is the quietest of all,
+    so it is checked BEFORE the request rather than diagnosed from its reply.
     """
+    sql = cell_sql(source, category, lo, hi, dim)
+    if len(sql) > MAX_SQL_CHARS:
+        return _split(source, category, lo, hi, dim, depth, "over the SQL length cap")
     try:
-        r = db_query(cell_sql(source, category, lo, hi, dim), limit=ROW_CAP)
+        r = db_query(sql, limit=ROW_CAP)
     except QueryTimeout:
         return _split(source, category, lo, hi, dim, depth, "timing out")
     if r["row_count"] >= ROW_CAP:
@@ -607,7 +803,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--source", required=True)
     ap.add_argument("--category", required=True)
-    ap.add_argument("--by", default="none", choices=sorted(DIMENSIONS))
+    ap.add_argument("--by", default="none",
+                    choices=sorted(set(DIMENSIONS) | set(PER_CHUNK_DIMENSIONS)))
     ap.add_argument("--width", type=int, default=DEFAULT_WIDTH,
                     help="id width per chunk (a chunk that times out is split)")
     ap.add_argument("--edge-check", action="store_true",
@@ -621,6 +818,16 @@ def main() -> int:
                          "EDGE, so neither half is contaminated.")
     ap.add_argument("--out")
     args = ap.parse_args()
+
+    global _LADDER
+    ladder_census = None
+    if args.by in PER_CHUNK_DIMENSIONS:
+        _LADDER = ladder_context(args.source, args.category, args.width)
+        ladder_census = _LADDER["census"]
+        print("  LADDER PRE-PASS — the shipped predicate, whole cell, one sweep")
+        for k, v in ladder_census.items():
+            print(f"    {k:<24} {v:>8}")
+        print()
 
     t0 = time.time()
     by_key, halves = sweep(args.source, args.category, args.by,
@@ -687,6 +894,7 @@ def main() -> int:
                 "by": args.by, "width": args.width, "seconds": round(took, 1),
                 "payload": {"n": pn, "ece": pece, "gap": pgap, **meta},
                 "exact": {"n": n, "ece": ece, "gap": gap},
+                "ladder_census": ladder_census,
                 "edge_check": edge,
                 "by_key": {str(k): {str(b): v for b, v in bb.items()}
                            for k, bb in by_key.items()},

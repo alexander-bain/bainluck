@@ -125,6 +125,27 @@ actually serves. There is not a single holdout, sample, or parallel-rail number 
 > nothing until the backend key exists, and 6 mutation-checked tests hold the per-cell counts and
 > the clause that stops a smaller curve being read as a fixed one. §6d.
 
+> **CAL-P118, 2026-08-29 — the flagship rule was measured against the published cell and it makes
+> the cell WORSE.** The gates are still shut (`WINDOW_NOT_FULL`), so this is a pre-build queue.
+> `polymarket/soccer` (rank 4, 44,857 excess-outcomes) is the cell §7 named as *"the first test of
+> the loop"* and predicted at **−0.28 pp**, *"the largest published improvement this program would
+> have made since 2026-08-01."* Folded through the producer's own chain with the shipped predicate
+> imported rather than restated, it is **+0.03 pp — wrong in sign — and worse on both holdout
+> halves and on every variant tried** (§6e). The mechanism is real: 3,989 published outcomes at ECE
+> **9.57** against a cell at 2.89. It cannot be removed, because in **7 of 10 buckets its error has
+> the opposite sign to the rest of the cell** and was cancelling it. **Rank 4 loses its ✅ and §7 is
+> rewritten rather than annotated.** Two structural findings came out of the same fold. First,
+> **81,291 condemned markets produce 3,989 published outcomes** — an O/U ladder *is* a `group_id`
+> cluster, so `virtual_market` had already collapsed it and the rule's reach into the curve is 7.4%
+> of the cell, not the 100% a subcohort implies. Second, **CAL-P117's stated cause for the exact
+> rail's row shortfall is disproven** (0 of 7,484 group clusters and 0 of 2,103 event clusters
+> change size under the category conjunct; 1 of 92,771 markets is demoted by chunking) and the
+> payload's own `staged` block names the real one: the curve is a mosaic of **128 units banked at
+> `20:35:54Z` of which 109 have drifted**, republished under `frozen_over_drift`. That is also why
+> the number is flat — **the `23:35:51Z` beat publishes the same `20:35:54Z` population as the
+> `20:37:41Z` beat.** §6e and CAL-P118-1. Published number **1.89 pp, FLAT**, on a genuinely new
+> curve (`23:35:51Z`, q268) carrying the same staged generation.
+
 ---
 
 ## 0. Why this page exists, and what it replaces
@@ -817,6 +838,45 @@ starvation signature, not a gate refusal. Per-beat clean rate by era, off the sa
 > against a 3,600 s interval, `beats_missed` 2, `stalled: false`), so **criterion 5 is RED on the
 > very payload every number on this page is folded from.**
 
+#### Re-read 2026-08-29 `00:0xZ` (~17:00 PT) — CAL-P118: **five beats, and the ring must roll**
+
+```
+RULING 009 FREEZE SCORE — 22 of the last 24
+  2/5 clean so far (window 24)   (3 misses; 2 allowed)
+  .#.,#   <- oldest ... newest   (',' = cancelled)
+  window   2026-08-28T19:40:52Z -> 2026-08-28T23:35:52Z
+  ring     168 observations, 163 excluded as pre-baseline
+  VERDICT  WINDOW_NOT_FULL   (best still reachable: 21/24)
+```
+
+CAL-P117 called the first window lost in practice. **It is now lost arithmetically**:
+`reachable_if_all_remaining_clean` has fallen to **21**, below the required 22, so no sequence of
+future beats can satisfy this window. The countdown depends entirely on the ring rolling the three
+misses off, which needs 24 further post-baseline beats — **no earlier than ~2026-08-29 22:40Z**, and
+that is a floor, not a forecast.
+
+| beat | terminal | outcome |
+|---|---|---|
+| `21:33:47Z` | `failed` | `gate: not_evaluated`, `not_attempted` |
+| `22:20:23Z` | **`cancelled`** | `gate: not_evaluated`, `not_attempted` — **a terminal state neither prior read has seen** |
+| `23:35:52Z` | `complete` | `gate: pass`, `published: true` — the curve §6e folds |
+
+**`cancelled` is new and it is not the starvation signature.** The three prior misses read `failed`;
+this one was revoked or killed. Whether it is `task_time_limit` (a hard SIGKILL, untracked — the
+`project_celery_sigkill_untracked` class) or a deliberate revoke is not established here and is not
+this lane's to establish. It is recorded because **the falsifier due after ~19:00Z Saturday is a live
+REVERT trigger, and a second failure mode inside the post-deploy window changes what that falsifier
+is measuring.** Post-v3921 the count is **2 clean of 5** (0.489 over 141 pre-baseline beats). Five
+beats is still not a rate.
+
+> 🔴 **And the two clean beats published the SAME population.** `23:35:51Z` (q268) and `20:37:41Z`
+> both carry `staged.staged_at = 20:35:54Z`, `units_banked 128`, **`units_drifted 109`**,
+> `frozen_over_drift: true`, `rolling_restage: true`. Every cell reads identically across the two
+> beats and the headline is 1.89 pp on both. **A clean beat is not a fresh measurement while
+> `frozen_over_drift` holds the bank** — the freeze score counts publishes, which is what ruling 009
+> asks of it, but this page must not bank a datapoint for a beat that republished a three-hour-old
+> generation. It did not. See §6e.
+
 ---
 
 ## 6. The inventory — every queued cell, ordered by excess
@@ -844,7 +904,7 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 | 1 | `polymarket/baseball` | B | 4.80 | 43,768 | +3.03 | 3.0 | +1.80 | 7.5 | 78,782 | ✅ **named and designed (CAL-P117, §6c)** — the two banked mechanisms are worth −0.53 pp and are NOT it; 54.4% is `Player Props` containers whose published price is a manufactured coin flip. K′ → **2.71 pp PASS**, 17,827 rows | **ZERO** — designed, unbuilt |
 | 2 | `kalshi/economics` | C | 5.29 | 28,613 | −0.47 | 3.0 | +2.29 | 7.8 | 65,524 | ✅ **named, designed AND RULED (CAL-P114 §6b, Alex 2026-08-28 option b)** — 99.7% cumulative index ladders; rules E+E2+E3 → 2.61 pp PASS, **approved with disclosure** | **ZERO** — ruled, unbuilt (disclosure surface BUILT, §6d) |
 | 3 | `polymarket/esports` | B | 7.59 | 14,053 | +6.02 | 3.0 | +4.59 | 10.9 | 64,503 | ✅ **named and designed (CAL-P112, §6a; re-checked on the exact rail, CAL-P114)** — the 1-winner tail `esports_multi_bundle_filter` cannot reach | **ZERO** — designed, unbuilt |
-| 4 | `polymarket/soccer` | B | 3.42 | 106,803 | +2.16 | 3.0 | +0.42 | 2.8 | 44,857 | ✅ O/U ladder coherence (CAL-P106/107) | **ZERO** — branch-only, unwired |
+| 4 | `polymarket/soccer` | B | 3.42 | 106,803 | +2.16 | 3.0 | +0.42 | 2.8 | 44,857 | ❌ **none — the named mechanism was measured on the published cell and REFUSED (CAL-P118, §6e)**; O/U ladder coherence reaches 7.4% of the cell and moves it **+0.03 pp, worse on both holdout halves** | **ZERO** — and no longer designed |
 | 5 | `odds_api_bookmaker/basketball_nba` | A | 5.18 | 10,186 | +1.03 | **2.5** | +2.68 | 5.4 | 27,298 | ❌ none | **not started** |
 | 6 | `kalshi/crypto` | C | 7.60 | 4,565 | +1.84 | 3.0 | +4.60 | 6.2 | 20,999 | ❌ none | **not started** |
 | 7 | `odds_api_bookmaker/baseball_mlb_preseason` | A | 8.24 | 3,253 | −7.67 | **2.5** | +5.74 | 6.5 | 18,672 | ❌ none | **not started** |
@@ -865,10 +925,19 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 By source: **polymarket 9 cells / 263,728** · **odds_api_bookmaker 6 / 82,345** · **kalshi 5 / 132,604**.
 
 **Scoreboard: 0 of 20 cells crossed off. 2 have a built rule and 4 more a designed one (all worth
-0.00 pp today). 3 have a shipped rule that did not clear the cell. 1 has a measured rule that was
+0.00 pp today). 3 have a shipped rule that did not clear the cell. 2 have a measured rule that was
 refused. 10 have no rule at all.** The four designed cells — ranks **1, 2, 3 and 17** — carry
 **218,385 of the board's 478,677 excess-outcomes, 45.6%**, and every one of them lands the day the
 freeze lifts.
+
+> **CAL-P118 moved rank 4 out of the designed column, and that is the second time a ✅ on this table
+> has not survived contact with its own cell.** Rank 1's two mechanisms were worth −0.53 pp
+> (CAL-P117); rank 4's is worth **+0.03 pp and is refused** (§6e). Both were diagnosed on a
+> subcohort. **The `mechanism known?` column is now only trustworthy where the row says which rail
+> scored it**, and the two remaining unscored ✅ rows are ranks 3 and 17 — designed on
+> `calibration_cell_replica` and re-checked on the exact rail by CAL-P114, which is a weaker
+> guarantee than rank 1's and rank 2's direct folds. Rank 3 is a Polymarket cell and is the largest
+> exposure left on this board.
 
 ### 12 material cells are over bar but NOT established — do not work these
 
@@ -1227,7 +1296,118 @@ closing clause reds it, and so does breaking the count binding.
 
 ---
 
-## 7. The first test of the loop: `polymarket/soccer` — and it does not clear its cell
+## 6e. RANK 4, measured and REFUSED — CAL-P118
+
+Full document: `artifacts/cal-p118/RULE-DESIGN-polymarket-soccer.md`. Machine-readable:
+`artifacts/cal-p118/ladder-rule-verdict.json`, `exact-polymarket-soccer-ladder.json`,
+`exact-polymarket-soccer-none.json`.
+
+`polymarket/soccer` is the cell §7 built this program's flagship prediction on. It has now been
+folded through the producer's own CTE chain, with the shipped predicate
+(`app/utils/ladder_coherence.py`) **imported rather than restated**, and the prediction is wrong in
+sign.
+
+| policy | n | ECE | (ECE−3)/σ | OLD | NEW | |
+|---|--:|--:|--:|--:|--:|---|
+| **control** (exact rail) | 101,401 | **2.89** | −0.73 | 4.86 | 2.01 | |
+| **A — the shipped rule**: drop every rung of an incoherent ladder | 97,412 | **2.92** | −0.48 | **4.99** | **2.22** | 🔴 worse on both halves |
+| A+B — also drop the ambiguous families | 97,242 | 2.95 | −0.29 | 5.00 | 2.23 | 🔴 worse still |
+| A+B+C — drop every ladder row in the cell | 93,881 | **3.11** | +0.70 | 5.20 | 2.30 | 🔴 pushes the rail's cell over its bar |
+
+**The ordering is monotone the wrong way.** There is no threshold to tune and no arm to drop: the
+more of the ladder population the rule removes, the worse the cell gets — pooled, and on each
+holdout half independently. §7's predicted −0.28 pp is measured at **+0.03 pp**.
+
+### The mechanism is real. That is not the same as being removable.
+
+| class | published outcomes | share | ECE | gap |
+|---|--:|--:|--:|--:|
+| `z_not_a_ladder` | 93,881 | **92.6%** | 3.11 | +1.81 |
+| `a_drop_incoherent` | 3,989 | 3.9% | **9.57** | +2.47 |
+| `c_ladder_coherent` | 3,361 | 3.3% | 1.73 | −0.07 |
+| `b_ambiguous_kept` | 170 | 0.2% | **16.24** | −5.86 |
+
+The condemned class is three times the cell's ECE and the coherent class is well under it, so the
+predicate separates exactly what it claims to. It still cannot be deleted: **in 7 of 10 buckets the
+condemned class's error has the opposite sign to the rest of the cell.** At bin 0 it is published at
+6.7% and wins 22.9% (+16.15 pp) against a remainder at −0.26; at bin 9 it is −8.43 against +2.35.
+Pooled per-bin they cancel. Remove one side and the other stands up.
+
+> **This is §2's cancellation, one level down.** §2 says a cell's headline can be a cancellation
+> rather than a description. §6e says a *class inside a cell* can be too — and that
+> **ECE on a pooled cell cannot grade a row-dropping rule.** Doctrine 18 arrives here as a positive
+> result rather than a warning. Any future rule on this board that removes rows owes this per-bin
+> table, not just a before/after ECE.
+
+### 81,291 condemned markets produce 3,989 published outcomes
+
+The pre-pass runs the shipped predicate over the whole cell in one sweep: **107,089 markets carry an
+`O/U` rung, 32,772 ladder families, 23,501 of them condemned, 81,291 markets condemned.** Those
+81,291 markets contribute **3,989 rows** to the curve.
+
+The reason is structural and it generalises: **an O/U ladder is a `group_id` cluster**, so
+`virtual_market` assigns the whole ladder one virtual question and `deduped` keeps one
+representative. *The producer had already collapsed the population this rule was built to delete.*
+CAL-P106 measured 5,708 legs of `soccer/quantity`; the published cell contains 7,520 ladder outcomes
+in total. The subcohort was never a sample of the cell — it was a different slice of a population
+the curve barely admits.
+
+**Second cell in two queues where a ✅ described a real defect in a population the published curve
+does not contain.** Rank 1: −0.53 pp. Rank 4: +0.03 pp.
+
+### The rule's own fail-safe keeps the worst-calibrated class on this board
+
+`b_ambiguous_kept` is 170 outcomes at **ECE 16.24** — kept deliberately, because the family key
+groups two ladders there, the rule's premise is disproven, and `incoherent_families` fails toward
+keeping (the guard that stopped an esports key-collapse condemning 231 markets as one family). The
+behaviour is right. What is worth watching is that it splits **57 OLD @ 8.38 / 113 NEW @ 20.21** —
+the ambiguous population is growing, and it is a key that does not identify a single ladder.
+
+### 🔴 The rail does not reproduce this cell, and CAL-P117's explanation is disproven
+
+Two control folds ~90 minutes apart read **101,650 / 2.90 / +1.79** and **101,401 / 2.89 / +1.76**
+against the payload's **106,803 / 3.42 / +2.16** — **−5.06% on rows and −0.53 pp on ECE**, five
+times CAL-P117's worst ECE disagreement, and pointing the wrong way for comfort: *the rail says this
+cell already passes.* Every level in §6e is therefore a within-rail delta, never a published number.
+
+P117-3 blamed the cell scope. Measured on the densest id band (`57M ≤ id < 58M`, 57,062 soccer
+markets): **0 of 7,484 group clusters and 0 of 2,103 event clusters change size** when the
+`llm_sport_category` conjunct is applied, and **0 of 51,290 group-grouped markets** (1 of 41,481 on
+the event path) are demoted below the ≥3 gate by 1,000,000-id chunking. The scope is exonerated and
+so is the chunking.
+
+The payload names the real candidate in its own `staged` block: `staged_at 20:35:54Z`,
+**`units_banked 128`, `units_drifted 109`, `frozen_over_drift true`, `rolling_restage true`**. The
+published curve is a mosaic of units banked three hours before the beat that published it; the exact
+rail is one live read taken later still. **They cannot agree except by luck.** The owed instrument is
+not a `--scope-check` — it is a **staged-generation replay**, the way `frozen_vm_roster` already lets
+the producer replay one coherent generation across chunks. **CAL-P118-1**, and P117-3 is superseded.
+
+> **The same fact explains the flat headline.** The `23:35:51Z` beat and the `20:37:41Z` beat publish
+> the *same* `20:35:54Z` staged population — which is why this cell reads 106,803 / 3.42 on both and
+> why the number is 1.89 pp on both. While `frozen_over_drift` holds the bank, **a new beat is not a
+> new measurement**, and this page must not record one as a datapoint.
+
+### The instrument
+
+`--by ladder` on `calibration_cell_exact.py`, plus `ladder_coherence.py` and its 48 tests carried
+onto this branch as **byte-identical copies** of `program/calibration-99` (`git diff` against that
+branch is empty for both paths). The module is unwired — nothing in `backend/app` imports it — so it
+changes no published row, and `precompute_calibration.py` is untouched, so ruling 009 is not engaged.
+
+Two properties are load-bearing and both are pinned by tests. **The predicate is imported, never
+restated** — `incoherent_families` and its four helpers are asserted by identity, and the script is
+forbidden a rung pattern of its own; the module's own docstring says its SQL rendering is UNPROVEN
+against its Python and that measurement must be driven from the Python side, so the verdict is
+computed in Python and only the answer, a set of market ids, is pushed back into SQL. **The verdict
+is computed before the chunking, not inside it** — a ladder family's markets are not id-contiguous,
+and a family evaluated on a partial rung set is *systematically more coherent* than the whole one,
+so chunk-local evaluation would silently under-condemn in one direction. 25 guards, 7 mutations,
+7 reds.
+
+---
+
+## 7. ~~The first test of the loop~~ — the prediction, and the measurement that refuted it
 
 The directive names the soccer/quantity ladder rule as the first cell driven through
 rule → cert → **MERGE → DEPLOY → re-measure**. Steps 1–2 are done. Step 3 has not started. Here is
@@ -1256,6 +1436,34 @@ cell, and it is why §8's estimate assumes ~1.5 rules per cell.
 *This prediction is exactly what Blocker 2 (the broken twin) should have produced by measurement
 instead of arithmetic. Record the measured delta here when it lands.*
 
+### 🔴 IT LANDED, 2026-08-29, and the prediction is wrong in SIGN — CAL-P118
+
+**Measured: +0.03 pp (2.89 → 2.92 on the exact rail), and worse on both holdout halves.** Not
+−0.28, not −0.1, not zero. The rule is **REFUSED** and rank 4 is back to no mechanism. §6e carries
+the fold, the per-bin cancellation table, and the four policy variants; the full document is
+`artifacts/cal-p118/RULE-DESIGN-polymarket-soccer.md`.
+
+**The prediction was made in good faith and flagged as an upper bound. Three things it could not
+have known, and each is a rule for the next one:**
+
+1. **The arithmetic assumed the excluded legs reach the curve.** 81,291 condemned markets produce
+   **3,989** published outcomes, because an O/U ladder is a `group_id` cluster and `virtual_market`
+   had already collapsed it to one representative. The rule's reach is **7.4% of the cell**, and the
+   arithmetic implicitly assumed ~100%.
+2. **The arithmetic treated ECE as additive across bins, and said so.** That is the assumption that
+   broke: in **7 of 10 buckets** the condemned class's error runs opposite to the rest of the cell
+   and was cancelling it. A high-ECE class can be load-bearing for a low-ECE pooled number.
+3. **The cohort was not a sample of the cell.** CAL-P106's 5,708 legs of `soccer/quantity` and the
+   cell's 7,520 ladder outcomes are almost the same size — the subcohort was a *different slice* of
+   a population the curve barely admits, not 5% of the published one.
+
+> **The general clause, and it now has two cases.** *A cell's inherited mechanism is a hypothesis
+> until the exact rail scores it on the published population, and the score can come back with the
+> wrong sign, not merely a smaller magnitude.* CAL-P117 measured rank 1's two mechanisms at −0.53 pp
+> against a claim of "the mechanism"; CAL-P118 measured rank 4's at +0.03 pp against a claim of
+> −0.28. **Neither error was in the diagnosis. Both were in the extrapolation from a subcohort to
+> the curve.** Candidate for `docs/doctrine.md` once a third case lands or Alex rules it.
+
 ---
 
 ## 8. Finish date — plainly
@@ -1266,6 +1474,16 @@ at which a rule actually changed the published population: **13 filters between 
 days: **zero.** Conversion assumption: **~1.5 rules per cell**, evidenced by §7 (the soccer rule
 falls short of its own cell) and by three cells that already have a shipped rule and remain over
 bar.
+
+> 🔴 **CAL-P118 gives the conversion assumption its first measured datapoint and it is worse than
+> assumed.** §7's evidence for ~1.5 rules per cell was that the soccer rule *falls short of* its
+> cell. Measured, it does not fall short — **it goes backwards, and the cell loses its mechanism
+> entirely.** Two of the four cells whose named mechanism has now been scored against the published
+> curve came back at −0.53 pp (rank 1, still failing) and **+0.03 pp (rank 4, refused)**. On that
+> evidence ~1.5 rules per cell is optimistic, and the honest statement is that **the conversion rate
+> from "named mechanism" to "published movement" is not yet known to be greater than zero** — the
+> program has never observed one. The re-estimate is not owed today; it is owed at the first
+> published movement, which is the only measurement that can settle it.
 
 | scenario | assumption | finish |
 |---|---|---|
