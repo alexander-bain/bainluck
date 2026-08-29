@@ -29,7 +29,11 @@ from app.utils.golf_evolution_market import (
     select_by_snapshot_richness,
 )
 from app.utils.odds_math import probability_to_american
-from app.utils.golf_membership import is_foreign_domain, is_prop_outcome
+from app.utils.golf_membership import (
+    drop_foreign_field_markets,
+    is_foreign_domain,
+    is_prop_outcome,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +136,14 @@ def _is_golf_market(market) -> bool:
 
     # For Kalshi/Polymarket: reject markets with clear non-golf signals
     if _NON_GOLF_RE.search(name):
+        return False
+
+    # UX-P168: the same question, asked of the #1625 membership authority rather
+    # than of this module's private copy. `_NON_GOLF_RE` and `FOREIGN_TERMS` had
+    # drifted apart — the authority knows domains (darts, snooker, chess, rodeo)
+    # this regex never listed, and every one of them runs an event called a
+    # "Masters" or an "Open", which `_GOLF_SIGNAL_RE` accepts on its own.
+    if is_foreign_domain(name):
         return False
 
     # Require at least one positive golf signal in the market name.
@@ -1938,6 +1950,12 @@ async def get_golf(
     result = await db.execute(query)
     markets_all = result.scalars().unique().all()
     markets_all = [m for m in markets_all if _is_golf_market(m)]
+    # UX-P168. The name-side gate above cannot see a market whose title is
+    # domain-neutral and whose FIELD is another sport — "Asia Masters 2026 Winner"
+    # was served as a PGA Tour golf tournament over four League of Legends teams.
+    # This is the only golf path that eager-loads `outcomes` (the `selectinload`
+    # above), so it is the only one that can ask.
+    markets_all = drop_foreign_field_markets(markets_all)
 
     # Split H2H matchups from winner markets
     h2h_markets_raw: list = []
