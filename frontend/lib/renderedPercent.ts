@@ -1,3 +1,5 @@
+import { leaderFirstSlice } from "./discover/leaderOrder";
+
 // The whole percent this surface prints for a probability — web's arm of
 // `contracts/rendered_percent.json` (#1933).
 //
@@ -161,4 +163,54 @@ export function renderedDuelPercents(
   if (away >= home) return renderedCardPercents([away, home]);
   const [homePct, awayPct] = renderedCardPercents([home, away]);
   return [awayPct, homePct];
+}
+
+// ── The HEADLINE percent, so two surfaces cannot headline one market twice ───
+//
+// UX-P162. `renderedCardPercents` answers for a LIST; a card's hero prints ONE
+// number out of that list, and picking it correctly is three separate decisions
+// that were spelled out longhand in `FeedCard` and not at all in Discover:
+//
+//   1. the served percent wins, keyed on the KEY BEING ABSENT rather than on the
+//      value being falsy — `?? derive()` re-derives on every correct card and
+//      makes the server's answer decorative;
+//   2. the rule is anchored on the LEADER-FIRST slice, because
+//      `renderedCardPercents` leaves index 0 untouched and derives index 1, so
+//      whichever row is first is the one that survives rounding. Anchoring on
+//      served order would let two surfaces normalize a pair around opposite ends
+//      and disagree by a point — the exact failure this function prevents;
+//   3. the hero is then found BY IDENTITY, not by position, because the headline
+//      is `top_outcomes[0]` (served order) while the slice is leader-first, so
+//      the two indices are not the same list.
+//
+// Null means "no override" — the caller keeps `formatProbabilityPercent`'s own
+// rounding — and that is also the answer when the headline is not among the
+// printed rows at all, rather than inventing a number for it.
+//
+// MEASURED on the deployed feed 2026-08-29 (114 unique futures cards across
+// `/api/feed` plus the politics, economics, entertainment and sports surfaces):
+// 7 are two-outcome and 0 disagree today, so this is a LATENT fix, not a visible
+// one. It is still real — a pair summing to 1.005 shifts the leader by a point
+// under the rule and not under raw rounding — and 1 of the 103 multi-outcome
+// cards already ships `top_outcomes[0]` that is NOT the maximum, which is what
+// makes decision 3 load-bearing rather than defensive.
+
+/** The shape both feed serializers give an outcome the card can print. */
+type RenderableOutcome = {
+  probability?: number | null;
+  rendered_percent?: number | null;
+};
+
+export function renderedLeaderPercent(
+  topOutcomes: ReadonlyArray<RenderableOutcome> | null | undefined,
+  leader: RenderableOutcome | null | undefined,
+  printedCount = 3,
+): number | null {
+  if (!leader) return null;
+  if ("rendered_percent" in leader) return leader.rendered_percent ?? null;
+
+  const printed = leaderFirstSlice(topOutcomes ?? [], printedCount);
+  const index = printed.indexOf(leader);
+  if (index < 0) return null;
+  return renderedCardPercents(printed.map((o) => o.probability))[index] ?? null;
 }

@@ -20,6 +20,12 @@
  * my-stuff. Both are fed by `GET /api/feed`, so this is one server change; the
  * reader-visible payoff is on the category and sports pages.
  *
+ * AMENDED BY UX-P162: still true about the SUM — Discover prints one number, so no
+ * total is visible there — but that hero was rounding its own raw probability while
+ * this card took the rule, so the two surfaces could disagree by a point on the SAME
+ * market. The hero now calls `renderedLeaderPercent` too. See
+ * `__tests__/components/discoverHeroAgreesWithFeedCard.test.tsx`.
+ *
  * ═══ WHAT EVERY PANEL IS MADE OF ═══
  *
  * Every card here is the SHIPPED `FeedCard` component with the app's own compiled

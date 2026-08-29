@@ -15,6 +15,11 @@
 // fed by `GET /api/feed`, so one server change covers them; the reader-visible payoff
 // is on the category and sports pages.
 //
+// AMENDED BY UX-P162: still true about the SUM, but that Discover hero was rounding
+// its own raw probability while this card took the rule, so one market could read 57%
+// there and 56% here. Both now call `renderedLeaderPercent`. See
+// `__tests__/components/discoverHeroAgreesWithFeedCard.test.tsx`.
+//
 // ## Why this file renders instead of checking the rule
 //
 // `renderedPercentContract.test.ts` already drives `cardSumReason` through the shared
