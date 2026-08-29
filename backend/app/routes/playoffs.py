@@ -2382,90 +2382,265 @@ def _match_golfer_to_field(
 # Golf schedule endpoint (must be before /{league_slug} catch-all)
 # ---------------------------------------------------------------------------
 
+#: The tours the `/playoffs/golf` schedule section is built from, in render
+#: order. Frozen here rather than inline so the warmer fetches exactly what the
+#: route serves.
+GOLF_SCHEDULE_TOURS: tuple[str, ...] = ("pga", "euro", "kft", "opp", "alt")
 
-@router.get("/golf/schedule")
-async def get_golf_schedule():
-    """Return golf season schedule from DataGolf across all tours.
+#: Primary cache key for the CLOCK-FREE tour payloads. Deliberately a sibling of
+#: `bainluck:category:playoffs:golf` (the grid on the same page), because the two
+#: are warmed by the same hourly task and a reader looking for one should find
+#: the other.
+GOLF_SCHEDULE_CACHE_KEY = "bainluck:category:playoffs:golf:schedule"
 
-    Returns tournaments grouped by tour with status indicators
-    for current/upcoming/completed events.
+#: 65 minutes, and the number is the #901 lesson applied one endpoint later: the
+#: warm cadence is hourly, so a 3600s TTL expires marginally BEFORE the next warm
+#: and hands a cold rebuild to whoever arrives in the gap. The TTL must outlive
+#: the cadence that refreshes it.
+GOLF_SCHEDULE_TTL_S = 3900
+
+#: 24h last-good mirror, matching the grid's. Serving week-old tournament dates
+#: is right; serving nothing while DataGolf is down is not.
+GOLF_SCHEDULE_STALE_TTL_S = 86400
+
+
+async def fetch_golf_schedule_raw() -> dict:
+    """Fetch every tour's schedule from DataGolf. Contains NO clock-derived state.
+
+    Two properties this function is shaped around:
+
+    **It is parallel.** The five tours are five independent external round trips
+    and the old code awaited them one after another, so the user paid the sum.
+    Nothing downstream depends on the order they *complete* in — only on the
+    order they are *rendered* in — so `gather` is answer-identical, and
+    `return_exceptions=True` preserves the old per-tour tolerance exactly: a tour
+    that raises is logged and skipped, its siblings survive (gotcha #42).
+
+    **It is clock-free.** Everything time-dependent — `is_current`,
+    `display_status`, `current_event_id` — is derived in `shape_golf_schedule`
+    from a `now_str` passed at SERVE time, never baked in here. That is what makes
+    this payload safe to cache for an hour: a cached response cannot print a
+    "This Week" badge on last week's tournament, because the badge is not in the
+    cache. Only DataGolf's own `status`/`current_round` can age, and those move on
+    a scale of days.
     """
-    if not os.getenv("DATAGOLF_API_KEY"):
-        raise HTTPException(status_code=503, detail="DataGolf API not configured")
+    import asyncio as _asyncio
 
     from app.services.datagolf_api import DataGolfAPIService
 
     service = DataGolfAPIService()
     try:
-        tours = ["pga", "euro", "kft", "opp", "alt"]
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        results = await _asyncio.gather(
+            *(service.get_schedule(tour=tour) for tour in GOLF_SCHEDULE_TOURS),
+            return_exceptions=True,
+        )
+    finally:
+        await service.close()
 
-        tour_schedules = []
-        for tour in tours:
-            try:
-                schedule = await service.get_schedule(tour=tour)
-            except Exception as e:
-                logger.warning("Golf schedule [%s]: error: %s", tour, e)
-                continue
-
-            if not schedule:
-                continue
-
-            tour_label = _TOUR_LABELS.get(tour, tour.upper())
-
-            # Find current event for this tour
-            current_event_id = None
-            for t in schedule:
-                if t.status and t.status != "completed":
-                    current_event_id = t.event_id
-                    break
-                if t.end_date and t.end_date >= now_str:
-                    current_event_id = t.event_id
-                    break
-
-            events = []
-            for t in schedule:
-                is_current = t.event_id == current_event_id
-                # Determine display status
-                if t.status == "completed":
-                    display_status = "completed"
-                elif is_current:
-                    display_status = "current"
-                elif t.start_date and t.start_date > now_str:
-                    display_status = "upcoming"
-                else:
-                    display_status = t.status or "unknown"
-
-                events.append({
+    tours = []
+    for tour, schedule in zip(GOLF_SCHEDULE_TOURS, results):
+        if isinstance(schedule, BaseException):
+            logger.warning("Golf schedule [%s]: error: %s", tour, schedule)
+            continue
+        if not schedule:
+            continue
+        tours.append({
+            "tour": tour,
+            "tournaments": [
+                {
                     "event_id": t.event_id,
-                    "name": t.event_name,
+                    "event_name": t.event_name,
                     "course": t.course,
                     "start_date": t.start_date,
                     "end_date": t.end_date,
                     "location": t.location,
                     "country": t.country,
-                    "status": display_status,
+                    "status": t.status,
                     "current_round": t.current_round,
-                    "is_current": is_current,
-                })
+                }
+                for t in schedule
+            ],
+        })
 
-            tour_schedules.append({
-                "tour": tour,
-                "tour_name": tour_label,
-                "events": events,
-                "current_event_id": current_event_id,
+    return {
+        "tours": tours,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def shape_golf_schedule(raw: dict, now_str: str) -> dict:
+    """Turn a cached raw payload into the response, applying TODAY's date.
+
+    Pure and clock-injected on purpose (gotcha #44): the caller supplies
+    `now_str`, so the same cached bytes shape differently on two different days
+    and a test can prove it without faking a clock.
+
+    The status cascade is carried over verbatim from the pre-cache route — the
+    same order, the same `break` semantics, the same fallbacks — because the ship
+    here is latency, and a rendering change smuggled in beside it would be
+    invisible in the timings.
+    """
+    tour_schedules = []
+    for entry in raw.get("tours") or []:
+        tour = entry.get("tour")
+        tournaments = entry.get("tournaments") or []
+        if not tournaments:
+            continue
+
+        tour_label = _TOUR_LABELS.get(tour, str(tour).upper())
+
+        # Find current event for this tour
+        current_event_id = None
+        for t in tournaments:
+            if t.get("status") and t.get("status") != "completed":
+                current_event_id = t.get("event_id")
+                break
+            if t.get("end_date") and t["end_date"] >= now_str:
+                current_event_id = t.get("event_id")
+                break
+
+        events = []
+        for t in tournaments:
+            is_current = t.get("event_id") == current_event_id
+            # Determine display status
+            if t.get("status") == "completed":
+                display_status = "completed"
+            elif is_current:
+                display_status = "current"
+            elif t.get("start_date") and t["start_date"] > now_str:
+                display_status = "upcoming"
+            else:
+                display_status = t.get("status") or "unknown"
+
+            events.append({
+                "event_id": t.get("event_id"),
+                "name": t.get("event_name"),
+                "course": t.get("course"),
+                "start_date": t.get("start_date"),
+                "end_date": t.get("end_date"),
+                "location": t.get("location"),
+                "country": t.get("country"),
+                "status": display_status,
+                "current_round": t.get("current_round"),
+                "is_current": is_current,
             })
 
-        return {
-            "tours": tour_schedules,
-            "last_updated": datetime.now(timezone.utc).isoformat(),
-        }
+        tour_schedules.append({
+            "tour": tour,
+            "tour_name": tour_label,
+            "events": events,
+            "current_event_id": current_event_id,
+        })
 
+    return {
+        "tours": tour_schedules,
+        # The time the DATA was fetched, not the time this response was
+        # assembled. Once a cache exists the two differ, and a serve-time stamp
+        # on hour-old bytes is a claim of freshness the payload cannot back.
+        "last_updated": raw.get("fetched_at"),
+    }
+
+
+@router.get("/golf/schedule")
+async def get_golf_schedule():
+    """Return golf season schedule from DataGolf across all tours (Redis-cached).
+
+    Returns tournaments grouped by tour with status indicators
+    for current/upcoming/completed events.
+
+    LAT-P126: this used to make five sequential DataGolf calls on EVERY request,
+    with no cache of any kind — three reads in a row measured 0.74 / 0.80 / 0.69 s
+    against a 0.25 s floor. The `/playoffs/golf` page's other half, the
+    championship grid, has been Redis-cached and hourly-warmed since #901; the
+    schedule section beside it was never given the same treatment, so every first
+    visit paid the external round trips.
+
+    The middleware's blanket `public, max-age=300` on `/api/playoffs/` does not
+    cover this: it is per-browser, so it helps a reload and does nothing for the
+    first load — which is the load this lane exists to fix.
+    """
+    if not os.getenv("DATAGOLF_API_KEY"):
+        raise HTTPException(status_code=503, detail="DataGolf API not configured")
+
+    import json
+
+    from app.tasks.redis_state import get_async_redis_client
+
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    try:
+        rc = get_async_redis_client()
+        try:
+            cached = await rc.get(GOLF_SCHEDULE_CACHE_KEY)
+        finally:
+            await rc.aclose()
+        if cached:
+            return shape_golf_schedule(json.loads(cached), now_str)
+    except Exception:
+        pass  # Fall through to a live fetch
+
+    try:
+        raw = await fetch_golf_schedule_raw()
     except Exception as e:
         logger.error("Golf schedule error: %s", e)
+        # Last-good rather than a 500: a week-old schedule is a real answer, an
+        # error page is not (#1484's rule, applied to this endpoint).
+        stale = await _read_golf_schedule_stale()
+        if stale is not None:
+            return _mark_last_good(
+                shape_golf_schedule(stale, now_str), "fetch_failed", degraded=True
+            )
         raise HTTPException(status_code=500, detail="Failed to fetch golf schedule")
-    finally:
-        await service.close()
+
+    if not raw.get("tours"):
+        # Every tour failed or returned nothing. The old code returned
+        # `{"tours": []}` here, which renders as a page with no schedule section
+        # at all — indistinguishable from "golf has no season". Prefer last-good,
+        # and never cache the empty answer over a good one (gotcha #53).
+        stale = await _read_golf_schedule_stale()
+        if stale is not None:
+            return _mark_last_good(
+                shape_golf_schedule(stale, now_str), "empty_fetch", degraded=True
+            )
+        return shape_golf_schedule(raw, now_str)
+
+    try:
+        rc = get_async_redis_client()
+        try:
+            payload = json.dumps(raw, default=str)
+            await rc.set(GOLF_SCHEDULE_CACHE_KEY, payload, ex=GOLF_SCHEDULE_TTL_S)
+            await rc.set(
+                f"{GOLF_SCHEDULE_CACHE_KEY}:stale",
+                payload,
+                ex=GOLF_SCHEDULE_STALE_TTL_S,
+            )
+        finally:
+            await rc.aclose()
+    except Exception:
+        pass  # A cache that cannot be written must not fail the request
+
+    return shape_golf_schedule(raw, now_str)
+
+
+async def _read_golf_schedule_stale() -> dict | None:
+    """Read the 24h last-good raw payload, or None. Never raises."""
+    import json
+
+    from app.tasks.redis_state import get_async_redis_client
+
+    try:
+        rc = get_async_redis_client()
+        try:
+            raw = await rc.get(f"{GOLF_SCHEDULE_CACHE_KEY}:stale")
+        finally:
+            await rc.aclose()
+        if raw:
+            candidate = json.loads(raw)
+            if isinstance(candidate, dict) and candidate.get("tours"):
+                return candidate
+    except Exception:
+        return None
+    return None
 
 
 # ---------------------------------------------------------------------------

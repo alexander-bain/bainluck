@@ -160,6 +160,52 @@ async def _precompute_golf():
     return "ok"
 
 
+async def _precompute_golf_schedule():
+    """Warm the `/playoffs/golf` schedule cache (LAT-P126).
+
+    A SEPARATE section from ``_precompute_golf``, which serves a different
+    endpoint (``/api/golf``). Hanging this off that function's success path would
+    reintroduce exactly the coupling LAT-P001 removed from the Discover warm: a
+    hiccup in the listing build would silently stop warming the schedule.
+
+    Why a warm and not just the route's cache: the route caches on a MISS, so
+    without this the first visitor after every TTL lapse still pays the full set
+    of DataGolf round trips. That is the hole LAT-P115 recorded after LAT-P108
+    made ``/futures/movers`` fast and warm for nobody, and ``/playoffs/golf`` is a
+    low-traffic page — the page where "the second reader is fast" ships the least.
+    No new beat entry: this rides the hourly ``precompute_category_pages``, whose
+    grid section already warms the OTHER half of this same page (#901).
+    """
+    from app.routes.playoffs import (
+        GOLF_SCHEDULE_CACHE_KEY,
+        GOLF_SCHEDULE_STALE_TTL_S,
+        GOLF_SCHEDULE_TTL_S,
+        fetch_golf_schedule_raw,
+    )
+    from app.tasks.redis_state import get_redis_client
+
+    raw = await fetch_golf_schedule_raw()
+    tours = raw.get("tours") or []
+    if not tours:
+        # Never overwrite a good cache with an empty fetch, and never let the
+        # zero-yield case read as a success (gotcha #53).
+        logger.warning(
+            "Golf schedule warm produced ZERO tours — cache left untouched"
+        )
+        return {"tours": 0, "written": False}
+
+    rc = get_redis_client()
+    payload = json.dumps(raw, default=str)
+    rc.set(GOLF_SCHEDULE_CACHE_KEY, payload, ex=GOLF_SCHEDULE_TTL_S)
+    rc.set(f"{GOLF_SCHEDULE_CACHE_KEY}:stale", payload, ex=GOLF_SCHEDULE_STALE_TTL_S)
+    tournaments = sum(len(t.get("tournaments") or []) for t in tours)
+    logger.info(
+        "Warmed golf schedule cache (%d tours, %d tournaments)",
+        len(tours), tournaments,
+    )
+    return {"tours": len(tours), "tournaments": tournaments, "written": True}
+
+
 async def _precompute_discover_candidate_base():
     """Every-2-minute Discover warm pass: candidate-ID base, then cold responses.
 
@@ -1346,6 +1392,10 @@ async def _precompute_all_category_pages():
         ("economics", _precompute_economics),
         ("weather", _precompute_weather),
         ("golf", _precompute_golf),
+        # Before "grids" on purpose: the comment below is load-bearing — the LAST
+        # section starves first, and this one is a single parallel round trip
+        # against an external API, not a 120s-budgeted database build.
+        ("golf_schedule", _precompute_golf_schedule),
         ("grids", _precompute_grids),
     ]
     run_started = _time.monotonic()
