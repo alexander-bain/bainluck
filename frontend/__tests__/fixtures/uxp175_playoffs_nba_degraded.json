@@ -1,0 +1,4668 @@
+{
+ "league": "nba",
+ "name": "NBA Playoffs 2025-26",
+ "season": "2025-26",
+ "columns": [
+  {
+   "key": "make_playoffs",
+   "label": "Make Playoffs",
+   "order": 1,
+   "sequential": true,
+   "market_id": 52755708,
+   "market_ids": [
+    52755708
+   ],
+   "resolved": false
+  },
+  {
+   "key": "division",
+   "label": "Division",
+   "order": 2,
+   "sequential": true,
+   "market_id": 52755683,
+   "market_ids": [
+    52755683,
+    52755684,
+    52755685,
+    52755686,
+    52755688,
+    52755689
+   ],
+   "resolved": false
+  },
+  {
+   "key": "conference",
+   "label": "Conference",
+   "order": 3,
+   "sequential": true,
+   "market_id": 52755687,
+   "market_ids": [
+    52755664,
+    52755681,
+    52755687
+   ],
+   "resolved": false
+  },
+  {
+   "key": "championship",
+   "label": "Champion",
+   "order": 4,
+   "sequential": true,
+   "market_id": 2,
+   "market_ids": [
+    2
+   ],
+   "resolved": false
+  }
+ ],
+ "trend_chart": {
+  "hours": 168,
+  "bucket_seconds": 3600,
+  "timeline": [
+   {
+    "timestamp": "2026-08-22T20:00:00+00:00",
+    "outcomes": {
+     "San Antonio Spurs": 0.277778,
+     "Toronto Raptors": 0.038462,
+     "New York Knicks": 0.1,
+     "Detroit Pistons": 0.037088,
+     "Denver Nuggets": 0.038462,
+     "Minnesota Timberwolves": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Cleveland Cavaliers": 0.0333705,
+     "Boston Celtics": 0.066667,
+     "Philadelphia 76ers": 0.1026315
+    }
+   },
+   {
+    "timestamp": "2026-08-23T00:00:00+00:00",
+    "outcomes": {
+     "Detroit Pistons": 0.037088,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Boston Celtics": 0.066667,
+     "New York Knicks": 0.1,
+     "Denver Nuggets": 0.038462,
+     "Cleveland Cavaliers": 0.0333705,
+     "Philadelphia 76ers": 0.1026315,
+     "Toronto Raptors": 0.038462,
+     "San Antonio Spurs": 0.277778,
+     "Minnesota Timberwolves": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-23T04:00:00+00:00",
+    "outcomes": {
+     "Toronto Raptors": 0.038462,
+     "Cleveland Cavaliers": 0.0333705,
+     "Detroit Pistons": 0.037088,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "San Antonio Spurs": 0.277778,
+     "New York Knicks": 0.1,
+     "Philadelphia 76ers": 0.1026315,
+     "Boston Celtics": 0.066667,
+     "Minnesota Timberwolves": 0.038462,
+     "Denver Nuggets": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-23T08:00:00+00:00",
+    "outcomes": {
+     "New York Knicks": 0.1,
+     "Toronto Raptors": 0.038462,
+     "San Antonio Spurs": 0.277778,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Minnesota Timberwolves": 0.038462,
+     "Boston Celtics": 0.066667,
+     "Detroit Pistons": 0.037088,
+     "Cleveland Cavaliers": 0.0333705,
+     "Denver Nuggets": 0.038462,
+     "Philadelphia 76ers": 0.1026315
+    }
+   },
+   {
+    "timestamp": "2026-08-23T12:00:00+00:00",
+    "outcomes": {
+     "Detroit Pistons": 0.037088,
+     "New York Knicks": 0.1,
+     "Toronto Raptors": 0.038462,
+     "Philadelphia 76ers": 0.1026315,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Denver Nuggets": 0.038462,
+     "Minnesota Timberwolves": 0.038462,
+     "Cleveland Cavaliers": 0.0333705,
+     "Boston Celtics": 0.066667,
+     "San Antonio Spurs": 0.277778
+    }
+   },
+   {
+    "timestamp": "2026-08-23T16:00:00+00:00",
+    "outcomes": {
+     "Philadelphia 76ers": 0.1026315,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Toronto Raptors": 0.038462,
+     "Minnesota Timberwolves": 0.038462,
+     "Denver Nuggets": 0.038462,
+     "Cleveland Cavaliers": 0.0333705,
+     "Boston Celtics": 0.066667,
+     "New York Knicks": 0.1,
+     "San Antonio Spurs": 0.277778,
+     "Detroit Pistons": 0.037088
+    }
+   },
+   {
+    "timestamp": "2026-08-23T20:00:00+00:00",
+    "outcomes": {
+     "Philadelphia 76ers": 0.1026315,
+     "San Antonio Spurs": 0.277778,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "New York Knicks": 0.1,
+     "Toronto Raptors": 0.038462,
+     "Cleveland Cavaliers": 0.0333705,
+     "Boston Celtics": 0.066667,
+     "Detroit Pistons": 0.037088,
+     "Denver Nuggets": 0.038462,
+     "Minnesota Timberwolves": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-24T00:00:00+00:00",
+    "outcomes": {
+     "Minnesota Timberwolves": 0.038462,
+     "Denver Nuggets": 0.038462,
+     "Boston Celtics": 0.066667,
+     "New York Knicks": 0.1,
+     "Philadelphia 76ers": 0.1026315,
+     "Toronto Raptors": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "San Antonio Spurs": 0.277778,
+     "Detroit Pistons": 0.037088,
+     "Cleveland Cavaliers": 0.0333705
+    }
+   },
+   {
+    "timestamp": "2026-08-24T04:00:00+00:00",
+    "outcomes": {
+     "Boston Celtics": 0.066667,
+     "Philadelphia 76ers": 0.1026315,
+     "Denver Nuggets": 0.038462,
+     "Toronto Raptors": 0.038462,
+     "San Antonio Spurs": 0.277778,
+     "New York Knicks": 0.1,
+     "Detroit Pistons": 0.037088,
+     "Minnesota Timberwolves": 0.038462,
+     "Cleveland Cavaliers": 0.0333705,
+     "Oklahoma City Thunder": 0.28174600000000005
+    }
+   },
+   {
+    "timestamp": "2026-08-24T08:00:00+00:00",
+    "outcomes": {
+     "Minnesota Timberwolves": 0.038462,
+     "Philadelphia 76ers": 0.1026315,
+     "Detroit Pistons": 0.037088,
+     "Cleveland Cavaliers": 0.0333705,
+     "Boston Celtics": 0.066667,
+     "Toronto Raptors": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Denver Nuggets": 0.038462,
+     "San Antonio Spurs": 0.277778,
+     "New York Knicks": 0.1
+    }
+   },
+   {
+    "timestamp": "2026-08-24T12:00:00+00:00",
+    "outcomes": {
+     "Denver Nuggets": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "San Antonio Spurs": 0.277778,
+     "Detroit Pistons": 0.037088,
+     "New York Knicks": 0.1,
+     "Boston Celtics": 0.066667,
+     "Cleveland Cavaliers": 0.0333705,
+     "Minnesota Timberwolves": 0.038462,
+     "Philadelphia 76ers": 0.1026315,
+     "Toronto Raptors": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-24T16:00:00+00:00",
+    "outcomes": {
+     "Cleveland Cavaliers": 0.0333705,
+     "Boston Celtics": 0.066667,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Toronto Raptors": 0.038462,
+     "Detroit Pistons": 0.037088,
+     "New York Knicks": 0.1,
+     "Philadelphia 76ers": 0.1026315,
+     "San Antonio Spurs": 0.277778,
+     "Denver Nuggets": 0.038462,
+     "Minnesota Timberwolves": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-24T20:00:00+00:00",
+    "outcomes": {
+     "San Antonio Spurs": 0.277778,
+     "Cleveland Cavaliers": 0.0333705,
+     "Boston Celtics": 0.066667,
+     "Philadelphia 76ers": 0.1026315,
+     "Toronto Raptors": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Denver Nuggets": 0.038462,
+     "New York Knicks": 0.1,
+     "Minnesota Timberwolves": 0.038462,
+     "Detroit Pistons": 0.037088
+    }
+   },
+   {
+    "timestamp": "2026-08-25T00:00:00+00:00",
+    "outcomes": {
+     "Philadelphia 76ers": 0.1026315,
+     "Boston Celtics": 0.066667,
+     "Minnesota Timberwolves": 0.038462,
+     "San Antonio Spurs": 0.277778,
+     "Detroit Pistons": 0.037088,
+     "New York Knicks": 0.1,
+     "Cleveland Cavaliers": 0.0333705,
+     "Toronto Raptors": 0.038462,
+     "Denver Nuggets": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005
+    }
+   },
+   {
+    "timestamp": "2026-08-25T04:00:00+00:00",
+    "outcomes": {
+     "Philadelphia 76ers": 0.1026315,
+     "Boston Celtics": 0.066667,
+     "Denver Nuggets": 0.038462,
+     "New York Knicks": 0.1,
+     "Toronto Raptors": 0.038462,
+     "Minnesota Timberwolves": 0.038462,
+     "Cleveland Cavaliers": 0.0333705,
+     "San Antonio Spurs": 0.277778,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Detroit Pistons": 0.037088
+    }
+   },
+   {
+    "timestamp": "2026-08-25T08:00:00+00:00",
+    "outcomes": {
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "New York Knicks": 0.1,
+     "Toronto Raptors": 0.038462,
+     "San Antonio Spurs": 0.277778,
+     "Detroit Pistons": 0.037088,
+     "Denver Nuggets": 0.038462,
+     "Boston Celtics": 0.066667,
+     "Philadelphia 76ers": 0.1026315,
+     "Cleveland Cavaliers": 0.0333705,
+     "Minnesota Timberwolves": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-25T12:00:00+00:00",
+    "outcomes": {
+     "Toronto Raptors": 0.038462,
+     "Cleveland Cavaliers": 0.0333705,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Denver Nuggets": 0.038462,
+     "Detroit Pistons": 0.037088,
+     "San Antonio Spurs": 0.277778,
+     "Boston Celtics": 0.066667,
+     "Minnesota Timberwolves": 0.038462,
+     "New York Knicks": 0.1,
+     "Philadelphia 76ers": 0.1026315
+    }
+   },
+   {
+    "timestamp": "2026-08-25T16:00:00+00:00",
+    "outcomes": {
+     "Minnesota Timberwolves": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Toronto Raptors": 0.038462,
+     "New York Knicks": 0.1,
+     "Denver Nuggets": 0.038462,
+     "Boston Celtics": 0.066667,
+     "Detroit Pistons": 0.037088,
+     "San Antonio Spurs": 0.277778,
+     "Philadelphia 76ers": 0.1026315,
+     "Cleveland Cavaliers": 0.0333705
+    }
+   },
+   {
+    "timestamp": "2026-08-25T20:00:00+00:00",
+    "outcomes": {
+     "Cleveland Cavaliers": 0.032258,
+     "Toronto Raptors": 0.036472500000000005,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Detroit Pistons": 0.035098500000000005,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Philadelphia 76ers": 0.0954545,
+     "Minnesota Timberwolves": 0.038462,
+     "New York Knicks": 0.1,
+     "Denver Nuggets": 0.038462,
+     "Boston Celtics": 0.066667
+    }
+   },
+   {
+    "timestamp": "2026-08-26T00:00:00+00:00",
+    "outcomes": {
+     "Toronto Raptors": 0.036472500000000005,
+     "Boston Celtics": 0.066667,
+     "New York Knicks": 0.1,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Detroit Pistons": 0.035098500000000005,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Cleveland Cavaliers": 0.032258,
+     "Minnesota Timberwolves": 0.038462,
+     "Philadelphia 76ers": 0.0954545,
+     "Denver Nuggets": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-26T04:00:00+00:00",
+    "outcomes": {
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Boston Celtics": 0.066667,
+     "Denver Nuggets": 0.038462,
+     "Toronto Raptors": 0.036472500000000005,
+     "Cleveland Cavaliers": 0.032258,
+     "San Antonio Spurs": 0.27046800000000004,
+     "New York Knicks": 0.1,
+     "Philadelphia 76ers": 0.0954545,
+     "Detroit Pistons": 0.035098500000000005,
+     "Minnesota Timberwolves": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-26T08:00:00+00:00",
+    "outcomes": {
+     "New York Knicks": 0.1,
+     "Cleveland Cavaliers": 0.032258,
+     "Minnesota Timberwolves": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Philadelphia 76ers": 0.0954545,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Detroit Pistons": 0.035098500000000005,
+     "Denver Nuggets": 0.038462,
+     "Boston Celtics": 0.066667,
+     "Toronto Raptors": 0.036472500000000005
+    }
+   },
+   {
+    "timestamp": "2026-08-26T12:00:00+00:00",
+    "outcomes": {
+     "Detroit Pistons": 0.035098500000000005,
+     "New York Knicks": 0.1,
+     "Denver Nuggets": 0.038462,
+     "Boston Celtics": 0.066667,
+     "Cleveland Cavaliers": 0.032258,
+     "Minnesota Timberwolves": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Philadelphia 76ers": 0.0954545,
+     "Toronto Raptors": 0.036472500000000005,
+     "San Antonio Spurs": 0.27046800000000004
+    }
+   },
+   {
+    "timestamp": "2026-08-26T16:00:00+00:00",
+    "outcomes": {
+     "Detroit Pistons": 0.035098500000000005,
+     "New York Knicks": 0.1,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Minnesota Timberwolves": 0.038462,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Philadelphia 76ers": 0.0954545,
+     "Boston Celtics": 0.066667,
+     "Denver Nuggets": 0.038462,
+     "Cleveland Cavaliers": 0.032258,
+     "Toronto Raptors": 0.036472500000000005
+    }
+   },
+   {
+    "timestamp": "2026-08-26T20:00:00+00:00",
+    "outcomes": {
+     "Cleveland Cavaliers": 0.032258,
+     "Detroit Pistons": 0.035098500000000005,
+     "New York Knicks": 0.1,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Boston Celtics": 0.066667,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Philadelphia 76ers": 0.0954545,
+     "Denver Nuggets": 0.038462,
+     "Minnesota Timberwolves": 0.038462,
+     "Toronto Raptors": 0.036472500000000005
+    }
+   },
+   {
+    "timestamp": "2026-08-27T00:00:00+00:00",
+    "outcomes": {
+     "Toronto Raptors": 0.036472500000000005,
+     "Cleveland Cavaliers": 0.032258,
+     "Boston Celtics": 0.0645835,
+     "Philadelphia 76ers": 0.0954545,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Denver Nuggets": 0.038462,
+     "Detroit Pistons": 0.035098500000000005,
+     "New York Knicks": 0.1,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Minnesota Timberwolves": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-27T04:00:00+00:00",
+    "outcomes": {
+     "Toronto Raptors": 0.036472500000000005,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Boston Celtics": 0.0645835,
+     "Denver Nuggets": 0.038462,
+     "New York Knicks": 0.1,
+     "Cleveland Cavaliers": 0.032258,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Detroit Pistons": 0.035098500000000005,
+     "Philadelphia 76ers": 0.0954545,
+     "Minnesota Timberwolves": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-27T08:00:00+00:00",
+    "outcomes": {
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Boston Celtics": 0.0645835,
+     "Philadelphia 76ers": 0.0954545,
+     "Detroit Pistons": 0.035098500000000005,
+     "New York Knicks": 0.1,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Toronto Raptors": 0.036472500000000005,
+     "Minnesota Timberwolves": 0.038462,
+     "Denver Nuggets": 0.038462,
+     "Cleveland Cavaliers": 0.032258
+    }
+   },
+   {
+    "timestamp": "2026-08-27T12:00:00+00:00",
+    "outcomes": {
+     "San Antonio Spurs": 0.27046800000000004,
+     "Denver Nuggets": 0.038462,
+     "Toronto Raptors": 0.036472500000000005,
+     "Cleveland Cavaliers": 0.032258,
+     "Philadelphia 76ers": 0.0954545,
+     "Detroit Pistons": 0.035098500000000005,
+     "Boston Celtics": 0.0645835,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Minnesota Timberwolves": 0.038462,
+     "New York Knicks": 0.1
+    }
+   },
+   {
+    "timestamp": "2026-08-27T16:00:00+00:00",
+    "outcomes": {
+     "San Antonio Spurs": 0.27046800000000004,
+     "New York Knicks": 0.1,
+     "Detroit Pistons": 0.035098500000000005,
+     "Philadelphia 76ers": 0.0954545,
+     "Boston Celtics": 0.0645835,
+     "Toronto Raptors": 0.036472500000000005,
+     "Cleveland Cavaliers": 0.032258,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Minnesota Timberwolves": 0.038462,
+     "Denver Nuggets": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-27T20:00:00+00:00",
+    "outcomes": {
+     "San Antonio Spurs": 0.27046800000000004,
+     "Toronto Raptors": 0.036472500000000005,
+     "Cleveland Cavaliers": 0.032258,
+     "Minnesota Timberwolves": 0.038462,
+     "New York Knicks": 0.1,
+     "Detroit Pistons": 0.035098500000000005,
+     "Philadelphia 76ers": 0.0954545,
+     "Boston Celtics": 0.0645835,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Denver Nuggets": 0.038462
+    }
+   },
+   {
+    "timestamp": "2026-08-28T00:00:00+00:00",
+    "outcomes": {
+     "Toronto Raptors": 0.036472500000000005,
+     "Cleveland Cavaliers": 0.032258,
+     "Philadelphia 76ers": 0.0954545,
+     "New York Knicks": 0.1,
+     "Minnesota Timberwolves": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Denver Nuggets": 0.038462,
+     "Boston Celtics": 0.0645835,
+     "Detroit Pistons": 0.035098500000000005,
+     "San Antonio Spurs": 0.27046800000000004
+    }
+   },
+   {
+    "timestamp": "2026-08-28T04:00:00+00:00",
+    "outcomes": {
+     "Denver Nuggets": 0.038462,
+     "Philadelphia 76ers": 0.0954545,
+     "Boston Celtics": 0.0645835,
+     "New York Knicks": 0.1,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Toronto Raptors": 0.036472500000000005,
+     "Minnesota Timberwolves": 0.038462,
+     "Cleveland Cavaliers": 0.032258,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Detroit Pistons": 0.035098500000000005
+    }
+   },
+   {
+    "timestamp": "2026-08-28T08:00:00+00:00",
+    "outcomes": {
+     "San Antonio Spurs": 0.27046800000000004,
+     "Boston Celtics": 0.0645835,
+     "New York Knicks": 0.1,
+     "Cleveland Cavaliers": 0.032258,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Denver Nuggets": 0.038462,
+     "Minnesota Timberwolves": 0.038462,
+     "Detroit Pistons": 0.035098500000000005,
+     "Philadelphia 76ers": 0.0954545,
+     "Toronto Raptors": 0.036472500000000005
+    }
+   },
+   {
+    "timestamp": "2026-08-28T12:00:00+00:00",
+    "outcomes": {
+     "Denver Nuggets": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Cleveland Cavaliers": 0.032258,
+     "Toronto Raptors": 0.036472500000000005,
+     "New York Knicks": 0.1,
+     "Minnesota Timberwolves": 0.038462,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Detroit Pistons": 0.035098500000000005,
+     "Philadelphia 76ers": 0.0954545,
+     "Boston Celtics": 0.0645835
+    }
+   },
+   {
+    "timestamp": "2026-08-28T16:00:00+00:00",
+    "outcomes": {
+     "Detroit Pistons": 0.035098500000000005,
+     "Cleveland Cavaliers": 0.032258,
+     "New York Knicks": 0.1,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Denver Nuggets": 0.038462,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Boston Celtics": 0.0645835,
+     "Minnesota Timberwolves": 0.038462,
+     "Philadelphia 76ers": 0.0954545,
+     "Toronto Raptors": 0.036472500000000005
+    }
+   },
+   {
+    "timestamp": "2026-08-28T20:00:00+00:00",
+    "outcomes": {
+     "New York Knicks": 0.1,
+     "Boston Celtics": 0.0645835,
+     "Cleveland Cavaliers": 0.032258,
+     "Detroit Pistons": 0.035098500000000005,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Minnesota Timberwolves": 0.038462,
+     "Denver Nuggets": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Toronto Raptors": 0.036472500000000005,
+     "Philadelphia 76ers": 0.0954545
+    }
+   },
+   {
+    "timestamp": "2026-08-29T00:00:00+00:00",
+    "outcomes": {
+     "Denver Nuggets": 0.038462,
+     "New York Knicks": 0.1,
+     "Detroit Pistons": 0.035098500000000005,
+     "Cleveland Cavaliers": 0.032258,
+     "Boston Celtics": 0.0645835,
+     "Philadelphia 76ers": 0.0954545,
+     "Minnesota Timberwolves": 0.038462,
+     "Toronto Raptors": 0.036472500000000005,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Oklahoma City Thunder": 0.28174600000000005
+    }
+   },
+   {
+    "timestamp": "2026-08-29T04:00:00+00:00",
+    "outcomes": {
+     "Toronto Raptors": 0.036472500000000005,
+     "Detroit Pistons": 0.036472500000000005,
+     "Denver Nuggets": 0.038462,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Philadelphia 76ers": 0.0954545,
+     "Cleveland Cavaliers": 0.032258,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Minnesota Timberwolves": 0.038462,
+     "New York Knicks": 0.09761900000000001,
+     "Boston Celtics": 0.0645835
+    }
+   },
+   {
+    "timestamp": "2026-08-29T08:00:00+00:00",
+    "outcomes": {
+     "Boston Celtics": 0.0645835,
+     "New York Knicks": 0.09761900000000001,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Toronto Raptors": 0.036472500000000005,
+     "Denver Nuggets": 0.038462,
+     "Detroit Pistons": 0.036472500000000005,
+     "Minnesota Timberwolves": 0.038462,
+     "Cleveland Cavaliers": 0.032258,
+     "Philadelphia 76ers": 0.0954545
+    }
+   },
+   {
+    "timestamp": "2026-08-29T12:00:00+00:00",
+    "outcomes": {
+     "Detroit Pistons": 0.036472500000000005,
+     "Denver Nuggets": 0.038462,
+     "Cleveland Cavaliers": 0.032258,
+     "Philadelphia 76ers": 0.0954545,
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Minnesota Timberwolves": 0.038462,
+     "New York Knicks": 0.09761900000000001,
+     "Boston Celtics": 0.0645835,
+     "Toronto Raptors": 0.036472500000000005,
+     "San Antonio Spurs": 0.27046800000000004
+    }
+   },
+   {
+    "timestamp": "2026-08-29T16:00:00+00:00",
+    "outcomes": {
+     "Oklahoma City Thunder": 0.28174600000000005,
+     "Minnesota Timberwolves": 0.038462,
+     "New York Knicks": 0.09761900000000001,
+     "Detroit Pistons": 0.036472500000000005,
+     "Toronto Raptors": 0.036472500000000005,
+     "Cleveland Cavaliers": 0.032258,
+     "Philadelphia 76ers": 0.0954545,
+     "Denver Nuggets": 0.038462,
+     "San Antonio Spurs": 0.27046800000000004,
+     "Boston Celtics": 0.0645835
+    }
+   }
+  ],
+  "outcomes": [
+   {
+    "name": "Oklahoma City Thunder",
+    "current_probability": 0.28174600000000005
+   },
+   {
+    "name": "San Antonio Spurs",
+    "current_probability": 0.27046800000000004
+   },
+   {
+    "name": "New York Knicks",
+    "current_probability": 0.09761900000000001
+   },
+   {
+    "name": "Philadelphia 76ers",
+    "current_probability": 0.0954545
+   },
+   {
+    "name": "Boston Celtics",
+    "current_probability": 0.0645835
+   },
+   {
+    "name": "Minnesota Timberwolves",
+    "current_probability": 0.038462
+   },
+   {
+    "name": "Denver Nuggets",
+    "current_probability": 0.038462
+   },
+   {
+    "name": "Detroit Pistons",
+    "current_probability": 0.036472500000000005
+   },
+   {
+    "name": "Toronto Raptors",
+    "current_probability": 0.036472500000000005
+   },
+   {
+    "name": "Cleveland Cavaliers",
+    "current_probability": 0.032258
+   }
+  ],
+  "column": "championship",
+  "top": 10
+ },
+ "teams": [
+  {
+   "name": "Oklahoma City Thunder",
+   "short_name": "OKC",
+   "team_id": 153,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/okc.png",
+   "primary_color": "#007ac1",
+   "secondary_color": "#ef3b24",
+   "record": "64-18",
+   "conference": "Western Conference",
+   "division": "Northwest",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.98,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.98,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.9208,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.725,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.725,
+       "market_name": "Pro Basketball Northwest Division Winner"
+      }
+     ],
+     "trend_24h": 0.0506,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.2659,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.2659,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0175,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.2367,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.2367,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0003,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "San Antonio Spurs",
+   "short_name": "Spurs",
+   "team_id": 16807,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.98,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.98,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.9208,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.905,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.905,
+       "market_name": "Pro Basketball Southwest Division Winner"
+      }
+     ],
+     "trend_24h": 0.0348,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.2778,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.2778,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0135,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.2292,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.2292,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0003,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Philadelphia 76ers",
+   "short_name": "PHI",
+   "team_id": 50,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/phi.png",
+   "primary_color": "#1d428a",
+   "secondary_color": "#e01234",
+   "record": "45-37",
+   "conference": "Eastern Conference",
+   "division": "Atlantic",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.895,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.895,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.841,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.3,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.3,
+       "market_name": "Pro Basketball Atlantic Division Winner"
+      }
+     ],
+     "trend_24h": 0.0087,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.1786,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.1786,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0157,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0817,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0817,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0001,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "New York Knicks",
+   "short_name": "NY",
+   "team_id": 108,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/ny.png",
+   "primary_color": "#1d428a",
+   "secondary_color": "#f58426",
+   "record": "53-29",
+   "conference": "Eastern Conference",
+   "division": "Atlantic",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.935,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.935,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.8786,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.335,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.335,
+       "market_name": "Pro Basketball Atlantic Division Winner"
+      }
+     ],
+     "trend_24h": 0.0098,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.1706,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.1706,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.015,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0815,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0815,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": -0.0009,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Boston Celtics",
+   "short_name": "BOS",
+   "team_id": 100,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/bos.png",
+   "primary_color": "#008348",
+   "secondary_color": "#ffffff",
+   "record": "56-26",
+   "conference": "Eastern Conference",
+   "division": "Atlantic",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.835,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.835,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.7846,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.255,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.255,
+       "market_name": "Pro Basketball Atlantic Division Winner"
+      }
+     ],
+     "trend_24h": 0.0074,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0992,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0992,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0087,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0523,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0523,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0001,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Minnesota Timberwolves",
+   "short_name": "MIN",
+   "team_id": 106,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/min.png",
+   "primary_color": "#266092",
+   "secondary_color": "#79bc43",
+   "record": "49-33",
+   "conference": "Western Conference",
+   "division": "Northwest",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.875,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.875,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.8222,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.17,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.17,
+       "market_name": "Pro Basketball Northwest Division Winner"
+      }
+     ],
+     "trend_24h": 0.0119,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0595,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0595,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": -0.0056,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0319,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0319,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Denver Nuggets",
+   "short_name": "DEN",
+   "team_id": 154,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/den.png",
+   "primary_color": "#0e2240",
+   "secondary_color": "#fec524",
+   "record": "54-28",
+   "conference": "Western Conference",
+   "division": "Northwest",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.82,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.82,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.7705,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.085,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.085,
+       "market_name": "Pro Basketball Northwest Division Winner"
+      }
+     ],
+     "trend_24h": 0.0059,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0476,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0476,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0031,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0312,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0312,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": -0.0007,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Toronto Raptors",
+   "short_name": "TOR",
+   "team_id": 35,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/tor.png",
+   "primary_color": "#d91244",
+   "secondary_color": "#000000",
+   "record": "46-36",
+   "conference": "Eastern Conference",
+   "division": "Atlantic",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.705,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.705,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.6624,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.13,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.13,
+       "market_name": "Pro Basketball Atlantic Division Winner"
+      }
+     ],
+     "trend_24h": 0.0038,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0754,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0754,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0066,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0303,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0303,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Detroit Pistons",
+   "short_name": "DET",
+   "team_id": 41,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/det.png",
+   "primary_color": "#1d428a",
+   "secondary_color": "#c8102e",
+   "record": "60-22",
+   "conference": "Eastern Conference",
+   "division": "Central",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.815,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.815,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.7658,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.395,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.395,
+       "market_name": "Pro Basketball Central Division Winner"
+      }
+     ],
+     "trend_24h": 0.0134,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0556,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0556,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0049,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0303,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0303,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0006,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Cleveland Cavaliers",
+   "short_name": "CLE",
+   "team_id": 156,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/cle.png",
+   "primary_color": "#860038",
+   "secondary_color": "#bc945c",
+   "record": "52-30",
+   "conference": "Eastern Conference",
+   "division": "Central",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.79,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.79,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.7423,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.385,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.385,
+       "market_name": "Pro Basketball Central Division Winner"
+      }
+     ],
+     "trend_24h": 0.013,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0516,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0516,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0045,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0273,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0273,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": -0.0005,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Miami Heat",
+   "short_name": "Heat",
+   "team_id": 16808,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.69,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.69,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.6483,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.385,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.385,
+       "market_name": "Pro Basketball Southeast Division Winner"
+      }
+     ],
+     "trend_24h": 0.0057,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0595,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0595,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0052,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0261,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0261,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Houston Rockets",
+   "short_name": "HOU",
+   "team_id": 39,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/hou.png",
+   "primary_color": "#ce1141",
+   "secondary_color": "#000000",
+   "record": "52-30",
+   "conference": "Western Conference",
+   "division": "Southwest",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.77,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.77,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.7235,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.105,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.105,
+       "market_name": "Pro Basketball Southwest Division Winner"
+      }
+     ],
+     "trend_24h": 0.004,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0278,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0278,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0018,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0185,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0185,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Los Angeles Lakers",
+   "short_name": "Lakers",
+   "team_id": 16837,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.75,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.75,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.7047,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.555,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.555,
+       "market_name": "Pro Basketball Pacific Division Winner"
+      }
+     ],
+     "trend_24h": 0.0314,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0516,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0516,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0034,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.018,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.018,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Indiana Pacers",
+   "short_name": "IND",
+   "team_id": 103,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/ind.png",
+   "primary_color": "#0c2340",
+   "secondary_color": "#ffd520",
+   "record": "18-59",
+   "conference": "Eastern Conference",
+   "division": "Central",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.645,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.645,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.6061,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.22,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.22,
+       "market_name": "Pro Basketball Central Division Winner"
+      }
+     ],
+     "trend_24h": 0.0074,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0516,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0516,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0045,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0176,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0176,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": -0.0005,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Orlando Magic",
+   "short_name": "ORL",
+   "team_id": 13554,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/orl.png",
+   "primary_color": "#0150b5",
+   "secondary_color": "#9ca0a3",
+   "record": "45-37",
+   "conference": "Eastern Conference",
+   "division": "Southeast",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.55,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.55,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.5168,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.22,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.22,
+       "market_name": "Pro Basketball Southeast Division Winner"
+      }
+     ],
+     "trend_24h": 0.0033,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0278,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0278,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0024,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0143,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0143,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Atlanta Hawks",
+   "short_name": "ATL",
+   "team_id": 43,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/atl.png",
+   "primary_color": "#c8102e",
+   "secondary_color": "#fdb927",
+   "record": "46-36",
+   "conference": "Eastern Conference",
+   "division": "Southeast",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.59,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.59,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.5544,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.22,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.22,
+       "market_name": "Pro Basketball Southeast Division Winner"
+      }
+     ],
+     "trend_24h": 0.0033,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0278,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0278,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0024,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0137,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0137,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0008,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Golden State Warriors",
+   "short_name": "GS",
+   "team_id": 46,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/gs.png",
+   "primary_color": "#fdb927",
+   "secondary_color": "#1d428a",
+   "record": "37-45",
+   "conference": "Western Conference",
+   "division": "Pacific",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.51,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.51,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.4792,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.22,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.22,
+       "market_name": "Pro Basketball Pacific Division Winner"
+      }
+     ],
+     "trend_24h": 0.0125,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0198,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0198,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0013,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0135,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0135,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Portland Trail Blazers",
+   "short_name": "POR",
+   "team_id": 11362,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/por.png",
+   "primary_color": "#e03a3e",
+   "secondary_color": "#000000",
+   "record": "36-37",
+   "conference": "Western Conference",
+   "division": "Northwest",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.585,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.585,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.5497,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.045,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.045,
+       "market_name": "Pro Basketball Northwest Division Winner"
+      }
+     ],
+     "trend_24h": 0.0031,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0119,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0119,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0008,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0099,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0099,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Charlotte Hornets",
+   "short_name": "CHA",
+   "team_id": 40,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/cha.png",
+   "primary_color": "#008ca8",
+   "secondary_color": "#1d1060",
+   "record": "44-38",
+   "conference": "Eastern Conference",
+   "division": "Southeast",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.385,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.385,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.3618,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.105,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.105,
+       "market_name": "Pro Basketball Southeast Division Winner"
+      }
+     ],
+     "trend_24h": 0.0016,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0119,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0119,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.001,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0075,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0075,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Phoenix Suns",
+   "short_name": "PHX",
+   "team_id": 45,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/phx.png",
+   "primary_color": "#29127a",
+   "secondary_color": "#e56020",
+   "record": "45-37",
+   "conference": "Western Conference",
+   "division": "Pacific",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.52,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.52,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.4886,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.2,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.2,
+       "market_name": "Pro Basketball Pacific Division Winner"
+      }
+     ],
+     "trend_24h": 0.0113,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0079,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0079,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0005,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "championship": {
+     "merged_probability": 0.0063,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0063,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Utah Jazz",
+   "short_name": "UTAH",
+   "team_id": 44,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/utah.png",
+   "primary_color": "#4e008e",
+   "secondary_color": "#79a3dc",
+   "record": "21-57",
+   "conference": "Western Conference",
+   "division": "Northwest",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.43,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.43,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.404,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.05,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.05,
+       "market_name": "Pro Basketball Northwest Division Winner"
+      }
+     ],
+     "trend_24h": 0.0035,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0159,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0159,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.001,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0049,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0049,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0003,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Washington Wizards",
+   "short_name": "WSH",
+   "team_id": 42,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/wsh.png",
+   "primary_color": "#e31837",
+   "secondary_color": "#002b5c",
+   "record": "17-59",
+   "conference": "Eastern Conference",
+   "division": "Southeast",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.28,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.28,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.2631,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.085,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.085,
+       "market_name": "Pro Basketball Southeast Division Winner"
+      }
+     ],
+     "trend_24h": 0.0013,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0198,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0198,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0017,
+     "state": "live"
+    },
+    "championship": {
+     "merged_probability": 0.0049,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0049,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": -0.0001,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Dallas Mavericks",
+   "short_name": "DAL",
+   "team_id": 37,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/dal.png",
+   "primary_color": "#0064b1",
+   "secondary_color": "#bbc4ca",
+   "record": "24-53",
+   "conference": "Western Conference",
+   "division": "Southwest",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.315,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.315,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.296,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "Pro Basketball Southwest Division Winner"
+      }
+     ],
+     "trend_24h": 0.0004,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "conference": {
+     "merged_probability": 0.0079,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0079,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0005,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "championship": {
+     "merged_probability": 0.004,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.004,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0001,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Los Angeles Clippers",
+   "short_name": "LAC",
+   "team_id": 537,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/lac.png",
+   "primary_color": "#12173f",
+   "secondary_color": "#c8102e",
+   "record": "42-40",
+   "conference": "Western Conference",
+   "division": "Pacific",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.21,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.21,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.1973,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.065,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.065,
+       "market_name": "Pro Basketball Pacific Division Winner"
+      }
+     ],
+     "trend_24h": 0.0037,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0079,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0079,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0005,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "championship": {
+     "merged_probability": 0.0015,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0015,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": -0.0002,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "New Orleans Pelicans",
+   "short_name": "Pelicans",
+   "team_id": 16892,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.21,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.21,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.1973,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "Pro Basketball Southwest Division Winner"
+      }
+     ],
+     "trend_24h": 0.0004,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "conference": {
+     "merged_probability": 0.0079,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0079,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0005,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "championship": {
+     "merged_probability": 0.0013,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0013,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0001,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Milwaukee Bucks",
+   "short_name": "Bucks",
+   "team_id": 16835,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.11,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.11,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.1034,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.015,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.015,
+       "market_name": "Pro Basketball Central Division Winner"
+      }
+     ],
+     "trend_24h": 0.0005,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0079,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0079,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0007,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "championship": {
+     "merged_probability": 0.0012,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0012,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Chicago Bulls",
+   "short_name": "CHI",
+   "team_id": 36,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/chi.png",
+   "primary_color": "#ce1141",
+   "secondary_color": "#000000",
+   "record": "29-48",
+   "conference": "Eastern Conference",
+   "division": "Central",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.105,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.105,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.0987,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.02,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.02,
+       "market_name": "Pro Basketball Central Division Winner"
+      }
+     ],
+     "trend_24h": 0.0007,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0079,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0079,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0007,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "championship": {
+     "merged_probability": 0.0012,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0012,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Memphis Grizzlies",
+   "short_name": "MEM",
+   "team_id": 105,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/mem.png",
+   "primary_color": "#5d76a9",
+   "secondary_color": "#12173f",
+   "record": "25-51",
+   "conference": "Western Conference",
+   "division": "Southwest",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.145,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.145,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.1362,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "Pro Basketball Southwest Division Winner"
+      }
+     ],
+     "trend_24h": 0.0004,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "conference": {
+     "merged_probability": 0.0079,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0079,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0005,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "championship": {
+     "merged_probability": 0.0012,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0012,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Brooklyn Nets",
+   "short_name": "BKN",
+   "team_id": 48,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/bkn.png",
+   "primary_color": "#000000",
+   "secondary_color": "#ffffff",
+   "record": "18-59",
+   "conference": "Eastern Conference",
+   "division": "Atlantic",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.06,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.06,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.0564,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "Pro Basketball Atlantic Division Winner"
+      }
+     ],
+     "trend_24h": 0.0003,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "conference": {
+     "merged_probability": 0.0079,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0079,
+       "market_name": "Pro Basketball Eastern Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0007,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "championship": {
+     "merged_probability": 0.0011,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0011,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Sacramento Kings",
+   "short_name": "SAC",
+   "team_id": 155,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/sac.png",
+   "primary_color": "#5a2d81",
+   "secondary_color": "#6a7a82",
+   "record": "20-57",
+   "conference": "Western Conference",
+   "division": "Pacific",
+   "region": null,
+   "seed": null,
+   "cells": {
+    "make_playoffs": {
+     "merged_probability": 0.075,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.075,
+       "market_name": "Pro Basketball Playoff Qualifiers"
+      }
+     ],
+     "trend_24h": 0.0705,
+     "state": "live"
+    },
+    "division": {
+     "merged_probability": 0.02,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.02,
+       "market_name": "Pro Basketball Pacific Division Winner"
+      }
+     ],
+     "trend_24h": 0.0011,
+     "state": "live"
+    },
+    "conference": {
+     "merged_probability": 0.0079,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.0079,
+       "market_name": "Pro Basketball Western Conference Champion"
+      }
+     ],
+     "trend_24h": 0.0005,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "championship": {
+     "merged_probability": 0.0009,
+     "sources": [
+      {
+       "source": "odds_api",
+       "probability": 0.0009,
+       "market_name": "NBA Championship Winner"
+      }
+     ],
+     "trend_24h": 0.0,
+     "state": "live"
+    }
+   }
+  }
+ ],
+ "grouped_teams": {
+  "Eastern Conference": [
+   {
+    "name": "Philadelphia 76ers",
+    "short_name": "PHI",
+    "team_id": 50,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/phi.png",
+    "primary_color": "#1d428a",
+    "secondary_color": "#e01234",
+    "record": "45-37",
+    "conference": "Eastern Conference",
+    "division": "Atlantic",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.895,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.895,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.841,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.3,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.3,
+        "market_name": "Pro Basketball Atlantic Division Winner"
+       }
+      ],
+      "trend_24h": 0.0087,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.1786,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.1786,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0157,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0817,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0817,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0001,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "New York Knicks",
+    "short_name": "NY",
+    "team_id": 108,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/ny.png",
+    "primary_color": "#1d428a",
+    "secondary_color": "#f58426",
+    "record": "53-29",
+    "conference": "Eastern Conference",
+    "division": "Atlantic",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.935,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.935,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.8786,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.335,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.335,
+        "market_name": "Pro Basketball Atlantic Division Winner"
+       }
+      ],
+      "trend_24h": 0.0098,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.1706,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.1706,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.015,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0815,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0815,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": -0.0009,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Boston Celtics",
+    "short_name": "BOS",
+    "team_id": 100,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/bos.png",
+    "primary_color": "#008348",
+    "secondary_color": "#ffffff",
+    "record": "56-26",
+    "conference": "Eastern Conference",
+    "division": "Atlantic",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.835,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.835,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.7846,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.255,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.255,
+        "market_name": "Pro Basketball Atlantic Division Winner"
+       }
+      ],
+      "trend_24h": 0.0074,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0992,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0992,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0087,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0523,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0523,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0001,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Toronto Raptors",
+    "short_name": "TOR",
+    "team_id": 35,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/tor.png",
+    "primary_color": "#d91244",
+    "secondary_color": "#000000",
+    "record": "46-36",
+    "conference": "Eastern Conference",
+    "division": "Atlantic",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.705,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.705,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.6624,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.13,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.13,
+        "market_name": "Pro Basketball Atlantic Division Winner"
+       }
+      ],
+      "trend_24h": 0.0038,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0754,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0754,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0066,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0303,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0303,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Detroit Pistons",
+    "short_name": "DET",
+    "team_id": 41,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/det.png",
+    "primary_color": "#1d428a",
+    "secondary_color": "#c8102e",
+    "record": "60-22",
+    "conference": "Eastern Conference",
+    "division": "Central",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.815,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.815,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.7658,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.395,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.395,
+        "market_name": "Pro Basketball Central Division Winner"
+       }
+      ],
+      "trend_24h": 0.0134,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0556,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0556,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0049,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0303,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0303,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0006,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Cleveland Cavaliers",
+    "short_name": "CLE",
+    "team_id": 156,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/cle.png",
+    "primary_color": "#860038",
+    "secondary_color": "#bc945c",
+    "record": "52-30",
+    "conference": "Eastern Conference",
+    "division": "Central",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.79,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.79,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.7423,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.385,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.385,
+        "market_name": "Pro Basketball Central Division Winner"
+       }
+      ],
+      "trend_24h": 0.013,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0516,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0516,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0045,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0273,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0273,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": -0.0005,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Indiana Pacers",
+    "short_name": "IND",
+    "team_id": 103,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/ind.png",
+    "primary_color": "#0c2340",
+    "secondary_color": "#ffd520",
+    "record": "18-59",
+    "conference": "Eastern Conference",
+    "division": "Central",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.645,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.645,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.6061,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.22,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.22,
+        "market_name": "Pro Basketball Central Division Winner"
+       }
+      ],
+      "trend_24h": 0.0074,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0516,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0516,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0045,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0176,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0176,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": -0.0005,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Orlando Magic",
+    "short_name": "ORL",
+    "team_id": 13554,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/orl.png",
+    "primary_color": "#0150b5",
+    "secondary_color": "#9ca0a3",
+    "record": "45-37",
+    "conference": "Eastern Conference",
+    "division": "Southeast",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.55,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.55,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.5168,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.22,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.22,
+        "market_name": "Pro Basketball Southeast Division Winner"
+       }
+      ],
+      "trend_24h": 0.0033,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0278,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0278,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0024,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0143,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0143,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Atlanta Hawks",
+    "short_name": "ATL",
+    "team_id": 43,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/atl.png",
+    "primary_color": "#c8102e",
+    "secondary_color": "#fdb927",
+    "record": "46-36",
+    "conference": "Eastern Conference",
+    "division": "Southeast",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.59,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.59,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.5544,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.22,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.22,
+        "market_name": "Pro Basketball Southeast Division Winner"
+       }
+      ],
+      "trend_24h": 0.0033,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0278,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0278,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0024,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0137,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0137,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0008,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Charlotte Hornets",
+    "short_name": "CHA",
+    "team_id": 40,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/cha.png",
+    "primary_color": "#008ca8",
+    "secondary_color": "#1d1060",
+    "record": "44-38",
+    "conference": "Eastern Conference",
+    "division": "Southeast",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.385,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.385,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.3618,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.105,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.105,
+        "market_name": "Pro Basketball Southeast Division Winner"
+       }
+      ],
+      "trend_24h": 0.0016,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0119,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0119,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.001,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0075,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0075,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Washington Wizards",
+    "short_name": "WSH",
+    "team_id": 42,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/wsh.png",
+    "primary_color": "#e31837",
+    "secondary_color": "#002b5c",
+    "record": "17-59",
+    "conference": "Eastern Conference",
+    "division": "Southeast",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.28,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.28,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.2631,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.085,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.085,
+        "market_name": "Pro Basketball Southeast Division Winner"
+       }
+      ],
+      "trend_24h": 0.0013,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0198,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0198,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0017,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0049,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0049,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": -0.0001,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Chicago Bulls",
+    "short_name": "CHI",
+    "team_id": 36,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/chi.png",
+    "primary_color": "#ce1141",
+    "secondary_color": "#000000",
+    "record": "29-48",
+    "conference": "Eastern Conference",
+    "division": "Central",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.105,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.105,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.0987,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.02,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.02,
+        "market_name": "Pro Basketball Central Division Winner"
+       }
+      ],
+      "trend_24h": 0.0007,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0079,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0079,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0007,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "championship": {
+      "merged_probability": 0.0012,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0012,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Brooklyn Nets",
+    "short_name": "BKN",
+    "team_id": 48,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/bkn.png",
+    "primary_color": "#000000",
+    "secondary_color": "#ffffff",
+    "record": "18-59",
+    "conference": "Eastern Conference",
+    "division": "Atlantic",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.06,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.06,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.0564,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.01,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.01,
+        "market_name": "Pro Basketball Atlantic Division Winner"
+       }
+      ],
+      "trend_24h": 0.0003,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "conference": {
+      "merged_probability": 0.0079,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0079,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0007,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "championship": {
+      "merged_probability": 0.0011,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0011,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   }
+  ],
+  "Western Conference": [
+   {
+    "name": "Oklahoma City Thunder",
+    "short_name": "OKC",
+    "team_id": 153,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/okc.png",
+    "primary_color": "#007ac1",
+    "secondary_color": "#ef3b24",
+    "record": "64-18",
+    "conference": "Western Conference",
+    "division": "Northwest",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.98,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.98,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.9208,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.725,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.725,
+        "market_name": "Pro Basketball Northwest Division Winner"
+       }
+      ],
+      "trend_24h": 0.0506,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.2659,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.2659,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0175,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.2367,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.2367,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0003,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Minnesota Timberwolves",
+    "short_name": "MIN",
+    "team_id": 106,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/min.png",
+    "primary_color": "#266092",
+    "secondary_color": "#79bc43",
+    "record": "49-33",
+    "conference": "Western Conference",
+    "division": "Northwest",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.875,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.875,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.8222,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.17,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.17,
+        "market_name": "Pro Basketball Northwest Division Winner"
+       }
+      ],
+      "trend_24h": 0.0119,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0595,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0595,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": -0.0056,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0319,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0319,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Denver Nuggets",
+    "short_name": "DEN",
+    "team_id": 154,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/den.png",
+    "primary_color": "#0e2240",
+    "secondary_color": "#fec524",
+    "record": "54-28",
+    "conference": "Western Conference",
+    "division": "Northwest",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.82,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.82,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.7705,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.085,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.085,
+        "market_name": "Pro Basketball Northwest Division Winner"
+       }
+      ],
+      "trend_24h": 0.0059,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0476,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0476,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0031,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0312,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0312,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": -0.0007,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Houston Rockets",
+    "short_name": "HOU",
+    "team_id": 39,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/hou.png",
+    "primary_color": "#ce1141",
+    "secondary_color": "#000000",
+    "record": "52-30",
+    "conference": "Western Conference",
+    "division": "Southwest",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.77,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.77,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.7235,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.105,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.105,
+        "market_name": "Pro Basketball Southwest Division Winner"
+       }
+      ],
+      "trend_24h": 0.004,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0278,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0278,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0018,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0185,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0185,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Golden State Warriors",
+    "short_name": "GS",
+    "team_id": 46,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/gs.png",
+    "primary_color": "#fdb927",
+    "secondary_color": "#1d428a",
+    "record": "37-45",
+    "conference": "Western Conference",
+    "division": "Pacific",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.51,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.51,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.4792,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.22,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.22,
+        "market_name": "Pro Basketball Pacific Division Winner"
+       }
+      ],
+      "trend_24h": 0.0125,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0198,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0198,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0013,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0135,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0135,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Portland Trail Blazers",
+    "short_name": "POR",
+    "team_id": 11362,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/por.png",
+    "primary_color": "#e03a3e",
+    "secondary_color": "#000000",
+    "record": "36-37",
+    "conference": "Western Conference",
+    "division": "Northwest",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.585,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.585,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.5497,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.045,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.045,
+        "market_name": "Pro Basketball Northwest Division Winner"
+       }
+      ],
+      "trend_24h": 0.0031,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0119,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0119,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0008,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0099,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0099,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Phoenix Suns",
+    "short_name": "PHX",
+    "team_id": 45,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/phx.png",
+    "primary_color": "#29127a",
+    "secondary_color": "#e56020",
+    "record": "45-37",
+    "conference": "Western Conference",
+    "division": "Pacific",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.52,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.52,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.4886,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.2,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.2,
+        "market_name": "Pro Basketball Pacific Division Winner"
+       }
+      ],
+      "trend_24h": 0.0113,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0079,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0079,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0005,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "championship": {
+      "merged_probability": 0.0063,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0063,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Utah Jazz",
+    "short_name": "UTAH",
+    "team_id": 44,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/utah.png",
+    "primary_color": "#4e008e",
+    "secondary_color": "#79a3dc",
+    "record": "21-57",
+    "conference": "Western Conference",
+    "division": "Northwest",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.43,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.43,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.404,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.05,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.05,
+        "market_name": "Pro Basketball Northwest Division Winner"
+       }
+      ],
+      "trend_24h": 0.0035,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0159,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0159,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.001,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0049,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0049,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0003,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Dallas Mavericks",
+    "short_name": "DAL",
+    "team_id": 37,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/dal.png",
+    "primary_color": "#0064b1",
+    "secondary_color": "#bbc4ca",
+    "record": "24-53",
+    "conference": "Western Conference",
+    "division": "Southwest",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.315,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.315,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.296,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.01,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.01,
+        "market_name": "Pro Basketball Southwest Division Winner"
+       }
+      ],
+      "trend_24h": 0.0004,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "conference": {
+      "merged_probability": 0.0079,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0079,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0005,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "championship": {
+      "merged_probability": 0.004,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.004,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0001,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Los Angeles Clippers",
+    "short_name": "LAC",
+    "team_id": 537,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/lac.png",
+    "primary_color": "#12173f",
+    "secondary_color": "#c8102e",
+    "record": "42-40",
+    "conference": "Western Conference",
+    "division": "Pacific",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.21,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.21,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.1973,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.065,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.065,
+        "market_name": "Pro Basketball Pacific Division Winner"
+       }
+      ],
+      "trend_24h": 0.0037,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0079,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0079,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0005,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "championship": {
+      "merged_probability": 0.0015,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0015,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": -0.0002,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Memphis Grizzlies",
+    "short_name": "MEM",
+    "team_id": 105,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/mem.png",
+    "primary_color": "#5d76a9",
+    "secondary_color": "#12173f",
+    "record": "25-51",
+    "conference": "Western Conference",
+    "division": "Southwest",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.145,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.145,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.1362,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.01,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.01,
+        "market_name": "Pro Basketball Southwest Division Winner"
+       }
+      ],
+      "trend_24h": 0.0004,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "conference": {
+      "merged_probability": 0.0079,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0079,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0005,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "championship": {
+      "merged_probability": 0.0012,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0012,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Sacramento Kings",
+    "short_name": "SAC",
+    "team_id": 155,
+    "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/sac.png",
+    "primary_color": "#5a2d81",
+    "secondary_color": "#6a7a82",
+    "record": "20-57",
+    "conference": "Western Conference",
+    "division": "Pacific",
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.075,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.075,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.0705,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.02,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.02,
+        "market_name": "Pro Basketball Pacific Division Winner"
+       }
+      ],
+      "trend_24h": 0.0011,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0079,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0079,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0005,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "championship": {
+      "merged_probability": 0.0009,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0009,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   }
+  ],
+  "Other": [
+   {
+    "name": "San Antonio Spurs",
+    "short_name": "Spurs",
+    "team_id": 16807,
+    "logo_url": null,
+    "primary_color": null,
+    "secondary_color": null,
+    "record": null,
+    "conference": null,
+    "division": null,
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.98,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.98,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.9208,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.905,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.905,
+        "market_name": "Pro Basketball Southwest Division Winner"
+       }
+      ],
+      "trend_24h": 0.0348,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.2778,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.2778,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0135,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.2292,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.2292,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0003,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Miami Heat",
+    "short_name": "Heat",
+    "team_id": 16808,
+    "logo_url": null,
+    "primary_color": null,
+    "secondary_color": null,
+    "record": null,
+    "conference": null,
+    "division": null,
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.69,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.69,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.6483,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.385,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.385,
+        "market_name": "Pro Basketball Southeast Division Winner"
+       }
+      ],
+      "trend_24h": 0.0057,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0595,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0595,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0052,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.0261,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0261,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Los Angeles Lakers",
+    "short_name": "Lakers",
+    "team_id": 16837,
+    "logo_url": null,
+    "primary_color": null,
+    "secondary_color": null,
+    "record": null,
+    "conference": null,
+    "division": null,
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.75,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.75,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.7047,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.555,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.555,
+        "market_name": "Pro Basketball Pacific Division Winner"
+       }
+      ],
+      "trend_24h": 0.0314,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0516,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0516,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0034,
+      "state": "live"
+     },
+     "championship": {
+      "merged_probability": 0.018,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.018,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "New Orleans Pelicans",
+    "short_name": "Pelicans",
+    "team_id": 16892,
+    "logo_url": null,
+    "primary_color": null,
+    "secondary_color": null,
+    "record": null,
+    "conference": null,
+    "division": null,
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.21,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.21,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.1973,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.01,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.01,
+        "market_name": "Pro Basketball Southwest Division Winner"
+       }
+      ],
+      "trend_24h": 0.0004,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "conference": {
+      "merged_probability": 0.0079,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0079,
+        "market_name": "Pro Basketball Western Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0005,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "championship": {
+      "merged_probability": 0.0013,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0013,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0001,
+      "state": "live"
+     }
+    }
+   },
+   {
+    "name": "Milwaukee Bucks",
+    "short_name": "Bucks",
+    "team_id": 16835,
+    "logo_url": null,
+    "primary_color": null,
+    "secondary_color": null,
+    "record": null,
+    "conference": null,
+    "division": null,
+    "region": null,
+    "seed": null,
+    "cells": {
+     "make_playoffs": {
+      "merged_probability": 0.11,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.11,
+        "market_name": "Pro Basketball Playoff Qualifiers"
+       }
+      ],
+      "trend_24h": 0.1034,
+      "state": "live"
+     },
+     "division": {
+      "merged_probability": 0.015,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.015,
+        "market_name": "Pro Basketball Central Division Winner"
+       }
+      ],
+      "trend_24h": 0.0005,
+      "state": "live"
+     },
+     "conference": {
+      "merged_probability": 0.0079,
+      "sources": [
+       {
+        "source": "kalshi",
+        "probability": 0.0079,
+        "market_name": "Pro Basketball Eastern Conference Champion"
+       }
+      ],
+      "trend_24h": 0.0007,
+      "state": "live",
+      "is_minimum_tick": true
+     },
+     "championship": {
+      "merged_probability": 0.0012,
+      "sources": [
+       {
+        "source": "odds_api",
+        "probability": 0.0012,
+        "market_name": "NBA Championship Winner"
+       }
+      ],
+      "trend_24h": 0.0,
+      "state": "live"
+     }
+    }
+   }
+  ]
+ },
+ "movers": [
+  {
+   "name": "New York Knicks",
+   "short_name": "NY",
+   "team_id": 108,
+   "column": "championship",
+   "change_24h": -0.0009,
+   "direction": "down",
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/ny.png",
+   "primary_color": "#1d428a"
+  },
+  {
+   "name": "Atlanta Hawks",
+   "short_name": "ATL",
+   "team_id": 43,
+   "column": "championship",
+   "change_24h": 0.0008,
+   "direction": "up",
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/atl.png",
+   "primary_color": "#c8102e"
+  },
+  {
+   "name": "Denver Nuggets",
+   "short_name": "DEN",
+   "team_id": 154,
+   "column": "championship",
+   "change_24h": -0.0007,
+   "direction": "down",
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/den.png",
+   "primary_color": "#0e2240"
+  },
+  {
+   "name": "Detroit Pistons",
+   "short_name": "DET",
+   "team_id": 41,
+   "column": "championship",
+   "change_24h": 0.0006,
+   "direction": "up",
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/det.png",
+   "primary_color": "#1d428a"
+  },
+  {
+   "name": "Cleveland Cavaliers",
+   "short_name": "CLE",
+   "team_id": 156,
+   "column": "championship",
+   "change_24h": -0.0005,
+   "direction": "down",
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/cle.png",
+   "primary_color": "#860038"
+  },
+  {
+   "name": "Indiana Pacers",
+   "short_name": "IND",
+   "team_id": 103,
+   "column": "championship",
+   "change_24h": -0.0005,
+   "direction": "down",
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/ind.png",
+   "primary_color": "#0c2340"
+  },
+  {
+   "name": "Oklahoma City Thunder",
+   "short_name": "OKC",
+   "team_id": 153,
+   "column": "championship",
+   "change_24h": 0.0003,
+   "direction": "up",
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/okc.png",
+   "primary_color": "#007ac1"
+  },
+  {
+   "name": "San Antonio Spurs",
+   "short_name": "Spurs",
+   "team_id": 16807,
+   "column": "championship",
+   "change_24h": 0.0003,
+   "direction": "up",
+   "logo_url": null,
+   "primary_color": null
+  },
+  {
+   "name": "Utah Jazz",
+   "short_name": "UTAH",
+   "team_id": 44,
+   "column": "championship",
+   "change_24h": 0.0003,
+   "direction": "up",
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/utah.png",
+   "primary_color": "#4e008e"
+  },
+  {
+   "name": "Los Angeles Clippers",
+   "short_name": "LAC",
+   "team_id": 537,
+   "column": "championship",
+   "change_24h": -0.0002,
+   "direction": "down",
+   "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/lac.png",
+   "primary_color": "#12173f"
+  }
+ ],
+ "movers_degraded": false,
+ "team_count": 30,
+ "last_updated": "2026-08-29T17:28:20.549552+00:00",
+ "sources_available": [
+  "kalshi",
+  "odds_api"
+ ],
+ "championship_market_id": 2,
+ "stale": true,
+ "stale_reason": "timeout",
+ "degraded": true,
+ "degraded_reason": "timeout"
+}

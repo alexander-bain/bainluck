@@ -1,0 +1,830 @@
+{
+ "league": "epl",
+ "name": "Premier League 2025-26",
+ "season": "2025-26",
+ "columns": [
+  {
+   "key": "relegation",
+   "label": "Relegated",
+   "order": 1,
+   "sequential": false,
+   "market_id": 56775512,
+   "market_ids": [
+    56775512
+   ],
+   "resolved": false
+  },
+  {
+   "key": "top_4",
+   "label": "Top 4",
+   "order": 2,
+   "sequential": false,
+   "market_id": 31834246,
+   "market_ids": [
+    31834246
+   ],
+   "resolved": false
+  }
+ ],
+ "trend_chart": {
+  "timeline": [],
+  "outcomes": [],
+  "column": "championship",
+  "top": 10
+ },
+ "teams": [
+  {
+   "name": "Hull City",
+   "short_name": "City",
+   "team_id": 1804,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.68,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.68,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.4919,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.08,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.08,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.064,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Coventry City",
+   "short_name": "City",
+   "team_id": 1813,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.585,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.585,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.4232,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.008,
+     "state": "live",
+     "is_minimum_tick": true
+    }
+   }
+  },
+  {
+   "name": "Ipswich Town",
+   "short_name": "Town",
+   "team_id": 1819,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.435,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.435,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.3147,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.075,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.075,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.06,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Sunderland",
+   "short_name": "SUN",
+   "team_id": 134,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/soccer/500/366.png",
+   "primary_color": "#EB172B",
+   "secondary_color": "#FFB6C1",
+   "record": "0-0-1",
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.315,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.315,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.2279,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.045,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.045,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.036,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Fulham",
+   "short_name": "FUL",
+   "team_id": 135,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/soccer/500/370.png",
+   "primary_color": "#ffffff",
+   "secondary_color": "#CC0000",
+   "record": "0-0-1",
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.235,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.235,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.17,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.025,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.025,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.02,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Crystal Palace",
+   "short_name": "DC",
+   "team_id": 5214,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": "1-0-1",
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.225,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.225,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.1628,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.085,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.085,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.0679,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Nottingham Forest",
+   "short_name": "NFO",
+   "team_id": 2,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/soccer/500/393.png",
+   "primary_color": "#c8102e",
+   "secondary_color": "#1B3624",
+   "record": "0-1-1",
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.155,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.155,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.1121,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.085,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.085,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.0679,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Newcastle United",
+   "short_name": "NEW",
+   "team_id": 2303,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/soccer/500/361.png",
+   "primary_color": "#000000",
+   "secondary_color": "#ffffff",
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.13,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.13,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.094,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.045,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.045,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.036,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Leeds United",
+   "short_name": "LEE",
+   "team_id": 1,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/soccer/500/357.png",
+   "primary_color": "#ffffff",
+   "secondary_color": "#FFCD00",
+   "record": "1-0-0",
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.125,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.125,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0904,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.26,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.26,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.2078,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Brentford",
+   "short_name": "BRE",
+   "team_id": 144,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/soccer/500/337.png",
+   "primary_color": "#f42727",
+   "secondary_color": "#0f1c3f",
+   "record": "1-0-0",
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.09,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.09,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0651,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.155,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.155,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.1239,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Arsenal",
+   "short_name": "ARS",
+   "team_id": 6314,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/soccer/500/359.png",
+   "primary_color": "#e20520",
+   "secondary_color": "#003399",
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.04,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.04,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0289,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.935,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.935,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.7474,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Bournemouth",
+   "short_name": "BOU",
+   "team_id": 137,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/soccer/500/349.png",
+   "primary_color": "#f42727",
+   "secondary_color": "#B57EDC",
+   "record": "0-0-1",
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.1,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.1,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0723,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.08,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.08,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.064,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Aston Villa",
+   "short_name": "Villa",
+   "team_id": 5674,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.095,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.095,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0687,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.065,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.065,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.052,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Everton",
+   "short_name": "DC",
+   "team_id": 4742,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": "1-0-1",
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.085,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.085,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0615,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.07,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.07,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.056,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Brighton",
+   "short_name": "ATX",
+   "team_id": 4755,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": "1-1-0",
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.07,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.07,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0506,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.195,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.195,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.1559,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Tottenham",
+   "short_name": "DC",
+   "team_id": 4758,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": "1-0-1",
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.07,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.07,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0506,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.24,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.24,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.1919,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Chelsea",
+   "short_name": "Chelsea",
+   "team_id": 6315,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/soccer/500/363.png",
+   "primary_color": "#144992",
+   "secondary_color": "#ffeeee",
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.05,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.05,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0362,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.7,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.7,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.5596,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Manchester United",
+   "short_name": "United",
+   "team_id": 11861,
+   "logo_url": null,
+   "primary_color": null,
+   "secondary_color": null,
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.05,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.05,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0362,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.47,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.47,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.3757,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Manchester City",
+   "short_name": "MNC",
+   "team_id": 6318,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/soccer/500/382.png",
+   "primary_color": "#99c5ea",
+   "secondary_color": "#e6ff00",
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.01,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.01,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0072,
+     "state": "live",
+     "is_minimum_tick": true
+    },
+    "top_4": {
+     "merged_probability": 0.765,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.765,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.6115,
+     "state": "live"
+    }
+   }
+  },
+  {
+   "name": "Liverpool",
+   "short_name": "LIV",
+   "team_id": 6321,
+   "logo_url": "https://a.espncdn.com/i/teamlogos/soccer/500/364.png",
+   "primary_color": "#d11317",
+   "secondary_color": "#132257",
+   "record": null,
+   "conference": null,
+   "division": null,
+   "region": null,
+   "seed": null,
+   "cells": {
+    "relegation": {
+     "merged_probability": 0.07,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.07,
+       "market_name": "EPL Relegation"
+      }
+     ],
+     "trend_24h": 0.0506,
+     "state": "live"
+    },
+    "top_4": {
+     "merged_probability": 0.6,
+     "sources": [
+      {
+       "source": "kalshi",
+       "probability": 0.6,
+       "market_name": "EPL Top 4 Finishers"
+      }
+     ],
+     "trend_24h": 0.4796,
+     "state": "live"
+    }
+   }
+  }
+ ],
+ "grouped_teams": null,
+ "movers": [],
+ "movers_degraded": false,
+ "team_count": 20,
+ "last_updated": "2026-08-29T14:56:21.249090+00:00",
+ "sources_available": [
+  "kalshi"
+ ],
+ "championship_market_id": null,
+ "stale": true,
+ "stale_reason": "cache_miss"
+}

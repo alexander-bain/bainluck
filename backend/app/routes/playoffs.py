@@ -2749,6 +2749,27 @@ def _grid_payload_usable(payload) -> bool:
     return isinstance(teams, list) and len(teams) > 0
 
 
+def degraded_grid_detail(league_slug: str) -> str:
+    """The sentence a reader sees when the grid 503s (#1484, UX-P175).
+
+    Public and named rather than inlined at the ``raise`` site because it is a
+    CROSS-LAYER string: the route emits it, ``apiFetch`` preserves it, and
+    ``/playoffs/[sport]`` renders it verbatim in place of "Failed to load".
+    Re-typing it on the frontend side would make two layers agree today from two
+    sources and drift apart later with nothing going red — so the frontend
+    fixture is generated FROM this function and
+    ``test_playoff_degraded_contract.py`` fails if the two ever diverge.
+
+    The wording is load-bearing. "not an empty league" exists because the
+    failure mode being corrected is a reader concluding the competition has no
+    markets, which is the same false claim UX-P173 removed from the empty state.
+    """
+    return (
+        f"Playoff grid for '{league_slug}' timed out and no last-good "
+        f"payload is available. This is a degraded state, not an empty league."
+    )
+
+
 def _mark_last_good(payload: dict, reason: str, *, degraded: bool) -> dict:
     """Label a last-good serve. Additive fields only; existing keys untouched.
 
@@ -2857,11 +2878,7 @@ async def get_playoff_grid_cached(
             return _mark_last_good(last_good, "timeout", degraded=True)
         raise HTTPException(
             status_code=503,
-            detail=(
-                f"Playoff grid for '{league_slug}' timed out and no last-good "
-                f"payload is available. This is a degraded state, not an empty "
-                f"league."
-            ),
+            detail=degraded_grid_detail(league_slug),
         )
 
     if cache_eligible:
