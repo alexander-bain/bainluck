@@ -19,7 +19,7 @@ import re
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -2534,13 +2534,27 @@ async def get_feed(
         # rankable concepts (the "UFC 329 wasn't bubbling" gap). Gated on
         # include_events, so the futures-only feed audit never sees them.
         _skip_concepts = not include_events
+        _concept_sport_filter: tuple[str, ...] | None = None
         if static_tag_filter:
-            _concept_sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
-            # Concepts exist for combat cards (mma) + motorsports GPs (f1). A sport
-            # filter for anything else means the concept streams have nothing to add.
-            _concept_allowed = {"sport:mma", "sport:motorsports", "sport:f1"}
-            if _concept_sport_tags and not (set(_concept_sport_tags) & _concept_allowed):
-                _skip_concepts = True
+            # UX-P177: this gate used to be the WHOLE tag story. It decided
+            # whether to RUN the tier — against a hand-written allowlist that had
+            # already lost `cycling` — and then built the tier with no filter at
+            # all, so the concept stream was gated by the sport tag and never
+            # filtered by it. Measured on production 2026-08-29:
+            # `?tags=["sport:mma"]` served 16 concepts of which 5 were foreign,
+            # `?tags=["sport:motorsports"]` served the SAME 16 of which 12 were,
+            # and `?tags=["sport:cycling"]` served 0 while the Vuelta sat on the
+            # other two. Both halves are now one function, derived from
+            # `CONCEPT_SOURCES`, so the alias vocabulary cannot fork again.
+            #
+            # The cache key already carried the tag tuple, so it was never the
+            # bug and is unchanged — the BUILDER is what ignored the tag.
+            from app.utils.event_concept_population import concept_filter_for_tags
+
+            _tag_skip, _concept_sport_filter = concept_filter_for_tags(
+                static_tag_filter
+            )
+            _skip_concepts = _skip_concepts or _tag_skip
         if not _skip_concepts:
             try:
                 # #2143: the concept build is principal-INDEPENDENT — it takes
@@ -2580,7 +2594,14 @@ async def get_feed(
                 )
 
                 async def _build_concepts():
-                    return await _score_event_concepts(db, now, sport, ctx)
+                    # `sport` (the ?sport= param) keeps precedence; the
+                    # tag-derived filter only speaks when the caller named no
+                    # sport, which is exactly what both readers of this path do
+                    # — `/categories/[slug]` and `RelatedByTag` send `tags` and
+                    # nothing else.
+                    return await _score_event_concepts(
+                        db, now, sport or _concept_sport_filter, ctx
+                    )
 
                 concept_items = await _shared_get_or_build(
                     "concepts",
@@ -9185,7 +9206,7 @@ async def _resolve_concept_leader(db: AsyncSession, key: str) -> Optional[dict]:
 async def _score_event_concepts(
     db: AsyncSession,
     now: datetime,
-    sport_filter: Optional[str],
+    sport_filter: Optional[Union[str, tuple[str, ...]]],
     ctx=None,
 ) -> list[dict]:
     """Score event concepts (UFC cards + F1 Grands Prix, L2-84/L2-86) for the
