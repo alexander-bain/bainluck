@@ -115,6 +115,14 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     "search_scorer_wiring_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "search_tier_split_mutations": [("MUTANTS", "needle", "replacement", "TARGET")],
     "search_stemmer_alias_mutations": [("MUTANTS", 2, 3, 1)],
+    # LAT-P124. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above — an append at the head of this dict
+    # is what several consecutive latency branches have collided on. Placed here
+    # rather than in `DISK_FREE` on purpose: its oracle is the 21-test guard
+    # suite run against the mutated file, which is stronger than any in-process
+    # fake for a change whose whole measurement is a QUERY COUNT taken through
+    # the real route. That trade is argued in the harness docstring.
+    "search_suggestions_cold_mutations": [("MUTANTS", 2, 3, "TARGET")],
     "search_word_test_mutations": [("MUTANTS", 2, 3, 1)],
     "typeahead_concept_provenance_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "typeahead_warmer_mutations": [("MUTATIONS", 3, 4, 1)],
