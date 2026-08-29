@@ -2703,6 +2703,131 @@ def _market_passes_league_filter(name: str, external_id: str, config) -> bool:
     return True
 
 
+#: Which source OWNS each external-id space the grid matches on.
+#:
+#: ``FuturesMarket.external_id`` is documented in ``models.py`` as "sport_key or
+#: event_ticker", and which of the two a given row carries is decided entirely
+#: by ``source``. ``LeagueConfig.sport_keys`` holds The Odds API's sport keys;
+#: ``LeagueConfig.external_id_prefixes`` holds Kalshi series tickers. This map
+#: is that already-documented pairing, written where a query can read it.
+GRID_ID_SPACE_SOURCE: dict[str, str] = {
+    "sport_keys": "odds_api",
+    "external_id_prefixes": "kalshi",
+}
+
+
+def _league_pattern_to_ilike(pattern_str: str) -> str:
+    """Convert a league name regex to a SQL ILIKE body (``\\bNBA\\b`` -> ``NBA``).
+
+    Unchanged behaviour, lifted out of ``get_playoff_grid`` so the candidate
+    filter can be built — and tested — without a request.
+    """
+    sql_pattern = re.sub(r"\\[bs]", "", pattern_str)
+    sql_pattern = re.sub(r"\\s\+|\\s\*", "%", sql_pattern)
+    sql_pattern = re.sub(r"[()?\[\]^$]", "", sql_pattern)
+    return sql_pattern.replace("\\", "").strip()
+
+
+def _build_grid_market_filters(config: LeagueConfig):
+    """Build the grid's candidate-market filters: ``(with_status, bare)``.
+
+    Three matching paths, unchanged in what they select:
+
+    * **A** — ``external_id`` starts with one of the league's Odds API sport keys.
+    * **B.1** — ``external_id`` starts with one of its Kalshi series tickers.
+    * **B.2** — ``llm_sport_category`` matches and the market NAME matches one of
+      the league's name patterns (Polymarket).
+
+    **A and B.1 are each scoped to the source that owns their id space, and that
+    scoping is the whole latency fix.** Without it the predicate is an ``OR``
+    across two unrelated columns — ``external_id`` on one side,
+    ``llm_sport_category`` + ``name`` on the other — which no single index can
+    serve, so Postgres abandons indexes entirely and sequentially scans the
+    whole of ``futures_markets``: 911,217 rows, 645K of them Polymarket and 266K
+    Kalshi, read to find markets that can only ever be among the **12** odds_api
+    rows in the table.
+
+    Measured on production 2026-08-29, EPL:
+
+    ========================  ===========  ==========  ======
+    query                     before       after       rows
+    ========================  ===========  ==========  ======
+    candidate scan            16,503 ms    2,473 ms    37
+    resolved backfill         6,246 ms     375 ms      16
+    ========================  ===========  ==========  ======
+
+    Before: ``Parallel Seq Scan`` discarding 911,180 rows. After: a ``BitmapOr``
+    over ``ix_fm_source_created_at`` and ``ix_futures_name_trgm``. Identical
+    result sets.
+
+    The narrowing is **lossless, measured rather than assumed**: across all
+    911,217 rows, ZERO non-odds_api rows match any of the 18 configured
+    sport_keys and ZERO non-kalshi rows match any of the 7 configured ticker
+    prefixes, and ``source`` is NOT NULL with 0 null rows. Because that is a
+    fact about data and not a constraint, the guard suite pins it from the
+    inside: every ``external_id`` predicate this function emits must be
+    conjoined with a ``source`` equality, so a future source that starts minting
+    the other's id shape fails a test rather than silently dropping a grid
+    column.
+    """
+    # Paths A and B.1 — one AND-group per id space, each scoped to its source.
+    id_space_conditions = []
+    for attr, source in GRID_ID_SPACE_SOURCE.items():
+        prefixes = getattr(config, attr, None) or []
+        prefix_conditions = [
+            FuturesMarket.external_id.ilike(f"{prefix}%") for prefix in prefixes
+        ]
+        if prefix_conditions:
+            id_space_conditions.append(
+                and_(FuturesMarket.source == source, or_(*prefix_conditions))
+            )
+
+    # Path B.2 — category + league name patterns (Polymarket). The name filter is
+    # pushed to SQL so the category's whole inventory is never loaded.
+    category_conditions = []
+    for pattern_str in config.league_name_patterns or []:
+        sql_pattern = _league_pattern_to_ilike(pattern_str)
+        if sql_pattern:
+            category_conditions.append(
+                and_(
+                    FuturesMarket.llm_sport_category == config.sport_category,
+                    FuturesMarket.name.ilike(f"%{sql_pattern}%"),
+                )
+            )
+    if not category_conditions:
+        category_conditions.append(
+            FuturesMarket.llm_sport_category == config.sport_category
+        )
+
+    # Ticker-prefixed markets (Kalshi/OddsAPI) can be resolved (e.g. division
+    # winners after the regular season). Category-matched (Polymarket) stay
+    # open/closed to avoid loading thousands of resolved markets.
+    ticker_filter = or_(*id_space_conditions) if id_space_conditions else None
+    category_filter = or_(*category_conditions) if category_conditions else None
+
+    status_conditions = []
+    if ticker_filter is not None:
+        status_conditions.append(
+            and_(ticker_filter, FuturesMarket.status.in_(("open", "closed", "resolved")))
+        )
+    if category_filter is not None:
+        status_conditions.append(
+            and_(category_filter, FuturesMarket.status.in_(("open", "closed")))
+        )
+    market_filter_with_status = (
+        or_(*status_conditions)
+        if status_conditions
+        else FuturesMarket.status.in_(("open", "closed"))
+    )
+    # The bare filter feeds the resolved backfill, which adds its own status term.
+    market_filter = (
+        or_(*id_space_conditions, *category_conditions)
+        if id_space_conditions or category_conditions
+        else None
+    )
+    return market_filter_with_status, market_filter
+
+
 async def get_playoff_grid(
     league_slug: str,
     hours: int = None,
@@ -2788,50 +2913,10 @@ async def get_playoff_grid(
             league_slug, register.version, register.season, register_stats,
         )
     else:
-        # Path A: Match by external_id sport key prefix (Odds API markets)
-        sport_conditions = []
-        for sk in config.sport_keys:
-            sport_conditions.append(FuturesMarket.external_id.ilike(f"{sk}%"))
-
-        # Path B.1: Match by external_id ticker prefix (Kalshi markets like KXNBA%)
-        if config.external_id_prefixes:
-            for pfx in config.external_id_prefixes:
-                sport_conditions.append(FuturesMarket.external_id.ilike(f"{pfx}%"))
-
-        # Path B.2: Match by llm_sport_category + league name patterns (Polymarket).
-        # Push league name filter to SQL via ILIKE to avoid loading ALL category markets.
-        category_conditions = []
-        if config.league_name_patterns:
-            for pattern_str in config.league_name_patterns:
-                # Convert regex to SQL ILIKE: \bNBA\b → %NBA%, \bPro\s+Basketball\b → %Pro%Basketball%
-                sql_pattern = re.sub(r"\\[bs]", "", pattern_str)
-                sql_pattern = re.sub(r"\\s\+|\\s\*", "%", sql_pattern)
-                sql_pattern = re.sub(r"[()?\[\]^$]", "", sql_pattern)
-                sql_pattern = sql_pattern.replace("\\", "").strip()
-                if sql_pattern:
-                    category_conditions.append(
-                        and_(
-                            FuturesMarket.llm_sport_category == config.sport_category,
-                            FuturesMarket.name.ilike(f"%{sql_pattern}%"),
-                        )
-                    )
-        if not category_conditions:
-            category_conditions.append(FuturesMarket.llm_sport_category == config.sport_category)
-
-        # Ticker-prefixed markets (Kalshi/OddsAPI) can be resolved (e.g., division
-        # winners after regular season). Category-matched (Polymarket) stay open/closed
-        # to avoid loading thousands of resolved markets.
-        ticker_filter = or_(*sport_conditions) if sport_conditions else None
-        category_filter = or_(*category_conditions) if category_conditions else None
-
-        status_conditions = []
-        if ticker_filter is not None:
-            status_conditions.append(and_(ticker_filter, FuturesMarket.status.in_(("open", "closed", "resolved"))))
-        if category_filter is not None:
-            status_conditions.append(and_(category_filter, FuturesMarket.status.in_(("open", "closed"))))
-        market_filter_with_status = or_(*status_conditions) if status_conditions else FuturesMarket.status.in_(("open", "closed"))
-        # Keep the original market_filter for the resolved backfill (which adds its own status filter)
-        market_filter = or_(*sport_conditions, *category_conditions) if sport_conditions or category_conditions else None
+        # Candidate-market filters. Each external-id path is scoped to the source
+        # that owns its id space, which is what keeps this off a 911,217-row
+        # sequential scan — see `_build_grid_market_filters` for the measurement.
+        market_filter_with_status, market_filter = _build_grid_market_filters(config)
 
         # #1484 bounded compute — phase 1 of a two-phase load: market ROWS only, no
         # outcomes. Every filter between here and the column match (`_market_passes_
