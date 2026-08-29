@@ -178,7 +178,10 @@ from app.utils.labeling_queue import (
     review_key_for_feed_item as _review_key_for_feed_item,
 )
 from app.utils.name_normalization import names_match as _team_name_matches
-from app.utils.outcome_display import display_rank_order
+from app.utils.outcome_display import (
+    display_rank_order,
+    drop_dominant_field_outcomes,
+)
 from app.utils.personalization import (
     PersonalizationContext,
     compute_event_multiplier,
@@ -6108,11 +6111,23 @@ async def _score_sports_mode_futures(
                 else None
             )
 
+        # UX-P163: same removal as `_score_futures`, and it has to be here too —
+        # the two serializers print the same card type and a fix in one of them
+        # would just move the disagreement between surfaces instead of ending it.
+        # Sports mode has no mixed-binary strip, so this IS its card list. Scoring
+        # (`sorted_outcomes[:10]`), the leader pick and `outcomes_data`'s settled
+        # filter deliberately keep reading the full list: this narrows what the card
+        # SAYS, never what surfaces or ranks.
+        card_outcomes = drop_dominant_field_outcomes(
+            sorted_outcomes,
+            lambda o: o.name,
+            lambda o: float(o.current_probability) if o.current_probability else None,
+        )
         # Queue 283 (#1487): ONE display-probability basis, shared by the
         # mini-list, distribution, and headline/context leader copy. Sports mode
-        # draws every outcome surface from sorted_outcomes (no mixed-binary
+        # draws every outcome surface from card_outcomes (no mixed-binary
         # strip). leader_prob stays RAW for hook staleness/eligibility below.
-        _display_scale = _feed_display_scale(sorted_outcomes)
+        _display_scale = _feed_display_scale(card_outcomes)
         display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
 
         probs_available = [
@@ -6409,13 +6424,13 @@ async def _score_sports_mode_futures(
                     else None
                 ),
             }
-            for position, o in enumerate(sorted_outcomes[:3], start=1)
+            for position, o in enumerate(card_outcomes[:3], start=1)
         ]
         top_outcomes_data = humanize_outcome_names_for_feed(
             top_outcomes_data, market.name
         )
         top_outcomes_data = _normalize_feed_probabilities(
-            top_outcomes_data, sorted_outcomes
+            top_outcomes_data, card_outcomes
         )
         # #2088 criterion 3: the printed percents and the reason they may not total
         # 100. AFTER the scale, so the rule is applied to the displayed basis.
@@ -6447,7 +6462,7 @@ async def _score_sports_mode_futures(
                     else None
                 ),
             }
-            for o in sorted_outcomes
+            for o in card_outcomes
         ]
         discover_card = classify_discover_card_archetype(
             name=market.name,
@@ -7356,6 +7371,27 @@ async def _score_futures(
             # field so the card renders a clean nominee distribution (never a binary
             # merged into a candidate list). Pure binary markets pass through untouched.
             card_outcomes = _strip_mixed_binary_meta(sorted_outcomes)
+            # UX-P163: and a ~100% field outcome ("Other") is not merely demoted for
+            # this card — it is REMOVED from it. `display_rank_order` above put it at
+            # the end, which keeps it out of a top-N slot only while the list is
+            # LONGER than N; market 112903 arrived here as exactly three rows, so
+            # "the end" was still inside the `[:3]` below.
+            #
+            # The halving is the reason this is a bug and not a tidy-up. That row's
+            # no-bid 1.0 (bid 0.0000 / ask 1.0000) also sat in `_feed_display_scale`'s
+            # divisor directly beneath, pushing the surviving sum to exactly 2.0 — the
+            # inclusive top of the band — so EVERY number the payload carried was
+            # halved: Discover headlined `Democratic Party 43%` on 2026-08-29 while
+            # `/api/futures/112903` served 0.855 at the same moment. Dropped BEFORE
+            # the scale for that reason. The shared ranker's demote-not-delete
+            # contract is deliberate and untouched (`test_other_at_100_leaves_the_top_n`).
+            card_outcomes = drop_dominant_field_outcomes(
+                card_outcomes,
+                lambda o: o.name,
+                lambda o: (
+                    float(o.current_probability) if o.current_probability else None
+                ),
+            )
             # Queue 283 (#1487): ONE display-probability basis for this card.
             # _display_scale is the single divisor every VISIBLE surface uses —
             # the mini-list (top_outcomes), the distribution (discover_card), and
