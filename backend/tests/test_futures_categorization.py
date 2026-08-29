@@ -637,21 +637,21 @@ class TestCategorizeMarket:
         result = categorize_market("xyzzy foobar", use_llm=False)
         assert result == "other"
 
-    @patch("app.utils.futures_categorization.llm")
+    @patch("app.services.llm")
     def test_llm_fallback(self, mock_llm):
         mock_llm.is_available.return_value = True
         mock_llm.classify_futures_market.return_value = "basketball"
         result = categorize_market("Some Ambiguous Market")
         assert result == "basketball"
 
-    @patch("app.utils.futures_categorization.llm")
+    @patch("app.services.llm")
     def test_llm_returns_other(self, mock_llm):
         mock_llm.is_available.return_value = True
         mock_llm.classify_futures_market.return_value = "other"
         result = categorize_market("Completely Unknown Thing")
         assert result == "other"
 
-    @patch("app.utils.futures_categorization.llm")
+    @patch("app.services.llm")
     def test_llm_unavailable_fallback(self, mock_llm):
         mock_llm.is_available.return_value = False
         result = categorize_market("Some Ambiguous Market")
