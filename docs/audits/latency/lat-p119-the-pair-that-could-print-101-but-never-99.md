@@ -89,7 +89,9 @@ percent prints an em-dash — so the fix cannot be quietly undone by a caller.
 | mutation battery | **10/10 killed, 0 survived, 0 not-applied — EXIT 0** |
 | residue scan (on a COMMIT, per P117-5) | **CLEAN EXIT 0** — 165 needles / 20 targets, **888 broad checks** |
 | ruff | both changed `.py` files clean; master's copy of `scan_mutation_residue.py` also clean — the new file adds **zero** findings |
-| backend suite | see the report's gate block |
+| `npm run contract` (**a CI gate**, `ci.yml:531`) | **484 pass / 0 fail, EXIT 0** — and 484/0/exit 0 on **master** too, so the count is unchanged rather than merely green |
+| backend, scoped | `test_mutation_guard.py` + `test_startup.py` — **13 passed, EXIT 0**, including `test_every_on_disk_harness_is_guarded` |
+| backend, full | see the READY token — launched, starved by two sibling lanes' concurrent suites, and **stated unfinished rather than inferred from the scoped pass** |
 
 `migration_slot: none` — no DDL, no index, no schema change.
 `beat_schedule_change: FALSE` — no beat file, no Celery task, no config var.
@@ -106,6 +108,33 @@ Repaired by fixing the assertion, not the mutant: the served pair is now **30/70
 a value only a read of the payload can produce, asserted beside the locally derived
 32/68 that it must not be. Same species as LAT-P116's M3 — *a pin computed from
 the thing it pins is not a pin*.
+
+### 🔴 The component extraction redded a CI gate that no rendering test can see
+
+`npm run contract` (**`ci.yml:531`** — a real CI gate) reads
+`app/events/[id]/page.tsx` as **TEXT** and asserts it contains
+`data-testid="event-hero-probability"`. UX-P043 / #1649 wrote that block because
+the browser pack's first-ever dispatch failed 4/4 on a hero that was working
+exactly as designed, and deleting the hook silently re-reds the pack against a
+healthy page.
+
+Extracting the hero pair moved that string one file away. **1 failing of 484** —
+while `jest` (3,607 passing), `npm run build` and `npm run typecheck` all stayed
+green, because **none of them reads source as source.** It was found by grepping
+for consumers of the testid, not by any suite this lane runs by reflex.
+
+The repair follows the hook rather than reverting the extraction — the hook still
+ships to the browser, which is what the pack actually needs — and pins it in
+**both** directions, because the extraction created two ways to lose it: the
+component can drop the hook, or the page can stop rendering the component. It also
+pins `data-probability` to the **probability**, since the rail compares it against
+the Discover card that links here (UX-P003) and the one thing this cycle changed is
+what the hero *prints*.
+
+**Offered as a gotcha:** *extracting a component can red a SOURCE-READING contract.*
+Three gates pass a file that has been emptied of the string a fourth gate greps it
+for. The class is wider than this instance — `sectionErrorBoundary.test.tsx` and
+`__tests__/ios/*` read source the same way.
 
 ### 🔴 The residue scanner was sweeping a scope that could not contain these mutants
 
@@ -231,5 +260,5 @@ and not any single missing fix, is what the cold-path needle is waiting on.
 
 ## Rulings / gotchas
 
-**Rulings banked: NONE** (next free **138**). **Gotchas banked: NONE**, one offered
-(the guard-scope asymmetry above).
+**Rulings banked: NONE** (next free **138**). **Gotchas banked: NONE**, **two offered** — the
+guard-scope asymmetry, and the source-reading contract a component extraction reds.
