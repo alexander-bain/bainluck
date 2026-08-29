@@ -96,6 +96,9 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # sha256 residue check at exit until that glob is derived from the declared
     # targets (written, waiting on `program/latency-104`).
     "ios_duel_percent_served_pair_mutations": [("MUTANTS", 3, 4, 2)],
+    # LAT-P128. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above.
+    "league_context_grid_cache_mutations": [("MUTANTS", 2, 3, "SERVICE")],
     "offline_rerank_fidelity_mutations": [("MUTATIONS", 3, 4, 1)],
     "outcome_evidence_class_mutations": [("MUTATIONS", 3, 4, 1)],
     # LAT-P118. Alphabetical, for the reason spelled out under

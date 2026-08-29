@@ -85,12 +85,36 @@ async def _compute_league_context(
     if not config:
         return None
 
-    # Import here to avoid circular imports
-    from app.routes.playoffs import get_playoff_grid
+    # Import here to avoid circular imports.
+    #
+    # LAT-P128: this is the CACHED wrapper, not the raw builder. The three
+    # arguments below are exactly `get_playoff_grid_cached`'s `cache_eligible`
+    # set (`not debug and hours is None and top == 10`), so this call has
+    # always been eligible to read the Redis key that the hourly grid warm
+    # (#901) keeps populated — it just called past it into a full rebuild, on
+    # every miss of league_context's own 300 s key.
+    #
+    # Measured on production, one sequence, three requests back to back
+    # (2026-08-29T14:56:57Z). The key was warm on BOTH sides of the 21-second
+    # read:
+    #
+    #   GET /api/playoffs/bundesliga              200   0.356 s  wall=20.7  q=0
+    #   GET /api/events/14970280/related-futures  200  21.678 s  wall=21418 q=23
+    #   GET /api/playoffs/bundesliga              200   0.329 s  wall=22.2  q=0
+    #
+    # q=23 cold vs q=14 warm; the difference of 9 is exactly the grid's own
+    # query count when it rebuilds.
+    #
+    # The wrapper is strictly safer than the raw builder here, not merely
+    # faster: it adds the 25 s wall and the labelled last-good fallback that
+    # this path never had, and on a genuine miss it also REFILLS the shared
+    # key, so an event page can no longer rebuild a grid without leaving the
+    # result where the grid page will find it.
+    from app.routes.playoffs import get_playoff_grid_cached
 
     try:
         # Call the grid endpoint function directly (not via HTTP)
-        grid_data = await get_playoff_grid(
+        grid_data = await get_playoff_grid_cached(
             league_slug=league_slug,
             hours=None,
             top=10,
@@ -98,6 +122,13 @@ async def _compute_league_context(
             db=db,
         )
     except Exception as e:
+        # Load-bearing since LAT-P128, and `Exception` rather than a narrower
+        # tuple on purpose: the wrapper answers a timeout-with-no-last-good with
+        # `HTTPException(503)`, which is the honest answer for the grid PAGE and
+        # must never become the event page's answer. `HTTPException` subclasses
+        # `Exception`, so the 503 degrades to `league_context: null` here — the
+        # same shape a caller already gets when the grid has no data — instead of
+        # turning a degraded side-panel into a failed event page.
         logger.warning("Failed to compute league context for %s: %s", league_slug, e)
         return None
 
