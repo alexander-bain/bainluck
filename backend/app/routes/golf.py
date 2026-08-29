@@ -760,6 +760,43 @@ _TOUR_CLASSIFICATION_PATTERNS = [
     (re.compile(r"\btgl\b|tomorrow'?s?\s+golf", re.I), "tgl"),
 ]
 
+# Kalshi series tickers that NAME the tour. Kalshi tickers are `KX<SERIES>-<EVENT>`
+# and the series token for a tour-run event carries the tour: `KXDPWORLDTOUR-OMEM26`
+# (Omega European Masters), `KXDPWORLDTOURR2LEAD-...`, `KXLPGATOUR-FMC26`.
+#
+# This is an ID-ANCHORED authority and it outranks any name guess (gotcha #32 /
+# ruling 048: a name-and-time correspondence is not a correspondence). It exists
+# because `Omega European Masters` — a DP World Tour event — matches none of the
+# name patterns above ("European MASTERS", not "European TOUR"), carries no
+# DataGolf metadata, and so fell through to the bare `return "pga"` at the bottom
+# of `_classify_tour`. The card then badged it `⛳ PGA Tour` and `/categories/golf`
+# filed it under the PGA Tour section — one week after its own sibling, the
+# Husqvarna British Masters, was filed correctly under DP World Tour.
+#
+# Deliberately NOT listed:
+#   * `KXLIV*` — every LIV market in the corpus already matches `\bliv\s+golf\b`
+#     by name, and `KXLIVE*` is a plausible non-golf series. No reader to gain.
+#   * `KXCHAMPTOUR*` (PGA Tour Champions, the senior tour) — there is no
+#     `champions` tour key, and "PGA Tour" is imprecise for it rather than wrong.
+#   * bare `KXPGA*` — it would swallow `KXPGAAWARDS-*` (the Producers Guild of
+#     America awards, which are misfiled into the golf pool capture-side) and
+#     `KXPGASOLHEIM-*` (a women's team event). Every one of those already lands
+#     on `pga` via the default, so recognizing them buys no answer and only
+#     launders a guess into a claim.
+_KALSHI_TOUR_TICKER_PREFIXES = (
+    ("KXDPWORLDTOUR", "dp_world"),
+    ("KXLPGA", "lpga"),
+)
+
+# A POSITIVE recognizer for the PGA Tour, so "pga" can be an answer the function
+# reached rather than the answer it ran out of road on.
+#
+# ⚠️ It requires the full phrase "PGA Tour", NOT a bare `\bpga\b`. Three DP World
+# Tour events on the current DataGolf schedule are named `BMW PGA Championship`
+# and `BMW Australian PGA Championship` — a bare `\bpga\b` would badge them
+# `PGA Tour` and manufacture the exact defect this block exists to remove.
+_PGA_TOUR_NAME_RE = re.compile(r"\bpga\s+tour\b", re.I)
+
 TOUR_DISPLAY_NAMES = {
     "pga": "PGA Tour",
     "dp_world": "DP World Tour",
@@ -831,6 +868,24 @@ def _classify_tour(
                     mapped = _datagolf_tour_to_key(parts[1])
                     if mapped:
                         return mapped
+    # Kalshi's own series ticker names the tour for events DataGolf never
+    # supplied metadata for. Id-anchored, so it outranks the name recognizer
+    # below and is the only thing standing between `Omega European Masters` and
+    # a `⛳ PGA Tour` badge. Measured 2026-08-29: 8 of the 110 open golf markets
+    # carry a `KXDPWORLDTOUR*` ticker while the function answers "pga".
+    if market_external_ids:
+        for eid in market_external_ids:
+            if not eid:
+                continue
+            ticker = eid.upper()
+            for prefix, tour in _KALSHI_TOUR_TICKER_PREFIXES:
+                if ticker.startswith(prefix):
+                    return tour
+    # A name that says "PGA Tour" in as many words. Reaching an answer here and
+    # reaching the line below produce the same string today, but only one of them
+    # is evidence — see the parked default-inversion note in the UX-P181 report.
+    if _PGA_TOUR_NAME_RE.search(market_name):
+        return "pga"
     # Default to PGA Tour for non-major, non-women's, non-pattern-matched
     return "pga"
 

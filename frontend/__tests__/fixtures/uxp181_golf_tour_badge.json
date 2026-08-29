@@ -1,0 +1,2887 @@
+{
+  "_source": "GET https://api.bainluck.com/api/golf, 2026-08-29, verbatim. The three tournaments are AS SERVED \u2014 i.e. the BEFORE, defect included.",
+  "_defect": "omega_european_masters is served tour='pga'/tour_label='PGA Tour'. It is a DP World Tour event: its only open market is KXDPWORLDTOUR-OMEM26 and the pga_schedule row below (same payload) reads tour='euro'.",
+  "tournaments_as_served": [
+    {
+      "key": "tour_championship",
+      "name": "Tour Championship",
+      "is_major": false,
+      "is_tour_event": true,
+      "is_womens": false,
+      "tour": "pga",
+      "tour_label": "PGA Tour",
+      "commence_time": "2026-08-22T16:00:26+00:00",
+      "resolution_date": "2026-08-30T00:00:00+00:00",
+      "market_ids": [
+        59485746,
+        59433935,
+        59433932,
+        59433941,
+        59433933,
+        59433934,
+        59433936,
+        59433938,
+        59490792,
+        59485748,
+        59485745,
+        59485749,
+        59485747
+      ],
+      "market_sources": [
+        "datagolf",
+        "polymarket",
+        "polymarket",
+        "polymarket",
+        "polymarket",
+        "polymarket",
+        "polymarket",
+        "polymarket",
+        "kalshi",
+        "datagolf",
+        "datagolf",
+        "datagolf",
+        "datagolf"
+      ],
+      "market_names": [
+        "TOUR Championship - Top 5 Finish",
+        "PGA Tour: TOUR Championship Winner",
+        "PGA Tour: TOUR Championship Third Round Leader",
+        "PGA Tour: TOUR Championship Top 5",
+        "PGA Tour: TOUR Championship Second Round Leader",
+        "PGA Tour: TOUR Championship First Round Leader",
+        "PGA Tour: TOUR Championship Top 20",
+        "PGA Tour: TOUR Championship Top 10",
+        "TOUR Championship: Hole-in-One",
+        "TOUR Championship - Top 20 Finish",
+        "TOUR Championship - Winner",
+        "TOUR Championship - Make the Cut",
+        "TOUR Championship - Top 10 Finish"
+      ],
+      "golfers": [
+        {
+          "name": "Scottie Scheffler",
+          "probability": 0.262,
+          "movement_24h": 0.0746,
+          "sources": {
+            "datagolf_model": 0.262
+          },
+          "opening_probability": 0.181,
+          "american_odds": 282,
+          "rank": 1
+        },
+        {
+          "name": "Viktor Hovland",
+          "probability": 0.237,
+          "movement_24h": 0.0755,
+          "sources": {
+            "datagolf_model": 0.237
+          },
+          "opening_probability": 0.025,
+          "american_odds": 322,
+          "rank": 2
+        },
+        {
+          "name": "Ryan Gerard",
+          "probability": 0.201,
+          "movement_24h": 0.0796,
+          "sources": {
+            "datagolf_model": 0.201
+          },
+          "opening_probability": 0.015,
+          "american_odds": 398,
+          "rank": 3
+        },
+        {
+          "name": "Chris Gotterup",
+          "probability": 0.086,
+          "movement_24h": -0.0286,
+          "sources": {
+            "datagolf_model": 0.086
+          },
+          "opening_probability": 0.03,
+          "american_odds": 1063,
+          "rank": 4
+        },
+        {
+          "name": "Ludvig Aberg",
+          "probability": 0.084,
+          "movement_24h": 0.0338,
+          "sources": {
+            "datagolf_model": 0.084
+          },
+          "opening_probability": 0.057,
+          "american_odds": 1090,
+          "rank": 5
+        },
+        {
+          "name": "Adam Scott",
+          "probability": 0.057,
+          "movement_24h": 0.0327,
+          "sources": {
+            "datagolf_model": 0.057
+          },
+          "opening_probability": 0.011,
+          "american_odds": 1654,
+          "rank": 6
+        },
+        {
+          "name": "Rory McIlroy",
+          "probability": 0.03,
+          "movement_24h": 0.0215,
+          "sources": {
+            "datagolf_model": 0.03
+          },
+          "opening_probability": 0.051,
+          "american_odds": 3233,
+          "rank": 7
+        },
+        {
+          "name": "Cameron Young",
+          "probability": 0.015,
+          "movement_24h": -0.0602,
+          "sources": {
+            "datagolf_model": 0.015
+          },
+          "opening_probability": 0.043,
+          "american_odds": 6567,
+          "rank": 8
+        },
+        {
+          "name": "Sam Burns",
+          "probability": 0.007,
+          "movement_24h": -0.0193,
+          "sources": {
+            "datagolf_model": 0.007
+          },
+          "opening_probability": 0.037,
+          "american_odds": 14186,
+          "rank": 9
+        },
+        {
+          "name": "Russell Henley",
+          "probability": 0.006,
+          "movement_24h": -0.0047,
+          "sources": {
+            "datagolf_model": 0.006
+          },
+          "opening_probability": 0.012,
+          "american_odds": 16567,
+          "rank": 10
+        },
+        {
+          "name": "Min Woo Lee",
+          "probability": 0.004,
+          "movement_24h": -0.0023,
+          "sources": {
+            "datagolf_model": 0.004
+          },
+          "opening_probability": 0.018,
+          "american_odds": 24900,
+          "rank": 11
+        },
+        {
+          "name": "Matt Fitzpatrick",
+          "probability": 0.003,
+          "movement_24h": -0.0309,
+          "sources": {
+            "datagolf_model": 0.003
+          },
+          "opening_probability": 0.034,
+          "american_odds": 33233,
+          "rank": 12
+        },
+        {
+          "name": "Collin Morikawa",
+          "probability": 0.003,
+          "movement_24h": -0.0984,
+          "sources": {
+            "datagolf_model": 0.003
+          },
+          "opening_probability": 0.02,
+          "american_odds": 33233,
+          "rank": 13
+        },
+        {
+          "name": "Jacob Bridgeman",
+          "probability": 0.002,
+          "movement_24h": -0.0018,
+          "sources": {
+            "datagolf_model": 0.002
+          },
+          "opening_probability": 0.007,
+          "american_odds": 49900,
+          "rank": 14
+        },
+        {
+          "name": "Si Woo Kim",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.002
+          },
+          "opening_probability": 0.03,
+          "american_odds": 49900,
+          "rank": 15
+        }
+      ],
+      "prop_markets": [
+        {
+          "name": "TOUR Championship: Hole-in-One",
+          "source": "kalshi",
+          "outcomes": [
+            {
+              "name": "1+ holes-in-one",
+              "probability": 0.19
+            },
+            {
+              "name": "2+ holes-in-one",
+              "probability": 0.095
+            },
+            {
+              "name": "3+ holes-in-one",
+              "probability": 0.08
+            }
+          ]
+        }
+      ],
+      "_all_golfers": [
+        {
+          "name": "Scottie Scheffler",
+          "probability": 0.262,
+          "movement_24h": 0.0746,
+          "sources": {
+            "datagolf_model": 0.262
+          },
+          "opening_probability": 0.181,
+          "american_odds": 282,
+          "rank": 1
+        },
+        {
+          "name": "Viktor Hovland",
+          "probability": 0.237,
+          "movement_24h": 0.0755,
+          "sources": {
+            "datagolf_model": 0.237
+          },
+          "opening_probability": 0.025,
+          "american_odds": 322,
+          "rank": 2
+        },
+        {
+          "name": "Ryan Gerard",
+          "probability": 0.201,
+          "movement_24h": 0.0796,
+          "sources": {
+            "datagolf_model": 0.201
+          },
+          "opening_probability": 0.015,
+          "american_odds": 398,
+          "rank": 3
+        },
+        {
+          "name": "Chris Gotterup",
+          "probability": 0.086,
+          "movement_24h": -0.0286,
+          "sources": {
+            "datagolf_model": 0.086
+          },
+          "opening_probability": 0.03,
+          "american_odds": 1063,
+          "rank": 4
+        },
+        {
+          "name": "Ludvig Aberg",
+          "probability": 0.084,
+          "movement_24h": 0.0338,
+          "sources": {
+            "datagolf_model": 0.084
+          },
+          "opening_probability": 0.057,
+          "american_odds": 1090,
+          "rank": 5
+        },
+        {
+          "name": "Adam Scott",
+          "probability": 0.057,
+          "movement_24h": 0.0327,
+          "sources": {
+            "datagolf_model": 0.057
+          },
+          "opening_probability": 0.011,
+          "american_odds": 1654,
+          "rank": 6
+        },
+        {
+          "name": "Rory McIlroy",
+          "probability": 0.03,
+          "movement_24h": 0.0215,
+          "sources": {
+            "datagolf_model": 0.03
+          },
+          "opening_probability": 0.051,
+          "american_odds": 3233,
+          "rank": 7
+        },
+        {
+          "name": "Cameron Young",
+          "probability": 0.015,
+          "movement_24h": -0.0602,
+          "sources": {
+            "datagolf_model": 0.015
+          },
+          "opening_probability": 0.043,
+          "american_odds": 6567,
+          "rank": 8
+        },
+        {
+          "name": "Sam Burns",
+          "probability": 0.007,
+          "movement_24h": -0.0193,
+          "sources": {
+            "datagolf_model": 0.007
+          },
+          "opening_probability": 0.037,
+          "american_odds": 14186,
+          "rank": 9
+        },
+        {
+          "name": "Russell Henley",
+          "probability": 0.006,
+          "movement_24h": -0.0047,
+          "sources": {
+            "datagolf_model": 0.006
+          },
+          "opening_probability": 0.012,
+          "american_odds": 16567,
+          "rank": 10
+        },
+        {
+          "name": "Min Woo Lee",
+          "probability": 0.004,
+          "movement_24h": -0.0023,
+          "sources": {
+            "datagolf_model": 0.004
+          },
+          "opening_probability": 0.018,
+          "american_odds": 24900,
+          "rank": 11
+        },
+        {
+          "name": "Matt Fitzpatrick",
+          "probability": 0.003,
+          "movement_24h": -0.0309,
+          "sources": {
+            "datagolf_model": 0.003
+          },
+          "opening_probability": 0.034,
+          "american_odds": 33233,
+          "rank": 12
+        },
+        {
+          "name": "Collin Morikawa",
+          "probability": 0.003,
+          "movement_24h": -0.0984,
+          "sources": {
+            "datagolf_model": 0.003
+          },
+          "opening_probability": 0.02,
+          "american_odds": 33233,
+          "rank": 13
+        },
+        {
+          "name": "Jacob Bridgeman",
+          "probability": 0.002,
+          "movement_24h": -0.0018,
+          "sources": {
+            "datagolf_model": 0.002
+          },
+          "opening_probability": 0.007,
+          "american_odds": 49900,
+          "rank": 14
+        },
+        {
+          "name": "Si Woo Kim",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.002
+          },
+          "opening_probability": 0.03,
+          "american_odds": 49900,
+          "rank": 15
+        },
+        {
+          "name": "Justin Rose",
+          "probability": 0.001,
+          "movement_24h": -0.02,
+          "sources": {
+            "datagolf_model": 0.001
+          },
+          "opening_probability": 0.01,
+          "american_odds": 99900,
+          "rank": 16
+        },
+        {
+          "name": "Wyndham Clark",
+          "probability": 0.001,
+          "movement_24h": -0.0057,
+          "sources": {
+            "datagolf_model": 0.001
+          },
+          "opening_probability": 0.018,
+          "american_odds": 99900,
+          "rank": 17
+        },
+        {
+          "name": "Hideki Matsuyama",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.024,
+          "american_odds": null,
+          "rank": 18
+        },
+        {
+          "name": "Robert MacIntyre",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.009,
+          "american_odds": null,
+          "rank": 19
+        },
+        {
+          "name": "J.J. Spaun",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.013,
+          "american_odds": null,
+          "rank": 20
+        },
+        {
+          "name": "Kristoffer Reitan",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.01,
+          "american_odds": null,
+          "rank": 21
+        },
+        {
+          "name": "Tom Kim",
+          "probability": 0.0,
+          "movement_24h": -0.0065,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.014,
+          "american_odds": null,
+          "rank": 22
+        },
+        {
+          "name": "Tommy Fleetwood",
+          "probability": 0.0,
+          "movement_24h": -0.0046,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.038,
+          "american_odds": null,
+          "rank": 23
+        },
+        {
+          "name": "Alex Fitzpatrick",
+          "probability": 0.0,
+          "movement_24h": -0.0018,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.008,
+          "american_odds": null,
+          "rank": 24
+        },
+        {
+          "name": "Xander Schauffele",
+          "probability": 0.0,
+          "movement_24h": -0.0036,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.055,
+          "american_odds": null,
+          "rank": 25
+        },
+        {
+          "name": "Akshay Bhatia",
+          "probability": 0.0,
+          "movement_24h": -0.0066,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.004,
+          "american_odds": null,
+          "rank": 26
+        },
+        {
+          "name": "Gary Woodland",
+          "probability": 0.0,
+          "movement_24h": -0.0114,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.006,
+          "american_odds": null,
+          "rank": 27
+        },
+        {
+          "name": "Ryan Fox",
+          "probability": 0.0,
+          "movement_24h": -0.0041,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.006,
+          "american_odds": null,
+          "rank": 28
+        },
+        {
+          "name": "Patrick Cantlay",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.024,
+          "american_odds": null,
+          "rank": 29
+        },
+        {
+          "name": "Alex Smalley",
+          "probability": 0.0,
+          "movement_24h": -0.0057,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.009,
+          "american_odds": null,
+          "rank": 30
+        }
+      ],
+      "h2h_matchups": [],
+      "slug": "tour-championship",
+      "venue": "East Lake Golf Club",
+      "location": "Atlanta, GA",
+      "schedule_status": "upcoming",
+      "start_date": "2026-08-27T00:00:00+00:00",
+      "end_date": "2026-08-30T00:00:00+00:00"
+    },
+    {
+      "key": "omega_european_masters",
+      "name": "Omega European Masters",
+      "is_major": false,
+      "is_tour_event": true,
+      "is_womens": false,
+      "tour": "pga",
+      "tour_label": "PGA Tour",
+      "commence_time": "2026-09-20T00:00:00+00:00",
+      "resolution_date": "2026-09-06T00:00:00+00:00",
+      "market_ids": [
+        59759220
+      ],
+      "market_sources": [
+        "kalshi"
+      ],
+      "market_names": [
+        "Omega European Masters Winner"
+      ],
+      "golfers": [
+        {
+          "name": "Andreas Halvorsen",
+          "probability": 0.1,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.1
+          },
+          "opening_probability": null,
+          "american_odds": 900,
+          "rank": 1
+        },
+        {
+          "name": "Adrian Meronk",
+          "probability": 0.1,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.1
+          },
+          "opening_probability": null,
+          "american_odds": 900,
+          "rank": 2
+        },
+        {
+          "name": "Eddie Pepperell",
+          "probability": 0.1,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.1
+          },
+          "opening_probability": null,
+          "american_odds": 900,
+          "rank": 3
+        },
+        {
+          "name": "Antoine Rozner",
+          "probability": 0.1,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.1
+          },
+          "opening_probability": null,
+          "american_odds": 900,
+          "rank": 4
+        }
+      ],
+      "prop_markets": [],
+      "_all_golfers": [
+        {
+          "name": "Andreas Halvorsen",
+          "probability": 0.1,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.1
+          },
+          "opening_probability": null,
+          "american_odds": 900,
+          "rank": 1
+        },
+        {
+          "name": "Adrian Meronk",
+          "probability": 0.1,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.1
+          },
+          "opening_probability": null,
+          "american_odds": 900,
+          "rank": 2
+        },
+        {
+          "name": "Eddie Pepperell",
+          "probability": 0.1,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.1
+          },
+          "opening_probability": null,
+          "american_odds": 900,
+          "rank": 3
+        },
+        {
+          "name": "Antoine Rozner",
+          "probability": 0.1,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.1
+          },
+          "opening_probability": null,
+          "american_odds": 900,
+          "rank": 4
+        }
+      ],
+      "h2h_matchups": [],
+      "slug": "omega-european-masters",
+      "venue": "Crans-sur-Sierre GC",
+      "location": "Crans-Montana, Switzerland",
+      "schedule_status": "upcoming",
+      "start_date": "2026-09-03T00:00:00+00:00",
+      "end_date": "2026-09-06T00:00:00+00:00"
+    },
+    {
+      "key": "husqvarna_british_masters",
+      "name": "Husqvarna British Masters",
+      "is_major": false,
+      "is_tour_event": true,
+      "is_womens": false,
+      "tour": "dp_world",
+      "tour_label": "DP World Tour",
+      "commence_time": "2026-08-24T15:10:59+00:00",
+      "resolution_date": "2026-08-30T00:00:00+00:00",
+      "market_ids": [
+        59485750,
+        59700138,
+        59700139,
+        59512841,
+        59512843,
+        59512844,
+        59512842,
+        59514417,
+        59514415,
+        59514416,
+        59714294,
+        59485751,
+        59512401,
+        59485753,
+        59485752,
+        59485754
+      ],
+      "market_sources": [
+        "datagolf",
+        "kalshi",
+        "kalshi",
+        "polymarket",
+        "polymarket",
+        "polymarket",
+        "polymarket",
+        "polymarket",
+        "polymarket",
+        "polymarket",
+        "kalshi",
+        "datagolf",
+        "kalshi",
+        "datagolf",
+        "datagolf",
+        "datagolf"
+      ],
+      "market_names": [
+        "Husqvarna British Masters hosted by Sir Nick Faldo - Winner",
+        "Husqvarna British Masters hosted by Sir Nick Faldo End of Round 3 Leader",
+        "Husqvarna British Masters hosted by Sir Nick Faldo End of Round 2 Leader",
+        "DP World Tour: British Masters Top 20",
+        "DP World Tour: British Masters Top 10",
+        "DP World Tour: British Masters Top 5",
+        "DP World Tour: British Masters Winner",
+        "DP World Tour: British Masters First Round Leader",
+        "DP World Tour: British Masters Third Round Leader",
+        "DP World Tour: British Masters Second Round Leader",
+        "Husqvarna British Masters hosted by Sir Nick Faldo: To Make the Cut",
+        "Husqvarna British Masters hosted by Sir Nick Faldo - Top 5 Finish",
+        "Husqvarna British Masters hosted by Sir Nick Faldo Winner",
+        "Husqvarna British Masters hosted by Sir Nick Faldo - Top 20 Finish",
+        "Husqvarna British Masters hosted by Sir Nick Faldo - Top 10 Finish",
+        "Husqvarna British Masters hosted by Sir Nick Faldo - Make the Cut"
+      ],
+      "golfers": [
+        {
+          "name": "Marco Penge",
+          "probability": 0.218,
+          "movement_24h": 0.0174,
+          "sources": {
+            "datagolf_model": 0.252,
+            "kalshi": 0.184
+          },
+          "opening_probability": 0.033,
+          "american_odds": 359,
+          "rank": 1
+        },
+        {
+          "name": "Daniel Hillier",
+          "probability": 0.177,
+          "movement_24h": 0.0837,
+          "sources": {
+            "datagolf_model": 0.236,
+            "kalshi": 0.119
+          },
+          "opening_probability": 0.017,
+          "american_odds": 465,
+          "rank": 2
+        },
+        {
+          "name": "Tom McKibbin",
+          "probability": 0.111,
+          "movement_24h": 0.0142,
+          "sources": {
+            "datagolf_model": 0.179,
+            "kalshi": 0.042
+          },
+          "opening_probability": 0.039,
+          "american_odds": 801,
+          "rank": 3
+        },
+        {
+          "name": "Shaun Norris",
+          "probability": 0.049,
+          "movement_24h": 0.0226,
+          "sources": {
+            "datagolf_model": 0.052,
+            "kalshi": 0.045
+          },
+          "opening_probability": 0.008,
+          "american_odds": 1941,
+          "rank": 4
+        },
+        {
+          "name": "Jacob Skov Olesen",
+          "probability": 0.035,
+          "movement_24h": 0.0229,
+          "sources": {
+            "datagolf_model": 0.044,
+            "kalshi": 0.025
+          },
+          "opening_probability": 0.034,
+          "american_odds": 2757,
+          "rank": 5
+        },
+        {
+          "name": "Fabrizio Zanotti",
+          "probability": 0.026,
+          "movement_24h": 0.0191,
+          "sources": {
+            "datagolf_model": 0.032,
+            "kalshi": 0.02
+          },
+          "opening_probability": 0.002,
+          "american_odds": 3746,
+          "rank": 6
+        },
+        {
+          "name": "Oliver Lindell",
+          "probability": 0.026,
+          "movement_24h": -0.0032,
+          "sources": {
+            "datagolf_model": 0.039,
+            "kalshi": 0.012
+          },
+          "opening_probability": 0.03,
+          "american_odds": 3746,
+          "rank": 7
+        },
+        {
+          "name": "Matthew Jordan",
+          "probability": 0.021,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.025,
+            "kalshi": 0.016
+          },
+          "opening_probability": 0.03,
+          "american_odds": 4662,
+          "rank": 8
+        },
+        {
+          "name": "Ignacio Elvira Mijares",
+          "probability": 0.017,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.017
+          },
+          "opening_probability": 0.003,
+          "american_odds": 5782,
+          "rank": 9
+        },
+        {
+          "name": "Thorbjorn Olesen",
+          "probability": 0.016,
+          "movement_24h": 0.0166,
+          "sources": {
+            "datagolf_model": 0.01,
+            "kalshi": 0.022
+          },
+          "opening_probability": 0.01,
+          "american_odds": 6150,
+          "rank": 10
+        },
+        {
+          "name": "Niklas Norgaard",
+          "probability": 0.016,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.016
+          },
+          "opening_probability": 0.011,
+          "american_odds": 6150,
+          "rank": 11
+        },
+        {
+          "name": "Ewen Ferguson",
+          "probability": 0.014,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.013,
+            "kalshi": 0.015
+          },
+          "opening_probability": 0.039,
+          "american_odds": 7043,
+          "rank": 12
+        },
+        {
+          "name": "Keita Nakajima",
+          "probability": 0.013,
+          "movement_24h": 0.0045,
+          "sources": {
+            "datagolf_model": 0.0,
+            "polymarket": 0.03,
+            "kalshi": 0.009
+          },
+          "opening_probability": 0.033,
+          "american_odds": 7592,
+          "rank": 13
+        },
+        {
+          "name": "Angel Hidalgo",
+          "probability": 0.009,
+          "movement_24h": 0.0022,
+          "sources": {
+            "datagolf_model": 0.014,
+            "kalshi": 0.004
+          },
+          "opening_probability": 0.003,
+          "american_odds": 11011,
+          "rank": 14
+        },
+        {
+          "name": "Davis Bryant",
+          "probability": 0.007,
+          "movement_24h": -0.0089,
+          "sources": {
+            "datagolf_model": 0.003,
+            "kalshi": 0.011
+          },
+          "opening_probability": 0.007,
+          "american_odds": 14186,
+          "rank": 15
+        }
+      ],
+      "prop_markets": [
+        {
+          "name": "Husqvarna British Masters hosted by Sir Nick Faldo End of Round 3 Leader",
+          "source": "kalshi",
+          "outcomes": [
+            {
+              "name": "Keita Nakajima",
+              "probability": 0.02
+            }
+          ]
+        }
+      ],
+      "_all_golfers": [
+        {
+          "name": "Marco Penge",
+          "probability": 0.218,
+          "movement_24h": 0.0174,
+          "sources": {
+            "datagolf_model": 0.252,
+            "kalshi": 0.184
+          },
+          "opening_probability": 0.033,
+          "american_odds": 359,
+          "rank": 1
+        },
+        {
+          "name": "Daniel Hillier",
+          "probability": 0.177,
+          "movement_24h": 0.0837,
+          "sources": {
+            "datagolf_model": 0.236,
+            "kalshi": 0.119
+          },
+          "opening_probability": 0.017,
+          "american_odds": 465,
+          "rank": 2
+        },
+        {
+          "name": "Tom McKibbin",
+          "probability": 0.111,
+          "movement_24h": 0.0142,
+          "sources": {
+            "datagolf_model": 0.179,
+            "kalshi": 0.042
+          },
+          "opening_probability": 0.039,
+          "american_odds": 801,
+          "rank": 3
+        },
+        {
+          "name": "Shaun Norris",
+          "probability": 0.049,
+          "movement_24h": 0.0226,
+          "sources": {
+            "datagolf_model": 0.052,
+            "kalshi": 0.045
+          },
+          "opening_probability": 0.008,
+          "american_odds": 1941,
+          "rank": 4
+        },
+        {
+          "name": "Jacob Skov Olesen",
+          "probability": 0.035,
+          "movement_24h": 0.0229,
+          "sources": {
+            "datagolf_model": 0.044,
+            "kalshi": 0.025
+          },
+          "opening_probability": 0.034,
+          "american_odds": 2757,
+          "rank": 5
+        },
+        {
+          "name": "Fabrizio Zanotti",
+          "probability": 0.026,
+          "movement_24h": 0.0191,
+          "sources": {
+            "datagolf_model": 0.032,
+            "kalshi": 0.02
+          },
+          "opening_probability": 0.002,
+          "american_odds": 3746,
+          "rank": 6
+        },
+        {
+          "name": "Oliver Lindell",
+          "probability": 0.026,
+          "movement_24h": -0.0032,
+          "sources": {
+            "datagolf_model": 0.039,
+            "kalshi": 0.012
+          },
+          "opening_probability": 0.03,
+          "american_odds": 3746,
+          "rank": 7
+        },
+        {
+          "name": "Matthew Jordan",
+          "probability": 0.021,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.025,
+            "kalshi": 0.016
+          },
+          "opening_probability": 0.03,
+          "american_odds": 4662,
+          "rank": 8
+        },
+        {
+          "name": "Ignacio Elvira Mijares",
+          "probability": 0.017,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.017
+          },
+          "opening_probability": 0.003,
+          "american_odds": 5782,
+          "rank": 9
+        },
+        {
+          "name": "Thorbjorn Olesen",
+          "probability": 0.016,
+          "movement_24h": 0.0166,
+          "sources": {
+            "datagolf_model": 0.01,
+            "kalshi": 0.022
+          },
+          "opening_probability": 0.01,
+          "american_odds": 6150,
+          "rank": 10
+        },
+        {
+          "name": "Niklas Norgaard",
+          "probability": 0.016,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.016
+          },
+          "opening_probability": 0.011,
+          "american_odds": 6150,
+          "rank": 11
+        },
+        {
+          "name": "Ewen Ferguson",
+          "probability": 0.014,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.013,
+            "kalshi": 0.015
+          },
+          "opening_probability": 0.039,
+          "american_odds": 7043,
+          "rank": 12
+        },
+        {
+          "name": "Keita Nakajima",
+          "probability": 0.013,
+          "movement_24h": 0.0045,
+          "sources": {
+            "datagolf_model": 0.0,
+            "polymarket": 0.03,
+            "kalshi": 0.009
+          },
+          "opening_probability": 0.033,
+          "american_odds": 7592,
+          "rank": 13
+        },
+        {
+          "name": "Angel Hidalgo",
+          "probability": 0.009,
+          "movement_24h": 0.0022,
+          "sources": {
+            "datagolf_model": 0.014,
+            "kalshi": 0.004
+          },
+          "opening_probability": 0.003,
+          "american_odds": 11011,
+          "rank": 14
+        },
+        {
+          "name": "Davis Bryant",
+          "probability": 0.007,
+          "movement_24h": -0.0089,
+          "sources": {
+            "datagolf_model": 0.003,
+            "kalshi": 0.011
+          },
+          "opening_probability": 0.007,
+          "american_odds": 14186,
+          "rank": 15
+        },
+        {
+          "name": "Harry Hall",
+          "probability": 0.007,
+          "movement_24h": 0.0022,
+          "sources": {
+            "datagolf_model": 0.008,
+            "kalshi": 0.005
+          },
+          "opening_probability": 0.031,
+          "american_odds": 14186,
+          "rank": 16
+        },
+        {
+          "name": "Jayden Schaper",
+          "probability": 0.006,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.006
+          },
+          "opening_probability": 0.01,
+          "american_odds": 16567,
+          "rank": 17
+        },
+        {
+          "name": "Erik Van Rooyen",
+          "probability": 0.005,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.002,
+            "kalshi": 0.009
+          },
+          "opening_probability": 0.006,
+          "american_odds": 19900,
+          "rank": 18
+        },
+        {
+          "name": "Haotong Li",
+          "probability": 0.005,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.01
+          },
+          "opening_probability": 0.02,
+          "american_odds": 19900,
+          "rank": 19
+        },
+        {
+          "name": "Renato Paratore",
+          "probability": 0.005,
+          "movement_24h": 0.0089,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.01
+          },
+          "opening_probability": 0.006,
+          "american_odds": 19900,
+          "rank": 20
+        },
+        {
+          "name": "Casey Jarvis",
+          "probability": 0.005,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.01
+          },
+          "opening_probability": 0.041,
+          "american_odds": 19900,
+          "rank": 21
+        },
+        {
+          "name": "Todd Clements",
+          "probability": 0.005,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.01
+          },
+          "opening_probability": 0.021,
+          "american_odds": 19900,
+          "rank": 22
+        },
+        {
+          "name": "Oihan Guillamoundeguy",
+          "probability": 0.005,
+          "movement_24h": 0.0025,
+          "sources": {
+            "datagolf_model": 0.006,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.008,
+          "american_odds": 19900,
+          "rank": 23
+        },
+        {
+          "name": "Hennie Du Plessis",
+          "probability": 0.004,
+          "movement_24h": 0.0077,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.009
+          },
+          "opening_probability": 0.015,
+          "american_odds": 24900,
+          "rank": 24
+        },
+        {
+          "name": "Bernd Wiesberger",
+          "probability": 0.004,
+          "movement_24h": 0.0075,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.009
+          },
+          "opening_probability": 0.007,
+          "american_odds": 24900,
+          "rank": 25
+        },
+        {
+          "name": "Francesco Laporta",
+          "probability": 0.004,
+          "movement_24h": 0.0047,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.009
+          },
+          "opening_probability": 0.006,
+          "american_odds": 24900,
+          "rank": 26
+        },
+        {
+          "name": "Marcus Helligkilde",
+          "probability": 0.004,
+          "movement_24h": 0.0012,
+          "sources": {
+            "datagolf_model": 0.006,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.007,
+          "american_odds": 24900,
+          "rank": 27
+        },
+        {
+          "name": "Eugenio Chacarra",
+          "probability": 0.004,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.004
+          },
+          "opening_probability": 0.053,
+          "american_odds": 24900,
+          "rank": 28
+        },
+        {
+          "name": "Joakim Lagergren",
+          "probability": 0.004,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.008
+          },
+          "opening_probability": 0.009,
+          "american_odds": 24900,
+          "rank": 29
+        },
+        {
+          "name": "Dan Bradbury",
+          "probability": 0.004,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.008
+          },
+          "opening_probability": 0.006,
+          "american_odds": 24900,
+          "rank": 30
+        },
+        {
+          "name": "Calum Hill",
+          "probability": 0.004,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.008
+          },
+          "opening_probability": 0.009,
+          "american_odds": 24900,
+          "rank": 31
+        },
+        {
+          "name": "Julien Guerrier",
+          "probability": 0.004,
+          "movement_24h": -0.0045,
+          "sources": {
+            "datagolf_model": 0.006,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.019,
+          "american_odds": 24900,
+          "rank": 32
+        },
+        {
+          "name": "Joost Luiten",
+          "probability": 0.004,
+          "movement_24h": 0.0025,
+          "sources": {
+            "datagolf_model": 0.002,
+            "kalshi": 0.005
+          },
+          "opening_probability": 0.004,
+          "american_odds": 24900,
+          "rank": 33
+        },
+        {
+          "name": "Jorge Campillo",
+          "probability": 0.004,
+          "movement_24h": 0.0055,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.006
+          },
+          "opening_probability": 0.012,
+          "american_odds": 24900,
+          "rank": 34
+        },
+        {
+          "name": "Gregorio De Leo",
+          "probability": 0.004,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.006
+          },
+          "opening_probability": 0.005,
+          "american_odds": 24900,
+          "rank": 35
+        },
+        {
+          "name": "Thriston Lawrence",
+          "probability": 0.004,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.007
+          },
+          "opening_probability": 0.003,
+          "american_odds": 24900,
+          "rank": 36
+        },
+        {
+          "name": "Richard Mansell",
+          "probability": 0.004,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.007
+          },
+          "opening_probability": 0.01,
+          "american_odds": 24900,
+          "rank": 37
+        },
+        {
+          "name": "John Parry",
+          "probability": 0.003,
+          "movement_24h": 0.0057,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.006
+          },
+          "opening_probability": 0.014,
+          "american_odds": 33233,
+          "rank": 38
+        },
+        {
+          "name": "Romain Langasque",
+          "probability": 0.003,
+          "movement_24h": 0.0032,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.006
+          },
+          "opening_probability": 0.007,
+          "american_odds": 33233,
+          "rank": 39
+        },
+        {
+          "name": "Matteo Manassero",
+          "probability": 0.003,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.006
+          },
+          "opening_probability": 0.01,
+          "american_odds": 33233,
+          "rank": 40
+        },
+        {
+          "name": "Guido Migliozzi",
+          "probability": 0.003,
+          "movement_24h": 0.0035,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.005
+          },
+          "opening_probability": 0.003,
+          "american_odds": 33233,
+          "rank": 41
+        },
+        {
+          "name": "Rocco Repetto Taylor",
+          "probability": 0.003,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.005
+          },
+          "opening_probability": 0.003,
+          "american_odds": 33233,
+          "rank": 42
+        },
+        {
+          "name": "Ben Schmidt",
+          "probability": 0.003,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.005
+          },
+          "opening_probability": 0.009,
+          "american_odds": 33233,
+          "rank": 43
+        },
+        {
+          "name": "Matthieu Pavon",
+          "probability": 0.003,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.003,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.016,
+          "american_odds": 33233,
+          "rank": 44
+        },
+        {
+          "name": "Daniel Rodrigues",
+          "probability": 0.003,
+          "movement_24h": 0.0022,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.004
+          },
+          "opening_probability": 0.006,
+          "american_odds": 33233,
+          "rank": 45
+        },
+        {
+          "name": "Tom Vaillant",
+          "probability": 0.003,
+          "movement_24h": 0.0032,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.005
+          },
+          "opening_probability": 0.005,
+          "american_odds": 33233,
+          "rank": 46
+        },
+        {
+          "name": "Joe Dean",
+          "probability": 0.003,
+          "movement_24h": -0.0109,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.005
+          },
+          "opening_probability": 0.016,
+          "american_odds": 33233,
+          "rank": 47
+        },
+        {
+          "name": "Mike Toorop",
+          "probability": 0.003,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.005
+          },
+          "opening_probability": 0.001,
+          "american_odds": 33233,
+          "rank": 48
+        },
+        {
+          "name": "Jeff Winther",
+          "probability": 0.003,
+          "movement_24h": 0.0047,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.005
+          },
+          "opening_probability": 0.005,
+          "american_odds": 33233,
+          "rank": 49
+        },
+        {
+          "name": "Ryggs Johnston",
+          "probability": 0.003,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.005
+          },
+          "opening_probability": 0.002,
+          "american_odds": 33233,
+          "rank": 50
+        },
+        {
+          "name": "Kota Kaneko",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.004
+          },
+          "opening_probability": 0.004,
+          "american_odds": 49900,
+          "rank": 51
+        },
+        {
+          "name": "Felix Mory",
+          "probability": 0.002,
+          "movement_24h": 0.0027,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.004
+          },
+          "opening_probability": 0.006,
+          "american_odds": 49900,
+          "rank": 52
+        },
+        {
+          "name": "Scott Jamieson",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.004
+          },
+          "opening_probability": 0.004,
+          "american_odds": 49900,
+          "rank": 53
+        },
+        {
+          "name": "Marcus Kinhult",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.004
+          },
+          "opening_probability": 0.005,
+          "american_odds": 49900,
+          "rank": 54
+        },
+        {
+          "name": "Frederic LaCroix",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.003,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.003,
+          "american_odds": 49900,
+          "rank": 55
+        },
+        {
+          "name": "Angel Ayora",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.002
+          },
+          "opening_probability": 0.026,
+          "american_odds": 49900,
+          "rank": 56
+        },
+        {
+          "name": "Patrick Reed",
+          "probability": 0.002,
+          "movement_24h": -0.0027,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.063,
+          "american_odds": 49900,
+          "rank": 57
+        },
+        {
+          "name": "Darius Van Driel",
+          "probability": 0.002,
+          "movement_24h": 0.0017,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.004
+          },
+          "opening_probability": 0.004,
+          "american_odds": 49900,
+          "rank": 58
+        },
+        {
+          "name": "Pablo Larrazabal",
+          "probability": 0.002,
+          "movement_24h": 0.0015,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.004
+          },
+          "opening_probability": 0.0,
+          "american_odds": 49900,
+          "rank": 59
+        },
+        {
+          "name": "Johannes Veerman",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.004
+          },
+          "opening_probability": 0.003,
+          "american_odds": 49900,
+          "rank": 60
+        },
+        {
+          "name": "Filippo Celli",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.004
+          },
+          "opening_probability": 0.01,
+          "american_odds": 49900,
+          "rank": 61
+        },
+        {
+          "name": "Marcel Schneider",
+          "probability": 0.002,
+          "movement_24h": 0.0017,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.002,
+          "american_odds": 49900,
+          "rank": 62
+        },
+        {
+          "name": "Harley Smith",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.0,
+          "american_odds": 49900,
+          "rank": 63
+        },
+        {
+          "name": "Jordan Gumberg",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.002,
+          "american_odds": 49900,
+          "rank": 64
+        },
+        {
+          "name": "Antoine Rozner",
+          "probability": 0.002,
+          "movement_24h": -0.0122,
+          "sources": {
+            "datagolf_model": 0.003,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.012,
+          "american_odds": 49900,
+          "rank": 65
+        },
+        {
+          "name": "Ross Fisher",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.002,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.004,
+          "american_odds": 49900,
+          "rank": 66
+        },
+        {
+          "name": "Matt Wallace",
+          "probability": 0.002,
+          "movement_24h": -0.0047,
+          "sources": {
+            "datagolf_model": 0.002,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.034,
+          "american_odds": 49900,
+          "rank": 67
+        },
+        {
+          "name": "Maximilian Steinlechner",
+          "probability": 0.002,
+          "movement_24h": 0.0012,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.007,
+          "american_odds": 49900,
+          "rank": 68
+        },
+        {
+          "name": "Sam Bairstow",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.01,
+          "american_odds": 49900,
+          "rank": 69
+        },
+        {
+          "name": "Danny Willett",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.002,
+          "american_odds": 49900,
+          "rank": 70
+        },
+        {
+          "name": "Shubhankar Sharma",
+          "probability": 0.002,
+          "movement_24h": 0.0012,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.002,
+          "american_odds": 49900,
+          "rank": 71
+        },
+        {
+          "name": "Sebastian Garcia Rodriguez",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.001,
+          "american_odds": 49900,
+          "rank": 72
+        },
+        {
+          "name": "Jens Dantorp",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.006,
+          "american_odds": 49900,
+          "rank": 73
+        },
+        {
+          "name": "Joshua Berry",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.0,
+          "american_odds": 49900,
+          "rank": 74
+        },
+        {
+          "name": "Dylan Frittelli",
+          "probability": 0.002,
+          "movement_24h": 0.0017,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.007,
+          "american_odds": 49900,
+          "rank": 75
+        },
+        {
+          "name": "Alexander Levy",
+          "probability": 0.002,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.005,
+          "american_odds": 49900,
+          "rank": 76
+        },
+        {
+          "name": "Rafa Cabrera Bello",
+          "probability": 0.002,
+          "movement_24h": 0.0015,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.003
+          },
+          "opening_probability": 0.001,
+          "american_odds": 49900,
+          "rank": 77
+        },
+        {
+          "name": "Daniel Gavins",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.0,
+          "american_odds": 99900,
+          "rank": 78
+        },
+        {
+          "name": "John Gough",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.001,
+          "american_odds": 99900,
+          "rank": 79
+        },
+        {
+          "name": "Albin Bergstrom",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.003,
+          "american_odds": 99900,
+          "rank": 80
+        },
+        {
+          "name": "Adri Arnaus",
+          "probability": 0.001,
+          "movement_24h": 0.0012,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.002,
+          "american_odds": 99900,
+          "rank": 81
+        },
+        {
+          "name": "Dylan Naidoo",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.001,
+          "american_odds": 99900,
+          "rank": 82
+        },
+        {
+          "name": "Daniel Van Tonder",
+          "probability": 0.001,
+          "movement_24h": 0.0012,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.008,
+          "american_odds": 99900,
+          "rank": 83
+        },
+        {
+          "name": "Connor Syme",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.002,
+          "american_odds": 99900,
+          "rank": 84
+        },
+        {
+          "name": "Freddy Schott",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.006,
+          "american_odds": 99900,
+          "rank": 85
+        },
+        {
+          "name": "Brandon Stone",
+          "probability": 0.001,
+          "movement_24h": -0.004,
+          "sources": {
+            "datagolf_model": 0.002,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.011,
+          "american_odds": 99900,
+          "rank": 86
+        },
+        {
+          "name": "Kazuma Kobori",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.011,
+          "american_odds": 99900,
+          "rank": 87
+        },
+        {
+          "name": "JC Ritchie",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.004,
+          "american_odds": 99900,
+          "rank": 88
+        },
+        {
+          "name": "Sean Crocker",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.004,
+          "american_odds": 99900,
+          "rank": 89
+        },
+        {
+          "name": "Andres Gallegos",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.001,
+          "american_odds": 99900,
+          "rank": 90
+        },
+        {
+          "name": "Stefano Mazzoli",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.002
+          },
+          "opening_probability": 0.003,
+          "american_odds": 99900,
+          "rank": 91
+        },
+        {
+          "name": "Luke List",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.001,
+          "american_odds": 99900,
+          "rank": 92
+        },
+        {
+          "name": "Marcus Armitage",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.026,
+          "american_odds": 99900,
+          "rank": 93
+        },
+        {
+          "name": "Anthony Quayle",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.003,
+          "american_odds": 99900,
+          "rank": 94
+        },
+        {
+          "name": "Kiradech Aphibarnrat",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.006,
+          "american_odds": 99900,
+          "rank": 95
+        },
+        {
+          "name": "Yuto Katsuragawa",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.003,
+          "american_odds": 99900,
+          "rank": 96
+        },
+        {
+          "name": "Thomas Rosenmueller",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.015,
+          "american_odds": 99900,
+          "rank": 97
+        },
+        {
+          "name": "Adrian Meronk",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.001,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.004,
+          "american_odds": 99900,
+          "rank": 98
+        },
+        {
+          "name": "Yurav Premlall",
+          "probability": 0.001,
+          "movement_24h": -0.003,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.002,
+          "american_odds": 99900,
+          "rank": 99
+        },
+        {
+          "name": "Andreas Halvorsen",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.01,
+          "american_odds": 99900,
+          "rank": 100
+        },
+        {
+          "name": "Eddie Pepperell",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.012,
+          "american_odds": 99900,
+          "rank": 101
+        },
+        {
+          "name": "Edoardo Molinari",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.0,
+          "american_odds": 99900,
+          "rank": 102
+        },
+        {
+          "name": "Manuel Elvira",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.007,
+          "american_odds": 99900,
+          "rank": 103
+        },
+        {
+          "name": "Paul Waring",
+          "probability": 0.001,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.001
+          },
+          "opening_probability": 0.006,
+          "american_odds": 99900,
+          "rank": 104
+        },
+        {
+          "name": "David Law",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.01,
+          "american_odds": null,
+          "rank": 105
+        },
+        {
+          "name": "Jack Buchanan",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.001,
+          "american_odds": null,
+          "rank": 106
+        },
+        {
+          "name": "Ashun Wu",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.002,
+          "american_odds": null,
+          "rank": 107
+        },
+        {
+          "name": "Quim Vidal",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.002,
+          "american_odds": null,
+          "rank": 108
+        },
+        {
+          "name": "Jack Senior",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.003,
+          "american_odds": null,
+          "rank": 109
+        },
+        {
+          "name": "Ivan Cantero Gutierrez",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.003,
+          "american_odds": null,
+          "rank": 110
+        },
+        {
+          "name": "Zander Lombard",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.005,
+          "american_odds": null,
+          "rank": 111
+        },
+        {
+          "name": "Yanhan Zhou",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.016,
+          "american_odds": null,
+          "rank": 112
+        },
+        {
+          "name": "Gonzalo Fdez-Castano",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.0,
+          "american_odds": null,
+          "rank": 113
+        },
+        {
+          "name": "Cameron Adam",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.006,
+          "american_odds": null,
+          "rank": 114
+        },
+        {
+          "name": "Tyrrell Hatton",
+          "probability": 0.0,
+          "movement_24h": -0.002,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.068,
+          "american_odds": null,
+          "rank": 115
+        },
+        {
+          "name": "Alejandro Del Rey",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.008,
+          "american_odds": null,
+          "rank": 116
+        },
+        {
+          "name": "Ugo Coussaud",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.006,
+          "american_odds": null,
+          "rank": 117
+        },
+        {
+          "name": "Louis De Jager",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.0,
+          "american_odds": null,
+          "rank": 118
+        },
+        {
+          "name": "Grant Forrest",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.012,
+          "american_odds": null,
+          "rank": 119
+        },
+        {
+          "name": "Joel Girrbach",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.007,
+          "american_odds": null,
+          "rank": 120
+        },
+        {
+          "name": "Benjamin Follet-Smith",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.001,
+          "american_odds": null,
+          "rank": 121
+        },
+        {
+          "name": "Quentin Debove",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.003,
+          "american_odds": null,
+          "rank": 122
+        },
+        {
+          "name": "Rikuya Hoshino",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.001,
+          "american_odds": null,
+          "rank": 123
+        },
+        {
+          "name": "Matthew Baldwin",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.003,
+          "american_odds": null,
+          "rank": 124
+        },
+        {
+          "name": "Michael Hollick",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.006,
+          "american_odds": null,
+          "rank": 125
+        },
+        {
+          "name": "Frankie Capan",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.0,
+          "american_odds": null,
+          "rank": 126
+        },
+        {
+          "name": "Marcel Siem",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.003,
+          "american_odds": null,
+          "rank": 127
+        },
+        {
+          "name": "Sadom Kaewkanjana",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.005,
+          "american_odds": null,
+          "rank": 128
+        },
+        {
+          "name": "Wenyi Ding",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.003,
+          "american_odds": null,
+          "rank": 129
+        },
+        {
+          "name": "K.H. Lee",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.003,
+          "american_odds": null,
+          "rank": 130
+        },
+        {
+          "name": "Ryan Peake",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.001,
+          "american_odds": null,
+          "rank": 131
+        },
+        {
+          "name": "Brandon Robinson Thompson",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.009,
+          "american_odds": null,
+          "rank": 132
+        },
+        {
+          "name": "Jason Scrivener",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.007,
+          "american_odds": null,
+          "rank": 133
+        },
+        {
+          "name": "Mikael Lindberg",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.011,
+          "american_odds": null,
+          "rank": 134
+        },
+        {
+          "name": "MJ Daffue",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.01,
+          "american_odds": null,
+          "rank": 135
+        },
+        {
+          "name": "Niklas Lemke",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.002,
+          "american_odds": null,
+          "rank": 136
+        },
+        {
+          "name": "Euan Walker",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.005,
+          "american_odds": null,
+          "rank": 137
+        },
+        {
+          "name": "Andy Sullivan",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.016,
+          "american_odds": null,
+          "rank": 138
+        },
+        {
+          "name": "Daniel Young",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.004,
+          "american_odds": null,
+          "rank": 139
+        },
+        {
+          "name": "Jack Yule",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.001,
+          "american_odds": null,
+          "rank": 140
+        },
+        {
+          "name": "Clement Charmasson",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.002,
+          "american_odds": null,
+          "rank": 141
+        },
+        {
+          "name": "Jeong Weon Ko",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.001,
+          "american_odds": null,
+          "rank": 142
+        },
+        {
+          "name": "Luke Donald",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.0,
+          "american_odds": null,
+          "rank": 143
+        },
+        {
+          "name": "Haydn McCullen",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.0,
+          "american_odds": null,
+          "rank": 144
+        },
+        {
+          "name": "Yuvraj Singh Sandhu",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0
+          },
+          "opening_probability": 0.001,
+          "american_odds": null,
+          "rank": 145
+        },
+        {
+          "name": "Fred Biondi",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.002,
+          "american_odds": null,
+          "rank": 146
+        },
+        {
+          "name": "Tobias Jonsson",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.004,
+          "american_odds": null,
+          "rank": 147
+        },
+        {
+          "name": "Connor McKinney",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.0,
+          "american_odds": null,
+          "rank": 148
+        },
+        {
+          "name": "David Micheluzzi",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.002,
+          "american_odds": null,
+          "rank": 149
+        },
+        {
+          "name": "Sebastian Soderberg",
+          "probability": 0.0,
+          "movement_24h": -0.0025,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.003,
+          "american_odds": null,
+          "rank": 150
+        },
+        {
+          "name": "Michael Mjaaseth",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.001,
+          "american_odds": null,
+          "rank": 151
+        },
+        {
+          "name": "Junghwan Lee",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.003,
+          "american_odds": null,
+          "rank": 152
+        },
+        {
+          "name": "Jordan Loft",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.0,
+          "american_odds": null,
+          "rank": 153
+        },
+        {
+          "name": "Hugo Townsend",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.006,
+          "american_odds": null,
+          "rank": 154
+        },
+        {
+          "name": "David Ravetto",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.01,
+          "american_odds": null,
+          "rank": 155
+        },
+        {
+          "name": "James Morrison",
+          "probability": 0.0,
+          "movement_24h": null,
+          "sources": {
+            "datagolf_model": 0.0,
+            "kalshi": 0.0
+          },
+          "opening_probability": 0.002,
+          "american_odds": null,
+          "rank": 156
+        }
+      ],
+      "h2h_matchups": [],
+      "slug": "husqvarna-british-masters",
+      "venue": "The Belfry Hotel & Resort",
+      "location": "Sutton Coldfield, England",
+      "schedule_status": "upcoming",
+      "start_date": "2026-08-27T00:00:00+00:00",
+      "end_date": "2026-08-30T00:00:00+00:00"
+    }
+  ],
+  "pga_schedule_rows": [
+    {
+      "name": "TOUR Championship",
+      "key": "tour_championship",
+      "start_date": "2026-08-27T00:00:00+00:00",
+      "end_date": "2026-08-30T00:00:00+00:00",
+      "venue": "East Lake Golf Club",
+      "location": "Atlanta, GA",
+      "status": "upcoming",
+      "round": "",
+      "tour": "pga"
+    },
+    {
+      "name": "Husqvarna British Masters hosted by Sir Nick Faldo",
+      "key": "husqvarna_british_masters",
+      "start_date": "2026-08-27T00:00:00+00:00",
+      "end_date": "2026-08-30T00:00:00+00:00",
+      "venue": "The Belfry Hotel & Resort",
+      "location": "Sutton Coldfield, England",
+      "status": "upcoming",
+      "round": "",
+      "tour": "euro"
+    },
+    {
+      "name": "Omega European Masters",
+      "key": "omega_european_masters",
+      "start_date": "2026-09-03T00:00:00+00:00",
+      "end_date": "2026-09-06T00:00:00+00:00",
+      "venue": "Crans-sur-Sierre GC",
+      "location": "Crans-Montana, Switzerland",
+      "status": "upcoming",
+      "round": "",
+      "tour": "euro"
+    }
+  ],
+  "expected_after": {
+    "omega_european_masters": {
+      "tour": "dp_world",
+      "tour_label": "DP World Tour"
+    },
+    "husqvarna_british_masters": {
+      "tour": "dp_world",
+      "tour_label": "DP World Tour"
+    },
+    "tour_championship": {
+      "tour": "pga",
+      "tour_label": "PGA Tour"
+    }
+  },
+  "_after_measured_by": "backend/tests/test_golf_tour_classification_authority.py, driving the real _classify_tour over the real futures_markets rows."
+}
