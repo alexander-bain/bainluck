@@ -69,6 +69,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     ],
     "feed_personalization_roundtrip_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "feed_prewarm_absent_shape_net_mutations": [("MUTATIONS", 3, 4, 1)],
+    # LAT-P115. Placed at its alphabetical position rather than at the head of
+    # the dict: six consecutive latency branches have now collided on the two
+    # lines directly under `admin_auth_gate_mutations`, because that is where an
+    # append lands when nobody looks. Sorted insertion is not tidiness here, it
+    # is the thing that stops the next cycle resolving this same hunk.
+    "futures_movers_warm_mutations": [("MUTATIONS", "needle", "replacement", "WARM")],
     "offline_rerank_fidelity_mutations": [("MUTATIONS", 3, 4, 1)],
     "outcome_evidence_class_mutations": [("MUTATIONS", 3, 4, 1)],
     "search_scorer_wiring_mutations": [("MUTATIONS", 2, 3, "TARGET")],

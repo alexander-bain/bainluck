@@ -2388,7 +2388,13 @@ def compute_snapshot_distribution(self):
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
 def update_max_movement(self):
-    """Update max_movement_24h on futures_markets from outcome data."""
+    """Update max_movement_24h on futures_markets, then publish the movers strip.
+
+    LAT-P115: this task WRITES the column `/api/futures/movers` ranks by, so it
+    is also the honest place to publish that answer. The warm runs AFTER the
+    commit and inside its own guard — the column update is this task's job and a
+    cache write must never be able to fail it or roll it back.
+    """
     async def _impl():
         from app.tasks.base import get_task_session
         from sqlalchemy import text
@@ -2407,7 +2413,20 @@ def update_max_movement(self):
                   AND (fm.max_movement_24h IS DISTINCT FROM sub.max_mv)
             """))
             await session.commit()
-            return {"updated": result.rowcount}
+            updated = result.rowcount
+
+            # Reported, not swallowed: a warm that never ran must be visible in
+            # the task result rather than inferred from a latency graph
+            # (gotcha #53 — "it returned" is not "it worked").
+            try:
+                from app.tasks.futures_movers_warm import warm_futures_movers
+
+                warm = await warm_futures_movers(session)
+            except Exception as exc:  # noqa: BLE001 — never fail the column update
+                logger.warning("update_max_movement: warm failed: %s", exc, exc_info=True)
+                warm = {"terminal": "failed", "completed": 0, "reason": "error"}
+
+            return {"updated": updated, "movers_warm": warm}
     return run_async(_impl())
 
 

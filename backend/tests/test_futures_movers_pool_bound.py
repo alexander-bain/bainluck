@@ -422,9 +422,28 @@ def test_legacy_arm_is_still_the_query_it_is_rolling_back_to():
 
 
 def test_the_route_actually_uses_the_builder_and_the_clamp():
-    """A helper-only guard stays green when the caller stops calling it."""
-    src = inspect.getsource(futures_routes.get_futures_movers)
-    assert "_build_movers_query(" in src
-    assert "pooled=_MOVERS_POOLED" in src
-    # Clamped BEFORE the cache key, or `limit=99999` mints its own Redis entry.
-    assert src.index("_clamp_movers_limit(") < src.index("cache_key = ")
+    """A helper-only guard stays green when the caller stops calling it.
+
+    ↻ LAT-P115 followed the indirection rather than dropping the assertion. The
+    route no longer names `_build_movers_query` directly — it calls
+    `build_and_cache_movers`, which does — because `update_max_movement` now
+    warms the same payload and a SECOND copy of the build would be free to drift
+    from the served one. The intent is unchanged and is still checked end to
+    end: the route must reach the POOLED builder, and the clamp must happen
+    before anything can mint a Redis key.
+    """
+    route_src = inspect.getsource(futures_routes.get_futures_movers)
+    build_src = inspect.getsource(futures_routes.build_and_cache_movers)
+
+    # One hop, and the hop is asserted rather than assumed.
+    assert "build_and_cache_movers(" in route_src
+    assert "_build_movers_query(" in build_src
+    assert "pooled=_MOVERS_POOLED" in build_src
+
+    # Clamped BEFORE anything can mint a Redis key, or `limit=99999` gets its own
+    # cache entry. The key is minted by `movers_cache_key(...)` now, in both the
+    # route's read and the builder's write, so the ordering is checked against
+    # the mint and not against a literal that has moved.
+    assert route_src.index("_clamp_movers_limit(") < route_src.index(
+        "movers_cache_key("
+    )
