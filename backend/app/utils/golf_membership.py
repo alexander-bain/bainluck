@@ -27,10 +27,17 @@ from typing import Any, Iterable
 
 # Domains that are never golf. A market naming one of these does not belong on a
 # golf page no matter how well its title happens to overlap a tournament name.
+#
+# UX-P168 added the second row. `masters`, `open`, `classic`, `invitational` and
+# `major` are all sufficient golf signals on their own (`_GOLF_SIGNAL_RE`), and
+# none of them is a golf word — every sport below runs an event called one of
+# them. "New Zealand Darts Masters: Winner" reached the golf page on `masters`
+# alone and was served as a PGA Tour tournament.
 FOREIGN_TERMS = frozenset(
     {
         "chess", "rodeo", "bowling", "basketball", "pba", "movie", "film",
         "actor", "actress", "squash", "tennis", "esports", "valorant",
+        "darts", "snooker", "cricket", "poker", "billiards",
     }
 )
 
@@ -107,3 +114,27 @@ def drop_foreign_markets(markets: Iterable[Any]) -> list[Any]:
     needs no schedule, no field and no DB round-trip to decide.
     """
     return [m for m in markets if not is_foreign_domain(getattr(m, "name", None))]
+
+
+def drop_foreign_field_markets(markets: Iterable[Any]) -> list[Any]:
+    """Filter out markets whose OUTCOMES name a non-golf domain.
+
+    The name-side half above cannot see "Asia Masters 2026 Winner" — the title is
+    domain-neutral and the esports is entirely in the field ("T1 Esports Academy",
+    "Dplus Challengers"). `evaluate_membership` has always specified this check on
+    `outcome_name`; nothing on the OPEN-tournament path ever ran it.
+
+    Outcomes are read out of ``__dict__`` rather than via attribute access on
+    purpose. This runs inside an async request, and a plain ``market.outcomes``
+    on a market whose relationship was not eager-loaded would fire a lazy load and
+    raise ``MissingGreenlet``. An unloaded relationship is therefore read as NO
+    EVIDENCE and the market is KEPT — the drop needs a foreign outcome it can
+    actually see, never the mere absence of a loaded field.
+    """
+    kept = []
+    for market in markets:
+        outcomes = market.__dict__.get("outcomes") if hasattr(market, "__dict__") else None
+        if outcomes and any(is_foreign_domain(getattr(o, "name", None)) for o in outcomes):
+            continue
+        kept.append(market)
+    return kept

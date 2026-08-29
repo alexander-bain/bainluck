@@ -1,0 +1,1302 @@
+{
+  "_source": "production api.bainluck.com, pulled 2026-08-29 by UX-P168",
+  "_what": "The BEFORE state: /api/golf served 6 tournaments, 2 of which were not golf.",
+  "served_tournaments_before": [
+    {
+      "key": "tour_championship",
+      "slug": "tour-championship",
+      "name": "Tour Championship",
+      "tour": "pga",
+      "tour_label": "PGA Tour",
+      "is_major": false,
+      "is_tour_event": true,
+      "is_womens": false,
+      "commence_time": "2026-08-22T16:00:26+00:00",
+      "start_date": "2026-08-27T00:00:00+00:00",
+      "end_date": "2026-08-30T00:00:00+00:00",
+      "resolution_date": "2026-08-30T00:00:00+00:00",
+      "schedule_status": "upcoming",
+      "market_ids": [
+        59433935,
+        59433932,
+        59433941,
+        59433933,
+        59433934,
+        59433936,
+        59433938,
+        59485745,
+        59490792,
+        59485749,
+        59485746,
+        59485747,
+        59485748
+      ],
+      "market_names": [
+        "PGA Tour: TOUR Championship Winner",
+        "PGA Tour: TOUR Championship Third Round Leader",
+        "PGA Tour: TOUR Championship Top 5",
+        "PGA Tour: TOUR Championship Second Round Leader",
+        "PGA Tour: TOUR Championship First Round Leader",
+        "PGA Tour: TOUR Championship Top 20",
+        "PGA Tour: TOUR Championship Top 10",
+        "TOUR Championship - Winner",
+        "TOUR Championship: Hole-in-One",
+        "TOUR Championship - Make the Cut",
+        "TOUR Championship - Top 5 Finish",
+        "TOUR Championship - Top 10 Finish",
+        "TOUR Championship - Top 20 Finish"
+      ],
+      "venue": "East Lake Golf Club",
+      "location": "Atlanta, GA",
+      "surviving_market_ids": [
+        59433935,
+        59433932,
+        59433941,
+        59433933,
+        59433934,
+        59433936,
+        59433938,
+        59485745,
+        59490792,
+        59485749,
+        59485746,
+        59485747,
+        59485748
+      ],
+      "survives_uxp168": true,
+      "golfers": [
+        {
+          "name": "Scottie Scheffler",
+          "probability": 0.187,
+          "movement_24h": -0.0275,
+          "rank": 1
+        },
+        {
+          "name": "Viktor Hovland",
+          "probability": 0.161,
+          "movement_24h": 0.0856,
+          "rank": 2
+        },
+        {
+          "name": "Ryan Gerard",
+          "probability": 0.121,
+          "movement_24h": 0.0885,
+          "rank": 3
+        },
+        {
+          "name": "Chris Gotterup",
+          "probability": 0.114,
+          "movement_24h": 0.0302,
+          "rank": 4
+        },
+        {
+          "name": "Collin Morikawa",
+          "probability": 0.101,
+          "movement_24h": 0.0163,
+          "rank": 5
+        },
+        {
+          "name": "Cameron Young",
+          "probability": 0.075,
+          "movement_24h": 0.0701,
+          "rank": 6
+        },
+        {
+          "name": "Ludvig Aberg",
+          "probability": 0.05,
+          "movement_24h": -0.0118,
+          "rank": 7
+        },
+        {
+          "name": "Matt Fitzpatrick",
+          "probability": 0.034,
+          "movement_24h": 0.0031,
+          "rank": 8
+        },
+        {
+          "name": "Sam Burns",
+          "probability": 0.026,
+          "movement_24h": -0.0151,
+          "rank": 9
+        },
+        {
+          "name": "Adam Scott",
+          "probability": 0.025,
+          "movement_24h": 0.0048,
+          "rank": 10
+        }
+      ]
+    },
+    {
+      "key": "husqvarna_british_masters",
+      "slug": "husqvarna-british-masters",
+      "name": "Husqvarna British Masters",
+      "tour": "dp_world",
+      "tour_label": "DP World Tour",
+      "is_major": false,
+      "is_tour_event": true,
+      "is_womens": false,
+      "commence_time": "2026-08-24T15:10:59+00:00",
+      "start_date": "2026-08-27T00:00:00+00:00",
+      "end_date": "2026-08-30T00:00:00+00:00",
+      "resolution_date": "2026-08-30T00:00:00+00:00",
+      "schedule_status": "upcoming",
+      "market_ids": [
+        59700138,
+        59700139,
+        59512401,
+        59512841,
+        59512843,
+        59512844,
+        59512842,
+        59514417,
+        59514415,
+        59514416,
+        59485751,
+        59485754,
+        59714294,
+        59485753,
+        59485752,
+        59485750
+      ],
+      "market_names": [
+        "Husqvarna British Masters hosted by Sir Nick Faldo End of Round 3 Leader",
+        "Husqvarna British Masters hosted by Sir Nick Faldo End of Round 2 Leader",
+        "Husqvarna British Masters hosted by Sir Nick Faldo Winner",
+        "DP World Tour: British Masters Top 20",
+        "DP World Tour: British Masters Top 10",
+        "DP World Tour: British Masters Top 5",
+        "DP World Tour: British Masters Winner",
+        "DP World Tour: British Masters First Round Leader",
+        "DP World Tour: British Masters Third Round Leader",
+        "DP World Tour: British Masters Second Round Leader",
+        "Husqvarna British Masters hosted by Sir Nick Faldo - Top 5 Finish",
+        "Husqvarna British Masters hosted by Sir Nick Faldo - Make the Cut",
+        "Husqvarna British Masters hosted by Sir Nick Faldo: To Make the Cut",
+        "Husqvarna British Masters hosted by Sir Nick Faldo - Top 20 Finish",
+        "Husqvarna British Masters hosted by Sir Nick Faldo - Top 10 Finish",
+        "Husqvarna British Masters hosted by Sir Nick Faldo - Winner"
+      ],
+      "venue": "The Belfry Hotel & Resort",
+      "location": "Sutton Coldfield, England",
+      "surviving_market_ids": [
+        59700138,
+        59700139,
+        59512401,
+        59512841,
+        59512843,
+        59512844,
+        59512842,
+        59514417,
+        59514415,
+        59514416,
+        59485751,
+        59485754,
+        59714294,
+        59485753,
+        59485752,
+        59485750
+      ],
+      "survives_uxp168": true,
+      "golfers": [
+        {
+          "name": "Marco Penge",
+          "probability": 0.222,
+          "movement_24h": 0.2325,
+          "rank": 1
+        },
+        {
+          "name": "Daniel Hillier",
+          "probability": 0.112,
+          "movement_24h": 0.1372,
+          "rank": 2
+        },
+        {
+          "name": "Tom McKibbin",
+          "probability": 0.088,
+          "movement_24h": 0.088,
+          "rank": 3
+        },
+        {
+          "name": "Matthew Jordan",
+          "probability": 0.038,
+          "movement_24h": -0.0505,
+          "rank": 4
+        },
+        {
+          "name": "Shaun Norris",
+          "probability": 0.037,
+          "movement_24h": 0.0259,
+          "rank": 5
+        },
+        {
+          "name": "Ewen Ferguson",
+          "probability": 0.028,
+          "movement_24h": -0.009,
+          "rank": 6
+        },
+        {
+          "name": "Thorbj\u00f8rn Olesen",
+          "probability": 0.027,
+          "movement_24h": 0.0221,
+          "rank": 7
+        },
+        {
+          "name": "Davis Bryant",
+          "probability": 0.019,
+          "movement_24h": -0.0293,
+          "rank": 8
+        },
+        {
+          "name": "Keita Nakajima",
+          "probability": 0.013,
+          "movement_24h": -0.0045,
+          "rank": 9
+        },
+        {
+          "name": "Joe Dean",
+          "probability": 0.013,
+          "movement_24h": -0.0305,
+          "rank": 10
+        }
+      ]
+    },
+    {
+      "key": "golfers_to_win_a_pga_tour_major_in_2027",
+      "slug": "golfers-to-win-a-pga-tour-major-in-2027",
+      "name": "Golfers To Win A Pga Tour Major In 2027",
+      "tour": "pga",
+      "tour_label": "PGA Tour",
+      "is_major": false,
+      "is_tour_event": true,
+      "is_womens": false,
+      "commence_time": "2028-01-14T15:00:00+00:00",
+      "start_date": null,
+      "end_date": null,
+      "resolution_date": "2028-01-14T15:00:00+00:00",
+      "schedule_status": null,
+      "market_ids": [
+        56775495
+      ],
+      "market_names": [
+        "Golfers to win a PGA Tour Major in 2027 "
+      ],
+      "venue": null,
+      "location": null,
+      "surviving_market_ids": [
+        56775495
+      ],
+      "survives_uxp168": true,
+      "golfers": [
+        {
+          "name": "Scottie Scheffler",
+          "probability": 0.059,
+          "movement_24h": null,
+          "rank": 1
+        },
+        {
+          "name": "Rory McIlroy",
+          "probability": 0.044,
+          "movement_24h": -0.0011,
+          "rank": 2
+        },
+        {
+          "name": "Jon Rahm",
+          "probability": 0.029,
+          "movement_24h": null,
+          "rank": 3
+        },
+        {
+          "name": "Ludvig Aberg",
+          "probability": 0.024,
+          "movement_24h": null,
+          "rank": 4
+        },
+        {
+          "name": "Xander Schauffele",
+          "probability": 0.024,
+          "movement_24h": null,
+          "rank": 5
+        },
+        {
+          "name": "Cameron Young",
+          "probability": 0.023,
+          "movement_24h": null,
+          "rank": 6
+        },
+        {
+          "name": "Bryson DeChambeau",
+          "probability": 0.023,
+          "movement_24h": 0.0027,
+          "rank": 7
+        },
+        {
+          "name": "Jackson Koivun",
+          "probability": 0.021,
+          "movement_24h": -0.0011,
+          "rank": 8
+        },
+        {
+          "name": "Matt Fitzpatrick",
+          "probability": 0.019,
+          "movement_24h": null,
+          "rank": 9
+        },
+        {
+          "name": "Tommy Fleetwood",
+          "probability": 0.017,
+          "movement_24h": null,
+          "rank": 10
+        }
+      ]
+    },
+    {
+      "key": "golfers_to_win_a_pga_tour_major_before_2030",
+      "slug": "golfers-to-win-a-pga-tour-major-before-2030",
+      "name": "Golfers To Win A Pga Tour Major Before 2030",
+      "tour": "pga",
+      "tour_label": "PGA Tour",
+      "is_major": false,
+      "is_tour_event": true,
+      "is_womens": false,
+      "commence_time": "2026-07-19T18:17:17+00:00",
+      "start_date": null,
+      "end_date": null,
+      "resolution_date": "2030-07-07T14:00:00+00:00",
+      "schedule_status": null,
+      "market_ids": [
+        52755548
+      ],
+      "market_names": [
+        "Golfers to win a PGA Tour Major before 2030 "
+      ],
+      "venue": null,
+      "location": null,
+      "surviving_market_ids": [
+        52755548
+      ],
+      "survives_uxp168": true,
+      "golfers": [
+        {
+          "name": "Miles Russell",
+          "probability": 0.032,
+          "movement_24h": null,
+          "rank": 1
+        },
+        {
+          "name": "Jackson Koivun",
+          "probability": 0.032,
+          "movement_24h": null,
+          "rank": 2
+        },
+        {
+          "name": "Andrew Novak",
+          "probability": 0.02,
+          "movement_24h": null,
+          "rank": 3
+        },
+        {
+          "name": "Aldrich Potgieter",
+          "probability": 0.02,
+          "movement_24h": null,
+          "rank": 4
+        },
+        {
+          "name": "Alex Smalley",
+          "probability": 0.02,
+          "movement_24h": null,
+          "rank": 5
+        },
+        {
+          "name": "Bud Cauley",
+          "probability": 0.02,
+          "movement_24h": null,
+          "rank": 6
+        },
+        {
+          "name": "Blades Brown",
+          "probability": 0.02,
+          "movement_24h": null,
+          "rank": 7
+        },
+        {
+          "name": "Daniel Berger",
+          "probability": 0.016,
+          "movement_24h": null,
+          "rank": 8
+        },
+        {
+          "name": "Akshay Bhatia",
+          "probability": 0.016,
+          "movement_24h": null,
+          "rank": 9
+        },
+        {
+          "name": "Michael Brennan",
+          "probability": 0.016,
+          "movement_24h": null,
+          "rank": 10
+        }
+      ]
+    },
+    {
+      "key": "new_zealand_darts_masters",
+      "slug": "new-zealand-darts-masters",
+      "name": "New Zealand Darts Masters",
+      "tour": "pga",
+      "tour_label": "PGA Tour",
+      "is_major": false,
+      "is_tour_event": true,
+      "is_womens": false,
+      "commence_time": "2026-08-05T15:08:54.137315+00:00",
+      "start_date": null,
+      "end_date": null,
+      "resolution_date": null,
+      "schedule_status": null,
+      "market_ids": [
+        58416367
+      ],
+      "market_names": [
+        "New Zealand Darts Masters: Winner"
+      ],
+      "venue": null,
+      "location": null,
+      "surviving_market_ids": [],
+      "survives_uxp168": false,
+      "golfers": [
+        {
+          "name": "Simon Whitlock",
+          "probability": 0.064,
+          "movement_24h": null,
+          "rank": 1
+        },
+        {
+          "name": "Ben Robb",
+          "probability": 0.064,
+          "movement_24h": null,
+          "rank": 2
+        },
+        {
+          "name": "Kayden Milne",
+          "probability": 0.064,
+          "movement_24h": null,
+          "rank": 3
+        },
+        {
+          "name": "Haupai Puha",
+          "probability": 0.064,
+          "movement_24h": null,
+          "rank": 4
+        },
+        {
+          "name": "Raymond Smith",
+          "probability": 0.064,
+          "movement_24h": null,
+          "rank": 5
+        },
+        {
+          "name": "James Wade",
+          "probability": 0.063,
+          "movement_24h": null,
+          "rank": 6
+        },
+        {
+          "name": "Josh Rock",
+          "probability": 0.063,
+          "movement_24h": null,
+          "rank": 7
+        },
+        {
+          "name": "Gerwyn Price",
+          "probability": 0.063,
+          "movement_24h": null,
+          "rank": 8
+        },
+        {
+          "name": "Adam Leek",
+          "probability": 0.063,
+          "movement_24h": null,
+          "rank": 9
+        },
+        {
+          "name": "Gian van Veen",
+          "probability": 0.061,
+          "movement_24h": null,
+          "rank": 10
+        }
+      ]
+    },
+    {
+      "key": "asia_masters_2026",
+      "slug": "asia-masters-2026",
+      "name": "Asia Masters 2026",
+      "tour": "pga",
+      "tour_label": "PGA Tour",
+      "is_major": false,
+      "is_tour_event": true,
+      "is_womens": false,
+      "commence_time": "2026-06-16T18:22:29.782288+00:00",
+      "start_date": null,
+      "end_date": null,
+      "resolution_date": null,
+      "schedule_status": null,
+      "market_ids": [
+        38277227
+      ],
+      "market_names": [
+        "Asia Masters 2026 Winner"
+      ],
+      "venue": null,
+      "location": null,
+      "surviving_market_ids": [],
+      "survives_uxp168": false,
+      "golfers": [
+        {
+          "name": "Dplus Challengers",
+          "probability": 0.216,
+          "movement_24h": 0.1109,
+          "rank": 1
+        },
+        {
+          "name": "T1 Esports Academy",
+          "probability": 0.123,
+          "movement_24h": -0.0389,
+          "rank": 2
+        },
+        {
+          "name": "NS Challengers",
+          "probability": 0.058,
+          "movement_24h": -0.0097,
+          "rank": 3
+        },
+        {
+          "name": "KT Challengers",
+          "probability": 0.019,
+          "movement_24h": -0.0272,
+          "rank": 4
+        }
+      ]
+    }
+  ],
+  "markets": [
+    {
+      "id": 58416367,
+      "name": "New Zealand Darts Masters: Winner",
+      "source": "polymarket",
+      "external_id": "801410",
+      "llm_sport_category": "golf",
+      "commence_time": "2026-08-05 15:08:54.137315+00:00",
+      "resolution_date": null,
+      "status": "open",
+      "outcome_count_in_production": 16,
+      "outcomes": [
+        {
+          "id": 216704821,
+          "name": "Simon Whitlock",
+          "current_probability": 0.245
+        },
+        {
+          "id": 216704822,
+          "name": "Ben Robb",
+          "current_probability": 0.245
+        },
+        {
+          "id": 216704823,
+          "name": "Kayden Milne",
+          "current_probability": 0.245
+        },
+        {
+          "id": 216704824,
+          "name": "Haupai Puha",
+          "current_probability": 0.245
+        },
+        {
+          "id": 216704825,
+          "name": "Raymond Smith",
+          "current_probability": 0.245
+        },
+        {
+          "id": 216704816,
+          "name": "James Wade",
+          "current_probability": 0.24
+        },
+        {
+          "id": 216704817,
+          "name": "Josh Rock",
+          "current_probability": 0.24
+        },
+        {
+          "id": 216704818,
+          "name": "Gerwyn Price",
+          "current_probability": 0.24
+        },
+        {
+          "id": 216704820,
+          "name": "Adam Leek",
+          "current_probability": 0.24
+        },
+        {
+          "id": 216718671,
+          "name": "Gian van Veen",
+          "current_probability": 0.235
+        },
+        {
+          "id": 216704815,
+          "name": "Jonny Clayton",
+          "current_probability": 0.235
+        },
+        {
+          "id": 216718673,
+          "name": "Stephen Bunting",
+          "current_probability": 0.235
+        },
+        {
+          "id": 216704813,
+          "name": "Ross Smith",
+          "current_probability": 0.235
+        },
+        {
+          "id": 216704819,
+          "name": "Damon Heta",
+          "current_probability": 0.235
+        },
+        {
+          "id": 216704814,
+          "name": "Mark Cleaver",
+          "current_probability": 0.235
+        },
+        {
+          "id": 216718677,
+          "name": "Jonny Tata",
+          "current_probability": 0.23
+        }
+      ]
+    },
+    {
+      "id": 38277227,
+      "name": "Asia Masters 2026 Winner",
+      "source": "polymarket",
+      "external_id": "601916",
+      "llm_sport_category": "golf",
+      "commence_time": "2026-06-16 18:22:29.782288+00:00",
+      "resolution_date": null,
+      "status": "open",
+      "outcome_count_in_production": 7,
+      "outcomes": [
+        {
+          "id": 164243830,
+          "name": "Dplus Challengers",
+          "current_probability": 0.555
+        },
+        {
+          "id": 164243826,
+          "name": "B",
+          "current_probability": 0.5
+        },
+        {
+          "id": 164243827,
+          "name": "A",
+          "current_probability": 0.5
+        },
+        {
+          "id": 164243828,
+          "name": "Other",
+          "current_probability": 0.5
+        },
+        {
+          "id": 164243829,
+          "name": "T1 Esports Academy",
+          "current_probability": 0.315
+        },
+        {
+          "id": 164243831,
+          "name": "NS Challengers",
+          "current_probability": 0.15
+        },
+        {
+          "id": 164243832,
+          "name": "KT Challengers",
+          "current_probability": 0.05
+        }
+      ]
+    },
+    {
+      "id": 59433935,
+      "name": "PGA Tour: TOUR Championship Winner",
+      "source": "polymarket",
+      "external_id": "890355",
+      "llm_sport_category": "golf",
+      "commence_time": "2026-08-22 16:00:52+00:00",
+      "resolution_date": "2026-08-30 00:00:00+00:00",
+      "status": "open",
+      "outcome_count_in_production": 1,
+      "outcomes": [
+        {
+          "id": 221199645,
+          "name": "Chris Gotterup",
+          "current_probability": 0.99
+        }
+      ]
+    },
+    {
+      "id": 59512401,
+      "name": "Husqvarna British Masters hosted by Sir Nick Faldo Winner",
+      "source": "kalshi",
+      "external_id": "KXDPWORLDTOUR-HUBMHBSNF26",
+      "llm_sport_category": "golf",
+      "commence_time": "2026-09-13 00:00:00+00:00",
+      "resolution_date": "2026-09-13 00:00:00+00:00",
+      "status": "open",
+      "outcome_count_in_production": 157,
+      "outcomes": [
+        {
+          "id": 221504752,
+          "name": "Marco Penge",
+          "current_probability": 0.325
+        },
+        {
+          "id": 221555045,
+          "name": "Daniel Hillier",
+          "current_probability": 0.1055
+        },
+        {
+          "id": 221555035,
+          "name": "Nacho Elvira",
+          "current_probability": 0.0595
+        },
+        {
+          "id": 221504756,
+          "name": "Tom McKibbin",
+          "current_probability": 0.0505
+        },
+        {
+          "id": 221555051,
+          "name": "Thorbj\u00f8rn Olesen",
+          "current_probability": 0.05
+        },
+        {
+          "id": 221555090,
+          "name": "Davis Bryant",
+          "current_probability": 0.041
+        },
+        {
+          "id": 221555055,
+          "name": "Joe Dean",
+          "current_probability": 0.0375
+        },
+        {
+          "id": 221555036,
+          "name": "Ewen Ferguson",
+          "current_probability": 0.034
+        },
+        {
+          "id": 221555075,
+          "name": "Shaun Norris",
+          "current_probability": 0.033
+        },
+        {
+          "id": 221504747,
+          "name": "Matthew Jordan",
+          "current_probability": 0.032
+        },
+        {
+          "id": 221555044,
+          "name": "Daniel Brown",
+          "current_probability": 0.03
+        },
+        {
+          "id": 221504748,
+          "name": "Oliver Lindell",
+          "current_probability": 0.0295
+        },
+        {
+          "id": 221555048,
+          "name": "Antoine Rozner",
+          "current_probability": 0.025
+        },
+        {
+          "id": 221504749,
+          "name": "Eugenio Lopez-Chacarra",
+          "current_probability": 0.0245
+        },
+        {
+          "id": 221504757,
+          "name": "Angel Ayora Fanegas",
+          "current_probability": 0.021
+        },
+        {
+          "id": 221555046,
+          "name": "Casey Jarvis",
+          "current_probability": 0.021
+        },
+        {
+          "id": 221555063,
+          "name": "Todd Clements",
+          "current_probability": 0.02
+        },
+        {
+          "id": 221555066,
+          "name": "Hao-Tong Li",
+          "current_probability": 0.02
+        },
+        {
+          "id": 221555076,
+          "name": "Niklas N\u00f8rgaard M\u00f8ller",
+          "current_probability": 0.02
+        },
+        {
+          "id": 221555129,
+          "name": "Renato Paratore",
+          "current_probability": 0.02
+        },
+        {
+          "id": 221504750,
+          "name": "Keita Nakajima",
+          "current_probability": 0.019
+        },
+        {
+          "id": 221555078,
+          "name": "Erik Van Rooyen",
+          "current_probability": 0.019
+        },
+        {
+          "id": 221555073,
+          "name": "Francesco Laporta",
+          "current_probability": 0.018
+        },
+        {
+          "id": 221555068,
+          "name": "Bernd Wiesberger",
+          "current_probability": 0.018
+        },
+        {
+          "id": 221555041,
+          "name": "Hennie Du Plessis",
+          "current_probability": 0.018
+        }
+      ]
+    },
+    {
+      "id": 59172995,
+      "name": "CPKC Women's Open End of Round 1 Leader",
+      "source": "kalshi",
+      "external_id": "KXLPGAR1LEAD-CPKWO26",
+      "llm_sport_category": "golf",
+      "commence_time": "2026-09-06 00:00:00+00:00",
+      "resolution_date": "2026-09-06 00:00:00+00:00",
+      "status": "open",
+      "outcome_count_in_production": 158,
+      "outcomes": [
+        {
+          "id": 219798139,
+          "name": "Vanessa Borovilos",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798140,
+          "name": "Helen Briem",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798141,
+          "name": "Ashleigh Buhai",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798142,
+          "name": "Briana Chacon",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798143,
+          "name": "Jennifer Chang",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798144,
+          "name": "Hye Jin Choi",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798145,
+          "name": "Robyn Choi",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798146,
+          "name": "Carlota Ciganda",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798147,
+          "name": "Tillie Claggett",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798148,
+          "name": "Hailee Cooper",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798149,
+          "name": "Allisen Corpuz",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798150,
+          "name": "Katie Cranston",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798151,
+          "name": "Daniela Darquea",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798152,
+          "name": "Manon De Roey",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798153,
+          "name": "Perrine Delacour",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798154,
+          "name": "Aphrodite Deng",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798155,
+          "name": "Brianna Do",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798156,
+          "name": "Lindy Duncan",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798157,
+          "name": "Jodi Ewart Shadoff",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798158,
+          "name": "Isabella Fierro",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798159,
+          "name": "Laney Frye",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798160,
+          "name": "Ayaka Furue",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798161,
+          "name": "Isi Gabsa",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798162,
+          "name": "Sofia Garcia",
+          "current_probability": 0.3
+        },
+        {
+          "id": 219798163,
+          "name": "Savannah Grewal",
+          "current_probability": 0.3
+        }
+      ]
+    },
+    {
+      "id": 56775495,
+      "name": "Golfers to win a PGA Tour Major in 2027 ",
+      "source": "kalshi",
+      "external_id": "KXGOLFMAJOR-27",
+      "llm_sport_category": "golf",
+      "commence_time": "2028-01-14 15:00:00+00:00",
+      "resolution_date": "2028-01-14 15:00:00+00:00",
+      "status": "open",
+      "outcome_count_in_production": 112,
+      "outcomes": [
+        {
+          "id": 214439069,
+          "name": "Scottie Scheffler",
+          "current_probability": 0.545
+        },
+        {
+          "id": 214439070,
+          "name": "Rory McIlroy",
+          "current_probability": 0.405
+        },
+        {
+          "id": 214439071,
+          "name": "Jon Rahm",
+          "current_probability": 0.265
+        },
+        {
+          "id": 214439072,
+          "name": "Ludvig Aberg",
+          "current_probability": 0.225
+        },
+        {
+          "id": 214439073,
+          "name": "Xander Schauffele",
+          "current_probability": 0.225
+        },
+        {
+          "id": 214439074,
+          "name": "Cameron Young",
+          "current_probability": 0.215
+        },
+        {
+          "id": 214439075,
+          "name": "Bryson DeChambeau",
+          "current_probability": 0.215
+        },
+        {
+          "id": 214439082,
+          "name": "Jackson Koivun",
+          "current_probability": 0.195
+        },
+        {
+          "id": 214439076,
+          "name": "Matt Fitzpatrick",
+          "current_probability": 0.18
+        },
+        {
+          "id": 214439079,
+          "name": "Tommy Fleetwood",
+          "current_probability": 0.155
+        },
+        {
+          "id": 214439080,
+          "name": "Collin Morikawa",
+          "current_probability": 0.155
+        },
+        {
+          "id": 214439133,
+          "name": "Sam Burns",
+          "current_probability": 0.14
+        },
+        {
+          "id": 214439081,
+          "name": "Justin Thomas",
+          "current_probability": 0.1305
+        },
+        {
+          "id": 214439132,
+          "name": "Blades Brown",
+          "current_probability": 0.12
+        },
+        {
+          "id": 214439134,
+          "name": "Patrick Cantlay",
+          "current_probability": 0.105
+        },
+        {
+          "id": 214439135,
+          "name": "Wyndham Clark",
+          "current_probability": 0.105
+        },
+        {
+          "id": 214439136,
+          "name": "Chris Gotterup",
+          "current_probability": 0.105
+        },
+        {
+          "id": 214439137,
+          "name": "Tyrrell Hatton",
+          "current_probability": 0.105
+        },
+        {
+          "id": 214439138,
+          "name": "Russell Henley",
+          "current_probability": 0.105
+        },
+        {
+          "id": 214439139,
+          "name": "Viktor Hovland",
+          "current_probability": 0.105
+        },
+        {
+          "id": 214439140,
+          "name": "Si Woo Kim",
+          "current_probability": 0.105
+        },
+        {
+          "id": 214439141,
+          "name": "Brooks Koepka",
+          "current_probability": 0.105
+        },
+        {
+          "id": 214439142,
+          "name": "Min Woo Lee",
+          "current_probability": 0.105
+        },
+        {
+          "id": 214439143,
+          "name": "Robert MacIntyre",
+          "current_probability": 0.105
+        },
+        {
+          "id": 214439144,
+          "name": "Hideki Matsuyama",
+          "current_probability": 0.105
+        }
+      ]
+    },
+    {
+      "id": 59485745,
+      "name": "TOUR Championship - Winner",
+      "source": "datagolf",
+      "external_id": "datagolf:pga:60:win",
+      "llm_sport_category": "golf",
+      "commence_time": "2026-08-27 00:00:00+00:00",
+      "resolution_date": "2026-08-30 00:00:00+00:00",
+      "status": "open",
+      "outcome_count_in_production": 50,
+      "outcomes": [
+        {
+          "id": 221384901,
+          "name": "Scottie Scheffler",
+          "current_probability": 0.187001
+        },
+        {
+          "id": 221384911,
+          "name": "Viktor Hovland",
+          "current_probability": 0.161108
+        },
+        {
+          "id": 221384922,
+          "name": "Ryan Gerard",
+          "current_probability": 0.121271
+        },
+        {
+          "id": 221384910,
+          "name": "Chris Gotterup",
+          "current_probability": 0.114186
+        },
+        {
+          "id": 221384915,
+          "name": "Collin Morikawa",
+          "current_probability": 0.101154
+        },
+        {
+          "id": 221384905,
+          "name": "Cameron Young",
+          "current_probability": 0.075093
+        },
+        {
+          "id": 221384902,
+          "name": "Ludvig Aberg",
+          "current_probability": 0.050018
+        },
+        {
+          "id": 221384908,
+          "name": "Matt Fitzpatrick",
+          "current_probability": 0.033679
+        },
+        {
+          "id": 221384907,
+          "name": "Sam Burns",
+          "current_probability": 0.026346
+        },
+        {
+          "id": 221384929,
+          "name": "Adam Scott",
+          "current_probability": 0.024617
+        },
+        {
+          "id": 221384930,
+          "name": "Justin Rose",
+          "current_probability": 0.021153
+        },
+        {
+          "id": 221384941,
+          "name": "Gary Woodland",
+          "current_probability": 0.011428
+        },
+        {
+          "id": 221384926,
+          "name": "Russell Henley",
+          "current_probability": 0.01032
+        },
+        {
+          "id": 221384904,
+          "name": "Rory McIlroy",
+          "current_probability": 0.008059
+        },
+        {
+          "id": 221384923,
+          "name": "Tom Kim",
+          "current_probability": 0.006907
+        },
+        {
+          "id": 221384916,
+          "name": "Wyndham Clark",
+          "current_probability": 0.00668
+        },
+        {
+          "id": 221384944,
+          "name": "Akshay Bhatia",
+          "current_probability": 0.006664
+        },
+        {
+          "id": 221384917,
+          "name": "Min Woo Lee",
+          "current_probability": 0.005837
+        },
+        {
+          "id": 221384932,
+          "name": "Alex Smalley",
+          "current_probability": 0.005657
+        },
+        {
+          "id": 221384906,
+          "name": "Tommy Fleetwood",
+          "current_probability": 0.005114
+        },
+        {
+          "id": 221384939,
+          "name": "Jacob Bridgeman",
+          "current_probability": 0.004284
+        },
+        {
+          "id": 221384940,
+          "name": "Ryan Fox",
+          "current_probability": 0.004145
+        },
+        {
+          "id": 221384903,
+          "name": "Xander Schauffele",
+          "current_probability": 0.003668
+        },
+        {
+          "id": 221384909,
+          "name": "Si Woo Kim",
+          "current_probability": 0.002243
+        },
+        {
+          "id": 221384936,
+          "name": "Alex Fitzpatrick",
+          "current_probability": 0.001988
+        }
+      ]
+    }
+  ],
+  "population": {
+    "candidate_markets": 139,
+    "passed_master_gate": 81,
+    "passed_uxp168_gate": 79,
+    "outcomes_scanned_for_false_positives": 4138,
+    "markets_with_a_foreign_domain_outcome": 1
+  },
+  "_outcome_cap": "fields capped at 25 outcomes by price; outcome_count_in_production is the real size"
+}
