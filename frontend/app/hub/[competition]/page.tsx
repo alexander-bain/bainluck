@@ -32,23 +32,49 @@ import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 // ---------------------------------------------------------------------------
 // Section display config: friendly labels + render order. Sections the backend
 // returns that aren't listed here still render (title-cased) after these.
+//
+// ── UX-P167 (#2167): these are the NEUTRAL defaults, and that is the whole fix ──
+//
+// This map used to hold MMA's words — `matches: "Fight Markets"`, `season_stats:
+// "Fighter Stats"` — because MMA was the only hub when it was written. The page
+// is generic across five competitions, so those words shipped verbatim onto the
+// others: measured live on 2026-08-29, during US Open week, `/hub/tennis` printed
+// "FIGHT MARKETS" over 103 tennis markets, `/hub/esports` printed it over 98, and
+// `/hub/golf` printed "FIGHTER STATS" over five golf markets.
+//
+// The sport-specific vocabulary now lives in `HubConfig.section_labels` and
+// arrives in the payload (`data.section_labels`), beside the `label`/`title`/
+// `blurb` that were already served per competition. What stays here is the
+// neutral word for each key.
+//
+// The direction matters. Defaults are neutral and OVERRIDES add flavour, so
+// every failure path lands on a label that is plain but true: a hub that
+// declares nothing, an unmapped section key, and a payload cached before this
+// shipped (the hub mirror lives up to 24h) all read "Matches", never another
+// sport's word. The inverse — combat defaults with per-hub escapes — would make
+// silence mean "Fight Markets" again, which is exactly the bug.
 // ---------------------------------------------------------------------------
 
 const SECTION_META: Record<string, { label: string }> = {
   futures: { label: "Tournament Winners" },
-  props: { label: "Fight Props" },
-  matches: { label: "Fight Markets" },
+  props: { label: "Props" },
+  matches: { label: "Matches" },
   awards: { label: "Awards" },
-  season_stats: { label: "Fighter Stats" },
+  season_stats: { label: "Player Stats" },
   series: { label: "Series" },
   more_markets: { label: "More Markets" },
 };
 const SECTION_ORDER = ["futures", "props", "matches", "awards", "season_stats", "series", "more_markets"];
 
-function sectionLabel(key: string): string {
-  // L2-174 Item 3b — acronym-safe so an unmapped section key like "pga_tour_major"
-  // reads "PGA Tour Major", not "Pga Tour Major".
-  return SECTION_META[key]?.label || toTitleCaseAcronymSafe(key);
+/** Neutral heading over the `upcoming` rail when the payload declares none. */
+const UPCOMING_LABEL_FALLBACK = "Upcoming";
+
+function sectionLabel(key: string, served?: Record<string, string> | null): string {
+  // The competition's own word wins when it has one (combat hubs say "Fight
+  // Markets"); otherwise the neutral default; otherwise L2-174 Item 3b's
+  // acronym-safe title case, so an unmapped key like "pga_tour_major" reads
+  // "PGA Tour Major", not "Pga Tour Major".
+  return served?.[key] || SECTION_META[key]?.label || toTitleCaseAcronymSafe(key);
 }
 
 function orderedSections(sections: Record<string, LeagueMarket[]>): [string, LeagueMarket[]][] {
@@ -239,7 +265,10 @@ function HubContent({ competition }: { competition: string }) {
         {hasUpcoming && (
           <section className="mb-12">
             <h2 className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-3">
-              Upcoming Cards
+              {/* UX-P167 (#2167): "Cards" is combat vocabulary. A slam and a
+                  major are tournaments, and this rail printed "Upcoming Cards"
+                  over 12 tennis and 3 golf ones. */}
+              {data.upcoming_label || UPCOMING_LABEL_FALLBACK}
             </h2>
             <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
               {data.upcoming.map((c) => (
@@ -263,7 +292,7 @@ function HubContent({ competition }: { competition: string }) {
               {showHeader && (
                 <div className="flex items-baseline justify-between mb-3">
                   <h2 className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase">
-                    {sectionLabel(key)}
+                    {sectionLabel(key, data.section_labels)}
                   </h2>
                   {showChip && (
                     <span className="font-mono text-[11px] text-text-muted">

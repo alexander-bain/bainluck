@@ -1618,6 +1618,17 @@ export interface HubResponse {
   emoji: string;
   blurb: string;
   sport_key: string;
+  // UX-P167 (#2167) — the section heading vocabulary, declared per competition.
+  //
+  // Sport-SPECIFIC words only: the combat hubs send
+  // `{matches: "Fight Markets", props: "Fight Props", season_stats: "Fighter
+  // Stats"}` and golf/tennis/esports send `{}`. The client holds the neutral
+  // default for every key, so an absent field (an older cached payload — the hub
+  // mirror lives up to 24h) reads plain and true rather than reading like
+  // another sport. Optional for exactly that reason.
+  section_labels?: Record<string, string>;
+  /** Heading over the `upcoming` rail — "Upcoming Cards" for combat, "Upcoming Tournaments" for golf/tennis. */
+  upcoming_label?: string;
   upcoming: HubUpcoming[];
   sections: Record<string, LeagueMarket[]>;
   total_markets: number;
