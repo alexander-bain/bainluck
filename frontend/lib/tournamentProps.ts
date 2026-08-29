@@ -75,6 +75,9 @@ export interface PropOutcome {
   price_state: PriceState;
   /** Does this outcome answer the card's question? Curated, never inferred. */
   is_answer: boolean;
+  /** UX-P157. This row's own book grade — see `lib/liquidity`. */
+  liquidity?: string | null;
+  liquidity_reasons?: string[] | null;
 }
 
 export interface PropMarket {
@@ -117,6 +120,9 @@ export interface PropMarket {
   /** Entity keys of priced outcomes that are not live. */
   stale_outcomes: string[];
   mixed_freshness: boolean;
+  /** UX-P157. The AND over the card's priced rows — see `lib/liquidity`. */
+  liquidity?: string | null;
+  liquidity_reasons?: string[] | null;
 }
 
 /**

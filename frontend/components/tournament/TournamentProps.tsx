@@ -2,7 +2,9 @@
 
 import React from "react";
 
+import LiquidityMark from "../LiquidityMark";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
+import { LIQUIDITY_DEFINITION, isMarked, readLiquidity } from "@/lib/liquidity";
 import {
   FRESHNESS_DEFINITION,
   answerOutcome,
@@ -261,6 +263,15 @@ function PropCard({
   // hidden, and the label says "looks", because that is the strength of the
   // evidence we have. Real settlement detection is lane1's.
   const looksDecided = propIsResolved(market);
+  // THE NON-HOVER PATH ON THE WEB, and the rehearsal for the native one
+  // (UX-P157). A phone browser has no hover either, so the same tap that a
+  // SwiftUI long-press will perform opens the same sentence here. Card-local
+  // state: two cards open at once is fine and closing one must not close the
+  // other.
+  const [revealed, setRevealed] = React.useState<string | null>(null);
+  const toggleReveal = React.useCallback((sentence: string) => {
+    setRevealed((open) => (open === sentence ? null : sentence));
+  }, []);
 
   return (
     <li
@@ -287,6 +298,15 @@ function PropCard({
           {variant !== "sentence" && incomplete === null && (
             <FreshnessMark market={market} variant={variant} />
           )}
+          {/* UX-P157. Beside the freshness chip and NOT merged into it: a
+              question can be quoted four minutes ago on a market nobody will
+              trade at, which is the whole of Q428's residual, and one mark
+              standing for both facts would make that case unsayable. */}
+          <LiquidityMark
+            facts={market}
+            observedAt={market.observed_at}
+            onReveal={toggleReveal}
+          />
           {answer && (
             <span
               className={`shrink-0 text-[17px] font-bold tabular-nums tracking-tight ${
@@ -338,14 +358,26 @@ function PropCard({
                   No number yet
                 </span>
               ) : (
-                <span
-                  className={`shrink-0 tabular-nums ${
-                    outcome.probability_is_live
-                      ? "text-text-primary"
-                      : "text-text-secondary"
-                  }`}
-                >
-                  {formatPropProbability(outcome.probability)}
+                <span className="flex shrink-0 items-center gap-1">
+                  {/* PER ROW, because a field card's leader can be heavily
+                      traded while the tail it is printed above is quoted by
+                      nobody — marking only the card would say the wrong thing
+                      about both ends of it. */}
+                  <LiquidityMark
+                    facts={outcome}
+                    observedAt={outcome.observed_at}
+                    size="sm"
+                    onReveal={toggleReveal}
+                  />
+                  <span
+                    className={`tabular-nums ${
+                      outcome.probability_is_live
+                        ? "text-text-primary"
+                        : "text-text-secondary"
+                    }`}
+                  >
+                    {formatPropProbability(outcome.probability)}
+                  </span>
                 </span>
               )}
             </li>
@@ -360,6 +392,20 @@ function PropCard({
           data-missing={incomplete.subjects.length + incomplete.undeclared}
         >
           {incompleteComparisonNote(incomplete)}
+        </p>
+      )}
+
+      {/* THE TAPPED REVEAL (UX-P157). Inline under the card rather than in a
+          floating popover: a popover on a phone covers the number the reader
+          just asked about, and this sentence is only meaningful while that
+          number is on screen. Dismissed by tapping the mark again. */}
+      {revealed !== null && (
+        <p
+          className="mt-1.5 rounded-lg bg-surface-elevated px-2 py-1.5 text-[11.5px] leading-snug text-text-secondary"
+          data-testid="prop-liquidity-reveal"
+          role="status"
+        >
+          {revealed}
         </p>
       )}
 
@@ -498,6 +544,16 @@ export default function TournamentProps({
       propIncompleteComparison(market) === null &&
       propFreshness(market).state !== "fresh"
   );
+  // The same gate for the mark, over the CARD and every row it prints: a field
+  // card can be unmarked itself while a tail row inside it carries a mark, and
+  // an unexplained symbol is worse than the number it sits beside.
+  const anyThin = shown.some(
+    (market) =>
+      isMarked(readLiquidity(market.liquidity)) ||
+      (market.outcomes ?? []).some((outcome) =>
+        isMarked(readLiquidity(outcome.liquidity))
+      )
+  );
 
   return (
     <section data-testid="tournament-props" data-considered={curated.considered}>
@@ -539,6 +595,36 @@ export default function TournamentProps({
           data-testid="props-freshness-definition"
         >
           {FRESHNESS_DEFINITION}
+        </p>
+      )}
+
+      {/* AND WHAT THE MARK MEANS, ONCE (UX-P157, Alex's illiquidity ruling).
+          Same rule as the sentence above it and deliberately a SECOND
+          paragraph, not an extension of the first: age and thinness are two
+          independent facts about a question, and a reader who has worked out
+          what one mark means has learned nothing about the other. Gated on a
+          mark actually being on screen. */}
+      {anyThin && (
+        <p
+          className="mt-1.5 flex max-w-[62ch] items-start gap-1.5 text-[11px] leading-snug text-text-muted"
+          data-testid="props-liquidity-definition"
+        >
+          <span className="mt-[3px] flex shrink-0 items-center gap-1">
+            <LiquidityMark
+              facts={{ liquidity: "thin", liquidity_reasons: ["no_trades_24h"] }}
+              size="sm"
+              decorative
+            />
+            <LiquidityMark
+              facts={{
+                liquidity: "barely",
+                liquidity_reasons: ["no_trades_24h", "spread_exceeds_price"],
+              }}
+              size="sm"
+              decorative
+            />
+          </span>
+          <span>{LIQUIDITY_DEFINITION}</span>
         </p>
       )}
 

@@ -993,12 +993,45 @@ async def _process_event_batch(
                             event_id=event.id,
                             matchup_title=_group_matchup_title,
                         )
+                        # ── ITS OWN 24h VOLUME (UX-P157, #2256).
+                        #
+                        # The PARENT event row has carried `volume_24h` since it
+                        # was written; the sub-market row never has, and the
+                        # sub-market is the one a question is asked of. Measured
+                        # 2026-08-28 against production: all 336 US Open
+                        # reach-a-round markets — every cell of the bracket
+                        # grid — hold `volume_24h IS NULL`, while their parent
+                        # event rows hold real figures (`910235` = $5,493).
+                        #
+                        # The consequence was not a missing column, it was a
+                        # missing GRADE. Alex's illiquidity ruling asks for at
+                        # least two levels and `market_liquidity` builds them
+                        # from two facts; with this one absent, every cell on
+                        # the surface the ruling is about could only ever reach
+                        # level one. A graded signal with one reachable grade is
+                        # not a graded signal.
+                        #
+                        # `market.volume_24h` is Gamma's own `volume24hr`, already
+                        # parsed by `PolymarketMarket` and already in this loop's
+                        # hand — this writes down a number we were throwing away,
+                        # and it adds no request. NULL-preserving: a market Gamma
+                        # serves without the field keeps NULL, which grades as
+                        # unknown and draws nothing, rather than a fabricated 0
+                        # that would read downstream as a measured "nobody traded
+                        # this".
+                        sub_volume_24h = (
+                            int(market.volume_24h)
+                            if market.volume_24h is not None
+                            else None
+                        )
                         sub_set = {
                             "name": sub_name,
                             "market_tier": sub_tier,
                             "status": "open" if event.active else "resolved",
                             "event_id": parent_event_id,
                             "updated_at": func.now(),
+                            "volume_24h": sub_volume_24h,
+                            "volume_updated_at": func.now(),
                         }
                         if sub_meta_insert:
                             # MERGE, never clobber — same COALESCE(md,'{}') || idiom
@@ -1040,6 +1073,8 @@ async def _process_event_batch(
                             group_type="polymarket_sub_market",
                             event_id=parent_event_id,
                             market_metadata=sub_meta_insert,
+                            volume_24h=sub_volume_24h,
+                            volume_updated_at=func.now(),
                         ).on_conflict_do_update(
                             index_elements=["source", "external_id"],
                             set_=sub_set,

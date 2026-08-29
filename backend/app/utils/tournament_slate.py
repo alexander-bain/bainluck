@@ -57,6 +57,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
+from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
 from app.utils.tournament_board import (
     DARK_PRICE_HOURS,
     draw_label,
@@ -159,6 +160,11 @@ def _side_view(
         # muting the pair with no reason given.
         "age_hours": round(age, 2) if age is not None else None,
         "price_state": price_state(age),
+        # This side's OWN book grade (UX-P157). Both sides of a match are two
+        # tokens on one venue book, but they are two DIFFERENT venue rows here
+        # and either may be the thin one, so neither speaks for the other.
+        "liquidity": (loaded.get("liquidity") or {}).get("level") or LIQUIDITY_UNKNOWN,
+        "liquidity_reasons": sorted((loaded.get("liquidity") or {}).get("reasons") or []),
     }
 
 
@@ -355,6 +361,13 @@ def build_match_row(
         "favourite": favourite,
         "has_moved": any(abs(m) > MOVE_DEAD_BAND for m in moves),
         "source_count": 1,
+        # THE AND, again: a match row prints one pair, so it is as solid as its
+        # thinner side. A 90/10 built from a traded favourite and an untraded
+        # underdog is not a traded 90/10 — the underdog's book is half of it.
+        "liquidity": thinnest_liquidity([v.get("liquidity") for v in views]),
+        "liquidity_reasons": sorted(
+            {r for v in views for r in (v.get("liquidity_reasons") or [])}
+        ),
     }, None
 
 
@@ -698,6 +711,8 @@ def build_props(
     for prop in TournamentRegister(register).props:
         views: list[dict[str, Any]] = []
         priced_times: list[Optional[datetime]] = []
+        card_liquidity: list[Optional[str]] = []
+        card_liquidity_reasons: set[str] = set()
         # WHAT THE REGISTER DECLARED, not what happened to arrive.  A leg is
         # identified by its external id where it has one, because our own
         # `market_id` is a local surrogate a re-ingest can move.
@@ -757,7 +772,25 @@ def build_props(
                 # register, never inferred here — see the answer rule in
                 # `tournament_register.validate_prop`.
                 "is_answer": outcome.get("is_answer") is True,
+                # Its own book grade (UX-P157). Per row rather than per card,
+                # because a field card's leader can be heavily traded while the
+                # tail rows it is printed above are not quoted by anybody.
+                "liquidity": (
+                    (loaded.get("liquidity") or {}).get("level") or LIQUIDITY_UNKNOWN
+                ),
+                "liquidity_reasons": sorted(
+                    (loaded.get("liquidity") or {}).get("reasons") or []
+                ),
             })
+            if probability is not None:
+                # Only a PRICED row votes on the CARD's grade, matching the
+                # freshness rule three lines up. An unpriced row has no book
+                # reading to be thin, and letting it vote would mark every
+                # partially-quoted field card as barely traded.
+                card_liquidity.append((loaded.get("liquidity") or {}).get("level"))
+                card_liquidity_reasons.update(
+                    (loaded.get("liquidity") or {}).get("reasons") or []
+                )
 
         # The card's own state is the AND over its priced outcomes: a ranked
         # field is a published artifact too, and a stale member can outrank
@@ -814,6 +847,9 @@ def build_props(
             ),
             "stale_outcomes": stale_outcomes,
             "mixed_freshness": 0 < len(stale_outcomes) < len(priced_times),
+            # THE AND over the card's priced rows (UX-P157, #2256).
+            "liquidity": thinnest_liquidity(card_liquidity),
+            "liquidity_reasons": sorted(card_liquidity_reasons),
         })
     return out
 

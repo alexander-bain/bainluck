@@ -3,6 +3,7 @@
 import React from "react";
 
 import EventCardShell from "@/components/EventCardShell";
+import LiquidityMark from "@/components/LiquidityMark";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
@@ -202,6 +203,24 @@ function SideLine({
           >
             {move}
           </span>
+        )}
+        {/* UX-P157. Before the number and inside the same baseline run, so it
+            qualifies THIS side rather than the row: on a match the two sides
+            are two venue rows and the underdog's is routinely the thin one.
+            Decorative — the whole match card is a link (Alex's UX-P154 item 2)
+            and a focusable control inside it would put a second tab stop in
+            front of every fixture. The `title` still answers a mouse, and the
+            row's own detail note carries the sentence for everyone else. */}
+        {entry.priced && (
+          <LiquidityMark
+            facts={{
+              liquidity: side.liquidity,
+              liquidity_reasons: side.liquidity_reasons,
+            }}
+            observedAt={side.observedAt}
+            size="sm"
+            decorative
+          />
         )}
         {entry.priced && (
           <span

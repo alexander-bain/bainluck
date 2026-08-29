@@ -55,6 +55,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from app.utils.futures_source_merge import blend_with_verdict
+from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
 from app.utils.tournament_register import (
     STALE_PRICE_HOURS,
     TournamentRegister,
@@ -249,6 +250,11 @@ def build_boards(
             # oldest, the display needs the newest, and a max destroys one of
             # them at the moment it is taken.
             contributor_times: list[Optional[datetime]] = []
+            # And every contributor's OWN book grade, for the same reason: the
+            # row is as solid as its THINNEST leg, so the list has to survive
+            # long enough for `thinnest_liquidity` to take the worst of it.
+            contributor_liquidity: list[Optional[str]] = []
+            contributor_liquidity_reasons: set[str] = set()
             settled_result: Optional[str] = None
 
             for block in player.get("sources") or []:
@@ -318,7 +324,16 @@ def build_boards(
                         # than re-deriving a threshold client-side.
                         "age_hours": round(source_age, 2) if source_age is not None else None,
                         "price_state": price_state(source_age),
+                        # How thin THIS venue's book is (UX-P157). Per source for
+                        # the same reason `price_state` is: the row's verdict is
+                        # the worst of them, and a UI that wants to name the thin
+                        # leg reads it here rather than re-deriving it.
+                        "liquidity": (loaded.get("liquidity") or {}).get("level"),
                     }
+                )
+                contributor_liquidity.append((loaded.get("liquidity") or {}).get("level"))
+                contributor_liquidity_reasons.update(
+                    (loaded.get("liquidity") or {}).get("reasons") or []
                 )
                 if isinstance(block.get("outcome_id"), int):
                     contributors.append((str(block.get("source")), block["outcome_id"]))
@@ -349,6 +364,11 @@ def build_boards(
                         "divergent": False,
                         "trend": [],
                         "trend_delta": None,
+                        # Settled means settled: there is no live book behind a
+                        # result to grade, and `unknown` draws nothing. Present
+                        # rather than absent so every row has one shape.
+                        "liquidity": LIQUIDITY_UNKNOWN,
+                        "liquidity_reasons": [],
                     }
                 )
                 continue
@@ -418,6 +438,11 @@ def build_boards(
                     "divergent": divergence is not None,
                     "trend": trend,
                     "trend_delta": trend_delta,
+                    # ── HOW THIN THE MARKET BEHIND THIS ROW IS (UX-P157,
+                    # #2256). The AND over contributors, exactly like `age`
+                    # above: one number, answering for every book inside it.
+                    "liquidity": thinnest_liquidity(contributor_liquidity),
+                    "liquidity_reasons": sorted(contributor_liquidity_reasons),
                 }
             )
 

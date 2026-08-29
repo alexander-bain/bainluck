@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import LiquidityMark from "../LiquidityMark";
 import TrendSparkline from "./TrendSparkline";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore from "./ShowMore";
@@ -47,6 +48,10 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
   // Names the old leg when only one of them is old (UX-P135), so a row muted
   // by a stale Polymarket price does not read as "nobody has looked at this".
   const freshness = rowFreshnessLabel(row);
+  const [revealed, setRevealed] = React.useState<string | null>(null);
+  const toggleReveal = React.useCallback((sentence: string) => {
+    setRevealed((open) => (open === sentence ? null : sentence));
+  }, []);
 
   return (
     <li
@@ -96,9 +101,35 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
                   {freshness}
                 </span>
               )}
+              {/* UX-P157. On the honesty line rather than beside the number,
+                  and that is a measurement, not a preference: the number track
+                  is 52px and "100%" in 19px bold tabular figures already fills
+                  it. This line is where the row's other caveats live, so the
+                  mark is in company rather than alone.
+
+                  Universal means ONE symbol and ONE sentence everywhere, not
+                  one pixel offset everywhere — the four surfaces have four
+                  different amounts of room and pretending otherwise is how a
+                  signal gets dropped from the cramped one. */}
+              <LiquidityMark
+                facts={row}
+                observedAt={row.observed_at}
+                size="sm"
+                className="ml-1 align-baseline"
+                onReveal={toggleReveal}
+              />
             </>
           )}
         </div>
+        {revealed !== null && (
+          <p
+            className="mt-1 text-[10.5px] leading-snug text-text-secondary"
+            data-testid="row-liquidity-reveal"
+            role="status"
+          >
+            {revealed}
+          </p>
+        )}
       </div>
 
       <div className="text-right">
