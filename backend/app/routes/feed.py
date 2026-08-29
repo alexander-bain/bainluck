@@ -4664,8 +4664,15 @@ async def _load_personalization_context(
 ) -> PersonalizationContext:
     """Load all user personalization data into a context object.
 
-    Single query pattern: load favorites, preferences, and pins in parallel-ish
-    SQLAlchemy queries, then assemble into the context.
+    The queries below are SEQUENTIAL round trips on one ``AsyncSession``, not
+    parallel ones — a session is not safe for concurrent use, so there is no
+    ``gather`` to be had here. (A previous docstring called them "parallel-ish";
+    it was describing an intention, not the code, and this lane has now been
+    misled by an optimistic comment often enough to say plainly what runs.)
+
+    That makes the ROUND-TRIP COUNT the cost driver rather than the work in any
+    one query, which is why the user-scoped reads are skipped outright for an
+    anonymous principal instead of being filtered to nothing. See LAT-P113.
     """
     if not user and not session_id:
         return PersonalizationContext()
@@ -4691,19 +4698,54 @@ async def _load_personalization_context(
         )
     interaction_identity_clause = or_(*interaction_identity_filters)
 
-    # Load user favorites, preferences, pins, and recent Discover behavior in parallel
+    # --- LAT-P113: the three user-scoped reads are SKIPPED, not filtered ------
+    #
+    # These were `select(...).where(False)` whenever `user` was None — three
+    # statements that cannot return a row by construction. Production's own
+    # planner says exactly that: each plans to a bare `Result` node with no
+    # table access at all (EXPLAIN ANALYZE on prod, 2026-08-28: 0.016 / 1.225 /
+    # 0.024 ms for `user_favorites` / `user_preferences` / `user_pins`). They
+    # cost ~nothing to RUN and a full round trip to ASK — and the anonymous,
+    # session-only principal that asked all three on every Discover open is, by
+    # LAT-P089's own census, very nearly the whole population of cold opens
+    # (2 users have EVER recorded a Discover interaction).
+    #
+    # Why this is the lever rather than a micro-optimisation, measured on the
+    # deployed slug `f0b512b8` at the native first-paint shape, six fresh
+    # `x-session-id`s: the `personalization` stage is **66-86% of the entire
+    # request** for a brand-new install (36.7 ms p50 against a 44.5 ms total;
+    # the whole remainder is an ~8 ms `cache_shared_hit`). Meanwhile the four
+    # REAL queries execute in 0.877 / 3.408 / 0.046 ms server-side for a
+    # principal the database has never seen. Server-side work is ~5 ms of a
+    # ~37 ms stage, so the stage is round TRIPS, and deleting three provably
+    # empty ones removes 3/7 of the dominant term with no behaviour to change.
+    #
+    # And the whole context is then discarded anyway: for an inert principal it
+    # compares equal to `PersonalizationContext()` and the request takes the
+    # LAT-P089 shared entry. This does NOT replace that check with a cheaper
+    # predicate — LAT-P089 chose structural equality deliberately so that a
+    # field added later is covered without anyone remembering a probe, and that
+    # reasoning is untouched here. The only claim being made is narrower and
+    # needs no equality argument: do not ask a question whose answer is fixed.
+    favorites: list[UserFavorite] = []
+    prefs: UserPreference | None = None
+    pins: list[UserPin] = []
     if user:
-        favorites_query = select(UserFavorite).where(UserFavorite.user_id == user.id)
-        prefs_query = select(UserPreference).where(UserPreference.user_id == user.id)
-        pins_query = select(UserPin).where(UserPin.user_id == user.id)
-    else:
-        favorites_query = select(UserFavorite).where(False)
-        prefs_query = select(UserPreference).where(False)
-        pins_query = select(UserPin).where(False)
+        favorites_result = await db.execute(
+            select(UserFavorite).where(UserFavorite.user_id == user.id)
+        )
+        prefs_result = await db.execute(
+            select(UserPreference).where(UserPreference.user_id == user.id)
+        )
+        pins_result = await db.execute(
+            select(UserPin).where(UserPin.user_id == user.id)
+        )
+        favorites = list(favorites_result.scalars().all())
+        prefs = prefs_result.scalar_one_or_none()
+        pins = list(pins_result.scalars().all())
 
-    favorites_result = await db.execute(favorites_query)
-    prefs_result = await db.execute(prefs_query)
-    pins_result = await db.execute(pins_query)
+    # Recent Discover behaviour — these DO run for a session-only principal,
+    # because a session can carry interactions even with no user attached.
     interactions_result = await db.execute(
         select(
             DiscoverInteraction.category,
@@ -4773,8 +4815,6 @@ async def _load_personalization_context(
         .order_by(func.max(DiscoverInteraction.created_at).desc())
     )
 
-    favorites = favorites_result.scalars().all()
-
     team_relations: dict[int, set[str]] = {}
     team_weights: dict[int, float] = {}
     for fav in favorites:
@@ -4783,12 +4823,10 @@ async def _load_personalization_context(
         team_relations[fav.team_id].add(fav.relation_type)
         team_weights[fav.team_id] = float(fav.weight) if fav.weight else 1.0
 
-    prefs = prefs_result.scalar_one_or_none()
     sport_affinities = (
         prefs.sport_affinities if prefs and prefs.sport_affinities else {}
     )
 
-    pins = pins_result.scalars().all()
     pinned_event_ids = {p.target_id for p in pins if p.pin_type == "event"}
     pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
 
