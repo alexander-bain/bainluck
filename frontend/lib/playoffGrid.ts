@@ -43,6 +43,7 @@ export type GridCellState =
   /** ALARM: no cell registered for this player × round. Nobody censused it. */
   | "unregistered";
 
+import { isMarked, liquidityReveal, readLiquidity } from "./liquidity";
 import type { PlayerImage } from "./slate";
 
 export interface GridCellSource {
@@ -71,6 +72,9 @@ export interface GridCell {
   is_alarm: boolean;
   freshest_observed_at?: string | null;
   partially_unlinked?: boolean;
+  /** UX-P157. How thin the market behind this cell is — see `lib/liquidity`. */
+  liquidity?: string | null;
+  liquidity_reasons?: string[] | null;
 }
 
 export interface GridColumn {
@@ -228,6 +232,25 @@ export function gridWidthPx(columnCount: number): number {
   return GRID_NAME_WIDTH_PX + columnCount * GRID_COLUMN_WIDTH_PX;
 }
 
+/**
+ * How many cells wear an illiquidity mark (UX-P157).
+ *
+ * Counted rather than assumed, and it is what gates the legend: a grid with no
+ * marked cell must not print a key explaining a symbol that is not on screen —
+ * the same rule the `no mkt` clause beside it already follows. It is also the
+ * honest denominator for the report, because "the signal is live" and "the
+ * signal fires on this draw" are two different claims.
+ */
+export function markedCellCount(grid: PlayoffGrid): number {
+  let marked = 0;
+  for (const row of grid.rows) {
+    for (const cell of Object.values(row.cells ?? {})) {
+      if (isMarked(readLiquidity(cell?.liquidity))) marked += 1;
+    }
+  }
+  return marked;
+}
+
 /** The server payload, in this module's own casing. No logic, no defaults. */
 export function readPlayoffGrid(payload: PlayoffGridPayload | null | undefined): PlayoffGrid | null {
   if (!payload) return null;
@@ -284,8 +307,27 @@ export function gridCellGlyph(cell: GridCell): string {
   }
 }
 
-/** The sentence behind the glyph, for `title=` and for screen readers. */
+/**
+ * The sentence behind the glyph, for `title=` and for screen readers.
+ *
+ * Since UX-P157 the illiquidity reveal is APPENDED here rather than living only
+ * on the mark itself. A grid value track is 46px on a phone: the mark inside it
+ * is eight pixels wide and is not a hover target anybody can reliably find, so
+ * the cell's own tooltip — which covers the whole cell — has to carry the
+ * answer too. Appended and not substituted: "0.8% to reach the quarter-final"
+ * and "barely traded" are two different things the reader needs, and the
+ * second one is only interesting because the first one is on screen.
+ */
 export function gridCellExplanation(cell: GridCell, columnLabel: string): string {
+  const base = gridCellStateExplanation(cell, columnLabel);
+  const reveal = liquidityReveal(
+    { liquidity: cell.liquidity, liquidity_reasons: cell.liquidity_reasons },
+    cell.observed_at
+  );
+  return reveal === null ? base : `${base} ${reveal}`;
+}
+
+function gridCellStateExplanation(cell: GridCell, columnLabel: string): string {
   switch (cell.state) {
     case "live":
       // UX-P146: was "Live price." Alex's product-wide ruling on the noun.

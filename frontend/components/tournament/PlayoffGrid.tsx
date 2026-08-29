@@ -2,6 +2,8 @@
 
 import React from "react";
 
+import LiquidityMark from "../LiquidityMark";
+import { LIQUIDITY_DEFINITION } from "@/lib/liquidity";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
@@ -13,6 +15,7 @@ import {
   gridCellGlyph,
   gridScrolls,
   gridWidthPx,
+  markedCellCount,
   type GridCell,
   type GridColumn,
   type PlayoffGrid as PlayoffGridModel,
@@ -207,8 +210,19 @@ function Cell({
       } ${barred ? "block w-full" : ""}`}
     >
       <span className="sr-only">{explanation} </span>
-      <span aria-hidden="true" className={barred ? "block" : undefined}>
+      <span
+        aria-hidden="true"
+        className={barred ? "flex items-center justify-end gap-1" : undefined}
+      >
         {text}
+        {/* UX-P157. Inside the number's own line so it cannot be mistaken for
+            a mark on the row or on the column — it belongs to THIS cell.
+            No `onReveal`: a 46px value track has nowhere to put a panel, and
+            the cell's `title` already carries the same sentence (see
+            `gridCellExplanation`). The sr-only text above carries it too, so
+            the mark is `aria-hidden` chrome here rather than a second,
+            duplicate announcement on every thin cell in a 336-cell grid. */}
+        <LiquidityMark facts={cell} observedAt={cell.observed_at} size="sm" decorative />
       </span>
       {barred && <SparkBar probability={cell.probability as number} />}
     </span>
@@ -374,6 +388,10 @@ export default function PlayoffGrid({
   const visible = expanded ? grid.rows : grid.rows.slice(0, COLLAPSED_LIST_COUNT);
   const template = gridTemplate(grid.columns.length);
   const scrolls = gridScrolls(grid.columns.length);
+  // Over the WHOLE grid, not the five visible rows: the key explains a symbol
+  // that is one "show more" away, and a key that appears on expand would look
+  // like the marks appeared with it.
+  const marked = markedCellCount(grid);
 
   return (
     <section
@@ -544,6 +562,42 @@ export default function PlayoffGrid({
         Nothing here is calculated from anything else: every number is one a market
         quoted for exactly the question in its column.
       </p>
+
+      {/* ═══ THE ILLIQUIDITY KEY (UX-P157, Alex's ruling / #2256) ═══
+
+          Said ONCE, under the grid, and only when the grid actually has marks
+          on it — a key to a symbol that is not on screen is furniture. The two
+          glyphs are the real component at the real size, not a drawing of it:
+          if the mark ever changes shape this key changes with it, which is the
+          only way a key stays true without anybody remembering to update it. */}
+      {marked > 0 && (
+        <p
+          className="mt-1.5 flex max-w-[80ch] items-start gap-1.5 text-[11px] leading-snug text-text-muted"
+          data-testid="grid-liquidity-key"
+          data-marked={marked}
+        >
+          <span className="mt-[3px] flex shrink-0 items-center gap-1">
+            <LiquidityMark
+              facts={{ liquidity: "thin", liquidity_reasons: ["no_trades_24h"] }}
+              size="sm"
+              decorative
+            />
+            <LiquidityMark
+              facts={{
+                liquidity: "barely",
+                liquidity_reasons: ["no_trades_24h", "spread_exceeds_price"],
+              }}
+              size="sm"
+              decorative
+            />
+          </span>
+          <span>
+            <b className="font-semibold text-text-secondary">{marked}</b> of{" "}
+            {grid.pricedCells} numbers here come off a market barely anybody is
+            trading. {LIQUIDITY_DEFINITION}
+          </span>
+        </p>
+      )}
 
       <SumCheck grid={grid} />
     </section>

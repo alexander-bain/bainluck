@@ -65,6 +65,11 @@ export interface SlateSide {
   /** THIS side's own freshness (UX-P135). The row's verdict is the AND. */
   age_hours: number | null;
   price_state: PriceState;
+  /** When a probability for THIS side last reached us. */
+  observed_at?: string | null;
+  /** UX-P157. This side's own book grade — see `lib/liquidity`. */
+  liquidity?: string | null;
+  liquidity_reasons?: string[] | null;
 }
 
 export interface SlateMatch {
@@ -113,6 +118,9 @@ export interface SlateMatch {
   favourite: string | null;
   has_moved: boolean;
   source_count: number;
+  /** UX-P157. The AND over both sides — see `lib/liquidity`. */
+  liquidity?: string | null;
+  liquidity_reasons?: string[] | null;
   /**
    * This match's OWN broadcast, when the register names one (UX-P137, ruling
    * 8). Absent today for every match — see `matchBroadcast` for why the field

@@ -74,6 +74,9 @@ export interface TournamentRow {
   divergent: boolean;
   trend: TournamentTrendPoint[];
   trend_delta: number | null;
+  /** UX-P157. The AND over this row's contributors — see `lib/liquidity`. */
+  liquidity?: string | null;
+  liquidity_reasons?: string[] | null;
 }
 
 export interface TournamentBoardData {

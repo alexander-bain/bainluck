@@ -140,6 +140,11 @@ export interface MatchListSide {
   titleChance: number | null;
   isWinner: boolean;
   placeholder: SidePlaceholder;
+  /** UX-P157. This side's own book grade — see `lib/liquidity`. */
+  liquidity?: string | null;
+  liquidity_reasons?: string[] | null;
+  /** The side's own last reading, for the reveal's "precisely when". */
+  observedAt?: string | null;
 }
 
 export interface MatchListEntry {
@@ -326,6 +331,11 @@ function sideFromSlate(
     titleChance: titleChances[side.entity_key] ?? null,
     isWinner: winnerKey !== null && winnerKey === side.entity_key,
     placeholder: "none",
+    // UX-P157. PER SIDE and not per row: a 90/10 is two separate venue rows,
+    // and it is routinely the underdog's that nobody will trade at.
+    liquidity: side.liquidity ?? null,
+    liquidity_reasons: side.liquidity_reasons ?? null,
+    observedAt: side.observed_at ?? null,
   };
 }
 

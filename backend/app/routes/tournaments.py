@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
+from app.utils.market_liquidity import grade_liquidity
 from app.utils.tournament_advancement import build_advancement
 from app.utils.tournament_board import TREND_DAYS, build_boards
 from app.utils.tournament_event_link import resolve_matchup_events
@@ -175,6 +176,12 @@ async def _load_prices(
     ``futures_outcomes.last_updated``.  The Day-1 census measured the latter at
     a month stale on the Polymarket men's field while its snapshots ran current
     — a page that trusted it would report confidence it does not have.
+
+    **AND THE BOOK THE PRICE CAME OFF**, since UX-P157.  This one loader feeds
+    every surface on the hub — boards, grid, bracket, slate, props — so a fact
+    added here reaches all five without five opinions about it, and a fact added
+    anywhere else would be a sixth.  ``liquidity`` is graded once, by
+    ``utils.market_liquidity``, and travels with the number it describes.
     """
     if not outcome_ids:
         return {}
@@ -189,7 +196,45 @@ async def _load_prices(
                 # the slate's move is only meaningful against the same row's own
                 # opening price.
                 FuturesOutcome.opening_probability,
-            ).where(FuturesOutcome.id.in_(outcome_ids))
+                # ── THE BOOK (UX-P157, #2256).
+                #
+                # ⚠️ THIS READ HAS A NAMED DEPENDENCY: **PR #2259 (Q428)**, which
+                # is CERT-431 GREEN and unmerged as of 2026-08-28. Q428 teaches
+                # `tournament_price_refresh` to write bid/ask alongside the price
+                # it produced; until it lands, that rail re-prices this surface
+                # every ten minutes and leaves these two columns frozen at the
+                # last full poll.
+                #
+                # MEASURED HERE, not inferred: of the 336 US Open ladder markets,
+                # **320 of the 325 comparable** hold a stored book that differs
+                # from Gamma's live one right now (specimen `0x01837d5aba`:
+                # stored 0.23/0.24, live 0.01/0.49). So pre-merge, the grade is
+                # computed from a book that is a DIFFERENT observation from the
+                # number beside it — Q428's "two observations wearing one
+                # timestamp", in the field that reads them.
+                #
+                # Shipped anyway, and the reason is the same one that lets this
+                # signal use a test Q428 refused: the failure mode is a mark that
+                # is early or late on a tail cell, with the number still printed
+                # beside it. It cannot delete a cell and it cannot change a
+                # number. The post-merge distribution was measured too and is in
+                # the UX-P157 report.
+                FuturesOutcome.current_yes_bid,
+                FuturesOutcome.current_yes_ask,
+                # The venue's own 24h figure, market-level: Kalshi and
+                # Polymarket both report volume per MARKET, not per outcome, so
+                # both legs of a binary share it. Joined rather than a second
+                # round trip — one extra column on an existing index lookup.
+                FuturesMarket.volume_24h,
+            )
+            # OUTER, and it matters: an INNER join would drop the whole price
+            # row if a market were ever missing, and a dropped price does not
+            # render as "no liquidity data" — it renders as `unlinked`, the
+            # grid's red alarm. A liquidity signal must not be able to blank a
+            # number. Worst case here is a `None` volume, which grades as
+            # unknown and draws nothing.
+            .outerjoin(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+            .where(FuturesOutcome.id.in_(outcome_ids))
         )
     ).all()
 
@@ -222,6 +267,13 @@ async def _load_prices(
             ),
             "observed_at": observed_by_id.get(row.id),
             "source_name": row.name,
+            # {"level": ..., "reasons": [...]}. Graded here, once, so no
+            # builder downstream can hold a second opinion about the same book.
+            "liquidity": grade_liquidity(
+                bid=row.current_yes_bid,
+                ask=row.current_yes_ask,
+                volume_24h=row.volume_24h,
+            ),
         }
         for row in rows
     }
