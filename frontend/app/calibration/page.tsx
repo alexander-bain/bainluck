@@ -1986,6 +1986,34 @@ export default function CalibrationPage() {
                 not because our prices got better. We publish the count per cell so that is
                 checkable and so the smaller curve is never read as a fixed one.
               </span>
+              {/* CAL-P119 — Alex ruled polymarket/baseball on 2026-08-28 as
+                  "EXCLUDE NOW + FIX WRITER", and the second half of that is a
+                  promise this page has to keep. Those rows are NOT structurally
+                  ineligible the way an index ladder's rungs are: they are real
+                  questions whose published price a writer manufactured. So the
+                  page must never let a temporary exclusion read as a permanent
+                  one. Rendered from the payload, per cell, with the condition
+                  that ends it — when the writer is fixed the backend stops
+                  emitting the cell and this sentence disappears on its own. */}
+              {data.nonexclusive_bundle_filter.temporary_by_cell &&
+                Object.keys(data.nonexclusive_bundle_filter.temporary_by_cell).length > 0 && (
+                  <span
+                    className="text-text-muted"
+                    data-testid="calibration-nonexclusive-bundle-temporary"
+                  >
+                    {" "}
+                    <strong className="text-text-primary">Part of this is temporary by design.</strong>{" "}
+                    {Object.entries(data.nonexclusive_bundle_filter.temporary_by_cell)
+                      .map(([cell, condition]) => `${cell} — returns when ${condition}`)
+                      .join("; ")}
+                    . Those rows are real questions whose published price was written wrong, not
+                    rows that were never forecasts &mdash; the market&rsquo;s own quote is intact and
+                    only our copy of it is bad. So they are set aside while that defect is fixed,
+                    and no longer: once it is, they re-enter the curve and this exclusion empties
+                    itself. We are not claiming they are gone for good &mdash; if this sentence
+                    outlives the fix, the exclusion is the thing that is wrong.
+                  </span>
+                )}
             </li>
           )}
           {data.exclusion_symmetry && (

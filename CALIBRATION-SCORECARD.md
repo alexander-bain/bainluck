@@ -146,6 +146,24 @@ actually serves. There is not a single holdout, sample, or parallel-rail number 
 > `20:37:41Z` beat.** §6e and CAL-P118-1. Published number **1.89 pp, FLAT**, on a genuinely new
 > curve (`23:35:51Z`, q268) carrying the same staged generation.
 
+> **CAL-P119, 2026-08-29 — the second cell is RULED, and its exclusion is the first one on this
+> board that is designed to end.** Alex ruled `polymarket/baseball` (rank 1, the largest cell on the
+> board): **EXCLUDE NOW + FIX WRITER**. The miswritten Player-Props rows leave the published curve
+> with the same named, counted disclosure as `kalshi/economics` — **rank 1 crosses off, 4.71 →
+> 2.71 pp, cell stays material** — and the writer that produced their prices is being repaired in
+> parallel by lane1 queue 022. **The pair is now decided: ~5.7% of the published curve, ruled as a
+> pair rather than as two separate 3%s**, which is what §6c asked for. 🔴 **The two exclusions are
+> not the same kind and the page must not flatten them.** Rank 2's rows were *never forecasts of a
+> single question* — structural, permanent. Rank 1's rows are **real questions whose published price
+> our own writer manufactured** (a leg quoted 0.0355 published at 0.5005) while the market's quote
+> stayed intact — so its exclusion is **TEMPORARY BY DESIGN: when the writer is repaired the rows
+> return and the exclusion empties itself.** The disclosure surface gained one field for exactly
+> that (`temporary_by_cell`, keyed per cell, valued with the condition that ENDS the exclusion),
+> it is **empty for rank 2 deliberately**, and it is rendered from the payload so the sentence
+> disappears on its own when the backend stops emitting the cell. §6f. Published number **1.89 pp,
+> FLAT** — a fourth beat (`00:36:47Z`) on the *same* `20:35:54Z` staged population, now
+> **`units_drifted` 128 of 128**, so CAL-P118's finding did not merely hold, it completed.
+
 ---
 
 ## 0. Why this page exists, and what it replaces
@@ -877,6 +895,40 @@ beats is still not a rate.
 > asks of it, but this page must not bank a datapoint for a beat that republished a three-hour-old
 > generation. It did not. See §6e.
 
+#### Re-read 2026-08-29 `00:4xZ` (~17:4x PT) — CAL-P119: **six beats, two clean in a row, and the bank is now fully drifted**
+
+```
+RULING 009 FREEZE SCORE — 22 of the last 24
+  3/6 clean so far (window 24)   (3 misses; 2 allowed)
+  .#..##   <- oldest ... newest   ('#' = clean, '.' = miss)
+  window   2026-08-28T19:40:52Z -> 2026-08-29T00:36:48Z
+  ring     168 observations, 162 excluded as pre-baseline
+  VERDICT  WINDOW_NOT_FULL   (best still reachable: 21/24)
+```
+
+**The ring rolled by exactly one** — 163 pre-baseline exclusions became 162 against a fixed 168
+observations, which is the mechanic CAL-P118 said the countdown now depends on entirely. Nothing
+else moved: 3 misses against 2 allowed, `reachable_if_all_remaining_clean` still **21**, still below
+the required 22, so **this window remains arithmetically lost** and the earliest lift is still the
+ring rolling all three misses off, no sooner than **~2026-08-29 22:40Z**.
+
+Two clean beats in a row (`23:35:51Z`, `00:36:47Z`) is the best run since the baseline. **Post-v3921
+is 3 clean of 6.** Six beats is still not a rate, and this page does not report one.
+
+*One transcription note, because the freeze score is a live REVERT trigger and its output must not
+drift silently: CAL-P118 recorded the `22:20:23Z` beat as `,` (`cancelled`) and this read renders
+that position `.`. Both count as a miss and no number above changes, but the two reads disagree on
+the glyph and the disagreement is recorded rather than reconciled by choosing one.*
+
+> 🔴 **The fourth beat republished the same population again, and the bank is now fully drifted.**
+> `00:36:47Z` carries `staged.staged_at = 20:35:54Z`, `units_banked 128`, **`units_drifted` 128 —
+> all 128 of them, up from 109** — `frozen_over_drift: true`, `rolling_restage: true`,
+> `units_this_beat 6`. The headline is **1.89 pp** on all four beats because all four publish the
+> **same `20:35:54Z` generation**. CAL-P118's structural finding did not merely hold; it completed:
+> **there is now no unit in the published curve that has not drifted from the database it claims to
+> describe.** `availability` still reads `"stale"`, so **criterion 5 is still RED.** No datapoint is
+> banked for this beat either.
+
 ---
 
 ## 6. The inventory — every queued cell, ordered by excess
@@ -901,7 +953,7 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 
 | # | published cell | cls | ECE | n | gap | bar | excess | σ | excess-outcomes | mechanism known? | status |
 |--:|---|:-:|--:|--:|--:|--:|--:|--:|--:|---|---|
-| 1 | `polymarket/baseball` | B | 4.80 | 43,768 | +3.03 | 3.0 | +1.80 | 7.5 | 78,782 | ✅ **named and designed (CAL-P117, §6c)** — the two banked mechanisms are worth −0.53 pp and are NOT it; 54.4% is `Player Props` containers whose published price is a manufactured coin flip. K′ → **2.71 pp PASS**, 17,827 rows | **ZERO** — designed, unbuilt |
+| 1 | `polymarket/baseball` | B | 4.80 | 43,768 | +3.03 | 3.0 | +1.80 | 7.5 | 78,782 | ✅ **named, designed AND RULED (CAL-P117 §6c, Alex 2026-08-28 "EXCLUDE NOW + FIX WRITER")** — 54.4% is `Player Props` containers whose published price is a manufactured coin flip. K′ → **2.71 pp PASS**, 17,827 rows. Exclusion is **TEMPORARY BY DESIGN**, §6f | **ZERO** — ruled, unbuilt (disclosure surface BUILT, §6f) |
 | 2 | `kalshi/economics` | C | 5.29 | 28,613 | −0.47 | 3.0 | +2.29 | 7.8 | 65,524 | ✅ **named, designed AND RULED (CAL-P114 §6b, Alex 2026-08-28 option b)** — 99.7% cumulative index ladders; rules E+E2+E3 → 2.61 pp PASS, **approved with disclosure** | **ZERO** — ruled, unbuilt (disclosure surface BUILT, §6d) |
 | 3 | `polymarket/esports` | B | 7.59 | 14,053 | +6.02 | 3.0 | +4.59 | 10.9 | 64,503 | ✅ **named and designed (CAL-P112, §6a; re-checked on the exact rail, CAL-P114)** — the 1-winner tail `esports_multi_bundle_filter` cannot reach | **ZERO** — designed, unbuilt |
 | 4 | `polymarket/soccer` | B | 3.42 | 106,803 | +2.16 | 3.0 | +0.42 | 2.8 | 44,857 | ❌ **none — the named mechanism was measured on the published cell and REFUSED (CAL-P118, §6e)**; O/U ladder coherence reaches 7.4% of the cell and moves it **+0.03 pp, worse on both holdout halves** | **ZERO** — and no longer designed |
@@ -924,11 +976,11 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 
 By source: **polymarket 9 cells / 263,728** · **odds_api_bookmaker 6 / 82,345** · **kalshi 5 / 132,604**.
 
-**Scoreboard: 0 of 20 cells crossed off. 2 have a built rule and 4 more a designed one (all worth
-0.00 pp today). 3 have a shipped rule that did not clear the cell. 2 have a measured rule that was
-refused. 10 have no rule at all.** The four designed cells — ranks **1, 2, 3 and 17** — carry
-**218,385 of the board's 478,677 excess-outcomes, 45.6%**, and every one of them lands the day the
-freeze lifts.
+**Scoreboard: 0 of 20 cells crossed off. 2 are RULED and landable (ranks 1 and 2) and 2 more are
+designed but unruled (ranks 3 and 17) — all four worth 0.00 pp today. 3 have a shipped rule that did
+not clear the cell. 2 have a measured rule that was refused. 10 have no rule at all.** Those four
+cells carry **218,385 of the board's 478,677 excess-outcomes, 45.6%**, and every one of them lands
+the day the freeze lifts.
 
 > **CAL-P118 moved rank 4 out of the designed column, and that is the second time a ✅ on this table
 > has not survived contact with its own cell.** Rank 1's two mechanisms were worth −0.53 pp
@@ -938,6 +990,14 @@ freeze lifts.
 > `calibration_cell_replica` and re-checked on the exact rail by CAL-P114, which is a weaker
 > guarantee than rank 1's and rank 2's direct folds. Rank 3 is a Polymarket cell and is the largest
 > exposure left on this board.
+
+> **CAL-P119 changed what the `crossed off?` column will have to mean.** Rank 1 is ruled and will
+> cross off at 2.71 pp — but **its exclusion is temporary by design** (§6f), so the rows it removes
+> are expected back once lane1 queue 022 repairs the writer. **A cell crossed off behind a temporary
+> exclusion is not a cell that is done.** When the rows return this cell must be re-scored, and this
+> table needs to survive that without quietly keeping a ✅ it no longer earns. **Rank 1's row is
+> therefore the first on this board that carries a scheduled re-open**, and nobody may read the
+> board's eventual "1 of 20 crossed off" as 1 of 20 permanently solved.
 
 ### 12 material cells are over bar but NOT established — do not work these
 
@@ -1287,12 +1347,15 @@ of a single question stopped being counted, not because our prices got better."*
 `calibrationNonexclusiveBundleDisclosure.test.tsx`, 6 tests, mutation-checked: softening that
 closing clause reds it, and so does breaking the count binding.
 
-> ⚠️ **The ruling covers 3.0%, not 5.7%.** `polymarket/baseball`'s rule (§6c) removes a further
-> ~2.7% of the published curve on the same argument. Alex has ruled the first; he has not been
-> asked about the pair. `YOUR-TURN.md` item 9. The disclosure *mechanism* is deliberately general —
-> the key is `nonexclusive_bundle_filter`, not `economics_ladder_filter`, and `excluded_by_cell`
-> takes any number of cells — so rank 1 inherits the surface if it is approved. **That is the
-> mechanism generalising, not the ruling.**
+> ⚠️ ~~**The ruling covers 3.0%, not 5.7%.**~~ **↻ CLOSED the same evening — the pair was ruled.**
+> `polymarket/baseball`'s rule (§6c) removes a further ~2.7% on the same argument, and this box
+> asked for the two to be put to Alex together rather than one 3% at a time. They were: **CAL-P119,
+> "EXCLUDE NOW + FIX WRITER"**, §6f. Rank 1 did inherit `nonexclusive_bundle_filter` rather than
+> needing a second key, so the prediction that *"the mechanism generalises, not the ruling"* holds —
+> **with one correction that matters.** The two exclusions are **not the same kind**: rank 2's rows
+> were never forecasts of a single question (permanent), rank 1's are real questions our own writer
+> mis-priced (**temporary by design**). The surface gained `temporary_by_cell` for exactly that, and
+> **it is empty for this cell deliberately** — nothing here promises rank 2's rows come back.
 
 ---
 
@@ -1404,6 +1467,100 @@ is computed before the chunking, not inside it** — a ladder family's markets a
 and a family evaluated on a partial rung set is *systematically more coherent* than the whole one,
 so chunk-local evaluation would silently under-condemn in one direction. 25 guards, 7 mutations,
 7 reds.
+
+---
+
+## 6f. The second cell RULED — and the first exclusion designed to END — CAL-P119
+
+**Alex, 2026-08-28, on `polymarket/baseball` (rank 1): EXCLUDE NOW + FIX WRITER.**
+
+> *Option (b) EXTENDS to `polymarket/baseball`: the miswritten Player-Props rows leave the published
+> curve with the same named, counted on-page disclosure as `kalshi/economics` (rank 1 crosses off,
+> 4.71 → 2.71pp, cell stays material). The writer bug is being chased by lane1 (queue 022) — your
+> exclusion is explicitly TEMPORARY-BY-DESIGN: when the writer is repaired the rows return and the
+> exclusion empties itself; write that into the rule doc and the disclosure copy so the page never
+> claims those rows are gone forever.*
+
+Full document: **`artifacts/cal-p117/RULE-DESIGN-polymarket-baseball.md` §9**. Rank 1 moves from
+*designed* to **landable**; it ships nothing today, because K′ lives in the frozen file and waits
+for ruling 009's amended lift.
+
+**§6c's open ask is closed.** It said the two rules *"should be ruled together — a reader who
+accepts each 3% in isolation has not been shown the 6%."* They were. **~5.7% of the published curve
+is now approved for removal across two ruled rules**, decided as a pair.
+
+### 🔴 Two cells, one filter, two different reasons — and the difference is the reader's
+
+| | `kalshi/economics` (rank 2) | `polymarket/baseball` (rank 1) |
+|---|---|---|
+| what is wrong | **the rows.** An intraday index ladder's rungs were never competing answers to one question, at a price sum of 15–72 | **the price we wrote.** A real prop question, quoted **0.0355** by the market, published at **0.5005** by our own writer |
+| the market's own quote | there is no single quote to be right about | **intact** — `opening_probability` is a coherent monotone prop ladder; only `calibration_probability` is a spray |
+| kind | structural | our defect |
+| ends | **never** | **when lane1 queue 022 repairs the writer** |
+
+**The honest sentence for rank 1 is not "these rows are ineligible". It is "we do not currently have
+a price for these rows that is ours to publish."** ~2.7% of the curve is being set aside because
+*we* got it wrong, not because the market did — and a page that does not say so has written off
+~24,000 real forecasts on our own defect with no way back.
+
+### The exclusion must empty itself, and that is a design constraint, not a hope
+
+1. **`('polymarket','baseball')` in the allowlist is expected to be REMOVED.** It is a hold on a
+   cell while a named defect elsewhere is repaired, not permanent scope.
+2. **The rows return as good data** — not deleted, not regraded. When the writer publishes the
+   market's quote again, K′'s M1 arm stops matching, R3 stops carrying them, and the payload count
+   falls on its own.
+3. **The disclosure is rendered from the payload, never hard-coded**, so the sentence disappears
+   when the backend stops emitting the cell. A hard-coded "baseball is temporary" line would still
+   be on the page a year after the fix — *the same lie in the other direction.*
+4. 🔴 **The falsifier.** If the writer fix lands and this exclusion does **not** empty, the §6c
+   diagnosis was wrong and **the exclusion is re-argued from scratch, not extended.** An exclusion
+   that outlives its stated cause has no stated cause.
+
+> **What will NOT come back, stated so the promise stays checkable.** R1 and R2 are the *historical
+> residue* of the same family — **1,258 of their 1,284 rows are in the OLD holdout half**. Fixing a
+> writer forward does not un-write the back catalogue, so R1 and R2 are expected to stay and only
+> the M1/R3 population returns. **"The exclusion empties itself" means the temporary part empties**,
+> and the per-cell count is what will say by how much. Nobody should promise it reaches zero before
+> it is measured.
+
+### The scope is shared. The predicate behind each entry is not.
+
+Rank 1 joins rank 2's `(source, category)` allowlist and rank 2's payload key — but **not** rank
+2's test. Extending `is_nonexclusive_bundle` to this cell is **refused by measurement** (8.35), and
+RULE E alone is **9.02** against a 4.69 control (§6c). The allowlist is a list of cells that have
+each earned an exclusion on their own evidence; it is not a family resemblance.
+
+### The half that is not frozen is BUILT
+
+| half | where | status |
+|---|---|---|
+| the predicate | `precompute_calibration.py` — **K′ = R1 + R2 + R3 + M1**, allowlist gaining `('polymarket','baseball')` | **waiting on the freeze.** Never with M2 (pushes OLD back over at 3.06), never with R3 restricted to sum > 15 (passes pooled, fails BOTH halves) |
+| the payload | the **same** `nonexclusive_bundle_filter`, plus new **`temporary_by_cell`** — keyed `"<source>/<category>"`, valued with **the condition that ends the exclusion**, so the page can name it without knowing it | spec'd, rule doc §9.4 |
+| **the page** | `frontend/app/calibration/page.tsx`, in the **same list item** as rank 2's | ✅ **BUILT and green on this branch** |
+
+One filter, one bullet — so a reader who meets *"3.9% of the curve was removed"* meets *"and part of
+that is coming back"* in the same breath rather than two bullets later. Gated on the map being
+present **and non-empty**, so a payload carrying only `kalshi/economics` renders **no** claim that
+anything returns: the ruling that approved rank 2 said no such thing.
+
+`calibrationNonexclusiveBundleDisclosure.test.tsx` `describe` **CAL-P119**, 7 tests, **6 mutations /
+6 reds**: dropping the *"gone for good"* promise reds it; dropping the *rows re-enter the curve*
+promise reds it; hard-coding the cell name instead of binding to the payload reds it; removing the
+non-empty gate reds it; blurring *"the price was wrong"* into a generic *"temporarily excluded"*
+reds it; weakening the type reds it.
+
+### 🔴 This hides the defect from the curve. It does not fix it.
+
+**lane1 queue 022 owns the writer**, and its item 1 is the question this lane cannot answer: **is
+that writer feeding user-facing probabilities anywhere — event pages, props sections — or only the
+calibration pipeline's copy?** If it is user-facing it is a **P0 and it outranks everything here**:
+this exclusion would then be cleaning our *measurement* of a defect still being shown to users.
+Nothing in §6f should be read as repairing anything. It stops the curve reporting our writer's error
+as the market's miscalibration, deliberately and disclosed.
+
+Queue 022's item 3 is the return path — *"the excluded rows return as good data and CAL's exclusion
+empties itself."* **That report is the trigger to remove the allowlist entry and re-score the cell.**
 
 ---
 

@@ -309,3 +309,119 @@ vs 2.79 in §4) both are printed rather than averaged.*
 * **The exact rail's cell-scoping approximation is now bounded at 5.7% on a grouped-source cell.**
   §1. Worth a `--scope-check` that folds the same cell with and without the category conjunct, the
   way `--edge-check` folds it at two widths.
+
+---
+
+## 9. THE RULING — Alex, 2026-08-28: **EXCLUDE NOW + FIX WRITER**
+
+Staged to this lane as `runner-inbox/calibration/018-baseball-exclusion-ruled.md`, in Alex's
+decision:
+
+> *Option (b) EXTENDS to `polymarket/baseball`: the miswritten Player-Props rows leave the published
+> curve with the same named, counted on-page disclosure as `kalshi/economics` (rank 1 crosses off,
+> 4.71 → 2.71pp, cell stays material). The writer bug is being chased by lane1 (queue 022) — your
+> exclusion is explicitly TEMPORARY-BY-DESIGN: when the writer is repaired the rows return and the
+> exclusion empties itself; write that into the rule doc and the disclosure copy so the page never
+> claims those rows are gone forever.*
+
+This is the second of the four banked designs to have its decision taken, and it takes the pair to
+**~5.7% of the published curve removed between two ruled rules** — the number §5 said had to be put
+in front of Alex rather than accumulated one 3% at a time. It was, and it was ruled.
+
+Rank 1's status moves from *designed* to **landable**. It still ships nothing today: K′ lives in the
+frozen file and waits for ruling 009's amended lift.
+
+### 9.1 🔴 This exclusion is NOT the same kind as `kalshi/economics`'s, and the difference is the reader's
+
+The two cells now leave the curve through one filter and for two different reasons. Conflating them
+is the specific error this section exists to prevent:
+
+| | `kalshi/economics` (rank 2) | `polymarket/baseball` (rank 1) |
+|---|---|---|
+| what is wrong | the **rows** — an intraday index ladder's rungs were never competing answers to one question, at a price sum of 15–72 | the **price we wrote** — a real prop question, quoted 0.0355 by the market, published at 0.5005 by our own writer (§3) |
+| the market's own quote | there is no single quote to be right about | **intact.** `opening_probability` is a coherent monotone prop ladder; only `calibration_probability` is a spray |
+| ruled | option (b), APPROVED WITH DISCLOSURE | **EXCLUDE NOW + FIX WRITER** |
+| when it ends | **never.** Structural and permanent | **when lane1 queue 022 repairs the writer** |
+
+**So the honest sentence for rank 1 is not "these rows are ineligible". It is "we do not currently
+have a price for these rows that is ours to publish."** ~2.7% of the published curve is being set
+aside because *we* got it wrong, not because the market did, and a page that does not say so has
+written off 24,000 real forecasts on our own defect and left no way back.
+
+### 9.2 TEMPORARY BY DESIGN — the exclusion must empty itself
+
+The design constraint, stated so a later reader cannot mistake it for an oversight:
+
+1. **The allowlist entry `(polymarket, baseball)` is expected to be REMOVED.** It is not permanent
+   scope. It is a hold placed on a cell while a named defect elsewhere is repaired.
+2. **The rows return as good data.** They are not deleted, regraded, or written off. When the writer
+   publishes the market's own quote again, K′'s M1 arm (rows forced into `[0.45, 0.55]` from an open
+   >0.25 away) stops matching, R3 stops carrying them, and **the count in the payload falls to zero
+   on its own.**
+3. **The disclosure is rendered from the payload, never hard-coded.** When the backend stops
+   emitting `polymarket/baseball` in `temporary_by_cell`, the sentence disappears from the page
+   without a copy change. A hard-coded "baseball is temporary" line would still be on the page a
+   year after the fix — the same lie in the other direction.
+4. 🔴 **The falsifier.** If the writer fix lands and this exclusion does *not* empty, then the
+   diagnosis in §3 was wrong — the near-0.50 spray was not the writer — and **the exclusion must be
+   re-argued from scratch, not extended.** An exclusion that outlives its stated cause is an
+   exclusion with no stated cause.
+
+> **Note what this does NOT license.** R1 (half-spike pair) and R2 (published-pair incoherence) are
+> the *historical residue* of the same family (§0) — 1,258 of their 1,284 rows are in the OLD
+> holdout half. Fixing the writer forward does not un-write the back catalogue, so **R1 and R2 are
+> expected to stay** after the writer is repaired, and only the M1/R3 population returns. The
+> exclusion emptying itself means the *temporary* part empties, and the payload's per-cell count is
+> what will say by how much. Nobody should promise the count reaches literally zero until it is
+> measured — what is promised is that the rows come back and the count falls.
+
+### 9.3 What lands in the frozen file, when the freeze lifts
+
+| | |
+|---|---|
+| predicate | **K′ = R1 + R2 + R3 + M1**, §4. Every arm load-bearing; dropping R2 alone puts the cell back over the bar at 3.10 |
+| scope | the **same** `(source, category)` allowlist as rank 2, gaining `('polymarket','baseball')`. **Not** `is_nonexclusive_bundle` — extending that flag to this cell is **REFUSED by measurement** (8.35, §2), and RULE E alone is 9.02. The allowlist is shared; the *predicate behind each entry is not* |
+| payload key | the **same** `nonexclusive_bundle_filter`, with `excluded_by_cell["polymarket/baseball"]` and **`temporary_by_cell["polymarket/baseball"]`** carrying the revert condition |
+| never | with M2 (pushes OLD back over at 3.06), nor with R3 restricted to sum > 15 (passes pooled, fails BOTH halves) |
+| verdict | 4.71 → **2.71 pp**, 17,827 rows, **excess-outcomes 78,782 → 0**, holdout OLD 2.90 / NEW 2.63 |
+
+**One honest caveat carried forward from §4:** 2.71 against a 3.0 bar is **0.77σ under it** — a pass,
+and not a comfortable one. And because the temporary population is expected to *return*, this cell
+will be re-scored when it does. **Crossing rank 1 off is a claim about the curve as it will be
+published, not a claim that the cell is permanently solved.**
+
+### 9.4 The disclosure contract, and it is BUILT
+
+The page half is on this branch and green, in the same list item as rank 2's — one filter, one
+bullet, so a reader who meets *"3.9% of the curve was removed"* meets *"and part of that is coming
+back"* in the same breath rather than two bullets later.
+
+* type: `CalibrationNonexclusiveBundleFilter.temporary_by_cell?: Record<string, string>` in
+  `frontend/lib/api.ts` — keyed `"<source>/<category>"`, valued with **the condition that ends the
+  exclusion**, so the page can name it without knowing it.
+* page: `frontend/app/calibration/page.tsx`, gated on the map being present AND non-empty — a
+  payload with only `kalshi/economics` in it renders **no** claim that anything comes back, because
+  the ruling that approved rank 2 said no such thing.
+* guard: `frontend/__tests__/lib/calibrationNonexclusiveBundleDisclosure.test.tsx`, `describe`
+  **CAL-P119**, 7 tests, **6 mutations / 6 reds** — dropping the "gone for good" promise reds it;
+  dropping the *rows re-enter the curve* promise reds it; hard-coding the cell name instead of
+  binding to the payload reds it; removing the non-empty gate reds it; blurring "the price was
+  wrong" into a generic "temporarily excluded" reds it; weakening the type reds it.
+
+Four things the copy says, each pinned because each is a clause of the ruling: **temporary by
+design**; the named cell **and the condition that ends it**; **the rows re-enter the curve and the
+exclusion empties itself**; and *"we are not claiming they are gone for good — if this sentence
+outlives the fix, the exclusion is the thing that is wrong."*
+
+### 9.5 The handoff this rule depends on
+
+**lane1 queue 022 owns the writer** (`022-baseball-writer-bug.md`), and its item 1 is the question
+this lane could not answer: **is that writer feeding user-facing probabilities anywhere, or only the
+calibration pipeline's copy?** If it is user-facing it is a P0 and it outranks everything here —
+this exclusion cleans our *measurement* of a defect that would still be on event pages. Nothing in
+this document should be read as fixing the defect. It hides it from the curve, deliberately and
+disclosed, so the curve stops reporting our writer's error as the market's miscalibration.
+
+Its item 3 is the return path: *"when fixed, note it in the report for calibration: the excluded
+rows return as good data and CAL's exclusion empties itself."* **That report is the trigger to
+remove `('polymarket','baseball')` from the allowlist and re-score the cell.**

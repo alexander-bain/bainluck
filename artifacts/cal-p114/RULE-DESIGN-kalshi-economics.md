@@ -448,3 +448,23 @@ further **~2.7% of the published curve** on the same argument, and the two toget
 `nonexclusive_bundle_filter`, not `economics_ladder_filter`, and `excluded_by_cell` takes any
 number of cells — so if rank 1 is approved it inherits the surface rather than needing a second
 one. **That is the mechanism generalising, not the ruling.**
+
+> ### ↻ ANSWERED 2026-08-28 — rank 1 was ruled, and it inherited the surface with one addition
+>
+> Alex ruled `polymarket/baseball` the same evening: **EXCLUDE NOW + FIX WRITER**
+> (`runner-inbox/calibration/018-baseball-exclusion-ruled.md`, CAL-P119). The pair is now decided
+> and the ~5.7% was put in front of him as a pair, which is what this section asked for. Rank 1 did
+> inherit `nonexclusive_bundle_filter` rather than needing a second key — the prediction above
+> holds.
+>
+> 🔴 **But the two exclusions are not the same kind, and this document must not be read as though
+> they were.** `kalshi/economics` leaves because its **rows** were never competing answers to one
+> question: structural, and **permanent**. `polymarket/baseball` leaves because a **writer**
+> manufactured its published prices (a leg quoted 0.0355 published at 0.5005) while the market's own
+> quote stayed intact: **temporary by design**, and it ends when lane1 queue 022 repairs the writer.
+>
+> The surface gained one field for exactly that difference — `temporary_by_cell`, keyed
+> `"<source>/<category>"` and valued with the condition that ends the exclusion. **It is empty for
+> this cell, deliberately.** A payload carrying only `kalshi/economics` renders no claim that
+> anything comes back, because the ruling that approved *this* rule said no such thing. Full
+> reasoning: `artifacts/cal-p117/RULE-DESIGN-polymarket-baseball.md` §9.1–9.2.
