@@ -130,6 +130,114 @@ class TestRedFirstGate:
         assert "is stamped `401815659`" in body
 
 
+class TestAmbiguousFixturesAreGradedByNobody:
+    """CERT-434 — a fixture the binder REFUSED is unobserved, not broken.
+
+    The refusal only pays for itself if it reaches the scorecard. A row marked
+    ambiguous and then counted as `missing` anyway would file the identical
+    false alarm with one more word in it.
+    """
+
+    def test_a_refused_fixture_is_neither_matched_nor_missing_nor_a_dupe(self):
+        rows = _slate_repaired(5)
+        rows[1].event_ids = []
+        rows[1].sources = {}
+        rows[1].ambiguous = True
+        card = score_fixtures(rows, TEAM_AXIOM_SOURCES)
+        assert card["events_external"] == 5      # truth published five
+        assert card["graded"] == 4               # this run may speak for four
+        assert card["ambiguous"] == 1
+        assert (card["matched_1"], card["dupes"], card["missing"]) == (4, 0, 0)
+
+    def test_the_counters_still_reconcile_to_what_truth_published(self):
+        """Nothing is quietly dropped: every published fixture lands in exactly
+        one bucket, or the scorecard is lying by omission."""
+        rows = _slate_repaired(6)
+        rows[0].ambiguous = True
+        rows[1].ambiguous = True
+        rows[2].event_ids = []
+        rows[2].sources = {}
+        rows[3].event_ids = [1, 2]
+        card = score_fixtures(rows, TEAM_AXIOM_SOURCES)
+        assert (
+            card["matched_1"] + card["dupes"] + card["missing"] + card["ambiguous"]
+            == card["events_external"]
+        )
+
+    def test_an_otherwise_perfect_slate_with_one_refusal_is_not_red(self):
+        """The whole point. The delayed doubleheader used to publish a missing
+        game and a duplicated one; at worst it now publishes a refusal, and a
+        refusal is silent."""
+        rows = _slate_repaired(5)
+        rows[1].event_ids = []
+        rows[1].sources = {}
+        rows[1].ambiguous = True
+        card = score_fixtures(rows, TEAM_AXIOM_SOURCES)
+        assert axiom_is_red(card, TEAM_AXIOM_SOURCES) is False
+        assert axiom_offenders(rows, TEAM_AXIOM_SOURCES) == []
+
+    def test_a_refusal_does_not_mask_a_real_defect_beside_it(self):
+        """The other direction, and the one that keeps this from being a
+        blanket mute: one refused fixture plus one genuinely missing game is
+        still red, and the missing game is still named."""
+        rows = _slate_repaired(5)
+        rows[1].ambiguous = True
+        rows[3].event_ids = []
+        rows[3].sources = {}
+        card = score_fixtures(rows, TEAM_AXIOM_SOURCES)
+        assert axiom_is_red(card, TEAM_AXIOM_SOURCES) is True
+        assert [o["fixture"] for o in axiom_offenders(rows, TEAM_AXIOM_SOURCES)] == [
+            "Away3 @ Home3"
+        ]
+
+    def test_a_slate_refused_end_to_end_is_silent_not_a_total_outage(self):
+        """`graded == 0` with fixtures published is "nothing observed", which
+        is the off-day answer (gotcha #53), not a league-wide red."""
+        rows = _slate_repaired(3)
+        for row in rows:
+            row.ambiguous = True
+        card = score_fixtures(rows, TEAM_AXIOM_SOURCES)
+        assert card["graded"] == 0
+        assert card["events_external"] == 3
+        assert axiom_is_red(card, TEAM_AXIOM_SOURCES) is False
+
+    def test_the_needle_does_not_count_a_refusal_as_unclean(self):
+        """Four clean fixtures and one the binder could not read is 100% of
+        what was measured — reporting 80% would move the lane's needle on a day
+        nothing about the product changed."""
+        rows = _slate_repaired(5)
+        rows[1].event_ids = []
+        rows[1].sources = {}
+        rows[1].ambiguous = True
+        assert coverage_percent([score_fixtures(rows, TEAM_AXIOM_SOURCES)]) == 100.0
+
+    def test_the_issue_body_declares_which_denominator_it_used(self):
+        """A per-source line reading `3/5` when only four fixtures were graded
+        is an unexplained gap an operator would chase."""
+        rows = _slate_repaired(5)
+        rows[1].ambiguous = True
+        rows[3].sources = dict(ALL_LINKED, kalshi=False)
+        card = score_fixtures(rows, TEAM_AXIOM_SOURCES)
+        body = build_rollcall_issue_body(
+            "mlb", "2026-08-29", card,
+            axiom_offenders(rows, TEAM_AXIOM_SOURCES), "https://espn/…",
+            TEAM_AXIOM_SOURCES,
+        )
+        assert "| kalshi | 3/4 |" in body
+        assert "refused as ambiguous, graded by nobody | 1 |" in body
+
+    def test_a_card_written_before_graded_existed_still_grades(self):
+        """The 30-day Redis history outlives this deploy, so yesterday's cards
+        arrive without the key. Falling back to `events_external` keeps the
+        trailing baselines and the needle continuous instead of reading zero."""
+        legacy = {"events_external": 4, "matched_1": 4, "dupes": 0, "missing": 0,
+                  "clean": 4, "per_source": {s: 4 for s in TEAM_AXIOM_SOURCES}}
+        assert axiom_is_red(legacy, TEAM_AXIOM_SOURCES) is False
+        assert coverage_percent([legacy]) == 100.0
+        assert axiom_is_red({**legacy, "clean": 3, "matched_1": 3, "missing": 1},
+                            TEAM_AXIOM_SOURCES) is True
+
+
 class TestOffDaysAreSilent:
     """Gotcha #53 — an empty slate is a shape, not a fact."""
 

@@ -2298,6 +2298,17 @@ class RollcallScore(Base):
     axiom: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     events_external: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    #: Fixtures this run is entitled to have an opinion about: ``events_external``
+    #: minus ``ambiguous``. Every counter below is over THIS population, so
+    #: ``matched_1 + dupes + missing + ambiguous == events_external``.
+    graded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    #: Fixtures the binder refused rather than guessing at — a same-matchup
+    #: group whose rows could not be assigned one-to-one without a coin flip
+    #: (CERT-434). Not graded, never an offender, cannot make a league red.
+    ambiguous: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     matched_1: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     dupes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     missing: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

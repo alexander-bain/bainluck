@@ -25,6 +25,12 @@ def upgrade():
         sa.Column("league", sa.String(length=40), nullable=False),
         sa.Column("axiom", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("events_external", sa.Integer(), nullable=False, server_default="0"),
+        # `graded` is the denominator every other counter is over:
+        # events_external minus the fixtures the binder REFUSED to bind
+        # (CERT-434). Stored rather than derived so the API and the Redis
+        # mirror cannot disagree about what a day's coverage percentage means.
+        sa.Column("graded", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("ambiguous", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("matched_1", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("dupes", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("missing", sa.Integer(), nullable=False, server_default="0"),

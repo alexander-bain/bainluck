@@ -1419,7 +1419,8 @@ async def get_rollcall(
     day = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     rows = (await db.execute(
         text("""
-            SELECT league, axiom, events_external, matched_1, dupes, missing,
+            SELECT league, axiom, events_external, graded, ambiguous,
+                   matched_1, dupes, missing,
                    mis_stamped, clean, per_source, verdict, offenders,
                    justification, generated_at
             FROM rollcall_scores
@@ -1430,14 +1431,16 @@ async def get_rollcall(
     )).mappings().all()
 
     leagues = [dict(r) for r in rows]
-    graded = [
+    # Renamed off `graded` since that is now a COLUMN meaning something else
+    # (fixtures graded within a league, vs leagues observed at all).
+    observed = [
         lg for lg in leagues
         if lg["axiom"] and lg["verdict"] not in ("truth_unavailable",)
     ]
     return {
         "date": day,
         "found": bool(leagues),
-        "coverage_pct": coverage_percent(graded),
+        "coverage_pct": coverage_percent(observed),
         "leagues_red": [lg["league"] for lg in leagues if lg["verdict"] == "red"],
         "leagues": leagues,
     }

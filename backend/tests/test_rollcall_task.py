@@ -164,6 +164,153 @@ class TestAttach:
         assert rows[0].event_ids == [1]
         assert rows[1].event_ids == [2]
 
+    def test_a_delayed_first_game_does_not_hand_itself_to_the_second(self):
+        """CERT-434's BLOCK specimen, verbatim.
+
+        Same teams at 17:00 and 20:00; game 1 is pushed to 19:00 by rain. Under
+        independent nearest-fixture picks BOTH rows chose the 20:00 fixture —
+        19:00 is one hour from it and two from its own — so the sentinel filed
+        `g1 missing` and `g2 dupes=2` about two perfectly healthy games. The
+        assignment is one-to-one: the pairing that minimises TOTAL skew
+        (2.0 + 0.0) beats the one that minimises each row's own (1.0 + 3.0).
+        """
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T20:00:00+00:00"),
+            ],
+            [
+                _ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T19:00:00+00:00"),
+                _ev(2, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T20:00:00+00:00"),
+            ],
+        )
+        assert [r.event_ids for r in rows] == [[1], [2]]
+        assert [r.ambiguous for r in rows] == [False, False]
+
+    def test_the_same_specimen_in_the_other_input_order(self):
+        """Order-independence is the property, not the specimen. A matcher that
+        happens to be right when the delayed row is listed first and wrong when
+        it is listed second is still the bug."""
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T20:00:00+00:00"),
+            ],
+            [
+                _ev(2, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T20:00:00+00:00"),
+                _ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T19:00:00+00:00"),
+            ],
+        )
+        assert [r.event_ids for r in rows] == [[1], [2]]
+
+    def test_an_unbreakable_tie_is_refused_not_decided_by_list_order(self):
+        """Both rows sit exactly between both fixtures, so the two pairings cost
+        the same and nothing in the data prefers either. Deciding it by list
+        order would be a coin flip presented as a finding, so the group is
+        marked ambiguous — and an ambiguous fixture is graded by nobody."""
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T21:00:00+00:00"),
+            ],
+            [
+                _ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T19:00:00+00:00"),
+                _ev(2, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T19:00:00+00:00"),
+            ],
+        )
+        assert [r.ambiguous for r in rows] == [True, True]
+
+    def test_one_row_equidistant_from_two_fixtures_is_refused(self):
+        """The same refusal with the cardinalities reversed: one event, two
+        fixtures, no reason to prefer either. Guessing produces a confident
+        `missing` on whichever fixture lost the coin flip."""
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T21:00:00+00:00"),
+            ],
+            [_ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                 commence_time="2026-08-28T19:00:00+00:00")],
+        )
+        assert [r.ambiguous for r in rows] == [True, True]
+
+    def test_a_duplicate_inside_a_doubleheader_is_still_caught(self):
+        """The control that keeps the fix from being a cover-up: three rows for
+        two fixtures. Two of them pair off; the third has nowhere one-to-one to
+        go and lands on its nearest fixture as the visible duplicate it is."""
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T20:00:00+00:00"),
+            ],
+            [
+                _ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T17:00:00+00:00"),
+                _ev(2, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T20:00:00+00:00"),
+                _ev(3, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T20:05:00+00:00"),
+            ],
+        )
+        assert [r.event_ids for r in rows] == [[1], [2, 3]]
+        assert [r.ambiguous for r in rows] == [False, False]
+
+    def test_a_delayed_game_beside_an_id_stamped_sibling_still_finds_its_own(self):
+        """The occupied-fixture case. g2 is already settled by its provider id,
+        so the delayed id-less row must take the EMPTY fixture rather than pile
+        onto the stamped one just because it is nearer in time."""
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    espn_id="401816706", kickoff="2026-08-28T20:00:00+00:00"),
+            ],
+            [
+                _ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T19:00:00+00:00"),
+                _ev(2, "Detroit Tigers", "Los Angeles Dodgers",
+                    espn_id="401816706", commence_time="2026-08-28T20:00:00+00:00"),
+            ],
+        )
+        assert [r.event_ids for r in rows] == [[1], [2]]
+
+    def test_unrelated_matchups_never_compete_for_each_others_fixtures(self):
+        """The grouping is per matchup, so a busy slate cannot let one game's
+        delay perturb another game's binding."""
+        rows = _attach(
+            [
+                _fx("a", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("b", "New York Yankees", "Boston Red Sox",
+                    kickoff="2026-08-28T17:30:00+00:00"),
+            ],
+            [
+                _ev(1, "New York Yankees", "Boston Red Sox",
+                    commence_time="2026-08-28T17:30:00+00:00"),
+                _ev(2, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T19:00:00+00:00"),
+            ],
+        )
+        assert [r.event_ids for r in rows] == [[2], [1]]
+        assert [r.ambiguous for r in rows] == [False, False]
+
     def test_a_rain_delayed_start_still_binds(self):
         """Six hours of slack, so a provisional or delayed start is not a
         fabricated `missing`."""
@@ -255,6 +402,49 @@ class TestFiling:
         ])
         assert calls == []
         assert out[0]["action"] == "skipped_truth_unavailable"
+
+    def test_a_wholly_ambiguous_league_neither_files_nor_closes(self, monkeypatch):
+        """Same argument as `truth_unavailable`, and this is the direction that
+        bites. A slate the binder refused end to end is not evidence of health,
+        so it must not reach the rail at all — otherwise `red=False` sends it
+        down the green path and CLOSES an open roll-call issue with a comment
+        saying the league is clean on a day nothing was graded."""
+        calls = []
+        monkeypatch.setattr(
+            "app.tasks.sentinel_filing.fetch_open_alert_issues", lambda: []
+        )
+        monkeypatch.setattr(
+            "app.tasks.sentinel_filing.reconcile_issue",
+            lambda **kw: calls.append(kw) or {"action": "resolved"},
+        )
+        out = _reconcile("2026-08-26", [
+            {"league": "mlb", "verdict": "ambiguous", "offenders": [],
+             "events_external": 2, "graded": 0, "ambiguous": 2, "clean": 0,
+             "per_source": {}, "axiom_sources": ["kalshi"], "truth_url": "u"},
+        ])
+        assert calls == []
+        assert out[0]["action"] == "skipped_ambiguous"
+
+    def test_a_partly_refused_league_still_reconciles_on_what_it_graded(self, monkeypatch):
+        """The refusal is per fixture, not a mute switch: a league with one
+        refused fixture and four clean ones is still observed and still speaks."""
+        calls = []
+        monkeypatch.setattr(
+            "app.tasks.sentinel_filing.fetch_open_alert_issues", lambda: []
+        )
+        monkeypatch.setattr(
+            "app.tasks.sentinel_filing.reconcile_issue",
+            lambda **kw: calls.append(kw) or {"action": "resolved"},
+        )
+        _reconcile("2026-08-26", [
+            {"league": "mlb", "verdict": "pass", "offenders": [],
+             "events_external": 5, "graded": 4, "ambiguous": 1, "clean": 4,
+             "per_source": {}, "axiom_sources": ["kalshi"], "truth_url": "u"},
+        ])
+        assert len(calls) == 1 and calls[0]["red"] is False
+        # The green comment must not claim five fixtures were verified.
+        assert "4/4 graded fixtures" in calls[0]["green_comment"]
+        assert "1 further fixture(s) refused" in calls[0]["green_comment"]
 
     def test_a_red_league_files_and_a_clean_one_resolves(self, monkeypatch):
         seen = []

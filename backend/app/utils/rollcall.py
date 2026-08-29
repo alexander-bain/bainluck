@@ -211,6 +211,12 @@ class FixtureRow:
     #: created it and stamped it with the wrong id" are opposite defects with
     #: opposite repairs, and a bare ``missing`` says the first about both.
     id_conflicts: list[dict[str, Any]] = field(default_factory=list)
+    #: The binder could not tell which of several same-matchup fixtures this
+    #: row's events belong to, and REFUSED rather than deciding by list order
+    #: (CERT-434). An ambiguous fixture is not graded, is not an offender, and
+    #: cannot make a league red — a coin flip is not a finding. It is still
+    #: counted and reported, so the refusal is visible rather than silent.
+    ambiguous: bool = False
 
     @property
     def matched_one(self) -> bool:
@@ -235,11 +241,22 @@ def score_fixtures(
     """Reduce fixture rows to the frozen scorecard shape.
 
     ``{events_external, matched_1, dupes, missing, clean, per_source: {...}}``
+
+    Two denominators, and the difference between them is load-bearing.
+    ``events_external`` is what truth published — it never shrinks, because a
+    fixture the binder could not resolve is still a fixture. ``graded`` is what
+    this run is entitled to have an opinion about: ``events_external`` minus the
+    fixtures marked :attr:`FixtureRow.ambiguous`. Every other counter here is
+    over the graded population, so ``matched_1 + dupes + missing + ambiguous ==
+    events_external`` still reconciles and nothing is quietly dropped.
     """
     rows = list(fixtures)
     per_source = {s: 0 for s in ALL_SOURCES}
-    matched_1 = dupes = missing = clean = mis_stamped = 0
+    matched_1 = dupes = missing = clean = mis_stamped = ambiguous = 0
     for row in rows:
+        if row.ambiguous:
+            ambiguous += 1
+            continue
         n = len(row.event_ids)
         if n == 0:
             missing += 1
@@ -257,6 +274,11 @@ def score_fixtures(
             clean += 1
     return {
         "events_external": len(rows),
+        #: Fixtures this run refused to bind (see :attr:`FixtureRow.ambiguous`).
+        "ambiguous": ambiguous,
+        #: The population every counter below is over, and the denominator the
+        #: alarm predicate uses. Never larger than ``events_external``.
+        "graded": len(rows) - ambiguous,
         "matched_1": matched_1,
         "dupes": dupes,
         "missing": missing,
@@ -274,6 +296,11 @@ def axiom_offenders(
     """Every fixture that breaks the axiom, named. No silent aggregation."""
     out: list[dict[str, Any]] = []
     for row in fixtures:
+        if row.ambiguous:
+            # A fixture the binder refused is not evidence of a defect in either
+            # direction, and an offender entry is what files the issue. Naming
+            # it here would put the crying wolf back with an extra word on it.
+            continue
         gaps: list[str] = []
         if len(row.event_ids) == 0:
             # Two different defects, two different repairs. `mis_stamped` says
@@ -299,15 +326,21 @@ def axiom_offenders(
 def axiom_is_red(scorecard: dict[str, Any], axiom_sources: Sequence[str]) -> bool:
     """The alarm predicate for an axiom league.
 
-    Guarded on ``events_external > 0``: an off-day publishes no fixtures and is
-    not a finding. Above zero the whole matrix must hold — exactly one event per
-    fixture AND every axiom source linked on every fixture. The frozen
-    acceptance writes the source clause as ``per_source.kalshi <
-    events_external``; the expectation matrix above it requires all four, and
-    the matrix is what is implemented, so a Polymarket-shaped outage cannot pass
-    a Kalshi-shaped gate.
+    Guarded on ``graded > 0``: an off-day publishes no fixtures and is not a
+    finding, and neither is a day whose every fixture the binder refused
+    (CERT-434) — both are "nothing observed", not "nothing there". Above zero
+    the whole matrix must hold — exactly one event per fixture AND every axiom
+    source linked on every fixture. The frozen acceptance writes the source
+    clause as ``per_source.kalshi < events_external``; the expectation matrix
+    above it requires all four, and the matrix is what is implemented, so a
+    Polymarket-shaped outage cannot pass a Kalshi-shaped gate.
+
+    The denominator is ``graded``, not ``events_external``. Using the published
+    count would make one refused fixture on an otherwise perfect slate read as
+    a missing game, which is the exact false alarm the refusal exists to stop.
+    Cards written before ``graded`` existed fall back to ``events_external``.
     """
-    total = scorecard.get("events_external", 0)
+    total = scorecard.get("graded", scorecard.get("events_external", 0))
     if total <= 0:
         return False
     if scorecard.get("matched_1") != total:
@@ -363,10 +396,16 @@ def coverage_percent(scorecards: Iterable[dict[str, Any]]) -> float | None:
     Clean means exactly one DB event AND every axiom source linked. Returns
     ``None`` when there were no axiom fixtures at all — a league-wide off-day
     publishes no number rather than a flattering 100%.
+
+    The denominator is ``graded``, matching :func:`axiom_is_red`: a fixture the
+    binder refused is unobserved, and an unobserved fixture counted as unclean
+    would move the needle on a day nothing actually changed.
     """
     total = clean = 0
     for card in scorecards:
-        total += int(card.get("events_external", 0) or 0)
+        total += int(
+            card.get("graded", card.get("events_external", 0)) or 0
+        )
         clean += int(card.get("clean", 0) or 0)
     if total == 0:
         return None
@@ -391,7 +430,10 @@ def rollcall_fingerprint(league: str, offenders: Sequence[dict[str, Any]]) -> st
 
 
 def build_rollcall_issue_title(league: str, scorecard: dict[str, Any]) -> str:
-    total = scorecard.get("events_external", 0)
+    # `graded`, not `events_external` — the headline count must be the one the
+    # body's offender list can actually account for, or a refused fixture reads
+    # as an unnamed failure nobody can look up.
+    total = scorecard.get("graded", scorecard.get("events_external", 0))
     return (
         f"[rollcall] {league.upper()}: {total - scorecard.get('clean', 0)}/{total} "
         f"fixtures fail the coverage axiom"
@@ -410,6 +452,8 @@ def build_rollcall_issue_body(
 ) -> str:
     fp = rollcall_fingerprint(league, offenders)
     ps = scorecard.get("per_source") or {}
+    graded = scorecard.get("graded", scorecard.get("events_external", 0))
+    refused = int(scorecard.get("ambiguous", 0) or 0)
     lines = [
         f"`{FINGERPRINT_MARKER}:{fp}`  (dedupe key — one issue per league per "
         f"breakage shape)",
@@ -421,6 +465,8 @@ def build_rollcall_issue_body(
         "| metric | value |",
         "|---|---|",
         f"| fixtures published by truth | {scorecard.get('events_external')} |",
+        f"| …graded (the denominator for every row below) | {graded} |",
+        f"| …refused as ambiguous, graded by nobody | {refused} |",
         f"| exactly one DB event | {scorecard.get('matched_1')} |",
         f"| duplicated | {scorecard.get('dupes')} |",
         f"| no claimable event | {scorecard.get('missing')} |",
@@ -432,7 +478,7 @@ def build_rollcall_issue_body(
     ]
     for s in ALL_SOURCES:
         mark = "yes" if s in axiom_sources else "measured"
-        lines.append(f"| {s} | {ps.get(s, 0)}/{scorecard.get('events_external')} | {mark} |")
+        lines.append(f"| {s} | {ps.get(s, 0)}/{graded} | {mark} |")
     for note in exclusions:
         lines += ["", f"> {note}"]
     lines += ["", f"**Truth source:** {truth_url}", "", "### Offending fixtures", ""]
