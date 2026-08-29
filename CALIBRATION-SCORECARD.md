@@ -958,7 +958,7 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 | 3 | `polymarket/esports` | B | 7.59 | 14,053 | +6.02 | 3.0 | +4.59 | 10.9 | 64,503 | ✅ **named and designed (CAL-P112, §6a; re-checked on the exact rail, CAL-P114)** — the 1-winner tail `esports_multi_bundle_filter` cannot reach | **ZERO** — designed, unbuilt |
 | 4 | `polymarket/soccer` | B | 3.42 | 106,803 | +2.16 | 3.0 | +0.42 | 2.8 | 44,857 | ❌ **none — the named mechanism was measured on the published cell and REFUSED (CAL-P118, §6e)**; O/U ladder coherence reaches 7.4% of the cell and moves it **+0.03 pp, worse on both holdout halves** | **ZERO** — and no longer designed |
 | 5 | `odds_api_bookmaker/basketball_nba` | A | 5.18 | 10,186 | +1.03 | **2.5** | +2.68 | 5.4 | 27,298 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 573 games behind these rows, so the board’s σ counts one outcome ~17.8x. **σ = 1.28, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
-| 6 | `kalshi/crypto` | C | 7.60 | 4,565 | +1.84 | 3.0 | +4.60 | 6.2 | 20,999 | ❌ none | **not started** |
+| 6 | `kalshi/crypto` | C | 7.60 | 4,565 | +1.84 | 3.0 | +4.60 | 6.2 | 20,999 | ✅ **named and designed (CAL-P121, §6h)** — the cell is **99.5% metal**, not crypto — gold/silver/lithium/nickel threshold ladders the LLM relabelled (exactly 1 of 4,566 rows is a cryptocurrency market) — and 99.9% is `bundle_multiwin`. **RULE C** = one tuple on rank 2's already-ruled allowlist → removes 4,563 of 4,566 rows | **ZERO** — designed, unbuilt; the rule **deletes the cell** (3 rows → absence) |
 | 7 | `odds_api_bookmaker/baseball_mlb_preseason` | A | 8.24 | 3,253 | −7.67 | **2.5** | +5.74 | 6.5 | 18,672 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 217 games behind these rows, so the board’s σ counts one outcome ~15.0x. **σ = 1.69, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
 | 8 | `kalshi/entertainment` | C | 5.21 | 8,355 | +1.07 | 3.0 | +2.21 | 4.0 | 18,465 | ⚠️ partial (exit-exam item 3: settlement-timing rival UNKNOWN) | **not started** |
 | 9 | `kalshi/golf` | B | 3.88 | 20,500 | +3.72 | 3.0 | +0.88 | 2.5 | 18,040 | ⚠️ `golf_placeholder_filter` live since 07-09 | **shipped, insufficient** |
@@ -976,11 +976,19 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 
 By source: **polymarket 9 cells / 263,728** · **odds_api_bookmaker 6 / 82,345** · **kalshi 5 / 132,604**.
 
-**Scoreboard: 0 of 20 cells crossed off. 2 are RULED and landable (ranks 1 and 2) and 2 more are
-designed but unruled (ranks 3 and 17) — all four worth 0.00 pp today. 3 have a shipped rule that did
-not clear the cell. 2 have a measured rule that was refused. 10 have no rule at all.** Those four
-cells carry **218,385 of the board's 478,677 excess-outcomes, 45.6%**, and every one of them lands
-the day the freeze lifts.
+**Scoreboard: 0 of 20 cells crossed off. 2 are RULED and landable (ranks 1 and 2) and 3 more are
+designed but unruled (ranks 3, 6 and 17) — all five worth 0.00 pp today. 3 have a shipped rule that
+did not clear the cell. 2 have a measured rule that was refused. 9 have no rule at all.** Those five
+cells carry **239,384 excess-outcomes** — 50.0% of the board's uncorrected 478,677, and **60.4% of
+the 396,332 that survive CAL-P120's σ correction** — and every one of them lands the day the freeze
+lifts.
+
+> **CAL-P121 added rank 6 to the banked column, and it is the first banked design whose rule
+> *deletes* its cell rather than repairing it** (4,563 of 4,566 rows; 3 survive, below the floor).
+> `kalshi/tech` was already headed for the same outcome at 260 rows, but at 4,563 this needs Alex's
+> eyes and it is item 1 of §6h's owed list. The mechanism is not the one the cell's name implies:
+> **`kalshi/crypto` is 99.5% gold and silver, and exactly one of its 4,566 rows is a
+> cryptocurrency market.**
 
 > 🔴 **CAL-P120: the six `odds_api_bookmaker` rows above should not be on this table at all, and the
 > σ column is why.** Every one of them publishes one GAME as ten to eighteen bookmaker-rows carrying
@@ -1698,6 +1706,114 @@ quietly on its own initiative, in either direction. **And it is a producer-weigh
 the producer frozen under ruling 009. **YOUR-TURN item 10**, parked as **CAL-P120-1**; the settling
 measurement — `mce_closing_line` recomputed with this source de-replicated to game grain — is a
 measurement-lane job under ruling 134 and should run *before* anyone rules, not after.
+
+---
+
+## 6h. RANK 6 pre-built — CAL-P121, and the cell is 99.5% metal
+
+Full document: **`artifacts/cal-p121/RULE-DESIGN-kalshi-crypto.md`**. Designed, benched on the
+producer's own chain, holdout-split, **not built, worth 0.00 pp today.**
+
+### The two cheap checks CAL-P120 paid for, run first
+
+**The rail reaches it, and better than it has reached anything.** `futures_markets` holds 255,104
+`kalshi` rows, and `calibration_cell_exact` reproduces this cell at **4,566 / 7.61 / +1.83** against
+the payload's 4,565 / 7.60 / +1.84 — **+0.02%**, against +0.55% on `kalshi/economics` and −5.7% on
+`polymarket/baseball`.
+
+**The σ correction was measured, and it does NOT rescue this cell.** CAL-P120's correction is a
+*dedup* and does not transfer: eighteen bookmaker rows are byte-identical copies, but a threshold
+ladder's rungs carry different prices and different outcomes and cannot collapse without inventing a
+price. So a new instrument — **`backend/scripts/calibration_cluster_sigma.py`**, 41 guards and
+10 mutations / 10 reds, read-only, one added dimension on the proven rail and no re-implementation — resamples the cell's
+**markets** and recomputes its own ECE, 2,000 times, seeded.
+
+### 🔴 It answers criterion 3 (PARKED CAL-P114-3) and criterion 6 (CAL-P120-2) together, and the answer is that the error has NO FIXED DIRECTION
+
+| cell | rows | markets | rows/mkt | σ_row (board) | σ_market (bound) | **σ measured** | design effect |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| `kalshi/economics` | 29,046 | 2,032 | 14.29 | 7.60 | 2.01 | **5.68** | **1.79** |
+| `kalshi/crypto` | 4,566 | 625 | 7.31 | 6.23 | 2.31 | **7.14** | **0.76** |
+
+*(`kalshi/economics` reads 29,046 / 5.23 here against §6b's 28,738 / 5.29 — same rail, same cell,
+**population drift** between the two sweeps; nothing has shipped into the producer since 2026-08-13
+and the σ ordering is not sensitive to it.)*
+
+**CAL-P114 §3a's estimate was pessimistic by 2.5x** — it predicted ~2.3σ for `kalshi/economics` and
+the measured answer is 5.68σ, because substituting the market count assumes perfect within-market
+correlation, which is a bound and not a measurement. And **on `kalshi/crypto` the direction
+reverses**: design effect **0.76 < 1**, so `50/√n` is *conservative* there. `cell_se_pp` is the
+maximum-variance (p = 0.5) SE and this cell's mass sits in the 0–10% and 90–100% deciles, which
+outweighs its clustering.
+
+So **`50/√n` is wrong in both directions and which one dominates is a per-cell empirical fact.** No
+single re-definition of the denominator is right: substituting the market count would have demoted
+`kalshi/economics` to 2.01σ, a hair over the gate, on an assumption the measurement refutes.
+**Neither cell changes verdict**, which is the reassuring half — the gate has been robust to its own
+bad denominator so far. **Recommendation to Alex: do not redefine criterion 3 — report the pair**,
+via an `effective_n` / `design_effect` column on the already-queued cells only, fed by this
+instrument. That is a measurement-lane job under ruling 134 and it is not staged here.
+
+### The cell is 99.5% metal, and exactly ONE of its 4,566 rows is cryptocurrency
+
+97.6% is gold and silver (`KXSILVERH` 35.5%, `KXGOLDH` 33.3%, `KXGOLDD` 10.5%, `KXSILVERD` 7.6%,
+`KXGOLDW` 6.0%, `KXSILVERW` 2.4%, `KXGOLDMON` 2.3%); with `KXLITHIUMW` and `KXNICKELW` it is
+**99.5% metals**, 4,545 of 4,566 rows. Of the 21 rows left, 14 are a company metric about a crypto
+*exchange*, 6 are earnings-call quotes, and **one row — 0.02% — is an actual cryptocurrency
+market** (`KXHYPE15M`, *"HYPE Up or Down — 15 minutes"*). `tasks/kalshi.py:654-658` skips crypto at
+ingest by design, but it fires on the category assigned **at ingest** and this whole cohort arrived
+as `other` — which is how 4,545 metals markets and one Hyperliquid contract ended up behind a label
+that says `crypto`. These markets arrived as
+`category='other'` — no ticker prefix matches, no name rule matches — and were **relabelled `crypto`
+afterwards** by the LLM pass in `tasks/futures.py`, because `services/llm.py:248 SPORT_CATEGORIES`
+has `crypto` and `economics` and **no `commodities`**. A model given no correct bucket picks the
+nearest asset-price attractor. Same shape as the motorsports misclassification: **classify
+positively**.
+
+> 🔴 **HAZARD — do not "clean up" rank 6 with the button that exists.** `tasks/retention.py:299`
+> `_cleanup_crypto_impl` DELETEs markets, outcomes and snapshots `WHERE llm_sport_category =
+> 'crypto'`, exposed at `routes/admin_data_quality.py:306`. It is not on the beat schedule, which is
+> why these rows are alive. **Its predicate is exactly the label that is wrong**: pressing it would
+> permanently destroy 3,922 gold, silver, palladium, copper, lithium and nickel markets and all their
+> history. If the relabel ships, that task's predicate must be re-derived before it is ever run.
+
+### RULE C, and it deletes the cell
+
+99.9% of the cell is `bundle_multiwin`; 91.1% sits in markets whose published prices sum above 1.15.
+**RULE C** is one tuple — `(kalshi, crypto)` — on the allowlist Alex already ruled for rank 2 (§6d).
+No new predicate, no new threshold, no new payload key, and it inherits the
+`nonexclusive_bundle_filter` disclosure surface that is already built and green on this branch.
+
+| policy | n | ECE | verdict |
+|---|--:|--:|---|
+| A_today (control) | 4,566 | 7.61 | +4.61 over bar, 20,999 excess-outcomes |
+| **C — allowlist add** | **3** | 30.50 | **removes 4,563 rows; the cell becomes an absence** |
+
+Both arms of the ruled gate condemn the same rows — every `sum ≤ 1.15` row here also realized ≥2
+winners — so **there is no version of this rule that leaves a material cell behind.** Holdout on the
+published cell's own median (`market_id 57,542,638`, 2,278 / 2,288): **OLD 6.46, NEW 10.73, no sign
+reversal, the later half worse**, and **every class in both halves is over the bar** (OLD's best
+6.80, NEW's best 9.59). There is no slice a narrower rule could have kept.
+
+### 🔴 Three things this cell adds that generalise past it
+
+1. **A cohort-scoped exclusion keyed on a label is switched off the day someone repairs the label.**
+   §6b concluded the allowlist must be keyed on `(source, category)` and that is still right — but if
+   the relabel ships and these rows become `kalshi/commodities`, an allowlist holding
+   `(kalshi, crypto)` stops reaching them and **rank 6 reappears under a new name at 7.6 pp with no
+   rule attached.** C must seed both tuples, and §8 of the rule doc specs a guard that reds when any
+   `kalshi` cell over its bar is >95% `bundle_multiwin` and off the allowlist.
+2. **Two of this cell's three defects are OURS, and RULE C hides both.** `poll_kalshi_markets` runs
+   every two hours (`crontab(minute=45, hour="*/2")`) and two thirds of this cell is **hourly**
+   markets: 65.9% of its closing lines are 1–4 h stale, and the hourly series read 10.87 against the
+   daily series' 4.61 on the same asset and shape. Supported, **not established** — the age fold is
+   non-monotone and this page will not upgrade it. **PARKED CAL-P121-2**, and it is not
+   metals-specific.
+3. **CAL-P117's coin-flip class is not confined to Polymarket.** `--by cpdrift` finds
+   `a_forced_to_half` at **170 rows / 36.32 pp** here, on Kalshi, and it is **growing across the
+   holdout split** (68 @ 31.91 → 102 @ 39.26). Lane1's writer-repair queue should be told this cohort
+   exists. Separately, `z_no_cp_fallback` — the rows using ruling 103's `opening_probability`
+   fallback — is the **best-calibrated class in the cell** at 2.38 pp, under the bar, on both halves.
 
 ---
 
