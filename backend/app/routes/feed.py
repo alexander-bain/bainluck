@@ -9224,6 +9224,36 @@ async def get_tag_counts(
 
     from sqlalchemy import text
 
+    # Both statements below GROUP BY the ORDINAL, not the output alias.
+    #
+    # `GROUP BY category` looks like it names the `AS category` alias. In
+    # PostgreSQL it does not, whenever a table in the FROM has a real column of
+    # that name: an input column takes precedence over an output alias in
+    # GROUP BY, and the alias is only consulted when nothing else matches.
+    # `futures_markets` HAS a `category` column (models.py, right beside
+    # `llm_sport_category`), so the futures statement grouped by
+    # `futures_markets.category` and left the selected
+    # `COALESCE(llm_sport_category, 'other')` ungrouped —
+    #
+    #     GroupingError: column "futures_markets.llm_sport_category" must
+    #     appear in the GROUP BY clause or be used in an aggregate function
+    #
+    # — an unhandled exception, so `/api/feed/tag-counts` returned Starlette's
+    # plain-text 500 and `/categories` rendered "Failed to load categories".
+    # That was true from the day the route was written (`c536d738`,
+    # 2026-03-01): the column it collides with was already there. The page has
+    # never worked.
+    #
+    # An ordinal cannot be captured by a column name, so it is the fix that
+    # does not depend on the schema staying as it is today. The events
+    # statement was NOT failing — `events` and `sports` have no `category`
+    # column — but it is the identical shape one migration away from the
+    # identical silent breakage, so it groups by ordinal too. Verified
+    # byte-identical against production before and after the change.
+    # Guards: `tests/test_sql_group_by_alias_collision.py` (repo-wide, static)
+    # and `tests/integration/test_tag_counts_real_postgres.py` (this handler's
+    # own statements, prepared by a real PostgreSQL).
+
     # Count events by sport key prefix (first segment before '_')
     event_counts_result = await db.execute(
         text("""
@@ -9254,7 +9284,7 @@ async def get_tag_counts(
                 OR (e.status = 'scheduled' AND e.commence_time <= :upcoming AND e.commence_time >= :now)
                 OR (e.status IN ('completed', 'closed') AND e.commence_time >= :recent)
             )
-            GROUP BY category
+            GROUP BY 1
         """),
         {"now": now, "upcoming": upcoming_cutoff, "recent": recent_cutoff},
     )
@@ -9272,7 +9302,7 @@ async def get_tag_counts(
             WHERE status = 'open'
               AND event_id IS NULL
               AND (resolution_date IS NULL OR resolution_date >= :now)
-            GROUP BY category
+            GROUP BY 1
         """),
         {"now": now},
     )
