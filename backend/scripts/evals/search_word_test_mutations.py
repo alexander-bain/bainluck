@@ -346,14 +346,18 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
     (
         "futures-window-back-to-a-literal",
         EVENTS,
-        """        .limit(_SEARCH_FUTURES_WINDOW)
-    )
-
-    # Apply sport filter to futures if specified""",
-        """        .limit(20)
-    )
-
-    # Apply sport filter to futures if specified""",
+        # LAT-P111 re-targeted the needle, not the mutant. The window statement
+        # moved inside `_futures_window_query(...)` so the full query and the
+        # tier-ordered subsets share one builder; the indentation shifted and
+        # the blank line went with it. The property is unchanged: the window
+        # must be the NAMED constant, because the window being the page's only
+        # dedup headroom is the fact a bare `20` hides.
+        """            .limit(_SEARCH_FUTURES_WINDOW)
+        )
+        # Apply sport filter to futures if specified""",
+        """            .limit(20)
+        )
+        # Apply sport filter to futures if specified""",
         DEDUP_ORACLE,
         "Re-hides the relationship between the window and the page — the fact "
         "that the window IS the page's only dedup headroom goes uncommented "

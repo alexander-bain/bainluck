@@ -68,6 +68,7 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     "offline_rerank_fidelity_mutations": [("MUTATIONS", 3, 4, 1)],
     "outcome_evidence_class_mutations": [("MUTATIONS", 3, 4, 1)],
     "search_scorer_wiring_mutations": [("MUTATIONS", 2, 3, "TARGET")],
+    "search_tier_split_mutations": [("MUTANTS", "needle", "replacement", "TARGET")],
     "search_stemmer_alias_mutations": [("MUTANTS", 2, 3, 1)],
     "search_word_test_mutations": [("MUTANTS", 2, 3, 1)],
     "typeahead_concept_provenance_mutations": [("MUTATIONS", 2, 3, "TARGET")],
