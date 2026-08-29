@@ -98,6 +98,10 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # one table, so the target is carried per-entry at index 2 rather than by a
     # module constant.
     "game_markets_shared_cache_mutations": [("MUTANTS", 3, 4, 2)],
+    # LAT-P126. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above. Two targets in one table (the route
+    # and its warmer), carried per-entry at index 1.
+    "golf_schedule_cache_mutations": [("MUTANTS", 3, 4, 1)],
     # LAT-P120. Alphabetical, for the reason spelled out under
     # `futures_movers_warm_mutations` above. Its targets are `.swift`, so Pass B's
     # hardcoded `*.py` glob cannot reach them — the harness carries its own
