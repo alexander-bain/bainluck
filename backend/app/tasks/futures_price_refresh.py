@@ -44,13 +44,47 @@ group, or touch ``event_id``. Discovery stays the polls' job. This separation is
 the actual fix: refresh coverage no longer depends on a discovery ordering, so
 the two can never starve each other again.
 
+TWO ARMS, BECAUSE THERE ARE TWO KINDS OF VALUABLE
+--------------------------------------------------
+The sweep selects on **value** (tier 1 above a volume floor) and, since
+2026-08-27, also on **identity** (any market a committed tournament register
+renders — :func:`app.utils.tournament_register.registered_market_ids`).
+
+The second arm exists because the first one cannot express the US Open props
+section. Measured 2026-08-27: every one of the three markets behind that
+section was tier 5 — ``sinner-competes`` 215h stale, both ``*-second-major``
+837h — and the eight curated Polymarket props were tier 2/5 with ``volume``
+NULL. The predicate admitted **none of them, ever**. The page did exactly what
+it was built to do (``propIsDark`` rotated the dark cards out) and rendered its
+honest empty state, so the only symptom was an empty section and nothing
+anywhere was red. A curated market's value is the curation; a volume floor
+cannot see it.
+
+The arms keep separate clocks and this is the second half of the same fix. The
+class window and the *renderer's* ``LIVE_PRICE_STALE`` bound are both 6h, so the
+sweep only became interested in a market once it had already breached the gate
+the page renders through — it could not arrive before the dark window, only
+after. Registered rows use :data:`REGISTERED_REFRESH_MINUTES` instead, which is
+a sub-interval of the hourly beat, so they are re-priced hours before they could
+go dark. Do not collapse the two constants back into one: that lockstep IS the
+defect.
+
+Registered rows are selected first, sorted to the head of each source loop, and
+never truncated by ``budget`` — both loops stop on the wall clock, so head
+position is what makes "curated rows cannot be starved by the class" a
+guarantee rather than a tendency. The arm is bounded by what is committed on
+disk (81 markets, 5 Kalshi + 76 Polymarket over 72 Gamma events, ≈9 extra HTTP
+calls per beat), so no upstream can grow it.
+
 STARVATION GUARDS (gotcha #41 — an ordering needs both bounds)
 --------------------------------------------------------------
 * **Value floor and liveness floor**, not a bare "oldest first": tier 1, volume
   at or above :data:`HIGH_VALUE_VOLUME_FLOOR`, ``status='open'``, and a
   resolution date in the future. Gotcha #33 (settled Kalshi markets keep
   ``status='open'``) means ``status`` alone is not a liveness test; the
-  resolution-date bound is what keeps the dead out of the queue.
+  resolution-date bound is what keeps the dead out of the queue. The registered
+  arm drops the value floor and keeps **both** liveness bounds verbatim, so a
+  curated row is not a licence to re-animate the stale-open population.
 * **Ordered by value, not by staleness.** Oldest-capture-first looks right and
   is a trap here: a market that can never be priced (a stale-settled book
   returning no bid, ask or trade) has a NULL last-capture forever, so it would
@@ -93,6 +127,31 @@ HIGH_VALUE_VOLUME_FLOOR = 10_000
 #: use one definition of stale rather than two.
 STALE_AFTER_HOURS = 6
 
+#: How stale a REGISTERED market may get before the sweep re-prices it.
+#:
+#: The class window above and the renderer's own bound are both 6h, and that
+#: lockstep is a defect for a curated page: the sweep only becomes interested in
+#: a market once it has *already* breached the gate the page renders through, so
+#: the beat is always one cycle behind the thing it exists to prevent. A
+#: registered market should be re-priced hours before it could go dark, not an
+#: hour after it did.
+#:
+#: **45 minutes, not 60, and the 15 is the whole point.** The beat is hourly at
+#: ``:50`` and the window is evaluated against ``NOW()`` at the moment the run
+#: reaches the query — a few seconds *later* each hour than the capture it is
+#: testing. At exactly 60 the previous run's own snapshot is still inside the
+#: window (``21:50:10`` is newer than ``NOW() - 1h`` when now is ``22:50:05``),
+#: so the market fails the staleness test, is skipped, and refreshes every
+#: *other* hour. The same margin keeps the attempt marker from outliving its
+#: next beat. Any sub-interval value works; this one leaves 15 minutes of slack
+#: for a late or slow run.
+#:
+#: It is deliberately NOT ``STALE_AFTER_HOURS``: that constant is the *renderer's*
+#: definition of stale and the freshness guard reads it. This is a *producer*
+#: interval. Collapsing the two back into one constant is what created the
+#: lockstep.
+REGISTERED_REFRESH_MINUTES = 45
+
 #: Markets refreshed per run. 900 was the whole standing backlog when this
 #: shipped; the budget exists so a bad day cannot turn one run into a wall-clock
 #: overrun, not because the full set is unaffordable.
@@ -121,9 +180,31 @@ def _attempt_key(market_id: int) -> str:
 #: table, because it must read every snapshot for every candidate. The EXISTS
 #: form rides ``idx_fos_outcome_captured`` (outcome_id, captured_at) and stops at
 #: the first row inside the window.
+#: The Gamma **event** id, which is not always ``external_id``.
+#:
+#: Polymarket rows arrive from two ingest branches with two keying conventions,
+#: and this expression is the only place that difference is reconciled:
+#:
+#: * negRisk **field** rows (one market, many outcomes — the US Open winner
+#:   fields) carry the event id directly in ``external_id`` (``'139236'``).
+#: * decomposed **sub-market** rows (one market per question — every curated
+#:   prop) carry a ``0x`` *condition* id there instead; their event id lives in
+#:   ``market_metadata->>'polymarket_event_id'`` and in ``group_id``.
+#:
+#: ``/events?id=0x...`` does not resolve a condition id, so before this the whole
+#: sub-market convention was unreachable by the refresh path even when selected.
+_POLY_EVENT_ID_SQL = """
+        CASE WHEN fm.source = 'polymarket' THEN COALESCE(
+                 NULLIF(fm.market_metadata->>'polymarket_event_id', ''),
+                 NULLIF(substring(fm.group_id FROM '^polymarket:(.+)$'), ''),
+                 CASE WHEN fm.external_id ~ '^[0-9]+$' THEN fm.external_id END
+             ) END AS poly_event_id
+"""
+
 _CANDIDATE_SQL = text(
-    """
-    SELECT fm.id, fm.source, fm.external_id, fm.volume
+    f"""
+    SELECT fm.id, fm.source, fm.external_id, fm.volume,
+           {_POLY_EVENT_ID_SQL}
       FROM futures_markets fm
      WHERE fm.status = 'open'
        AND fm.source IN ('kalshi', 'polymarket')
@@ -141,6 +222,51 @@ _CANDIDATE_SQL = text(
      LIMIT :scan_limit
     """
 )
+
+#: Registered markets, selected by identity instead of by value.
+#:
+#: No tier bound and no volume floor — that is the entire point, and both
+#: omissions are load-bearing rather than lax. The liveness bounds are kept
+#: verbatim from the class query: ``status='open'`` plus a future resolution date
+#: (gotcha #33 — a settled Kalshi market keeps ``status='open'``, so the date is
+#: what actually keeps the dead out of the queue), so this arm cannot re-animate
+#: the stale-open population the US Open slate census fenced off.
+#:
+#: The set is bounded by what is committed on disk, not by anything a market can
+#: do to itself, so no upstream can grow it.
+_REGISTERED_CANDIDATE_SQL = text(
+    f"""
+    SELECT fm.id, fm.source, fm.external_id, fm.volume,
+           {_POLY_EVENT_ID_SQL}
+      FROM futures_markets fm
+     WHERE fm.id = ANY(:market_ids)
+       AND fm.status = 'open'
+       AND fm.source IN ('kalshi', 'polymarket')
+       AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
+       AND NOT EXISTS (
+             SELECT 1
+               FROM futures_outcomes fo
+               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
+              WHERE fo.market_id = fm.id
+                AND s.captured_at > NOW() - make_interval(mins => :stale_minutes)
+           )
+     ORDER BY fm.id
+    """
+)
+
+
+def _rows_to_markets(rows, *, registered: bool) -> list[dict]:
+    return [
+        {
+            "id": mid,
+            "source": source,
+            "external_id": external_id,
+            "volume": volume,
+            "poly_event_id": poly_event_id,
+            "registered": registered,
+        }
+        for mid, source, external_id, volume, poly_event_id in rows
+    ]
 
 
 async def _scan_candidates(
@@ -163,10 +289,22 @@ async def _scan_candidates(
             },
         )
     ).fetchall()
-    return [
-        {"id": mid, "source": source, "external_id": external_id, "volume": volume}
-        for mid, source, external_id, volume in rows
-    ]
+    return _rows_to_markets(rows, registered=False)
+
+
+async def _scan_registered_candidates(
+    session, *, market_ids: list[int], stale_minutes: int
+) -> list[dict]:
+    """Stale markets a committed tournament register renders, at any tier or volume."""
+    if not market_ids:
+        return []
+    rows = (
+        await session.execute(
+            _REGISTERED_CANDIDATE_SQL,
+            {"market_ids": market_ids, "stale_minutes": stale_minutes},
+        )
+    ).fetchall()
+    return _rows_to_markets(rows, registered=True)
 
 
 def _load_attempt_skips(market_ids: list[int]) -> set[int]:
@@ -223,7 +361,24 @@ async def _write_prices(
     """Write price columns + one snapshot per outcome. Returns snapshots written.
 
     ``priced`` items: ``external_id``, ``probability``, ``yes_bid``, ``yes_ask``,
-    ``last_price``.
+    ``last_price``, and optionally a ``no`` sub-dict of the same shape.
+
+    TWO OUTCOME-ID CONVENTIONS, ONE WRITER. ``external_id`` on a priced item is
+    the provider's own market key (a Kalshi ticker, a Polymarket condition id).
+    How that key appears in ``futures_outcomes`` depends on which ingest branch
+    minted the row:
+
+    * **bare** — Kalshi tickers, and the outcomes of a Polymarket negRisk field
+      (``0x…``, one outcome per contender).
+    * **suffixed** — the legs of a decomposed Polymarket binary, written
+      ``{condition_id}_yes`` / ``{condition_id}_no`` by the sub-market branch of
+      ``tasks/polymarket.py``.
+
+    Matching only the bare form is why every curated prop counted as
+    ``unknown_outcomes``: the price arrived, found no row named after it, and was
+    discarded — a refusal that looked exactly like "we do not hold this market".
+    A market row carries one convention or the other, never both, so resolving
+    bare-then-suffixed cannot double-write.
 
     Three refusals, each load-bearing:
 
@@ -269,49 +424,70 @@ async def _write_prices(
         ).fetchall()
     }
 
+    def _legs(item: dict) -> list[tuple[int, dict]]:
+        """``(outcome_id, side)`` pairs, in whichever convention this market holds."""
+        key = item["external_id"]
+        bare = existing.get(key)
+        if bare is not None:
+            return [(bare, item)]
+        legs: list[tuple[int, dict]] = []
+        yes_id = existing.get(f"{key}_yes")
+        if yes_id is not None:
+            legs.append((yes_id, item))
+        no_id = existing.get(f"{key}_no")
+        no_side = item.get("no")
+        if no_id is not None and no_side:
+            legs.append((no_id, no_side))
+        return legs
+
     now = datetime.now(timezone.utc)
     written = 0
     for item in priced:
         prob = item.get("probability")
         if prob is None or not (0 < prob < 1):
             continue
-        outcome_id = existing.get(item["external_id"])
-        if outcome_id is None:
+
+        legs = _legs(item)
+        if not legs:
             stats["unknown_outcomes"] += 1
             continue
 
-        american = probability_to_american(prob)
-        await session.execute(
-            sa_update(FuturesOutcome)
-            .where(FuturesOutcome.id == outcome_id)
-            .values(
-                current_probability=prob,
-                current_american_odds=american,
-                current_yes_bid=item.get("yes_bid"),
-                current_yes_ask=item.get("yes_ask"),
-                last_updated=func.now(),
-                # #2024: `last_updated` records that a poll RAN; this records
-                # that the price MOVED. Both matter and they are not the same.
-                price_changed_at=price_changed_at_value(
-                    FuturesOutcome.current_probability,
-                    FuturesOutcome.price_changed_at,
-                    prob,
-                ),
+        for outcome_id, side in legs:
+            side_prob = side.get("probability")
+            if side_prob is None or not (0 < side_prob < 1):
+                continue
+            american = probability_to_american(side_prob)
+            await session.execute(
+                sa_update(FuturesOutcome)
+                .where(FuturesOutcome.id == outcome_id)
+                .values(
+                    current_probability=side_prob,
+                    current_american_odds=american,
+                    current_yes_bid=side.get("yes_bid"),
+                    current_yes_ask=side.get("yes_ask"),
+                    last_updated=func.now(),
+                    # #2024: `last_updated` records that a poll RAN; this records
+                    # that the price MOVED. Both matter and they are not the same.
+                    price_changed_at=price_changed_at_value(
+                        FuturesOutcome.current_probability,
+                        FuturesOutcome.price_changed_at,
+                        side_prob,
+                    ),
+                )
             )
-        )
-        await session.execute(
-            pg_insert(FuturesOddsSnapshot).values(
-                outcome_id=outcome_id,
-                bookmaker=bookmaker,
-                probability=prob,
-                american_odds=american,
-                yes_bid=item.get("yes_bid"),
-                yes_ask=item.get("yes_ask"),
-                last_price=item.get("last_price"),
-                captured_at=now,
+            await session.execute(
+                pg_insert(FuturesOddsSnapshot).values(
+                    outcome_id=outcome_id,
+                    bookmaker=bookmaker,
+                    probability=side_prob,
+                    american_odds=american,
+                    yes_bid=side.get("yes_bid"),
+                    yes_ask=side.get("yes_ask"),
+                    last_price=side.get("last_price"),
+                    captured_at=now,
+                )
             )
-        )
-        written += 1
+            written += 1
 
     return written
 
@@ -372,7 +548,7 @@ async def _fetch_polymarket_prices(service, event_ids: list[str]) -> dict[str, l
     legs is not a price at any leg, and capturing it poisons
     ``opening_probability`` permanently because opening is COALESCEd).
     """
-    from app.tasks.polymarket import _resolve_market_probability
+    from app.tasks.polymarket import _resolve_market_probability, complementary_book
     from app.utils.winner_field_coherence import field_is_incoherent
 
     raw_events = await service.get_events_by_ids(event_ids)
@@ -386,15 +562,46 @@ async def _fetch_polymarket_prices(service, event_ids: list[str]) -> dict[str, l
             prob = _resolve_market_probability(market)
             if prob is None or prob <= 0:
                 continue
-            priced.append(
-                {
-                    "external_id": market.condition_id,
-                    "probability": prob,
-                    "yes_bid": market.best_bid,
-                    "yes_ask": market.best_ask,
-                    "last_price": market.last_trade_price,
-                }
+            item = {
+                "external_id": market.condition_id,
+                "probability": prob,
+                "yes_bid": market.best_bid,
+                "yes_ask": market.best_ask,
+                "last_price": market.last_trade_price,
+            }
+
+            # THE NO LEG. A decomposed binary stores two rows and the card is
+            # only presented as live when BOTH are fresh, so refreshing Yes alone
+            # leaves the prop exactly as dark as before — the write lands and the
+            # user still sees nothing.
+            #
+            # It is the complement of the Yes price we ACCEPTED, never
+            # ``outcome_prices[1]``, and the difference is not academic. Measured
+            # against live Gamma 2026-08-27 on the four curated US Open prop
+            # events: 92 priced markets, ``outcome_prices`` summed to exactly 1
+            # in every single one — so whenever Yes came from ``outcome_prices``
+            # the two rules agree exactly. They diverge only when Yes did NOT:
+            # ``alcaraz-semifinals`` quoted ``[0.32, 0.68]`` over an untradeable
+            # 0.11/0.53 book, so 0.32 was refused as a fabricated midpoint
+            # (#1578) and Yes resolved to the 0.53 last trade. Writing 0.68
+            # beside it would print a card whose two sides sum to 1.21 — and 0.68
+            # is the complement of the very number we just refused.
+            #
+            # ``1 - accepted`` is coherent with what we publish by construction,
+            # which is the same reasoning ``complementary_book`` applies to the
+            # book: one binary CLOB addressed from the other token, an identity
+            # rather than an estimate.
+            no_bid, no_ask, no_last = complementary_book(
+                market.best_bid, market.best_ask, market.last_trade_price
             )
+            item["no"] = {
+                "probability": 1.0 - prob,
+                "yes_bid": no_bid,
+                "yes_ask": no_ask,
+                "last_price": no_last,
+            }
+
+            priced.append(item)
         if not priced:
             continue
         if field_is_incoherent(
@@ -419,9 +626,11 @@ async def _refresh_stale_futures_prices(
     volume_floor: int = HIGH_VALUE_VOLUME_FLOOR,
     stale_hours: int = STALE_AFTER_HOURS,
     budget: int = DEFAULT_MARKET_BUDGET,
+    registered_refresh_minutes: int = REGISTERED_REFRESH_MINUTES,
 ) -> dict:
     """Refresh prices for stale high-value open futures markets. See module docstring."""
     from app.tasks.base import get_task_session
+    from app.utils.tournament_register import registered_market_ids
 
     started = time.monotonic()
     stats: dict = {
@@ -437,6 +646,9 @@ async def _refresh_stale_futures_prices(
         "by_source": {},
         "remaining_stale": None,
         "budget_hit": False,
+        "registered_candidates": 0,
+        "registered_attempted": 0,
+        "registered_priced": 0,
     }
 
     async with get_task_session() as session:
@@ -447,13 +659,32 @@ async def _refresh_stale_futures_prices(
         await session.execute(text("SET statement_timeout = '60s'"))
         await session.execute(text("SET lock_timeout = '15s'"))
 
-        scan = await _scan_candidates(
+        # Registered first, and on a shorter clock. Two arms rather than one
+        # loosened predicate: the class keeps its value floor (widening that
+        # would pull the whole low-value tail into an hourly sweep and starve
+        # exactly what it is meant to protect), while curated rows are selected
+        # by identity because curation is their value floor.
+        registered_scan = await _scan_registered_candidates(
+            session,
+            market_ids=sorted(registered_market_ids()),
+            stale_minutes=registered_refresh_minutes,
+        )
+        class_scan = await _scan_candidates(
             session,
             volume_floor=volume_floor,
             stale_hours=stale_hours,
             scan_limit=max(budget * 3, budget + 50),
         )
+
+        # A registered market that is ALSO tier-1 high-volume (every US Open
+        # winner field is) appears in both. It must keep the registered
+        # classification or it inherits the 6h attempt TTL and the shorter clock
+        # is undone.
+        registered_ids = {m["id"] for m in registered_scan}
+        scan = registered_scan + [m for m in class_scan if m["id"] not in registered_ids]
+
         stats["candidates"] = len(scan)
+        stats["registered_candidates"] = len(registered_scan)
         skip_ids = _load_attempt_skips([m["id"] for m in scan])
         selected = [m for m in scan if m["id"] not in skip_ids][:budget]
 
@@ -463,16 +694,29 @@ async def _refresh_stale_futures_prices(
             # opposite states, so they get different terminals.
             stats["terminal"] = "complete" if not scan else "no_work"
             stats["reason"] = (
-                "no stale high-value markets"
+                "no stale high-value or registered markets"
                 if not scan
                 else "every stale market was attempted inside the current window"
             )
             stats["remaining_stale"] = len(scan)
             return stats
 
+        # Registered ahead of the class WITHIN each source: both source loops are
+        # truncated by the wall budget, so head position is what makes "curated
+        # rows cannot be starved by the class" true rather than merely likely.
+        selected.sort(key=lambda m: not m["registered"])
         kalshi_markets = [m for m in selected if m["source"] == "kalshi"]
         poly_markets = [m for m in selected if m["source"] == "polymarket"]
         attempted_ids: list[int] = []
+        registered_attempted_ids: list[int] = []
+
+        def _note_attempt(market: dict) -> None:
+            stats["markets_attempted"] += 1
+            if market["registered"]:
+                stats["registered_attempted"] += 1
+                registered_attempted_ids.append(market["id"])
+            else:
+                attempted_ids.append(market["id"])
 
         # --- Polymarket: batched by id, so the whole backlog costs ~25 calls ---
         if poly_markets:
@@ -480,8 +724,26 @@ async def _refresh_stale_futures_prices(
 
             poly_service = PolymarketAPIService()
             try:
-                by_external = {m["external_id"]: m for m in poly_markets}
-                ids = list(by_external.keys())
+                # MANY MARKETS PER EVENT, so this is a list and not a scalar.
+                # A negRisk field is one market on one event, but the decomposed
+                # binaries are one event per QUESTION GROUP — the eight curated
+                # US Open props sit on four events, two of them sharing one.
+                # Keying market-per-event would have silently dropped the second
+                # prop of every pair.
+                by_event: dict[str, list[dict]] = {}
+                for market in poly_markets:
+                    event_id = market.get("poly_event_id")
+                    if not event_id:
+                        # No resolvable Gamma event id: the row cannot be
+                        # addressed, and saying so is the point (gotcha #53).
+                        # Counted, marked attempted so it rotates, never retried
+                        # into a 422 loop against `/events?id=0x…`.
+                        _note_attempt(market)
+                        stats["no_event_id"] = stats.get("no_event_id", 0) + 1
+                        continue
+                    by_event.setdefault(str(event_id), []).append(market)
+
+                ids = list(by_event.keys())
                 for i in range(0, len(ids), POLYMARKET_ID_BATCH):
                     if time.monotonic() - started > _TIME_BUDGET_S:
                         stats["budget_hit"] = True
@@ -494,31 +756,34 @@ async def _refresh_stale_futures_prices(
                     except Exception as exc:  # one bad batch must not wipe the run
                         stats["errors"].append(f"polymarket batch {i}: {exc}")
                         continue
-                    for external_id in chunk:
-                        market = by_external[external_id]
-                        attempted_ids.append(market["id"])
-                        stats["markets_attempted"] += 1
-                        priced = priced_by_event.get(external_id)
-                        if priced is None:
-                            stats["not_found"] += 1
-                            continue
-                        try:
-                            written = await _write_prices(
-                                session, market["id"], "polymarket", priced, stats
-                            )
-                            await session.commit()
-                        except Exception as exc:
-                            await session.rollback()
-                            stats["errors"].append(f"polymarket {external_id}: {exc}")
-                            continue
-                        if written:
-                            stats["markets_priced"] += 1
-                            stats["snapshots_written"] += written
-                            stats["by_source"]["polymarket"] = (
-                                stats["by_source"].get("polymarket", 0) + written
-                            )
-                        else:
-                            stats["unpriceable"] += 1
+                    for event_id in chunk:
+                        priced = priced_by_event.get(event_id)
+                        for market in by_event[event_id]:
+                            _note_attempt(market)
+                            if priced is None:
+                                stats["not_found"] += 1
+                                continue
+                            try:
+                                written = await _write_prices(
+                                    session, market["id"], "polymarket", priced, stats
+                                )
+                                await session.commit()
+                            except Exception as exc:
+                                await session.rollback()
+                                stats["errors"].append(
+                                    f"polymarket {market['external_id']}: {exc}"
+                                )
+                                continue
+                            if written:
+                                stats["markets_priced"] += 1
+                                stats["snapshots_written"] += written
+                                stats["by_source"]["polymarket"] = (
+                                    stats["by_source"].get("polymarket", 0) + written
+                                )
+                                if market["registered"]:
+                                    stats["registered_priced"] += 1
+                            else:
+                                stats["unpriceable"] += 1
                     await asyncio.sleep(0.3)
             finally:
                 await poly_service.close()
@@ -537,8 +802,7 @@ async def _refresh_stale_futures_prices(
                     if time.monotonic() - started > _TIME_BUDGET_S:
                         stats["budget_hit"] = True
                         break
-                    attempted_ids.append(market["id"])
-                    stats["markets_attempted"] += 1
+                    _note_attempt(market)
                     try:
                         priced = await _fetch_kalshi_prices(
                             kalshi_service, market["external_id"]
@@ -564,11 +828,21 @@ async def _refresh_stale_futures_prices(
                         stats["by_source"]["kalshi"] = (
                             stats["by_source"].get("kalshi", 0) + written
                         )
+                        if market["registered"]:
+                            stats["registered_priced"] += 1
                     else:
                         stats["unpriceable"] += 1
                     await asyncio.sleep(0.15)
 
+        # Two TTLs, because there are two clocks. A registered market marked for
+        # 6h would be unreachable for five hours after every refresh, which is
+        # the lockstep this change exists to break — the shorter select window
+        # would simply re-find it and the marker would veto it.
         _mark_attempted(attempted_ids, ttl_seconds=stale_hours * 3600)
+        _mark_attempted(
+            registered_attempted_ids,
+            ttl_seconds=max(1, registered_refresh_minutes) * 60,
+        )
 
         # Measure what is LEFT, so the run reports the invariant's state and not
         # just its own throughput. This is the number the guard reads.
