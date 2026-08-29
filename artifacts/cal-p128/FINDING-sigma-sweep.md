@@ -1,4 +1,4 @@
-# CAL-P128 — the board's σ column, measured on twelve cells
+# CAL-P128 — the board’s σ column, measured on all fourteen working cells
 
 **Published curve 1.89 pp, FLAT →** (population `q268`, unmoved for a fourteenth
 reading — per §6e a re-publish is not a datapoint and none was recorded).
@@ -7,22 +7,25 @@ Queue 027 item 1: *"σ-sweep the board first… find out how many of them are re
 before designing another rule. This is the highest-value thing on the board right
 now and it may shorten the merge-fest considerably."*
 
-It was worth doing. **It does not shorten the merge-fest.**
+It was worth doing, and the answer splits three ways: **ten of the fourteen are
+confirmed real, two are refuted, and two cannot be scored at all.** The two
+refused cells carry **62,897 excess-outcomes** between them — including the
+board's rank 4, which nobody had questioned.
 
 ---
 
 ## 1. The result
 
-Twelve of the fourteen working board cells now have a measured cluster-bootstrap
-σ. (The board is 20 queued cells; six are `odds_api_bookmaker` and stay off per
-CAL-P120 §6g.) `polymarket/esports` and `polymarket/soccer` are outstanding.
+**All fourteen** working board cells now have a measured cluster-bootstrap σ. (The
+board is 20 queued cells; six are `odds_api_bookmaker` and stay off per CAL-P120
+§6g.)
 
 | cell | ECE | excess | σ board | σ measured | var ratio | coverage | verdict |
 |---|--:|--:|--:|--:|--:|--:|---|
 | `polymarket/baseball` | 4.80 | +1.80 | 7.53 | **5.26** | 1.93 | 0.939 | ESTABLISHED |
 | `kalshi/economics` | 5.29 | +2.29 | 7.75 | **5.82** | 1.82 | 1.027 | ESTABLISHED |
-| `polymarket/esports` | 7.59 | +4.59 | 10.88 | — | — | — | *unmeasured* |
-| `polymarket/soccer` | 3.42 | +0.42 | 2.75 | — | — | — | *unmeasured* |
+| `polymarket/esports` | 7.59 | +4.59 | 10.88 | **9.00** | 1.21 | 1.013 | ESTABLISHED |
+| `polymarket/soccer` | 3.42 | +0.42 | 2.75 | **0.87** 🔴 | 9.37 | 0.950 | **NOT ESTABLISHED** |
 | `kalshi/crypto` | 7.60 | +4.60 | 6.22 | **6.82** | 0.83 | 1.005 | ESTABLISHED |
 | `kalshi/entertainment` | 5.21 | +2.21 | 4.04 | **4.52** | 0.81 | 1.014 | ESTABLISHED |
 | `kalshi/golf` | 3.88 | +0.88 | 2.52 | **1.48** 🔴 | 2.91 | 1.008 | **NOT ESTABLISHED** |
@@ -34,9 +37,18 @@ CAL-P120 §6g.) `polymarket/esports` and `polymarket/soccer` are outstanding.
 | `kalshi/tech` | 10.96 | +7.96 | 5.52 | **4.13** | 1.81 | 1.012 | ESTABLISHED |
 | `polymarket/tech` | 4.91 | +1.91 | 2.01 | **2.23** | 0.81 | 0.988 | ESTABLISHED |
 
-**Nine established, one refuted, two undecidable.** The one refutation is
-`kalshi/golf`, which CAL-P127 already found and filed as 17-CAL. The sweep
-removed no cell that was not already off.
+**Ten established, two refuted, two undecidable.**
+
+`kalshi/golf` is CAL-P127's, already filed as 17-CAL. **`polymarket/soccer` is
+new, and it is the largest single result of the sweep** — rank 4 on the board,
+44,857 excess-outcomes, and nobody had questioned it. Its measured σ is **0.87**
+against the board's 2.75, and its bootstrap CI on the ECE is **[1.98, 3.87]**,
+straddling the 3.0 bar. On the exact rail the cell reads **2.89 — under its bar
+outright**, which is where the negative σ in the raw artifact comes from.
+
+Soccer also carries the largest variance ratio on the board by a factor of three:
+**9.37**, over 14,897 markets at 6.8 rows each. The board was treating 106,803
+rows as 106,803 independent observations; they are worth about **11,394**.
 
 ---
 
@@ -61,13 +73,13 @@ that bound, and the slack **outweighs** the clustering inflation:
 - `polymarket/hockey` 0.73 · `kalshi/entertainment` 0.81 · `polymarket/tech` 0.81 ·
   `kalshi/crypto` 0.83.
 
-Five of twelve cells come out **more** established than the board thought, one
-lands exactly on 1.00, and six come out less. So:
+Five of fourteen cells come out **more** established than the board thought, one
+lands exactly on 1.00, and eight come out less. So:
 
-> **The board's σ column is wrong in both directions, and the net effect on the
-> queue is approximately zero.** A sweep that removes one already-known cell out
-> of twelve is not a shortcut to the merge-fest; it is a confirmation that the
-> merge-fest is real work.
+> **The board's σ column is wrong in both directions, so the sweep is not a
+> blanket discount on the queue — it is a re-ranking of it.** Ten of fourteen
+> cells survive, five of them by a wider margin than the board claimed. Two fall.
+> The merge-fest is real work, and it is now two cells shorter than it was.
 
 This also renames a number. CAL-P127 quoted golf's **2.91** as a "design effect".
 It is reproduced exactly here, but it is not a textbook design effect — a design
@@ -116,7 +128,7 @@ computed over rows that are 43% duplicates.
 
 ## 4. What this discharges
 
-**The banked five now have measured σs, and every one measured is ESTABLISHED.**
+**All five banked designs now have a measured σ, and every one is ESTABLISHED.**
 The handoff flagged this as a live question ("⚠️ AND NONE OF THE FIVE HAS A
 MEASURED σ. Golf's verdict makes that a live question about all of them"):
 
@@ -124,11 +136,12 @@ MEASURED σ. Golf's verdict makes that a live question about all of them"):
 |--:|---|---|--:|---|
 | 1 | `polymarket/baseball` | K′ → 2.71 | **5.26** | ESTABLISHED |
 | 2 | `kalshi/economics` | E+E2+E3 → 2.61 | **5.82** | ESTABLISHED |
-| 3 | `polymarket/esports` | E → 3.29 | *running* | — |
+| 3 | `polymarket/esports` | E → 3.29 | **9.00** | ESTABLISHED |
 | 6 | `kalshi/crypto` | RULE C | **6.82** | ESTABLISHED |
 | 17 | `kalshi/tech` | T → 3.80 | **4.13** | ESTABLISHED |
 
-Four of five confirmed. None of the banked designs is chasing noise.
+**All five confirmed.** None of the banked designs is chasing noise, and the
+question the handoff raised about them is closed.
 
 **Criteria 3 and 6 are discharged as a by-product.** Alex's answer was to report
 `effective_n` and a design effect as a pair. Both are now computed per cell in the
@@ -178,12 +191,22 @@ now on the board rather than in a handoff paragraph.
 
 ## 6. Owed to Alex
 
-- 🔴 **19-CAL (NEW): `polymarket/basketball` cannot be scored until its phantom is
+- 🔴 **19-CAL (NEW): `polymarket/soccer` is NOT ESTABLISHED — take it off the
+  board.** Measured σ **0.87** against the ratified 2.0 gate; bootstrap CI on the
+  ECE **[1.98, 3.87]**, straddling the 3.0 bar; on the exact rail the cell reads
+  2.89, under its bar outright. Coverage 0.950, so this one decides. This is the
+  board's **rank 4** and **44,857 excess-outcomes** — by far the largest cell the
+  σ check has ever removed, and unlike golf it was never under suspicion. Same
+  precedent as the six CAL-P120 removed and the golf cell in 17-CAL. Recommend
+  **(a) take it off**: board 14 → 12 working cells (13 → 12 if you also take
+  golf), finish line 29/49 → 29/47. **No published row changes and no number
+  moves.**
+- 🔴 **20-CAL (NEW): `polymarket/basketball` cannot be scored until its phantom is
   resolved, and the parked CAL-P125-2 rule design is blocked on that, not on a
   holdout.** 43.44% phantom (CAL-P126), rail/payload coverage 0.641. Recommend
   **(a) park CAL-P125-2 behind the phantom repair** rather than spend a session on
   a rule whose margin is computed over 43% duplicate rows. No published row changes.
-- **20-CAL (NEW): `polymarket/hockey` has an unexplained 0.780 rail/payload
+- **21-CAL (NEW): `polymarket/hockey` has an unexplained 0.780 rail/payload
   divergence.** 9,945 excess-outcomes. It is in CAL-P126's unmeasured 21; a phantom
   measurement would say whether it is basketball's cause or a second one. Routing
   note, no decision.
@@ -195,11 +218,13 @@ now on the board rather than in a handoff paragraph.
 
 ## 7. Parked
 
-- **CAL-P128-1** — `polymarket/soccer` σ unmeasured. It is the 4th-largest cell
-  (44,857 excess-outcomes) and the only working cell with a row-grain σ (2.75) close
-  enough to the gate that a measurement could plausibly flip it either way.
-- **CAL-P128-2** — the six `odds_api_bookmaker` cells have no measured σ. They are
+- **CAL-P128-1** — the six `odds_api_bookmaker` cells have no measured σ. They are
   off the board by CAL-P120 §6g, so this is not blocking, but their σ column is the
   same row-grain estimate and `calibration_cluster_sigma`'s docstring notes that a
   bookmaker dedup is *exact* — so they are the one family where the correction has a
   known closed form and was never applied.
+- **CAL-P128-2** — soccer's variance ratio of **9.37** is three times the next
+  highest and worth understanding rather than just recording. 14,897 markets at 6.8
+  rows each is not obviously more clustered than baseball's 5,416 at 7.6 (ratio
+  1.93). Something about soccer's within-market structure is different, and whatever
+  it is probably applies to the other multi-outcome game cells.

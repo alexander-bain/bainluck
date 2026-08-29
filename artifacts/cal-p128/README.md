@@ -1,8 +1,10 @@
 # CAL-P128 — σ-sweep of the working board
 
-Read `FINDING-sigma-sweep.md`. Headline: **twelve of fourteen working cells
-measured; nine established, one refuted (already-known `kalshi/golf`), two
-undecidable. The sweep does not shorten the merge-fest.**
+Read `FINDING-sigma-sweep.md`. Headline: **all fourteen working cells measured.
+Ten established, TWO refuted, two undecidable.** The refusals are `kalshi/golf`
+(already known, 17-CAL) and — new, and the largest result here —
+**`polymarket/soccer`**, the board's rank 4 at 44,857 excess-outcomes, measured
+σ 0.87 against the board's 2.75.
 
 The measurements are committed as a ledger the board reads, not as prose:
 `artifacts/calibration-scorecard/measured-sigma.json`.
@@ -28,6 +30,11 @@ python3 backend/scripts/calibration_scorecard.py --live --markdown
 `run-sigma-sweep.sh` skips a cell whose JSON already exists, so re-running it is
 how a transient failure is retried — `polymarket/esports` died once on a
 `RemoteDisconnected` mid-sweep and was picked up by a second pass.
+
+Budget: eleven cells took 1-11 minutes each. `polymarket/esports` took ~25 min on
+a loaded database and `polymarket/soccer` ~40 min (106,803 rows over 14,897
+markets). Run the sweep sequentially — two concurrent sweeps put avoidable load on
+production Postgres, and the throttle is not what makes it slow.
 
 ## Files
 

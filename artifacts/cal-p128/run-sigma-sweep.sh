@@ -18,6 +18,9 @@ CELLS=(
   "polymarket economics"
   "polymarket hockey"
   "polymarket tech"
+  # Last on purpose: the biggest cell on the board and the slowest sweep.
+  # Everything above it banks before this one starts.
+  "polymarket soccer"
 )
 for c in "${CELLS[@]}"; do
   set -- $c

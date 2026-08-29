@@ -306,6 +306,40 @@
       "source": "polymarket",
       "variance_ratio_vs_board": 1.0
     },
+    "polymarket/esports": {
+      "artifact": "artifacts/cal-p128/sigma-polymarket-esports.json",
+      "as_measured": {
+        "bar": 3.0,
+        "bootstrap_ci": [
+          6.24,
+          8.09
+        ],
+        "ece_exact": 7.15,
+        "ece_payload": 7.59,
+        "established_at_gate": true,
+        "excess": 4.15,
+        "n": 14053,
+        "n_exact": 14242,
+        "payload_excess": 4.59,
+        "sigma_bootstrap": 9.004303375653457,
+        "sigma_gate": 2.0,
+        "sigma_row": 9.905207620236945
+      },
+      "boot": 2000,
+      "category": "esports",
+      "clusters": 4591,
+      "effective_n": 11614,
+      "exact_coverage": 1.0134,
+      "generated_at": "2026-08-29T00:36:47.978149+00:00",
+      "population_version": "q268",
+      "rows_per_cluster": 3.102,
+      "se_bootstrap_pp": 0.4608907348925067,
+      "se_market_pp": 0.7379320242424277,
+      "se_row_pp": 0.4189715308461881,
+      "seed": 20260829,
+      "source": "polymarket",
+      "variance_ratio_vs_board": 1.21
+    },
     "polymarket/golf": {
       "artifact": "artifacts/cal-p128/sigma-polymarket-golf.json",
       "as_measured": {
@@ -373,6 +407,40 @@
       "seed": 20260829,
       "source": "polymarket",
       "variance_ratio_vs_board": 0.734
+    },
+    "polymarket/soccer": {
+      "artifact": "artifacts/cal-p128/sigma-polymarket-soccer.json",
+      "as_measured": {
+        "bar": 3.0,
+        "bootstrap_ci": [
+          1.98,
+          3.87
+        ],
+        "ece_exact": 2.89,
+        "ece_payload": 3.42,
+        "established_at_gate": false,
+        "excess": -0.11,
+        "n": 106803,
+        "n_exact": 101484,
+        "payload_excess": 0.42,
+        "sigma_bootstrap": -0.2289023398124397,
+        "sigma_gate": 2.0,
+        "sigma_row": -0.7008441766897967
+      },
+      "boot": 2000,
+      "category": "soccer",
+      "clusters": 14897,
+      "effective_n": 11394,
+      "exact_coverage": 0.9502,
+      "generated_at": "2026-08-29T00:36:47.978149+00:00",
+      "population_version": "q268",
+      "rows_per_cluster": 6.812,
+      "se_bootstrap_pp": 0.4805542839366901,
+      "se_market_pp": 0.4096572029936208,
+      "se_row_pp": 0.15695357635637086,
+      "seed": 20260829,
+      "source": "polymarket",
+      "variance_ratio_vs_board": 9.374
     },
     "polymarket/tech": {
       "artifact": "artifacts/cal-p128/sigma-polymarket-tech.json",

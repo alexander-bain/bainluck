@@ -783,7 +783,7 @@ def render_markdown(result: dict, history: list[dict]) -> str:
             f"- ⚠️ **{ms['queued_cells_low_coverage']} queued cell(s) have a "
             f"measured sigma that is NOT allowed to decide** — the exact rail "
             f"and the payload disagree about the cell's population by more "
-            f"than {int((1 - sigma_ledger.COVERAGE_BAND[0]) * 100)}%, so the SE "
+            f"than {round((1 - sigma_ledger.COVERAGE_BAND[0]) * 100)}%, so the SE "
             f"and the excess are not measurements of the same rows: "
             f"{', '.join(ms['low_coverage_cells'])}. Which side is inflated is "
             "a per-cell question — basketball is 43.44% phantom (CAL-P126)."
