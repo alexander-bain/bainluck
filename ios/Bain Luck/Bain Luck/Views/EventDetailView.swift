@@ -516,7 +516,14 @@ struct EventDetailView: View {
                         // Pre-game odds as secondary context
                         if let awayOpeningProbability = event.openingOdds?.awayProbability,
                            let homeOpeningProbability = event.openingOdds?.homeProbability {
-                            Text("Opened \(formatProbability(awayOpeningProbability)) – \(formatProbability(homeOpeningProbability))")
+                            // #2085 — `opening_odds` is a complement pair too
+                            // (`opening_away_probability or round(1 - home, 4)`),
+                            // and it carries NO served percents at any deploy, so
+                            // this pair is always decided locally.
+                            let openDuel = renderedDuelPercents(
+                                away: awayOpeningProbability, home: homeOpeningProbability
+                            )
+                            Text("Opened \(formatProbability(awayOpeningProbability, renderedPercent: openDuel[0])) – \(formatProbability(homeOpeningProbability, renderedPercent: openDuel[1]))")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -524,14 +531,29 @@ struct EventDetailView: View {
                               let away = odds.awayProbability,
                               let home = odds.homeProbability {
                         let oddsFontSize: CGFloat = sizeClass == .regular ? 36 : 28
+                        // #2085 — THE HERO PAIR. `current_odds.away_probability`
+                        // is `round(1 - home, 6)` on the backend, so rounding the
+                        // two sides independently printed 101 whenever
+                        // `home * 100` landed on a half-percent (34 of 414
+                        // scheduled/live events, measured 2026-08-21). It could
+                        // print 101; it could never print 99.
+                        //
+                        // BOTH SERVED OR NEITHER. A served away beside a locally
+                        // derived home re-opens the same 101 from the other side,
+                        // and an older deploy can carry one field and not the
+                        // other, so the pair falls back whole.
+                        let duelFallback = renderedDuelPercents(away: away, home: home)
+                        let bothServed = odds.awayRenderedPercent != nil && odds.homeRenderedPercent != nil
+                        let awayPct = bothServed ? odds.awayRenderedPercent : duelFallback[0]
+                        let homePct = bothServed ? odds.homeRenderedPercent : duelFallback[1]
                         HStack(spacing: 8) {
-                            Text(formatProbability(away))
+                            Text(formatProbability(away, renderedPercent: awayPct))
                                 .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                 .foregroundStyle(colors.away)
                             Text("\u{2013}")
                                 .font(.title3)
                                 .foregroundStyle(.secondary.opacity(0.4))
-                            Text(formatProbability(home))
+                            Text(formatProbability(home, renderedPercent: homePct))
                                 .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                 .foregroundStyle(colors.home)
                         }
@@ -599,8 +621,11 @@ struct EventDetailView: View {
                        let opening = event.openingOdds,
                        let awayOpen = opening.awayProbability,
                        let homeOpen = opening.homeProbability {
+                        // #2085 — the live game's opening line, same pair rule
+                        // as the settled branch above.
+                        let openDuel = renderedDuelPercents(away: awayOpen, home: homeOpen)
                         HStack(spacing: 4) {
-                            Text("Opened \(formatProbability(awayOpen)) \u{2013} \(formatProbability(homeOpen))")
+                            Text("Opened \(formatProbability(awayOpen, renderedPercent: openDuel[0])) \u{2013} \(formatProbability(homeOpen, renderedPercent: openDuel[1]))")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }

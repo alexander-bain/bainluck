@@ -45,6 +45,7 @@ import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
+import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
 import { SignalBars } from "@/components/discover/shared";
 import { confidenceFromSources } from "@/lib/confidence";
 import {
@@ -335,8 +336,19 @@ export default function EventPage({ params }: EventPageProps) {
   }
 
   // Resolve display probability based on game status (see eventKeyStats.ts)
-  const { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb } =
-    resolveProbability(event, historyData, lastChartPoint, isLive, isFinished);
+  const {
+    homeProb,
+    awayProb,
+    probSourceLabel,
+    openingHomeProb,
+    openingAwayProb,
+    // #2085 — the whole percents to PRINT for each pair, decided together at
+    // the one place that knows which source each pair came from.
+    homePct,
+    awayPct,
+    openingHomePct,
+    openingAwayPct,
+  } = resolveProbability(event, historyData, lastChartPoint, isLive, isFinished);
 
   // #490: hero confidence signal (1-3 bars), computed client-side from the win-
   // prob sources already on the event + whether the line moved off open. Mirrors
@@ -679,41 +691,20 @@ export default function EventPage({ params }: EventPageProps) {
                   )}
                 </div>
               ) : (
-              // UX-P003: the hero's half of "card == hero == chart". The rail
-              // reads `data-probability` here and on the Discover card that
-              // links to this page, and fails if they disagree.
-              <div
-                className="flex items-baseline"
-                data-testid="event-hero-probability"
-                data-probability={homeProb ?? ""}
-                data-probability-source={probSourceLabel ?? ""}
-              >
-                <span
-                  className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
-                  style={{ color: event.home_team_data?.primary_color || "#111827" }}
-                >
-                  {homeProb !== null ? Math.round(homeProb * 100) : "—"}
-                </span>
-                <span
-                  className="text-lg font-bold leading-none ml-0.5"
-                  style={{ color: event.home_team_data?.primary_color || "#111827" }}
-                >
-                  %
-                </span>
-                <span className="text-lg font-light text-text-muted mx-1.5 self-center">{"–"}</span>
-                <span
-                  className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
-                  style={{ color: event.away_team_data?.primary_color || "#94A3B8" }}
-                >
-                  {awayProb !== null ? Math.round(awayProb * 100) : "—"}
-                </span>
-                <span
-                  className="text-lg font-bold leading-none ml-0.5"
-                  style={{ color: event.away_team_data?.primary_color || "#94A3B8" }}
-                >
-                  %
-                </span>
-              </div>
+              // #2085: the two sides are ONE decision — see
+              // `EventHeroProbabilityPair` and `resolveProbability`. This used
+              // to be four spans rounding `homeProb` and `awayProb`
+              // independently, which prints 101 whenever `home * 100` lands on
+              // a half-percent (8.2% of scheduled/live events, measured).
+              <EventHeroProbabilityPair
+                homeProb={homeProb}
+                awayProb={awayProb}
+                homePct={homePct}
+                awayPct={awayPct}
+                homeColor={event.home_team_data?.primary_color}
+                awayColor={event.away_team_data?.primary_color}
+                probSourceLabel={probSourceLabel}
+              />
               )}
 
               {/* Trend indicator — change since opening (live/pregame only) */}
@@ -748,7 +739,10 @@ export default function EventPage({ params }: EventPageProps) {
               {!isFinished && openingHomeProb !== null && (
                 <div className="mt-1.5">
                   <span className="text-[11px] text-text-muted">
-                    Opened {formatProbability(openingHomeProb)} {"–"} {formatProbability(openingAwayProb)}
+                    {/* #2085 — same pair, same rule. `opening_odds` derives its
+                        away side as `1 - home` on the backend too, so this line
+                        printed 101 for exactly the same reason the hero did. */}
+                    Opened {formatProbability(openingHomeProb, { rendered: openingHomePct })} {"–"} {formatProbability(openingAwayProb, { rendered: openingAwayPct })}
                   </span>
                 </div>
               )}

@@ -819,9 +819,34 @@ describe("event-page pack can prove both hero states", () => {
   const read = (...p) => fs.readFileSync(path.join(repoRoot, ...p), "utf8");
   const specRaw = () => read("frontend", "e2e", "specs", "event-page.spec.ts");
   const pageRaw = () => read("frontend", "app", "events", "[id]", "page.tsx");
+  // LAT-P119 (#2085) extracted the live/pregame hero's two percents into their
+  // own component, so the hook no longer lives in `page.tsx`. It still ships to
+  // the browser, which is what the pack needs and what this contract is really
+  // about — but a source read has to follow it. The settled hero is untouched
+  // and stays pinned in the page.
+  const heroPairRaw = () =>
+    read("frontend", "components", "EventHeroProbabilityPair.tsx");
 
   it("the page ships a stable hook for the LIVE/PREGAME hero", () => {
-    assert.ok(pageRaw().includes('data-testid="event-hero-probability"'));
+    // Pinned in BOTH directions, because the extraction created two ways to
+    // lose it: the component could drop the hook, or the page could stop
+    // rendering the component. Either one silently re-reds the pack against a
+    // healthy page, which is the failure this whole block exists to prevent.
+    assert.ok(
+      heroPairRaw().includes('data-testid="event-hero-probability"'),
+      "the hero-pair component must still carry the pack's hook"
+    );
+    assert.ok(
+      pageRaw().includes("<EventHeroProbabilityPair"),
+      "the page must still render the component that carries the hook"
+    );
+    // The rail reads `data-probability` here and on the Discover card that
+    // links to this page, and fails if they disagree (UX-P003) — so it has to
+    // stay the PROBABILITY, not the whole percent the hero now prints.
+    assert.ok(
+      heroPairRaw().includes("data-probability={homeProb ?? \"\"}"),
+      "data-probability must remain the probability, not the rendered percent"
+    );
   });
 
   it("the page ships a stable hook for the SETTLED hero", () => {
