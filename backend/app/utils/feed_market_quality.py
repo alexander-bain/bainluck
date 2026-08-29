@@ -102,6 +102,52 @@ def is_fabricated_midpoint(
     return abs(float(probability) - (bid + ask) / 2) < _PHANTOM_MIDPOINT_TOLERANCE
 
 
+def fabricated_midpoint_sql(probability: str, yes_bid: str, yes_ask: str) -> str:
+    """The SQL mirror of :func:`is_fabricated_midpoint`, over three column references.
+
+    Q436 needed this predicate inside a set-based UPDATE (``backfill_winners``'s
+    calibration closing-line selection reads ``futures_odds_snapshots`` in a
+    LATERAL, one seek per outcome — pulling rows into Python to call the function
+    above is not an option at that scale). It is generated here, from the same
+    constants, rather than restated at the call site, because "untradeable" has to
+    keep meaning exactly one thing in this codebase — the same reason
+    ``polymarket.py`` imports the function instead of copying its threshold.
+
+    ``tests/test_calibration_closing_line_q436.py`` runs a case table through BOTH
+    this string and the Python function and asserts they agree, so the mirror
+    cannot drift. Every clause below has a counterpart above, in order:
+
+    - ``(bid IS NOT NULL OR ask IS NOT NULL)`` is the both-null passthrough. It is
+      load-bearing, not defensive: without it ``COALESCE`` manufactures a 0.0/1.0
+      book for model-priced rows (DataGolf, derived complements) that have no book
+      at all, and every one of them priced at exactly 0.50 would be rejected as a
+      fabrication. The Python returns False for those; so must this.
+    - a missing side is the widest quote on that side (no bid = 0, no ask = 1).
+    - the spread test, then the "the price IS that book's midpoint" equality.
+
+    NULL-safety: the caller applies this under ``NOT (...)`` inside a WHERE, so a
+    NULL result would drop the row. ``probability`` is already constrained
+    non-NULL by every call site (``probability > 0 AND probability < 1``), and the
+    bid/ask arms are COALESCEd, so no clause here can evaluate to NULL.
+
+    Args:
+        probability: SQL expression for the stored/candidate probability.
+        yes_bid: SQL expression for the YES bid (may be NULL).
+        yes_ask: SQL expression for the YES ask (may be NULL).
+
+    Returns:
+        A parenthesised boolean SQL expression — TRUE when the price is fabricated.
+    """
+    return (
+        f"(({yes_bid} IS NOT NULL OR {yes_ask} IS NOT NULL)"
+        f" AND (COALESCE({yes_ask}, 1.0) - COALESCE({yes_bid}, 0.0))"
+        f" >= {FEED_PHANTOM_MIN_SPREAD}"
+        f" AND ABS({probability}"
+        f" - (COALESCE({yes_bid}, 0.0) + COALESCE({yes_ask}, 1.0)) / 2)"
+        f" < {_PHANTOM_MIDPOINT_TOLERANCE})"
+    )
+
+
 # A distribution over a MUTUALLY EXCLUSIVE field must still cover that field once the
 # phantoms are gone. Alex's ruling (2026-08-07, on #1574): drop the card. A gapped
 # exclusive ladder asserts something false by omission — Netflix keeping only its five
