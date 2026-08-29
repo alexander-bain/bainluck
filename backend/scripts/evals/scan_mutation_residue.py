@@ -67,6 +67,7 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
         ("ADHERENCE_MUTANTS", "needle", "replacement", "ADHERENCE"),
         ("REDIS_MUTANTS", "needle", "replacement", "REDIS_STATE"),
     ],
+    "feed_prewarm_absent_shape_net_mutations": [("MUTATIONS", 3, 4, 1)],
     "offline_rerank_fidelity_mutations": [("MUTATIONS", 3, 4, 1)],
     "outcome_evidence_class_mutations": [("MUTATIONS", 3, 4, 1)],
     "search_scorer_wiring_mutations": [("MUTATIONS", 2, 3, "TARGET")],
