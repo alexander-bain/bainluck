@@ -267,48 +267,57 @@ def _matchup_key(home: str, away: str) -> tuple[str, str] | None:
     return (h, a) if h <= a else (a, h)
 
 
-#: How many equally-optimal assignments are collected before the group is
-#: refused outright. Only reached by a pathological group; a doubleheader with
-#: a duplicated pair produces four.
-MAX_OPTIMA = 512
+#: How many candidate assignments are enumerated before a group is refused
+#: outright. The bounds above cap the search at ``13 ** 4`` and a real
+#: doubleheader produces single digits, so reaching this means the group is
+#: pathological and a refusal is the honest answer.
+MAX_ASSIGNMENTS = 8192
 
 
-def _optimal_assignments(
+def _assignments_by_rank(
     costs: dict[tuple[int, int], float], n_fixtures: int, n_events: int
-) -> tuple[list[dict[int, int]], bool]:
-    """Every max-cardinality, min-total-skew one-to-one assignment of a group.
+) -> tuple[list[list[dict[int, int]]], bool]:
+    """One-to-one assignments of a group, grouped into best-first RANKS.
 
     ``costs[(f, e)]`` is the skew in hours of each admissible pairing, indexed
-    by position within the group. Cardinality is maximised FIRST — binding two
-    games beats binding one of them very well — and total skew breaks the
-    remaining ties. Returns ``(assignments, truncated)``.
+    by position within the group. A rank is one ``(cardinality, total skew)``
+    value: rank 0 is every assignment binding the most fixtures for the least
+    total skew, rank 1 the next best, and so on down to the empty assignment.
+    Returns ``(ranks, truncated)``.
 
-    Optimising the TOTAL is what the delayed-doubleheader defect needs. Each row
-    picking its own nearest fixture independently sends both rows of a
-    17:00/20:00 pair to the 20:00 fixture when the first is delayed to 19:00,
-    because 19:00 really is nearer to 20:00 than to 17:00. Only the total is a
-    doubleheader-safe objective.
+    **Cardinality is ranked before cost, and that ordering is the whole
+    doubleheader fix.** Each row picking its own nearest fixture independently
+    sends both rows of a 17:00/20:00 pair to the 20:00 fixture when the first is
+    delayed to 19:00, because 19:00 really is nearer to 20:00 than to 17:00.
+    Only the total is a doubleheader-safe objective.
 
-    ALL the optima are returned, not just one, because the caller cannot judge
-    whether a tie matters until it has seen what each option would actually
-    publish — see :func:`_attach`. Exhaustive over fixtures, which is the small
-    side and is capped by :data:`MAX_GROUP_FIXTURES` before this is called.
+    **The lower ranks are returned too, and that is the other half.** Preferring
+    cardinality unconditionally assumes every fixture HAS a row, which is
+    exactly what a genuinely missing game denies. Two rows at 20:00 and 20:05
+    against fixtures at 17:00 and 20:00 are both plainly the second game, but
+    the top rank binds one of them to the 17:00 fixture at three hours' skew —
+    and does so two ways, at identical cost. The caller reads down the ranks
+    until one of them has an unambiguous answer, which lands on "17:00 is
+    missing, 20:00 is duplicated": the true reading, and the one the old binder
+    got right. See :func:`_attach`.
+
+    Exhaustive over fixtures, the small side, capped by
+    :data:`MAX_GROUP_FIXTURES` before this is ever called.
     """
-    best_key: tuple[int, float] | None = None
-    found: list[dict[int, int]] = []
+    buckets: dict[tuple[int, float], list[dict[int, int]]] = {}
+    total = 0
     truncated = False
 
     def walk(f: int, used: frozenset[int], chosen: dict[int, int], cost: float) -> None:
-        nonlocal best_key, found, truncated
+        nonlocal total, truncated
+        if truncated:
+            return
         if f == n_fixtures:
-            key = (-len(chosen), round(cost, 6))
-            if best_key is None or key < best_key:
-                best_key, found, truncated = key, [dict(chosen)], False
-            elif key == best_key:
-                if len(found) >= MAX_OPTIMA:
-                    truncated = True
-                else:
-                    found.append(dict(chosen))
+            total += 1
+            if total > MAX_ASSIGNMENTS:
+                truncated = True
+                return
+            buckets.setdefault((-len(chosen), round(cost, 6)), []).append(dict(chosen))
             return
         for e in range(n_events):
             if e in used or (f, e) not in costs:
@@ -319,7 +328,9 @@ def _optimal_assignments(
         walk(f + 1, used, chosen, cost)  # this fixture takes nobody
 
     walk(0, frozenset(), {}, 0.0)
-    return found, truncated
+    if truncated:
+        return [], True
+    return [buckets[k] for k in sorted(buckets)], False
 
 
 def _attach(fixtures: list[dict], events: list[dict]) -> list[FixtureRow]:
@@ -368,14 +379,23 @@ def _attach(fixtures: list[dict], events: list[dict]) -> list[FixtureRow]:
     Three properties of that solve carry their own weight:
 
     * **Refusal beats a coin flip — but only over a tie that MATTERS.** Every
-      optimal pairing is enumerated and each is turned into the rows it would
-      actually publish. If they all publish the same thing the tie is cosmetic
-      and is ignored: two of our rows recorded at the same minute really are
-      interchangeable, and refusing there would mute a real duplicate. Only when
-      the options disagree about which fixture holds what is the whole group
-      marked :attr:`FixtureRow.ambiguous` — not graded, not an offender, cannot
-      make a league red. Measured on the 2026-08-29 slate, which carries two
-      genuine doubleheaders: zero refusals.
+      pairing is enumerated and turned into the rows it would actually publish,
+      and the ranks are read best-first until one of them has a single answer.
+      A tie whose options all publish the same thing is cosmetic and is ignored:
+      two of our rows recorded at the same minute really are interchangeable,
+      and refusing there would mute a real duplicate. Only when no rank can
+      speak — or a leftover is exactly equidistant between two fixtures — is the
+      whole group marked :attr:`FixtureRow.ambiguous`: not graded, not an
+      offender, cannot make a league red. Measured on the 2026-08-29 slate,
+      which carries two genuine doubleheaders: zero refusals.
+    * **A missing game stays missing.** Preferring the pairing that binds the
+      most fixtures is what the doubleheader needs and is exactly wrong when a
+      game really is absent, because it assumes every fixture has a row. Two
+      rows at 20:00 and 20:05 against fixtures at 17:00 and 20:00 are both
+      plainly the second game; the top rank binds one to the 17:00 fixture at
+      three hours' skew, two ways, at identical cost. Reading one rank further
+      down recovers the true answer — 17:00 missing, 20:00 duplicated — which
+      is what the pre-fix binder reported and what this must not lose.
     * **Duplicates still surface.** Rows left over once every fixture in the
       group holds one land on their nearest fixture anyway, so three rows for a
       two-game doubleheader still read ``dupes=2`` on one of them. The fix must
@@ -435,54 +455,75 @@ def _attach(fixtures: list[dict], events: list[dict]) -> list[FixtureRow]:
         if not skews:
             continue
 
-        def place(pairs: dict[int, int]) -> list[list[int]]:
+        def place(pairs: dict[int, int]) -> tuple[list[list[int]], bool]:
             """Where every row in the group ends up under one assignment.
 
             Leftovers — rows for which no one-to-one slot remained — fall to
             their nearest admissible fixture. That is how a genuine duplicate
             stays visible once every fixture in the group already holds a row:
             the fix must not become a way of hiding what the sentinel is for.
+
+            The second return value flags a leftover that is EQUIDISTANT between
+            two fixtures. Nothing in the data says which one it duplicates, and
+            the answer changes which fixture gets named in an auto-filed issue,
+            so it is reported up rather than settled by list order.
             """
             out: list[list[int]] = [[] for _ in fx_idxs]
             for gi, ge in pairs.items():
                 out[gi].append(ge)
+            bound = set(pairs.values())
+            tied = False
             for ge in range(len(group_evs)):
-                if ge in pairs.values():
+                if ge in bound:
                     continue
                 best: tuple[float, int] | None = None
+                contested = False
                 for gi in range(len(fx_idxs)):
                     skew = skews.get((gi, ge))
-                    if skew is not None and (best is None or skew < best[0]):
-                        best = (skew, gi)
+                    if skew is None:
+                        continue
+                    if best is None or skew < best[0] - 1e-9:
+                        best, contested = (skew, gi), False
+                    elif abs(skew - best[0]) <= 1e-9 and gi != best[1]:
+                        contested = True
                 if best is not None:
                     out[best[1]].append(ge)
-            return out
+                    tied = tied or contested
+            return out, tied
+
+        def outcome(placement: list[list[int]]) -> tuple:
+            return tuple(tuple(sorted(f)) for f in placement)
 
         # Only fixtures the id pass left empty compete for a one-to-one slot.
         slots = [gi for gi, idx in enumerate(fx_idxs) if not claims[idx]]
-        if len(slots) > MAX_GROUP_FIXTURES or len(group_evs) > MAX_GROUP_EVENTS:
+        ranks, truncated = ([], True) if (
+            len(slots) > MAX_GROUP_FIXTURES or len(group_evs) > MAX_GROUP_EVENTS
+        ) else _assignments_by_rank(
+            {(slots.index(gi), ge): c for (gi, ge), c in skews.items() if gi in slots},
+            len(slots), len(group_evs),
+        )
+
+        # Read DOWN the ranks and take the first one that has a single answer.
+        #
+        # A tie inside a rank only matters if the options would PUBLISH
+        # different rows — two of our rows recorded at the same minute are
+        # interchangeable, and refusing there would mute a real duplicate. When
+        # they do differ, the tie is real and this rank cannot speak, so the
+        # next-best one is asked instead. That descent is what keeps a genuinely
+        # missing game visible: the top rank would bind a row to it at three
+        # hours' skew, two ways, at identical cost; one rank down says plainly
+        # that the fixture has nothing and its sibling has two.
+        placement, tied = place({})   # the fallback a refusal publishes
+        settled = False
+        for options in ranks:
+            candidates = [place({slots[f]: e for f, e in pairs.items()})
+                          for pairs in options]
+            if len({outcome(p) for p, _ in candidates}) == 1:
+                placement, tied = candidates[0]
+                settled = True
+                break
+        if truncated or not settled or tied:
             ambiguous.update(fx_idxs)
-            placement = place({})
-        else:
-            options, truncated = _optimal_assignments(
-                {(slots.index(gi), ge): c
-                 for (gi, ge), c in skews.items() if gi in slots},
-                len(slots), len(group_evs),
-            )
-            placements = [
-                place({slots[f]: e for f, e in pairs.items()}) for pairs in options
-            ] or [place({})]
-            # A tie only matters if it changes what gets PUBLISHED. Two rows at
-            # the same minute are interchangeable — every optimal pairing puts
-            # the same two rows on the same fixture, so there is nothing to
-            # refuse and a real duplicate is still reported. Refuse only when
-            # the options genuinely disagree about which fixture holds what.
-            distinct = {
-                tuple(tuple(sorted(f)) for f in p) for p in placements
-            }
-            if truncated or len(distinct) > 1:
-                ambiguous.update(fx_idxs)
-            placement = placements[0]
 
         for gi, ges in enumerate(placement):
             for ge in ges:

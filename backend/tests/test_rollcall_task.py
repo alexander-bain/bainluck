@@ -211,6 +211,34 @@ class TestAttach:
         )
         assert [r.event_ids for r in rows] == [[1], [2]]
 
+    def test_a_missing_game_beside_a_duplicated_one_stays_missing(self):
+        """The regression the one-to-one fix nearly introduced, caught by
+        running the old and new binders side by side.
+
+        Both rows are plainly the 20:00 game. Preferring the pairing that binds
+        the MOST fixtures — which is what the doubleheader needs — drags one of
+        them onto the 17:00 fixture at three hours' skew, and does it two ways
+        at identical cost. The pre-fix binder reported this correctly, so a fix
+        that refuses here trades a false alarm for a missed defect: exactly the
+        cover-up the sentinel cannot afford.
+        """
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T20:00:00+00:00"),
+            ],
+            [
+                _ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T20:00:00+00:00"),
+                _ev(2, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T20:05:00+00:00"),
+            ],
+        )
+        assert [r.event_ids for r in rows] == [[], [1, 2]]
+        assert [r.ambiguous for r in rows] == [False, False]
+
     def test_an_unbreakable_tie_is_refused_not_decided_by_list_order(self):
         """Both rows sit exactly between both fixtures, so the two pairings cost
         the same and nothing in the data prefers either. Deciding it by list
