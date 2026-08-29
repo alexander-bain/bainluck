@@ -180,6 +180,12 @@ SHIPPED_DIMENSIONS = {
     # suite went red. `calibration_cluster_sigma` still contributes exactly
     # `marketid`.
     "bandratio": ("BANDRATIO_EXPR", "BANDRATIO_JOIN", "BANDRATIO_PRE"),
+    # Added to the RAIL by CAL-P132, fourth time in a row. Same commit as the
+    # registration, same reason as the three notes above; nothing new to say
+    # except that the note is now load-bearing enough that a fifth dimension
+    # should read it before touching `DIMENSIONS`.
+    # `calibration_cluster_sigma` still contributes exactly `marketid`.
+    "twin": ("TWIN_EXPR", "TWIN_JOIN", "TWIN_PRE"),
     "pair": ("PAIR_EXPR", "PAIR_JOIN", ""),
     "pairtype": ("PAIRTYPE_EXPR", "PAIR_JOIN", ""),
     "pairsum": ("PAIRSUM_EXPR", "PAIRSUM_JOIN", "SUMBAND_PRE"),

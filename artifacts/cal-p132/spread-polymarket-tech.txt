@@ -1,0 +1,7 @@
+polymarket/tech   cluster spread at chunk width 1,000,000
+
+  key         clusters   markets   in wide  % wide   max spread  max size  risk
+  group_id         260     2,252       600   26.6%   55,567,179        34  MODERATE
+  event_id           0         0         0       —            0         0  NO_CLUSTERS
+
+  VERDICT  MODERATE — expect a single-digit shortfall (soccer 14.2% -> -5.06%, baseball 32.2% -> -5.70%)

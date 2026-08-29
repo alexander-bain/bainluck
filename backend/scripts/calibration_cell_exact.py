@@ -470,6 +470,82 @@ CASE WHEN bl.bl_legs IS NULL OR bl.bl_legs < 3 THEN 'z_not_a_partition'
      END
 """
 
+#: CAL-P132 — the TWO-GRAIN TWIN dimension, for `polymarket/tech` (rank 19).
+#:
+#: WHAT IT ASKS. Does this row's ``group_id`` publish the SAME question at TWO
+#: grains at once — a ``field`` market listing every candidate answer, AND a
+#: shelf of ``container_member`` binaries asking about those answers one at a
+#: time — and if so, which grain is this row?
+#:
+#: WHY THE CELL NEEDS IT. ``polymarket/tech`` is not a tech cell in the sense the
+#: board's other [C] cells are. 29.2% of its 2,973 raw markets are PODCAST AND
+#: KEYNOTE WORD BINGO — *"What will Jensen Huang say during the NVIDIA GTC
+#: Keynote?"*, *"What will be said on the next All-In Podcast?"* — and Polymarket
+#: publishes each of those events twice. Group ``polymarket:555948`` carries a
+#: 22-leg field, *"What will Tim Cook say at Apple WWDC 2026 on June 8th?"*, and
+#: fourteen separate binaries, *"Will Tim Cook say 'Siri' during the Apple WWDC
+#: 2026 event on June 8th?"* — the same phrase list, asked twice, both ingested,
+#: both scored by the curve.
+#:
+#: WHY NO DIMENSION ALREADY ON THE RAIL CAN SEE IT. ``market_type`` separates
+#: ``field`` from ``container_member`` but is blind to whether they are the same
+#: question: a lone field and a twinned field land in one arm. ``series`` keys on
+#: the group and therefore splits the cell into one arm per event — 289 of them
+#: here, past ``rule_search``'s ``MAX_CLASSES``, so it cannot be searched at all.
+#: This dimension is ``series`` collapsed onto the one property of a group that
+#: is a claim about the PRODUCT rather than about one event.
+#:
+#: THE SUFFIX IS A CROSS, NOT A GATE — CAL-P131's ``|full`` / ``|part`` rule
+#: applied to a second dimension. The whole question is whether ONE of the two
+#: grains is the broken one, and a dimension that labelled the group without
+#: labelling the row's own grain could not answer it: the field rows and the
+#: member rows of a twinned group would pool, and a defect in one grain would be
+#: diluted by the other. ``a_twinned|f`` and ``a_twinned|m`` are the two arms the
+#: whole build exists to compare, and ``b_field_only|f`` is their control — the
+#: same market shape, same category, same price scale, published ONCE.
+#:
+#: THE GROUP CENSUS IS DELIBERATELY NOT CHUNK-SCOPED. ``grpcomp`` filters to the
+#: groups this chunk touches and then counts EVERY market in each of those
+#: groups, straight off ``futures_markets``. Counting only the chunk's own rows
+#: would make twin-ness a property of where the chunk boundary fell — gotcha #53
+#: in its usual costume, a market reading ``b_field_only`` because its siblings
+#: were 1,000,000 ids away and the fold reporting that as a clean table. It is
+#: also why the census does NOT filter on ``status`` or category: a twin is a
+#: fact about what was published, not about what happened to resolve.
+#:
+#: LEAKAGE. ``market_type`` is assigned by ``app.utils.market_shape`` from
+#: outcome structure, leg names and group membership, and ``group_id`` is
+#: ingestion metadata. Neither reads a resolution, so unlike ``shape`` and
+#: ``sumband`` — which branch on ``sh.mw``, the realized win count — a rule keyed
+#: on this dimension is evaluable before any outcome exists.
+TWIN_PRE = """,
+grpcomp AS (
+    SELECT fm12.group_id,
+           COUNT(*) FILTER (WHERE fm12.market_type = 'field') AS g_fields,
+           COUNT(*) FILTER (WHERE fm12.market_type = 'container_member')
+               AS g_members
+    FROM futures_markets fm12
+    WHERE fm12.group_id IN (
+        SELECT group_id FROM market_info WHERE group_id IS NOT NULL
+    )
+    GROUP BY fm12.group_id
+)"""
+TWIN_JOIN = """
+LEFT JOIN futures_markets fm11 ON fm11.id = d.market_id
+LEFT JOIN grpcomp gc ON gc.group_id = fm11.group_id
+"""
+TWIN_EXPR = """
+CASE WHEN fm11.group_id IS NULL THEN 'z_ungrouped'
+     WHEN gc.g_fields >= 1 AND gc.g_members >= 1 THEN 'a_twinned'
+     WHEN gc.g_fields >= 1 THEN 'b_field_only'
+     WHEN gc.g_members >= 1 THEN 'c_members_only'
+     ELSE 'd_no_grain' END
+|| '|' ||
+CASE WHEN d.market_type = 'field' THEN 'f'
+     WHEN d.market_type = 'container_member' THEN 'm'
+     ELSE 'o' END
+"""
+
 #: CAL-P117 — the Over/Under PAIR dimension, for `polymarket/baseball`.
 #:
 #: Rank 1 of the board is not a bundle cell: it is two-leg Over/Under quantity
@@ -860,6 +936,7 @@ DIMENSIONS = {
     "sumband": (SUMBAND_EXPR, SUMBAND_JOIN, SUMBAND_PRE),
     "slotratio": (SLOTRATIO_EXPR, SLOTRATIO_JOIN, SUMBAND_PRE),
     "bandratio": (BANDRATIO_EXPR, BANDRATIO_JOIN, BANDRATIO_PRE),
+    "twin": (TWIN_EXPR, TWIN_JOIN, TWIN_PRE),
     "pair": (PAIR_EXPR, PAIR_JOIN, ""),
     "pairtype": (PAIRTYPE_EXPR, PAIR_JOIN, ""),
     "pairsum": (PAIRSUM_EXPR, PAIRSUM_JOIN, SUMBAND_PRE),

@@ -1,0 +1,110 @@
+{
+  "generated_at": "2026-08-29T00:36:47.978149+00:00",
+  "population_version": "q268",
+  "total_outcomes": 913851,
+  "headline_mce_closing_line": 1.89,
+  "headline_ci": [
+    0.86,
+    1.98
+  ],
+  "headline_target_pp": 2.0,
+  "headline_pass": true,
+  "availability": "stale",
+  "producer_stalled": true,
+  "producer_beats_missed": 19,
+  "thresholds": {
+    "class_bars_pp": {
+      "A_multibook_consensus": 2.5,
+      "B_exchange_contest": 3.0,
+      "C_exchange_standalone": 3.0
+    },
+    "reader_bar_pp": 3.0,
+    "min_cell_n": 1000,
+    "sigma_gate": 2.0,
+    "headline_target_pp": 2.0
+  },
+  "counts": {
+    "cells_total": 287,
+    "cells_material": 49,
+    "cells_material_outcomes": 874138,
+    "cells_pass": 17,
+    "cells_queued": 20,
+    "cells_unestablished": 12,
+    "cells_exempt": 238,
+    "queued_excess_outcomes": 478677,
+    "cells_at_bar": 29
+  },
+  "measured_sigma": {
+    "queued_cells_measured": 12,
+    "queued_cells_unmeasured": 6,
+    "queued_cells_low_coverage": 2,
+    "low_coverage_cells": [
+      "polymarket/basketball",
+      "polymarket/hockey"
+    ],
+    "queued_cells_refuted": 2,
+    "refuted_cells": [
+      "polymarket/soccer",
+      "kalshi/golf"
+    ],
+    "refuted_excess_outcomes": 62897,
+    "cells_at_bar_if_applied": 31
+  },
+  "per_class": {
+    "A_multibook_consensus": {
+      "bar_pp": 2.5,
+      "cells": 18,
+      "at_bar": 12,
+      "queued": 6,
+      "outcomes": 104986
+    },
+    "B_exchange_contest": {
+      "bar_pp": 3.0,
+      "cells": 20,
+      "at_bar": 12,
+      "queued": 8,
+      "outcomes": 653418
+    },
+    "C_exchange_standalone": {
+      "bar_pp": 3.0,
+      "cells": 11,
+      "at_bar": 5,
+      "queued": 6,
+      "outcomes": 115734
+    }
+  },
+  "done": false,
+  "self_check": {
+    "ok": true,
+    "detail": [
+      "by_category: 34/34 cells reproduced exactly",
+      "by_source: 7/7 cells reproduced exactly"
+    ]
+  }
+}
+
+self-check: ['by_category: 34/34 cells reproduced exactly', 'by_source: 7/7 cells reproduced exactly']
+
+QUEUED CELLS (20):
+  1. polymarket/baseball                        [B] ece=  4.80 n=  43,768 gap=  +3.03 bar=3.0 sigma=   7.5 excess-outcomes=  78,782
+  2. kalshi/economics                           [C] ece=  5.29 n=  28,613 gap=  -0.47 bar=3.0 sigma=   7.8 excess-outcomes=  65,524
+  3. polymarket/esports                         [B] ece=  7.59 n=  14,053 gap=  +6.02 bar=3.0 sigma=  10.9 excess-outcomes=  64,503
+  4. polymarket/soccer                          [B] ece=  3.42 n= 106,803 gap=  +2.16 bar=3.0 sigma=   2.8 excess-outcomes=  44,857
+  5. odds_api_bookmaker/basketball_nba          [A] ece=  5.18 n=  10,186 gap=  +1.03 bar=2.5 sigma=   5.4 excess-outcomes=  27,298
+  6. kalshi/crypto                              [C] ece=  7.60 n=   4,565 gap=  +1.84 bar=3.0 sigma=   6.2 excess-outcomes=  20,999
+  7. odds_api_bookmaker/baseball_mlb_preseason  [A] ece=  8.24 n=   3,253 gap=  -7.67 bar=2.5 sigma=   6.5 excess-outcomes=  18,672
+  8. kalshi/entertainment                       [C] ece=  5.21 n=   8,355 gap=  +1.07 bar=3.0 sigma=   4.0 excess-outcomes=  18,465
+  9. kalshi/golf                                [B] ece=  3.88 n=  20,500 gap=  +3.72 bar=3.0 sigma=   2.5 excess-outcomes=  18,040
+ 10. polymarket/cricket                         [B] ece=  8.11 n=   3,252 gap=  -4.61 bar=3.0 sigma=   5.8 excess-outcomes=  16,618
+ 11. polymarket/basketball                      [B] ece=  4.24 n=  13,135 gap=  +2.96 bar=3.0 sigma=   2.8 excess-outcomes=  16,287
+ 12. polymarket/golf                            [B] ece=  5.45 n=   6,463 gap=  +3.92 bar=3.0 sigma=   3.9 excess-outcomes=  15,834
+ 13. odds_api_bookmaker/icehockey_nhl           [A] ece=  3.89 n=   8,658 gap=  +3.04 bar=2.5 sigma=   2.6 excess-outcomes=  12,035
+ 14. odds_api_bookmaker/basketball_wncaab       [A] ece=  6.05 n=   3,382 gap=  -0.35 bar=2.5 sigma=   4.1 excess-outcomes=  12,006
+ 15. polymarket/economics                       [C] ece=  3.90 n=  12,882 gap=  +0.14 bar=3.0 sigma=   2.0 excess-outcomes=  11,594
+ 16. polymarket/hockey                          [B] ece=  7.36 n=   2,281 gap=  +0.66 bar=3.0 sigma=   4.2 excess-outcomes=   9,945
+ 17. kalshi/tech                                [C] ece= 10.96 n=   1,203 gap=  -9.35 bar=3.0 sigma=   5.5 excess-outcomes=   9,576
+ 18. odds_api_bookmaker/basketball_wnba         [A] ece=  4.81 n=   3,135 gap=  -0.07 bar=2.5 sigma=   2.6 excess-outcomes=   7,242
+ 19. polymarket/tech                            [C] ece=  4.91 n=   2,779 gap=  -0.85 bar=3.0 sigma=   2.0 excess-outcomes=   5,308
+ 20. odds_api_bookmaker/basketball_euroleague   [A] ece=  5.39 n=   1,762 gap=  -4.53 bar=2.5 sigma=   2.4 excess-outcomes=   5,092
+
+NEEDLE: calibration 29/49 cells-at-bar @ 2026-08-29T00:36:47.978149+00:00

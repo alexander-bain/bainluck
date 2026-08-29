@@ -1,0 +1,7 @@
+RULING 009 FREEZE SCORE — 22 of the last 24
+  3/24 clean   (21 misses; 2 allowed)
+  .#..##..................   <- oldest ... newest
+  window   2026-08-28T19:40:52.750701+00:00 -> 2026-08-29T18:38:29.178579+00:00
+  ring     168 observations, 144 excluded as pre-baseline
+  VERDICT  NOT_MET
+           per-window P is 5.6e-06 at the broken 0.472 rate and 0.884 at a healthy 0.95 rate — a score this far short is a producer finding, not bad luck
