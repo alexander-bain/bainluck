@@ -5481,6 +5481,36 @@ async def typeahead_search(
     if not team_pool and not event_pool and len(futures_pool) < 2:
         try:
             from sqlalchemy import text as sql_text
+            # LAT-P135/#1866: the WHERE uses the `%` OPERATOR, which the
+            # ix_teams_name_trgm GIN can serve; `similarity(a,b) > 0.25` is the
+            # function form, cannot use the index at all, and was evaluated three
+            # times per row (SELECT, WHERE, ORDER BY). Production EXPLAIN(ANALYZE)
+            # over the 9,619-row table: Seq Scan 176.379ms / 9,617 rows removed by
+            # filter -> Bitmap Index Scan 1.138ms. 155x, off an index that already
+            # exists — no DDL, which is why this was reachable while the dominant
+            # cost on this endpoint (`futures_query`, 87% of a ~3.6s cold build)
+            # is not.
+            #
+            # THIS IS /search's FIX, ARRIVING 130 CYCLES LATE. LAT-P002/#1494 made
+            # exactly this change to the twin fallback in `search_events` and the
+            # two surfaces then sat in disagreement, unnoticed, because nothing
+            # compared them. `test_typeahead_fuzzy_index_lat_p135.py` asserts every
+            # property over BOTH functions for that reason.
+            #
+            # `%` tests `similarity >= pg_trgm.similarity_threshold`, which defaults
+            # to 0.3 — STRICTER than the 0.25 this path has always used, so
+            # switching naively would silently narrow "did you mean". Pin the
+            # threshold for this transaction and keep the explicit `> 0.25` as the
+            # exact boundary (`%` is `>=`, the contract is `>`). Recall is therefore
+            # identical; only the access path changes.
+            #
+            # The band is occupied, not hypothetical: production `q="lakrs"` has a
+            # best team similarity of 0.2667, and `/search` answers
+            # `did_you_mean: "Växjö Lakers"` for it today — which is also the live
+            # proof that `SET LOCAL` takes effect here rather than being a no-op.
+            await db.execute(
+                sql_text("SET LOCAL pg_trgm.similarity_threshold = 0.25")
+            )
             fuzzy_teams = await db.execute(
                 select(
                     Team.id, Team.name, Team.slug, Team.abbreviation,
@@ -5488,7 +5518,10 @@ async def typeahead_search(
                     func.similarity(Team.name, q).label("sim"),
                 )
                 .join(Sport, Team.sport_id == Sport.id, isouter=True)
-                .where(func.similarity(Team.name, q) > 0.25)
+                .where(
+                    Team.name.op("%")(q),
+                    func.similarity(Team.name, q) > 0.25,
+                )
                 .order_by(func.similarity(Team.name, q).desc())
                 .limit(3)
             )

@@ -160,6 +160,11 @@ DISK_FREE: frozenset[str] = frozenset({
     # branch off the hunk seven consecutive latency branches have collided on.
     "browse_single_scan_mutations",
     "tag_counts_group_by_mutations",
+    # LAT-P135. Same construction: each mutant is a source STRING fed to the
+    # guard's own imported checks, never written anywhere. Its oracle is
+    # `tests/test_typeahead_fuzzy_index_lat_p135.py::CHECKS` imported directly,
+    # so there is no second copy of the contract to drift, either.
+    "typeahead_fuzzy_index_mutations",
 })
 
 # A replacement short enough to occur by coincidence is not evidence. `"}"`
