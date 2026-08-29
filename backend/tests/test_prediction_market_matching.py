@@ -3,7 +3,7 @@ Tests for prediction market → event matching utility.
 
 Tests cover:
 - Game-level market detection (is_game_level_market)
-- Kalshi game ticker detection (is_kalshi_game_ticker)
+- Kalshi game ticker detection (is_kalshi_game_level_ticker)
 - Category prefix stripping (_strip_category_prefix)
 - Matchup extraction from various formats
 - Team name fuzzy matching
@@ -18,7 +18,7 @@ import pytest
 
 from app.utils.prediction_market_matching import (
     is_game_level_market,
-    is_kalshi_game_ticker,
+    is_kalshi_game_level_ticker,
     get_sport_prefix_from_ticker,
     extract_matchup,
     extract_matchup_with_ticker_fallback,
@@ -1101,70 +1101,70 @@ class TestScoreCandidatesSportGuardrails:
 
 
 # =============================================================================
-# is_kalshi_game_ticker — Utility function (in prediction_market_matching.py)
+# is_kalshi_game_level_ticker — Utility function (in prediction_market_matching.py)
 # =============================================================================
 
 
-class TestIsKalshiGameTicker:
+class TestIsKalshiGameLevelTicker:
     """Test Kalshi game ticker detection from external_id."""
 
     def test_nba_game_ticker(self):
-        assert is_kalshi_game_ticker("KXNBAGAME-26FEB19BOSGSW")
+        assert is_kalshi_game_level_ticker("KXNBAGAME-26FEB19BOSGSW")
 
     def test_nba_game_ticker_lowercase(self):
-        assert is_kalshi_game_ticker("kxnbagame-26feb19bosgsw")
+        assert is_kalshi_game_level_ticker("kxnbagame-26feb19bosgsw")
 
     def test_nfl_game_ticker(self):
-        assert is_kalshi_game_ticker("KXNFLGAME-26SEP14SFDEN")
+        assert is_kalshi_game_level_ticker("KXNFLGAME-26SEP14SFDEN")
 
     def test_nhl_game_ticker(self):
-        assert is_kalshi_game_ticker("KXNHLGAME-26FEB20BOSNYR")
+        assert is_kalshi_game_level_ticker("KXNHLGAME-26FEB20BOSNYR")
 
     def test_mlb_game_ticker(self):
-        assert is_kalshi_game_ticker("KXMLBGAME-26APR05NYYLAD")
+        assert is_kalshi_game_level_ticker("KXMLBGAME-26APR05NYYLAD")
 
     def test_ncaab_game_ticker(self):
-        assert is_kalshi_game_ticker("KXNCAABGAME-26MAR20DUKEUNC")
+        assert is_kalshi_game_level_ticker("KXNCAABGAME-26MAR20DUKEUNC")
 
     def test_ncaaf_game_ticker(self):
-        assert is_kalshi_game_ticker("KXNCAAFGAME-26OCT12OHSTPSU")
+        assert is_kalshi_game_level_ticker("KXNCAAFGAME-26OCT12OHSTPSU")
 
     def test_wnba_game_ticker(self):
-        assert is_kalshi_game_ticker("KXWNBAGAME-26JUN15NYLVLA")
+        assert is_kalshi_game_level_ticker("KXWNBAGAME-26JUN15NYLVLA")
 
     def test_mls_game_ticker(self):
-        assert is_kalshi_game_ticker("KXMLSGAME-26JUL04NYCLA")
+        assert is_kalshi_game_level_ticker("KXMLSGAME-26JUL04NYCLA")
 
     def test_soccer_game_ticker(self):
-        assert is_kalshi_game_ticker("KXSOCCERGAME-26FEB20ARSCHI")
+        assert is_kalshi_game_level_ticker("KXSOCCERGAME-26FEB20ARSCHI")
 
     def test_ufc_fight_ticker(self):
-        assert is_kalshi_game_ticker("KXUFCFIGHT-26MAR15JONES")
+        assert is_kalshi_game_level_ticker("KXUFCFIGHT-26MAR15JONES")
 
     def test_boxing_fight_ticker(self):
-        assert is_kalshi_game_ticker("KXBOXINGFIGHT-26APR10FURY")
+        assert is_kalshi_game_level_ticker("KXBOXINGFIGHT-26APR10FURY")
 
     def test_unsupported_league_ticker_excluded_from_game_scan(self):
         """Classifiable Kalshi leagues without event coverage are not game tickers."""
         ticker = "KXCBAGAME-26FEB21BAYGUA"
         assert get_sport_prefix_from_ticker(ticker) == "basketball_other"
-        assert not is_kalshi_game_ticker(ticker)
+        assert not is_kalshi_game_level_ticker(ticker)
 
     def test_not_game_championship(self):
         """Championship tickers should not be game-level."""
-        assert not is_kalshi_game_ticker("NBACHAMP-BOS")
+        assert not is_kalshi_game_level_ticker("NBACHAMP-BOS")
 
     def test_not_game_mvp(self):
-        assert not is_kalshi_game_ticker("KXCOTY-24-BELICHICK")
+        assert not is_kalshi_game_level_ticker("KXCOTY-24-BELICHICK")
 
     def test_not_game_politics(self):
-        assert not is_kalshi_game_ticker("PRES-26-DEM")
+        assert not is_kalshi_game_level_ticker("PRES-26-DEM")
 
     def test_empty_string(self):
-        assert not is_kalshi_game_ticker("")
+        assert not is_kalshi_game_level_ticker("")
 
     def test_none_value(self):
-        assert not is_kalshi_game_ticker(None)
+        assert not is_kalshi_game_level_ticker(None)
 
 
 # =============================================================================

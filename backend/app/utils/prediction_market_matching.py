@@ -21,7 +21,7 @@ from app.utils.sport_keys import (
     KALSHI_TICKER_TO_SPORT_KEY as _TICKER_TO_SPORT_PREFIX,
     LLM_CATEGORY_TO_SPORT_PREFIX as _SPORT_CATEGORY_TO_KEY_PREFIX,
     get_sport_key_from_ticker as get_sport_prefix_from_ticker,
-    is_kalshi_game_ticker,
+    is_kalshi_game_level_ticker,
 )
 
 logger = logging.getLogger(__name__)
@@ -401,7 +401,7 @@ def is_game_level_market(
     - OR must have a Kalshi game ticker prefix
     """
     # Signal 1: Kalshi game ticker detection (most reliable)
-    if external_id and is_kalshi_game_ticker(external_id):
+    if external_id and is_kalshi_game_level_ticker(external_id):
         return True
 
     # Signal 2+3: Name pattern matching (with and without prefix/suffix stripping)
@@ -1563,7 +1563,7 @@ def extract_ticker_fragments(external_id: str) -> Optional[tuple[str, str, str]]
         return None
 
     # Must be a game ticker
-    if not is_kalshi_game_ticker(external_id):
+    if not is_kalshi_game_level_ticker(external_id):
         return None
 
     m = _TICKER_FRAGMENT_RE.match(external_id)
@@ -1611,7 +1611,7 @@ def combat_fighter_abbrevs(external_id: Optional[str]) -> Optional[tuple[str, st
     if not is_combat_fight_ticker(external_id):
         return None
     # Parse the trailing concat-abbrev token directly. NOTE: we can't route
-    # through extract_ticker_fragments() — its is_kalshi_game_ticker() gate
+    # through extract_ticker_fragments() — its is_kalshi_game_level_ticker() gate
     # rejects kxboxing (a pre-existing quirk), even though is_combat_fight_ticker
     # accepts it. _TICKER_FRAGMENT_RE matches both combat prefixes fine.
     m = _TICKER_FRAGMENT_RE.match(external_id)

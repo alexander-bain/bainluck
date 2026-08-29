@@ -1017,7 +1017,14 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxnba3pm": "basketball_nba",
     "kxnbadd": "basketball_nba",
     "kxnbahalf": "basketball_nba",
-    "kxnbaptsleader": "basketball_nba",
+    # REMOVED (Q440, #2231): "kxnbaptsleader". It arrived in the April 2026
+    # catalog batch above and it is not a future — `KXNBAPTSLEADER-26APR18ATLNYK`
+    # is "Atlanta at New York: Points Leader", one game's prop. Production has 77
+    # of them and 75 are linked to the right game, so the entry was wrong and the
+    # bare-startswith bug this queue removes was accidentally covering for it.
+    # Under longest-prefix-wins it would have started reading as a future and
+    # taken those 75 correct links with it. `kxnbapts` (player points props)
+    # already covers the family on the game side; this is a deletion, not a move.
     "kxncaab": "basketball_ncaab",
     "kxncaabff": "basketball_ncaab",
     "kxncaabe8": "basketball_ncaab",
@@ -1630,37 +1637,106 @@ def get_sport_key_from_ticker(external_id: str) -> Optional[str]:
     return None
 
 
-def is_kalshi_game_ticker(external_id: str) -> bool:
-    """Check whether a Kalshi ``external_id`` is a game-level ticker."""
+# ── DELETED (Q440, #2231): is_kalshi_game_ticker ─────────────────────────────
+# It answered "does ANY game prefix match" with a bare `startswith`, which is a
+# different question from "is this a game", and it gave a different answer:
+# eight futures prefixes strictly EXTEND a game prefix, so the Home Run Derby
+# (`kxmlbhrderby` over the player-home-runs prop prefix `kxmlbhr`) read as a
+# game. CERT-409 fixed the ANCHOR rail by adding the longest-prefix-wins
+# predicate below and left this one in place on a blast-radius argument; the
+# matching gate, the event route and the grammar adapters all kept asking the
+# broken one. Two predicates for one question is how they drifted, so there is
+# now one. Every former caller uses `is_kalshi_game_level_ticker`.
+#
+# What it cost, measured on production 2026-08-29 — the day it was deleted:
+#   * 78 season/award markets across four prefixes carry an `event_id`.
+#   * `GET /api/events/14611830/game-markets` (Nuggets vs Timberwolves) serves
+#     "Pro Basketball Pacific Division Winner" in its `other` bucket, and
+#     event 14970359 (Padres vs Blue Jays) serves "Pro Baseball Home Run Derby
+#     Selections".
+#   * event 5766515 is a pseudo-game whose two "teams" are both the string
+#     "At least 1 game played", carrying one market: "Will at least 1 game be
+#     played in the Women's Pro Basketball season?" — still `open`.
+
+
+def kalshi_futures_prefix_len(external_id: str) -> int:
+    """Length of the longest FUTURES prefix matching this ticker, else 0.
+
+    Exported because three rails each own a different game-prefix key set —
+    `KALSHI_GAME_TICKER_PREFIXES` (matching), `KALSHI_TICKER_TO_DISPLAY_LABEL`
+    (Kalshi ingest naming) — and every one of them needs the SAME
+    longest-prefix-wins comparison against the futures map. Handing out the
+    length rather than a boolean is the point: a caller cannot apply the rule
+    without stating how specific its own match was, which is exactly the step
+    the bare `startswith` skipped.
+    """
+    if not external_id:
+        return 0
+    ext_lower = external_id.lower()
+    return max(
+        (
+            len(p)
+            for p in KALSHI_FUTURES_TICKER_TO_SPORT_KEY
+            if ext_lower.startswith(p)
+        ),
+        default=0,
+    )
+
+
+def is_kalshi_shadowed_futures_ticker(external_id: str) -> bool:
+    """A game prefix matches — and a LONGER futures prefix matches too.
+
+    This is the #2231 class stated positively, and stating it positively is the
+    whole safety argument. "Not game-level" is a much larger set than "wrongly
+    read as game-level": measured against production 2026-08-29 over all 123,544
+    linked Kalshi markets, `not is_kalshi_game_level_ticker(...)` covers 14,049
+    rows, of which 14,046 are legitimately linked BY NAME under a ticker with no
+    game prefix at all (`kxwtasetwinner` 1,951, `kxboxing` 220, `kxcbagame` 189 —
+    leagues deliberately absent from the game map because this repo does not
+    ingest their events). Only **3** rows are the shadowed class.
+
+    So any repair keyed on the broad predicate destroys 14,046 correct links to
+    fix 3. This predicate is the narrow one, and it is the only one a repair may
+    use.
+    """
     if not external_id:
         return False
     ext_lower = external_id.lower()
-    return any(ext_lower.startswith(prefix) for prefix in KALSHI_GAME_TICKER_PREFIXES)
+    longest_game = max(
+        (len(p) for p in KALSHI_GAME_TICKER_PREFIXES if ext_lower.startswith(p)),
+        default=0,
+    )
+    if not longest_game:
+        return False
+    return longest_game <= kalshi_futures_prefix_len(external_id)
 
 
 def is_kalshi_game_level_ticker(external_id: str) -> bool:
     """Is this ticker game-level *unambiguously* — longest prefix wins.
 
-    CERT-409 [P1]. `is_kalshi_game_ticker()` above answers "does any game
-    prefix match", which is the right question for the matching scan and the
-    wrong one for a canonical identity key. Two ways it says yes about a
-    non-game:
+    CERT-409 [P1]. "Does any game prefix match" is the wrong question, and it
+    says yes about a non-game two ways:
 
       * A futures prefix can STRICTLY EXTEND a game prefix. `kxmlbhrderby`
         (the Home Run Derby) starts with the game prefix `kxmlbhr`, so a
-        `startswith` test calls the Derby a game. Eight futures prefixes have
-        this shape.
-      * The reverse also happens 134 times (`kxmlbrfi` extends the futures
+        `startswith` test calls the Derby a game. Seven futures prefixes have
+        this shape (eight pairs — `kxnflrecydsrecord` extends two).
+      * The reverse also happens 143 times (`kxmlbrfi` extends the futures
         prefix `kxmlb`), so "refuse if any futures prefix matches" is not the
-        fix either — it would silently stop anchoring 134 real game families.
+        fix either — it would silently stop anchoring 143 real game families.
 
     So neither map is consulted for a boolean; both are consulted for a
-    LENGTH, and the more specific one wins. The two maps share no exact key
-    (asserted in `test_sport_keys.py`), so there is no tie to break.
+    LENGTH, and the more specific one wins.
 
-    Used by the `event_provider_anchors` key builder, where a false positive is
-    not a mislabeled row but an absorption — one game claiming another's
-    identity, the outcome ruling 048 exists to prevent (gotcha #32).
+    **A tie is NOT game-level.** The maps share no exact key today (asserted in
+    `test_sport_keys.py` and again in `test_kalshi_one_ticker_predicate_q440.py`),
+    so the branch is unreachable — but it is defined rather than incidental,
+    because the unsafe direction is the same on both rails this feeds. On the
+    `event_provider_anchors` key builder a false positive is an absorption, one
+    game claiming another's identity (ruling 048 / gotcha #32). On the matching
+    gate a false positive puts a season market on a game page. A false negative
+    on either leaves a market unlinked: visible, reversible, nobody's identity
+    destroyed.
     """
     if not external_id:
         return False
@@ -1672,15 +1748,7 @@ def is_kalshi_game_level_ticker(external_id: str) -> bool:
     )
     if not longest_game:
         return False
-    longest_futures = max(
-        (
-            len(p)
-            for p in KALSHI_FUTURES_TICKER_TO_SPORT_KEY
-            if ext_lower.startswith(p)
-        ),
-        default=0,
-    )
-    return longest_game > longest_futures
+    return longest_game > kalshi_futures_prefix_len(external_id)
 
 
 def get_sport_keys_for_category(category: Optional[str]) -> Optional[list[str]]:
