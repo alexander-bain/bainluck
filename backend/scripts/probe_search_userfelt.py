@@ -83,9 +83,14 @@ def probe_one(base: str, term: str, timeout: float) -> dict:
     qs = urllib.parse.urlencode({"q": term, "debug_timing": "1"})
     url = f"{base.rstrip('/')}/api/events/search?{qs}"
     row: dict = {"term": term, "url_path": "/api/events/search"}
+    # LAT-P118: this probe writes one `search_query_logs` row per call and that
+    # table elects the 40 warm slots. `X-Bainluck-Origin` stops the vote WITHOUT
+    # touching the response cache — which `?debug_timing=1` above does not, and
+    # which is why the flag already on this URL was never enough.
+    req = urllib.request.Request(url, headers={"X-Bainluck-Origin": "harness"})
     t0 = time.perf_counter()
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read()
             row["http_code"] = resp.getcode()
     except urllib.error.HTTPError as e:  # a status IS the answer, not an exception

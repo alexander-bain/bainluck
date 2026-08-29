@@ -124,10 +124,21 @@ smoke read, but a PUBLISHED needle uses the defaults; the output labels any
 run that does not.
 
 CONTAMINATION. Inherited and declared by the underlying snapshot: this run's
-`/api/feed` requests land in the always-sampled `latency-stats` window, and
-each cold-search sample writes one `search_query_logs` row (#1916). Cold search
-is a graded surface, so `--with-search` is not optional here — it is forced on,
-and the row count is printed.
+`/api/feed` requests land in the always-sampled `latency-stats` window. Cold
+search is a graded surface, so `--with-search` is not optional here — it is
+forced on, and the request count is printed.
+
+🔴 LAT-P118 CLOSED THE OTHER HALF, AND IT WAS THE HALF THAT COULD HAVE EATEN THE
+NUMBER. Every cold-search sample used to write a `search_query_logs` row (#1916),
+and that table is the 30-day head `typeahead_warmer.resolve_head` warms from. On
+2026-08-29 the probe term `cremonese` held **slot 40 of the 40 warm slots** on 42
+rows, all of them harness votes, displacing `president` (42) and `nba finals`
+(41). Left running, this instrument would eventually have warmed the very terms
+it probes — and `search_cold` is the LARGEST member of the needle pool, so the
+published number would have fallen with nothing having got faster. The snapshot
+now sends `X-Bainluck-Origin: harness` on every request, which suppresses the
+write and touches no cache in either direction (`?debug_timing=1` would have
+suppressed nothing here and bypassed the cache both ways).
 
 Exit codes (gotcha #54 — read the VALUE): 0 = a needle was produced. 1 = the
 run completed but the pool was too thin to publish a median. Anything else is
@@ -601,12 +612,15 @@ def report(snap: dict, nd: dict, uw: dict | None = None) -> int:
     )
     print(f"   other tab endpoints    {r.get('other', 0):>4d} — read-only")
     print(
-        f"   /api/events/search     {r['search']:>4d} — one `search_query_logs` "
-        "row each (#1916). Forced on: cold search is a graded surface."
+        f"   /api/events/search     {r['search']:>4d} — `X-Bainluck-Origin: harness` "
+        "SENT on every one (LAT-P118); 0 `search_query_logs` rows once that ship is "
+        "deployed, one row each until then. This line reports what the CLIENT sent, "
+        "not what the server did. Forced on: cold search is graded."
     )
     print(
-        f"   /api/events/typeahead  {r['typeahead']:>4d} — debug_timing, 0 votes "
-        "into search:trending:24h. Measured by the snapshot, NOT in the pool."
+        f"   /api/events/typeahead  {r['typeahead']:>4d} — debug_timing AND origin, "
+        "0 votes into search:trending:24h (debug_timing alone already guaranteed that "
+        "on any slug). Measured by the snapshot, NOT in the pool."
     )
     print(f"   /api/health            {r['health']:>4d}")
     if snap.get("stats_before"):

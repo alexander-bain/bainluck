@@ -68,7 +68,10 @@ def _server_ms(base: str, q: str) -> dict[str, Any] | None:
     """One request. `server` = TTFB - pretransfer, i.e. TLS/connect excluded."""
     url = f"{base}/api/events/typeahead?q={q.replace(' ', '%20')}"
     proc = subprocess.run(
-        ["curl", "-s", "-o", "/dev/null", "-w", _CURL_FMT, "--max-time", "40", url],
+        # LAT-P118: declare machine traffic — this probe measures the warm
+        # effect, so it must not also CAUSE one by voting in the head.
+        ["curl", "-s", "-o", "/dev/null", "-w", _CURL_FMT,
+         "-H", "X-Bainluck-Origin: harness", "--max-time", "40", url],
         capture_output=True, text=True,
     )
     if proc.returncode != 0 or not proc.stdout.strip():

@@ -125,8 +125,12 @@ CONTAMINATION, declared by the script itself rather than argued in prose:
     organic. The script prints its own `/api/feed` count so it can be
     subtracted. **Take the organic `latency-stats` read BEFORE running this**
     (ruling 127's protocol) — `--stats-before` records that you did.
-  * `/api/events/search` writes `search_query_logs`, the table #1916 exists to
-    clean. Off by default; `--with-search` opts in and the count is declared.
+  * `/api/events/search` USED TO WRITE a `search_query_logs` row per call — the
+    table #1916 exists to clean, and the one that elects the warmer's 40 slots.
+    LAT-P118 measured our own probe term `cremonese` holding slot 40 of 40 on 42
+    harness votes, so every request now carries `X-Bainluck-Origin: harness` and
+    the write is suppressed at the route. The count is still declared, because a
+    suppression you cannot see is a suppression you cannot check.
   * `/api/events/typeahead` votes into `search:trending:24h` on a cache miss and
     a single-digit vote can buy a slot in the warmer's 40-slot head (LAT-P097's
     contamination finding, in full in `done_bar_snapshot.py`'s docstring). This
@@ -379,10 +383,22 @@ def _get(
 
     Paced (see `MIN_REQUEST_INTERVAL_S`). The sleep happens BEFORE the clock
     starts, so it cannot leak into `wall_ms`.
+
+    🔴 EVERY request declares itself machine traffic (LAT-P118). This harness had
+    become a voter in the election it exists to observe: `/api/events/search`
+    writes one `search_query_logs` row per call, that table is the 30-day head
+    `typeahead_warmer.resolve_head` warms from, and on 2026-08-29 the probe term
+    `cremonese` sat at rank **40 of the 40 warm slots** on 42 rows — all of them
+    ours, none of them a person, and enough to displace `president` (42) and
+    `nba finals` (41). Left alone this ends with the needle measuring its own
+    warm cache: `search_cold` is the largest member of the pool, and warming the
+    terms it probes would drop the number without anything getting faster.
+    `X-Bainluck-Origin` stops the vote without touching the cache in either
+    direction, which is the whole reason it is not `?debug_timing=1`.
     """
     _pace()
     api = os.environ["BAINLUCK_API"]
-    headers: dict[str, str] = {}
+    headers: dict[str, str] = {"X-Bainluck-Origin": "harness"}
     if session_id:
         headers["x-session-id"] = session_id
     if token:
@@ -831,8 +847,9 @@ def report(snap: dict) -> int:
             )
     else:
         print(
-            "   search COLD: NOT RUN (--with-search opts in; it writes "
-            "search_query_logs, the table #1916 exists to clean)"
+            "   search COLD: NOT RUN (--with-search opts in; it sends the "
+            "LAT-P118 origin header, so it writes no search_query_logs row on a "
+            "slug that honours one)"
         )
         met = False
 
@@ -858,12 +875,13 @@ def report(snap: dict) -> int:
         "grouped-feed / predictions, all read-only"
     )
     print(
-        f"   /api/events/typeahead  {r['typeahead']:>4d} — debug_timing, "
-        "0 votes into search:trending:24h"
+        f"   /api/events/typeahead  {r['typeahead']:>4d} — debug_timing AND "
+        "X-Bainluck-Origin, 0 votes into search:trending:24h"
     )
     print(
-        f"   /api/events/search     {r['search']:>4d} — each writes one "
-        "search_query_logs row (#1916)"
+        f"   /api/events/search     {r['search']:>4d} — X-Bainluck-Origin: harness SENT "
+        "(LAT-P118); 0 search_query_logs rows on a slug that HONOURS it, one row each "
+        "until then. What the client sent, not what the server did. No cache bypass."
     )
     print(f"   /api/health            {r['health']:>4d}")
     if snap.get("stats_before"):
@@ -894,8 +912,8 @@ def main() -> int:
     ap.add_argument(
         "--with-search",
         action="store_true",
-        help="also measure cold /api/events/search — writes "
-        "search_query_logs (#1916)",
+        help="also measure cold /api/events/search — sends the LAT-P118 origin "
+        "header, so it writes no search_query_logs row on a slug that honours it",
     )
     ap.add_argument(
         "--stats-before",

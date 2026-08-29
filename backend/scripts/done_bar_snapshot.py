@@ -184,7 +184,11 @@ WARM_TERM = "celtics"
 def _get(path: str, *, token: str | None = None) -> tuple[int, dict, float]:
     """One GET. Returns (status, headers, wall_ms)."""
     api = os.environ["BAINLUCK_API"]
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    # LAT-P118: declare machine traffic on every request. See `cold_path_snapshot._get`
+    # for the measurement — a probe term reached warm slot 40 of 40 on our votes alone.
+    headers = {"X-Bainluck-Origin": "harness"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(f"{api}{path}", headers=headers)
     t0 = time.monotonic()
     try:

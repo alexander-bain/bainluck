@@ -147,12 +147,15 @@ def measure_transport_floor(base: str, timeout_s: float) -> dict:
 
 def probe_once(base: str, term: str, timeout_s: float) -> dict:
     url = base.rstrip("/") + "/api/events/typeahead?" + urllib.parse.urlencode({"q": term})
+    # LAT-P118: declare machine traffic so this probe stops voting in
+    # `search:trending:24h`, the other half of the head the warmer elects from.
+    req = urllib.request.Request(url, headers={"X-Bainluck-Origin": "harness"})
     started = time.time()
     http_code = 0
     body = b""
     err = None
     try:
-        with urllib.request.urlopen(url, timeout=timeout_s) as resp:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             http_code = resp.getcode()
             body = resp.read()
     except urllib.error.HTTPError as exc:  # a real HTTP answer, just not 200
