@@ -2664,6 +2664,13 @@ _GRID_MENS_RE = re.compile(r"\bMen.?s\b", re.IGNORECASE)
 _GRID_MENS_LEAGUES = ("ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "mlb")
 _GRID_WOMENS_LEAGUES = ("wnba", "ncaa-women-basketball")
 
+# Columns that stop trading once the regular season ends — prices sit at
+# 99.5%/0.5% for weeks with no updates, so they get a 60-day staleness cutoff
+# instead of the usual 7-day one. Module-level so the choice is assertable:
+# admitting a knockout column here would let a settled prior tournament merge
+# onto the grid at 0%/100%.
+_SETTLED_COLUMNS = {"make_playoffs", "division"}
+
 
 def _build_league_name_conditions(config) -> list:
     """SQL prefilter for Path B.2 — league name patterns pushed down as ILIKE.
@@ -2945,7 +2952,6 @@ async def get_playoff_grid(
         # season ends — prices stay at 99.5%/0.5% with no updates for weeks.
         # Use a much longer cutoff for these columns.
         _settled_cutoff = datetime.now(timezone.utc) - timedelta(days=60)
-        _SETTLED_COLUMNS = {"make_playoffs", "division"}
         _stale_skipped = 0
 
         # Resolve every market to its column FIRST (market fields only), then load
