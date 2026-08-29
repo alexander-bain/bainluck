@@ -61,6 +61,8 @@ REPO = BACKEND.parent
 # starts reading a `why` string as a code fragment and reporting nothing.
 SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     "admin_auth_gate_mutations": [("MUTANTS", "needle", "replacement", "ADMIN_UTILS")],
+    "cold_path_rejected_sample_mutations": [("MUTANTS", 2, 3, 1)],
+    "league_rails_fence_mutations": [("MUTANTS", 2, 3, 1)],
     "duration_sample_window_mutations": [
         ("ADHERENCE_MUTANTS", "needle", "replacement", "ADHERENCE"),
         ("REDIS_MUTANTS", "needle", "replacement", "REDIS_STATE"),
