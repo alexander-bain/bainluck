@@ -1,17 +1,33 @@
 """Security guard tests for Queue #252 — the auth-bypass pack.
 
 Item 1: passwordless admin mint (email-in-body alone) is closed.
+        **Superseded 2026-08-28 by #1279 V1 — see below.**
 Item 2: a deleted account's still-valid token can no longer resurrect the
         account or authenticate (no auto-create resurrection).
+
+── ITEM 1 MOVED, NOT DROPPED ──
+
+Queue #252 closed the passwordless mint by putting it behind
+``ENABLE_INSECURE_EMAIL_SIGN_IN``, and the three tests that lived here asserted
+that containment: the flag defaults off, it parses as expected, and a
+disabled handler returns 401. Alex then ruled the whole path deleted (#1279 V1),
+so all three assert against symbols that no longer exist — the flag, the
+request model, and the handler.
+
+They were not weakened; they were replaced by a stronger claim in
+``tests/integration/test_route_auth_email_signin_deleted.py``, which asserts the
+route 404s, that setting the flag cannot bring it back, and that the flag name
+is unreadable from anywhere in ``app/``. "The handler refuses" is a weaker
+statement than "there is no handler", and only the second is the ruling.
+
+Item 2 is untouched and still lives here.
 """
 
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
 
 from app.dependencies import auth as deps_auth
-from app.routes import auth as auth_route
 
 
 class _Result:
@@ -46,30 +62,9 @@ class _Creds:
 
 
 # --- Item 1: passwordless admin mint ---------------------------------------
-
-def test_email_sign_in_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("ENABLE_INSECURE_EMAIL_SIGN_IN", raising=False)
-    assert auth_route._email_sign_in_enabled() is False
-
-
-def test_email_sign_in_opt_in_flag(monkeypatch):
-    monkeypatch.setenv("ENABLE_INSECURE_EMAIL_SIGN_IN", "1")
-    assert auth_route._email_sign_in_enabled() is True
-    monkeypatch.setenv("ENABLE_INSECURE_EMAIL_SIGN_IN", "false")
-    assert auth_route._email_sign_in_enabled() is False
-
-
-@pytest.mark.asyncio
-async def test_email_only_body_returns_401_never_a_token(monkeypatch):
-    """The queue's guard: email-only body -> 401, never a token."""
-    monkeypatch.delenv("ENABLE_INSECURE_EMAIL_SIGN_IN", raising=False)
-    # Even an allowlisted admin email must not mint a token when disabled.
-    monkeypatch.setenv("ADMIN_USER_EMAILS", "admin@example.com")
-
-    body = auth_route.EmailSignInRequest(email="admin@example.com")
-    with pytest.raises(HTTPException) as exc:
-        await auth_route.email_sign_in(body, db=_DB(None))
-    assert exc.value.status_code == 401
+# Deleted with the endpoint it guarded (#1279 V1). The replacement is
+# tests/integration/test_route_auth_email_signin_deleted.py — see the module
+# docstring for why the move is a strengthening rather than a removal.
 
 
 # --- Item 2: deleted-account token cannot resurrect / authenticate ---------
