@@ -7,7 +7,8 @@ import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetchJSON } from "@/lib/adminFetch";
 import { requireDestructiveToken } from "@/lib/destructiveToken";
 import { trackEvent } from "@/lib/analytics";
-import { renderedPercent } from "@/lib/renderedPercent";
+import { cardSumReason, renderedPercent } from "@/lib/renderedPercent";
+import { cardSumExplanation } from "@/lib/cardSum";
 import {
   INITIAL_SESSION,
   keyToAction,
@@ -252,6 +253,16 @@ export default function LabelPassPage() {
   const servedPct = servedOutcomes[0]?.rendered_percent;
   const pct = servedPct != null ? servedPct : renderedPercent(featureNum("probability"));
   const probPct = pct != null ? `${pct}%` : "—";
+  // #2088. The SERVED reason is authoritative — including when it is null, which
+  // means "checked, and these do total 100". So the fallback keys on the KEY
+  // BEING ABSENT (a payload minted before this shipped), never on the value being
+  // falsy: `?? derive()` would quietly re-derive on every correct card and make
+  // the server's answer decorative.
+  const sumExplanation = cardSumExplanation(
+    "card_sum_reason" in features
+      ? features.card_sum_reason
+      : cardSumReason(servedOutcomes.map((o) => o.probability ?? null))
+  );
   const commenceLabel = (() => {
     const iso = features.commence_time;
     if (typeof iso !== "string") return null;
@@ -331,6 +342,18 @@ export default function LabelPassPage() {
                 </span>
               </div>
             ))}
+            {/* #2088 — an unexplained non-100 is the defect; a labelled one is a
+                fact. The reason is SERVED (`card_sum_reason`); `cardSumReason`
+                is the fallback for a payload minted before it was, exactly as
+                `renderedPercent` is above. */}
+            {sumExplanation && (
+              <p
+                className="text-xs text-text-muted leading-relaxed pt-1"
+                data-testid="card-sum-explanation"
+              >
+                {sumExplanation}
+              </p>
+            )}
           </div>
         )}
         <div className="flex gap-4 text-xs text-text-muted">
