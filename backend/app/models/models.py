@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Enum,
     Float,
     ForeignKey,
     Index,
@@ -25,6 +26,12 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.services.database import Base
+
+# The one runtime allowlist for `discover_interactions.provenance`, imported
+# rather than re-spelled: a second copy of this tuple is how the enum and its
+# values drifted apart the first time. `app.utils.discover_provenance` imports
+# nothing, so this cannot create a cycle.
+from app.utils.discover_provenance import PROVENANCE_VALUES
 
 
 class Sport(Base):
@@ -1357,8 +1364,52 @@ class DiscoverInteraction(Base):
     # not impersonate the valuable class). Historical NULLs are re-estimated
     # by a separate dry-run heuristic (89% / 23.6% fingerprints) — never
     # unattended rewrites. See add_disc_interactions_provenance migration.
+    #
+    # THE TYPE IS THE NAMED POSTGRES ENUM, NOT `String`. It was `String(20)`
+    # from 2026-08-18 to 2026-08-29, and that one word cost every interest
+    # signal the product received in those eleven days.
+    #
+    # `add_disc_int_provenance` created a real `CREATE TYPE discover_provenance`
+    # and added the column as that type. The model kept saying `String`, so
+    # SQLAlchemy compiled the bind as `$13::VARCHAR`, and PostgreSQL refuses
+    # varchar -> enum without a cast:
+    #
+    #   DatatypeMismatchError: column "provenance" is of type
+    #   discover_provenance but expression is of type character varying
+    #
+    # Every INSERT into this table therefore 500ed. `POST /api/feed/interactions`
+    # is the only writer, the browser sends it `keepalive` inside a
+    # `.catch(() => {})`, and nothing reads the table on a request path — so the
+    # rail failed in total silence. The last row banked 2026-08-18T19:34Z; the
+    # next eleven days produced zero. This is the mirror of the defect
+    # `app/utils/discover_provenance.py` documents one layer up ("the ORM took a
+    # value the database would reject"): there the VALUE list drifted from the
+    # enum, here the COLUMN TYPE did, and only the second one was fatal.
+    #
+    # No test caught it because the recording double does not enforce types and
+    # there is no local Postgres. `tests/test_discover_interaction_write_path.py`
+    # closes that by compiling the INSERT against the real asyncpg dialect and
+    # reading the cast, which needs no database at all.
+    #
+    # Generic `sa.Enum` and not `postgresql.ENUM`: it renders the named type on
+    # Postgres (what production has) and VARCHAR on SQLite (what most of the
+    # suite runs), so `Base.metadata.create_all` keeps working on both. The
+    # value order is `PROVENANCE_VALUES` because enum ordinals are what
+    # `ORDER BY provenance` means, and that tuple is asserted equal to the
+    # migration chain's order by `tests/test_discover_provenance.py`.
     provenance: Mapped[Optional[str]] = mapped_column(
-        String(20), nullable=True, index=True, server_default="unknown"
+        Enum(
+            *PROVENANCE_VALUES,
+            name="discover_provenance",
+            # The type is created by the migration on production and by
+            # `create_all` on a fresh test database; never let the ORM invent a
+            # second definition with a different label order.
+            create_constraint=False,
+            validate_strings=False,
+        ),
+        nullable=True,
+        index=True,
+        server_default="unknown",
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
