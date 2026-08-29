@@ -272,6 +272,22 @@ async def test_the_case_and_whitespace_of_the_value_do_not_decide_it(rc, logged)
     assert len(logged) == 1, "`user` stopped being `user` because of whitespace"
 
 
+@pytest.mark.asyncio
+async def test_an_empty_origin_value_reads_as_ABSENT_and_not_as_automation(rc, logged):
+    """`X-Bainluck-Origin:` with nothing after it is a proxy artefact, not a claim.
+
+    Gotcha #53's shape at the header level: an empty value and a stated value
+    must not read the same. Treating `""` as automation would let any middlebox
+    that normalises headers silently delete a person's vote, and the deletion
+    would be invisible — the row simply would not exist to be counted.
+    """
+    _warm(rc)
+
+    await _search(origin="")
+
+    assert len(logged) == 1, "an empty header value was read as a machine claim"
+
+
 # ---------------------------------------------------------------------------
 # 6-8. NOT A CACHE BYPASS — the whole reason this is not `?debug_timing=1`
 # ---------------------------------------------------------------------------
@@ -377,6 +393,72 @@ async def test_the_cache_hit_exit_is_guarded_too(rc, logged):
 
     assert result == CACHED_BODY, "the test did not exercise the hit path at all"
     assert logged == [], "the cache-hit exit voted despite the origin header"
+
+
+async def _typeahead(q: str, *, origin=None, debug_evidence=False, debug_timing=False):
+    """Call `/typeahead` directly, with the debug flags passed EXPLICITLY.
+
+    Their declared defaults are `Query(False, ...)` objects, which are TRUTHY
+    outside FastAPI — omitting them would make every call a debug call and every
+    assertion here vacuous. Two suites have paid a red run to learn this.
+    """
+    from app.routes.events import typeahead_search
+
+    return await typeahead_search(
+        q=q,
+        debug_evidence=debug_evidence,
+        debug_timing=debug_timing,
+        db=None,
+        request=_request(origin),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_harness_typeahead_call_does_not_vote_in_the_zset(rc):
+    """The OTHER sink, asserted at runtime and not only by reading the source.
+
+    On the ContextVar rather than on a resulting zset score, and the reason is
+    structural: with `db=None` the full build raises long before reaching the
+    trending write, so a score-based assertion would read 0.0 with or without the
+    fix — a test that passes for the wrong reason. `_record_trending`'s obedience
+    to the flag is pinned by the #2117 suite.
+    """
+    from app.routes.events import _suppress_trending_write
+
+    token = _suppress_trending_write.set(False)
+    try:
+        with pytest.raises(Exception):
+            await _typeahead("cremonese", origin="harness")
+
+        assert _suppress_trending_write.get() is True, (
+            "a probe that declared itself machine traffic still voted into "
+            "search:trending:24h — the rule has two consumers and one verdict"
+        )
+    finally:
+        _suppress_trending_write.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_typeahead_call_still_votes(rc):
+    """The complement. `/typeahead`'s zset is half the warmer's head.
+
+    If an ordinary keystroke stopped voting the head would elect from the
+    `search_query_logs` arm alone, and the surface that measures `/typeahead`
+    would stop measuring it — the mirror of #2117, arrived at by tidying.
+    """
+    from app.routes.events import _suppress_trending_write
+
+    token = _suppress_trending_write.set(False)
+    try:
+        with pytest.raises(Exception):
+            await _typeahead("cremonese", origin=None)
+
+        assert _suppress_trending_write.get() is False, (
+            "an ordinary typeahead request was suppressed — the head can no "
+            "longer learn what people type"
+        )
+    finally:
+        _suppress_trending_write.reset(token)
 
 
 def test_the_trending_sink_honours_the_same_rule(rc):

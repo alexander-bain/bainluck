@@ -77,6 +77,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     "futures_movers_warm_mutations": [("MUTATIONS", "needle", "replacement", "WARM")],
     "offline_rerank_fidelity_mutations": [("MUTATIONS", 3, 4, 1)],
     "outcome_evidence_class_mutations": [("MUTATIONS", 3, 4, 1)],
+    # LAT-P118. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above — an append at the head of this dict
+    # is what six consecutive latency branches have collided on.
+    "search_origin_channel_mutations": [
+        ("MUTANTS", "needle", "replacement", "TARGET")
+    ],
     "search_scorer_wiring_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "search_tier_split_mutations": [("MUTANTS", "needle", "replacement", "TARGET")],
     "search_stemmer_alias_mutations": [("MUTANTS", 2, 3, 1)],
