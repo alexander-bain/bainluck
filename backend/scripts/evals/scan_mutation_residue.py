@@ -61,18 +61,42 @@ REPO = BACKEND.parent
 # starts reading a `why` string as a code fragment and reporting nothing.
 SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     "admin_auth_gate_mutations": [("MUTANTS", "needle", "replacement", "ADMIN_UTILS")],
+    "cold_path_rejected_sample_mutations": [("MUTANTS", 2, 3, 1)],
+    "league_rails_fence_mutations": [("MUTANTS", 2, 3, 1)],
     "duration_sample_window_mutations": [
         ("ADHERENCE_MUTANTS", "needle", "replacement", "ADHERENCE"),
         ("REDIS_MUTANTS", "needle", "replacement", "REDIS_STATE"),
     ],
+    "feed_personalization_roundtrip_mutations": [("MUTATIONS", 2, 3, "TARGET")],
+    "feed_prewarm_absent_shape_net_mutations": [("MUTATIONS", 3, 4, 1)],
     "offline_rerank_fidelity_mutations": [("MUTATIONS", 3, 4, 1)],
     "outcome_evidence_class_mutations": [("MUTATIONS", 3, 4, 1)],
     "search_scorer_wiring_mutations": [("MUTATIONS", 2, 3, "TARGET")],
+    "search_tier_split_mutations": [("MUTANTS", "needle", "replacement", "TARGET")],
     "search_stemmer_alias_mutations": [("MUTANTS", 2, 3, 1)],
     "search_word_test_mutations": [("MUTANTS", 2, 3, 1)],
     "typeahead_concept_provenance_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "typeahead_warmer_mutations": [("MUTATIONS", 3, 4, 1)],
 }
+
+# Harnesses that write NOTHING, anywhere — every mutant is a source string
+# held in memory, `exec`'d or passed straight to the oracle. Not "restores
+# carefully": no write at all, so there is no backup to restore and nothing a
+# SIGKILL can leave behind. `_mutation_guard.py` calls this strictly the better
+# design and asks new harnesses to prefer it.
+#
+# They need an entry here rather than an empty list in `SHAPES`. An empty list
+# harvests zero pairs and prints nothing, which is indistinguishable from the
+# harness having been forgotten — the silent-narrowing failure this scanner
+# exists to refuse. Listed here they are counted and NAMED in Pass A.
+#
+# And the claim is VERIFIED, not taken on trust: each module must itself
+# declare `MUTATES_WORKING_TREE = False`. A name in a list here can drift away
+# from a harness that later grew a `write_text` on a real file; a constant in
+# the harness is edited by the person doing the growing.
+DISK_FREE: frozenset[str] = frozenset({
+    "tag_counts_group_by_mutations",
+})
 
 # A replacement short enough to occur by coincidence is not evidence. `"}"`
 # (search_stemmer_alias's president-synonym-removed) would match every Python
@@ -111,12 +135,22 @@ class Pair:
 def harvest() -> tuple[list[Pair], list[str]]:
     """Return (pairs, unknown_harnesses)."""
     on_disk = sorted(p.stem for p in EVALS.glob("*_mutations.py"))
-    unknown = [s for s in on_disk if s not in SHAPES]
+    unknown = [s for s in on_disk if s not in SHAPES and s not in DISK_FREE]
 
     pairs: list[Pair] = []
 
+    for stem in sorted(DISK_FREE):
+        if stem not in on_disk:
+            unknown.append(f"{stem} (listed in DISK_FREE, absent from disk)")
+            continue
+        if getattr(_load(stem), "MUTATES_WORKING_TREE", None) is not False:
+            unknown.append(
+                f"{stem} (listed in DISK_FREE but does not declare "
+                "MUTATES_WORKING_TREE = False)"
+            )
+
     for stem in on_disk:
-        if stem in unknown:
+        if stem in unknown or stem in DISK_FREE:
             continue
         module = _load(stem)
         for attr, n_key, r_key, target_spec in SHAPES[stem]:
@@ -217,6 +251,12 @@ def main() -> int:
             drift.append(f"{rel}  <-  {pair}  (needle drifted; harness needs re-targeting)")
 
     print(f"PASS A — target integrity: {len(pairs)} needles across {len(cache)} target file(s)")
+    if DISK_FREE:
+        print(
+            f"  + {len(DISK_FREE)} harness(es) declared disk-free and verified "
+            f"(MUTATES_WORKING_TREE = False): {', '.join(sorted(DISK_FREE))}"
+        )
+        print("    They write no target file, so they cannot leave residue.")
     if drift:
         print(f"  {len(drift)} needle(s) no longer present AND no mutant either — harness DRIFT,")
         print("  not residue. These mutants would score NOT-APPLIED, never a false kill.")

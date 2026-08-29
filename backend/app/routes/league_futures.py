@@ -13,9 +13,9 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Path
-from sqlalchemy import select, and_, or_, func, case
+from sqlalchemy import select, and_, or_, func, case, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.models import Event, FuturesMarket, FuturesOutcome, Sport
 from app.routes.events import (
@@ -218,6 +218,110 @@ RESULTS_LOOKBACK_DAYS = 14
 #: a cap is never a silent truncation.
 UPCOMING_GAMES_LIMIT = 8
 RESULTS_LIMIT = 8
+
+
+def upcoming_games_query(sport_key: str, now: datetime):
+    """The UPCOMING GAMES rail, scoped to one league.
+
+    `events` has no `sport_key` column, so the league scope is a join through
+    `sports` (memory: project_events_no_sport_key).
+
+    🔴 **Deliberately NOT fenced** — see `recent_results_query`. This ORDER BY
+    leads with a CASE expression, so no index can serve the ordering and the
+    planner already has to collect every match and sort. There is no LIMIT
+    pushdown to prevent, and adding the fence measured strictly WORSE:
+    `basketball_ncaab` went 56 blocks to 5,130 when it was applied here.
+    A fence is a claim about one plan, not a house style.
+    """
+    return (
+        select(Event)
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(
+            Sport.key == sport_key,
+            Event.status.in_(["live", "scheduled"]),
+            Event.commence_time >= now - timedelta(hours=2),
+        )
+        .order_by(
+            case((Event.status == "live", 0), else_=1),
+            Event.commence_time.asc(),
+        )
+        # +1 so the cap can be DECLARED rather than silently applied. A full
+        # COUNT would be a second round trip to say the same thing.
+        .limit(UPCOMING_GAMES_LIMIT + 1)
+    )
+
+
+def recent_results_query(sport_key: str, now: datetime):
+    """The RECENT RESULTS rail, scoped to one league.
+
+    🔴 **THE `OFFSET 0` IS AN OPTIMIZATION FENCE, NOT A PAGING CLAUSE.** Removing
+    it re-opens a 4.9-second cold read. LAT-P110, #2260.
+
+    The flat form — these same filters with `ORDER BY commence_time DESC
+    LIMIT 9` applied directly — lets the planner satisfy the ordering from
+    `ix_events_commence_time` and stop as soon as it has nine rows. That is the
+    right plan for a league that played yesterday and a catastrophic one for a
+    league that did not: the walk is bounded only by the 14-day window, so it
+    reads EVERY event in that window looking for this league's own. Measured on
+    production slug `67e2585c` with `EXPLAIN (ANALYZE, BUFFERS)` over the exact
+    statement this function compiles — quoting BLOCKS, because wall time swings
+    with the buffer cache while blocks do not:
+
+        league                 flat blocks   fenced blocks   rows returned
+        americanfootball_cfl        41,495             204               7
+        basketball_ncaab            41,707             208               0
+        baseball_ncaa               41,731             329               0
+        soccer_epl                  41,731             219              11
+        basketball_wncaab           41,731             205               0
+        americanfootball_nfl        13,975             292              14
+        baseball_mlb                 4,062             427              14
+        tennis_atp                   3,824             429              14
+        TOTAL                      230,256           2,313
+
+    ~325 MB of buffer traffic per cold league open, and it is the QUIET leagues
+    that pay most — precisely the ones whose 24h mirror has expired, so the
+    person who opens the CFL tab is the person who waits. First cold read of
+    `/api/leagues/americanfootball_cfl` on that slug: **4,649 ms**, of which the
+    `EXPLAIN` attributes 4,923 ms to this statement alone on a cold buffer cache.
+
+    `OFFSET 0` blocks subquery pull-up — PostgreSQL's `is_simple_subquery()`
+    refuses any subquery carrying a limit or offset node, and the check is on
+    the node's PRESENCE, not on its value — so the filter must run to completion
+    before the sort. The planner then reaches for `ix_events_sport_id` and the
+    ordering costs a sort over one league's own rows. Same rows, same order,
+    same LIMIT: row counts were asserted identical between the two forms on all
+    eight leagues above. Only the plan changes.
+
+    Every measured league improves or holds; none regresses. The inner set is
+    unbounded by design — bounding it would need an ORDER BY to be correct,
+    which is the very pushdown this fence exists to prevent — and the 14-day
+    window is the bound: the largest inner set across all 29 registered leagues
+    is `tennis_atp` at 470 rows (measured, same slug).
+
+    `literal_column("0")` rather than `.offset(0)`: a bind renders `OFFSET $1`,
+    which fences just as well but makes the emitted statement differ from the
+    one every number above was measured on.
+    """
+    inner = (
+        select(Event)
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(
+            Sport.key == sport_key,
+            # 'closed' as well as 'completed' — #1204's lesson: a settled
+            # doubleheader (and every source that closes rather than completes)
+            # is orphaned from a recents rail that only looks for 'completed'.
+            Event.status.in_(["completed", "closed"]),
+            Event.commence_time >= now - timedelta(days=RESULTS_LOOKBACK_DAYS),
+        )
+        .offset(literal_column("0"))
+        .subquery()
+    )
+    fenced_event = aliased(Event, inner)
+    return (
+        select(fenced_event)
+        .order_by(fenced_event.commence_time.desc())
+        .limit(RESULTS_LIMIT + 1)
+    )
 
 
 def _event_probability(event: Event) -> float | None:
@@ -904,36 +1008,8 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
     more_games = False
     more_results = False
     try:
-        _games_q = (
-            select(Event)
-            .join(Sport, Sport.id == Event.sport_id)
-            .where(
-                Sport.key == sport_key,
-                Event.status.in_(["live", "scheduled"]),
-                Event.commence_time >= now - timedelta(hours=2),
-            )
-            .order_by(
-                case((Event.status == "live", 0), else_=1),
-                Event.commence_time.asc(),
-            )
-            # +1 so the cap can be DECLARED rather than silently applied. A full
-            # COUNT would be a second round trip to say the same thing.
-            .limit(UPCOMING_GAMES_LIMIT + 1)
-        )
-        _results_q = (
-            select(Event)
-            .join(Sport, Sport.id == Event.sport_id)
-            .where(
-                Sport.key == sport_key,
-                # 'closed' as well as 'completed' — #1204's lesson: a settled
-                # doubleheader (and every source that closes rather than completes)
-                # is orphaned from a recents rail that only looks for 'completed'.
-                Event.status.in_(["completed", "closed"]),
-                Event.commence_time >= now - timedelta(days=RESULTS_LOOKBACK_DAYS),
-            )
-            .order_by(Event.commence_time.desc())
-            .limit(RESULTS_LIMIT + 1)
-        )
+        _games_q = upcoming_games_query(sport_key, now)
+        _results_q = recent_results_query(sport_key, now)
         _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
         _g_events = list(_g.scalars().all())
         _r = await asyncio.wait_for(db.execute(_results_q), timeout=10)

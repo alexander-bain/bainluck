@@ -281,6 +281,10 @@ class TestBeatScheduleCompleteness:
         # #12: this allowlist is the reason a new beat entry cannot land
         # silently.
         "warm-search-head",
+        # LAT-P109 (#2255) — the trigram GIN pending-list flush that keeps cold
+        # `/api/events/search` off the 4 MB sawtooth. Gotcha #12: this allowlist
+        # is the reason a new beat entry cannot land silently.
+        "flush-search-gin-pending-lists",
         "precompute-discover-candidate-base",
         # #2236 — the narrow republisher for live-containing feed shapes, whose
         # 60 s stale ceiling the 120 s beat above structurally cannot cover.

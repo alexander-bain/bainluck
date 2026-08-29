@@ -1959,6 +1959,63 @@ export default function CalibrationPage() {
               <span className="text-text-muted">{data.void_filter.excluded.toLocaleString()} excluded.</span>
             </li>
           )}
+          {/* CAL-P114 / CAL-P117 — Alex ruled this one on 2026-08-28 (option b):
+              the exclusion is APPROVED WITH DISCLOSURE. Two clauses below are
+              the ruling, not decoration, and neither may be trimmed for length:
+              the per-cell counts (so the reader sees WHICH cell shrank), and the
+              closing sentence (so "the curve got smaller" is never read as "the
+              platform got better"). The rows removed here were published as N
+              independent rungs of one market — an intraday index ladder, a
+              player-prop container — at a price sum of 15-72 rather than 1, so
+              they were never competing answers to one question. */}
+          {data.nonexclusive_bundle_filter && data.nonexclusive_bundle_filter.excluded > 0 && (
+            <li data-testid="calibration-nonexclusive-bundle-exclusion">
+              <strong className="text-text-primary">Non-partition bundle filter (index ladders, prop containers).</strong>{" "}
+              {data.nonexclusive_bundle_filter.rule}{" "}
+              <span className="text-text-muted">
+                {data.nonexclusive_bundle_filter.excluded.toLocaleString()} excluded
+                {data.nonexclusive_bundle_filter.excluded_by_cell
+                  ? ` — ${Object.entries(data.nonexclusive_bundle_filter.excluded_by_cell)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([cell, n]) => `${cell} ${n.toLocaleString()}`)
+                      .join(", ")}`
+                  : ""}
+                .{" "}
+                This one shrank the curve rather than improving it: the error on these cells fell
+                because rows that were never forecasts of a single question stopped being counted,
+                not because our prices got better. We publish the count per cell so that is
+                checkable and so the smaller curve is never read as a fixed one.
+              </span>
+              {/* CAL-P119 — Alex ruled polymarket/baseball on 2026-08-28 as
+                  "EXCLUDE NOW + FIX WRITER", and the second half of that is a
+                  promise this page has to keep. Those rows are NOT structurally
+                  ineligible the way an index ladder's rungs are: they are real
+                  questions whose published price a writer manufactured. So the
+                  page must never let a temporary exclusion read as a permanent
+                  one. Rendered from the payload, per cell, with the condition
+                  that ends it — when the writer is fixed the backend stops
+                  emitting the cell and this sentence disappears on its own. */}
+              {data.nonexclusive_bundle_filter.temporary_by_cell &&
+                Object.keys(data.nonexclusive_bundle_filter.temporary_by_cell).length > 0 && (
+                  <span
+                    className="text-text-muted"
+                    data-testid="calibration-nonexclusive-bundle-temporary"
+                  >
+                    {" "}
+                    <strong className="text-text-primary">Part of this is temporary by design.</strong>{" "}
+                    {Object.entries(data.nonexclusive_bundle_filter.temporary_by_cell)
+                      .map(([cell, condition]) => `${cell} — returns when ${condition}`)
+                      .join("; ")}
+                    . Those rows are real questions whose published price was written wrong, not
+                    rows that were never forecasts &mdash; the market&rsquo;s own quote is intact and
+                    only our copy of it is bad. So they are set aside while that defect is fixed,
+                    and no longer: once it is, they re-enter the curve and this exclusion empties
+                    itself. We are not claiming they are gone for good &mdash; if this sentence
+                    outlives the fix, the exclusion is the thing that is wrong.
+                  </span>
+                )}
+            </li>
+          )}
           {data.exclusion_symmetry && (
             <li>
               <strong className="text-text-primary">Never-traded exclusions differ by source (and we say so).</strong>{" "}

@@ -1891,8 +1891,33 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
     # Trade evidence beats a wide book, the same priority _kalshi_yes_probability
     # uses: somebody actually transacted there, so it is a belief even when the
     # current quotes are garbage.
+    #
+    # Q428: "somebody actually transacted there" is a claim about the PRESENT,
+    # and `lastTradePrice` carries no time. Measured on the 2026-08-28 US Open
+    # bracket grid, that unbounded exception is what put Novak Djokovic at 71%
+    # to reach the round of 16 and 79% to reach the quarter-final behind it —
+    # a monotonicity violation on the page, sourced from ONE $5 trade against a
+    # book quoted 7c bid / 98c ask. So the exception now checks the claim it
+    # already rests on, using Gamma's own 24-hour window rather than a number
+    # this file chose: a trade beats a wide book while the market is still being
+    # traded, and stops beating it once nobody is.
+    #
+    # This is not a liquidity floor and there is no dollar threshold to tune —
+    # the measured 24-hour-volume distribution on that population runs
+    # continuously from $0 to $1,900 with no empty band to put one in, so any
+    # floor would be a knob. The test is presence.
+    #
+    # Gotcha #19's case survives BY CONSTRUCTION, not by exemption. A blowout is
+    # a market that ran away DURING active trading — the book clears because
+    # everyone is on one side, not because nobody is there — so it carries
+    # 24-hour volume and this branch cannot reach it.
     if is_fabricated_midpoint(prob, market.best_bid, market.best_ask):
-        if market.last_trade_price is not None and 0 < market.last_trade_price < 1:
+        recently_traded = bool(market.volume_24h and float(market.volume_24h) > 0)
+        if (
+            recently_traded
+            and market.last_trade_price is not None
+            and 0 < market.last_trade_price < 1
+        ):
             return float(market.last_trade_price), "last_trade_price"
         return None, None
 

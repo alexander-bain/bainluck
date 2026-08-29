@@ -2024,6 +2024,20 @@ export interface CalibrationData {
   void_filter?: CalibrationExclusionFilter | null;
   soccer_2way_filter?: CalibrationExclusionFilter | null;
   esports_multi_bundle_filter?: CalibrationExclusionFilter | null;
+  /**
+   * CAL-P114 / CAL-P117, ruled by Alex 2026-08-28 (option b): the structural
+   * non-partition-bundle exclusion, and it ships WITH its disclosure. Rows that
+   * were published as N independent rungs of one market — an intraday index
+   * ladder, a player-prop container — stop entering the curve, and the count
+   * that left is named on the page so nobody later reads the smaller curve as a
+   * fixed one.
+   *
+   * `excluded_by_cell` is keyed `"<source>/<category>"`, because this filter is
+   * allowlisted per `(source, category)` and a single total would hide which
+   * cell it acted on. CAL-P114 measured why the allowlist cannot be keyed on
+   * category alone: `polymarket/economics` goes 3.91 -> 17.75 if it is.
+   */
+  nonexclusive_bundle_filter?: CalibrationNonexclusiveBundleFilter | null;
   // Queue #220/221 Item 3: exclusion-symmetry census — the poly never-traded
   // cohort still counted in the curve (Kalshi excludes all bands, poly only the
   // near-0.50 placeholder band).
@@ -2114,6 +2128,37 @@ export interface CalibrationExclusionFilter {
   excluded: number;
   events_excluded?: number;
   bookmaker_excluded?: number;
+}
+
+export interface CalibrationNonexclusiveBundleFilter {
+  /** Human-readable scope, e.g. "kalshi/economics, polymarket/baseball". */
+  applies_to: string;
+  rule: string;
+  excluded: number;
+  included?: number;
+  /** `"<source>/<category>" -> rows removed`. */
+  excluded_by_cell?: Record<string, number>;
+  /**
+   * CAL-P119, ruled by Alex 2026-08-28 ("EXCLUDE NOW + FIX WRITER"): the cells
+   * whose exclusion is **temporary by design**, keyed `"<source>/<category>"`,
+   * mapped to the named condition that ENDS the exclusion.
+   *
+   * Not every cell in this filter leaves for the same reason, and the
+   * difference is the reader's, not a bookkeeping detail. An intraday index
+   * ladder is excluded because its rungs were never competing answers to one
+   * question — that is structural and permanent. `polymarket/baseball`'s
+   * Player-Props legs are excluded because a WRITER produced their published
+   * price, uncorrelated with the market's own quote (a leg quoted 0.0355
+   * published at 0.5005). Those are real questions with intact market quotes,
+   * so when the writer is repaired the rows return and this exclusion empties
+   * itself.
+   *
+   * A cell listed here MUST render its revert condition. The failure this
+   * exists to stop is the page implying a temporary removal is a permanent
+   * one — i.e. quietly writing off ~2.7% of the curve as ineligible when it is
+   * only mis-written.
+   */
+  temporary_by_cell?: Record<string, string>;
 }
 
 export async function fetchCalibration(): Promise<CalibrationData> {

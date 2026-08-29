@@ -233,7 +233,10 @@ async def _write_refreshed_prices(
 
     from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
     from app.tasks.base import get_task_session
-    from app.tasks.polymarket import _resolve_market_probability
+    from app.tasks.polymarket import (
+        _resolve_market_probability,
+        complementary_book,
+    )
     from app.utils.odds_math import probability_to_american
 
     async with get_task_session() as session:
@@ -265,8 +268,22 @@ async def _write_refreshed_prices(
                 label = (name or "").strip().lower()
                 if label == "yes":
                     value = probability
+                    bid, ask, last = (
+                        market.best_bid,
+                        market.best_ask,
+                        market.last_trade_price,
+                    )
                 elif label == "no":
                     value = 1.0 - probability
+                    # The two tokens of a binary share ONE book, so the No side
+                    # is the same orders addressed from the other token — an
+                    # identity, not an estimate. Shared rather than restated:
+                    # CAL-P095 measured 493,415 Under/No legs carrying no book
+                    # at all precisely because a writer named these columns on
+                    # one leg and not the other.
+                    bid, ask, last = complementary_book(
+                        market.best_bid, market.best_ask, market.last_trade_price
+                    )
                 else:
                     continue
 
@@ -277,6 +294,24 @@ async def _write_refreshed_prices(
                     .values(
                         current_probability=value,
                         current_american_odds=probability_to_american(value),
+                        # Q428: THE BOOK TRAVELS WITH THE PRICE IT PRODUCED.
+                        # Without these two columns this rail moved the number
+                        # every ten minutes and left the book frozen at whatever
+                        # the last full poll wrote, so 181 of 328 US Open ladder
+                        # rows held a probability sitting OUTSIDE their own
+                        # stored [bid, ask] — not a stale book but two different
+                        # observations wearing one timestamp. Every book-based
+                        # predicate downstream (is_fabricated_midpoint #1578,
+                        # classify_fabricated_book UX-P011, the wide-spread
+                        # exclusion in precompute_calibration) was therefore
+                        # judging the wrong book on this surface, and the site
+                        # had no signal with which to mark an illiquid cell as
+                        # illiquid — which is what Alex's 2026-08-28 ruling asks
+                        # for. NULL-preserving: a market that arrives with no
+                        # book leaves with no book, never with a fabricated 0
+                        # that would read downstream as a real, empty one.
+                        current_yes_bid=bid,
+                        current_yes_ask=ask,
                         last_updated=now,
                     )
                 )
@@ -286,12 +321,20 @@ async def _write_refreshed_prices(
                 # that updated the outcome and wrote no snapshot would move the
                 # price while leaving the page's freshness verdict at 27 hours
                 # — a number that changed without admitting it had.
+                #
+                # Q428: and a snapshot without its book is a permanent one. The
+                # outcome row is at least overwritten by the next full poll;
+                # 34,638 ladder snapshots written in 12 hours carry a NULL book
+                # and that history cannot be reconstructed from anywhere.
                 await session.execute(
                     pg_insert(FuturesOddsSnapshot).values(
                         outcome_id=outcome_id,
                         bookmaker="polymarket",
                         probability=value,
                         american_odds=probability_to_american(value),
+                        yes_bid=bid,
+                        yes_ask=ask,
+                        last_price=last,
                         captured_at=now,
                     )
                 )

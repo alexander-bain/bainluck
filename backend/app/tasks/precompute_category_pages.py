@@ -485,6 +485,115 @@ def _live_prewarm_labels(rc) -> set[str]:
         labels.add(key.decode() if isinstance(key, (bytes, bytearray)) else str(key))
     return labels
 
+
+#: Redis hash: shape label -> the response-cache key the ROUTE resolved for that
+#: shape on its last successful warm (LAT-P112).
+#:
+#: Written from the scope readback inside `_prewarm_feed_shape`, never derived
+#: here. That distinction is the whole reason this is safe to add next to the
+#: comment above `FEED_PREWARM_LIVE_SHAPES_KEY` forbidding a per-key marker: the
+#: objection there is to RE-DERIVING the key outside the route, which is the
+#: LAT-P001 two-writers trap. Recording the key the route itself produced is the
+#: opposite move — it is the route's own answer, carried forward, and it cannot
+#: drift from the key the request path reads because it IS that key.
+FEED_PREWARM_SHAPE_KEYS_KEY = "bainluck:precompute:feed_prewarm:shape_keys"
+
+#: TTL on that hash. NOT a dead-man's switch (unlike the liveness hash): a
+#: remembered key going stale is harmless, because a shape's key changes only
+#: when the shape itself changes and the next warm rewrites it. It is long
+#: enough that the mapping outlives any hole this net exists to close — the
+#: longest observed warm gap on production was 2,511s — and short enough that a
+#: DELETED shape's mapping does not live in Redis forever.
+FEED_PREWARM_SHAPE_KEYS_TTL_S = 86_400
+
+
+def _record_shape_cache_key(rc, label: str, cache_key: str) -> None:
+    """Remember the route-resolved cache key for one shape. Never raises."""
+    try:
+        rc.hset(FEED_PREWARM_SHAPE_KEYS_KEY, label, cache_key)
+        rc.expire(FEED_PREWARM_SHAPE_KEYS_KEY, FEED_PREWARM_SHAPE_KEYS_TTL_S)
+    except Exception:
+        logger.debug("shape-key marker write failed for %s", label, exc_info=True)
+
+
+def _absent_prewarm_labels(rc, *, exclude: set[str] | None = None) -> set[str]:
+    """First-paint shapes whose cached response is GONE — the LAT-P112 hole.
+
+    WHY THIS EXISTS, in the numbers that produced it. `#2236`'s invariant
+    (`PERIOD + BUDGET <= ceiling`) is stated against the host beat's DECLARED
+    period of 120s. Measured on production 2026-08-29, the host beat
+    `precompute-discover-candidate-base` does not deliver 120s: it is routed to
+    the `background` queue, which sat at depth 25 while `realtime` sat at 0, and
+    its last 49 fires had a p50 gap of 138s, TEN gaps over 300s, and a maximum
+    of 2,511s. The non-live stale ceiling is 300s. So the anonymous Discover
+    entry is not merely stale during those gaps — it is ABSENT, and the next
+    person to open the app pays the full build. Production's own always-sampled
+    window recorded that build at 3,722.7 ms against a 10.8 ms hit p50.
+
+    The control that makes this a statement about the QUEUE and not about the
+    scheduler: `prewarm-live-feed-shapes`, same beat scheduler, same 24 hours,
+    routed to `realtime`, held a p50 gap of exactly its declared 40s with one
+    excursion over 120s in 49 fires.
+
+    So this net rides the rail that is actually punctual, and asks the only
+    question the punctual rail is missing: is anything simply gone?
+
+    Two properties it is built to have:
+
+    * **It cannot invent work.** A label with no remembered key is SKIPPED, not
+      built. That is the fail-closed direction: after a deploy the hash is empty
+      and this net does nothing at all until the host rail warms each shape once
+      and records its key — at which point the net arms itself, per shape,
+      against the key that shape actually uses.
+    * **It probes the mirror, not the head.** `<key>:stale` is what the request
+      path falls back to (`routes/feed.py::_read_shared_feed_cache`). A missing
+      HEAD with a live mirror is the ordinary between-warms state and costs a
+      reader ~14ms; a missing MIRROR is the hole. Probing the head would make
+      this pass rebuild every shape every 60s, which is the cost #2236's docstring
+      explicitly refused to pay.
+
+    Empty on any failure, for the same reason `_live_prewarm_labels` is.
+    """
+    exclude = exclude or set()
+    candidates = [s["label"] for s in FEED_PREWARM_SHAPES if s["label"] not in exclude]
+    if not candidates:
+        return set()
+    try:
+        raw = rc.hgetall(FEED_PREWARM_SHAPE_KEYS_KEY) or {}
+    except Exception:
+        logger.debug("shape-key marker read failed", exc_info=True)
+        return set()
+
+    # Decode only. The emptiness check belongs at the USE site below and is
+    # deliberately not duplicated here: two guards over one case mean neither
+    # can be shown to be doing the work, because mutating either leaves the
+    # other holding the line. LAT-P112's mutation battery found exactly that
+    # and this is the collapse it forced.
+    known: dict[str, str] = {}
+    for label_raw, key_raw in raw.items():
+        label = (
+            label_raw.decode() if isinstance(label_raw, (bytes, bytearray)) else str(label_raw)
+        )
+        key = key_raw.decode() if isinstance(key_raw, (bytes, bytearray)) else str(key_raw)
+        known[label] = key
+
+    absent: set[str] = set()
+    for label in candidates:
+        cache_key = known.get(label)
+        if not cache_key:
+            # Unknown OR blank. Both mean "this shape has no key I can probe",
+            # and both fail closed: a blank probed as a key would be
+            # `EXISTS ":stale"` — 0 for every shape — which marks the whole pool
+            # absent off one bad hash write.
+            continue
+        try:
+            if not rc.exists(f"{cache_key}:stale"):
+                absent.add(label)
+        except Exception:
+            logger.debug("shape-absence probe failed for %s", label, exc_info=True)
+            continue
+    return absent
+
 # The exact anonymous first-paint requests the clients issue:
 #   Discover  frontend/app/discover/page.tsx -> initialFeedRequest() + event_pct 0.15
 #   Sports    frontend/app/sports/page.tsx   -> initialFeedRequest() + mode "sports"
@@ -782,6 +891,11 @@ async def _prewarm_feed_shape(
     # now describes the payload actually on the key, so the republish pass can
     # never be selecting on a belief no warmer holds.
     _record_shape_liveness(rc, label, live)
+    # LAT-P112: carry the key the route just resolved forward, so the punctual
+    # 40s pass can ask whether this shape's entry has GONE without re-deriving
+    # a key of its own. Written here and only here, from the scope readback two
+    # statements above — the same value that was just published to.
+    _record_shape_cache_key(rc, label, cache_key)
     logger.info(
         "Pre-warmed %s feed in %.1fs (%d items, ttl=%ds, stale=%ds, live=%s)",
         label,
@@ -954,13 +1068,39 @@ async def _prewarm_discover_feed_responses():
 
 
 async def _prewarm_live_feed_shapes():
-    """Republish the live-containing feed shapes inside their own 60s ceiling (#2236).
+    """Republish live shapes (#2236) and rebuild any shape that has GONE (LAT-P112).
 
     The narrow half of the warm rail. Where `_prewarm_discover_feed_responses`
     warms every first-paint shape every 120s, this fires every
     `FEED_LIVE_REPUBLISH_PERIOD_S` over ONLY the shapes the last warm observed to
     be live — because those are the only ones whose cache entry dies at 60s and
     therefore the only ones the 120s pass structurally cannot keep warm.
+
+    LAT-P112 ADDS A SECOND, SMALLER SELECTION, AND IT IS A SAFETY NET RATHER
+    THAN A SECOND WARM RAIL. `#2236` proved its invariant against the host
+    beat's DECLARED 120s period. Production does not deliver 120s: that beat is
+    routed to the `background` queue (depth 25 while `realtime` was 0) and its
+    last 49 fires had a p50 gap of 138s and a maximum of 2,511s, with ten gaps
+    past the 300s non-live stale ceiling. Past that ceiling the entry is not
+    stale, it is gone, and the next arrival pays a full cold build — 3,722.7 ms
+    in production's own always-sampled `/api/feed` window, against a 10.8 ms hit
+    p50. This pass is on `realtime`, held its declared 40s p50 across the same
+    24 hours, and is therefore the only rail in the system that can be relied on
+    to notice. So it now also rebuilds any first-paint shape whose stale mirror
+    has disappeared (`_absent_prewarm_labels`).
+
+    THE NET NEVER COMPETES WITH THE INVARIANT. Live labels are ordered FIRST and
+    take their budget slices first; absent labels get what is left. #2236's
+    ceiling is load-bearing and a safety net must not be able to push a live
+    republish past it. Nothing about `FEED_LIVE_REPUBLISH_PERIOD_S` or
+    `FEED_LIVE_REPUBLISH_BUDGET_S` changes here, so
+    `live_republish_headroom_s()` is untouched.
+
+    OUT OF SCOPE, NAMED: `GROUPED_FEED_PREWARM_SHAPES`. Those two shapes have
+    the same exposure, but `/api/futures/grouped-feed` is the Sports tab's THIRD
+    request and does not gate first paint (`cold_path_snapshot.py` marks it
+    `blocking=False`). Widening the net to a non-blocking route would buy slot
+    time on the realtime queue for a wait nobody is doing.
 
     Three properties, each of which is the reason a line of this is shaped the
     way it is:
@@ -969,6 +1109,10 @@ async def _prewarm_live_feed_shapes():
       is one `HGETALL` — this is what makes a 40s beat affordable next to a
       120s pass that costs p50 9.8s. The cost scales with the number of shapes
       that are actually live, which is the only thing it should scale with.
+      LAT-P112 keeps that true: when the host rail is healthy every mirror
+      exists, so the net's whole cost is one `HGETALL` plus five `EXISTS` and it
+      builds nothing. It scales with the number of shapes that are actually
+      GONE, which is likewise the only thing it should scale with.
     * **It builds through the same function as the main pass.**
       `_prewarm_feed_shape` resolves the key by scope readback, applies the live
       ceiling, refuses degraded and empty payloads, and records liveness. A
@@ -1030,8 +1174,19 @@ async def _prewarm_live_feed_shapes():
             return "disabled"
 
     live_labels = _live_prewarm_labels(rc)
-    targets = [
-        (s["label"], s) for s in FEED_PREWARM_SHAPES if s["label"] in live_labels
+    # LAT-P112: live first, absent second — see the docstring. The budget is
+    # allocated in list order, so this ordering IS the priority rule and not a
+    # cosmetic one.
+    absent_labels = _absent_prewarm_labels(rc, exclude=live_labels)
+    if absent_labels:
+        logger.warning(
+            "Feed warm HOLE detected — %s had no stale mirror; rebuilding on the "
+            "40s rail (LAT-P112). The 120s host beat is late or starved.",
+            sorted(absent_labels),
+        )
+    targets = [(s["label"], s) for s in FEED_PREWARM_SHAPES if s["label"] in live_labels]
+    targets += [
+        (s["label"], s) for s in FEED_PREWARM_SHAPES if s["label"] in absent_labels
     ]
 
     budget_left = float(FEED_LIVE_REPUBLISH_BUDGET_S)
@@ -1052,6 +1207,12 @@ async def _prewarm_live_feed_shapes():
         "ran_at": datetime.now(timezone.utc).isoformat(),
         "period_s": FEED_LIVE_REPUBLISH_PERIOD_S,
         "live_labels": sorted(live_labels),
+        # LAT-P112: reported separately from `live_labels`, never merged into
+        # it. A reader must be able to ask "did the host rail leave a hole, and
+        # which shape" without inferring it — an empty list here every pass is
+        # the healthy state, and a non-empty one is a `background`-queue
+        # incident this pass covered for rather than a liveness fact.
+        "absent_labels": sorted(absent_labels),
         "shapes": shapes,
         "pass_budget_s": FEED_LIVE_REPUBLISH_BUDGET_S,
         "budget_left_s": round(budget_left, 1),
@@ -1067,7 +1228,12 @@ async def _prewarm_live_feed_shapes():
 
     if not targets:
         # The common case, and it must stay cheap enough to be uninteresting:
-        # one HGETALL, one SETEX, no build.
+        # one HGETALL, one HGETALL, five EXISTS, one SETEX, no build. The
+        # sentinel string is unchanged on purpose — "nothing was live" and
+        # "nothing was gone" are the same healthy state to every existing
+        # reader, and `absent_labels` in the report is where the distinction
+        # lives for anyone who needs it (gotcha #53: the zero-yield case must
+        # still be legible, and it is, in the status payload).
         return "no_live_shapes"
     return sum(1 for s in shapes.values() if s.get("outcome") == "ok")
 

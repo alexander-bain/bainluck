@@ -8,10 +8,8 @@ able to see or do that they could not before, and that name is the queue's reaso
 that cannot name one does not get run.
 
 A measurement is not progress. It is what you buy progress with, and it is only worth buying when
-something is waiting to spend it. The failure this rule exists to stop is the one where a program
-measures, files, re-measures, re-files, and certifies its own instruments for weeks while the
-product does not change — every step defensible, every artifact real, and nothing shipped. Rigour
-is not the problem; rigour aimed at the instrument instead of the ship is.
+something is waiting to spend it. *(Why — the measure/file/re-measure/certify trap:
+`docs/claude-md-overflow-2026-08-24.md`.)*
 
 So:
 
@@ -20,8 +18,7 @@ So:
   markets stop showing a blank result" is a ship.
 - **A measurement earns its place by naming the ship it unblocks.** If it unblocks nothing right
   now, it is *parked*, not dropped: append it to `.claude/handoff/PARKED-MEASUREMENTS.md` and move
-  on. Parked is a real state — the finding is true, it was paid for, and it comes back when a ship
-  needs it.
+  on. Parked is a real state, not a bin.
 - **Certs, audits, sentinels and probes are never the ship.** They are how a ship is trusted. They
   inherit the ship of the work they verify and are not queued on their own account.
 - **This does not license shipping broken things.** The reliability bar and cert tiering
@@ -40,13 +37,9 @@ for the other — a pillar with no ship is a mission statement, a ship with no p
 queue that cannot name both does not get run.
 
 **THE RIDER RULE.** Architecture work is permitted ONLY as the substrate of a named user-visible
-ship that is *already queued*. It rides that ship; it is never the cargo. Canonical example: the
-US Open register — identity architecture built FOR a page a person opens, not a register built
-first and pointed at a page later. **Architecture-only programs are forbidden**, however good the
-architecture, because the thing being deferred is the only thing anyone outside this repo can see.
-Alex's constraint, verbatim: *"I don't want to spend several more months creating beautiful
-architecture while simultaneously being embarrassed that I still don't have a product to show
-anyone."*
+ship that is *already queued*. It rides that ship; it is never the cargo. **Architecture-only
+programs are forbidden**, however good the architecture. *(Canonical example + Alex's verbatim
+constraint: `docs/claude-md-overflow-2026-08-24.md`.)*
 
 Everything below is how to do the work. This section is what the work is for.
 
@@ -54,11 +47,11 @@ Everything below is how to do the work. This section is what the work is for.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Size rule (enforced by the 40k-char tool limit):** this file must stay under 40,000 characters or every lane reads it silently truncated. Episodic detail, war stories, and full gotcha prose live in the linked reference docs; this file carries only the operating rules. Trimmed 2026-08-24 (was 72.6k); everything removed was preserved verbatim in `docs/claude-md-overflow-2026-08-24.md`.
+**Size rule (enforced by the 40k-char tool limit, guarded by `backend/tests/test_claude_md_size.py`):** this file must stay under 40,000 characters or every lane reads it silently truncated, and it keeps ≥4,000 characters of headroom so the next rule can be added without a scramble. Episodic detail, war stories, rationale and full gotcha prose live in the linked reference docs; this file carries only the operating rules. Trimmed twice (2026-08-24 from 72.6k, 2026-08-28 from 39.5k); everything removed is preserved verbatim in `docs/claude-md-overflow-2026-08-24.md`.
 
 ## Project Overview
 
-**Bain Luck** is a prediction market discovery platform that translates betting and prediction markets into intuitive probabilities. Users see "60% vs 40%" instead of "-150 / +130". Started with sports odds, now covers economics, politics, tech, culture, weather, and more via the Discover feed.
+**Bain Luck** is a prediction market discovery platform that translates betting and prediction markets into intuitive probabilities. Users see "60% vs 40%" instead of "-150 / +130". Sports odds plus economics, politics, tech, culture and weather, via the Discover feed.
 
 **North Star**: The most engaging way to explore what the world thinks will happen.
 **Target User**: Casual fans who want probability-first context — not betting advice.
@@ -68,7 +61,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## The #1 Technical Challenge: Semantic Matching
 
-The core magic of Bain Luck is **perfect semantic understanding** of every event, market, and source — grouped and matched so the user sees one unified view. Four layers, measured by `backend/scripts/audit_event_matching.py`: L1 event existence, L2 market→event linkage, L3 futures surfacing, L4 market completeness — all 100% at the last full audit (April 24; the `--self-check` feed parser is schema-stale, #193, so the dated column has not been re-measured — see overflow doc for the full freshness note). Grid accuracy duty now belongs to the **Grid Sentinel** (`backend/app/tasks/grid_sentinel.py`, daily 07:25 UTC): it classifies every finding REAL vs EXPLAINED (season-window artifact) vs WATCH (blend-hidden source disagreement — never RED), files deduped issues only for REAL, and carries a sampled ground-truth self-check (merged prob inside its own source envelope). **RED means REAL.** The **Flow Sentinel** (`tasks/flow_sentinel.py`, nightly 07:10 UTC) regression-guards the user-facing half and auto-files evidence-packed issues.
+The core magic of Bain Luck is **perfect semantic understanding** of every event, market, and source — grouped and matched so the user sees one unified view. Four layers, measured by `backend/scripts/audit_event_matching.py`: L1 event existence, L2 market→event linkage, L3 futures surfacing, L4 market completeness — all 100% at the last full audit (April 24; the `--self-check` feed parser is schema-stale, #193, so the dated column has not been re-measured — full freshness note in the overflow doc). Grid accuracy duty now belongs to the **Grid Sentinel** (`backend/app/tasks/grid_sentinel.py`, daily 07:25 UTC): it classifies every finding REAL vs EXPLAINED (season-window artifact) vs WATCH (blend-hidden source disagreement — never RED), and files deduped issues only for REAL. **RED means REAL.** The **Flow Sentinel** (`tasks/flow_sentinel.py`, nightly 07:10 UTC) regression-guards the user-facing half and auto-files evidence-packed issues.
 
 **Hill-climb playbook**: `docs/hill-climb-guide.md` — measure → fix biggest bucket → re-measure → repeat.
 **Philosophy**: Any metric below target for markets that SHOULD match is a bug, not a feature gap. Distinguish "our bug" from "upstream gap".
@@ -80,14 +73,14 @@ The core magic of Bain Luck is **perfect semantic understanding** of every event
 | Doc | Purpose | When to update |
 |-----|---------|---------------|
 | `docs/PRODUCT-BRAIN.md` | The staging JUDGMENT layer: standing rulings + the WHY + lane split. Rulings from 001 on are each their own file | Never append ruling prose to the body. New ruling = new `docs/rulings/NNN-<slug>.md` + ONE index line |
-| `docs/rulings/NNN-<slug>.md` | One file per ruling (separate files share no append region — two lanes banking the same day cannot conflict). `docs/rulings/README.md` has the shape + collision protocol | Whenever a ruling is issued. CI asserts index ↔ files both directions |
+| `docs/rulings/NNN-<slug>.md` | One file per ruling; `docs/rulings/README.md` has the shape + collision protocol | Whenever a ruling is issued. CI asserts index ↔ files both directions |
 | `docs/doctrine.md` | The GENERAL clauses lifted out of rulings — the sentence that survives deleting its case (ruling 081) | When a ruling's clause pays out outside its own case |
 | `docs/PRD.md` | The product's voice: vision, reliability bar, journeys, principles | When product theses change (Alex rulings) |
 | [GitHub Issues](https://github.com/alexander-bain/bainluck/issues) | The ONLY source of priority and status — docs hold judgment and reference, never ordering | Continuously |
 | `docs/github-workflow.md` | Issues/Project operating model | When labels, templates, columns, or handoff rules change |
 | `docs/architecture-reference.md` | Core system design: aggregation, resilience, charts, tasks, admin, feed-ranking detail | When architecture changes |
 | `docs/gotchas-reference.md` | Full gotcha catalog and incident learnings — the canonical text behind the Hot List below | When new gotchas discovered |
-| `docs/claude-md-overflow-2026-08-24.md` | Verbatim text trimmed from this file 2026-08-24 (long gotcha prose, feed-ranking detail, CI table, freshness notes) | Never — it is an archive; new prose goes to the proper reference doc |
+| `docs/claude-md-overflow-2026-08-24.md` | Verbatim text trimmed from this file (2026-08-24 and 2026-08-28): long gotcha prose, feed-ranking detail, CI table, freshness notes, rationale paragraphs | Only when trimming this file again; append a dated section, never rewrite an old one |
 | `docs/quality-audit.md` | Audit script usage, check catalog, CI guard-suite map | When checks added/removed |
 | `docs/hill-climb-guide.md` | Matching accuracy hill-climb playbook | When layers/gotchas change |
 | `docs/feature-reference.md` / `docs/completed-features.md` | Feature docs / shipped log | When features ship |
@@ -105,9 +98,9 @@ The core magic of Bain Luck is **perfect semantic understanding** of every event
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
-| iOS / iPadOS / macOS / watchOS | SwiftUI shared codebase, 142 Swift files. Project uses Xcode 16 file-system-synchronized groups (`objectVersion = 77`): **filesystem presence IS target membership** — there are no Sources build phases to check. Widget target is wired; the watch complication target is not. Watch app is the top secondary surface (P7) | TestFlight / direct |
+| iOS / iPadOS / macOS / watchOS | SwiftUI shared codebase, 142 Swift files. Xcode 16 file-system-synchronized groups (`objectVersion = 77`): **filesystem presence IS target membership** — there are no Sources build phases to check. Widget target is wired; the watch complication target is not | TestFlight / direct |
 
-**Key External Services:** The Odds API (~$119/mo, 5M quota — monitor), Kalshi (free, key), Polymarket (free), StatPal (~$99/mo), DataGolf (~$30/mo), MLB Stats API (free), ESPN (free, undocumented), OpenAI GPT-4o-mini (~$10/mo), Pexels (200 req/hr), TMDB (client-side, `frontend/lib/tmdb.ts`), Firebase Auth (Google + Apple Sign-In).
+**Key External Services:** The Odds API (5M/mo quota — the constrained one, monitor it), Kalshi (key), Polymarket, StatPal, DataGolf, MLB Stats API, ESPN (undocumented), OpenAI GPT-4o-mini, Pexels (200 req/hr), TMDB (client-side, `frontend/lib/tmdb.ts`), Firebase Auth (Google + Apple Sign-In). Monthly costs: overflow doc.
 
 ---
 
@@ -116,52 +109,27 @@ The core magic of Bain Luck is **perfect semantic understanding** of every event
 - **Deployments from GitHub**: `git push origin master` triggers CI; Vercel deploys frontend, Heroku deploys through the serialized CI `deploy` job after tests pass. **Pushing master is not a step you take because you finished the work.** Under Program Lanes the Integrator alone rebases, gates, merges, pushes and verifies master; ruling 017 requires holding `.claude/handoff/LANE-integrator.lock` for the push in **any** lane that writes master. Gates prove something about the commit you tested, not the commit you push.
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
 - **Backend tests**: `cd backend && python3 -m pytest tests/ -v`
-- **Single test**: `cd backend && python3 -m pytest tests/test_feed_scoring.py::TestFeedBaseScoring::test_live_nba -v`
+- **Single test**: `cd backend && python3 -m pytest tests/<file>.py::<Class>::<test> -v`
 - **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v`
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
-- **Frontend build (MANDATORY before push)**: `cd frontend && npm run build` — the **ESLint gate**; does NOT fail on TS type errors.
-- **Frontend typecheck (MANDATORY before push)**: `cd frontend && npm run typecheck` — the **TypeScript gate**, a real CI deploy gate. Fail-on-new against `frontend/typecheck-baseline.json`; run **after** `npm run build` (needs `.next/types/**`). See gotcha #10.
+- **Frontend gates (both MANDATORY before push)**: `cd frontend && npm run build` (the **ESLint gate** — it does NOT fail on TS errors), then `npm run typecheck` (the **TypeScript gate**, a real CI deploy gate — run it AFTER build, which it needs for `.next/types/**`). Ratchet semantics: gotcha #10.
 - **Frontend tests**: `cd frontend && npx jest` (single: `npx jest --testPathPattern=DiscoverCard`)
 - **Procfile validates imports**: release phase runs `python3 -c "from app.main import app"` before Alembic — broken imports never reach the web dyno.
 - **CI runs both** and serializes Heroku deploys with deploy-job concurrency.
 
-### Key Admin URLs
-```
-https://bainluck.com/admin              — Operations dashboard
-https://api.bainluck.com/docs           — API docs (Swagger)
-curl -H "Authorization: Bearer $ADMIN_TOKEN" https://api.bainluck.com/api/admin/prediction-markets/link-rate  — Link rate health
-```
+Key admin URLs: see Quick Reference at the bottom of this file.
 
 ---
 
 ## Project Structure
 
-```
-bainluck/
-├── backend/
-│   ├── app/
-│   │   ├── main.py              # FastAPI entry point
-│   │   ├── models/models.py     # SQLAlchemy models (30 models)
-│   │   ├── routes/              # API endpoints
-│   │   ├── services/            # External API clients + event_registry.py
-│   │   ├── config/              # win_prob_sources.py, league_configs.py
-│   │   ├── tasks/               # Celery tasks (27 modules)
-│   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
-│   ├── alembic/                 # Database migrations
-│   └── tests/                   # pytest suites (~19,000 items)
-├── frontend/
-│   ├── app/                     # Next.js app router (30+ pages)
-│   ├── components/              # React components
-│   └── lib/                     # API client, types, utilities
-├── ios/Bain Luck/               # SwiftUI app (all Apple platforms)
-└── docs/                        # Documentation
-```
+`backend/app/` — `main.py` (FastAPI entry), `models/models.py` (30 SQLAlchemy models), `routes/` (API endpoints), `services/` (external API clients + `event_registry.py`), `config/` (`win_prob_sources.py`, `league_configs.py`), `tasks/` (27 Celery modules), `utils/` (pure logic: `sport_keys.py`, `prediction_market_matching.py`, …); plus `backend/alembic/` (migrations) and `backend/tests/` (~19,000 items). `frontend/` — `app/` (Next.js app router, 30+ pages), `components/`, `lib/` (API client, types, utilities). `ios/Bain Luck/` — SwiftUI, all Apple platforms. `docs/` — documentation.
 
 ---
 
 ## Core Architecture
 
-Full detail for every subsystem: `docs/architecture-reference.md` (+ the overflow doc for prose trimmed from here 2026-08-24). The load-bearing facts:
+Full detail for every subsystem: `docs/architecture-reference.md` (+ the overflow doc). The load-bearing facts:
 
 **Event Registry** (`services/event_registry.py`): unified `find_or_create_event()`, 4-step cascade: exact source ID → cross-source ID → structured match → create. The structured match MUST include completed/closed events, and since ruling 048 an id-less claim NEVER absorbs (gotcha #32).
 
@@ -171,23 +139,23 @@ Full detail for every subsystem: `docs/architecture-reference.md` (+ the overflo
 
 **Source-Agnostic Resilience**: the system works when any single source goes dark (validated March 2026).
 
-**Discover Feed Ranking** (`routes/feed.py`, `utils/feed_market_quality.py`, `utils/feed_reasons.py`): multiple candidate pools → scoring with futures highlights → quality caps/diversity. Operating rules that must not regress: **never run LLM calls inside `GET /api/feed`** (enrichment is async, bounded, cached); deterministic explanations are first-class (never rely on LLM hooks for page-one comprehension); personalization is bounded and latency-safe (left-swipe is a soft downrank, never a hard dismissal); Discover event demotion caps non-exceptional events (`event_pct < 0.3`) at score 35 with tier-gated exceptions; election/soccer/geopolitics allowlists and story caps live in `futures_highlights.py` / `feed_market_quality.py`. Audit target: `boring-rate@20=0`, `ladder/bucket-rate@20=0`, `duplicate-family-rate@20=0`, `explanation-coverage@20=20/20` via `python3 scripts/audit_feed_quality.py`. Full ranking constants and penalty tables: architecture reference + overflow doc.
+**Discover Feed Ranking** (`routes/feed.py`, `utils/feed_market_quality.py`, `utils/feed_reasons.py`) — pipeline shape in the overflow doc. Operating rules that must not regress: **never run LLM calls inside `GET /api/feed`** (enrichment is async, bounded, cached); deterministic explanations are first-class (never rely on LLM hooks for page-one comprehension); personalization is bounded and latency-safe (left-swipe is a soft downrank, never a hard dismissal); Discover event demotion caps non-exceptional events (`event_pct < 0.3`) at score 35 with tier-gated exceptions; election/soccer/geopolitics allowlists and story caps live in `futures_highlights.py` / `feed_market_quality.py`. Audit target: `boring-rate@20=0`, `ladder/bucket-rate@20=0`, `duplicate-family-rate@20=0`, `explanation-coverage@20=20/20` via `python3 scripts/audit_feed_quality.py`. Full ranking constants and penalty tables: architecture reference + overflow doc.
 
 **Search** (`routes/events.py`): `GET /api/events/search` — broad ILIKE matching ranked by query-time Postgres full-text (event/team text weight A, market names B, outcomes C). No stored ts_vector migration; prove improvements on real search traces before adding triggers.
 
-**Cross-Source Market Matching** (`utils/cross_source_matching.py`): `normalize_question()` + `find_cross_source_markets()` pair Kalshi↔Polymarket questions, ranked by probability delta; conservative near-match second pass (Jaccard ≥ 0.72, containment ≥ 0.85, numeric/direction guards). Used by all category pages.
+**Cross-Source Market Matching** (`utils/cross_source_matching.py`): `normalize_question()` + `find_cross_source_markets()` pair Kalshi↔Polymarket questions, ranked by probability delta, with a conservative near-match second pass (thresholds and guards: overflow doc). Used by all category pages.
 
-**Themed Dashboard Pages** (politics, entertainment, weather, economics): shared pattern — backend route classifies `FuturesMarket` by `llm_sport_category` + ticker prefixes into sub-themes; `_classify_kind()` assigns rendering hints; `_group_threshold_markets()` builds heatmap groups; frontend CSS-module pages with typed data.
+**Themed Dashboard Pages** (politics, entertainment, weather, economics) share one backend pattern — classify, hint, group, render. Full shape: overflow doc.
 
-**iOS Authentication** (`ios/.../Services/AuthManager.swift`): backend-session-token pattern, NOT typical Firebase client auth — provider credential → backend verifies → PyJWT session token (HS256, 30-day) → Keychain. Silent Google restore on expiry; Apple revocation checked on foreground.
+**iOS Authentication** (`ios/.../Services/AuthManager.swift`): backend-session-token pattern, **NOT** typical Firebase client auth — provider credential → backend verifies → PyJWT session token (HS256, 30-day) → Keychain. Restore/revocation detail: overflow doc.
 
 **Native code organization**: views under `Views/`, shared UI `Components/`, helpers `Utilities/`, services `Services/`, `ObservableObject`s under `ViewModels/`; `@MainActor` on async mutating methods, not class-wide; read-only published state is `private(set)`.
 
-**Calibration Pipeline** (`routes/calibration.py`, `tasks/backfill_winners.py`): public `GET /api/calibration` (1h cache), pre-aggregated buckets across 3 sources with `price_moved` dimension. Curve price is `COALESCE(calibration_probability, opening_probability)` — **a coalesce, not an exclusion** (gotcha #144 / ruling 103 exist because the fallback was invisible). `backfill_winners` (6h) runs ~35 named phases; `backfill_polymarket_history` (6h) fetches CLOB history. Frontend `/calibration` with ECE + trading-activity section.
+**Calibration Pipeline** (`routes/calibration.py`, `tasks/backfill_winners.py`): public `GET /api/calibration` (1h cache), pre-aggregated buckets across 3 sources with `price_moved` dimension. Curve price is `COALESCE(calibration_probability, opening_probability)` — **a coalesce, not an exclusion** (gotcha #144 / ruling 103 exist because the fallback was invisible). `backfill_winners` (6h) runs ~35 named phases; `backfill_polymarket_history` (6h) fetches CLOB history.
 
-**Rage Shake Bug Reporting**: shake / `Cmd+Shift+F` → screenshot + app state → `POST /api/feedback/bug-report` → `/admin/bug-reports` with auto-diagnosis (P0-P3, category, ready-made prompt). Anonymous submission must keep working (gotcha #29).
+**Rage Shake Bug Reporting**: shake / `Cmd+Shift+F` → `POST /api/feedback/bug-report` → `/admin/bug-reports` with auto-diagnosis. Anonymous submission must keep working (gotcha #29).
 
-**Push Notifications Foundation** (`routes/notifications.py`, `services/firebase_push.py`): device-token registration + admin send-test. Still foundation, not a shipped notification system. Two live caveats (2026-08-24): `device_tokens` has never held an iOS row (#2109 — client side, verdict query in `tools/push-verdict/`), and `POST /api/notifications/register` is unauthenticated (#2118 — fix HELD until the device capture proves the current path, or the verdict is contaminated).
+**Push Notifications Foundation** (`routes/notifications.py`, `services/firebase_push.py`): device-token registration + admin send-test. Still foundation, not a shipped notification system. Two live caveats (2026-08-24): `device_tokens` has never held an iOS row (#2109, client side — verdict query in `tools/push-verdict/`), and `POST /api/notifications/register` is unauthenticated (#2118 — fix HELD until the device capture proves the current path).
 
 ---
 
@@ -201,8 +169,6 @@ Full detail for every subsystem: `docs/architecture-reference.md` (+ the overflo
 6. **Multi-platform** — iPhone first; watch = top secondary surface; iPad/Mac parity post-iPhone-bar (P7)
 
 **Two standing rulings that shape all of the above (Alex):** *The blend is the product* — one number per question; source divergence is a data bug to fix, not a feature to show (deliberate comparison surfaces only). *Settled means settled* — one system-wide settled language: heroes show winners, cards show results, props show the script graded, charts show the completed journey.
-
-**Work tracking**: GitHub Issues is the ONLY source of priority and status. `docs/PRODUCT-BRAIN.md` holds the standing judgment behind staging calls. Docs never carry ordering.
 
 ## Agent Execution Lanes (read before doing ANY repo work)
 
@@ -218,7 +184,7 @@ A queue-file `status:` line describes execution ("done" = finished running), NEV
 
 ### Non-Claude window mission bus (added 2026-08-24)
 
-Lane4 (codex) and the independent cert window take missions from `.claude/handoff/CODEX-QUEUE.md` and `.claude/handoff/CERT-QUEUE.md` — Fable/triage stage missions by writing those files; the windows poll them, execute, and append results to `CODEX-REPORT.md` (+ a row in `CODEX-CERT-LOG.md` for certs). Alex pastes into those windows only for out-of-band overrides. Two standing rules: the fix's author never runs its cert, and the cert window never audits its own prior cert subjects.
+Lane4 (codex) and the independent cert window take missions from `.claude/handoff/CODEX-QUEUE.md` and `.claude/handoff/CERT-QUEUE.md` — Fable/triage stage them by writing those files; the windows poll, execute, and append to `CODEX-REPORT.md` (+ a row in `CODEX-CERT-LOG.md` for certs). Two standing rules: the fix's author never runs its cert, and the cert window never audits its own prior cert subjects.
 
 ## GitHub Issues + Project Workflow
 
@@ -234,7 +200,7 @@ GitHub Issues is the single source of truth for priority, status, rationale, and
 
 ## Quota Guard System
 
-The Odds API quota (5M/month) is the most constrained resource. Circuit breaker in `tasks/redis_state.py`: >50K remaining = Normal; 20K-50K = LIVE_ONLY; <20K = FULL_STOP (priority sports only). Sport-tier polling: Tier 1 (NBA/NHL/MLB/NFL/NCAAB) 32s live us+us2; Tier 2 64s us; Tier 3 128s us — config in `SPORT_POLLING_TIERS`. Discovery: Tier 1 every 15 min, Tier 2 every 30 min.
+The Odds API quota (5M/month) is the most constrained resource. Circuit breaker in `tasks/redis_state.py`: >50K remaining = Normal; 20K-50K = LIVE_ONLY; <20K = FULL_STOP (priority sports only). Live-poll and discovery cadences are tiered by sport — `SPORT_POLLING_TIERS` is the authority, never a number quoted here (per-tier values: overflow doc).
 
 ---
 
@@ -244,7 +210,7 @@ The Odds API quota (5M/month) is the most constrained resource. Circuit breaker 
 
 ### Frontend Design System (MANDATORY)
 
-The site is **light mode only**. Use tokens from `globals.css` (`bg-surface-card`, `text-text-primary`, `text-text-secondary`, `text-text-muted`, `border-surface-border`, `text-accent-live`, `text-accent-brand`, `text-accent-danger`). Never raw Tailwind dark classes.
+The site is **light mode only**. Use the tokens defined in `globals.css` (`bg-surface-*`, `text-text-*`, `border-surface-border`, `text-accent-*`) — never raw Tailwind dark classes, never a hex.
 
 ### Analytics (MANDATORY)
 
@@ -254,19 +220,7 @@ Every frontend page needs 3 GA4 hooks before any conditional return: `usePageTra
 
 ## Database Schema (Key Tables)
 
-```
-events              — Games with teams, scores, EI, win_probability_sources (JSONB)
-odds_snapshots      — Historical odds per bookmaker (write-time dedup)
-win_prob_snapshots  — Multi-source win probability history
-futures_markets     — Championship/award/prop markets (market_tier, event_id, image_url, hook_description)
-futures_outcomes    — Individual outcomes within markets
-teams               — Team data (ESPN colors/logos, rosters, alternate_names)
-team_identity_mapping — Cross-source team identity index
-user_predictions    — Higher/Lower guesses
-user_seen_markets   — Feed dedup tracking
-users               — Firebase Auth users
-settlement_captures / event_provider_anchors — settlement-truth capture + provider id anchor channel (#1946)
-```
+`events` (games, scores, EI, `win_probability_sources` JSONB) · `odds_snapshots` (per bookmaker, write-time dedup) · `win_prob_snapshots` · `futures_markets` (championship/award/prop) · `futures_outcomes` · `teams` · `team_identity_mapping` · `user_predictions` · `user_seen_markets` · `users` · `settlement_captures` / `event_provider_anchors` (settlement-truth capture + provider id anchor channel, #1946). Per-table notes: overflow doc; authority is `backend/app/models/models.py`.
 
 **Key columns**: `Event.win_probability_sources` (JSONB), `FuturesMarket.market_tier` (1-5), `.event_id` (nullable FK), `.llm_sport_category`, `.group_id`, `.image_url`, `.hook_description`.
 
@@ -274,13 +228,13 @@ settlement_captures / event_provider_anchors — settlement-truth capture + prov
 
 ## Sport Key Architecture
 
-`utils/sport_keys.py` is the **single source of truth** for sport key translation maps. Imports nothing (zero circular-import risk). Maps: `SPORT_LEAGUE_MAP` (28), `KALSHI_TICKER_TO_SPORT_KEY` (~150), `KALSHI_FUTURES_TICKER_TO_SPORT_KEY` (~250), `SPORT_PREFIX_TO_LLM_CATEGORY` (11).
+`utils/sport_keys.py` is the **single source of truth** for sport key translation maps (`SPORT_LEAGUE_MAP`, `KALSHI_TICKER_TO_SPORT_KEY`, `KALSHI_FUTURES_TICKER_TO_SPORT_KEY`, `SPORT_PREFIX_TO_LLM_CATEGORY`). It imports nothing and must stay that way (zero circular-import risk).
 
 ---
 
 ## Gotchas Hot List
 
-Full catalog with war stories: `docs/gotchas-reference.md`. **These numbers are Hot List positions, NOT catalog ids** — the two spaces are independent and they collide (Hot List 44 is clock-branching test anchors; catalog 44 is EOM quota forecasting). Cite the catalog only via an explicit id written into the entry text (#124, #144, #154). This list is rules only — if you need the incident, read the reference.
+Full catalog with war stories: `docs/gotchas-reference.md`. **These numbers are Hot List positions, NOT catalog ids** — the two spaces are independent and they collide (worked example: overflow doc). Cite the catalog only via an explicit id written into the entry text (#124, #144, #154). This list is rules only — if you need the incident, read the reference.
 
 1. **Alembic revision IDs ≤32 chars**; Alembic uses psycopg2, not asyncpg.
 2. **Admin endpoints require mounting** in both `main.py` and `routes/__init__.py`; admin writes need `_check_admin_secret`.
@@ -313,10 +267,10 @@ Full catalog with war stories: `docs/gotchas-reference.md`. **These numbers are 
 29. **Bug reports keep anonymous submission working** while optional auth captures user identity.
 30. **Codex may reject literal `git push`** — use `git -c push.default=simple push origin master`.
 31. **Never CREATE INDEX CONCURRENTLY in Alembic** — Heroku release timeout ≈5 min; big indexes go via psql (May 22 outage).
-32. **Registry structured match includes completed/closed AND an id-less claim NEVER absorbs — it creates** (ruling 048). Absorption needs an id-anchored correspondence: a shared provider id on the candidate, or the claim's id dereferencing via its own provider's schedule. Neither ⇒ CREATE with provenance; id-keyed reconciliation drains the duplicate. Do not restore name-and-time absorption — a duplicate is visible and reversible, a wrong absorption is neither. **Amendment 2026-08-20:** the reconciliation drain is structurally unreachable for 99.6% of rows (`NO_ANCHOR_CHANNEL` — no provider id column exists) until `event_provider_anchors` ships; Alex ruled BUILD THE CHANNEL, loosening absorption REJECTED. Report channel-less rows as `NO_ANCHOR_CHANNEL`, never `AWAITING_ANCHOR`. Full text: ruling 048 + amendment, `docs/event-provider-anchor-channel-1946.md`.
+32. **Registry structured match includes completed/closed AND an id-less claim NEVER absorbs — it creates** (ruling 048). Absorption needs an id-anchored correspondence: a shared provider id on the candidate, or the claim's id dereferencing via its own provider's schedule. Neither ⇒ CREATE with provenance; id-keyed reconciliation drains the duplicate. Never restore name-and-time absorption. **Amendment 2026-08-20:** the drain is structurally unreachable for 99.6% of rows until `event_provider_anchors` ships — report those as `NO_ANCHOR_CHANNEL`, never `AWAITING_ANCHOR`; Alex ruled BUILD THE CHANNEL, loosening absorption REJECTED. Full text: ruling 048 + amendment, `docs/event-provider-anchor-channel-1946.md`.
 33. **Kalshi settled markets stay `status='open'` in DB** — polling only sees open markets; the settled-events backfill Phase 1 fixes unconditionally.
 34. **Never share one counter between status updates and data backfill** across a series loop — early series starve later ones.
-35. **Kalshi EVENT data is permanent; MARKET data purges at ≥74/<86 days (measured)** — `scripts/probe_kalshi_retention.py` re-measures; use the constants in `app/utils/kalshi_retention.py` (incl. `CAPTURE_PLANNING_AGE_DAYS = 66`), never a prose day count — a predicate cannot consume a range written in prose.
+35. **Kalshi EVENT data is permanent; MARKET data purges at ≥74/<86 days (measured)** — `scripts/probe_kalshi_retention.py` re-measures; use the constants in `app/utils/kalshi_retention.py` (incl. `CAPTURE_PLANNING_AGE_DAYS = 66`), never a prose day count.
 36. **Never catch-all in API clients returning Optional** — `None` for "doesn't exist" may only catch 404; 429 must re-raise.
 37. **`box_score_data` is a wrapper dict** — player stats live under the `"players"` key.
 38. **`json.loads` holds the GIL for the entire C-level parse** — `asyncio.to_thread` does NOT free the loop. Big decodes: orjson (with fallback), small pages, resumable cursor.
@@ -332,8 +286,8 @@ Full catalog with war stories: `docs/gotchas-reference.md`. **These numbers are 
 48. **Non-detached `heroku run` silently fails in the sandbox** — use `heroku run:detached` and verify side effects ~60s later; never trust the empty stdout.
 49. **Sentry issue `count` is LIFETIME** — read the 24h stats buckets before triaging by volume.
 50. **Headless `xcodebuild` fails on `#Preview` macro sandboxing** — add `OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -disable-sandbox'`; do NOT nuke the SPM cache.
-51. **Every destructive AND write-shaped git verb takes `-C` — and `-C` pins the DIRECTORY, not the BRANCH.** `~/bainluck` is always on `master`; branch work happens only in per-queue worktrees; master-writes only in the Integrator's detached worktree. Before any commit/merge/reset in a shared tree: `git -C <path> rev-parse --abbrev-ref HEAD` — the one call the incidents never made. Full history (three amendments): gotchas reference + ruling 056.
-52. **No orphan WIP in the shared master tree** — commit to a named branch or stash-with-message in-session; Integrator rescues >24h dirt to `rescue/<date>` at Phase 0. Never reconstruct lost work by archaeology — re-do from intent or rule it unneeded. **See also gotcha #154:** a strip/rebase is not complete until the stripped commits are on a pushed ref or explicitly ruled unneeded — committed work orphaned by a correct-looking rebase hides behind a clean `git status`.
+51. **Every destructive AND write-shaped git verb takes `-C` — and `-C` pins the DIRECTORY, not the BRANCH.** `~/bainluck` is always on `master`; branch work happens only in per-queue worktrees; master-writes only in the Integrator's detached worktree. Before any commit/merge/reset in a shared tree: `git -C <path> rev-parse --abbrev-ref HEAD`. Full history (three amendments): gotchas reference + ruling 056.
+52. **No orphan WIP in the shared master tree** — commit to a named branch or stash-with-message in-session; Integrator rescues >24h dirt to `rescue/<date>` at Phase 0. Never reconstruct lost work by archaeology — re-do from intent or rule it unneeded. **See also gotcha #154:** a strip/rebase is not complete until the stripped commits are on a pushed ref or explicitly ruled unneeded.
 53. **An empty 200 is not an absence — it is a response shape.** When an API returns the same body for "never existed" and "nothing to report", disambiguate with a second signal (existence lookup, measured retention bound, sentinel) before writing any claim — and make the zero-yield case loud (`app/utils/task_verdict.py`: "it returned" is not "it worked").
 54. **Never pipe a gate** — `cmd > /tmp/gate.txt 2>&1; echo "EXIT CODE: $?"; tail -20 /tmp/gate.txt`. And read the exit code's VALUE: **`1` is a result; everything else is a story about the harness** (pytest 2/3/4/5, 127, 137 SIGKILL, 143 SIGTERM = the gate never ran). Full entry: gotcha #124.
 
@@ -341,13 +295,13 @@ Full catalog with war stories: `docs/gotchas-reference.md`. **These numbers are 
 
 ## CI Test Coverage
 
-CI guard suites cover: startup imports (`test_startup.py`), Celery beat wiring (`test_tasks_wiring.py`), Alembic heads/orphans (`test_alembic.py`), the frontend ESLint+typecheck gates, route contracts for every major surface (`tests/integration/test_route_*.py`), feed scoring/demotion/dismiss-propagation/personalization, cross-source matching, futures highlights allowlists, rate limiting, auth contracts, and the ruling-ledger/gotcha-numbering integrity gates. The rule that matters: **every fix adds a guard test for its class** (see Quality Audit below). The canonical file-by-file table lives in `docs/quality-audit.md` (moved from here 2026-08-24; historical copy in the overflow doc).
+CI guard suites cover startup imports, beat wiring, Alembic heads/orphans, the frontend ESLint+typecheck gates, route contracts for every major surface, feed scoring and personalization, matching, and the ruling-ledger/gotcha-numbering integrity gates. The rule that matters: **every fix adds a guard test for its class** (see Quality Audit below). The canonical file-by-file table lives in `docs/quality-audit.md` (moved from here 2026-08-24; historical copy in the overflow doc).
 
 ---
 
 ## Session Startup: Health Check
 
-Run `/health` at the start of every session — Sentry, Heroku, CI, Celery queues, quota, link rates, grids, calibration, latency, feed quality. Full definition: `.claude/commands/health.md`.
+Run `/health` at the start of every session. Full definition: `.claude/commands/health.md`.
 
 **Thresholds for immediate action:** Sentry issue >100 events in 24h → triage now · background queue >50 → purge + investigate · endpoint latency >2s → investigate (especially `/api/feed`) · `is_winner` coverage <100% on any source → fix (any gap is a bug) · grid health <100% → investigate.
 
@@ -357,15 +311,11 @@ Run `/health` at the start of every session — Sentry, Heroku, CI, Celery queue
 
 Credentials NEVER go in tracked files — not CLAUDE.md, docs, code, tests, or committed build artifacts (keep `.next*` gitignored). Secrets live only in untracked `~/.claude/.env`, Heroku config, or Actions secrets. **A session holding a real secret must not write it anywhere tracked — file a `needs-user` issue naming the env var only.** gitleaks is the backstop; a finding means ROTATE (history retains it forever), never just delete the line.
 
-**Production API access:** the sandbox may block direct `curl` to `api.bainluck.com`. Workaround: `source ~/.claude/.env` (loads `BAINLUCK_API`, `ADMIN_TOKEN`), then:
+**Production API access:** the sandbox may block direct `curl` to `api.bainluck.com`. Workaround: `source ~/.claude/.env` (loads `BAINLUCK_API`, `ADMIN_TOKEN`) in the SAME command as the curl:
 ```bash
 source ~/.claude/.env && curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$BAINLUCK_API/api/admin/audit-pass2-guess" | python3 -m json.tool
 ```
-If `~/.claude/.env` doesn't exist, ask Alex to run:
-```bash
-echo 'export BAINLUCK_API="https://api.bainluck.com"' >> ~/.claude/.env
-echo "export ADMIN_TOKEN=$(heroku config:get ADMIN_TOKEN -a bainluck)" >> ~/.claude/.env
-```
+If `~/.claude/.env` doesn't exist, ask Alex to create it — the two `echo` lines are in the overflow doc.
 
 ---
 
@@ -383,26 +333,16 @@ When fixing ANY data quality, matching, or display issue: (1) audit BEFORE: `pyt
 
 ## Quick Reference
 
-| What | Where |
+**Surfaces** (https://bainluck.com): `/` Discover (default, also `/discover`) · `/sports` · `/discover/stats` · `/admin` · `/weather` · `/politics` · `/entertainment` · `/economics` · `/calibration` · `/privacy`.
+
+**Public APIs** (https://api.bainluck.com, docs at `/docs`): `GET /api/calibration` (1h cache) · `/api/weather/*` · `/api/politics` · `/api/entertainment` · `/api/leagues/{sport_key}`.
+
+**Admin APIs** (Bearer `$ADMIN_TOKEN`): `/api/admin/audit/all` (grid health) · `/api/admin/prediction-markets/link-rate` · `/api/admin/hook-coverage` · `/api/admin/backfill-winners/status` · `POST /api/admin/db-query` (read-only SQL, body `{"sql":"...","limit":500}`).
+
+**Priority + status, the only source:** https://github.com/alexander-bain/bainluck/issues. Judgment, gotchas and architecture: the Linked Reference Docs table above.
+
+| db-query rule | Detail |
 |------|-------|
-| Discover feed (default) | https://bainluck.com (also /discover) |
-| Sports feed | https://bainluck.com/sports |
-| Prediction stats | https://bainluck.com/discover/stats |
-| Admin dashboard | https://bainluck.com/admin |
-| Category pages | /weather · /politics · /entertainment · /economics · /calibration |
-| Calibration API | `GET /api/calibration` (public, 1h cache) |
-| Backfill status | `GET /api/admin/backfill-winners/status` |
-| Privacy policy | https://bainluck.com/privacy |
-| Category APIs | `GET /api/weather/*` · `/api/politics` · `/api/entertainment` · `/api/leagues/{sport_key}` |
-| Hook coverage | `GET /api/admin/hook-coverage` |
-| Grid health audit | `GET /api/admin/audit/all` (Bearer $ADMIN_TOKEN) |
-| Link rate health | `GET /api/admin/prediction-markets/link-rate` (Bearer $ADMIN_TOKEN) |
-| Ad-hoc SQL (read-only) | `POST /api/admin/db-query` (Bearer $ADMIN_TOKEN, body: `{"sql":"...","limit":500}`) |
 | **Query plan** | same endpoint, `{"sql":"SELECT ...","explain":true}` → `EXPLAIN (FORMAT JSON)`; supply a plain SELECT (the server composes the EXPLAIN). Plan-only does not execute. `"analyze":true` DOES execute (SELECT-only, no leading `WITH`, pure-function allowlist in `app/utils/sql_read_guard.py`, unlisted names refused BY NAME). `"timeout_ms"` 500ms–25s, default 10s |
-| **db-query refuses operational functions** | on BOTH the row path and `analyze`: `pg_cancel_backend`, `pg_terminate_backend`, advisory locks, `nextval`/`setval`, `pg_sleep`, `dblink`, `pg_read_file`. `SET TRANSACTION READ ONLY` does not make these safe (#1641). Errors return `{reason, correlation_id}`; plans capped 256 KiB with a `truncated` verdict |
+| **db-query refuses operational functions** | on BOTH the row path and `analyze`: `pg_cancel_backend`, `pg_terminate_backend`, advisory locks, `nextval`/`setval`, `pg_sleep`, `dblink`, `pg_read_file`. `SET TRANSACTION READ ONLY` does not make these safe (#1641). Errors return `{reason, correlation_id}` |
 | **Production query timings** | `pg_stat_statements` installed. Caveats (measured): near its 5,000-entry cap so ad-hoc probes get evicted, and errored statements are never recorded — a timing-out query is invisible |
-| API docs | https://api.bainluck.com/docs |
-| Priority + status (only source) | https://github.com/alexander-bain/bainluck/issues |
-| Standing product rulings | `docs/PRODUCT-BRAIN.md` |
-| Gotchas (full) | `docs/gotchas-reference.md` |
-| Architecture | `docs/architecture-reference.md` |

@@ -780,11 +780,12 @@ def build_celery_integration() -> CeleryIntegration:
     dispatch. It created **129 PAID monitors** and spent the whole $100
     pay-as-you-go budget in 4 days (Fable/Alex, 2026-08-21).
 
-    `beat_schedule` carries **132** entries as measured on this tree, not 129 —
-    the reported monitor count is monitors that had DISPATCHED at least once, so
-    the two numbers are not the same quantity and the gap is three beats that had
-    not yet fired. Recorded rather than reconciled, because the cost scales with
-    the schedule and the schedule is the larger number.
+    `beat_schedule` carried **132** entries when that was measured (2026-08-21)
+    and **141** on this tree, not 129 — the reported monitor count is monitors
+    that had DISPATCHED at least once, so the two numbers are not the same
+    quantity and the gap was three beats that had not yet fired. Recorded rather
+    than reconciled, because the cost scales with the schedule, the schedule is
+    the larger number, and it only ever grows.
 
     Nothing is lost by turning it off. Beat observability here is `task-metrics`
     plus the samplers — our own rail, already the thing every latency and
@@ -3029,6 +3030,37 @@ def warm_search_head(self, head_size: int = None):
 
 
 @celery_app.task(
+    bind=True,
+    soft_time_limit=90,
+    time_limit=120,
+    name="app.tasks.flush_search_gin_pending_lists",
+)
+def flush_search_gin_pending_lists(self):
+    """Keep the search path's trigram GIN pending lists from filling up.
+
+    LAT-P109/#2255. Measured on production 2026-08-28: the identical futures
+    query in `/api/events/search` cost 148.9 ms and then 27.8 ms eleven minutes
+    apart, same rows in and out, and a `%zzqqxxvv%` probe — a pattern that
+    matches nothing and can do no useful work — cost 49.9 ms over 507 shared
+    blocks, then 0.3 ms over 31. 507 pages is `gin_pending_list_limit = 4MB`
+    being read start to finish by every reader. Every trigram index on the
+    search read path climbs to that limit and is flushed by whichever INSERT
+    crosses it, so cold search is a coin flip between the two numbers.
+
+    Budget: the longest uninterrupted operation is ONE index flush, and that is
+    what carries the bound (`PER_INDEX_TIMEOUT_MS = 15s`), not the loop
+    boundary. Seven indexes at the 2-minute beat, each inside its own
+    savepoint — the full reasoning and the sawtooth measurement are in
+    `app/tasks/gin_pending_lists.py`.
+    """
+    from app.tasks.gin_pending_lists import _flush_gin_pending_lists
+
+    return _tracked_run(
+        "flush_search_gin_pending_lists", _flush_gin_pending_lists()
+    )
+
+
+@celery_app.task(
     bind=True, soft_time_limit=150, time_limit=180, name="app.tasks.rebuild_typeahead_index"
 )
 def rebuild_typeahead_index(
@@ -3829,6 +3861,32 @@ celery_app.conf.beat_schedule = {
         # that creates is declared for Integrator review rather than discovered.
         "schedule": 20.0,
         "options": {"queue": "background"},
+    },
+    "flush-search-gin-pending-lists": {
+        "task": "app.tasks.flush_search_gin_pending_lists",
+        # Every 2 min — LAT-P109/#2255. NOT a warmer: there is nothing to warm
+        # and nothing to invalidate. It moves index entries that already exist
+        # from the GIN pending list into the tree, which is work an inserting
+        # backend would do anyway at the 4 MB limit; this takes it off the read
+        # path instead of leaving it on a coin flip.
+        #
+        # WHY 2 MINUTES. The pending lists refill at a measured rate:
+        # `futures_outcomes.name` ~50 pages/min, `events.home_team_name` ~20.
+        # The limit is 512 pages (4 MB) and the reader pays the WHOLE list on
+        # every scan, so the cost a search sees is linear in how long the list
+        # has been accumulating. At 2 min the worst case is ~100 pages (~10 ms
+        # per index) against the 512-page (~50-92 ms per index) sawtooth peak
+        # this replaces. A shorter beat buys progressively less; a longer one
+        # lets `futures_outcomes` — the most expensive of the seven — get most
+        # of the way back to the limit between passes.
+        #
+        # `background` rather than `realtime`: this is maintenance, and it must
+        # never contend with the 2-minute live price poll it shares a period
+        # with. `expires` is set so a backlogged queue drops stale fires rather
+        # than running a pile of them back to back — a flush that is two
+        # minutes late has been superseded by the next one.
+        "schedule": 120.0,
+        "options": {"queue": "background", "expires": 110},
     },
     "typeahead-index-sentinel": {
         "task": "app.tasks.typeahead_index_sentinel",

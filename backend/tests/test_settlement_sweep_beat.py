@@ -471,8 +471,35 @@ class TestG7Routing:
 #: reasoning that admits the other three. The `period <= 180.0` assertion below
 #: is what keeps that from being a blanket welcome: a slower beat is not a floor
 #: and would still have to be reasoned about as a co-fire.
+#:
+#: 🔴 THE GUARD FIRED AS DESIGNED AGAIN (LAT-P109, 2026-08-28) on the FIFTH
+#: interval beat, `flush-search-gin-pending-lists` at 120 s. ARGUED, not
+#: absorbed, on three counts:
+#:
+#:   1. **What it costs the shared slot is bounded and small.** Seven
+#:      `gin_clean_pending_list()` calls, each merging roughly one beat-period's
+#:      accumulation (~100 index pages at the measured refill rates). No table
+#:      scan, no third-party call, no application work — and the merge itself is
+#:      work an inserting backend would otherwise do at the 4 MB limit, so this
+#:      moves the cost rather than adding it.
+#:   2. **It cannot pile up behind THIS sweep.** The entry carries
+#:      `expires: 110`, under its own 120 s period, so the ~7 minutes the sweep
+#:      holds the slot drop their stale fires instead of queueing three or four
+#:      flushes to run back to back the moment the sweep releases. Exactly one
+#:      runs after it. The cost of that window is that the pending lists grow
+#:      unflushed for seven minutes once a night, which is the state every minute
+#:      of every day was in before this beat existed.
+#:   3. **120 s is inside the floor's own rule**, not an exception to it — see
+#:      the `period <= 180.0` assertion below.
+#:
+#: Why `background` and not elsewhere: `realtime` carries the 2-minute live
+#: price poll and maintenance must not contend with it; `heavy` is the
+#: calibration/precompute family, whose 25-minute passes would make a 2-minute
+#: beat meaningless. The full measurement is
+#: `docs/audits/latency/lat-p109-the-gin-pending-list-sawtooth.md` (#2255).
 BACKGROUND_INTERVAL_FLOOR = frozenset(
     {
+        "flush-search-gin-pending-lists",
         "refresh-open-commentary",
         "sync-tournament-results",
         "warm-search-head",

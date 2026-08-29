@@ -1129,6 +1129,91 @@ _SEARCH_FUTURES_WINDOW = 20    # rows fetched before rerank + dedup
 _SEARCH_FUTURES_REFILL = 40    # rank 21-60, fetched ONLY on an observed collapse
 
 
+async def _fetch_futures_window(
+    db,
+    window_query,
+    candidates_in,
+    tier1_arms: list,
+    outcome_arm,
+    deadline: float,
+) -> tuple[list, str]:
+    """The futures window, fetched TIER-ORDERED instead of all at once.
+
+    LAT-P111 (#2261). The outcome arm — ``markets whose OUTCOME name matches`` —
+    is the dominant cost of `/api/events/search`, and for most queries it buys
+    nothing. Measured in production 2026-08-28 on the emitted statement,
+    `EXPLAIN (ANALYZE, BUFFERS)`, `oscars`:
+
+        Bitmap Heap Scan futures_outcomes   2,334 rows   1,572 blocks   583 ms
+        -> Index Scan futures_markets_pkey    x931       3,735 blocks   220 ms
+        = 67 candidate markets, 805 ms of an 839 ms query
+
+    The name arm returned **84** rows in 23 ms in the same plan. `_futures_name_
+    tier` is the FIRST sort key, so those 84 name matches occupy tier 0 and the
+    67 outcome-only rows occupy tier 2: **not one of them can reach a 20-row
+    page.** 805 ms, no effect on the answer.
+
+    WHY THIS IS NOT THE RECALL CHANGE #1732 REFUSES, AND THE DIFFERENCE MATTERS.
+    LAT-P032 measured the same arm and found it actively harmful for `fed` (7 of
+    20 results were substring collisions inside proper nouns) — then deliberately
+    left it alone, because deleting an arm is a recall-semantics change and this
+    lane does not bolt those onto a latency queue. LAT-P002 was REVERTED for
+    exactly that. Nothing here is deleted. The arm still runs whenever it can
+    change the answer; it is only SKIPPED in the case where the tier order proves
+    it cannot. The candidate set the route can see is unchanged.
+
+    THE PROOF, in three lines:
+      * every row this returns from ``outcome_arm`` alone matches neither name,
+        ticker nor alias — so ``_futures_name_tier`` scores it **2**;
+      * tier ASC is the first ORDER BY key, so every tier-2 row sorts below every
+        tier-0/1 row;
+      * therefore if the tier<=1 arms alone fill the window, the full arm set
+        returns those same rows in that same order.
+    When they do NOT fill it, ``tier1_rows`` is the COMPLETE tier<=1 set (the
+    LIMIT did not bind), so appending the outcome-only rows in their own order
+    reconstructs the full query's page exactly — same rows, same order, and the
+    expensive arm is paid for only when it is load-bearing.
+
+    Returns ``(rows, arm_state)``; ``arm_state`` is reported under
+    ``?debug_timing=1`` so "did it skip" is answerable from outside without
+    reading a log — a zero-cost stage and a stage that did not run are otherwise
+    the same observation (gotcha #53).
+    """
+    if tier1_arms:
+        tier1_rows = list(
+            (await db.execute(window_query(candidates_in(tier1_arms))))
+            .scalars()
+            .unique()
+            .all()
+        )
+    else:  # pragma: no cover - the name arm is always built
+        tier1_rows = []
+
+    if outcome_arm is None:
+        # Nothing was split: the tier<=1 arms ARE the whole arm set.
+        return tier1_rows, "absent"
+    if len(tier1_rows) >= _SEARCH_FUTURES_WINDOW:
+        return tier1_rows, "skipped"
+
+    await _apply_search_statement_timeout(db, deadline)
+    outcome_rows = (
+        (await db.execute(window_query(candidates_in([outcome_arm]))))
+        .scalars()
+        .unique()
+        .all()
+    )
+    merged = list(tier1_rows)
+    seen = {m.id for m in merged}
+    for m in outcome_rows:
+        if m.id in seen:
+            continue
+        seen.add(m.id)
+        merged.append(m)
+        if len(merged) >= _SEARCH_FUTURES_WINDOW:
+            break
+    return merged, "merged"
+
+
 def _search_tsquery(q: str):
     """Build a PostgreSQL query parser expression for user search text."""
     return func.websearch_to_tsquery(_SEARCH_TS_CONFIG_SQL, q.strip())
@@ -3432,17 +3517,30 @@ async def search_events(
             FuturesMarket.resolution_date >= datetime.now(timezone.utc),
         ),
     )
-    _futures_arm_selects = [
-        select(FuturesMarket.id).where(arm, *_futures_open_now)
-        for arm in _futures_where_or
-    ]
-    if len(_futures_arm_selects) > 1:
-        _futures_candidates = union(*_futures_arm_selects).subquery()
-        _futures_candidate_filter = FuturesMarket.id.in_(
-            select(_futures_candidates.c.id)
-        )
-    else:
-        _futures_candidate_filter = FuturesMarket.id.in_(_futures_arm_selects[0])
+    def _futures_candidates_in(arms):
+        """The UNION-of-arms candidate filter, for any SUBSET of the arms.
+
+        Extracted from a single inline expression by LAT-P111 so the same
+        construction serves the full arm set and the tier-ordered subsets below.
+        One builder, so a subset can never drift from the shape the full set
+        uses — the `search_cache` key lesson (one key, one place) applied to the
+        predicate.
+        """
+        _selects = [
+            select(FuturesMarket.id).where(arm, *_futures_open_now) for arm in arms
+        ]
+        if len(_selects) > 1:
+            return FuturesMarket.id.in_(select(union(*_selects).subquery().c.id))
+        return FuturesMarket.id.in_(_selects[0])
+
+    _futures_candidate_filter = _futures_candidates_in(_futures_where_or)
+
+    # LAT-P111/#2261: the arms, split by the TIER they can reach. Used only to
+    # order the work below — `_futures_where_or` above is untouched, so the
+    # candidate set this route can see is exactly what it was.
+    _futures_tier1_arms = [
+        arm for arm in (futures_name_match, league_ticker_match) if arm is not None
+    ] + list(_futures_alias_arms)
 
     # #993 Slice-Speed: rank by the NAME vector only. The old vector appended a
     # correlated string_agg(outcome names) computed for every candidate row
@@ -3508,29 +3606,63 @@ async def search_events(
         _futures_tier_whens.append((or_(*_futures_alias_arms), 1))
     _futures_name_tier = case(*_futures_tier_whens, else_=2)
 
-    futures_query = (
-        select(FuturesMarket)
-        .options(selectinload(FuturesMarket.sport))
-        .options(selectinload(FuturesMarket.outcomes))
-        .where(
-            _futures_candidate_filter,
-            *_futures_open_now,
-        )
-        .order_by(
-            _futures_name_tier.asc(),
-            futures_search_rank.desc(),
-            FuturesMarket.market_tier.asc().nulls_last(),
-            FuturesMarket.volume.desc().nulls_last(),
-            FuturesMarket.updated_at.desc(),
-        )
-        .limit(_SEARCH_FUTURES_WINDOW)
-    )
+    def _futures_window_query(candidate_filter):
+        """The futures window statement over a given candidate filter.
 
-    # Apply sport filter to futures if specified
-    if sport:
-        futures_query = futures_query.join(Sport, FuturesMarket.sport_id == Sport.id).where(
-            Sport.key == sport
+        LAT-P111: a builder rather than a literal, because the ORDER BY is the
+        thing that makes the tier split below provably answer-identical. If the
+        subset queries could be ordered differently from the full one — even by
+        an edit that only touched one of them — the proof would be void and
+        nothing would fail. There is one ORDER BY, so there is one order.
+        """
+        stmt = (
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.sport))
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(
+                candidate_filter,
+                *_futures_open_now,
+            )
+            .order_by(
+                _futures_name_tier.asc(),
+                futures_search_rank.desc(),
+                FuturesMarket.market_tier.asc().nulls_last(),
+                FuturesMarket.volume.desc().nulls_last(),
+                FuturesMarket.updated_at.desc(),
+                # LAT-P111: a TOTAL order. Not a tidiness edit — the five keys
+                # above do not order a large, common class of rows at all, and
+                # until now the PLAN was silently deciding the page.
+                #
+                # MEASURED on production, `ballon`: `58598676..58598736` are one
+                # Kalshi series ("Will <player> finish in the top 3/5 of the 2026
+                # Ballon d'Or?"). All 40+ carry tier 0, `ts_rank_cd` 0.4000000059,
+                # `market_tier` 3, `volume` NULL and an `updated_at` identical to
+                # the MICROSECOND — they were ingested in one batch. Every key is
+                # a tie, so which twenty of them fill a twenty-row window was
+                # whatever the executor happened to emit. Two DIFFERENT plans over
+                # the SAME data returned two different pages (12 of 20 rows
+                # changed), while the same plan twice was stable — which is why
+                # this was invisible: it looks deterministic right up until an
+                # unrelated planner change reshuffles somebody's search results.
+                #
+                # `id` is not a relevance signal and is not pretending to be one.
+                # It orders ONLY rows that are already equal on every signal the
+                # route declares, and it is what makes the tier split above
+                # provably answer-identical rather than answer-identical-in-
+                # practice. Recall is untouched: same candidate set, same twenty
+                # slots, a stated rule for filling them instead of an accident.
+                FuturesMarket.id.asc(),
+            )
+            .limit(_SEARCH_FUTURES_WINDOW)
         )
+        # Apply sport filter to futures if specified
+        if sport:
+            stmt = stmt.join(Sport, FuturesMarket.sport_id == Sport.id).where(
+                Sport.key == sport
+            )
+        return stmt
+
+    futures_query = _futures_window_query(_futures_candidate_filter)
 
     # LAT-P005/#1494: futures is NOT "non-essential enrichment" — that
     # classification (LAT-P002's) is what got this reverted.
@@ -3547,6 +3679,10 @@ async def search_events(
     # the events query), and a timeout here is logged at ERROR — it is a recall
     # incident, not routine shedding.
     await _apply_search_statement_timeout(db, _deadline)
+    # LAT-P111: "not reached" is its own state and is never coerced to "skipped".
+    # A stage that never ran and a stage that ran and skipped the arm are
+    # different facts (gotcha #53).
+    _futures_outcome_arm = "not_reached"
     if time.monotonic() > _deadline:
         logger.error(
             "search deadline exceeded before futures for %r — returning an answer "
@@ -3556,8 +3692,14 @@ async def search_events(
         degraded.append("futures")
     else:
         try:
-            futures_result = await db.execute(futures_query)
-            futures_markets_raw = futures_result.scalars().unique().all()
+            futures_markets_raw, _futures_outcome_arm = await _fetch_futures_window(
+                db,
+                _futures_window_query,
+                _futures_candidates_in,
+                _futures_tier1_arms,
+                futures_outcome_match,
+                _deadline,
+            )
         except Exception as exc:  # noqa: BLE001
             if not _is_query_timeout(exc):
                 raise
@@ -4079,8 +4221,14 @@ async def search_events(
         }} if _futures_collapsed else {}),
         # LAT-P002/#1494: opt-in only (?debug_timing=1); absent otherwise, so the
         # normal response shape is untouched.
+        # LAT-P111: `futures_outcome_arm` rides the SAME opt-in block and sits
+        # BESIDE `_stage_ms` rather than inside it — `total_ms` sums that dict's
+        # values, so a string member there would be a TypeError on every timing
+        # request and nowhere else.
         **({"debug_timing": {**_stage_ms,
-                             "total_ms": sum(_stage_ms.values())}} if debug_timing else {}),
+                             "total_ms": sum(_stage_ms.values()),
+                             "futures_outcome_arm": _futures_outcome_arm}}
+           if debug_timing else {}),
     }
 
     # LAT-P090/#2211: publish the answer, then count it. In that order.

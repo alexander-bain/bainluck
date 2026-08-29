@@ -516,6 +516,36 @@ def evaluate_monotonicity(
     violate it — all in the sub-5% tail, where a thin binary prices "reach the
     final" a point above "reach the semis".  That is the market's own
     incoherence and hiding it would be the page lying on the market's behalf.
+
+    ═══ ONLY CELLS OBSERVED AT THE SAME TIME ARE COMPARABLE (Q428) ═══
+
+    A cell the page has already marked ``dark`` or ``stale`` is not an opinion
+    about now, so an ordering between it and a live cell is not a disagreement
+    between two markets — it is a gap between two moments.  Measured on the
+    2026-08-28 payload, 5 of 27 reported violations were exactly that, four of
+    them comparing a price captured 75 hours ago against one captured ten
+    minutes ago:
+
+        Alex de Minaur     R16 -> QF   live(0.17h) / dark(75.05h)
+        Casper Ruud        R16 -> QF   live(0.17h) / dark(75.05h)
+        Valentin Vacherot  QF  -> SF   dark(75.05h) / live(0.17h)
+        Darwin Blanch      R16 -> QF   dark(75.05h) / live(0.17h)
+        Joao Fonseca       SF  -> F    dark(72.97h) / dark(75.05h)
+
+    This needs no constant and invents no vocabulary: the freshness words are
+    already on every cell and only a ``live`` one may wear
+    ``probability_is_live``.  Using them here is consistency with the surface's
+    own contract.  Nor does it hide anything — the cell still renders, still
+    carries its age and its state, and still counts in ``counts``.  What stops
+    is the page ASSERTING that two markets contradict each other when it has
+    only observed them at different times.
+
+    ``settled`` is deliberately NOT in the skip list.  It is a terminal fact
+    rather than a freshness word, and a settled cell out of order with a live
+    one is the worst version of this failure, not an exempt one.  A cell with
+    no ``state`` at all is compared: pure-logic callers pass bare
+    probabilities, and skipping a cell that never claimed to be stale would
+    switch this eval off for them.
     """
     order = [column["key"] for column in columns]
     violations: list[dict[str, Any]] = []
@@ -524,6 +554,7 @@ def evaluate_monotonicity(
             (key, row["cells"][key]["probability"])
             for key in order
             if row["cells"].get(key, {}).get("probability") is not None
+            and row["cells"].get(key, {}).get("state") not in (CELL_DARK, CELL_STALE)
         ]
         for (earlier, before), (later, after) in zip(priced, priced[1:]):
             if before < after - MONOTONICITY_EPSILON:
