@@ -1,0 +1,2542 @@
+{
+ "_comment": "Production /api/feed futures cards captured 2026-08-29 across every pair-printing surface (default feed, politics/economics/entertainment category tags, sports mode). Deduped by market id. Recapture: see the docstring of tests/test_feed_card_sum_2088.py.",
+ "captured_at": "2026-08-29T07:20:00Z",
+ "items": [
+  {
+   "id": 1,
+   "name": "MLB World Series Winner",
+   "source": "odds_api",
+   "outcome_count": 30,
+   "status": "open",
+   "remaining_outcome_count": 22,
+   "top_outcomes": [
+    {
+     "id": 1,
+     "name": "Los Angeles Dodgers",
+     "probability": 0.309723,
+     "rank": 1,
+     "movement": 4e-05
+    },
+    {
+     "id": 14,
+     "name": "Milwaukee Brewers",
+     "probability": 0.099037,
+     "rank": 2,
+     "movement": 0.00101
+    },
+    {
+     "id": 2,
+     "name": "New York Yankees",
+     "probability": 0.095674,
+     "rank": 3,
+     "movement": -8.7e-05
+    }
+   ]
+  },
+  {
+   "id": 86832,
+   "name": "NFL Super Bowl Winner",
+   "source": "odds_api",
+   "outcome_count": 32,
+   "status": "open",
+   "remaining_outcome_count": 24,
+   "top_outcomes": [
+    {
+     "id": 1309485,
+     "name": "Los Angeles Rams",
+     "probability": 0.138052,
+     "rank": 1,
+     "movement": 0.000135
+    },
+    {
+     "id": 1309486,
+     "name": "Buffalo Bills",
+     "probability": 0.074979,
+     "rank": 2,
+     "movement": 7.4e-05
+    },
+    {
+     "id": 1309484,
+     "name": "Seattle Seahawks",
+     "probability": 0.068102,
+     "rank": 3,
+     "movement": 6.7e-05
+    }
+   ]
+  },
+  {
+   "id": 55674287,
+   "name": "Will Stripe acquire PayPal this year?",
+   "source": "kalshi",
+   "outcome_count": 1,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 206747655,
+     "name": "Stripe acquire PayPal this year",
+     "probability": 0.065,
+     "rank": 1,
+     "movement": -0.57
+    }
+   ]
+  },
+  {
+   "id": 113354,
+   "name": "China x Philippines military clash before 2027?",
+   "source": "polymarket",
+   "outcome_count": 1,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 1629168,
+     "name": "China x Philippines military clash",
+     "probability": 0.59,
+     "rank": 1,
+     "movement": -0.035
+    }
+   ]
+  },
+  {
+   "id": 109349,
+   "name": "When will Apple release the iPhone 18?",
+   "source": "kalshi",
+   "outcome_count": 4,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 1596638,
+     "name": "Before 2027",
+     "probability": 0.15,
+     "rank": 1,
+     "movement": -0.015
+    },
+    {
+     "id": 1596639,
+     "name": "Before October",
+     "probability": 0.065,
+     "rank": 2,
+     "movement": -0.035
+    }
+   ]
+  },
+  {
+   "id": 59704867,
+   "name": "Where will it rain on Aug 29, 2026?",
+   "source": "kalshi",
+   "outcome_count": 22,
+   "status": "open",
+   "remaining_outcome_count": 14,
+   "top_outcomes": [
+    {
+     "id": 222363340,
+     "name": "Minneapolis",
+     "probability": 0.785,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222363341,
+     "name": "Seattle",
+     "probability": 0.74,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222363342,
+     "name": "Miami",
+     "probability": 0.72,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59670253,
+   "name": "Pokémon VGC 2026 World Champion Region (Masters)",
+   "source": "polymarket",
+   "outcome_count": 4,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 222226689,
+     "name": "Europe",
+     "probability": 0.265,
+     "rank": 1,
+     "movement": 0.005
+    },
+    {
+     "id": 222222076,
+     "name": "Japan",
+     "probability": 0.25,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222226691,
+     "name": "USA",
+     "probability": 0.245,
+     "rank": 3,
+     "movement": 0.005
+    }
+   ]
+  },
+  {
+   "id": 113364,
+   "name": "Next French Presidential Election",
+   "source": "polymarket",
+   "outcome_count": 128,
+   "status": "open",
+   "remaining_outcome_count": 34,
+   "top_outcomes": [
+    {
+     "id": 1629254,
+     "name": "Marine Le Pen",
+     "probability": 0.1563,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1629252,
+     "name": "Édouard Philippe",
+     "probability": 0.1347,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 1629253,
+     "name": "Jean-Luc Mélenchon",
+     "probability": 0.0635,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59609679,
+   "name": "2026 TOUR Championship: Weather Delay?",
+   "source": "polymarket",
+   "outcome_count": 1,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 221875172,
+     "name": "2026 TOUR Championship: Weather Delay",
+     "probability": 0.66,
+     "rank": 1,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 12194657,
+   "name": "Who will Taylor Swift's bridesmaids be?",
+   "source": "polymarket",
+   "outcome_count": 12,
+   "status": "open",
+   "remaining_outcome_count": 2,
+   "top_outcomes": [
+    {
+     "id": 69789474,
+     "name": "Gigi Hadid",
+     "probability": 0.0035,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 69789479,
+     "name": "Blake Lively",
+     "probability": 0.0005,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 151936570,
+     "name": "Abigail Anderson",
+     "probability": 0.0005,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 171,
+   "name": "Canadian Team to Win the Stanley Cup® Before the 2030-31 Season",
+   "source": "kalshi",
+   "outcome_count": 1,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 925,
+     "name": "Canadian Team to Win the Stanley Cup®...",
+     "probability": 0.425,
+     "rank": 1,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 112921,
+   "name": "Will China invade Taiwan by end of 2026?",
+   "source": "polymarket",
+   "outcome_count": 1,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 1626191,
+     "name": "China invade Taiwan by end of 2026",
+     "probability": 0.0415,
+     "rank": 1,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59706354,
+   "name": "Trump Truth Social posts this week? (8/23-8/29)",
+   "source": "kalshi",
+   "outcome_count": 10,
+   "status": "open",
+   "remaining_outcome_count": 2,
+   "top_outcomes": [
+    {
+     "id": 222367479,
+     "name": ">240",
+     "probability": 0.855,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222367480,
+     "name": "220-240",
+     "probability": 0.09,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222367481,
+     "name": "<80",
+     "probability": 0.01,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 108328,
+   "name": "Who will be Trump's next Press Secretary?",
+   "source": "kalshi",
+   "outcome_count": 28,
+   "status": "open",
+   "remaining_outcome_count": 20,
+   "top_outcomes": [
+    {
+     "id": 1591754,
+     "name": "Scott Jennings",
+     "probability": 0.215,
+     "rank": 1,
+     "movement": 0.04
+    },
+    {
+     "id": 219753403,
+     "name": "Anna Kelly",
+     "probability": 0.2,
+     "rank": 2,
+     "movement": 0.025
+    },
+    {
+     "id": 219753406,
+     "name": "Margo Martin",
+     "probability": 0.105,
+     "rank": 3,
+     "movement": 0.075
+    }
+   ]
+  },
+  {
+   "id": 108505,
+   "name": "Who will headline Coachella 2027?",
+   "source": "kalshi",
+   "outcome_count": 116,
+   "status": "open",
+   "remaining_outcome_count": 105,
+   "top_outcomes": [
+    {
+     "id": 1592580,
+     "name": "SZA",
+     "probability": 0.87,
+     "rank": 1,
+     "movement": 0.615
+    },
+    {
+     "id": 1592579,
+     "name": "Dua Lipa",
+     "probability": 0.565,
+     "rank": 2,
+     "movement": 0.05
+    },
+    {
+     "id": 1592627,
+     "name": "Fred again..",
+     "probability": 0.44,
+     "rank": 3,
+     "movement": 0.125
+    }
+   ]
+  },
+  {
+   "id": 20569379,
+   "name": "Russia x Ukraine ceasefire agreement by...?",
+   "source": "polymarket",
+   "outcome_count": 6,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 109194075,
+     "name": "December 31",
+     "probability": 0.485,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 109194076,
+     "name": "October 31",
+     "probability": 0.335,
+     "rank": 2,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 112996,
+   "name": "Brazil Presidential Election",
+   "source": "polymarket",
+   "outcome_count": 32,
+   "status": "open",
+   "remaining_outcome_count": 10,
+   "top_outcomes": [
+    {
+     "id": 1626861,
+     "name": "Luiz Inácio Lula da Silva",
+     "probability": 0.605,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1626862,
+     "name": "Flávio Bolsonaro",
+     "probability": 0.2615,
+     "rank": 2,
+     "movement": -0.0005
+    },
+    {
+     "id": 1626863,
+     "name": "Renan Santos",
+     "probability": 0.0885,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 52756010,
+   "name": "Big Brother Season 28 · Winner",
+   "source": "kalshi",
+   "outcome_count": 17,
+   "status": "open",
+   "remaining_outcome_count": 9,
+   "top_outcomes": [
+    {
+     "id": 206774605,
+     "name": "Dee Valladares",
+     "probability": 0.195,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 206774611,
+     "name": "Rick Devens",
+     "probability": 0.185,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 198635065,
+     "name": "Drew Campbell",
+     "probability": 0.095,
+     "rank": 3,
+     "movement": 0.01
+    }
+   ]
+  },
+  {
+   "id": 52755659,
+   "name": "2026-27 Stanley Cup® Finals Winner",
+   "source": "kalshi",
+   "outcome_count": 32,
+   "status": "open",
+   "remaining_outcome_count": 24,
+   "top_outcomes": [
+    {
+     "id": 198632536,
+     "name": "Florida Panthers",
+     "probability": 0.1045,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 198632538,
+     "name": "Carolina Hurricanes",
+     "probability": 0.0864,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 198632537,
+     "name": "Colorado Avalanche",
+     "probability": 0.0864,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 108621,
+   "name": "Which party will win the U.S. House?",
+   "source": "kalshi",
+   "outcome_count": 2,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 1593960,
+     "name": "Democratic Party",
+     "probability": 0.845,
+     "rank": 1,
+     "movement": -0.01
+    },
+    {
+     "id": 1593961,
+     "name": "Republican Party",
+     "probability": 0.155,
+     "rank": 2,
+     "movement": 0.01
+    }
+   ]
+  },
+  {
+   "id": 114584,
+   "name": "MLB World Series Champion 2026",
+   "source": "polymarket",
+   "outcome_count": 31,
+   "status": "open",
+   "remaining_outcome_count": 23,
+   "top_outcomes": [
+    {
+     "id": 1634465,
+     "name": "Los Angeles Dodgers",
+     "probability": 0.315,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1634478,
+     "name": "Milwaukee Brewers",
+     "probability": 0.1135,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 1634467,
+     "name": "New York Yankees",
+     "probability": 0.095,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 112903,
+   "name": "Which party will win the House in 2026?",
+   "source": "polymarket",
+   "outcome_count": 9,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 1626008,
+     "name": "Democratic Party",
+     "probability": 0.4275,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1626009,
+     "name": "Republican Party",
+     "probability": 0.0725,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 69758614,
+     "name": "Other",
+     "probability": 0.5,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 113356,
+   "name": "Which movie has biggest opening weekend in 2026?",
+   "source": "polymarket",
+   "outcome_count": 27,
+   "status": "open",
+   "remaining_outcome_count": 5,
+   "top_outcomes": [
+    {
+     "id": 1629183,
+     "name": "Avengers: Doomsday",
+     "probability": 0.715,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1629184,
+     "name": "Spider-Man: Brand New Day",
+     "probability": 0.265,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 1629189,
+     "name": "Dune: Messiah",
+     "probability": 0.0125,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 57774286,
+   "name": "McDonald's comparable sales growth in fiscal 2026",
+   "source": "kalshi",
+   "outcome_count": 8,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 214434928,
+     "name": "Above 1.5%",
+     "probability": 0.9,
+     "rank": 1,
+     "movement": -0.025
+    },
+    {
+     "id": 214434933,
+     "name": "Above 4%",
+     "probability": 0.75,
+     "rank": 2,
+     "movement": 0.5
+    },
+    {
+     "id": 214434931,
+     "name": "Above 3%",
+     "probability": 0.66,
+     "rank": 3,
+     "movement": 0.015
+    }
+   ]
+  },
+  {
+   "id": 131023,
+   "name": "Will Samuel Alito announce his retirement by...?",
+   "source": "polymarket",
+   "outcome_count": 6,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 186898290,
+     "name": "June 30, 2027",
+     "probability": 0.42,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1718147,
+     "name": "December 31",
+     "probability": 0.12,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 186825510,
+     "name": "September 30",
+     "probability": 0.055,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59165001,
+   "name": "NYC median asking rent in December 2026",
+   "source": "kalshi",
+   "outcome_count": 8,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 219750951,
+     "name": "Above $3,800",
+     "probability": 0.945,
+     "rank": 1,
+     "movement": -0.015
+    },
+    {
+     "id": 219750952,
+     "name": "Above $3,900",
+     "probability": 0.815,
+     "rank": 2,
+     "movement": -0.065
+    },
+    {
+     "id": 219750953,
+     "name": "Above $4,000",
+     "probability": 0.415,
+     "rank": 3,
+     "movement": -0.18
+    }
+   ]
+  },
+  {
+   "id": 57774252,
+   "name": "Klarna active consumers in fiscal 2026",
+   "source": "kalshi",
+   "outcome_count": 6,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 214434691,
+     "name": "Above 124 million",
+     "probability": 0.81,
+     "rank": 1,
+     "movement": -0.06
+    },
+    {
+     "id": 214434692,
+     "name": "Above 126 million",
+     "probability": 0.64,
+     "rank": 2,
+     "movement": 0.54
+    },
+    {
+     "id": 214434693,
+     "name": "Above 128 million",
+     "probability": 0.44,
+     "rank": 3,
+     "movement": -0.2
+    }
+   ]
+  },
+  {
+   "id": 109441,
+   "name": "Which companies will release a Fully AI-generated multi-episode scripted series  before 2027?",
+   "source": "kalshi",
+   "outcome_count": 8,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 1597099,
+     "name": "Amazon",
+     "probability": 0.27,
+     "rank": 1,
+     "movement": -0.715
+    },
+    {
+     "id": 1597097,
+     "name": "Disney",
+     "probability": 0.07,
+     "rank": 2,
+     "movement": 0.015
+    },
+    {
+     "id": 1597098,
+     "name": "Netflix",
+     "probability": 0.06,
+     "rank": 3,
+     "movement": -0.035
+    }
+   ]
+  },
+  {
+   "id": 56722520,
+   "name": "Will Netanyahu visit New York City by...?",
+   "source": "polymarket",
+   "outcome_count": 5,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 210596222,
+     "name": "December 31",
+     "probability": 0.5184,
+     "rank": 1,
+     "movement": -0.01
+    },
+    {
+     "id": 210596223,
+     "name": "September 30",
+     "probability": 0.4816,
+     "rank": 2,
+     "movement": 0.01
+    }
+   ]
+  },
+  {
+   "id": 57792416,
+   "name": "Will Neuralink's valuation hit (HIGH) $47.5B by August 31?",
+   "source": "polymarket",
+   "outcome_count": 2,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 214513320,
+     "name": "Not Neuralink's valuation",
+     "probability": 0.725,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 214513319,
+     "name": "Neuralink's valuation",
+     "probability": 0.275,
+     "rank": 2,
+     "movement": -0.5
+    }
+   ]
+  },
+  {
+   "id": 31834253,
+   "name": "Champions League Winner",
+   "source": "kalshi",
+   "outcome_count": 36,
+   "status": "open",
+   "remaining_outcome_count": 28,
+   "top_outcomes": [
+    {
+     "id": 149462867,
+     "name": "Barcelona",
+     "probability": 0.1378,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 149462868,
+     "name": "Real Madrid",
+     "probability": 0.122,
+     "rank": 2,
+     "movement": -0.005
+    },
+    {
+     "id": 149462870,
+     "name": "Arsenal",
+     "probability": 0.1142,
+     "rank": 3,
+     "movement": -0.005
+    }
+   ]
+  },
+  {
+   "id": 16756821,
+   "name": "Oil Price (WTI) on Election Day (November 3, 2026)?",
+   "source": "kalshi",
+   "outcome_count": 65,
+   "status": "open",
+   "remaining_outcome_count": 57,
+   "top_outcomes": [
+    {
+     "id": 219815031,
+     "name": "Above $62.99",
+     "probability": 0.89,
+     "rank": 1,
+     "movement": 0.07
+    },
+    {
+     "id": 219815040,
+     "name": "Above $63.49",
+     "probability": 0.885,
+     "rank": 2,
+     "movement": 0.205
+    },
+    {
+     "id": 219815036,
+     "name": "Above $63.99",
+     "probability": 0.88,
+     "rank": 3,
+     "movement": 0.13
+    }
+   ]
+  },
+  {
+   "id": 59165076,
+   "name": "How many PJM capacity emergency days will there be in 2026?",
+   "source": "kalshi",
+   "outcome_count": 6,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 219751567,
+     "name": "Above 10 days",
+     "probability": 0.4157,
+     "rank": 1,
+     "movement": -0.42
+    },
+    {
+     "id": 219751568,
+     "name": "Above 12 days",
+     "probability": 0.302,
+     "rank": 2,
+     "movement": -0.5
+    },
+    {
+     "id": 219751569,
+     "name": "Above 15 days",
+     "probability": 0.1529,
+     "rank": 3,
+     "movement": -0.545
+    }
+   ]
+  },
+  {
+   "id": 57774257,
+   "name": "Walmart US comparable sales growth (ex-fuel) in fiscal 2027",
+   "source": "kalshi",
+   "outcome_count": 9,
+   "status": "open",
+   "remaining_outcome_count": 1,
+   "top_outcomes": [
+    {
+     "id": 214434727,
+     "name": "Above 3.4%",
+     "probability": 0.795,
+     "rank": 1,
+     "movement": -0.11
+    },
+    {
+     "id": 214434728,
+     "name": "Above 3.6%",
+     "probability": 0.695,
+     "rank": 2,
+     "movement": -0.205
+    },
+    {
+     "id": 214434729,
+     "name": "Above 3.8%",
+     "probability": 0.495,
+     "rank": 3,
+     "movement": -0.405
+    }
+   ]
+  },
+  {
+   "id": 59693665,
+   "name": "Who will be House Minority Leader in the 120th Congress?",
+   "source": "kalshi",
+   "outcome_count": 13,
+   "status": "open",
+   "remaining_outcome_count": 5,
+   "top_outcomes": [
+    {
+     "id": 222298565,
+     "name": "Jim Jordan",
+     "probability": 0.285,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222298566,
+     "name": "Mike Johnson",
+     "probability": 0.275,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222298567,
+     "name": "Steve Scalise",
+     "probability": 0.145,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 57774307,
+   "name": "Klarna active klarna consumers in Q3",
+   "source": "kalshi",
+   "outcome_count": 8,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 214435081,
+     "name": "Above 121 million",
+     "probability": 0.79,
+     "rank": 1,
+     "movement": 0.01
+    },
+    {
+     "id": 214435082,
+     "name": "Above 122 million",
+     "probability": 0.715,
+     "rank": 2,
+     "movement": 0.025
+    },
+    {
+     "id": 214435083,
+     "name": "Above 123 million",
+     "probability": 0.555,
+     "rank": 3,
+     "movement": 0.525
+    }
+   ]
+  },
+  {
+   "id": 59699903,
+   "name": "Which of these parties will win a Riksdag seat?",
+   "source": "kalshi",
+   "outcome_count": 2,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 222337338,
+     "name": "Örebropartiet",
+     "probability": 0.29,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222337339,
+     "name": "Liberals",
+     "probability": 0.22,
+     "rank": 2,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59700338,
+   "name": "Which Alaska candidates will drop out in Aug 2026?",
+   "source": "kalshi",
+   "outcome_count": 6,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 222340438,
+     "name": "Matt Schultz",
+     "probability": 0.5109,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222340439,
+     "name": "Tom Begich",
+     "probability": 0.3723,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222340440,
+     "name": "David B. Leslie",
+     "probability": 0.0679,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59701236,
+   "name": "Top US Netflix Movie this week?",
+   "source": "kalshi",
+   "outcome_count": 12,
+   "status": "open",
+   "remaining_outcome_count": 4,
+   "top_outcomes": [
+    {
+     "id": 222342544,
+     "name": "The Whisper Man",
+     "probability": 0.115,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222342545,
+     "name": "Facing El Chapo",
+     "probability": 0.035,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222342546,
+     "name": "Don't Say Good Luck",
+     "probability": 0.01,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59693689,
+   "name": "Will Trump reverse the Lake America renaming?",
+   "source": "kalshi",
+   "outcome_count": 3,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 222298707,
+     "name": "Before Jan 1, 2027",
+     "probability": 0.145,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222298708,
+     "name": "Before Nov 1, 2026",
+     "probability": 0.065,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222298709,
+     "name": "Before Oct 1, 2026",
+     "probability": 0.045,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59693596,
+   "name": "Next DCCC chair?",
+   "source": "kalshi",
+   "outcome_count": 9,
+   "status": "open",
+   "remaining_outcome_count": 1,
+   "top_outcomes": [
+    {
+     "id": 222298231,
+     "name": "Jason Crow",
+     "probability": 0.115,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222298232,
+     "name": "Jamie Raskin",
+     "probability": 0.0665,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222298233,
+     "name": "Ted Lieu",
+     "probability": 0.065,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59700002,
+   "name": "Czech National Bank rate decision in September",
+   "source": "kalshi",
+   "outcome_count": 7,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 222337883,
+     "name": "Maintain current rate",
+     "probability": 0.6465,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222337884,
+     "name": "Hike 25bps",
+     "probability": 0.2837,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222337885,
+     "name": "Cut more than 50bps",
+     "probability": 0.014,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59693649,
+   "name": "Harvard federal sponsored revenue in FY2026?",
+   "source": "kalshi",
+   "outcome_count": 9,
+   "status": "open",
+   "remaining_outcome_count": 1,
+   "top_outcomes": [
+    {
+     "id": 222298510,
+     "name": "Above 600 million",
+     "probability": 0.905,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222298511,
+     "name": "Above 650 million",
+     "probability": 0.855,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222298512,
+     "name": "Above 700 million",
+     "probability": 0.71,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59693667,
+   "name": "When will Google Maps display \"Lake America\"?",
+   "source": "kalshi",
+   "outcome_count": 3,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 222298583,
+     "name": "Before Oct 1, 2026",
+     "probability": 0.915,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222298584,
+     "name": "Before Jan 1, 2027",
+     "probability": 0.915,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222298585,
+     "name": "Before Sep 15, 2026",
+     "probability": 0.855,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59490794,
+   "name": "FM Championship Winner",
+   "source": "kalshi",
+   "outcome_count": 144,
+   "status": "open",
+   "remaining_outcome_count": 136,
+   "top_outcomes": [
+    {
+     "id": 221390717,
+     "name": "Miyu Yamashita",
+     "probability": 0.35,
+     "rank": 1,
+     "movement": 0.06
+    },
+    {
+     "id": 221390650,
+     "name": "Hyo Joo Kim",
+     "probability": 0.135,
+     "rank": 2,
+     "movement": -0.01
+    },
+    {
+     "id": 221390640,
+     "name": "Chizzy Iwai",
+     "probability": 0.1,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59699722,
+   "name": "California FAIR Plan policies in force on September 30, 2026",
+   "source": "kalshi",
+   "outcome_count": 7,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 222336439,
+     "name": "Above 680,000",
+     "probability": 0.945,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222336440,
+     "name": "Above 690,000",
+     "probability": 0.935,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222336441,
+     "name": "Above 700,000",
+     "probability": 0.835,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59164972,
+   "name": "When will the S&P 500 Index be above $8,000?",
+   "source": "kalshi",
+   "outcome_count": 7,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 219750766,
+     "name": "Before Mar 1, 2027",
+     "probability": 0.73,
+     "rank": 1,
+     "movement": -0.11
+    },
+    {
+     "id": 219750765,
+     "name": "Before Feb 1, 2027",
+     "probability": 0.69,
+     "rank": 2,
+     "movement": -0.16
+    },
+    {
+     "id": 219750767,
+     "name": "Before Jan 1, 2027",
+     "probability": 0.675,
+     "rank": 3,
+     "movement": -0.075
+    }
+   ]
+  },
+  {
+   "id": 59700221,
+   "name": "Top Daily Music Video Global on YouTube: Aug 28, 2026",
+   "source": "kalshi",
+   "outcome_count": 15,
+   "status": "open",
+   "remaining_outcome_count": 7,
+   "top_outcomes": [
+    {
+     "id": 222339387,
+     "name": "Dai Dai",
+     "probability": 0.89,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222339388,
+     "name": "@SaiAbhyankkar - Radhimaa (Music Video) | Bhagyashri Borse | Vivek | Thejo Bharathwaj | Think Indie",
+     "probability": 0.01,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222339389,
+     "name": "KALYANI (Remix)",
+     "probability": 0.01,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59701225,
+   "name": "Steam: Weekly Top Seller ",
+   "source": "kalshi",
+   "outcome_count": 20,
+   "status": "open",
+   "remaining_outcome_count": 12,
+   "top_outcomes": [
+    {
+     "id": 222342421,
+     "name": "Counter-Strike 2",
+     "probability": 0.5745,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222342422,
+     "name": "WARDOGS",
+     "probability": 0.1745,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222342423,
+     "name": "STAR WARS Zero Company™",
+     "probability": 0.0426,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59490790,
+   "name": "TOUR Championship Winner",
+   "source": "kalshi",
+   "outcome_count": 30,
+   "status": "open",
+   "remaining_outcome_count": 22,
+   "top_outcomes": [
+    {
+     "id": 221390531,
+     "name": "Scottie Scheffler",
+     "probability": 0.225,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 221390544,
+     "name": "Viktor Hovland",
+     "probability": 0.155,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 221390542,
+     "name": "Chris Gotterup",
+     "probability": 0.115,
+     "rank": 3,
+     "movement": 0.005
+    }
+   ]
+  },
+  {
+   "id": 59693691,
+   "name": "Who will be featured on Trippie Redd's next album?",
+   "source": "kalshi",
+   "outcome_count": 22,
+   "status": "open",
+   "remaining_outcome_count": 14,
+   "top_outcomes": [
+    {
+     "id": 222298717,
+     "name": "Quavo",
+     "probability": 0.3911,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222298718,
+     "name": "Ski Mask The Slump God",
+     "probability": 0.1107,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222298719,
+     "name": "Sexyy Red",
+     "probability": 0.0517,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59693626,
+   "name": "How many wide film releases in Q4 2026?",
+   "source": "kalshi",
+   "outcome_count": 4,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 222298416,
+     "name": "At least 45",
+     "probability": 0.895,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222298417,
+     "name": "At least 50",
+     "probability": 0.795,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222298418,
+     "name": "At least 55",
+     "probability": 0.765,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59693546,
+   "name": "How many people will attend Broadway shows during the 2026–27 season?",
+   "source": "kalshi",
+   "outcome_count": 8,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 222298129,
+     "name": "above 13,500,000",
+     "probability": 0.935,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222298130,
+     "name": "above 13,750,000",
+     "probability": 0.905,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222298131,
+     "name": "above 14,000,000",
+     "probability": 0.845,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 114299,
+   "name": "Which party will gain most seats in Russian Parliamentary Election?",
+   "source": "polymarket",
+   "outcome_count": 34,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 1633322,
+     "name": "United Russia (ER)",
+     "probability": 0.565,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1633323,
+     "name": "New People (NL)",
+     "probability": 0.3685,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 1633324,
+     "name": "Liberal Democratic Party of Russia (LDPR)",
+     "probability": 0.0355,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59699848,
+   "name": "Berlin State Election: 4th Place",
+   "source": "kalshi",
+   "outcome_count": 7,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 222337118,
+     "name": "Grüne",
+     "probability": 0.43,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222337119,
+     "name": "AfD",
+     "probability": 0.18,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222337120,
+     "name": "CDU",
+     "probability": 0.135,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 52756062,
+   "name": "Texas State House winner?",
+   "source": "kalshi",
+   "outcome_count": 2,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 198635469,
+     "name": "Democratic party",
+     "probability": 0.25,
+     "rank": 1,
+     "movement": 0.08
+    },
+    {
+     "id": 198635468,
+     "name": "Republican party",
+     "probability": 0.16,
+     "rank": 2,
+     "movement": -0.72
+    }
+   ]
+  },
+  {
+   "id": 59490792,
+   "name": "TOUR Championship: Hole-in-One",
+   "source": "kalshi",
+   "outcome_count": 3,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 221444528,
+     "name": "1+ holes-in-one",
+     "probability": 0.1,
+     "rank": 1,
+     "movement": 0.005
+    },
+    {
+     "id": 221390592,
+     "name": "3+ holes-in-one",
+     "probability": 0.08,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 221390591,
+     "name": "2+ holes-in-one",
+     "probability": 0.03,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59534669,
+   "name": "TOUR Championship End of Round 3 Leader",
+   "source": "kalshi",
+   "outcome_count": 30,
+   "status": "open",
+   "remaining_outcome_count": 22,
+   "top_outcomes": [
+    {
+     "id": 221544268,
+     "name": "Viktor Hovland",
+     "probability": 0.1787,
+     "rank": 1,
+     "movement": 0.015
+    },
+    {
+     "id": 221544277,
+     "name": "Ryan Gerard",
+     "probability": 0.1447,
+     "rank": 2,
+     "movement": -0.005
+    },
+    {
+     "id": 221544253,
+     "name": "Scottie Scheffler",
+     "probability": 0.1234,
+     "rank": 3,
+     "movement": -0.005
+    }
+   ]
+  },
+  {
+   "id": 59712750,
+   "name": "Winn-Dixie 250 Powered by Coca-Cola  Winner",
+   "source": "kalshi",
+   "outcome_count": 39,
+   "status": "open",
+   "remaining_outcome_count": 31,
+   "top_outcomes": [
+    {
+     "id": 222382973,
+     "name": "Austin Hill",
+     "probability": 0.1454,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222382974,
+     "name": "Rajah Caruth",
+     "probability": 0.1312,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222382975,
+     "name": "Carson Kvapil",
+     "probability": 0.0993,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59706516,
+   "name": "Coke Zero Sugar 400 Winner",
+   "source": "kalshi",
+   "outcome_count": 41,
+   "status": "open",
+   "remaining_outcome_count": 33,
+   "top_outcomes": [
+    {
+     "id": 222367998,
+     "name": "Joey Logano",
+     "probability": 0.0729,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222367997,
+     "name": "Ryan Blaney",
+     "probability": 0.0607,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222367999,
+     "name": "William Byron",
+     "probability": 0.0445,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59700384,
+   "name": "Italian Grand Prix Winner",
+   "source": "kalshi",
+   "outcome_count": 22,
+   "status": "open",
+   "remaining_outcome_count": 14,
+   "top_outcomes": [
+    {
+     "id": 222340691,
+     "name": "Lando Norris",
+     "probability": 0.2727,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222340692,
+     "name": "George Russell",
+     "probability": 0.2381,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222340693,
+     "name": "Lewis Hamilton",
+     "probability": 0.0996,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59701233,
+   "name": "#2 US Netflix Movie this week?",
+   "source": "kalshi",
+   "outcome_count": 12,
+   "status": "open",
+   "remaining_outcome_count": 4,
+   "top_outcomes": [
+    {
+     "id": 222342512,
+     "name": "The Whisper Man",
+     "probability": 0.765,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222342513,
+     "name": "Facing El Chapo",
+     "probability": 0.075,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222342514,
+     "name": "Spider-Man: Into the Spider-Verse",
+     "probability": 0.04,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59701229,
+   "name": "#2 US Netflix Show this week?",
+   "source": "kalshi",
+   "outcome_count": 12,
+   "status": "open",
+   "remaining_outcome_count": 3,
+   "top_outcomes": [
+    {
+     "id": 222342468,
+     "name": "Beauty in Black: Season 3",
+     "probability": 0.905,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222342469,
+     "name": "Death of the Pastors Wife: Season 1",
+     "probability": 0.02,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222342470,
+     "name": "Outer Banks: Season 5",
+     "probability": 0.015,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59516566,
+   "name": "BLAST Open Porto 2026: Group A Winner",
+   "source": "polymarket",
+   "outcome_count": 1,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 221532597,
+     "name": "paiN",
+     "probability": 0.495,
+     "rank": 1,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 197,
+   "name": "Lightweight Title Holder on Dec 31, 2026?",
+   "source": "kalshi",
+   "outcome_count": 12,
+   "status": "open",
+   "remaining_outcome_count": 4,
+   "top_outcomes": [
+    {
+     "id": 1206,
+     "name": "Justin Gaethje",
+     "probability": 0.7808,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1210,
+     "name": "Arman Tsarukyan",
+     "probability": 0.0685,
+     "rank": 2,
+     "movement": -0.005
+    },
+    {
+     "id": 1209,
+     "name": "Charles Oliveira",
+     "probability": 0.0411,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 201,
+   "name": "Featherweight Title Holder on Dec 31, 2026?",
+   "source": "kalshi",
+   "outcome_count": 11,
+   "status": "open",
+   "remaining_outcome_count": 3,
+   "top_outcomes": [
+    {
+     "id": 1247,
+     "name": "Alexander Volkanovski",
+     "probability": 0.4906,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1243,
+     "name": "Movsar Evloev",
+     "probability": 0.4104,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 1244,
+     "name": "Lerone Murphy",
+     "probability": 0.0189,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 200,
+   "name": "Flyweight Title Holder on Dec 31, 2026?",
+   "source": "kalshi",
+   "outcome_count": 9,
+   "status": "open",
+   "remaining_outcome_count": 1,
+   "top_outcomes": [
+    {
+     "id": 1236,
+     "name": "Joshua Van",
+     "probability": 0.4703,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1239,
+     "name": "Alexandre Pantoja",
+     "probability": 0.4612,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 1234,
+     "name": "Manel Kape",
+     "probability": 0.0137,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 59512401,
+   "name": "Husqvarna British Masters hosted by Sir Nick Faldo Winner",
+   "source": "kalshi",
+   "outcome_count": 157,
+   "status": "open",
+   "remaining_outcome_count": 149,
+   "top_outcomes": [
+    {
+     "id": 221504752,
+     "name": "Marco Penge",
+     "probability": 0.1782,
+     "rank": 1,
+     "movement": -0.01
+    },
+    {
+     "id": 221555045,
+     "name": "Daniel Hillier",
+     "probability": 0.0579,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 221555035,
+     "name": "Nacho Elvira",
+     "probability": 0.0326,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 10,
+   "name": "FIFA World Cup Winner",
+   "source": "odds_api",
+   "outcome_count": 65,
+   "status": "open",
+   "remaining_outcome_count": 57,
+   "top_outcomes": [
+    {
+     "id": 831,
+     "name": "Spain",
+     "probability": 0.587142,
+     "rank": 1,
+     "movement": -0.003022
+    },
+    {
+     "id": 835,
+     "name": "Argentina",
+     "probability": 0.412858,
+     "rank": 2,
+     "movement": 0.003022
+    },
+    {
+     "id": 856,
+     "name": "Ghana",
+     "probability": null,
+     "rank": 3,
+     "movement": 5.5e-05
+    }
+   ]
+  },
+  {
+   "id": 34277839,
+   "name": "US Open Women's Singles Winner",
+   "source": "kalshi",
+   "outcome_count": 23,
+   "status": "open",
+   "remaining_outcome_count": 15,
+   "top_outcomes": [
+    {
+     "id": 152600872,
+     "name": "Aryna Sabalenka",
+     "probability": 0.2117,
+     "rank": 1,
+     "movement": 0.04
+    },
+    {
+     "id": 152600880,
+     "name": "Coco Gauff",
+     "probability": 0.1396,
+     "rank": 2,
+     "movement": 0.015
+    },
+    {
+     "id": 206838394,
+     "name": "Iga Swiatek",
+     "probability": 0.1306,
+     "rank": 3,
+     "movement": -0.025
+    }
+   ]
+  },
+  {
+   "id": 56775477,
+   "name": "2030 FIFA World Cup Champion",
+   "source": "kalshi",
+   "outcome_count": 82,
+   "status": "open",
+   "remaining_outcome_count": 74,
+   "top_outcomes": [
+    {
+     "id": 210850304,
+     "name": "Spain",
+     "probability": 0.1235,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 210850305,
+     "name": "France",
+     "probability": 0.1185,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 210850308,
+     "name": "England",
+     "probability": 0.0705,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 114159,
+   "name": "2026 Men’s US Open Winner (Tennis)",
+   "source": "polymarket",
+   "outcome_count": 23,
+   "status": "open",
+   "remaining_outcome_count": 15,
+   "top_outcomes": [
+    {
+     "id": 1632728,
+     "name": "Carlos Alcaraz",
+     "probability": 0.275,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1632731,
+     "name": "Alexander Zverev",
+     "probability": 0.232,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 1632729,
+     "name": "Novak Djokovic",
+     "probability": 0.1085,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 182,
+   "name": "College Football National Championship Qualifiers",
+   "source": "kalshi",
+   "outcome_count": 50,
+   "status": "open",
+   "remaining_outcome_count": 42,
+   "top_outcomes": [
+    {
+     "id": 1038,
+     "name": "Notre Dame",
+     "probability": 0.345,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1027,
+     "name": "Texas",
+     "probability": 0.27,
+     "rank": 2,
+     "movement": -0.005
+    },
+    {
+     "id": 1034,
+     "name": "Ohio St.",
+     "probability": 0.23,
+     "rank": 3,
+     "movement": -0.005
+    }
+   ]
+  },
+  {
+   "id": 210,
+   "name": "NL Manager of the Year Winner?",
+   "source": "kalshi",
+   "outcome_count": 17,
+   "status": "open",
+   "remaining_outcome_count": 9,
+   "top_outcomes": [
+    {
+     "id": 1431,
+     "name": "Pat Murphy",
+     "probability": 0.3485,
+     "rank": 1,
+     "movement": 0.015
+    },
+    {
+     "id": 1424,
+     "name": "Walt Weiss",
+     "probability": 0.195,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 206773419,
+     "name": "Don Mattingly",
+     "probability": 0.1079,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 2417016,
+   "name": "Pro Baseball Championship Series Matchup",
+   "source": "kalshi",
+   "outcome_count": 225,
+   "status": "open",
+   "remaining_outcome_count": 217,
+   "top_outcomes": [
+    {
+     "id": 13986765,
+     "name": "Tampa Bay vs Los Angeles D",
+     "probability": 0.1045,
+     "rank": 1,
+     "movement": 0.057
+    },
+    {
+     "id": 13986731,
+     "name": "New York Y vs Los Angeles D",
+     "probability": 0.103,
+     "rank": 2,
+     "movement": -0.0035
+    },
+    {
+     "id": 13986845,
+     "name": "Boston vs Los Angeles D",
+     "probability": 0.063,
+     "rank": 3,
+     "movement": -0.001
+    }
+   ]
+  },
+  {
+   "id": 4121126,
+   "name": "College Football Mountain West Championship Winner",
+   "source": "kalshi",
+   "outcome_count": 10,
+   "status": "open",
+   "remaining_outcome_count": 2,
+   "top_outcomes": [
+    {
+     "id": 29928164,
+     "name": "UNLV",
+     "probability": 0.2546,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 29928163,
+     "name": "North Dakota St.",
+     "probability": 0.2083,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 29928159,
+     "name": "New Mexico",
+     "probability": 0.2037,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 23502,
+   "name": "MLS Cup Champion",
+   "source": "kalshi",
+   "outcome_count": 30,
+   "status": "open",
+   "remaining_outcome_count": 22,
+   "top_outcomes": [
+    {
+     "id": 383346,
+     "name": "Miami",
+     "probability": 0.1726,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 383330,
+     "name": "Vancouver",
+     "probability": 0.1681,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 383342,
+     "name": "Nashville",
+     "probability": 0.1504,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 55674269,
+   "name": "Liga MX Apertura Champion",
+   "source": "kalshi",
+   "outcome_count": 18,
+   "status": "open",
+   "remaining_outcome_count": 10,
+   "top_outcomes": [
+    {
+     "id": 206747497,
+     "name": "America",
+     "probability": 0.213,
+     "rank": 1,
+     "movement": 0.08
+    },
+    {
+     "id": 206747494,
+     "name": "Guadalajara",
+     "probability": 0.1528,
+     "rank": 2,
+     "movement": -0.06
+    },
+    {
+     "id": 206747499,
+     "name": "Monterrey",
+     "probability": 0.0972,
+     "rank": 3,
+     "movement": 0.03
+    }
+   ]
+  },
+  {
+   "id": 108326,
+   "name": "2028 U.S. Presidential Election winner?",
+   "source": "kalshi",
+   "outcome_count": 30,
+   "status": "open",
+   "remaining_outcome_count": 22,
+   "top_outcomes": [
+    {
+     "id": 1591723,
+     "name": "J.D. Vance",
+     "probability": 0.21,
+     "rank": 1,
+     "movement": 0.005
+    },
+    {
+     "id": 1591726,
+     "name": "Alexandria Ocasio-Cortez",
+     "probability": 0.125,
+     "rank": 2,
+     "movement": -0.01
+    },
+    {
+     "id": 1591725,
+     "name": "Marco Rubio",
+     "probability": 0.115,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 108445,
+   "name": "2028 Democratic presidential nominee",
+   "source": "kalshi",
+   "outcome_count": 48,
+   "status": "open",
+   "remaining_outcome_count": 40,
+   "top_outcomes": [
+    {
+     "id": 1592161,
+     "name": "Alexandria Ocasio-Cortez",
+     "probability": 0.175,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1592164,
+     "name": "Jon Ossoff",
+     "probability": 0.165,
+     "rank": 2,
+     "movement": 0.01
+    },
+    {
+     "id": 1592160,
+     "name": "Gavin Newsom",
+     "probability": 0.125,
+     "rank": 3,
+     "movement": -0.03
+    }
+   ]
+  },
+  {
+   "id": 59164600,
+   "name": "Oscar Winner: Best Animated Feature Film",
+   "source": "kalshi",
+   "outcome_count": 9,
+   "status": "open",
+   "remaining_outcome_count": 1,
+   "top_outcomes": [
+    {
+     "id": 219748568,
+     "name": "Forgotten Island",
+     "probability": 0.4061,
+     "rank": 1,
+     "movement": 0.76
+    },
+    {
+     "id": 219748563,
+     "name": "Wildwood",
+     "probability": 0.2614,
+     "rank": 2,
+     "movement": 0.035
+    },
+    {
+     "id": 219748564,
+     "name": "Toy Story 5",
+     "probability": 0.1599,
+     "rank": 3,
+     "movement": 0.01
+    }
+   ]
+  },
+  {
+   "id": 20570794,
+   "name": "Fed Decision in September?",
+   "source": "polymarket",
+   "outcome_count": 5,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 109198550,
+     "name": "No change",
+     "probability": 0.56,
+     "rank": 1,
+     "movement": 0.015
+    },
+    {
+     "id": 109198551,
+     "name": "25 bps increase",
+     "probability": 0.385,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 109198552,
+     "name": "25 bps decrease",
+     "probability": 0.0605,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 113232,
+   "name": "Will the U.S. invade Iran before 2027?",
+   "source": "polymarket",
+   "outcome_count": 1,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 1628892,
+     "name": "the U.S. invade Iran",
+     "probability": 0.275,
+     "rank": 1,
+     "movement": -0.01
+    }
+   ]
+  },
+  {
+   "id": 56775571,
+   "name": "Grammy Winner: Best New Artist",
+   "source": "kalshi",
+   "outcome_count": 67,
+   "status": "open",
+   "remaining_outcome_count": 59,
+   "top_outcomes": [
+    {
+     "id": 210850965,
+     "name": "Ella Langley",
+     "probability": 0.2861,
+     "rank": 1,
+     "movement": -0.01
+    },
+    {
+     "id": 210850967,
+     "name": "SIENNA SPIRO",
+     "probability": 0.1583,
+     "rank": 2,
+     "movement": 0.005
+    },
+    {
+     "id": 210850992,
+     "name": "Renee Rapp",
+     "probability": 0.1167,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 56775503,
+   "name": "2027 FIFA Women's World Cup Champion",
+   "source": "kalshi",
+   "outcome_count": 32,
+   "status": "open",
+   "remaining_outcome_count": 24,
+   "top_outcomes": [
+    {
+     "id": 210850495,
+     "name": "Spain",
+     "probability": 0.2161,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 210850496,
+     "name": "USA",
+     "probability": 0.1629,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 210850498,
+     "name": "England",
+     "probability": 0.0768,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 113200,
+   "name": "Will the Iranian regime fall before 2027?",
+   "source": "polymarket",
+   "outcome_count": 1,
+   "status": "open",
+   "remaining_outcome_count": 0,
+   "top_outcomes": [
+    {
+     "id": 1628834,
+     "name": "the Iranian regime fall",
+     "probability": 0.105,
+     "rank": 1,
+     "movement": null
+    }
+   ]
+  },
+  {
+   "id": 113397,
+   "name": "Who will be the next Prime Minister of Israel after the next election?",
+   "source": "polymarket",
+   "outcome_count": 28,
+   "status": "open",
+   "remaining_outcome_count": 11,
+   "top_outcomes": [
+    {
+     "id": 1629438,
+     "name": "Gadi Eizenkot",
+     "probability": 0.2564,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 1629436,
+     "name": "Benjamin Netanyahu",
+     "probability": 0.1776,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 1629437,
+     "name": "Naftali Bennett",
+     "probability": 0.0375,
+     "rank": 3,
+     "movement": null
+    }
+   ]
+  }
+ ]
+}

@@ -941,6 +941,15 @@ export interface FeedFuturesOutcome {
   probability: number | null;
   rank: number | null;
   movement: number | null;
+  /**
+   * The whole percent the SERVER rendered for this outcome (#2060/#2088), under
+   * the card rule rather than one independent rounding per side. Annotated PER
+   * OUTCOME rather than served as a card-level array because `FeedCard` re-orders
+   * this list (`leaderFirstSlice`) before printing it — a positional array would
+   * be mis-paired on exactly the cards where the stored rank disagrees with the
+   * probability order. Optional only for a payload from a pre-#2088 backend.
+   */
+  rendered_percent?: number | null;
 }
 
 export interface FeedFuturesData {
@@ -955,6 +964,15 @@ export interface FeedFuturesData {
   status: string;
   resolution_date: string | null;
   top_outcomes: FeedFuturesOutcome[];
+  /**
+   * Why this card's printed percents do not total 100, or null if they do (#2088).
+   *
+   * The absence of the key and a served null are DIFFERENT facts and the card
+   * treats them differently: absent means "pre-#2088 payload, derive it locally",
+   * null means "the server checked and they total 100". Null for any arity other
+   * than two, meaning "no claim about a total", never "checked and fine".
+   */
+  card_sum_reason?: string | null;
   outcome_count: number;
   canonical_market_key: string | null;
   /** Canonical market shape (`FuturesMarket.market_type`) — Queue 310. */

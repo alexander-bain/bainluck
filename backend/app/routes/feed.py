@@ -72,6 +72,7 @@ from app.utils.feed_event_candidates import (
     event_candidate_ids,
 )
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
+from app.utils.graded_card import card_sum_reason, rendered_card_percents
 from app.utils.discover_bundles import (
     assemble_awards_theme_bundles,
     assemble_discover_comparison_bundles,
@@ -3644,6 +3645,60 @@ def _normalize_feed_probabilities(
     return top_outcomes
 
 
+# ── THE CARD RULE REACHES DISCOVER (#2088 criterion 3) ──────────────────────────
+#
+# #2060 gave a two-outcome card ONE rounding (normalize the complement pair, round the
+# headline once, derive the other side) and #2088 gave the pair that legitimately does
+# not total 100 a sentence saying so. Both shipped on the LABELING surfaces only.
+# Discover — the surface an actual reader lands on — never received either: until this
+# function there was no `rendered_percent` anywhere in this file, and `FeedCard.tsx`
+# printed `Math.round(outcome.probability * 100)` per outcome, independently, exactly
+# the arithmetic #2060 exists to replace.
+#
+# `_feed_display_scale` is NOT that rule and does not stand in for it. Its band is
+# ONE-SIDED: it divides down when a field sums above ~1.01 and does nothing at all
+# below 1.00. So a pair summing to 0.97 reaches the reader as `57 / 40` with no
+# explanation, and a pair summing to exactly 1.00 on the half-cent grid reaches them
+# as `85 / 16`. The two compose correctly and that is why this runs AFTER the scale:
+# the scale decides the BASIS, this decides what is PRINTED on that basis.
+#
+# ** MEASURED ON THE DEPLOYED FEED 2026-08-29 ** (`GET /api/feed?limit=100`, 64 futures
+# cards carrying printed outcomes): **2 cards print 101 today** — `Which party will win
+# the U.S. House?` (0.845/0.155 -> 85 + 16) and `Will Neuralink's valuation hit (HIGH)
+# $47.5B` (0.725/0.275 -> 73 + 28) — and **2 print an unexplained non-100** — `Which of
+# these parties will win a Riksdag seat?` (29 + 22) and `Texas State House winner?`
+# (25 + 16). Four of 64, 6.3%: two get their numbers corrected, two get a sentence.
+#
+# ** THE PERCENT IS WRITTEN PER OUTCOME, NOT AS A CARD-LEVEL LIST, AND THAT IS
+# LOAD-BEARING. ** `FeedCard.tsx` re-orders this list through `leaderFirstSlice` before
+# printing it, so a positional array served beside the outcomes would be silently
+# mis-paired on exactly the cards where the stored rank disagrees with the probability
+# order (UX-P005 class (a): ~23% of feed-surfaced markets). Annotating the dict travels
+# with the row through any re-ordering the client does.
+
+
+def _apply_card_percents(top_outcomes_data: list[dict]) -> str | None:
+    """Write `rendered_percent` onto each PRINTED outcome; return the card's sum reason.
+
+    Taken over the already-sliced, already-scaled `top_outcomes_data`, which IS the
+    printed card: both call sites build it from `[:3]` and then hand it through
+    `_normalize_feed_probabilities`, so the probabilities here are the display basis
+    and the arity here is the arity a reader sees. Deriving the rule from anything
+    wider (the market's full outcome list) would answer for a card nobody is shown.
+
+    The returned reason is `card_sum_reason`'s, scope note included: **`None` for any
+    arity other than two**, meaning "this card makes no claim about a total" and never
+    "checked and fine". A card printing two outcomes always has exactly two — the slice
+    is `[:3]`, so arity two implies the field itself is two — which is why the reason
+    can never land on a card that also says "+20 more" (`remaining_outcome_count` was 0
+    on all four affected cards in the measurement above, and is 0 by construction).
+    """
+    probabilities = [o.get("probability") for o in top_outcomes_data]
+    for outcome, percent in zip(top_outcomes_data, rendered_card_percents(probabilities)):
+        outcome["rendered_percent"] = percent
+    return card_sum_reason(probabilities)
+
+
 def _top_outcomes_for_trace(
     market: FuturesMarket,
 ) -> tuple[list[dict], str | None, float | None]:
@@ -6362,6 +6417,9 @@ async def _score_sports_mode_futures(
         top_outcomes_data = _normalize_feed_probabilities(
             top_outcomes_data, sorted_outcomes
         )
+        # #2088 criterion 3: the printed percents and the reason they may not total
+        # 100. AFTER the scale, so the rule is applied to the displayed basis.
+        _card_sum_reason = _apply_card_percents(top_outcomes_data)
 
         source_names = (
             (_canonical_source_names_cache or {}).get(
@@ -6428,6 +6486,10 @@ async def _score_sports_mode_futures(
                 market.resolution_date.isoformat() if market.resolution_date else None
             ),
             "top_outcomes": top_outcomes_data,
+            # #2088: served even when null — null is "checked, and they do total
+            # 100", which is a different fact from the key being absent (a payload
+            # from before this shipped). The client keys its fallback on absence.
+            "card_sum_reason": _card_sum_reason,
             "outcome_count": len(market.outcomes),
             "canonical_market_key": market.canonical_market_key,
             "group_id": market.group_id,
@@ -7770,6 +7832,9 @@ async def _score_futures(
             top_outcomes_data = _normalize_feed_probabilities(
                 top_outcomes_data, card_outcomes
             )
+            # #2088 criterion 3: the printed percents and the reason they may not
+            # total 100. AFTER the scale, so the rule sees the displayed basis.
+            _card_sum_reason = _apply_card_percents(top_outcomes_data)
 
             source_names = (
                 (_canonical_source_names_cache or {}).get(
@@ -7837,6 +7902,9 @@ async def _score_futures(
                     market.resolution_date.isoformat() if market.resolution_date else None
                 ),
                 "top_outcomes": top_outcomes_data,
+                # #2088: served even when null — see the note on the other
+                # serializer. Null means "checked"; absent means "pre-#2088 build".
+                "card_sum_reason": _card_sum_reason,
                 "outcome_count": len(market.outcomes),
                 "canonical_market_key": market.canonical_market_key,
                 "group_id": market.group_id,
