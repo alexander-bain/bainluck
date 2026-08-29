@@ -2266,3 +2266,61 @@ class EventProviderAnchor(Base):
             "uq_anchor_source_id", "source", "source_id", "id_kind", unique=True
         ),
     )
+
+
+class RollcallScore(Base):
+    """One durable roll-call scorecard row per ``(date, league)``.
+
+    The daily roll call asks an external truth source what fixtures exist and
+    then asserts, for the leagues Alex declared complete, that each one is in
+    our product exactly once with every source attached. This table is that
+    answer, kept so the question "when did this league start failing?" has an
+    answer that is not a log search.
+
+    Idempotent by ``(date, league)``: re-running the roll call for a day
+    REPLACES that day's row rather than appending, so a manual re-run to
+    confirm a fix does not create two contradictory records of the same day.
+    """
+
+    __tablename__ = "rollcall_scores"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    #: The slate date (UTC) the fixtures were published for.
+    score_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+
+    #: ``mlb`` / ``nba`` / … for axiom leagues, or a measured-domain key.
+    league: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    #: True when this league is graded against the 100% axiom; False when it is
+    #: graded against its own trailing baseline. Stored rather than derived so a
+    #: later change to the axiom list cannot silently re-grade recorded history.
+    axiom: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    events_external: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matched_1: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    dupes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    missing: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Exactly one DB event AND every axiom source linked.
+    clean: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    #: ``{"kalshi": n, "polymarket": n, "espn": n, "odds_api": n}``.
+    per_source: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    #: ``pass`` | ``red`` | ``off_day`` | ``unmeasurable`` | ``truth_unavailable``.
+    verdict: Mapped[str] = mapped_column(String(24), nullable=False)
+
+    #: Named offending fixtures — never a bare count (no silent aggregation).
+    offenders: Mapped[Optional[list]] = mapped_column(JSONB)
+
+    #: Why 100% is not the axiom here, for measured domains and for an axiom
+    #: league that excludes a source (golf/odds_api). Travels with the number.
+    justification: Mapped[Optional[str]] = mapped_column(Text)
+
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("score_date", "league", name="uq_rollcall_date_league"),
+    )

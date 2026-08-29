@@ -696,6 +696,9 @@ HEAVY_TASKS = {
     "app.tasks.flow_sentinel",
     "app.tasks.grid_sentinel",
     "app.tasks.grid_register_sentinel",
+    # C-ROLLCALL-BUILD-1 — the daily roll call joins the sentinel group at
+    # 08:00 UTC, after the 07:0x-07:50 fires, so the two heavy slots are free.
+    "app.tasks.rollcall_daily",
     "app.tasks.tournament_register_sentinel",
     "app.tasks.horizon_sentinel",
     "app.tasks.settled_concept_sentinel",
@@ -2534,6 +2537,27 @@ def grid_register_sentinel(self, apply=False, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660,
+                 name="app.tasks.rollcall_daily")
+def rollcall_daily(self, date=None, file_issues=True):
+    """The daily ground-truth roll call (C-ROLLCALL-BUILD-1): ask ESPN (and
+    Datagolf, for golf) what fixtures exist today, then assert Alex's coverage
+    axiom — every published fixture is in our product exactly once with every
+    source we carry linked to it. Names the offending fixture; never aggregates
+    a gap into a percentage nobody can act on. Read-only against events and
+    markets: the only rows it writes are its own scorecard and the deduped issue
+    the shared filing rail files for it (gotcha #21). Enrolled in
+    ``ENFORCED_TASKS`` from birth — a truth read that failed reports ``partial``
+    rather than an empty, flattering slate (gotcha #53). The 600s soft limit
+    sits under the 660s hard limit and above the run's 480s inner deadline, so
+    it can never SIGKILL untracked (#966)."""
+    from app.tasks.rollcall import _run_rollcall
+    return _tracked_run(
+        "rollcall_daily",
+        _run_rollcall(date=date, file_issues=file_issues),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
                  name="app.tasks.tournament_register_sentinel")
 def tournament_register_sentinel(self, file_issues=True):
@@ -4278,6 +4302,15 @@ celery_app.conf.beat_schedule = {
         # sentinels so it observes a settled board). heavy queue (#233).
         "task": "app.tasks.board_sentinel",
         "schedule": crontab(minute=50, hour=7),  # Daily 07:50 UTC
+        "options": {"queue": "heavy"},
+    },
+    "rollcall-daily": {
+        # C-ROLLCALL-BUILD-1: the daily ground-truth roll call. 08:00 UTC, the
+        # slot the frozen acceptance names — after every other sentinel
+        # (07:05–07:50) so it grades a settled morning rather than racing the
+        # overnight repair beats it would otherwise report as broken.
+        "task": "app.tasks.rollcall_daily",
+        "schedule": crontab(minute=0, hour=8),  # Daily 08:00 UTC
         "options": {"queue": "heavy"},
     },
     "recategorize-other-daily": {

@@ -373,6 +373,22 @@ ENFORCED_TASKS = frozenset({
     # before and the pass reads `failed`, never `complete`.
     "warm_prop_families",              # terminal + selected + dispatched
     "refresh_prop_families",           # terminal + rebuilt + degraded
+    # C-ROLLCALL-BUILD-1: the daily ground-truth roll call. Enrolled AT BIRTH
+    # and — per the trap this file spends thirty lines on — in the same change
+    # that gives it a terminal (`app/utils/rollcall.py: rollcall_terminal`).
+    #
+    # It needs enrolment more than any sentinel before it, because a roll call
+    # is the one detector whose silence is indistinguishable from a clean world.
+    # ESPN returns `[]` for an off-day and `[]` for a league path that broke;
+    # Datagolf returns an empty schedule between tour weeks and an empty
+    # schedule when the key expired. A run that read nothing therefore looks
+    # EXACTLY like a night where every fixture was perfect — and would keep
+    # looking like it, every morning, for as long as the truth source stayed
+    # down. So `complete` requires every axiom league to have been graded AND
+    # the scorecard to have reached its durable mirror; a truth read that failed
+    # or a mirror that did not take is `partial`, and grading nothing at all is
+    # `failed`. Finding gaps is `complete`: noticing is the job.
+    "rollcall_daily",                  # terminal + coverage_pct + truth_failures
 })
 
 
