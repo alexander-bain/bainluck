@@ -12,7 +12,7 @@ import type { CardActionCallbacks } from "./types";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { probabilityAuthorityClass } from "@/lib/confidence";
-import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { servedDuelPercents } from "@/lib/servedDuelPercents";
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -45,11 +45,19 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // widget arms ship on their own schedule, so "the backend deployed" is not the
   // same as "every payload carries it". Both arms are driven by the same contract
   // table, so the fallback cannot answer differently from the served value.
+  //
+  // #2279 — BOTH SERVED OR NEITHER. This site coalesced per side, so a payload
+  // carrying one field and not the other printed a served value beside a derived
+  // one — the same 101 from the other direction. `probWithheld` already nulls the
+  // two together; the payload is what could not.
   const servedAwayPct = probWithheld ? null : data.current_odds?.away_rendered_percent;
   const servedHomePct = probWithheld ? null : data.current_odds?.home_rendered_percent;
-  const [fallbackAwayPct, fallbackHomePct] = renderedDuelPercents(awayProb, homeProb);
-  const awayPct = servedAwayPct ?? fallbackAwayPct;
-  const homePct = servedHomePct ?? fallbackHomePct;
+  const [awayPct, homePct] = servedDuelPercents(
+    awayProb,
+    homeProb,
+    servedAwayPct,
+    servedHomePct,
+  );
   // UX-P052 (#1690) — the two percentages below are the card's answer to the
   // north-star "read the probability" task, and they were drawn at full
   // authority whatever the SignalBars beside them said. Measured live

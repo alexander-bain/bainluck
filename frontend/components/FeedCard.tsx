@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GolfTournament } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
-import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
@@ -306,12 +306,17 @@ function EventFeedCard({
   // `!isFinished` — i.e. exactly when `displayProb` IS `current_odds`. The
   // `opening_odds` branch above therefore never reaches them, which is why the
   // served values can be used directly rather than being matched to their source.
-  const [fallbackAwayPct, fallbackHomePct] = renderedDuelPercents(
+  //
+  // #2279 — BOTH SERVED OR NEITHER. This site coalesced per side, so a payload
+  // carrying one field and not the other printed a served value beside a derived
+  // one — the same 101 from the other direction, on a cached response or a
+  // partial rollout.
+  const [awayPct, homePct] = servedDuelPercents(
     displayAwayProb,
     displayHomeProb,
+    data.current_odds?.away_rendered_percent,
+    data.current_odds?.home_rendered_percent,
   );
-  const awayPct = data.current_odds?.away_rendered_percent ?? fallbackAwayPct;
-  const homePct = data.current_odds?.home_rendered_percent ?? fallbackHomePct;
 
   // Team colors for probability bar
   const homeColor = data.home_team_data?.primary_color ?? null;

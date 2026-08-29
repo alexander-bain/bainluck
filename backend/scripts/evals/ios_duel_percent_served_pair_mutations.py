@@ -1,11 +1,16 @@
-"""LAT-P120 (#2279) — the served-duel-pair mutation class, on four native surfaces.
+"""LAT-P120 (#2279) — the served-duel-pair mutation class, on all six surfaces.
+
+The stem says `ios_` because that is where the issue pointed and where the
+`SHAPES` key now lives; the battery covers the two WEB surfaces as well, because
+they carry the identical defect and splitting the battery by runtime would let a
+half-fix pass a full-looking line.
 
 WHAT A MUTANT PROVES HERE
 -------------------------
 UX-P114 moved one decision to the server — the two whole percents a game strip
-prints — so that four surfaces could stop each having an opinion about it. Four
-native surfaces then adopted the FIELDS and kept their own opinion about how to
-read them: all four coalesced per side,
+prints — so that every surface could stop having an opinion about it. Six
+surfaces then adopted the FIELDS and kept their own opinion about how to read
+them: all six coalesced per side,
 
     let awayPct = odds.awayRenderedPercent ?? duelFallback[0]
     let homePct = odds.homeRenderedPercent ?? duelFallback[1]
@@ -19,8 +24,9 @@ took the preference and not the rule, so with the served fields absent it printe
 Every failure in this class is INVISIBLE to a sum check taken on the happy path,
 because on a fully-served payload all four surfaces are already right. So the
 question this harness asks is not "does the strip render". It is: **would
-`frontend/__tests__/ios/duelPercentServedPair.test.ts` NOTICE if a surface went
-back?** Each mutant below breaks one property that file claims to defend, and a
+`frontend/__tests__/ios/duelPercentServedPair.test.ts` and
+`frontend/__tests__/lib/servedDuelPercents.test.ts` NOTICE if a surface went
+back?** Each mutant below breaks one property those files claim to defend, and a
 SURVIVOR is a missing assertion, reported per mutant.
 
 🔴 WHY THE ORACLE IS A SOURCE-READING SUITE, AND WHAT THAT DOES AND DOES NOT BUY
@@ -35,20 +41,26 @@ So the guard suite is two halves and they defend different things:
   * the SHAPE half reads the Swift as text and pins the exact expressions the
     transcription claims to mirror. That is what ties the Swift to it.
 
-Only the shape half can see a Swift-level mutation, and this harness is
-therefore a test OF THAT HALF: it asks whether the pins are specific enough. M4
-and M10 exist because they are the mutants a loose pin would let through — a
-transposed side that still sums to 100, and a served field handed to the wrong
-parameter. If either survives, the pin is a decoration.
+Only the shape half can see a Swift-level mutation, and for the native targets
+this harness is therefore a test OF THAT HALF: it asks whether the pins are
+specific enough. M4 and M10 exist because they are the mutants a loose pin would
+let through — a transposed side that still sums to 100, and a positional derive
+that moves the favourite off its own correct number. If either survives, the pin
+is a decoration.
+
+The WEB targets have no such limitation: `servedDuelPercents` is executed by its
+own suite, so M12 and M13 are killed by behaviour rather than by text. M12 is the
+one worth naming — rewriting `??` as `||` reads as a simplification and silently
+drops a served **0**, which is a real reading on a 0/100 card.
 
 The oracle runs the real suite out of process, so a mutant is killed only by an
 assertion that genuinely ships. Re-implementing the assertions here would prove
 that this file's copy of them still fails, which is worth nothing.
 
-THE TARGETS ARE `.swift`, WHICH IS NOT THIS DIRECTORY'S USUAL
--------------------------------------------------------------
+THE TARGETS ARE `.swift` AND `.ts(x)`, WHICH IS NOT THIS DIRECTORY'S USUAL
+--------------------------------------------------------------------------
 `scan_mutation_residue.py` on master hardcodes `*.py` for its broad Pass B, so
-Pass B cannot see residue in these targets. Pass A — the harness-shape pass — is
+Pass B cannot see residue in any of these targets. Pass A — the harness-shape pass — is
 file-type agnostic and covers this file normally. The glob-derivation fix that
 closes Pass B is LAT-P119's, already written and waiting on `program/latency-104`;
 it is deliberately NOT duplicated here, because two copies of it would collide in
@@ -89,9 +101,26 @@ RELATED_ROW = APP / "Components/RelatedByTagView.swift"
 MENU_BAR = APP / "Views/MenuBarView.swift"
 WIDGET = IOS / "BainLuckWidget/WidgetAPIClient.swift"
 
-TARGETS = [SHARED, DISCOVER_CARD, RELATED_ROW, MENU_BAR, WIDGET]
+WEB_SHARED = FRONTEND / "lib/servedDuelPercents.ts"
+WEB_FEED_CARD = FRONTEND / "components/FeedCard.tsx"
+WEB_DISCOVER_CARD = FRONTEND / "components/discover/EventCard.tsx"
 
-SUITE = "__tests__/ios/duelPercentServedPair.test.ts"
+TARGETS = [
+    SHARED,
+    DISCOVER_CARD,
+    RELATED_ROW,
+    MENU_BAR,
+    WIDGET,
+    WEB_SHARED,
+    WEB_FEED_CARD,
+    WEB_DISCOVER_CARD,
+]
+
+#: Both arms of the guard, run as ONE oracle. Splitting them would let a web
+#: mutant be "killed" by the native suite's unrelated failure and vice versa;
+#: keeping them together means a kill is a kill by whichever arm owns the claim,
+#: which is what the battery is measuring.
+SUITE_PATTERN = "(ios/duelPercentServedPair|lib/servedDuelPercents)"
 
 #: (id, description, target, old, new). `old` must appear EXACTLY once in its
 #: target — a mutation that matches zero or many places is a harness bug reported
@@ -213,12 +242,66 @@ MUTANTS: list[tuple[str, str, Path, str, str]] = [
         "                  homeProbability.isFinite else {",
         "                  true else {",
     ),
+    (
+        "M12",
+        "the web decision uses || — a served ZERO side falls back and the pair splits",
+        WEB_SHARED,
+        "  if (servedAway != null && servedHome != null) return [servedAway, servedHome];",
+        "  if (servedAway || servedHome) return [servedAway ?? null, servedHome ?? null];",
+    ),
+    (
+        "M13",
+        "the web decision takes a lone served side — the mixed pair is back",
+        WEB_SHARED,
+        """  if (servedAway != null && servedHome != null) return [servedAway, servedHome];
+  return renderedDuelPercents(awayProbability, homeProbability);""",
+        """  const local = renderedDuelPercents(awayProbability, homeProbability);
+  return [servedAway ?? local[0], servedHome ?? local[1]];""",
+    ),
+    (
+        "M14",
+        "FeedCard coalesces per side again — the chips print 101 on a partial payload",
+        WEB_FEED_CARD,
+        """  const [awayPct, homePct] = servedDuelPercents(
+    displayAwayProb,
+    displayHomeProb,
+    data.current_odds?.away_rendered_percent,
+    data.current_odds?.home_rendered_percent,
+  );""",
+        """  const [fallbackAwayPct, fallbackHomePct] = renderedDuelPercents(
+    displayAwayProb,
+    displayHomeProb,
+  );
+  const awayPct = data.current_odds?.away_rendered_percent ?? fallbackAwayPct;
+  const homePct = data.current_odds?.home_rendered_percent ?? fallbackHomePct;""",
+    ),
+    (
+        "M15",
+        "the Discover event card coalesces per side again — the default landing page",
+        WEB_DISCOVER_CARD,
+        """  const [awayPct, homePct] = servedDuelPercents(
+    awayProb,
+    homeProb,
+    servedAwayPct,
+    servedHomePct,
+  );""",
+        """  const [fallbackAwayPct, fallbackHomePct] = renderedDuelPercents(awayProb, homeProb);
+  const awayPct = servedAwayPct ?? fallbackAwayPct;
+  const homePct = servedHomePct ?? fallbackHomePct;""",
+    ),
+    (
+        "M16",
+        "FeedCard transposes the destructure — still sums to 100, still the wrong team",
+        WEB_FEED_CARD,
+        "  const [awayPct, homePct] = servedDuelPercents(",
+        "  const [homePct, awayPct] = servedDuelPercents(",
+    ),
 ]
 
 
 def _run_suite() -> int:
     return subprocess.run(
-        ["npx", "jest", "--testPathPatterns", "ios/duelPercentServedPair"],
+        ["npx", "jest", "--testPathPatterns", SUITE_PATTERN],
         cwd=FRONTEND,
         capture_output=True,
         text=True,
