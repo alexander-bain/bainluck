@@ -26,6 +26,7 @@ from app.models import (
     Team,
 )
 from app.services import get_db
+from app.utils.db_cancellation import is_query_canceled
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 from app.utils.static_divisions import lookup_division as _static_lookup_division
 from app.utils.grid_register import GridRegister, load_register
@@ -2773,6 +2774,71 @@ def _mark_last_good(payload: dict, reason: str, *, degraded: bool) -> dict:
     return payload
 
 
+# The two ways a grid build can fail without finishing, and the phrase each one
+# puts in the 503 body. Both produce the SAME response shape (see
+# ``_serve_grid_degraded``) because they are the same event to a user: the grid
+# could not be built. They keep DIFFERENT reason strings because the Grid
+# Sentinel and the precompute log both surface ``degraded_reason`` verbatim, and
+# "the route's wall fired" and "Postgres cancelled the statement" send an
+# operator to different places.
+GRID_FAILURE_TIMEOUT = "timeout"
+GRID_FAILURE_DB_CANCELED = "db_query_canceled"
+
+_GRID_FAILURE_PHRASE = {
+    GRID_FAILURE_TIMEOUT: "timed out",
+    GRID_FAILURE_DB_CANCELED: "was cancelled by the database",
+}
+
+
+async def _serve_grid_degraded(
+    league_slug: str,
+    cache_key: str,
+    cache_eligible: bool,
+    reason: str,
+):
+    """The single degradation path: labelled last-good if usable, else 503.
+
+    #1484 built this for the route's own 25 s wall. #2303 found a second way in
+    — a Postgres ``statement_timeout`` firing BELOW the wall, which reached the
+    client as a bare 500 and bypassed all of it. The two failures are
+    indistinguishable to a user, so they are answered by one function rather
+    than by two branches that agree today: a duplicated degradation path is a
+    path that drifts, and the drift is invisible until the rarer branch fires.
+
+    Never returns a 200 with an empty grid. That is the whole point of #1484 and
+    it is preserved here unchanged — an unusable last-good is no last-good.
+    """
+    import json
+
+    last_good = None
+    if cache_eligible:
+        from app.tasks.redis_state import get_async_redis_client
+
+        try:
+            rc = get_async_redis_client()
+            raw = await rc.get(f"{cache_key}:stale")
+            await rc.aclose()
+            if raw:
+                candidate = json.loads(raw)
+                if _grid_payload_usable(candidate):
+                    last_good = candidate
+        except Exception:
+            last_good = None
+
+    if last_good is not None:
+        return _mark_last_good(last_good, reason, degraded=True)
+
+    phrase = _GRID_FAILURE_PHRASE.get(reason, "could not be built")
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            f"Playoff grid for '{league_slug}' {phrase} and no last-good "
+            f"payload is available. This is a degraded state, not an empty "
+            f"league."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
@@ -2840,27 +2906,36 @@ async def get_playoff_grid_cached(
             "Playoff grid %s: request timed out after 25s — attempting last-good",
             league_slug,
         )
-        last_good = None
-        if cache_eligible:
-            try:
-                rc = get_async_redis_client()
-                raw = await rc.get(f"{cache_key}:stale")
-                await rc.aclose()
-                if raw:
-                    candidate = json.loads(raw)
-                    if _grid_payload_usable(candidate):
-                        last_good = candidate
-            except Exception:
-                last_good = None
-        if last_good is not None:
-            return _mark_last_good(last_good, "timeout", degraded=True)
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"Playoff grid for '{league_slug}' timed out and no last-good "
-                f"payload is available. This is a degraded state, not an empty "
-                f"league."
-            ),
+        return await _serve_grid_degraded(
+            league_slug, cache_key, cache_eligible, GRID_FAILURE_TIMEOUT
+        )
+    except Exception as exc:
+        # #2303. A Postgres ``statement_timeout`` fires BELOW this route's 25 s
+        # wall (measured: 500 at 20.30 s against a wall that never rang), so the
+        # ``asyncio.TimeoutError`` handler above never saw it. It arrived as
+        # ``DBAPIError``/``QueryCanceledError``, nothing caught it, and the user
+        # got a bare 500 — the exact "failed grid that does not degrade
+        # truthfully" #1484 was built to end, entering through a door #1484 did
+        # not know about.
+        #
+        # 🔴 This is NOT a widened ``except``. Only SQLSTATE 57014 is contained;
+        # every other database error — a bad predicate, a dead connection, a
+        # constraint violation — re-raises here and still becomes a 500, because
+        # a 503 that says "degraded, try later" about a query bug is a lie that
+        # nobody would ever chase. The re-raise is the load-bearing line.
+        if not is_query_canceled(exc):
+            raise
+        # ``exc_info`` deliberately: containing this must not make it invisible.
+        # Sentry's logging integration is how we learn the frequency, and the
+        # whole reason #2303 was findable is that the 500s were in Sentry.
+        logger.error(
+            "Playoff grid %s: database cancelled the build (SQLSTATE 57014) "
+            "below the 25s wall — attempting last-good",
+            league_slug,
+            exc_info=True,
+        )
+        return await _serve_grid_degraded(
+            league_slug, cache_key, cache_eligible, GRID_FAILURE_DB_CANCELED
         )
 
     if cache_eligible:
