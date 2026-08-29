@@ -98,6 +98,13 @@ from app.utils.ladder_coherence import (  # noqa: E402
     parse_ou_line,
     read_ladders,
 )
+# Imported under its module name, NOT flat. ``ladder_monotonicity`` exports its
+# own ``ambiguous_families`` with a different key type, and a flat import would
+# silently rebind the O/U one above — two predicates, one name, and whichever
+# import line came last decides which rule the ``ladder`` dimension enforces.
+from app.utils import ladder_monotonicity  # noqa: E402
+
+ladder_report = ladder_monotonicity.ladder_report
 from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE  # noqa: E402
 
 #: The db-query row path's silent truncation point.
@@ -922,9 +929,112 @@ CASE WHEN d.market_id = ANY({_id_array(_LADDER['drop'], lo, hi)})
 """, "", "")
 
 
+#: The MONOTONICITY pre-pass. Same pre-pass argument as the ladder one above —
+#: a nested family's market ids are not contiguous, so the verdict must not
+#: depend on where a chunk boundary fell — with one deliberate difference.
+#:
+#: THERE IS NO NAME FILTER IN THIS SQL, and that is the point. ``LADDER_ROWS_SQL``
+#: carries a Postgres name prefilter (the rung pattern, quoted once in this file
+#: and guarded by ``TestThePrefilterCannotHideARung``) which is a second
+#: rendering of a predicate whose authority is the Python; ``ladder_coherence``
+#: calls that pair UNPROVEN and books a whole-population differential as a cert
+#: obligation.
+#: Rather than open a second such obligation, this pre-pass pulls EVERY market in
+#: the cell that has a YES leg and lets the Python grammar be the only definition
+#: of what a rung is. It costs more rows and buys back the only thing that could
+#: make the fold disagree with the shipped predicate.
+MONO_ROWS_SQL = """
+SELECT fm.id AS market_id,
+       MAX(fm.name) AS name,
+       MAX(CASE WHEN lower(btrim(fo.name)) = 'yes'
+                THEN COALESCE(fo.calibration_probability, fo.opening_probability)
+           END) AS yes_price
+FROM futures_markets fm
+JOIN futures_outcomes fo ON fo.market_id = fm.id
+WHERE fm.source = '{source}'
+  AND COALESCE(fm.llm_sport_category, 'uncategorized') = '{category}'
+  AND fm.id >= {lo} AND fm.id < {hi}
+GROUP BY fm.id
+"""
+
+#: Filled by :func:`mono_context` before the sweep starts.
+_MONO: dict | None = None
+
+
+def _pull_mono_rows(source: str, category: str, lo: int, hi: int,
+                    depth: int = 0) -> list:
+    """Every market with a YES leg in an id range, or a split."""
+    sql = MONO_ROWS_SQL.format(source=source, category=category, lo=lo, hi=hi)
+    try:
+        r = db_query(sql, limit=ROW_CAP)
+    except QueryTimeout:
+        r = None
+    if r is not None and r["row_count"] < ROW_CAP:
+        return r["rows"]
+    if depth > 24 or hi - lo <= 1:
+        raise RuntimeError(f"mono pre-pass chunk {lo}-{hi} irreducible at depth {depth}")
+    mid = lo + (hi - lo) // 2
+    return (_pull_mono_rows(source, category, lo, mid, depth + 1)
+            + _pull_mono_rows(source, category, mid, hi, depth + 1))
+
+
+def mono_context(source: str, category: str, width: int) -> dict:
+    """Sweep the cell once and hand the shipped predicate its whole population.
+
+    The verdict is computed by ``app.utils.ladder_monotonicity.ladder_report`` —
+    the module a shipping caller would use — and this function never re-derives
+    a family key, a direction or a violation.
+    """
+    rng = db_query(
+        f"SELECT MIN(id) AS lo, MAX(id) AS hi FROM futures_markets "
+        f"WHERE source = '{source}'", limit=5)
+    lo, hi = rng["rows"][0]
+
+    rows: list = []
+    e = lo
+    n_chunks = 0
+    while e <= hi:
+        nxt = min(e + width, hi + 1)
+        n_chunks += 1
+        print(f"    mono pre-pass [{n_chunks}] ids {e}-{nxt}",
+              file=sys.stderr, flush=True)
+        rows.extend(_pull_mono_rows(source, category, e, nxt))
+        e = nxt
+
+    return ladder_report(
+        [{"market_id": r[0], "name": r[1], "yes_price": r[2]} for r in rows])
+
+
+def mono_dim(lo: int, hi: int) -> tuple[str, str, str]:
+    """The dimension expression for ONE chunk, from the pre-pass verdict.
+
+    Four arms, and as with ``ladder`` the last two are the controls the rule has
+    to survive: ``c_mono_coherent`` is the population a rule would KEEP and its
+    error is what the cell looks like afterwards, and ``z_not_in_a_ladder`` is
+    the part of the cell the mechanism cannot touch at all, which doctrine 18
+    says is how a row-dropping fix is graded.
+    """
+    if _MONO is None:  # pragma: no cover - main() fills it first
+        raise RuntimeError("mono_context() must run before the sweep")
+    return (f"""
+CASE WHEN d.market_id = ANY({_id_array(_MONO['drop'], lo, hi)})
+          THEN 'a_drop_reversed'
+     WHEN d.market_id = ANY({_id_array(_MONO['ambiguous'], lo, hi)})
+          THEN 'b_ambiguous_kept'
+     WHEN d.market_id = ANY({_id_array(_MONO['coherent'], lo, hi)})
+          THEN 'c_mono_coherent'
+     ELSE 'z_not_in_a_ladder' END
+""", "", "")
+
+
 #: Dimensions whose expression depends on the chunk, and therefore cannot live
 #: in the static table below.
-PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim}
+PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim, "mono": mono_dim}
+
+#: The pre-pass each per-chunk dimension needs before the sweep can start.
+#: Keyed the same way, so adding a dimension to one table without the other is a
+#: KeyError at start-up rather than an empty partition at the end (gotcha #53).
+PER_CHUNK_CONTEXT = {"ladder": ladder_context, "mono": mono_context}
 
 #: name -> (key expression, extra JOINs, extra CTEs appended to the chain)
 DIMENSIONS = {
@@ -1137,14 +1247,20 @@ def main() -> int:
     ap.add_argument("--out")
     args = ap.parse_args()
 
-    global _LADDER
+    global _LADDER, _MONO
     ladder_census = None
     if args.by in PER_CHUNK_DIMENSIONS:
-        _LADDER = ladder_context(args.source, args.category, args.width)
-        ladder_census = _LADDER["census"]
-        print("  LADDER PRE-PASS — the shipped predicate, whole cell, one sweep")
+        context = PER_CHUNK_CONTEXT[args.by](
+            args.source, args.category, args.width)
+        if args.by == "ladder":
+            _LADDER = context
+        else:
+            _MONO = context
+        ladder_census = context["census"]
+        print(f"  {args.by.upper()} PRE-PASS — the shipped predicate, "
+              f"whole cell, one sweep")
         for k, v in ladder_census.items():
-            print(f"    {k:<24} {v:>8}")
+            print(f"    {k:<38} {v}")
         print()
 
     t0 = time.time()
