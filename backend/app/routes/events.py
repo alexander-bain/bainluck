@@ -1967,6 +1967,102 @@ _ei_cache: dict = {}
 _ei_cache_time: float = 0
 _EI_CACHE_TTL = 300  # 5 minutes
 
+
+# ---------------------------------------------------------------------------
+# LAT-P116/#2272 — REFRESH BEHIND THE REQUEST, DON'T CHARGE IT TO A USER.
+#
+# `_load_ei_percentiles` and `_build_team_lookup` are process-global caches with
+# a 300 s TTL and NOTHING that rebuilds them. So every five minutes, in every
+# worker process, the NEXT request to arrive pays the whole build — and it is
+# never the same request twice, which is why this never looked like a slow
+# endpoint. Measured on slug `606bd84b` via `?debug_timing=1`, two independent
+# cold reads landing on the two `WEB_CONCURRENCY=2` workers seconds apart:
+#
+#     event_gei    216 ms / 276 ms      (warm: 0 ms)
+#     event_teams  424 ms / 342 ms      (warm: 0 ms)
+#
+# ~560-700 ms added to one user's search, on top of a 157 ms p50 build. The team
+# half is that expensive because its docstring's "~500 rows" is stale by 19x:
+# `teams` holds 9,577 rows, 1,592 of them with ESPN enrichment, and every one is
+# loaded, snapshotted and run through the alternate-names dedup.
+#
+# THE FIX IS SERVE-STALE, NOT A WARMER, and the distinction is the whole design.
+# A warmer is a second schedule that can silently stop (LAT-P115 shipped one and
+# had to prove the producer still ran); serve-stale has no schedule to fail —
+# the rebuild is triggered BY the request that would otherwise have paid for it,
+# and if the rebuild never happens the only consequence is that the next request
+# tries again. Staleness is free here on the data's own terms: the percentiles
+# "change only when recalculate is triggered" and team colours "change very
+# rarely", both quoted from the functions being fixed.
+#
+# 🔴 A BLOCKING PATH IS KEPT, ON PURPOSE, IN TWO PLACES. An empty cache still
+# builds synchronously — a first request in a fresh process has no stale value
+# to serve, and returning `{}` there would ship a search with no logos rather
+# than a slow one. And past `_STALE_SERVE_CEILING` the stale value stops being
+# served at all: a refresher that fails forever must degrade into the old slow
+# behaviour, never into silently serving hour-old data with no signal. That is
+# the fail-closed half, and it is the reason this is not just `TTL * 10`.
+# ---------------------------------------------------------------------------
+
+#: How far past its TTL a value may still be served while a rebuild runs behind
+#: it. Beyond this the caller blocks and rebuilds, so a permanently-failing
+#: refresh degrades to the pre-LAT-P116 behaviour instead of serving stale data
+#: indefinitely. 5x TTL = 25 min: long enough that a transient DB blip costs no
+#: user a rebuild, short enough that a real outage is visible in latency.
+_STALE_SERVE_CEILING = 5
+
+#: Strong refs to in-flight rebuilds. `asyncio` only holds a WEAK reference to a
+#: bare task, so without this the GC can collect a rebuild mid-flight and the
+#: cache silently never refreshes — the same hazard `_SEARCH_LOG_TASKS` exists
+#: for one screen up, and the reason this is a set and not a bool.
+_STALE_REFRESH_TASKS: set = set()
+
+#: Names with a rebuild currently in flight. Without it a burst of requests
+#: arriving in the same expired millisecond each launch their own rebuild, and
+#: the stampede is worse than the thing being fixed.
+_STALE_REFRESH_INFLIGHT: set[str] = set()
+
+
+def _serve_stale_and_refresh(name: str, rebuild) -> bool:
+    """Kick `rebuild()` onto the loop and tell the caller to serve what it has.
+
+    Returns True when the stale value may be served (a rebuild is running or
+    already in flight), False when the caller must build synchronously — no
+    running loop, so there is nothing to refresh behind.
+
+    `rebuild` is a zero-arg coroutine function that opens its OWN session: the
+    request's `AsyncSession` is not ours to hold past the response, and reusing
+    it is how a background task ends up writing into a closed session.
+    """
+    import asyncio
+
+    if name in _STALE_REFRESH_INFLIGHT:
+        return True
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop (sync test harness, script import). Nothing can run behind the
+        # caller, so refuse rather than serve stale forever.
+        return False
+
+    _STALE_REFRESH_INFLIGHT.add(name)
+
+    async def _run() -> None:
+        try:
+            await rebuild()
+        except Exception as exc:  # noqa: BLE001
+            # Leave the existing value ALONE. A failed rebuild must not poison
+            # the cache, and the ceiling above is what stops the failure being
+            # invisible if it persists.
+            logger.warning("cache refresh-behind failed for %s: %s", name, exc)
+        finally:
+            _STALE_REFRESH_INFLIGHT.discard(name)
+
+    task = loop.create_task(_run())
+    _STALE_REFRESH_TASKS.add(task)
+    task.add_done_callback(_STALE_REFRESH_TASKS.discard)
+    return True
+
 # In-memory cache for game-markets responses (roster queries are expensive)
 # Completed games: cached indefinitely. Live/scheduled: 30s TTL.
 _game_markets_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (timestamp, status, response)
@@ -2021,14 +2117,24 @@ async def _load_ei_percentiles(db: AsyncSession) -> dict:
 
     Returns empty dict if table doesn't exist or query fails,
     allowing the API to function without EI data.
+
+    LAT-P116: past the TTL the STALE value is served and the rebuild runs behind
+    the response — measured at 216-276 ms when a user paid for it. Only an empty
+    cache (first request in a fresh process) still blocks.
     """
     import time
 
     global _ei_cache, _ei_cache_time
 
     now = time.monotonic()
-    if _ei_cache and (now - _ei_cache_time) < _EI_CACHE_TTL:
-        return _ei_cache
+    if _ei_cache:
+        age = now - _ei_cache_time
+        if age < _EI_CACHE_TTL:
+            return _ei_cache
+        if age < _EI_CACHE_TTL * _STALE_SERVE_CEILING and _serve_stale_and_refresh(
+            "ei_percentiles", _rebuild_ei_percentiles
+        ):
+            return _ei_cache
 
     try:
         result = await db.execute(
@@ -2036,18 +2142,46 @@ async def _load_ei_percentiles(db: AsyncSession) -> dict:
         )
         rows = result.all()
 
-        percentiles = {}
-        for scope, percentile, threshold in rows:
-            if scope not in percentiles:
-                percentiles[scope] = {}
-            percentiles[scope][percentile] = float(threshold) if threshold else 0
-
-        _ei_cache = percentiles
+        _ei_cache = _shape_ei_percentiles(rows)
         _ei_cache_time = now
-        return percentiles
+        return _ei_cache
     except Exception:
         # Table may not exist yet - return empty dict
         return {}
+
+
+def _shape_ei_percentiles(rows) -> dict:
+    """`(scope, percentile, threshold)` rows → the nested dict the cache holds.
+
+    Extracted, NOT copied, so the refresh-behind path and the blocking path can
+    never shape the same rows two different ways — a warmed value that differs
+    from the served one by one key is a wrong answer served fast (LAT-P115).
+    """
+    percentiles: dict = {}
+    for scope, percentile, threshold in rows:
+        if scope not in percentiles:
+            percentiles[scope] = {}
+        percentiles[scope][percentile] = float(threshold) if threshold else 0
+    return percentiles
+
+
+async def _rebuild_ei_percentiles() -> None:
+    """Refresh `_ei_cache` on its own session. Raises on failure, so the caller's
+    handler can log it and leave the previous value in place."""
+    import time
+
+    from app.services.database import async_session_maker
+
+    global _ei_cache, _ei_cache_time
+
+    async with async_session_maker() as s:
+        result = await s.execute(
+            select(EIPercentile.scope, EIPercentile.percentile, EIPercentile.raw_ei_threshold)
+        )
+        rows = result.all()
+
+    _ei_cache = _shape_ei_percentiles(rows)
+    _ei_cache_time = time.monotonic()
 
 
 # Backward-compatible alias
@@ -10759,14 +10893,24 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     Matches on exact name or alternate_names JSONB array.
     Only returns teams that have ESPN enrichment (color or logo).
 
-    Uses an in-memory cache since the teams table is small (~500 rows)
-    and team colors/logos change very rarely. This avoids N JSONB ?
-    conditions per request (previously one per team name).
+    Uses an in-memory cache because team colors/logos change very rarely. This
+    avoids N JSONB ? conditions per request (previously one per team name).
+
+    🔴 The table is NOT small, and the comment that said "~500 rows" is why this
+    build's cost went unsuspected for so long: `teams` holds **9,577 rows, 1,592
+    of them ESPN-enriched** (measured on production 2026-08-29), and every one
+    of those 1,592 is loaded, snapshotted and run through the alternate-names
+    ambiguity dedup. That is a 342-424 ms build, not a lookup.
 
     The values are `TeamSnapshot`, NOT `Team` — see the cache comment above
     for #2107. The snapshot is taken here, one statement after the rows are
     loaded and while their session is still open; nothing that survives this
     function holds a reference to an ORM row.
+
+    LAT-P116: past the TTL the STALE lookup is served and the rebuild runs
+    behind the response. Only an empty cache still blocks — a first request in a
+    fresh process has no stale value, and shipping a search with no logos to
+    save 400 ms is a worse answer, not a faster one.
     """
     import time
 
@@ -10775,36 +10919,68 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     if not team_names:
         return {}
 
+    names_set = set(team_names)
     now = time.monotonic()
-    if _team_cache and (now - _team_cache_time) < _TEAM_CACHE_TTL:
-        # Fast path: filter cached lookup by requested names
-        names_set = set(team_names)
-        return {k: v for k, v in _team_cache.items() if k in names_set}
+    if _team_cache:
+        age = now - _team_cache_time
+        if age < _TEAM_CACHE_TTL or (
+            age < _TEAM_CACHE_TTL * _STALE_SERVE_CEILING
+            and _serve_stale_and_refresh("team_lookup", _rebuild_team_lookup)
+        ):
+            # Fast path: filter cached lookup by requested names
+            return {k: v for k, v in _team_cache.items() if k in names_set}
 
-    # Load all teams with ESPN data (small table) — single simple query
+    # Load all teams with ESPN data — single simple query
     result = await db.execute(
         select(Team).where(
             or_(Team.primary_color.isnot(None), Team.logo_url_small.isnot(None))
         )
     )
-    teams = result.scalars().all()
-
-    # Detach BEFORE anything else touches these rows. Deduping over snapshots
-    # rather than over ORM rows also means the ambiguity guard's `.sport_id` /
-    # `.alternate_names` reads happen here, inside the live-session window,
-    # instead of at some later request's mercy.
-    snapshots = [_snapshot_team(t) for t in teams]
-
-    # Build full lookup: map all known names to team snapshots, with a
-    # cross-league ambiguity guard (see _dedupe_team_name_lookup).
-    full_lookup = _dedupe_team_name_lookup(snapshots)
+    full_lookup = _shape_team_lookup(result.scalars().all())
 
     _team_cache = full_lookup
     _team_cache_time = now
 
     # Return only the subset matching requested names
-    names_set = set(team_names)
     return {k: v for k, v in full_lookup.items() if k in names_set}
+
+
+def _shape_team_lookup(teams) -> dict:
+    """`Team` rows → the name→`TeamSnapshot` lookup the cache holds.
+
+    Extracted, NOT copied, so the refresh-behind path and the blocking path
+    cannot drift (LAT-P115: a warmed payload differing from the served one by
+    one key is a wrong answer served fast).
+
+    Detaches BEFORE anything else touches these rows. Deduping over snapshots
+    rather than over ORM rows also means the ambiguity guard's `.sport_id` /
+    `.alternate_names` reads happen here, inside the live-session window,
+    instead of at some later request's mercy.
+    """
+    snapshots = [_snapshot_team(t) for t in teams]
+    # Cross-league ambiguity guard — see `_dedupe_team_name_lookup`.
+    return _dedupe_team_name_lookup(snapshots)
+
+
+async def _rebuild_team_lookup() -> None:
+    """Refresh `_team_cache` on its own session. Raises on failure, so the
+    caller's handler can log it and leave the previous value in place."""
+    import time
+
+    from app.services.database import async_session_maker
+
+    global _team_cache, _team_cache_time
+
+    async with async_session_maker() as s:
+        result = await s.execute(
+            select(Team).where(
+                or_(Team.primary_color.isnot(None), Team.logo_url_small.isnot(None))
+            )
+        )
+        full_lookup = _shape_team_lookup(result.scalars().all())
+
+    _team_cache = full_lookup
+    _team_cache_time = time.monotonic()
 
 
 def _compute_standings_context(home_team, away_team, home_name: str, away_name: str) -> dict | None:
