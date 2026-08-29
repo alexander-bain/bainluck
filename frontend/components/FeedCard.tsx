@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GolfTournament } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
-import { renderedDuelPercents, renderedCardPercents, cardSumReason } from "@/lib/renderedPercent";
+import { renderedDuelPercents, renderedCardPercents, cardSumReason, renderedLeaderPercent } from "@/lib/renderedPercent";
 import { cardSumExplanation } from "@/lib/cardSum";
 import { eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
@@ -605,11 +605,12 @@ function FuturesFeedCard({
   // the original row objects, so `indexOf` is exact. Null when the headline is not
   // among the printed rows at all, which leaves `formatProbability` on its
   // pre-existing behaviour rather than inventing a number.
-  const heroPercent = !leader
-    ? null
-    : "rendered_percent" in leader
-      ? leader.rendered_percent
-      : (fallbackPercents[printedOutcomes.indexOf(leader)] ?? null);
+  //
+  // UX-P162 lifted that dance into `renderedLeaderPercent` unchanged, because the
+  // Discover hero needed the identical three decisions and a second hand-copy is
+  // how the two surfaces would have drifted back apart. Same slice (leader-first,
+  // 3) and therefore the same answer as the inline form it replaces.
+  const heroPercent = renderedLeaderPercent(data.top_outcomes, leader);
 
   // Category emoji
   const catKey = data.llm_sport_category ?? "";

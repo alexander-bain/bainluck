@@ -7,6 +7,7 @@ import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "@/lib/probabilityDisplay";
+import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
@@ -298,7 +299,31 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     );
   }
 
-  const pctDisplay = prob != null ? formatProbabilityPercent(prob) : null;
+  // UX-P162 — "one number per question", across surfaces and not just within a card.
+  //
+  // This hero rounded the leader's raw probability while `FeedCard` — the SAME
+  // market, drawn by `/categories/*`, `/sports` and `/my-stuff` off the SAME
+  // `GET /api/feed` payload — takes the card rule. The rule normalizes a
+  // complement pair by its true total before rounding, so a pair summing to
+  // 1.005 moves the leader by a point: the identical market reads 57% here and
+  // 56% one tab over, which is the "blend is the product" thesis broken across
+  // surfaces rather than within a card.
+  //
+  // LATENT TODAY, and deliberately reported as such: measured on the deployed
+  // feed 2026-08-29 across all five feed surfaces, 114 unique futures cards, 7
+  // two-outcome, and 0 currently disagree. The fix is here because the disagreement
+  // is structural and silent — nothing would have told us the day a pair landed
+  // off 1.00.
+  //
+  // `renderedLeaderPercent` is the shared decision (served-percent-wins,
+  // leader-first anchoring, identity lookup) rather than a fourth hand-copy of
+  // the three-line dance; `FeedCard` calls the same function, which is what makes
+  // "they agree" a property of the code instead of a promise.
+  const heroPercent = renderedLeaderPercent(data.top_outcomes, leader);
+  // UX-P046's floor still runs on the PROBABILITY, not on the override, so a
+  // served 0 over a live 0.003 prints `<1%` and not `0%`. That composition lives
+  // in `formatProbabilityPercent`; passing `{ rendered }` does not opt out of it.
+  const pctDisplay = prob != null ? formatProbabilityPercent(prob, { rendered: heroPercent }) : null;
   // UX-P052 (#1690) — the verbatim census finding names THIS number: rendered
   // "at full visual authority regardless of provenance", so a single 48h-old
   // print and a 3-source consensus look identical at the same 62%. Both hero
@@ -572,6 +597,12 @@ function compactOutcomeName(name: string): string {
 
 export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFuturesData }) {
   const leader = data.top_outcomes?.[0];
+  // UX-P162 — the same market's headline, so a group row and the full card it
+  // expands into cannot print two different numbers for one question. `GroupCard`
+  // and `ThemeBundleCard` render this row for markets that ALSO appear as their
+  // own `FuturesCard`, so leaving it on raw rounding would have moved the
+  // disagreement one component sideways instead of removing it.
+  const compactPercent = renderedLeaderPercent(data.top_outcomes, leader);
   const context = feedContextSnippet(item);
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
@@ -584,7 +615,7 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
       {leader && (
         <div className="flex items-center gap-2 shrink-0">
           <MovementBadge m={leader.movement} prob={leader.probability} />
-          <span className="font-mono tabular-nums text-sm font-bold">{leader.probability != null && leader.probability > 0 ? formatProbabilityPercent(leader.probability) : "—"}</span>
+          <span className="font-mono tabular-nums text-sm font-bold">{leader.probability != null && leader.probability > 0 ? formatProbabilityPercent(leader.probability, { rendered: compactPercent }) : "—"}</span>
         </div>
       )}
     </Link>
