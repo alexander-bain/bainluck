@@ -285,6 +285,11 @@ def _serialize_concept(c: dict) -> dict:
         "domain": c.get("domain"),
         "status": c.get("status"),
         "start_date": c.get("start_date"),
+        # This serializer is an ALLOWLIST, so a key a lister starts emitting is
+        # dropped here unless it is named — silently, with the rail still 200-ing.
+        # `end_date` is the tennis rail's honest home for the winner market's
+        # resolution date, which it used to mis-serve as `start_date`.
+        "end_date": c.get("end_date"),
         "is_major": bool(c.get("is_major")),
         "fight_count": c.get("fight_count"),
     }

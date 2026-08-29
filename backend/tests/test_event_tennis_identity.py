@@ -27,12 +27,14 @@ production market set, measured the same day.
 
 import json
 import pathlib
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from app.utils.event_tennis import (
     _MIN_FIELD_OUTCOMES,
+    TennisEventAdapter,
     canonical_slug_tokens,
     canonical_tokens,
     is_winner_field,
@@ -40,6 +42,7 @@ from app.utils.event_tennis import (
     list_tennis_tournament_concepts,
     select_winner_field,
     tennis_gender,
+    tennis_is_major,
     tournament_tokens,
 )
 from app.utils.name_normalization import clean_slug
@@ -83,7 +86,7 @@ def _markets_with_outcomes(rows):
                 id=r["id"],
                 volume_24h=r["volume_24h"],
                 status=r["status"],
-                resolution_date=None,
+                resolution_date=r.get("resolution_date"),
                 outcomes=[SimpleNamespace(name=f"Player {i}") for i in range(n)],
             )
         )
@@ -392,3 +395,175 @@ class TestHubRailNeverLinksABrokenShelf:
     async def test_the_rail_is_not_silently_empty(self):
         """Guard the guard — an empty rail would pass the three above vacuously."""
         assert len(await self._emitted()) >= 12
+
+
+# ---------------------------------------------------------------------------
+# 6. Tennis can say "major", and its one date is an END (UX-P178, #2167)
+# ---------------------------------------------------------------------------
+#
+# Both tennis concept sites hardcoded `is_major: False` and the rail served the
+# winner market's `resolution_date` under the key `start_date`. Measured live
+# 2026-08-29 on /api/hub/tennis: 12 upcoming cards, **0** flagged major (and 0 of
+# 48 across all five hubs — the "★ Marquee" chip had never rendered anywhere),
+# while four cards printed a FUTURE date under a pulsing LIVE dot. The detail
+# envelope for those same concepts served that identical timestamp as `end_date`
+# with `start_date: None`.
+
+#: The production census of tennis-categorized winner markets, verbatim
+#: (db-query 2026-08-29, `truncated: False`, 14 rows). Three of them are FOOTBALL
+#: — AFC Wimbledon — carrying `llm_sport_category = 'tennis'`. They are in this
+#: table on purpose: they are what a bare `%Wimbledon%` substring test gets wrong.
+_MAJOR_CENSUS: tuple[tuple[str, bool], ...] = (
+    ("2026 Men's Australian Open Winner", True),
+    ("2026 Men's French Open Winner", True),
+    ("2026 Men’s Singles Roland Garros: Winner", True),
+    ("2026 Men’s US Open Winner (Tennis)", True),
+    ("2026 Men’s Wimbledon Winner", True),
+    ("2026 Women's French Open Winner", True),
+    ("2026 Women’s Singles Roland Garros: Winner", True),
+    ("2026 Women’s US Open Winner (Tennis)", True),
+    ("2026 Women's Wimbledon Winner", True),
+    ("Huddersfield vs Wimbledon: First Half Winner", False),  # football
+    ("US Open Men's Singles Winner", True),
+    ("US Open Women's Singles Winner", True),
+    ("Wimbledon vs Newport: First Half Winner", False),  # football
+    ("Wimbledon vs Reading: First Half Winner", False),  # football
+)
+
+
+class TestTennisKnowsWhatAMajorIs:
+    @pytest.mark.parametrize("name,expected", _MAJOR_CENSUS)
+    def test_the_production_census(self, name, expected):
+        assert tennis_is_major(name) is expected, name
+
+    def test_the_football_wimbledons_are_rejected(self):
+        """Called out separately from the table because it is the whole reason the
+        predicate is anchored rather than a substring test. AFC Wimbledon is a
+        football club and its markets are miscategorized as tennis upstream."""
+        football = [n for n, _ in _MAJOR_CENSUS if " vs " in n]
+        assert len(football) == 3, "the census lost its football rows"
+        assert not [n for n in football if tennis_is_major(n)]
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Cincinnati Open: Winner",
+            "WTA 1000 Toronto: Winner",
+            "ATP 1000 Montreal: Winner",
+            "WTA Washington Winner",
+            "2026 WTA Athens Winner",
+        ],
+    )
+    def test_ordinary_tournaments_are_not_majors(self, name):
+        """The control, and it carries more weight than the positives: a predicate
+        that returns True for everything satisfies every assertion above and makes
+        the chip meaningless."""
+        assert tennis_is_major(name) is False
+
+    def test_both_names_for_the_french_open_are_recognized(self):
+        """Roland Garros and the French Open are one tournament under two names and
+        BOTH are live in the corpus, one winner market per source."""
+        assert tennis_is_major("2026 Men's French Open Winner")
+        assert tennis_is_major("2026 Men’s Singles Roland Garros: Winner")
+
+    def test_the_census_is_not_vacuous(self):
+        """Guard the guard: an all-False predicate passes every negative case."""
+        assert sum(1 for n, _ in _MAJOR_CENSUS if tennis_is_major(n)) == 11
+
+
+class TestTheRailFlagsMajorsAndServesAnEndDate:
+    """Drives the REAL `list_tennis_tournament_concepts` over the REAL production
+    corpus — not a copy of its grouping (see section 5's note)."""
+
+    async def _concepts(self):
+        rows = [dict(r) for r in CORPUS if r["status"] == "open"]
+        for r in rows:
+            # The US Open winner markets carried this resolution date in production.
+            if "US Open" in r["name"]:
+                r["resolution_date"] = datetime(2026, 9, 13, tzinfo=timezone.utc)
+        db = _FakeDB(_markets_with_outcomes(rows))
+        return await list_tennis_tournament_concepts(db, limit=50)
+
+    async def test_the_us_open_is_marquee(self):
+        majors = [c["name"] for c in await self._concepts() if c["is_major"]]
+        assert majors, "the rail flags no majors at all — the state UX-P178 fixed"
+        assert all("US Open" in n for n in majors), majors
+
+    async def test_the_ordinary_tournaments_are_not(self):
+        """A rail that flags everything is as useless as one that flags nothing."""
+        concepts = await self._concepts()
+        plain = [c for c in concepts if not c["is_major"]]
+        assert len(plain) >= 8, f"only {len(plain)} unflagged of {len(concepts)}"
+
+    async def test_the_resolution_date_is_never_served_as_a_start(self):
+        """The defect: /hub/tennis printed this END date as a start, under a LIVE
+        pill. We have no tournament start date for tennis, and a date we do not
+        have is absent — never guessed, never borrowed from another field."""
+        for c in await self._concepts():
+            assert c["start_date"] is None, c["name"]
+
+    async def test_the_date_we_do_have_is_still_served(self):
+        """The other half, and without it the fix is a regression: nulling
+        `start_date` alone would turn every dated tennis card into "TBD"."""
+        dated = [c for c in await self._concepts() if c["end_date"]]
+        assert len(dated) == 2, [c["name"] for c in dated]
+        assert all(c["end_date"].startswith("2026-09-13") for c in dated)
+
+
+class TestTheRailAndTheDetailPageAgreeAboutOneTimestamp:
+    """Redundancy is not coupling. Both layers read the SAME field
+    (`winner.resolution_date`) and both were free to name it whatever they liked —
+    which is exactly how they came to disagree, the rail calling it `start_date`
+    and the envelope calling it `end_date`, one click apart.
+
+    So this asserts the AGREEMENT, and it does it on ONE payload driven through
+    BOTH real code paths rather than on two fixtures that can drift apart.
+    """
+
+    def _market(self, name="2026 Wimbledon Winner"):
+        # Gotcha #44: offset FIRST, then truncate. A fixed calendar date here goes
+        # stale — `tennis_status` settles anything already resolved and the rail
+        # drops it, so the agreement would be asserted over two empty lists.
+        resolves = (datetime.now(timezone.utc) + timedelta(days=4)).replace(
+            microsecond=0
+        )
+        return SimpleNamespace(
+            id=114157,
+            name=name,
+            status="open",
+            llm_sport_category="tennis",
+            source="polymarket",
+            group_id="polymarket:139182",
+            resolution_date=resolves,
+            outcomes=[
+                SimpleNamespace(name="Coco Gauff", current_probability=0.45, is_winner=False),
+                SimpleNamespace(name="Aryna Sabalenka", current_probability=0.40, is_winner=False),
+                SimpleNamespace(name="Karolína Muchová", current_probability=0.35, is_winner=False),
+            ],
+        )
+
+    async def _both(self, name="2026 Wimbledon Winner"):
+        from app.utils.name_normalization import clean_slug as _slug
+
+        db = _FakeDB([self._market(name)])
+        rail = await list_tennis_tournament_concepts(db, limit=50)
+        envelope = await TennisEventAdapter().build_event(_slug(name), db)
+        assert rail and envelope, "one of the two layers served nothing"
+        return rail[0], envelope["event"]
+
+    async def test_they_agree_on_the_end_date(self):
+        rail, event = await self._both()
+        assert rail["end_date"] == event["end_date"]
+        assert rail["end_date"] is not None  # not agreeing on a shared None
+
+    async def test_they_agree_that_there_is_no_start_date(self):
+        rail, event = await self._both()
+        assert rail["start_date"] is None and event["start_date"] is None
+
+    async def test_they_agree_the_slam_is_major(self):
+        rail, event = await self._both()
+        assert rail["is_major"] is True and event["is_major"] is True
+
+    async def test_they_agree_an_ordinary_tournament_is_not(self):
+        rail, event = await self._both("Cincinnati Open: Winner")
+        assert rail["is_major"] is False and event["is_major"] is False

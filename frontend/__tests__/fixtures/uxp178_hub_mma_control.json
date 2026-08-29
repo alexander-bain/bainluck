@@ -1,0 +1,140 @@
+{
+  "_provenance": "GET /api/hub/mma on production, 2026-08-29 (UX-P178). The CONTROL: combat cards carry a genuine commence-time start_date and must render byte-identical across this change.",
+  "upcoming": [
+    {
+      "key": "event:ufc:26aug29",
+      "name": "Fight Night: Nurmagomedov vs Song",
+      "domain": "ufc",
+      "status": "live",
+      "start_date": "2026-08-29T23:40:00+00:00",
+      "is_major": false,
+      "fight_count": 13
+    },
+    {
+      "key": "event:ufc:26sep01",
+      "name": "MMA: McCracken vs Sanchez",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-01T23:20:00+00:00",
+      "is_major": false,
+      "fight_count": 3
+    },
+    {
+      "key": "event:ufc:26sep05",
+      "name": "Chatman vs Wint",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-05T23:20:00+00:00",
+      "is_major": false,
+      "fight_count": 18
+    },
+    {
+      "key": "event:ufc:26sep06",
+      "name": "Spivac vs Petrino",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-06T00:40:00+00:00",
+      "is_major": false,
+      "fight_count": 1
+    },
+    {
+      "key": "event:ufc:26sep09",
+      "name": "Mir vs Apodaca",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-09T00:20:00+00:00",
+      "is_major": false,
+      "fight_count": 1
+    },
+    {
+      "key": "event:ufc:26sep10",
+      "name": "Alexandre Pantoja vs Joshua Van",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-10T00:00:00+00:00",
+      "is_major": false,
+      "fight_count": 3
+    },
+    {
+      "key": "event:ufc:26sep12",
+      "name": "Jean Silva vs Jose Delgado",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-12T18:00:00+00:00",
+      "is_major": false,
+      "fight_count": 11
+    },
+    {
+      "key": "event:ufc:26sep13",
+      "name": "Jean Silva vs Yair Rodriguez",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-13T00:00:00+00:00",
+      "is_major": false,
+      "fight_count": 1
+    },
+    {
+      "key": "event:ufc:26sep15",
+      "name": "McCracken vs Sanchez",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-15T23:40:00+00:00",
+      "is_major": false,
+      "fight_count": 3
+    },
+    {
+      "key": "event:ufc:26sep17",
+      "name": "Rivera vs Darby",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-17T00:20:00+00:00",
+      "is_major": false,
+      "fight_count": 2
+    },
+    {
+      "key": "event:ufc:26sep02",
+      "name": "MMA: Rivera vs Darby",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-17T00:20:00+00:00",
+      "is_major": false,
+      "fight_count": 2
+    },
+    {
+      "key": "event:ufc:26sep20",
+      "name": "Joshua Van vs Alexandre Pantoja",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-20T04:00:00+00:00",
+      "is_major": false,
+      "fight_count": 4
+    },
+    {
+      "key": "event:ufc:26sep26",
+      "name": "Darren Till vs Yoel Romero",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-09-26T18:00:00+00:00",
+      "is_major": false,
+      "fight_count": 1
+    },
+    {
+      "key": "event:ufc:26oct04",
+      "name": "Valentina Shevchenko vs Natalia Silva",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-10-04T01:00:00+00:00",
+      "is_major": false,
+      "fight_count": 2
+    },
+    {
+      "key": "event:ufc:26oct25",
+      "name": "Alex Volkanovski vs Movsar Evloev",
+      "domain": "ufc",
+      "status": "upcoming",
+      "start_date": "2026-10-25T04:00:00+00:00",
+      "is_major": false,
+      "fight_count": 2
+    }
+  ]
+}
