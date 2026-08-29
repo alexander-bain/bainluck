@@ -787,26 +787,76 @@ async def browse_futures(
         # Offset 0 and no rows: the population really is empty. No query needed.
         total = 0
 
+    # UX-P165: browse was the FOURTH divergent copy of the display rules — the one
+    # #993's docstring warns about. It filtered only the legacy `player AB` regex
+    # and then sorted RAW, so an unrankable row could hold position 0. That matters
+    # more here than anywhere else: `CompactMarketCard` renders `top_outcomes[0]`
+    # and NOTHING else, so the artifact is not a wasted row inside a list — it is
+    # the market's entire one-line description on the /search category browser.
+    #
+    # Measured on the deployed build 2026-08-29 over ALL 21,441 browse markets
+    # (100% sweep, not a sample): 686 cards led with an unrankable outcome — 181 a
+    # dominant field row ("FedEx Cup Playoffs: Winner -> Other 100%") and 505 an
+    # anonymized reserved slot ("Massachusetts Governor Republican Primary Winner
+    # -> Candidate Z 100%"). A further 9 led with a sub-threshold field outcome
+    # ("Fed decisions (Jun-Sep) -> Other 51%", a 9-way market). 695 total, 3.24%.
+    #
+    # Same three primitives, same order, as `_format_market_detail` (UX-P164) so
+    # the click-through from a browse card to the market page cannot disagree with
+    # the card that produced it.
+    #
+    # ONE deliberate difference from detail, and it is a scope decision, not an
+    # omission: `normalize_display_probs` is NOT applied. Browse has no
+    # mutual-exclusivity-safe basis to normalize on at the top-3 slice, and the
+    # #199/#1200/#1201 guards exist precisely because squeezing the wrong family
+    # (golf make-cut, threshold ladders, independent binaries) is worse than
+    # leaving raw prices alone. Browse serves raw prices today and still does;
+    # 386 markets whose whole field is visible in the top 3 sum >1.02 and are left
+    # exactly as they were. Measured and parked, not silently changed.
+    #
+    # Because nothing is normalized here, the raw probability IS the rendered
+    # number — so `_FIELD_DOMINANT_MIN`'s documented rule ("judge the number
+    # RENDERED") is satisfied by judging the raw price. That is the placement
+    # answer for this, the fourth caller: feed drops BEFORE its scale, detail and
+    # search drop AFTER normalization, and browse has no basis step to sit either
+    # side of.
+    from app.utils.outcome_display import (
+        drop_dominant_field_outcomes,
+        is_placeholder_outcome_name,
+        leader_pick_order,
+    )
+
     items = []
     for market in markets:
+        # NEVER EMPTIES, matching `display_rank_order`/`drop_dominant_field_outcomes`:
+        # a market whose every outcome is a placeholder keeps its rows rather than
+        # rendering a card with no subtitle at all.
         real_outcomes = [
             o for o in market.outcomes
-            if not _GARBAGE_OUTCOME_RE.match(o.name or "")
-        ]
+            if not is_placeholder_outcome_name(o.name)
+        ] or list(market.outcomes)
         sorted_outcomes = sorted(
             real_outcomes,
             key=lambda o: float(o.current_probability) if o.current_probability else 0,
             reverse=True,
         )
-        top3 = [
+        display_outcomes = [
             {
                 "id": o.id,
                 "name": o.name,
                 "probability": float(o.current_probability) if o.current_probability else None,
                 "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
             }
-            for o in sorted_outcomes[:3]
+            for o in sorted_outcomes
         ]
+        # Drop BEFORE the `[:3]` slice, then leader-pick: demotion alone only keeps
+        # a row out of a top-N slot while the list is LONGER than N (UX-P163), and
+        # the mean browse market has 6.3 outcomes.
+        display_outcomes = drop_dominant_field_outcomes(
+            display_outcomes, lambda o: o.get("name"), lambda o: o.get("probability")
+        )
+        leader_pick_order(display_outcomes)
+        top3 = display_outcomes[:3]
         items.append({
             "id": market.id,
             "name": market.name,

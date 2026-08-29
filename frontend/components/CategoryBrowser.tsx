@@ -233,7 +233,11 @@ function CategoryMarkets({ category, onClose }: { category: string; onClose: () 
   );
 }
 
-function CompactMarketCard({ market }: { market: FuturesBrowseItem }) {
+// UX-P165: exported (named — the default export is still CategoryBrowser) so the
+// capture rig can render the SHIPPED card rather than a copy of it. This card
+// reads `top_outcomes[0]` and nothing else, so whatever the browse API puts in
+// position 0 IS the market's entire one-line description. No behaviour change.
+export function CompactMarketCard({ market }: { market: FuturesBrowseItem }) {
   const leader = market.top_outcomes[0];
 
   return (
