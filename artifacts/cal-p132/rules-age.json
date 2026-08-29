@@ -1,0 +1,1 @@
+{"classes": ["z_no_snapshot"], "total": {"n": 2738, "ece": 5.0, "gap": -1.02}, "bar": 3.0, "floor_rows": 1, "searched": 1, "passing": [], "ranked": [{"keep": ["z_no_snapshot"], "n": 2738, "ece": 5.0, "gap": -1.02, "dropped": 0, "dropped_pct": 0.0, "OLD": {"n": 1352, "ece": 5.61, "gap": 0.61}, "NEW": {"n": 1386, "ece": 5.98, "gap": -2.62}, "worst_half": 5.98}]}

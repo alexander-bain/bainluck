@@ -219,8 +219,32 @@ class TestValidateIsTheTranscriptionGuard:
         with pytest.raises(ValueError):
             ledger_mod.load(p)
 
-    def test_a_missing_ledger_is_empty_not_an_error(self, tmp_path):
-        assert ledger_mod.load(tmp_path / "nope.json")["entries"] == {}
+    def test_a_missing_ledger_is_an_error_not_an_empty_one(self, tmp_path):
+        """🔴 REVERSED BY CAL-P129 — this asserted the opposite until 2026-08-29.
+
+        The original read ``load(missing)["entries"] == {}`` and carried no
+        rationale, one line below a sibling whose docstring says *"A malformed
+        ledger must not silently fall back to the old board."* The two halves of
+        the same question were answered opposite ways, and only the malformed
+        half was argued.
+
+        CAL-P129 measured what the unargued half costs. ``LEDGER_PATH`` was
+        relative, so ``cd backend && python3 scripts/calibration_scorecard.py``
+        — the invocation CLAUDE.md documents for every backend script — missed
+        the file, took this empty reading, and printed a complete, plausible
+        board reporting ``queued_cells_measured: 0`` and
+        ``cells_at_bar_if_applied: 29``. From the repository root the same
+        command reports 12 and 31. No error, no banner, exit 0.
+
+        The path is now absolute, so this case is far less reachable; the
+        reversal is kept anyway, because "less reachable" is not the same
+        argument as "safe", and it was unreachability that hid it the first
+        time. ``missing_ok=True`` is the opt-in for the one caller — ``--build``
+        — that legitimately starts from no ledger.
+        """
+        with pytest.raises(FileNotFoundError):
+            ledger_mod.load(tmp_path / "nope.json")
+        assert ledger_mod.load(tmp_path / "nope.json", missing_ok=True)["entries"] == {}
 
 
 class TestTheVarianceRatioIsNamedForWhatItIsARatioTo:

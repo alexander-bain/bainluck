@@ -1,0 +1,212 @@
+[
+ {
+  "n": 1,
+  "generated_at_utc": "2026-08-28T19:40:52Z",
+  "terminal": "failed",
+  "gate": "not_evaluated",
+  "published": false,
+  "elapsed_ms": 1400139,
+  "class": "B",
+  "attribution": "diagnostics statement timeout (resolution_source truth-class census)"
+ },
+ {
+  "n": 2,
+  "generated_at_utc": "2026-08-28T20:37:42Z",
+  "terminal": "complete",
+  "gate": "pass",
+  "published": true,
+  "elapsed_ms": 1217667,
+  "class": "CLEAN",
+  "attribution": "published \u2014 fresh futures restage (staged_age 109s)"
+ },
+ {
+  "n": 3,
+  "generated_at_utc": "2026-08-28T21:33:47Z",
+  "terminal": "failed",
+  "gate": "not_evaluated",
+  "published": false,
+  "elapsed_ms": 1126642,
+  "class": "D",
+  "attribution": "sports read:events cancelled \u2014 THE failure v3921 targeted"
+ },
+ {
+  "n": 4,
+  "generated_at_utc": "2026-08-28T22:20:23Z",
+  "terminal": "cancelled",
+  "gate": "not_evaluated",
+  "published": false,
+  "elapsed_ms": 224425,
+  "class": "C",
+  "attribution": "task cancelled by deploy v3923 (22:20:05Z)"
+ },
+ {
+  "n": 5,
+  "generated_at_utc": "2026-08-28T23:35:52Z",
+  "terminal": "complete",
+  "gate": "pass",
+  "published": true,
+  "elapsed_ms": 1251577,
+  "class": "CLEAN",
+  "attribution": "published \u2014 RE-SERVED the 20:35:54Z futures bank (drift 109/128)"
+ },
+ {
+  "n": 6,
+  "generated_at_utc": "2026-08-29T00:36:48Z",
+  "terminal": "complete",
+  "gate": "pass",
+  "published": true,
+  "elapsed_ms": 1307873,
+  "class": "CLEAN",
+  "attribution": "published \u2014 RE-SERVED the 20:35:54Z futures bank (drift 128/128)"
+ },
+ {
+  "n": 7,
+  "generated_at_utc": "2026-08-29T01:38:36Z",
+  "terminal": "failed",
+  "gate": "refuse",
+  "published": false,
+  "elapsed_ms": 1309897,
+  "class": "A",
+  "attribution": "publish gate refuse: category_collapse + population_shrink"
+ },
+ {
+  "n": 8,
+  "generated_at_utc": "2026-08-29T02:40:04Z",
+  "terminal": "failed",
+  "gate": "not_evaluated",
+  "published": false,
+  "elapsed_ms": 1394379,
+  "class": "B",
+  "attribution": "diagnostics statement timeout"
+ },
+ {
+  "n": 9,
+  "generated_at_utc": "2026-08-29T03:51:33Z",
+  "terminal": "failed",
+  "gate": "refuse",
+  "published": false,
+  "elapsed_ms": 1397892,
+  "class": "A",
+  "attribution": "publish gate refuse"
+ },
+ {
+  "n": 10,
+  "generated_at_utc": "2026-08-29T04:49:03Z",
+  "terminal": "failed",
+  "gate": "refuse",
+  "published": false,
+  "elapsed_ms": 1170713,
+  "class": "A",
+  "attribution": "publish gate refuse"
+ },
+ {
+  "n": 11,
+  "generated_at_utc": "2026-08-29T05:44:36Z",
+  "terminal": "failed",
+  "gate": "refuse",
+  "published": false,
+  "elapsed_ms": 1320467,
+  "class": "A",
+  "attribution": "publish gate refuse"
+ },
+ {
+  "n": 12,
+  "generated_at_utc": "2026-08-29T06:37:34Z",
+  "terminal": "failed",
+  "gate": "refuse",
+  "published": false,
+  "elapsed_ms": 1311592,
+  "class": "A",
+  "attribution": "publish gate refuse"
+ },
+ {
+  "n": 13,
+  "generated_at_utc": "2026-08-29T07:47:14Z",
+  "terminal": "failed",
+  "gate": "refuse",
+  "published": false,
+  "elapsed_ms": 1285812,
+  "class": "A",
+  "attribution": "publish gate refuse"
+ },
+ {
+  "n": 14,
+  "generated_at_utc": "2026-08-29T08:37:15Z",
+  "terminal": "cancelled",
+  "gate": "not_evaluated",
+  "published": false,
+  "elapsed_ms": 807870,
+  "class": "C",
+  "attribution": "task cancelled by deploy v3930 (08:36:58Z)"
+ },
+ {
+  "n": 15,
+  "generated_at_utc": "2026-08-29T09:35:48Z",
+  "terminal": "failed",
+  "gate": "refuse",
+  "published": false,
+  "elapsed_ms": 1248115,
+  "class": "A",
+  "attribution": "publish gate refuse"
+ },
+ {
+  "n": 16,
+  "generated_at_utc": "2026-08-29T10:22:27Z",
+  "terminal": "cancelled",
+  "gate": "not_evaluated",
+  "published": false,
+  "elapsed_ms": 447221,
+  "class": "C",
+  "attribution": "task cancelled by deploy v3933 (10:22:09Z)"
+ },
+ {
+  "n": 17,
+  "generated_at_utc": "2026-08-29T11:33:25Z",
+  "terminal": "failed",
+  "gate": "refuse",
+  "published": false,
+  "elapsed_ms": 1104776,
+  "class": "A",
+  "attribution": "publish gate refuse"
+ },
+ {
+  "n": 18,
+  "generated_at_utc": "2026-08-29T12:37:39Z",
+  "terminal": "failed",
+  "gate": "refuse",
+  "published": false,
+  "elapsed_ms": 1359254,
+  "class": "A",
+  "attribution": "publish gate refuse"
+ },
+ {
+  "n": 19,
+  "generated_at_utc": "2026-08-29T13:39:14Z",
+  "terminal": "failed",
+  "gate": "refuse",
+  "published": false,
+  "elapsed_ms": 1375599,
+  "class": "A",
+  "attribution": "publish gate refuse"
+ },
+ {
+  "n": 20,
+  "generated_at_utc": "2026-08-29T14:42:33Z",
+  "terminal": "failed",
+  "gate": "refuse",
+  "published": false,
+  "elapsed_ms": 1402733,
+  "class": "A",
+  "attribution": "publish gate refuse"
+ },
+ {
+  "n": 21,
+  "generated_at_utc": "2026-08-29T15:52:08Z",
+  "terminal": "failed",
+  "gate": "not_evaluated",
+  "published": false,
+  "elapsed_ms": 1416310,
+  "class": "B",
+  "attribution": "diagnostics statement timeout"
+ }
+]

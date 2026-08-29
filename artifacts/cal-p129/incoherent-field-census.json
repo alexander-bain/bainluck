@@ -1,0 +1,232 @@
+{
+  "note": "COMPOSITION census, broader population than the published cell \u2014 no producer exclusions applied. The published figure is the rail's 1,228 of 8,480 rows (14.5%). Never quote these counts as the cell's.",
+  "chunks_run": 13,
+  "chunks_failed": [],
+  "totals": {
+    "series": 44,
+    "markets": 257,
+    "outcomes": 3460
+  },
+  "series": {
+    "KXSPOTSTREAMGLOBAL": {
+      "markets": 19,
+      "outcomes": 399,
+      "avg_price_sum": 7.87
+    },
+    "KXSPOTIFYGLOBALD": {
+      "markets": 27,
+      "outcomes": 376,
+      "avg_price_sum": 6.2
+    },
+    "KXSPOTIFY2D": {
+      "markets": 23,
+      "outcomes": 343,
+      "avg_price_sum": 9.53
+    },
+    "KXBBCHARTPOSITIONSONG": {
+      "markets": 35,
+      "outcomes": 338,
+      "avg_price_sum": 6.46
+    },
+    "KXSPOTIFYARTISTD": {
+      "markets": 23,
+      "outcomes": 337,
+      "avg_price_sum": 7.57
+    },
+    "KXBBCHARTPOSITIONALBUM": {
+      "markets": 30,
+      "outcomes": 268,
+      "avg_price_sum": 6.02
+    },
+    "KXSPOTIFYD": {
+      "markets": 13,
+      "outcomes": 190,
+      "avg_price_sum": 8.46
+    },
+    "KXSPOTSTREAMSUSA": {
+      "markets": 16,
+      "outcomes": 185,
+      "avg_price_sum": 7.16
+    },
+    "KXSPOTIFYALBUMW": {
+      "markets": 9,
+      "outcomes": 124,
+      "avg_price_sum": 6.18
+    },
+    "KXARTISTSTREAMS": {
+      "markets": 12,
+      "outcomes": 92,
+      "avg_price_sum": 4.66
+    },
+    "KXSPOTIFYARTISTW": {
+      "markets": 5,
+      "outcomes": 79,
+      "avg_price_sum": 4.63
+    },
+    "KXBILLBOARDRUNNERUPSONG": {
+      "markets": 3,
+      "outcomes": 78,
+      "avg_price_sum": 6.07
+    },
+    "KXBILLBOARDRUNNERUPALBUM": {
+      "markets": 4,
+      "outcomes": 75,
+      "avg_price_sum": 8.96
+    },
+    "KXMETGALAFITS": {
+      "markets": 2,
+      "outcomes": 56,
+      "avg_price_sum": 4.62
+    },
+    "KXCANNESBESTACTOR": {
+      "markets": 1,
+      "outcomes": 55,
+      "avg_price_sum": 2.75
+    },
+    "KXCANNESBESTACTRESS": {
+      "markets": 1,
+      "outcomes": 46,
+      "avg_price_sum": 2.76
+    },
+    "KXNETFLIXRANKMOVIERUNNERUP": {
+      "markets": 3,
+      "outcomes": 40,
+      "avg_price_sum": 2.38
+    },
+    "KXAMERICANIDOL": {
+      "markets": 1,
+      "outcomes": 30,
+      "avg_price_sum": 13.26
+    },
+    "KXNETFLIXRANKSHOWGLOBAL2": {
+      "markets": 2,
+      "outcomes": 28,
+      "avg_price_sum": 2.37
+    },
+    "KXDWTSCAST": {
+      "markets": 1,
+      "outcomes": 28,
+      "avg_price_sum": 5.95
+    },
+    "KXBOND": {
+      "markets": 1,
+      "outcomes": 25,
+      "avg_price_sum": 2.21
+    },
+    "KXNETFLIXRANKMOVIEGLOBAL2": {
+      "markets": 2,
+      "outcomes": 21,
+      "avg_price_sum": 2.71
+    },
+    "KXTOPALBUM": {
+      "markets": 1,
+      "outcomes": 18,
+      "avg_price_sum": 17.26
+    },
+    "KXROLEATEVENTLOLLA": {
+      "markets": 1,
+      "outcomes": 16,
+      "avg_price_sum": 2.8
+    },
+    "KXNETFLIXTOPVIEWSTV": {
+      "markets": 2,
+      "outcomes": 15,
+      "avg_price_sum": 4.29
+    },
+    "KXPUREALBUMS": {
+      "markets": 1,
+      "outcomes": 15,
+      "avg_price_sum": 6.96
+    },
+    "KXSURVIVORELIMINATION": {
+      "markets": 1,
+      "outcomes": 14,
+      "avg_price_sum": 2.08
+    },
+    "KXNETFLIXRANKSHOW": {
+      "markets": 1,
+      "outcomes": 14,
+      "avg_price_sum": 2.27
+    },
+    "KXLIUKELIMINATIONW": {
+      "markets": 1,
+      "outcomes": 14,
+      "avg_price_sum": 4.1
+    },
+    "KXTOPSONG": {
+      "markets": 1,
+      "outcomes": 14,
+      "avg_price_sum": 3.72
+    },
+    "KXLIUKELIMINATION": {
+      "markets": 1,
+      "outcomes": 14,
+      "avg_price_sum": 3.17
+    },
+    "KXNETFLIXRANKSHOWRUNNERUP": {
+      "markets": 1,
+      "outcomes": 13,
+      "avg_price_sum": 3.0
+    },
+    "KXART": {
+      "markets": 2,
+      "outcomes": 13,
+      "avg_price_sum": 3.75
+    },
+    "KXNETFLIXRANKSHOWGLOBAL": {
+      "markets": 1,
+      "outcomes": 12,
+      "avg_price_sum": 3.22
+    },
+    "KXROASTSUBJECT": {
+      "markets": 1,
+      "outcomes": 11,
+      "avg_price_sum": 5.45
+    },
+    "KXBET": {
+      "markets": 1,
+      "outcomes": 10,
+      "avg_price_sum": 2.09
+    },
+    "KXLIUSAELIMINATIONW": {
+      "markets": 1,
+      "outcomes": 9,
+      "avg_price_sum": 3.15
+    },
+    "KXEMMYNOMS": {
+      "markets": 1,
+      "outcomes": 9,
+      "avg_price_sum": 4.45
+    },
+    "KXMEDIARELEASEADDTRAILER": {
+      "markets": 1,
+      "outcomes": 7,
+      "avg_price_sum": 3.38
+    },
+    "KXANIMEBCD": {
+      "markets": 1,
+      "outcomes": 7,
+      "avg_price_sum": 3.47
+    },
+    "KXRBLX": {
+      "markets": 1,
+      "outcomes": 7,
+      "avg_price_sum": 2.08
+    },
+    "KXTRAVISKELCEWEDDING": {
+      "markets": 1,
+      "outcomes": 6,
+      "avg_price_sum": 3.65
+    },
+    "KXARTISTCOLLABTHUGANDGUNNA": {
+      "markets": 1,
+      "outcomes": 5,
+      "avg_price_sum": 2.05
+    },
+    "KXRT": {
+      "markets": 1,
+      "outcomes": 4,
+      "avg_price_sum": 2.41
+    }
+  }
+}
