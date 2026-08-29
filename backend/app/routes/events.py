@@ -2609,6 +2609,65 @@ async def _log_search_query(
         logger.warning("search-log write failed: %s", exc)
 
 
+#: LAT-P118/#1916 step 1 — the ORIGIN CHANNEL. An HTTP header by which a caller
+#: that is not a person says so, and the ONE thing it does is stop that request
+#: voting in the two tables that elect what search keeps warm.
+#:
+#: 🔴 WHY A HEADER AND NOT THE ContextVar TWENTY LINES BELOW. `_suppress_search_log`
+#: is read only inside this process, so it reaches exactly one caller: the warmer,
+#: which invokes the route function directly. Every OTHER writer of automated
+#: search traffic arrives over HTTP — the Flow Sentinel's nightly gold set from a
+#: Celery worker via `httpx`, and this program's own cold-path harnesses from a
+#: laptop — and a ContextVar in the API process cannot be set from any of them.
+#: LAT-P117 measured the consequence: of 4,257 rows in the 30-day window, 13 are
+#: attested and 4,244 are not. The suppression that exists covers the one polluter
+#: that was never the big one.
+#:
+#: 🔴 WHY NOT `?debug_timing=1`, WHICH ALREADY SUPPRESSES THE TRENDING VOTE ON
+#: `/typeahead` AND IS THE OBVIOUS REACH. On THIS route `debug_timing` bypasses the
+#: response cache in BOTH directions — `_search_cache_readable` excludes it on the
+#: read, and the write excludes it again — for reasons that are correct and are not
+#: about logging (a cached body carries no timing block, so serving one would answer
+#: a timing request with silence). A harness passing it to stop voting would
+#: therefore also pin `search_cold`, the largest member of the latency needle's
+#: pool, to a FORCED COLD BUILD for ever: the number could never show a warmer
+#: reaching that surface, because the instrument would have opted out of the cache
+#: it is measuring. **Suppressing a write and bypassing a cache are two different
+#: asks and they must not share one flag.** This one touches no cache, on either
+#: side, and `test_the_origin_header_is_not_a_cache_bypass` is the pin.
+#:
+#: THE VALUE RULE, and it is deliberately asymmetric. `user` and ABSENT both log.
+#: Any other non-empty value suppresses. The header is private, non-standard and
+#: set by nobody's browser, so the only way it arrives at all is a caller asserting
+#: "I am not a person" — and an unrecognised value there is overwhelmingly a typo in
+#: a new harness, where the safe reading is the one the harness intended. `user` is
+#: honoured explicitly so an internal caller CAN assert humanity positively; that
+#: assertion is not yet recorded anywhere, because recording it needs the `origin`
+#: column #1916 asks for and this ship carries no DDL. Parked P118-1.
+_ORIGIN_HEADER = "x-bainluck-origin"
+_ORIGIN_USER = "user"
+
+
+def _request_is_automation(request: Optional[Request]) -> bool:
+    """True when this request declared itself machine traffic via `_ORIGIN_HEADER`.
+
+    Best-effort and FAILS TOWARD LOGGING: `None` (an in-process call that has no
+    HTTP request at all) and any object that cannot produce headers both read as
+    a person. That is the pre-LAT-P118 behaviour, and it is the right direction —
+    a bug here that over-suppresses drains the warm head silently, while a bug
+    that under-suppresses leaves a row we can see and count.
+    """
+    if request is None:
+        return False
+    try:
+        raw = request.headers.get(_ORIGIN_HEADER)
+    except Exception:  # noqa: BLE001 — a header read never breaks search
+        return False
+    if not raw:
+        return False
+    return raw.strip().lower() != _ORIGIN_USER
+
+
 # LAT-P090/#2211: suppress the search-query log for the head warmer's OWN calls.
 #
 # #1866 IN ITS ORIGINAL FORM, refused on this surface before it can start. The
@@ -2655,7 +2714,7 @@ def _record_search_query(payload: dict, *, q: str, request: Request, current_use
 
     Best-effort throughout. Instrumentation never breaks search.
     """
-    if _suppress_search_log.get():
+    if _suppress_search_log.get() or _request_is_automation(request):
         return
     try:
         results = payload.get("results") or []
@@ -4437,6 +4496,21 @@ async def typeahead_search(
     ),
     debug_timing: bool = Query(False, description="Return per-stage timings in ms"),
     db: AsyncSession = Depends(get_db),
+    # LAT-P118: injected by FastAPI from the annotation, with a default of None
+    # ONLY so the three in-process callers (`typeahead_warmer` and two suites)
+    # keep working unchanged. `None` reads as a person — see
+    # `_request_is_automation` — which is the pre-LAT-P118 behaviour, and the
+    # warmer is covered by its ContextVar regardless.
+    #
+    # 🔴 THE ANNOTATION MUST BE BARE `Request`, NOT `Optional[Request]`. FastAPI
+    # special-cases the Request type by `lenient_issubclass`, which a `Union`
+    # fails, so `Optional[Request]` is routed to the pydantic field builder
+    # instead and the app dies at IMPORT time with "Invalid args for response
+    # field". Written down because the safer-looking annotation is the broken
+    # one. `test_fastapi_really_injects_the_request_despite_the_default` pins the
+    # injection itself: the whole channel is silently dead without it, and a dead
+    # suppression looks exactly like a clean table.
+    request: Request = None,
 ):
     """
     Lightweight typeahead search for the search bar.
@@ -4505,7 +4579,15 @@ async def typeahead_search(
     # here would clobber the warmer's own suppression and re-open #1866 proper.
     # `test_the_warmer_suppression_is_never_clobbered_by_a_non_debug_call` pins
     # exactly that, and it is the load-bearing half of this fix.
-    if debug_evidence or debug_timing:
+    #
+    # LAT-P118: `_request_is_automation` joins the condition so the ORIGIN CHANNEL
+    # is ONE rule with TWO consumers rather than a rule that happens to be honoured
+    # on `/search`. Gotcha #128 is exactly this shape and it has already cost this
+    # surface once: `search_head_warmer` filtered its head for attested traffic
+    # while `typeahead_warmer` read the same table whole, and the repaired copy hid
+    # the broken one for weeks. A caller declaring itself machine traffic must stop
+    # voting in BOTH sinks or it has not stopped voting.
+    if debug_evidence or debug_timing or _request_is_automation(request):
         _suppress_trending_write.set(True)
 
     _cache_key = f"bainluck:typeahead:{q.lower().strip()}"

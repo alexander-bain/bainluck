@@ -123,8 +123,12 @@ def map_response(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def fetch_search(query: str, *, api: str, timeout: float) -> dict[str, Any]:
     url = f"{api.rstrip('/')}/api/events/search?q={urllib.parse.quote(query)}"
+    # LAT-P118: an eval pass is not a person. Without this header every probe
+    # writes a `search_query_logs` row and votes in the 40-slot warm head the
+    # `typeahead_warmer` elects — measured putting a probe term in slot 40 of 40.
+    request = urllib.request.Request(url, headers={"X-Bainluck-Origin": "harness"})
     started = time.monotonic()
-    with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - fixed host
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed host
         payload = json.load(response)
     if not isinstance(payload, dict):
         raise ValueError(f"SEARCH_SOURCE_INVALID: non-object response for {query!r}")

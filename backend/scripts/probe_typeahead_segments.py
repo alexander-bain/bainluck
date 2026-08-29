@@ -123,9 +123,16 @@ def _segments(fields: list[str]) -> dict[str, Any]:
 
 
 def _one(url: str, timeout_s: int = 30) -> dict[str, Any] | None:
-    """One request, one connection. Returns None on transport failure."""
+    """One request, one connection. Returns None on transport failure.
+
+    LAT-P118: declares machine traffic, so this probe stops voting in
+    `search:trending:24h` — the zset that supplies half the warmer's 40-slot
+    head. It changes no timing: the header is read only by the trending
+    recorder, never by the cache on either side.
+    """
     proc = subprocess.run(
-        ["curl", "-s", "-o", "/dev/null", "-w", _CURL_FMT, "--max-time",
+        ["curl", "-s", "-o", "/dev/null", "-w", _CURL_FMT,
+         "-H", "X-Bainluck-Origin: harness", "--max-time",
          str(timeout_s), url],
         capture_output=True,
         text=True,
@@ -148,6 +155,7 @@ def _pair_on_one_connection(url: str, timeout_s: int = 30) -> list[dict[str, Any
     proc = subprocess.run(
         ["curl", "-s", "-o", "/dev/null", "-w", _CURL_FMT + "\n",
          "-o", "/dev/null", "-w", _CURL_FMT + "\n",
+         "-H", "X-Bainluck-Origin: harness",  # LAT-P118, as in `_one`
          "--max-time", str(timeout_s), url, url],
         capture_output=True,
         text=True,
@@ -179,6 +187,7 @@ def run_round(
 ) -> list[dict[str, Any]]:
     rows = []
     for q in arm:
+        # LAT-P118: `X-Bainluck-Origin` is set inside `_one`; the URL is unchanged.
         url = f"{base}/api/events/typeahead?q={q.replace(' ', '%20')}"
         miss = _one(url)
         time.sleep(gap_s)
@@ -301,6 +310,7 @@ def main() -> int:
     if args.reuse_arm:
         control = []
         for q in args.arm[:3]:
+            # LAT-P118: the header is set inside `_pair_on_one_connection`.
             url = f"{base}/api/events/typeahead?q={q.replace(' ', '%20')}"
             legs = _pair_on_one_connection(url)
             control.append({"query": q, "legs": legs})

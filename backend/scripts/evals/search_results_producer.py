@@ -140,7 +140,9 @@ def fetch_typeahead(
     url = f"{api.rstrip('/')}/api/events/typeahead?q={urllib.parse.quote(query)}"
     if debug_evidence:
         url += "&debug_evidence=1"
-    with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - fixed host
+    # LAT-P118: an eval pass is not a person — stop voting in `search:trending:24h`.
+    request = urllib.request.Request(url, headers={"X-Bainluck-Origin": "harness"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed host
         payload = json.load(response)
     suggestions = payload.get("suggestions")
     if not isinstance(suggestions, list):
