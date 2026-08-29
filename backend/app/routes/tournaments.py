@@ -167,8 +167,29 @@ async def _espn_results(slug: str) -> dict[str, Any]:
     return {"draws": {}, "stats": {}, "errors": []}
 
 
+def _hours_since(stamp: datetime | None, at: datetime) -> float | None:
+    """How long ago, in hours, or ``None`` if there is nothing to measure from.
+
+    Naive stamps are read as UTC — every writer of ``volume_updated_at`` uses
+    ``func.now()`` on a UTC database, and a naive value here means the driver
+    dropped the tzinfo, not that somebody meant local time.  Getting that wrong
+    would silently shift an age by the server's offset and either invent or
+    suppress a mark.
+
+    A stamp in the FUTURE returns a negative number and is deliberately not
+    clamped: ``grade_liquidity`` refuses it, because two clocks disagreeing is
+    not an observation, and the honest response to "we cannot tell when this
+    was measured" is the same as to "we never measured it".
+    """
+    if stamp is None:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return (at - stamp).total_seconds() / 3600.0
+
+
 async def _load_prices(
-    session: AsyncSession, outcome_ids: list[int]
+    session: AsyncSession, outcome_ids: list[int], *, now: datetime | None = None
 ) -> dict[int, dict[str, Any]]:
     """Current price + the time it was last actually OBSERVED, per outcome.
 
@@ -186,6 +207,12 @@ async def _load_prices(
     if not outcome_ids:
         return {}
 
+    # Passed by both callers, which already hold one. Defaulted rather than
+    # required so a third caller cannot accidentally grade against no clock at
+    # all — and read ONCE here, not per row, so every cell in one response is
+    # aged against the same instant.
+    at = now or datetime.now(timezone.utc)
+
     rows = (
         await session.execute(
             select(
@@ -198,27 +225,31 @@ async def _load_prices(
                 FuturesOutcome.opening_probability,
                 # ── THE BOOK (UX-P157, #2256).
                 #
-                # ⚠️ THIS READ HAS A NAMED DEPENDENCY: **PR #2259 (Q428)**, which
-                # is CERT-431 GREEN and unmerged as of 2026-08-28. Q428 teaches
-                # `tournament_price_refresh` to write bid/ask alongside the price
-                # it produced; until it lands, that rail re-prices this surface
-                # every ten minutes and leaves these two columns frozen at the
-                # last full poll.
+                # This read had a named dependency on **PR #2259 (Q428)**, which
+                # merged 2026-08-29 02:49Z and deployed. UX-P158 re-measured the
+                # thing UX-P157 was owed to re-measure, and the premise HOLDS
+                # where the rail runs:
                 #
-                # MEASURED HERE, not inferred: of the 336 US Open ladder markets,
-                # **320 of the 325 comparable** hold a stored book that differs
-                # from Gamma's live one right now (specimen `0x01837d5aba`:
-                # stored 0.23/0.24, live 0.01/0.49). So pre-merge, the grade is
-                # computed from a book that is a DIFFERENT observation from the
-                # number beside it — Q428's "two observations wearing one
-                # timestamp", in the field that reads them.
+                #   before  320 of 325 comparable ladder markets held a stored
+                #           book differing from Gamma's live one
+                #   after   138 of 325 — and the split is the whole story. Of
+                #           the 221 rows the 10-minute rail had refreshed within
+                #           the hour, 187 of 219 comparable are book-IDENTICAL
+                #           to live and the rest are quotes that moved between
+                #           the two reads. Of the 115 rows the rail does NOT
+                #           write, 0 of 106 match: their book is frozen at the
+                #           2026-08-25 full poll, 83 hours old.
                 #
-                # Shipped anyway, and the reason is the same one that lets this
-                # signal use a test Q428 refused: the failure mode is a mark that
-                # is early or late on a tail cell, with the number still printed
-                # beside it. It cannot delete a cell and it cannot change a
-                # number. The post-merge distribution was measured too and is in
-                # the UX-P157 report.
+                # THE 115 ARE NOT A REGISTER GAP — all 336 are pinned, and the
+                # rail's own summary says why (2026-08-29 05:35Z, read from
+                # task-metrics, not inferred): `conditions_requested: 366,
+                # markets_returned: 328, unpriced: 107`. 336 - 328 = 8 Gamma no
+                # longer serves, and 107 are Q428's DECLINE — a book it will not
+                # publish a price from. 8 + 107 = 115, exactly. So the rows with
+                # the stalest books are the ones Q428 judged untradeable, which
+                # is the same population this mark exists to describe. That is
+                # why UX-P158 writes the volume observation for every market
+                # Gamma RETURNS rather than every market it prices.
                 FuturesOutcome.current_yes_bid,
                 FuturesOutcome.current_yes_ask,
                 # The venue's own 24h figure, market-level: Kalshi and
@@ -226,6 +257,16 @@ async def _load_prices(
                 # both legs of a binary share it. Joined rather than a second
                 # round trip — one extra column on an existing index lookup.
                 FuturesMarket.volume_24h,
+                # ── AND WHEN WE ASKED FOR IT (UX-P158).
+                #
+                # Without this column a NULL `volume_24h` is unreadable, and the
+                # mark's whole second grade turns on reading it: Gamma omits a
+                # zero rather than serving one (328/328 against the trade tape),
+                # so "asked, and no figure came back" is a measured zero while
+                # "never asked" is nothing at all. Same shape as `observed_at`
+                # below — a number and the time it was taken travel together or
+                # they are not a measurement.
+                FuturesMarket.volume_updated_at,
             )
             # OUTER, and it matters: an INNER join would drop the whole price
             # row if a market were ever missing, and a dropped price does not
@@ -273,6 +314,7 @@ async def _load_prices(
                 bid=row.current_yes_bid,
                 ask=row.current_yes_ask,
                 volume_24h=row.volume_24h,
+                volume_observed_age_hours=_hours_since(row.volume_updated_at, at),
             ),
         }
         for row in rows
@@ -573,7 +615,7 @@ async def get_event_tournament(
         }
     )
     now = datetime.now(timezone.utc)
-    prices = await _load_prices(db, outcome_ids)
+    prices = await _load_prices(db, outcome_ids, now=now)
 
     decided = build_results(
         register, results=await _espn_results(slug), prices=prices
@@ -699,6 +741,7 @@ async def _hub_payload(
             | set(prop_outcome_ids)
             | set(reach_outcome_ids)
         ),
+        now=now,
     )
     # Trend lines are a board feature. Loading series for the slate's ~130
     # outcomes would triple the per-request scan to draw nothing.

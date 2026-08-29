@@ -47,6 +47,13 @@ from app.utils.tournament_slate import build_props
 
 NOW = datetime(2026, 8, 28, 22, 0, tzinfo=timezone.utc)
 
+#: "We asked the venue half an hour ago." UX-P158 made the volume fact take the
+#: age of its own observation, so every specimen below that means to CHECK that
+#: fact has to say when it was checked. A literal rather than a fixture: these
+#: are unit specimens and an age is one of their coordinates now, exactly like
+#: a bid.
+FRESH_HOURS = 0.5
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # THE RULE
@@ -64,13 +71,17 @@ class TestGradeLiquidity:
         begins. The report says out loud that three of the sixteen come out
         this way; that is the rule being honest, not the rule missing.
         """
-        assert grade_liquidity(bid=0.69, ask=0.71, volume_24h=7) == {
+        assert grade_liquidity(
+            bid=0.69, ask=0.71, volume_24h=7, volume_observed_age_hours=FRESH_HOURS
+        ) == {
             "level": LIQUIDITY_TRADED,
             "reasons": [],
         }
 
     def test_no_trades_in_a_day_is_one_level(self):
-        assert grade_liquidity(bid=0.69, ask=0.71, volume_24h=0) == {
+        assert grade_liquidity(
+            bid=0.69, ask=0.71, volume_24h=0, volume_observed_age_hours=FRESH_HOURS
+        ) == {
             "level": LIQUIDITY_THIN,
             "reasons": [REASON_NO_TRADES_24H],
         }
@@ -79,14 +90,18 @@ class TestGradeLiquidity:
         """#2257's shape: quoted 0.00/0.08 — eight cents, and TIGHT by
         `FEED_PHANTOM_MIN_SPREAD` (0.20 absolute) — while the uncertainty band
         is twice the 4% it is printing."""
-        assert grade_liquidity(bid=0.0, ask=0.08, volume_24h=195) == {
+        assert grade_liquidity(
+            bid=0.0, ask=0.08, volume_24h=195, volume_observed_age_hours=FRESH_HOURS
+        ) == {
             "level": LIQUIDITY_THIN,
             "reasons": [REASON_SPREAD_EXCEEDS_PRICE],
         }
 
     def test_both_wrong_is_the_second_level(self):
         """Venus Williams' QF cell, the specimen Alex's ruling is about."""
-        graded = grade_liquidity(bid=0.0, ask=0.08, volume_24h=0)
+        graded = grade_liquidity(
+            bid=0.0, ask=0.08, volume_24h=0, volume_observed_age_hours=FRESH_HOURS
+        )
         assert graded["level"] == LIQUIDITY_BARELY
         assert set(graded["reasons"]) == {
             REASON_NO_TRADES_24H,
@@ -98,9 +113,9 @@ class TestGradeLiquidity:
         R16 above a 79% QF. Q428 stopped the number being published from it;
         this asserts that if such a book ever reaches a reader again it arrives
         wearing the strongest mark we have."""
-        assert grade_liquidity(bid=0.07, ask=0.98, volume_24h=0)["level"] == (
-            LIQUIDITY_BARELY
-        )
+        assert grade_liquidity(
+            bid=0.07, ask=0.98, volume_24h=0, volume_observed_age_hours=FRESH_HOURS
+        )["level"] == (LIQUIDITY_BARELY)
 
     def test_nothing_to_check_is_unknown_and_never_traded(self):
         """GOTCHA #53. An outcome with no book and no volume figure is a
@@ -123,7 +138,7 @@ class TestGradeLiquidity:
         """One known-bad fact with the other uncheckable is `thin` — the honest
         floor. Not `barely` (we have not found two problems) and not `unknown`
         (we have found one)."""
-        assert grade_liquidity(volume_24h=0) == {
+        assert grade_liquidity(volume_24h=0, volume_observed_age_hours=FRESH_HOURS) == {
             "level": LIQUIDITY_THIN,
             "reasons": [REASON_NO_TRADES_24H],
         }
@@ -138,14 +153,18 @@ class TestGradeLiquidity:
         `>=`."""
         assert (
             REASON_SPREAD_EXCEEDS_PRICE
-            in grade_liquidity(bid=0.0, ask=0.0, volume_24h=5)["reasons"]
+            in grade_liquidity(
+                bid=0.0, ask=0.0, volume_24h=5, volume_observed_age_hours=FRESH_HOURS
+            )["reasons"]
         )
 
     def test_a_crossed_book_is_not_graded_as_tight(self):
         """`ask < bid` is a garbled reading, not a tight market. It must not
         come back `traded` — that would be the parse error reading as a clean
         bill of health."""
-        graded = grade_liquidity(bid=0.90, ask=0.10, volume_24h=0)
+        graded = grade_liquidity(
+            bid=0.90, ask=0.10, volume_24h=0, volume_observed_age_hours=FRESH_HOURS
+        )
         assert graded["level"] == LIQUIDITY_THIN
         assert graded["reasons"] == [REASON_NO_TRADES_24H]
 
@@ -168,7 +187,9 @@ class TestGradeLiquidity:
         here. If a tolerance is ever genuinely wanted it needs its own ruling
         and its own measurement, not a quiet epsilon.
         """
-        graded = grade_liquidity(bid=bid, ask=ask, volume_24h=100)
+        graded = grade_liquidity(
+            bid=bid, ask=ask, volume_24h=100, volume_observed_age_hours=FRESH_HOURS
+        )
         assert (REASON_SPREAD_EXCEEDS_PRICE in graded["reasons"]) is marked
 
 
@@ -199,13 +220,26 @@ class TestThinnestLiquidity:
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def _price(probability, *, bid=None, ask=None, volume=None, hours_ago=1.0):
+def _price(
+    probability,
+    *,
+    bid=None,
+    ask=None,
+    volume=None,
+    hours_ago=1.0,
+    volume_age_hours=FRESH_HOURS,
+):
     return {
         "probability": probability,
         "opening_probability": probability,
         "observed_at": NOW - timedelta(hours=hours_ago),
         "source_name": "yes",
-        "liquidity": grade_liquidity(bid=bid, ask=ask, volume_24h=volume),
+        "liquidity": grade_liquidity(
+            bid=bid,
+            ask=ask,
+            volume_24h=volume,
+            volume_observed_age_hours=volume_age_hours,
+        ),
     }
 
 
