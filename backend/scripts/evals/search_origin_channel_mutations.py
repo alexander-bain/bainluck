@@ -37,6 +37,17 @@ LAT-P118's own file would notice, and the assertion that does notice already
 exists in that older suite. A guard that only checks the newest half of a
 condition is how the older half gets deleted.
 
+⚠️ WHICH ORACLE KILLS WHICH MUTANT IS NOT UNIFORM, AND THE ASYMMETRY IS REAL.
+`_apply` swaps a module ATTRIBUTE. `search_events` looks `_record_search_query`
+and `_request_is_automation` up in module globals at call time, so M1/M2/…/M9
+reach the HTTP path and the integration oracle kills them on its own — measured:
+M1, M7 and M9 each fail the integration file standing alone. M10 does NOT.
+FastAPI bound `typeahead_search` into its route object at import, so replacing
+the module attribute leaves the registered route untouched, and M10 is killed by
+the unit oracle only. That is a property of how routes are bound, not a weakness
+in the integration file, and it is written here so the next reader does not
+"discover" it as one and delete the wrong test.
+
 NOTHING IS WRITTEN TO DISK. The mutated function is compiled UNDER THE REAL
 FILENAME and exec'd into the module's own namespace, so `inspect.getsource`
 still reads the unmutated file — which means the structural tests correctly
@@ -63,9 +74,21 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 BACKEND = HERE.parents[1]
 
-#: Both halves. The second is not decoration — see the module docstring.
+#: Three oracles, and none of them is decoration.
+#:
+#: * the unit suite — the guard's logic, callable with a hand-built Request.
+#: * the INTEGRATION suite — the same channel over a real ASGI stack. A mutant
+#:   that breaks header injection rather than header handling can only be seen
+#:   from here, and "the header is never injected" and "the header is honoured"
+#:   produce identical unit results.
+#: * `test_search_response_cache.py` — M8 removes the `_suppress_search_log` arm
+#:   of the condition this ship edits, which re-opens #1866. Nothing in
+#:   LAT-P118's own files would notice; the assertion that does notice already
+#:   exists in that older suite. A guard that only checks the newest half of a
+#:   condition is how the older half gets deleted.
 ORACLES = [
     "tests/test_search_origin_channel_p118.py",
+    "tests/integration/test_route_search_origin_channel_p118.py",
     "tests/test_search_response_cache.py",
 ]
 
