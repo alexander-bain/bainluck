@@ -14,7 +14,8 @@
 // Presentational only: no fetching, no auth, no state. Everything it needs
 // arrives as props, which is what makes it renderable in a test.
 
-import { renderedPercent } from "@/lib/renderedPercent";
+import { cardSumReason, renderedPercent } from "@/lib/renderedPercent";
+import { cardSumExplanation } from "@/lib/cardSum";
 
 export interface LabelingCardOutcome {
   name: string | null;
@@ -44,6 +45,15 @@ export interface LabelingCardData {
   resolution_date?: string | null;
   /** #2060 item 3 — `name` is the repaired text; this is what Kalshi shipped. */
   name_at_source?: string | null;
+  /**
+   * #2088. Why this card's numbers do not total 100 — `independent_prices`,
+   * `unpriced_outcome`, or null meaning "checked, and they do".
+   *
+   * Optional ONLY for a payload from a pre-#2088 backend. The absence of the key
+   * and a served null are different facts and the card treats them differently:
+   * absent means "derive it locally", null means "the server checked".
+   */
+  card_sum_reason?: string | null;
 }
 
 // ── #2060: this page had a FOURTH copy of the rounding rule ──────────────────
@@ -85,6 +95,15 @@ export function whenLabel(iso: string | null | undefined): string | null {
 export default function LabelingCard({ card }: { card: LabelingCardData }) {
   const starts = whenLabel(card.commence_time);
   const resolves = whenLabel(card.resolution_date);
+  // #2088. The served reason wins, INCLUDING when it is null ("checked, and they
+  // do total 100"). Keying the fallback on the value being falsy — `?? derive()`
+  // — would re-derive on every correct card and make the server's answer
+  // decorative, so it keys on the KEY being absent.
+  const sumExplanation = cardSumExplanation(
+    "card_sum_reason" in card
+      ? card.card_sum_reason
+      : cardSumReason((card.top_outcomes ?? []).map((o) => o.probability))
+  );
 
   return (
     <div className="bg-surface-card rounded-2xl border border-surface-border overflow-hidden shadow-sm">
@@ -145,6 +164,18 @@ export default function LabelingCard({ card }: { card: LabelingCardData }) {
                 </span>
               </div>
             ))}
+            {/* #2088 — a card reading `57 / 40` looks broken in precisely the way
+                `93 / 8` looked broken, and the reader cannot tell the two apart.
+                The reason is SERVED; deriving it here is the fallback for a
+                payload from a pre-#2088 backend, exactly as `pctOf` is above. */}
+            {sumExplanation && (
+              <p
+                className="text-xs text-text-muted leading-relaxed pt-0.5"
+                data-testid="card-sum-explanation"
+              >
+                {sumExplanation}
+              </p>
+            )}
           </div>
         )}
         <div className="flex gap-1.5 flex-wrap pt-1">

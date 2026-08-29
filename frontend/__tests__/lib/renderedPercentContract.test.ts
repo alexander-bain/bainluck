@@ -25,6 +25,10 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
 import {
+  SUM_INDEPENDENT_PRICES,
+  SUM_UNPRICED_OUTCOME,
+  cardSum,
+  cardSumReason,
   isComplementPair,
   renderedCardPercents,
   renderedDuelPercents,
@@ -55,10 +59,19 @@ interface DuelCase {
   positional: (number | null)[];
   discriminates?: boolean;
 }
+interface CardSumCase {
+  probabilities: (number | null)[];
+  percents: (number | null)[];
+  complement_pair: boolean;
+  sum: number | null;
+  reason: string | null;
+}
 interface Contract {
   version: number;
   rule: string;
   card_rule: string;
+  card_sum_rule: string;
+  card_sum_cases: CardSumCase[];
   implementations: {
     runtime: string;
     path: string;
@@ -182,6 +195,61 @@ describe("web renders the CARD the way the contract says", () => {
     expect(renderedCardPercents(null)).toEqual([]);
     expect(isComplementPair([0.6, undefined])).toBe(false);
     expect(isComplementPair([NaN, 0.4])).toBe(false);
+  });
+});
+
+// ── WHY THE TWO NUMBERS DO NOT ADD UP (#2088) ────────────────────────────────
+
+describe("web explains a non-100 card the way the contract says", () => {
+  it.each(
+    CONTRACT.card_sum_cases.map((c) => [JSON.stringify(c.probabilities), c] as const)
+  )("%s", (_label, c) => {
+    expect(cardSum(c.probabilities)).toBe(c.sum);
+    expect(cardSumReason(c.probabilities)).toBe(c.reason);
+  });
+
+  it("carries both directions — firing rows AND rows that provably cannot", () => {
+    // A reason that only ever fires is wallpaper; one that can never fire is dead
+    // code. Same shape as the card rule's gotcha #43 guard above.
+    const reasoned = CONTRACT.card_sum_cases.filter((c) => c.reason !== null);
+    const silent = CONTRACT.card_sum_cases.filter((c) => c.reason === null);
+    expect(reasoned.length).toBeGreaterThanOrEqual(4);
+    expect(silent.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("never apologises for a complement pair — #2060 already made those 100", () => {
+    const pairs = CONTRACT.card_sum_cases.filter((c) => c.complement_pair);
+    expect(pairs.length).toBeGreaterThanOrEqual(3);
+    for (const c of pairs) {
+      expect([c.probabilities, cardSumReason(c.probabilities)]).toEqual([
+        c.probabilities,
+        null,
+      ]);
+    }
+  });
+
+  it("the two reasons name different facts", () => {
+    // Folding them would tell the reader "these two prices disagree" about a card
+    // that only has one price (ruling 086).
+    expect(cardSumReason([0.57, null])).toBe(SUM_UNPRICED_OUTCOME);
+    expect(cardSumReason([0.57, 0.4])).toBe(SUM_INDEPENDENT_PRICES);
+  });
+
+  it("is a function of the PICTURE, not of the floats behind it", () => {
+    // This is what keeps it out of `card_fingerprint` safely: two different
+    // probability inputs that render the same card must explain it the same way.
+    expect(renderedCardPercents([0.57, 0.4])).toEqual(
+      renderedCardPercents([0.5749, 0.4022])
+    );
+    expect(cardSumReason([0.57, 0.4])).toBe(cardSumReason([0.5749, 0.4022]));
+  });
+
+  it("says nothing about arity other than two — null is not a clean bill", () => {
+    expect(cardSum([0.5, 0.3, 0.17])).toBe(97);
+    expect(cardSumReason([0.5, 0.3, 0.17])).toBeNull();
+    expect(cardSumReason([0.6])).toBeNull();
+    expect(cardSumReason([])).toBeNull();
+    expect(cardSumReason(undefined)).toBeNull();
   });
 });
 

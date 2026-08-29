@@ -52,6 +52,8 @@ from app.utils.graded_card import (
     LABEL_PASS_SERVED_OUTCOMES,
     OMITTED,
     card_fingerprint,
+    card_sum,
+    card_sum_reason,
     compare_snapshot,
     drift_outcome,
     rendered_card_percents,
@@ -417,14 +419,11 @@ def _live_features(proposal, market, outcomes) -> dict:
         repairs = repair_truncated_names(
             getattr(market, "external_id", None), [o.name for o in served]
         )
-        percents = rendered_card_percents(
-            [
-                float(o.current_probability)
-                if o.current_probability is not None
-                else None
-                for o in served
-            ]
-        )
+        served_probabilities = [
+            float(o.current_probability) if o.current_probability is not None else None
+            for o in served
+        ]
+        percents = rendered_card_percents(served_probabilities)
         features["outcomes"] = [
             {
                 "name": repairs.get(o.name, o.name),
@@ -438,12 +437,30 @@ def _live_features(proposal, market, outcomes) -> dict:
             }
             for i, o in enumerate(served)
         ]
+        # #2088. The total this card actually prints, and — when it is not 100 — why.
+        # SERVED rather than re-derived per client, for the same reason
+        # `rendered_percent` is: the server already computes the picture, so serving
+        # it is what makes "every surface agrees" true by construction.
+        #
+        # `card_sum_reason` is a pure function of the percents above, which are
+        # already inside `card_fingerprint`'s digest, so this adds NO new way for the
+        # card to drift and is deliberately left out of the fingerprint payload.
+        features["rendered_sum"] = card_sum(served_probabilities)
+        features["card_sum_reason"] = card_sum_reason(served_probabilities)
     else:
         repairs = {}
         # Say why, rather than showing a number that cannot be true.
         features["probability"] = None
         features["outcomes"] = None
         features["field_withheld_reason"] = coherence["reason"]
+        # #2088. A withheld field draws no numbers, so there is no total and
+        # nothing to explain — but the KEYS are still present, because a client
+        # that branches on `"card_sum_reason" in features` must be able to tell a
+        # card the server checked from a payload minted before the server could.
+        # `field_withheld_reason` already says why the field is absent; a second
+        # explanation here would contradict it.
+        features["rendered_sum"] = None
+        features["card_sum_reason"] = None
 
     features["title"] = apply_name_repairs(_live_title(proposal, market), repairs)
     features["title_at_source"] = _live_title(proposal, market)
