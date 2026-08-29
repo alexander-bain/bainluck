@@ -2301,6 +2301,11 @@ class RollcallScore(Base):
     matched_1: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     dupes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     missing: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: A SUBSET of ``missing``: no event the roll call may claim, but a
+    #: same-name same-time row exists under a foreign provider id. Kept apart
+    #: because "never created" and "created and mis-stamped" want opposite
+    #: repairs, and one word for both sends the wrong one.
+    mis_stamped: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     #: Exactly one DB event AND every axiom source linked.
     clean: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 

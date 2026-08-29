@@ -9,12 +9,18 @@ tests pin both directions.
 from app.tasks.rollcall import _attach, _reconcile
 
 
-def _ev(eid, home, away, espn_id=None, **flags):
+#: The nominal first pitch every helper defaults to, so a test that does not
+#: care about time does not have to say so.
+T0 = "2026-08-26T22:40:00+00:00"
+
+
+def _ev(eid, home, away, espn_id=None, commence_time=T0, **flags):
     row = {
         "id": eid,
         "espn_id": espn_id,
         "home_team_name": home,
         "away_team_name": away,
+        "commence_time": commence_time,
         "has_kalshi": False,
         "has_polymarket": False,
         "has_espn": False,
@@ -24,9 +30,9 @@ def _ev(eid, home, away, espn_id=None, **flags):
     return row
 
 
-def _fx(label, home, away, espn_id=None):
+def _fx(label, home, away, espn_id=None, kickoff=T0):
     return {"label": label, "home": home, "away": away, "espn_id": espn_id,
-            "kickoff": "2026-08-26T22:40:00+00:00"}
+            "kickoff": kickoff}
 
 
 class TestAttach:
@@ -103,6 +109,120 @@ class TestAttach:
             [_ev(5, "Boston Red Sox", "New York Mets")],
         )
         assert rows[0].event_ids == []
+
+    def test_tomorrows_series_game_is_not_todays_duplicate(self):
+        """The defect the first production read found. A three-game series names
+        the identical matchup on three days, and the ±18h window holds two of
+        them — so a name-only matcher reported MLB as 17 fixtures / 17 duplicated
+        out of an ordinary Thursday. Tomorrow's game must fall to nobody."""
+        rows = _attach(
+            [_fx("LAD @ DET", "Detroit Tigers", "Los Angeles Dodgers",
+                 kickoff="2026-08-28T22:40:00+00:00")],
+            [
+                _ev(15290804, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T22:40:00+00:00"),
+                _ev(15290969, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-29T17:10:00+00:00"),
+            ],
+        )
+        assert rows[0].event_ids == [15290804]
+        assert rows[0].matched_one is True
+
+    def test_a_real_duplicate_on_the_same_day_is_still_caught(self):
+        """The other direction, and the reason the fix is a time bound rather
+        than a first-match-wins: two rows for the SAME start time are the
+        duplicate this sentinel exists to find, and both must be claimed."""
+        rows = _attach(
+            [_fx("BOS @ NYY", "New York Yankees", "Boston Red Sox",
+                 kickoff="2026-08-28T23:15:00+00:00")],
+            [
+                _ev(1, "New York Yankees", "Boston Red Sox",
+                    commence_time="2026-08-28T23:15:00+00:00"),
+                _ev(2, "New York Yankees", "Boston Red Sox",
+                    commence_time="2026-08-28T23:20:00+00:00"),
+            ],
+        )
+        assert rows[0].event_ids == [1, 2]
+        assert rows[0].matched_one is False
+
+    def test_a_doubleheader_splits_across_its_two_fixtures(self):
+        """Nearest-in-time, not first-match-wins: game 2 belongs to fixture 2."""
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:10:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T22:40:00+00:00"),
+            ],
+            [
+                _ev(2, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T22:40:00+00:00"),
+                _ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T17:10:00+00:00"),
+            ],
+        )
+        assert rows[0].event_ids == [1]
+        assert rows[1].event_ids == [2]
+
+    def test_a_rain_delayed_start_still_binds(self):
+        """Six hours of slack, so a provisional or delayed start is not a
+        fabricated `missing`."""
+        rows = _attach(
+            [_fx("BOS @ MIA", "Miami Marlins", "Boston Red Sox",
+                 kickoff="2026-08-28T22:40:00+00:00")],
+            [_ev(1, "Miami Marlins", "Boston Red Sox",
+                 commence_time="2026-08-29T01:55:00+00:00")],
+        )
+        assert rows[0].event_ids == [1]
+
+    def test_an_untimed_event_is_never_name_matched(self):
+        """Declining beats guessing — an event whose start we cannot parse
+        cannot be told apart from tomorrow's game in the same series."""
+        rows = _attach(
+            [_fx("BOS @ MIA", "Miami Marlins", "Boston Red Sox")],
+            [_ev(1, "Miami Marlins", "Boston Red Sox", commence_time=None)],
+        )
+        assert rows[0].event_ids == []
+
+    def test_a_wrong_provider_id_reads_as_mis_stamped_not_missing(self):
+        """The second defect the first production read found. BOS @ NYY
+        2026-08-29 17:05Z: event 14877917 is the right game at the right time
+        stamped `401815659` while the board says `401874913`. "Never created"
+        and "created with the wrong id" want opposite repairs, so they must not
+        share a word."""
+        rows = _attach(
+            [_fx("BOS @ NYY", "New York Yankees", "Boston Red Sox",
+                 espn_id="401874913", kickoff="2026-08-29T17:05:00+00:00")],
+            [_ev(14877917, "New York Yankees", "Boston Red Sox",
+                 espn_id="401815659", commence_time="2026-08-29T17:05:00+00:00")],
+        )
+        assert rows[0].event_ids == []
+        assert rows[0].mis_stamped is True
+        assert rows[0].id_conflicts == [
+            {"event_id": 14877917, "espn_id": "401815659"}
+        ]
+
+    def test_a_genuinely_absent_game_stays_missing(self):
+        """The other direction — no row of any stamp names this fixture."""
+        rows = _attach(
+            [_fx("TOR @ PHX", "Phoenix Mercury", "Toronto Tempo",
+                 espn_id="401999001")],
+            [_ev(1, "New York Liberty", "Chicago Sky", espn_id="401999002")],
+        )
+        assert rows[0].event_ids == []
+        assert rows[0].mis_stamped is False
+        assert rows[0].id_conflicts == []
+
+    def test_tomorrows_mis_stamped_sibling_is_not_a_conflict(self):
+        """The conflict search is bounded in time by the same rule the name pass
+        is, or every series would report a stamp defect it does not have."""
+        rows = _attach(
+            [_fx("LAD @ DET", "Detroit Tigers", "Los Angeles Dodgers",
+                 espn_id="401816706", kickoff="2026-08-28T22:40:00+00:00")],
+            [_ev(9, "Detroit Tigers", "Los Angeles Dodgers", espn_id="401816721",
+                 commence_time="2026-08-29T17:10:00+00:00")],
+        )
+        assert rows[0].mis_stamped is False
 
     def test_golf_fixtures_bind_on_the_event_name(self):
         """A golf fixture has no away side. ``fixture_matches`` requires both

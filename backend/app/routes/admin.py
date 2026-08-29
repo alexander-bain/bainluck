@@ -1420,8 +1420,8 @@ async def get_rollcall(
     rows = (await db.execute(
         text("""
             SELECT league, axiom, events_external, matched_1, dupes, missing,
-                   clean, per_source, verdict, offenders, justification,
-                   generated_at
+                   mis_stamped, clean, per_source, verdict, offenders,
+                   justification, generated_at
             FROM rollcall_scores
             WHERE score_date = :d
             ORDER BY axiom DESC, league

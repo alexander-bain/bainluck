@@ -105,7 +105,29 @@ class TestRedFirstGate:
         rows[3].sources = {}
         card = score_fixtures(rows, TEAM_AXIOM_SOURCES)
         assert card["missing"] == 1
+        assert card["mis_stamped"] == 0
         assert axiom_is_red(card, TEAM_AXIOM_SOURCES) is True
+
+    def test_a_mis_stamped_fixture_counts_inside_missing_and_is_named_apart(self):
+        """`mis_stamped` is a SUBSET of `missing`, not a sibling of it: the
+        fixture still has no event the roll call may claim, so the axiom is
+        still broken — but the repair is a re-stamp, not a create."""
+        rows = _slate_repaired()
+        rows[2].event_ids = []
+        rows[2].sources = {}
+        rows[2].id_conflicts = [{"event_id": 14877917, "espn_id": "401815659"}]
+        card = score_fixtures(rows, TEAM_AXIOM_SOURCES)
+        assert card["missing"] == 1
+        assert card["mis_stamped"] == 1
+        assert axiom_is_red(card, TEAM_AXIOM_SOURCES) is True
+
+        offenders = axiom_offenders(rows, TEAM_AXIOM_SOURCES)
+        assert offenders[0]["gaps"][0] == "mis_stamped"
+        body = build_rollcall_issue_body(
+            "mlb", "2026-08-29", card, offenders, "https://espn/…",
+            TEAM_AXIOM_SOURCES,
+        )
+        assert "is stamped `401815659`" in body
 
 
 class TestOffDaysAreSilent:

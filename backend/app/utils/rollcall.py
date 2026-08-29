@@ -205,10 +205,20 @@ class FixtureRow:
     event_ids: list[int] = field(default_factory=list)
     sources: dict[str, bool] = field(default_factory=dict)
     truth_ref: str | None = None
+    #: Events that name this fixture, at this fixture's time, but carry a
+    #: DIFFERENT provider id — so the id pass could not take them and the name
+    #: pass must not. Recorded because "we never created this game" and "we
+    #: created it and stamped it with the wrong id" are opposite defects with
+    #: opposite repairs, and a bare ``missing`` says the first about both.
+    id_conflicts: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def matched_one(self) -> bool:
         return len(self.event_ids) == 1
+
+    @property
+    def mis_stamped(self) -> bool:
+        return not self.event_ids and bool(self.id_conflicts)
 
     def missing_sources(self, axiom_sources: Sequence[str]) -> list[str]:
         if not self.matched_one:
@@ -228,11 +238,13 @@ def score_fixtures(
     """
     rows = list(fixtures)
     per_source = {s: 0 for s in ALL_SOURCES}
-    matched_1 = dupes = missing = clean = 0
+    matched_1 = dupes = missing = clean = mis_stamped = 0
     for row in rows:
         n = len(row.event_ids)
         if n == 0:
             missing += 1
+            if row.mis_stamped:
+                mis_stamped += 1
         elif n == 1:
             matched_1 += 1
         else:
@@ -248,6 +260,9 @@ def score_fixtures(
         "matched_1": matched_1,
         "dupes": dupes,
         "missing": missing,
+        #: A SUBSET of ``missing`` — the fixture has no event the roll call may
+        #: claim, but a same-name same-time row exists under a foreign id.
+        "mis_stamped": mis_stamped,
         "clean": clean,
         "per_source": per_source,
     }
@@ -261,7 +276,10 @@ def axiom_offenders(
     for row in fixtures:
         gaps: list[str] = []
         if len(row.event_ids) == 0:
-            gaps.append("missing")
+            # Two different defects, two different repairs. `mis_stamped` says
+            # the game exists and its provider id is wrong; `missing` says it
+            # was never created. Collapsing them sends the wrong fix.
+            gaps.append("mis_stamped" if row.mis_stamped else "missing")
         elif len(row.event_ids) > 1:
             gaps.append(f"dupes={len(row.event_ids)}")
         gaps.extend(f"{s}=0" for s in row.missing_sources(axiom_sources))
@@ -273,6 +291,7 @@ def axiom_offenders(
             "event_ids": list(row.event_ids),
             "gaps": gaps,
             "truth_ref": row.truth_ref,
+            "id_conflicts": list(row.id_conflicts),
         })
     return out
 
@@ -404,7 +423,8 @@ def build_rollcall_issue_body(
         f"| fixtures published by truth | {scorecard.get('events_external')} |",
         f"| exactly one DB event | {scorecard.get('matched_1')} |",
         f"| duplicated | {scorecard.get('dupes')} |",
-        f"| missing entirely | {scorecard.get('missing')} |",
+        f"| no claimable event | {scorecard.get('missing')} |",
+        f"| …of which exist under a WRONG provider id | {scorecard.get('mis_stamped', 0)} |",
         f"| fully clean (1 event + all axiom sources) | {scorecard.get('clean')} |",
         "",
         "| source | linked | axiom |",
@@ -422,6 +442,12 @@ def build_rollcall_issue_body(
             f"- `{o.get('fixture')}` {o.get('kickoff') or ''} → DB ids {ids} "
             f"({', '.join(o.get('gaps', []))})"
         )
+        for c in o.get("id_conflicts") or []:
+            lines.append(
+                f"    - event `{c.get('event_id')}` names this fixture at this "
+                f"time but is stamped `{c.get('espn_id')}`, truth says "
+                f"`{o.get('truth_ref')}`"
+            )
     if len(offenders) > max_named:
         lines.append(f"- …and {len(offenders) - max_named} more (full list in the scorecard)")
     lines += [

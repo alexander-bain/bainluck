@@ -28,6 +28,7 @@ def upgrade():
         sa.Column("matched_1", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("dupes", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("missing", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("mis_stamped", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("clean", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("per_source", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("verdict", sa.String(length=24), nullable=False),

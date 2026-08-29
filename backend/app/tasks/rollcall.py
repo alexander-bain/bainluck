@@ -64,6 +64,14 @@ DEADLINE_SECONDS = 480.0
 #: disagree about what "today" means.
 WINDOW_HOURS = 18
 
+#: How far an unstamped event may sit from a fixture's published start and
+#: still be that fixture. Six hours comfortably covers a rain delay, a
+#: provisional start time and a timezone-rounded feed, and comfortably does NOT
+#: reach the next day's game in the same series — which is the whole point (see
+#: :func:`_attach`). An event further out than this from every fixture that
+#: names it is left unclaimed rather than assigned to the wrong day.
+MAX_NAME_SKEW_HOURS = 6.0
+
 ESPN_TRUTH_URL = "https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard?dates={date}"
 DATAGOLF_TRUTH_URL = "https://feeds.datagolf.com/get-schedule?tour={tour}"
 
@@ -205,6 +213,36 @@ async def _our_events(session, sport_keys: tuple[str, ...], day: str) -> list[di
     return [dict(r) for r in rows]
 
 
+def _as_utc(value: Any) -> datetime | None:
+    """Parse a timestamp from either side of the comparison, or give up.
+
+    Returns ``None`` rather than guessing — a caller that cannot tell two times
+    apart must decline the match, not assume it (the alternative is the
+    adjacent-day collapse :func:`_attach` documents).
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        text = value.strip().replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _skew_hours(ours: Any, theirs: Any) -> float | None:
+    """Absolute hours between our start time and the fixture's, or ``None``."""
+    a, b = _as_utc(ours), _as_utc(theirs)
+    if a is None or b is None:
+        return None
+    return abs((a - b).total_seconds()) / 3600.0
+
+
 def _attach(fixtures: list[dict], events: list[dict]) -> list[FixtureRow]:
     """Bind each truth fixture to the DB events that claim it.
 
@@ -225,31 +263,75 @@ def _attach(fixtures: list[dict], events: list[dict]) -> list[FixtureRow]:
     nobody. That is honest: either it is an adjacent-day game inside the ±18h
     window, or its stamp is wrong — and a wrong stamp showing up as an
     unclaimed row beats it silently satisfying the wrong fixture.
+
+    **The name pass is bounded in TIME as well as in name, and this is the
+    correctness argument the first production read paid for.** A baseball
+    series plays the identical matchup on three consecutive days, so inside a
+    ±18h window "Dodgers @ Tigers" names two or three real, distinct, perfectly
+    healthy games. Matching on names alone, the first live run reported MLB as
+    ``17 fixtures, 17 duplicated`` — a total-outage headline manufactured
+    entirely by the matcher out of an ordinary Thursday. Each unstamped event is
+    therefore assigned to its NEAREST fixture in time and to no other, and only
+    when that fixture is within :data:`MAX_NAME_SKEW_HOURS`. A doubleheader's
+    two games fall to their own two fixtures; tomorrow's series game falls to
+    nobody, because tomorrow's fixture is not on today's board.
     """
     by_espn: dict[str, list[dict]] = {}
     for ev in events:
         if ev.get("espn_id"):
             by_espn.setdefault(str(ev["espn_id"]), []).append(ev)
-    nameable = [ev for ev in events if not ev.get("espn_id")]
 
-    rows: list[FixtureRow] = []
-    for fx in fixtures:
-        claimed: list[dict] = []
-        seen_ids: set[int] = set()
+    claims: list[list[dict]] = [[] for _ in fixtures]
+    claimed_ids: set[int] = set()
+    for idx, fx in enumerate(fixtures):
         if fx.get("espn_id"):
             for ev in by_espn.get(str(fx["espn_id"]), []):
-                claimed.append(ev)
-                seen_ids.add(ev["id"])
-        for ev in nameable:
-            if ev["id"] in seen_ids:
-                continue
-            if fixture_matches(
+                if ev["id"] not in claimed_ids:
+                    claims[idx].append(ev)
+                    claimed_ids.add(ev["id"])
+
+    for ev in events:
+        if ev.get("espn_id") or ev["id"] in claimed_ids:
+            continue
+        best: tuple[float, int] | None = None
+        for idx, fx in enumerate(fixtures):
+            if not fixture_matches(
                 ev.get("home_team_name") or "", ev.get("away_team_name") or "",
                 fx.get("home") or "", fx.get("away") or "",
             ):
-                claimed.append(ev)
-                seen_ids.add(ev["id"])
+                continue
+            skew = _skew_hours(ev.get("commence_time"), fx.get("kickoff"))
+            if skew is None or skew > MAX_NAME_SKEW_HOURS:
+                continue
+            if best is None or skew < best[0]:
+                best = (skew, idx)
+        if best is not None:
+            claims[best[1]].append(ev)
+            claimed_ids.add(ev["id"])
 
+    rows: list[FixtureRow] = []
+    for idx, fx in enumerate(fixtures):
+        claimed = claims[idx]
+        conflicts: list[dict[str, Any]] = []
+        if not claimed:
+            # Nothing claimed this fixture. Before calling it missing, look for
+            # a row that names it AT ITS TIME but carries somebody else's id —
+            # a wrong stamp, not an absent game. Measured on the first live run:
+            # BOS @ NYY 2026-08-29 17:05Z, event 14877917 stamped 401815659
+            # while the board says 401874913.
+            for ev in events:
+                if ev["id"] in claimed_ids or not ev.get("espn_id"):
+                    continue
+                if not fixture_matches(
+                    ev.get("home_team_name") or "", ev.get("away_team_name") or "",
+                    fx.get("home") or "", fx.get("away") or "",
+                ):
+                    continue
+                skew = _skew_hours(ev.get("commence_time"), fx.get("kickoff"))
+                if skew is not None and skew <= MAX_NAME_SKEW_HOURS:
+                    conflicts.append(
+                        {"event_id": ev["id"], "espn_id": str(ev["espn_id"])}
+                    )
         sources: dict[str, bool] = {}
         if len(claimed) == 1:
             ev = claimed[0]
@@ -265,6 +347,7 @@ def _attach(fixtures: list[dict], events: list[dict]) -> list[FixtureRow]:
             event_ids=[e["id"] for e in claimed],
             sources=sources,
             truth_ref=fx.get("espn_id") or fx.get("datagolf_event_id"),
+            id_conflicts=conflicts,
         ))
     return rows
 
@@ -334,10 +417,11 @@ async def _write_scores(session, day: str, cards: list[dict]) -> int:
                 text("""
                     INSERT INTO rollcall_scores (
                         score_date, league, axiom, events_external, matched_1,
-                        dupes, missing, clean, per_source, verdict, offenders,
-                        justification, generated_at
+                        dupes, missing, mis_stamped, clean, per_source, verdict,
+                        offenders, justification, generated_at
                     ) VALUES (
-                        :d, :league, :axiom, :ext, :m1, :dupes, :missing, :clean,
+                        :d, :league, :axiom, :ext, :m1, :dupes, :missing,
+                        :mis_stamped, :clean,
                         CAST(:per_source AS jsonb), :verdict, CAST(:offenders AS jsonb),
                         :justification, now()
                     )
@@ -347,6 +431,7 @@ async def _write_scores(session, day: str, cards: list[dict]) -> int:
                         matched_1 = EXCLUDED.matched_1,
                         dupes = EXCLUDED.dupes,
                         missing = EXCLUDED.missing,
+                        mis_stamped = EXCLUDED.mis_stamped,
                         clean = EXCLUDED.clean,
                         per_source = EXCLUDED.per_source,
                         verdict = EXCLUDED.verdict,
@@ -362,6 +447,7 @@ async def _write_scores(session, day: str, cards: list[dict]) -> int:
                     "m1": int(card.get("matched_1", 0) or 0),
                     "dupes": int(card.get("dupes", 0) or 0),
                     "missing": int(card.get("missing", 0) or 0),
+                    "mis_stamped": int(card.get("mis_stamped", 0) or 0),
                     "clean": int(card.get("clean", 0) or 0),
                     "per_source": json.dumps(card.get("per_source") or {}),
                     "verdict": card.get("verdict", "unmeasurable"),
