@@ -35,14 +35,22 @@ import app.tasks.precompute_category_pages as pcp
 from app.config.league_configs import get_all_league_slugs
 
 
-# The one league deliberately left out of the warm list, and the reason it is
-# out. Measured 2026-08-29: `/api/playoffs/ncaa-basketball?top=11` returned
-# **25.36 s to `unfinished=1`**, of which **17.87 s was `app` and not `db`**, and
-# Sentry carried 7 of its "timed out and no last-good payload is available" 503s
-# in the preceding 24 h. It is the one league that cannot be built at all, so
-# warming it would spend up to the whole per-league ceiling every hour to publish
-# nothing. Its 503 is a real user-visible defect with its own ship (P131-1).
-KNOWN_UNBUILDABLE = {"ncaa-basketball"}
+# Leagues deliberately left out of the warm list, and the reason each is out.
+#
+# 🔴 EMPTY SINCE LAT-P132 (#2302), AND IT MUST STAY EMPTY UNLESS SOMEONE WRITES A
+# REASON HERE. P131 put `ncaa-basketball` in this set on the strength of one 503
+# whose split read `app=17.87 s, db=7.26 s` — and `unfinished=1`, which
+# `app/utils/request_timing.py` defines as "a statement started and never
+# recorded a finish", so its duration is excluded from `db` and lands in `app` by
+# subtraction. The 17.87 s of "app" was a query. It was the candidate scan, and
+# LAT-P132 took it from 24,465 ms to 984 ms on an identical row set. The league
+# builds — two 200s on 2026-08-29, 20.8 s and 21.6 s — so "cannot be built at
+# all" was never true; it straddled the wall, exactly like NFL.
+#
+# An entry here is a claim that a league CANNOT be built, and that claim now has
+# a worked example of being wrong. It needs a reading with no `unfinished` flag
+# on it.
+KNOWN_UNBUILDABLE: set[str] = set()
 
 GOOD_GRID = {"teams": [{"name": "Team A"}], "columns": [{"key": "championship"}]}
 EMPTY_GRID = {"teams": [], "columns": []}
@@ -109,13 +117,34 @@ def test_the_four_original_leagues_are_still_warmed():
 
 
 def test_the_unbuildable_league_stays_out_until_it_builds():
-    """ncaa-basketball is excluded deliberately; re-adding it needs its own ship.
+    """P131's landmine, kept armed and now discharged for ncaa-basketball.
 
-    Not a style preference: it 503s at the route wall and burns the budget of
-    every league behind it. If someone fixes the build and adds it back, this
-    test is the place that records what had to be true first.
+    The invariant is unchanged — a league declared unbuildable must not be warmed
+    — but the set it guards is empty, so the test now also pins the discharge: if
+    someone re-adds `ncaa-basketball` to `KNOWN_UNBUILDABLE` while leaving it in
+    the warm list, this fails and they have to say which of the two they meant.
     """
     assert not (KNOWN_UNBUILDABLE & set(pcp.GRID_WARM_LEAGUES))
+
+
+def test_no_league_is_declared_unbuildable_any_more():
+    """The ship: every configured league is warmed, with NO exceptions carved out.
+
+    `test_every_league_with_a_grid_config_is_warmed` subtracts
+    `KNOWN_UNBUILDABLE` before it asserts, so re-populating that set is a way to
+    silence it. This test is the second door: the exception mechanism itself is
+    empty, and re-opening it is a visible, deliberate act.
+    """
+    assert KNOWN_UNBUILDABLE == set(), (
+        "a league was declared unbuildable again — that claim needs a reading "
+        "with no `unfinished` flag on its timing split, because P131's did have "
+        f"one and was wrong: {sorted(KNOWN_UNBUILDABLE)}"
+    )
+
+
+def test_ncaa_basketball_is_warmed():
+    """#2302's ship, named so a shrink of the list fails HERE with the issue id."""
+    assert "ncaa-basketball" in pcp.GRID_WARM_LEAGUES
 
 
 # --------------------------------------------------------------------------

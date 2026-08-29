@@ -272,7 +272,16 @@ class TestPrecomputeObservability:
 
         leagues = report["grid_leagues"]
         assert leagues["mlb"]["outcome"] == "timeout"
-        assert leagues["mlb"]["timeout_s"] == pcp.GRID_WARM_TIMEOUT_S
+        # The recorded deadline is `min(GRID_WARM_TIMEOUT_S, this league's share
+        # of the pass budget)`, not the ceiling. It used to be the ceiling only
+        # because mlb was LAST in the warm list, so `_prewarm_target_deadline`
+        # handed it everything left; LAT-P132 put `ncaa-basketball` behind it and
+        # its share became a real bound. What #1484 asks of this rail is that the
+        # deadline which actually bound is the one written down — so assert that,
+        # not the constant it happened to equal.
+        recorded = leagues["mlb"]["timeout_s"]
+        assert 0 < recorded <= pcp.GRID_WARM_TIMEOUT_S, recorded
+        assert recorded <= pcp.GRID_WARM_PASS_BUDGET_S
         # A timeout on one league must not stop the others.
         assert leagues["nba"]["outcome"] == "ok"
         assert leagues["nba"]["teams"] == 1

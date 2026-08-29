@@ -109,13 +109,19 @@ _LAT_P131_DEAD = [
         '                    rc.setex(f"{cache_key}:stale", 3600, payload)',
     ),
     (
-        "M-READD-UNBUILDABLE",
-        "add back the league that 503s — it burns the budget of everyone behind it",
-        '''GRID_WARM_LEAGUES = [
-    "la-liga",''',
-        '''GRID_WARM_LEAGUES = [
+        # Was M-READD-UNBUILDABLE until LAT-P132 (#2302) fixed the build and put
+        # `ncaa-basketball` IN the list — at which point re-adding it stopped
+        # being a mutation and the mutant would have SURVIVED, quietly turning a
+        # 13/13 into a 12/13 that nobody re-read. Inverted rather than deleted:
+        # the invariant it guards (the list is a decision, not a default) is
+        # unchanged, only its direction is.
+        "M-DROP-NCAAB",
+        "drop the league LAT-P132 fixed — its first visitor of the day pays 6 s again",
+        '''    "mlb",
     "ncaa-basketball",
-    "la-liga",''',
+]''',
+        '''    "mlb",
+]''',
     ),
 ]
 

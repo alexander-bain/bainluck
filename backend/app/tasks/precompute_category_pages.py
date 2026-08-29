@@ -383,19 +383,36 @@ GRID_WARM_PASS_BUDGET_S = 180.0
 #:
 #: 🔴 The ordering is an OPTIMISATION and the budget is the INVARIANT — do not
 #: swap them round. `_prewarm_target_deadline` guarantees every league at least
-#: `GRID_WARM_PASS_BUDGET_S / N` = 13.8 s in EVERY order; ascending cost merely
+#: `GRID_WARM_PASS_BUDGET_S / N` = 12.9 s at N=14 in EVERY order; ascending cost merely
 #: buys the expensive tail the slack the cheap head did not spend (mlb, last,
 #: is offered ~102 s against a measured 53.4 s on the beat). Costs rot, so the
 #: per-league `duration_s` in the run report is the instrument for re-deriving
 #: this order — not a re-read of this comment.
 #:
-#: 🔴 `ncaa-basketball` is DELIBERATELY ABSENT and its absence is the finding,
-#: not an oversight. It is the one league that cannot be built at all: 25.36 s
-#: to `unfinished=1`, of which 17.87 s is `app` and not `db`, and Sentry carries
-#: 7 of its "timed out and no last-good payload is available" 503s in the last
-#: 24 h. Warming it would spend up to 120 s an hour to publish nothing. Its 503
-#: is a real user-visible defect with its own ship (parked P131-1); a warm list
-#: is not the place to hide a page that does not build.
+#: ✅ `ncaa-basketball` JOINED THE LIST (LAT-P132, #2302) AND P131 WAS WRONG ABOUT
+#: WHY IT WAS OUT. P131 recorded it as "the one league that cannot be built at
+#: all" from a single 503 whose split read `app=17.87 s, db=7.26 s`. That split
+#: also carried `unfinished=1`, and `app/utils/request_timing.py` documents what
+#: that means: a statement STARTED and never recorded a finish, so its duration
+#: is excluded from `db` and lands in `app` by subtraction. The 17.87 s "app" was
+#: a query. 🔴 **`unfinished=1` makes a split PARTIAL — read it before reading
+#: the `app`/`db` ratio, or the instrument will hand you the wrong owner.**
+#: The league builds: two 200s on 2026-08-29 (20.8 s and 21.6 s, real payloads)
+#: against the same 25 s wall it sometimes loses to. LAT-P132 took 16.2 s out of
+#: its candidate scan (see `_external_id_prefix_condition` in `routes/playoffs.py`
+#: — 24,465 ms -> 984 ms on the identical row set), which is what moves it from
+#: "straddles the wall" to "warmable".
+#:
+#: 🔴 Its position — LAST — is the one thing here that is NOT measured, and it is
+#: last BECAUSE it is not measured. Predicted ~6.4 s (21.6 s observed, minus the
+#: 16.2 s `maxq` this ship removes, plus ~1.0 s for the replacement scan), but a
+#: prediction is not a measurement and the ordering's only job is to give the
+#: tail slack. An unmeasured league in the position with the most slack is the
+#: cheapest place to be wrong. Re-derive from the run report's per-league
+#: `duration_s` after deploy and move it — that is the instrument, not this
+#: comment. The 120 s per-league ceiling and the pass budget below bound the
+#: damage either way, and `_grid_payload_usable` stops a bad build overwriting
+#: the good `:stale` mirror.
 GRID_WARM_LEAGUES = [
     "la-liga",
     "champions-league",
@@ -410,6 +427,7 @@ GRID_WARM_LEAGUES = [
     "ncaa-football",
     "golf",
     "mlb",
+    "ncaa-basketball",
 ]
 
 # Where the run report lands for the read-only admin rail. One key, overwritten
