@@ -802,6 +802,13 @@ export interface SearchResponse {
   sports: SearchSportFacet[];
   query: string;
   did_you_mean?: string;
+  /** #2239: the stages `/api/events/search` had to shed against its 20,000 ms
+   *  deadline. ADDITIVE — absent means a complete answer. Present means the
+   *  empty sections below it are "we stopped early", not "nothing matched", and
+   *  the page must not render an absence claim over them
+   *  (`lib/searchAnswerState.ts`). The backend has published this since
+   *  LAT-P002; nothing modelled it, so nothing read it. */
+  degraded?: string[];
 }
 
 // Search suggestions (zero-state)

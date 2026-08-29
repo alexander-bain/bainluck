@@ -2838,8 +2838,41 @@ _suppress_search_log: contextvars.ContextVar[bool] = contextvars.ContextVar(
 _SEARCH_ANSWER_SECTIONS = ("teams", "event_concepts", "futures")
 
 
-def _answered_result_count(payload: dict) -> int:
-    """How many things this search actually put in front of the person.
+def _answered_result_count(payload: dict) -> int | None:
+    """How many things this search actually put in front of the person, or None
+    if we did not finish looking.
+
+    🔴 #2239: A DEGRADED ANSWER HAS NO COUNT. The payload above declares every
+    stage it had to shed in `degraded`, and says why in its own comment: "a stage
+    we could not complete must be distinguishable from a stage that honestly
+    found nothing". That distinction survived onto the wire and died here — the
+    sections of a shed stage are empty, empty sums to `0`, and `0` is the value a
+    genuinely empty answer writes. One number, two facts.
+
+    The bill for that arrived as #2239 itself. The only trace of the incident
+    (`patriots`, 2026-08-14 22:16 UTC, five submissions nine seconds apart,
+    `result_count` 25 -> 0 -> 0 -> 0 -> 25) is three rows of the ambiguous zero,
+    and fifteen days later the mechanism still cannot be named from them: the row
+    cannot say whether the query matched nothing or whether the request gave up.
+
+    So a degraded answer logs NULL, and the invariant becomes one sentence:
+    **every non-NULL `result_count` is a COMPLETE answer.** A degraded answer
+    that still carried content is NULL too — "25 events, futures shed" is not 25,
+    it is 25-and-an-unknown-number-more, which is the same ambiguity one step to
+    the left.
+
+    This is free. `result_count` is nullable and NO CONSUMER READS IT: both
+    warm-head elections rank by rows and sessions
+    (`search_head_warmer._USER_HEAD_SQL`, `typeahead_warmer`'s 30-day head) and
+    neither one selects this column. What it buys is that `result_count = 0`
+    finally means "this query genuinely has nothing", which is the precondition
+    for the flap alert #2239 asks for — a detector that cannot tell an abandoned
+    request from an empty one has nothing to alert on.
+
+    ⚠️ The obvious refinement against this table is still `WHERE result_count > 0`
+    and it is still wrong — it now discards the incomplete answers too, silently,
+    which is the LAT-P117 eviction hazard below wearing a different mask. Filter
+    on `result_count = 0` for "empty" and `IS NULL` for "unknown". Never on `> 0`.
 
     🔴 LAT-P117: `pagination.total_results` COUNTS ONE SECTION OF FOUR, and for
     the whole futures half of search that section is empty. Measured on
@@ -2871,6 +2904,12 @@ def _answered_result_count(payload: dict) -> int:
     `results` is one 25-row page of it); the other three are unpaginated, so
     they contribute their lengths.
     """
+    # Checked BEFORE anything is counted: there is no count to take. `degraded`
+    # is additive, so absent-or-empty is a complete answer and anything truthy —
+    # including a malformed non-list — is a declaration that a stage was cut short.
+    if payload.get("degraded"):
+        return None
+
     total = 0
     pagination = payload.get("pagination")
     if isinstance(pagination, dict):
