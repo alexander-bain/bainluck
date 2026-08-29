@@ -18,6 +18,7 @@ from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.leader_order import leader_first_outcomes
+from app.utils.lifecycle import served_event_status
 from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX
 from app.utils.tournament_stages import (
     get_stages_for_sport,
@@ -2737,7 +2738,11 @@ async def get_related_events(
             "home_team": event.home_team_name,
             "away_team": event.away_team_name,
             "commence_time": event.commence_time.isoformat(),
-            "status": event.status,
+            # Q438: the lifecycle invariant, not the raw column. See
+            # `app/utils/lifecycle.served_event_status`.
+            "status": served_event_status(
+                event.status, event.commence_time, datetime.now(timezone.utc)
+            ),
             "sport": event.sport.key if event.sport else None,
             "home_score": event.home_score,
             "away_score": event.away_score,

@@ -6425,7 +6425,15 @@ async def typeahead_search(
                         "type": "event",
                         "text": f"{event.away_team_name} at {event.home_team_name}",
                         "event_id": event.id,
-                        "status": event.status,
+                        # Q438: typeahead's OTHER event pool (above) already went
+                        # through the invariant; this fuzzy pool was left raw, so
+                        # the same row could read `live` or `scheduled` depending
+                        # on which arm matched the query.
+                        "status": served_event_status(
+                            event.status,
+                            event.commence_time,
+                            datetime.now(timezone.utc),
+                        ),
                         "sport_key": event.sport.key if event.sport else None,
                         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
                         "home_logo": home.logo_url_small if home else None,

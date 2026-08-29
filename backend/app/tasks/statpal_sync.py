@@ -74,6 +74,9 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # game that has not been played yet.
     live_pair_refused = 0
     premature_live_skipped = 0
+    # Q438: creations this path DOWNGRADED to 'scheduled' because the game had
+    # not started. Always present; 0 is a reading, not an absence (gotcha #53).
+    premature_live_created_as_scheduled = 0
 
     # Track StatPal fixture IDs already processed in this run
     # to prevent duplicates across soccer league iterations
@@ -333,7 +336,34 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     )
                     if existing.scalar_one_or_none():
                         continue
-                    # Create the missing event
+                    # Create the missing event.
+                    #
+                    # #1945/Q438 — the row is created either way (the playoff gap
+                    # this path exists to fill is real), but it may only be
+                    # created LIVE once its own start time has arrived. Same
+                    # predicate as the score write above; one implementation.
+                    #
+                    # 🔴 MEASURED on production 2026-08-29: this path had created
+                    # **48 events since 2026-05-15, and all 48 were created
+                    # BEFORE their own commence_time** — it has never once
+                    # created a game that was actually in progress. 46 have since
+                    # rolled to `completed`; the two still sitting `live` were
+                    # 15292756 (Colts vs Lions) and 15292757 (Titans vs Bears),
+                    # minted 2026-08-26 for an 2026-08-29 kickoff and badged LIVE
+                    # on the NFL league page for three days.
+                    premature_create = live_write_is_premature(
+                        live_fix.start_time, now
+                    )
+                    if premature_create:
+                        premature_live_created_as_scheduled += 1
+                        logger.warning(
+                            "StatPal premature-live guard: creating %s vs %s (%s) as "
+                            "'scheduled', not 'live' — start_time %s is still in the "
+                            "future (now %s) (#1945/Q438)",
+                            live_fix.home_team, live_fix.away_team, our_key,
+                            live_fix.start_time.isoformat() if live_fix.start_time else None,
+                            now.isoformat(),
+                        )
                     claim_id = live_fix.fixture_id or f"statpal_live_{live_fix.home_team}_{live_fix.away_team}"
                     identity = EventIdentity(
                         sport_key=our_key,
@@ -352,20 +382,28 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             schedule_derived=STATPAL_LISTING_IS_NOT_A_DEREFERENCE,
                         ),
                         commence_time_source="statpal",
-                        status="live",
+                        status="scheduled" if premature_create else "live",
                     )
                     event, was_created = await find_or_create_event(
                         session, identity,
                     )
                     if was_created:
                         live_created += 1
-                        if live_fix.home_score is not None:
-                            event.home_score = live_fix.home_score
-                        if live_fix.away_score is not None:
-                            event.away_score = live_fix.away_score
+                        # The status downgrade above and the score are the SAME
+                        # claim — a game that has not started has no score to
+                        # carry either, and writing one would restore the exact
+                        # contradiction (`scheduled` + a live score) one field
+                        # over. The sibling score path 100 lines up refuses on
+                        # this predicate; so does this one.
+                        if not premature_create:
+                            if live_fix.home_score is not None:
+                                event.home_score = live_fix.home_score
+                            if live_fix.away_score is not None:
+                                event.away_score = live_fix.away_score
                         logger.info(
-                            "Created event from live StatPal: %s vs %s (%s)",
+                            "Created event from live StatPal: %s vs %s (%s) as %s",
                             live_fix.away_team, live_fix.home_team, our_key,
+                            "scheduled (premature)" if premature_create else "live",
                         )
                 sport_created += live_created
 
@@ -400,6 +438,7 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         # #1945/#1947 — same rule: always present, 0 is a reading.
         "live_pair_refused": live_pair_refused,
         "premature_live_skipped": premature_live_skipped,
+        "premature_live_created_as_scheduled": premature_live_created_as_scheduled,
     }
 
 

@@ -438,16 +438,55 @@ def future_settled_events(events: list[dict], now) -> list[dict]:
     return out
 
 
-def live_before_commence_events(events: list[dict], now) -> list[dict]:
+def live_before_commence_events(
+    events: list[dict], now, *, selected_as: str | None = None
+) -> list[dict]:
     """status='live' events whose commence_time is in the FUTURE — labeled live
     before they started (Queue 283 lifecycle invariant: live => now >= start).
 
     This is the read-side monitor for the same rule the classifiers now enforce
     (``highlights.compute_highlight`` / ``app.utils.lifecycle``). ``now`` injected
-    for testability."""
+    for testability.
+
+    ``selected_as`` is the status FILTER that produced ``events``, and passing it
+    is what keeps this limb alive.
+
+    🔴 MEASURED 2026-08-29 (Q438) — THIS LIMB WAS STRUCTURALLY BLIND, and had been
+    since queue 364. It read ``e["status"]``, which is the SERVED value; queue 364
+    then wired ``served_event_status`` into ``app/routes/events.py``, so the very
+    surface this monitor samples began rewriting a premature ``live`` to
+    ``scheduled`` before the monitor ever saw it. The filter still SELECTS on the
+    raw database column, so the offending rows are returned — presented with the
+    repaired value. The predicate on the next line therefore skipped every one of
+    them, and the limb could only ever report ``[]``.
+
+    Production that morning, from ``/api/events?status=live&limit=200``::
+
+        15292756  Colts vs Lions       commence 2026-08-29T17:00Z   served "scheduled"
+        15292757  Titans vs Bears      commence 2026-08-29T22:00Z   served "scheduled"
+        14969919  Fire vs Whitecaps    commence 2026-10-06T18:00Z   served "scheduled"
+
+    All three sat ``live`` in the database, all three were returned by the live
+    filter, and the sentinel reported ``live_before_commence: []``. Its sibling
+    ``future_settled`` fired the same run on event 14958839 — because
+    ``served_event_status`` only ever rewrites ``live``, never ``completed``.
+    That asymmetry is the proof: one limb reads a repaired field, the other does
+    not. Meanwhile ``_build_dup_key``'s comment above still names this limb as
+    the compensating control for the doubleheader blind spot, which it had
+    silently stopped being.
+
+    So: when the caller says it asked for ``status=live``, every row in the list
+    is one the DATABASE considers live, whatever the serializer chose to print,
+    and the served value becomes evidence rather than a filter. Callers that pass
+    nothing keep the old served-value behaviour, which is correct for any sample
+    that was not taken through a status filter.
+    """
     out = []
     for e in events:
-        if e.get("status") != "live":
+        served = e.get("status")
+        # The selector is the authority when we have one; the served value is
+        # only a fallback for unfiltered samples.
+        if selected_as != "live" and served != "live":
             continue
         t = _parse_commence(e.get("commence_time"))
         if t is None or t <= now:
@@ -455,6 +494,9 @@ def live_before_commence_events(events: list[dict], now) -> list[dict]:
         out.append({"event_id": e.get("id"), "sport": e.get("sport"),
                     "home_team": e.get("home_team"), "away_team": e.get("away_team"),
                     "commence_time": e.get("commence_time"),
+                    # Kept because the DISAGREEMENT is the sharpest evidence: the
+                    # database says live, the public surface prints something else.
+                    "served_status": served,
                     "starts_in_hours": round((t - now).total_seconds() / 3600.0, 1)})
     return out
 
@@ -1718,16 +1760,20 @@ async def _run_resolved_state(client: httpx.AsyncClient) -> dict:
     stale = stale_live_events(live, now, STALE_LIVE_HOURS)
     future = future_settled_events(completed, now)
     inverted = inverted_completed_events(completed)
-    live_before = live_before_commence_events(live, now)
+    # `selected_as` is load-bearing (Q438): `/api/events?status=live` SELECTS on
+    # the raw column and SERVES the repaired one, so without it this limb reads
+    # its own fix and reports [] forever.
+    live_before = live_before_commence_events(live, now, selected_as="live")
     failures = [
         {"detail": f"live {s['sport']} game {s['home_team']} vs {s['away_team']} "
                    f"started {s['age_hours']}h ago but still renders LIVE (id {s['event_id']})"}
         for s in stale
     ] + [
         {"detail": f"live {b['sport']} event {b['home_team']} vs {b['away_team']} "
-                   f"renders LIVE but its commence_time {b['commence_time']} is "
-                   f"{b['starts_in_hours']}h in the FUTURE (live before start, id "
-                   f"{b['event_id']})"}
+                   f"is LIVE in the database but its commence_time "
+                   f"{b['commence_time']} is {b['starts_in_hours']}h in the FUTURE "
+                   f"(live before start, id {b['event_id']}; public surfaces serve "
+                   f"it as {b.get('served_status')!r})"}
         for b in live_before
     ] + [
         {"detail": f"settled {f['sport']} event {f['home_team']} vs {f['away_team']} "
