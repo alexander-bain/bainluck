@@ -4673,6 +4673,47 @@ _suppress_trending_write: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "bainluck_typeahead_suppress_trending_write", default=False
 )
 
+#: LAT-P134/#1866: bypass the cache READ, keep the cache WRITE. The warmer's way
+#: to refresh an entry WITHOUT ever removing it.
+#:
+#: 🔴 WHY IT EXISTS. This route writes its cache only on the miss path, so the
+#: only way `typeahead_warmer` could extend an entry's life was to DELETE the
+#: entry and let the route miss (`_drop_cached`, LAT-P060). That opens a hole:
+#: from the DELETE until this route's `setex`, the key is ABSENT, and a real user
+#: typing that term misses too and pays a full build of their own. LAT-P060
+#: priced that hole at "~20ms, the HOT cost, because the warmer keeps the pages
+#: resident". MEASURED 2026-08-29 ON PRODUCTION `8ca1e2ed`, two confirmed head
+#: terms, 70 samples through the real cache path: p50 18-19ms, and **6 samples
+#: (8.6%) at 2,000-3,689ms**. The estimate was two orders of magnitude low,
+#: because the recompute's cost is LAT-P096's un-indexed `to_tsvector` scan over
+#: ~49.5k open markets — CPU, which page residency does not buy back (that cycle
+#: measured 27,483 buffer HITS, i.e. already resident, still 742.7ms).
+#:
+#: So the hole is not the price of warming; it is an artefact of warming through
+#: a door marked "miss". With this flag the warmer rebuilds over the live entry:
+#: the old answer is served continuously until the new one replaces it, at the
+#: same instant it would have been written anyway. Max staleness is UNCHANGED at
+#: the 65s TTL — this buys latency, not freshness, and it must not be read as
+#: buying freshness.
+#:
+#: 🔴 READ-ONLY IN THIS ROUTE, and that is load-bearing. `debug_evidence` and
+#: `debug_timing` bypass the cache in BOTH directions; this bypasses ONE. If the
+#: route ever set this var, or if the write condition ever grew a
+#: `_force_cache_rebuild` term, the warmer would run the full query path, write
+#: nothing, and report success — a green pass that warmed nothing, which is
+#: gotcha #53 and is the same trap the `Query(False)` comment in `_warm_one`
+#: already describes. `test_typeahead_warmer_overwrites_not_deletes.py` pins both
+#: halves, and `_warm_one` re-reads the TTL afterwards so a silent no-op becomes
+#: a counted `no_write`, not a success.
+#:
+#: A ContextVar, not a parameter, for the same reason as the var above: FastAPI
+#: would turn a plain-defaulted argument into a public query parameter, and
+#: `?force_cache_rebuild=1` on the open internet is a self-service way to make
+#: every keystroke pay the miss path.
+_force_cache_rebuild: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "bainluck_typeahead_force_cache_rebuild", default=False
+)
+
 
 def _record_trending(q: str) -> None:
     """Count one `/typeahead` query, from EITHER of the route's two exits (#2117).
@@ -4842,7 +4883,13 @@ async def typeahead_search(
     # stage that cost nothing (gotcha #53: an absent field and a zero field must
     # never read the same). The instrument would then under-report exactly the
     # path #1866 is about, which is the miss.
-    if not debug_evidence and not debug_timing:
+    #
+    # LAT-P134: `_force_cache_rebuild` joins the READ condition and ONLY the read
+    # condition. It is the warmer saying "do not answer me from the entry I am
+    # here to replace" — the write below must still fire, or the warmer warms
+    # nothing. See the ContextVar's own comment for why the hole it removes was
+    # mispriced by two orders of magnitude.
+    if not debug_evidence and not debug_timing and not _force_cache_rebuild.get():
         try:
             _rc = get_redis_client()
             _cached = _rc.get(_cache_key)

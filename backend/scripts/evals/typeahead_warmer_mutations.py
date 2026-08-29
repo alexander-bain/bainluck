@@ -75,10 +75,25 @@ MUTATIONS: list[tuple[str, Path, str, str, str]] = [
         "M3", WARMER,
         "an EMPTY head reports `complete` — a warmer that warmed nothing "
         "reporting a clean success (gotcha #53)",
-        '        "terminal": "complete" if head and not timeouts and not errors else "partial",\n',
-        '        "terminal": "complete" if not timeouts and not errors else "partial",\n',
+        # LAT-P134 re-target: the terminal expression grew a `no_writes` term
+        # and was reflowed over four lines. Re-pointed by the cycle that moved
+        # it — a needle left drifting scores NOT-APPLIED, which prints next to
+        # the kills and reads like coverage.
+        '            if head and not timeouts and not errors and not no_writes\n',
+        '            if not timeouts and not errors and not no_writes\n',
     ),
     (
+        # 🔴 RE-TARGETED BY LAT-P134, and by the cycle that MOVED the code it
+        # points at rather than by a later reader guessing. The needle had
+        # drifted (#2113/#2154) — `scan_mutation_residue` PASS A had been
+        # reporting it as harness drift for weeks, which scores NOT-APPLIED and
+        # never a false kill, so the defect was simply uncovered. LAT-P134
+        # restructured this very try/except (the route call moved into a `try`
+        # with a `finally` that resets `_force_cache_rebuild`), which is exactly
+        # the edit a per-item-guard mutant exists to police. Leaving it drifted
+        # would have meant shipping a rewrite of the guard with the battery for
+        # that guard switched off. M6 remains drifted and is NOT touched here:
+        # it points at `resolve_head`, which this cycle did not change.
         "M4", WARMER,
         "one throwing query aborts the whole loop, so healthy siblings never "
         "warm (gotcha #42)",
@@ -86,6 +101,7 @@ MUTATIONS: list[tuple[str, Path, str, str, str]] = [
         '        logger.warning("typeahead_warmer: %r failed", q, exc_info=True)\n'
         "        await _safe_rollback(session)\n"
         '        return {"q": q, "ok": False, "reason": "error",\n'
+        '                "ttl_before": ttl_before, "rebuilt": True, "ttl_after": None,\n'
         '                "seconds": round(time.monotonic() - started, 3)}\n',
         "    except Exception:  # noqa: BLE001\n"
         '        logger.warning("typeahead_warmer: %r failed", q, exc_info=True)\n'
@@ -102,8 +118,14 @@ MUTATIONS: list[tuple[str, Path, str, str, str]] = [
         "M6", WARMER,
         "the head source is hardcoded, so a run that fell back to the static "
         "floor reports itself as the live distribution",
-        '        return head[:limit], "db:search_query_logs:30d"\n',
-        '        return head[:limit], "redis:search:trending:24h"\n',
+        # LAT-P134 re-target. This one is NOT LAT-P134's doing — it drifted when
+        # `resolve_head` gained the blended head and the local became
+        # `log_head` (LAT-P078). It is taken here because #2113/#2154 name
+        # exactly these two mutants as "now unguarded", the harness was already
+        # open on this desk, and a NOT-APPLIED printed beside nine kills reads
+        # like coverage to everyone who does not scroll.
+        '        return log_head[:limit], "db:search_query_logs:30d"\n',
+        '        return log_head[:limit], "redis:search:trending:24h"\n',
     ),
     (
         "M7", WARMER,
