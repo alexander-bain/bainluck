@@ -960,7 +960,7 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 | 5 | `odds_api_bookmaker/basketball_nba` | A | 5.18 | 10,186 | +1.03 | **2.5** | +2.68 | 5.4 | 27,298 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 573 games behind these rows, so the board’s σ counts one outcome ~17.8x. **σ = 1.28, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
 | 6 | `kalshi/crypto` | C | 7.60 | 4,565 | +1.84 | 3.0 | +4.60 | 6.2 | 20,999 | ✅ **named and designed (CAL-P121, §6h)** — the cell is **99.5% metal**, not crypto — gold/silver/lithium/nickel threshold ladders the LLM relabelled (exactly 1 of 4,566 rows is a cryptocurrency market) — and 99.9% is `bundle_multiwin`. **RULE C** = one tuple on rank 2's already-ruled allowlist → removes 4,563 of 4,566 rows | **ZERO** — designed, unbuilt; the rule **deletes the cell** (3 rows → absence) |
 | 7 | `odds_api_bookmaker/baseball_mlb_preseason` | A | 8.24 | 3,253 | −7.67 | **2.5** | +5.74 | 6.5 | 18,672 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 217 games behind these rows, so the board’s σ counts one outcome ~15.0x. **σ = 1.69, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
-| 8 | `kalshi/entertainment` | C | 5.21 | 8,355 | +1.07 | 3.0 | +2.21 | 4.0 | 18,465 | ⚠️ partial (exit-exam item 3: settlement-timing rival UNKNOWN) | **not started** |
+| 8 | `kalshi/entertainment` | C | 5.21 | 8,355 | +1.07 | 3.0 | +2.21 | 4.0 | 18,465 | ✅ **named and measured (CAL-P122, §6i)** — the exit-exam's settlement-timing lead is refuted cell-wide (`moved` 4.96 vs `unmoved` 6.37). 4.7% of the cell is a class that **cannot contain a loss**: `clean_vms`' `has_winner >= 1` drops **432 authoritative graded losses** and keeps 395 winners. **The honest cell is 6.30 on n 8,850**, and the σ shortcut would have demoted it (1.74σ bound vs **4.66σ measured**) | **ZERO — and NO RULE IS BANKED.** Every passing policy deletes the filtered class; the same rule on the corrected population reads 5.75 and fails. **Alex: 12-CAL + 13-CAL (HOLD RULE E2)** |
 | 9 | `kalshi/golf` | B | 3.88 | 20,500 | +3.72 | 3.0 | +0.88 | 2.5 | 18,040 | ⚠️ `golf_placeholder_filter` live since 07-09 | **shipped, insufficient** |
 | 10 | `polymarket/cricket` | B | 8.11 | 3,252 | −4.61 | 3.0 | +5.11 | 5.8 | 16,618 | ✅ diagnosed 2026-08-09 (exit-exam item 3) | **diagnosed, no rule built** |
 | 11 | `polymarket/basketball` | B | 4.24 | 13,135 | +2.96 | 3.0 | +1.24 | 2.8 | 16,287 | ❌ none | **not started** |
@@ -982,6 +982,16 @@ did not clear the cell. 2 have a measured rule that was refused. 9 have no rule 
 cells carry **239,384 excess-outcomes** — 50.0% of the board's uncorrected 478,677, and **60.4% of
 the 396,332 that survive CAL-P120's σ correction** — and every one of them lands the day the freeze
 lifts.
+
+> 🔴 **CAL-P122 is the first queue to work a cell and bank NOTHING, on purpose (§6i).** Rank 8's
+> best measured policy lands it at **1.27 pp** — and the identical predicate scored against the
+> population corrected for our own filter reads **5.75 and fails both halves.** The gap is 395 rows
+> that our producer publishes if and only if they won. **The banked column stays at five designs
+> and 239,384 excess-outcomes; what grew is the owed column.** Two items for Alex: **12-CAL** (the
+> lone-claim filter — fixing it makes the headline worse) and **13-CAL, a HOLD on RULE E2**, which
+> is ruled, unbuilt, riding the allowlist onto ranks 2 and 6, and resting on a premise this queue
+> disproved. *A cell that yields no rule is a result; a cell that yields a rule scored on the wrong
+> population is a regression with a green number on it.*
 
 > **CAL-P121 added rank 6 to the banked column, and it is the first banked design whose rule
 > *deletes* its cell rather than repairing it** (4,563 of 4,566 rows; 3 survive, below the floor).
@@ -1814,6 +1824,134 @@ reversal, the later half worse**, and **every class in both halves is over the b
    holdout split** (68 @ 31.91 → 102 @ 39.26). Lane1's writer-repair queue should be told this cohort
    exists. Separately, `z_no_cp_fallback` — the rows using ruling 103's `opening_probability`
    fallback — is the **best-calibrated class in the cell** at 2.38 pp, under the bar, on both halves.
+
+---
+
+## 6i. RANK 8 — CAL-P122, and the cell's biggest class is a population this curve filtered
+
+**No rule is banked here, and that is the finding rather than a shortfall.** Every policy that
+clears the bar on `kalshi/entertainment` does so by deleting a class our own producer has already
+made one-sided, and the identical policy scored against the corrected population fails. Full
+document: `artifacts/cal-p122/RULE-DESIGN-kalshi-entertainment.md`.
+
+### The three cheap checks, and the third one changed a verdict
+
+Rail reproduction **8,418 / 5.21 / +1.04** against the payload's **8,355 / 5.21 / +1.07** —
+**+0.75%**, ECE to the second decimal. `--by series` (lesson 5, run in the first five minutes):
+**the label is TRUE** — 155 series of music charts, streaming, Netflix rankings, awards and
+reality TV, nothing mis-shelved. The lesson still paid: ninety seconds instead of an assumption.
+
+`calibration_cluster_sigma`, 2,000 resamples, seeded:
+
+```
+8,418 rows / 1,550 markets / 5.43 rows per market
+  row grain (the board today)         SE 0.545   sigma 4.06
+  market grain (perfect-corr bound)   SE 1.270   sigma 1.74
+  cluster bootstrap (MEASURED)        SE 0.474   sigma 4.66
+  bootstrap ECE 95% interval [4.43, 6.27] pp     design effect 0.76
+```
+
+🔴 **This is the first cell where CAL-P114 §3a's market-count shortcut would have changed a
+verdict** — 1.74σ is *under* `SIGMA_GATE`, and measured the cell sits at 4.66σ with a bootstrap
+lower bound of 4.43 pp against a 3.0 bar. Two cells were already known to be mis-corrected in
+opposite directions by that shortcut; this is the third and the first where it is decisive. The
+recommendation already with Alex — **report `effective_n` and `design_effect` as a pair, do not
+redefine the denominator** — now has a case behind it and not just a caveat.
+
+### The cell, and the class that cannot contain a loss
+
+| class | n | share | ECE | gap | mean price | actual |
+|---|--:|--:|--:|--:|--:|--:|
+| `bundle` ǀ 5–15 | 2,442 | 29.0% | 5.46 | +0.19 | 51.62 | 51.43 |
+| `field1` ǀ **≤ 1.15** | 2,416 | 28.7% | **1.66** | **+0.25** | 15.23 | 14.98 |
+| `bundle` ǀ 2–5 | 1,373 | 16.3% | 8.61 | −0.26 | 37.11 | 37.36 |
+| `field1` ǀ 1.15–2 | 574 | 6.8% | 9.21 | +8.63 | 22.22 | 13.59 |
+| `field1` ǀ 2–5 | 499 | 5.9% | 25.21 | +25.21 | 34.83 | 9.62 |
+| **`single` ǀ ≤ 1.15** | **395** | **4.7%** | **32.48** | **−32.48** | 67.52 | **100.00** |
+| `field1` ǀ 5–15 | 155 | 1.8% | 47.87 | +47.87 | 56.26 | 8.39 |
+| *(bundle ≤1.15 / bundle 1.15–2 / binary ≤1.15: 564 rows)* | | | | | | |
+
+The `field1` ladder is the familiar shape — **+0.25 → +8.63 → +25.21 → +47.87** sorted by
+published price sum, monotone, same-signed in both holdout halves, exactly RULE E's population.
+The `bundle` half is **not** a directional defect: every band's gap is within 3.3 pp of zero and
+the two largest within 0.3. And the `single` class — exactly the cell's `unshaped` markets, no
+residue — is **395 rows, 395 winners, average published price 0.675.**
+
+### 🔴 The 100% win rate is `clean_vms`, not the capture — and it contradicts a RULED rule
+
+`precompute_calibration.py:2067-2071` filters virtual markets on `has_winner >= 1`. For a **lone
+claim** — an ungrouped market whose virtual market is itself, holding one captured outcome — that
+means **publish if and only if it won.** Queue 299 rung 1 carves the class out on purpose
+(*"a lone Yes/No claim that legitimately resolved No is not an authority failure"*) and
+`orphan_partition_markets` declines it too; **both carve-outs are dead letters, because the gate
+predates Queue 299 by three months (#691) and deletes the row before either predicate runs.**
+
+`backend/scripts/calibration_missing_loser_census.py` (new, read-only, 28 guards / 12 mutations)
+reads `vm_stats` — the CTE `clean_vms` filters — so the counterfactual is the producer's own
+population one predicate earlier, not a re-implementation.
+
+```
+  arm                                      n      ECE      gap  winrate
+  A_also_no_winner (rung 1 owns these)  1,622    35.00   +35.00     0.0%    <- correctly excluded
+  B_lone_claim (UNIQUELY dropped)         432    51.91   +51.91     0.0%    <- the defect
+
+  the class   published today   395   32.48  -32.48  100.0% winners
+              losers restored   827   21.09  +11.60   47.8% winners
+  the cell    published today 8,418    5.21   +1.04
+              losers restored 8,850    6.30   +3.53
+```
+
+The 432 are **graded losses, not ungraded rows**: `backfill_winners.py:411-419` writes
+`is_winner = false, resolution_source = 'api_settlement'` in one statement from Kalshi's own
+`result = 'no'`. **The sign reverses** (−32.48 published, +11.60 honest), **the honest cell is
+worse** (5.21 → 6.30), and the holdout says the defect is **live and accelerating** — 60 dropped
+rows in the OLD half against **372** in the NEW.
+
+### The rule grid, and the trap in it
+
+| policy | POOLED | OLD | NEW | |
+|---|---|---|---|---|
+| A_today (published) | 8,418 / 5.21 | 5.30 | 5.70 | control |
+| **A2 honest** (restored) | 8,850 / **6.30** | 5.22 | **7.97** | the real starting line |
+| B (drop bundles) | 4,132 / 6.30 | 5.70 | 8.33 | 🔴 worse than nothing |
+| E (keep sum ≤ 1.15) | 3,085 / 5.10 | 4.97 | 7.05 | fails |
+| **S + E** (S = exclude the lone class) | **2,690 / 1.27** | **2.17** | **2.38** | **passes** |
+| **the same E, on the honest population** | **3,517 / 5.75** | 3.88 | **9.61** | 🔴 **fails, and worse** |
+| R + F (restore, drop `field1` > 1.15) | 7,622 / 5.40 | 5.48 | 6.43 | fails |
+
+> **A rule that clears the bar on the published population and fails on the true one has not
+> fixed a cell — it has deleted the evidence that the cell is broken.** `S` is **RULE E2** wearing
+> this cell's name, and E2 is ruled, unbuilt, and riding the allowlist onto ranks 2 and 6.
+
+### Owed to Alex — two items, and the second is a HOLD on ruled work
+
+1. **12-CAL: the curve publishes winners and drops losers for lone claims.** Three options,
+   **(a) recommended** — narrow the gate to `has_winner >= 1 OR the vm is a lone claim with an
+   authoritative resolution`, then re-measure the board. It is the only option that ends in a true
+   number, and it makes the headline **worse**. A producer change under freeze, so it is a ruling,
+   not a lane's call.
+2. 🔴 **13-CAL: HOLD RULE E2.** Its stated justification is *"a population that is 100% winners is
+   one-sided capture"*. Measured, the capture is two-sided and the **filter** is one-sided. E2 must
+   not land before 12-CAL is decided; if it lands anyway its rule text must say what it does —
+   *we drop a class our own population filter made unscoreable* — because a published exclusion
+   whose stated cause is false is the same defect as one that outlives its cause (§6f clause 4).
+
+### What this closes, and what it refutes
+
+**Exit-exam item 3's entertainment half now has a named diagnosis**, and it is not the one the exam
+predicted. The exam's strongest lead was CAL-P026's bucket-9 `price_moved` split read as
+settlement-collapse; folded on the published cell today, `moved` is **4.96** against `unmoved`
+**6.37** — the moved half is the *better* half, cell-wide. `--by cpdrift` agrees from the other
+side: the coin-flip classes are 3.8% of this cell and the 61.5% `d_normal` majority carries 6.04
+on its own. The exam expected *"an exclusion with a count"*; the answer is *a population filter of
+ours, and the count belongs on the other side of the ledger.*
+
+**Parked, not dropped.** **CAL-P122-1** — run the census on every queued cell, `polymarket/esports`
+first (E2's origin and its 453/453 claim), then the two ruled cells the allowlist reaches; ⚠️ the
+row path rate-limits at 60/min and a 429 mid-sweep reads as a small class. **CAL-P122-2** — read
+the `bundle` half (4,286 rows, 50.9%, two-sided bucket error, `KXARTISTSTREAMS` alone 1,048 rows at
+16.4 / −7.89 and the cell's largest single error mass). Not a rule candidate until somebody reads
+it.
 
 ---
 
