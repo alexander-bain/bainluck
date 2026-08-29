@@ -83,8 +83,12 @@ MUTATIONS: list[tuple[str, Path, str, str, str]] = [
     (
         "M3", ROUTE,
         "a debug request READS the cache, silently returning no echo",
-        "    if not debug_evidence and not debug_timing:\n        try:\n"
-        "            _rc = get_redis_client()\n",
+        # LAT-P134 re-target: `_force_cache_rebuild` joined this READ guard
+        # (and ONLY the read guard). The needle is updated by the cycle that
+        # moved the line, not left to drift into a NOT-APPLIED that reads as
+        # coverage — `scan_mutation_residue` PASS A caught it the same session.
+        "    if not debug_evidence and not debug_timing and not _force_cache_rebuild.get():\n"
+        "        try:\n            _rc = get_redis_client()\n",
         "    if True:\n        try:\n            _rc = get_redis_client()\n",
     ),
     # LAT-P054/#1866: `debug_timing` joined both guards, so both need their own
@@ -102,9 +106,14 @@ MUTATIONS: list[tuple[str, Path, str, str, str]] = [
         "M14", ROUTE,
         "a debug-TIMING request READS the cache, so it is answered with a "
         "payload carrying no `debug_timing` key — silence read as a free request",
-        "    if not debug_evidence and not debug_timing:\n        try:\n"
-        "            _rc = get_redis_client()\n",
-        "    if not debug_evidence:\n        try:\n            _rc = get_redis_client()\n",
+        # LAT-P134 re-target: `_force_cache_rebuild` joined this READ guard
+        # (and ONLY the read guard). The needle is updated by the cycle that
+        # moved the line, not left to drift into a NOT-APPLIED that reads as
+        # coverage — `scan_mutation_residue` PASS A caught it the same session.
+        "    if not debug_evidence and not debug_timing and not _force_cache_rebuild.get():\n"
+        "        try:\n            _rc = get_redis_client()\n",
+        "    if not debug_evidence and not _force_cache_rebuild.get():\n"
+        "        try:\n            _rc = get_redis_client()\n",
     ),
     (
         "M4", ROUTE,
