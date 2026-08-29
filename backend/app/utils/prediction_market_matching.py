@@ -1217,6 +1217,94 @@ def kalshi_game_id(external_id: Optional[str]) -> Optional[str]:
     return m.group(1).upper() if m else None
 
 
+# Q435 — the tours whose Kalshi tickers carry a per-MATCH segment shared across
+# every series that prices that match. ATP and WTA only: this is the measured
+# population (production census 2026-08-29) and the one the US Open needs. ITF
+# is deliberately absent — its markets are bare matchups whose ticker shape has
+# not been measured here, and an unmeasured tour in this set would be a guess
+# wearing an id's clothes.
+_KALSHI_MATCH_SEGMENT_SPORT_KEYS = frozenset({"tennis_atp", "tennis_wta"})
+
+
+def kalshi_match_segment_key(external_id: Optional[str]) -> Optional[str]:
+    """The provider's OWN key for a tennis match, qualified by tour.
+
+    Kalshi prices one tennis match through many *events*, one per series:
+
+        KXATPMATCH-26AUG30BUBWOL          the match winner
+        KXATPSETWINNER-26AUG30BUBWOL-1    set 1 winner
+        KXATPEXACTMATCH-26AUG30BUBWOL     the exact score
+        KXATPGTOTAL-26AUG30BUBWOL-T22     total games
+
+    ``26AUG30BUBWOL`` is Kalshi's own event segment and it is IDENTICAL across
+    all four. This function returns ``"tennis_atp:26AUG30BUBWOL"`` for every one
+    of them and ``None`` for anything else.
+
+    **Why this is not a matching heuristic.** The token is READ out of the
+    provider's ticker, not inferred from a name and a time window: same source,
+    same key, parsed. Two markets that return the same value are the same match
+    because Kalshi says so. That is ruling 048 arm A — a shared id — and it is
+    the reason this may propagate a link where ``_find_matching_event``'s name
+    comparison may not.
+
+    **What it does NOT authorize.** This keys a market to a market. It is not an
+    event anchor and must never become one: Kalshi tennis stays
+    ``id_kind='market'`` in ``event_provider_anchors`` under Alex's 2026-08-21
+    ruling, and nothing here absorbs one event row into another.
+    """
+    if not external_id:
+        return None
+    from app.utils.sport_keys import get_sport_key_from_ticker
+
+    sport_key = get_sport_key_from_ticker(external_id)
+    if sport_key not in _KALSHI_MATCH_SEGMENT_SPORT_KEYS:
+        return None
+    game_id = kalshi_game_id(external_id)
+    if not game_id:
+        return None
+    return f"{sport_key}:{game_id}"
+
+
+# The Kalshi tennis series that price the MATCH ITSELF — who wins it. Everything
+# else carrying a match segment (set winners, exact score, game totals, game and
+# set handicaps) is a PROP *about* a match, and a prop is not evidence that a
+# match exists.
+_KALSHI_TENNIS_MATCH_SERIES = (
+    "kxatpmatch", "kxwtamatch",
+    "kxatpchallengermatch", "kxwtachallengermatch",
+    "kxatpdoubles", "kxwtadoubles",
+    "kxatpchallengerdoubles", "kxwtachallengerdoubles",
+    "kxatpgame", "kxwtagame",
+)
+
+
+def is_kalshi_tennis_prop_ticker(external_id: Optional[str]) -> bool:
+    """True for a Kalshi tennis market that is a PROP about a match.
+
+    Q435. This exists to answer one question — *may this market invent an
+    Event?* — and the answer for a prop is no.
+
+    Measured on production 2026-08-29: event 15295024, "Alexander Bublik vs
+    Jeffrey John Wolf", commence 00:00Z, `commence_time_source='kalshi_ticker'`,
+    was auto-created by a `KXATPSETWINNER` / `KXATPEXACTMATCH` pair *while event
+    15293809 for the same match already existed* from the Odds API and was the
+    row the US Open draw register pinned. A set-3-winner market manufactured a
+    second identity for a match it does not decide, and the four props then
+    rendered on a page nothing links to.
+
+    Refusing the create is not a loosening in the other direction either: the
+    prop is not absorbed into anything, it simply stays unlinked until its own
+    match segment resolves (``kalshi_match_segment_key`` + the reconciliation in
+    ``tasks/prediction_market_matching``) or the match-winner market brings the
+    event into existence. An honestly unlinked prop is visible and reversible; a
+    twin event is neither, which is the same ledger ruling 048 balances.
+    """
+    if not kalshi_match_segment_key(external_id):
+        return False
+    lowered = str(external_id).strip().lower()
+    return not lowered.startswith(_KALSHI_TENNIS_MATCH_SERIES)
+
+
 def kalshi_game_teams(external_id: Optional[str]) -> Optional[str]:
     """Return the uppercase TEAM-code of a Kalshi game ticker (the game-id with
     its date + optional HHMM stripped), or None when absent.

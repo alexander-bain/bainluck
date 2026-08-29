@@ -456,13 +456,45 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxatpgamespread": "tennis_atp",             # Game spread
     "kxatpgspread": "tennis_atp",                # Game spread (alt ticker)
     "kxatpgametotal": "tennis_atp",              # Total games
+    "kxatpgtotal": "tennis_atp",                 # Total games (alt ticker)
     "kxatptotalsets": "tennis_atp",              # Total sets
     "kxatpdoubles": "tennis_atp",                # Doubles match
+    "kxatpchallengerdoubles": "tennis_atp",      # Challenger doubles match
     "kxatpgame": "tennis_atp",                   # Match winner (by event)
     "kxwtamatch": "tennis_wta",
     "kxwtachallengermatch": "tennis_wta",         # WTA Challenger match
     "kxwtadoubles": "tennis_wta",                # WTA doubles match
+    "kxwtachallengerdoubles": "tennis_wta",       # WTA Challenger doubles match
     "kxwtagame": "tennis_wta",                   # WTA match winner (by event)
+    # Q435 — the WTA half of the match family, and the ATP alt-ticker that was
+    # missed with it. The ATP prop series above have been mapped since #1109;
+    # their WTA mirrors never were, and the omission is the whole reason a WTA
+    # match's props cannot reach a page. Measured on production 2026-08-29,
+    # open markets carrying a well-formed match segment:
+    #
+    #     kxatpsetwinner   193 / 193 linked     kxwtasetwinner   121 /   0 linked
+    #     kxatpexactmatch   72 /  72 linked     kxwtaexactmatch   52 /   0 linked
+    #     kxatpgspread      54 /  54 linked     kxwtagtotal       56 /   0 linked
+    #                                           kxatpgtotal       54 /   0 linked
+    #
+    # Every unlinked row above carries `26AUG30BUBWOL`-shaped segment that
+    # `kalshi_game_id()` already parses correctly — the ticker was never
+    # ambiguous, it was simply absent from this table. The linked column is the
+    # control: the identical ATP series links at 100%, so this is a mapping gap
+    # and not a matching problem. Symmetry is the rule here — an ATP entry with
+    # no WTA mirror is the defect, so the mirrors are written even where no
+    # market is live today (`kxwtagspread`, `kxwtaanyset`, …); a mapping table
+    # is a vocabulary, not an observation, and #1888's honest-empty rule governs
+    # what we WRITE about a market, not which tickers we can read.
+    "kxwtasetwinner": "tennis_wta",              # WTA set winner
+    "kxwtaanyset": "tennis_wta",                 # WTA any set winner
+    "kxwtaexactmatch": "tennis_wta",             # WTA exact match score
+    "kxwtaexactsets": "tennis_wta",              # WTA exact sets
+    "kxwtagamespread": "tennis_wta",             # WTA game spread
+    "kxwtagspread": "tennis_wta",                # WTA game spread (alt ticker)
+    "kxwtagametotal": "tennis_wta",              # WTA total games
+    "kxwtagtotal": "tennis_wta",                 # WTA total games (alt ticker)
+    "kxwtatotalsets": "tennis_wta",              # WTA total sets
     # ITF (International Tennis Federation) — #1109. ATP and WTA were mapped
     # here from the start; ITF never was, and the omission was not neutral.
     #
