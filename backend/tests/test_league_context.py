@@ -188,7 +188,7 @@ class TestLeagueContextService:
                 },
             }
 
-        monkeypatch.setattr("app.routes.playoffs.get_playoff_grid", fake_grid)
+        monkeypatch.setattr("app.routes.playoffs.get_playoff_grid_cached", fake_grid)
 
         ctx = await _compute_league_context("nba", db=object())
 
@@ -215,7 +215,7 @@ class TestLeagueContextService:
         async def missing_grid(**kwargs):
             return None
 
-        monkeypatch.setattr("app.routes.playoffs.get_playoff_grid", missing_grid)
+        monkeypatch.setattr("app.routes.playoffs.get_playoff_grid_cached", missing_grid)
 
         assert await _compute_league_context("not-a-league", db=object()) is None
         assert await _compute_league_context("nba", db=object()) is None
@@ -228,7 +228,7 @@ class TestLeagueContextService:
         async def empty_grid(**kwargs):
             return {"teams": []}
 
-        monkeypatch.setattr("app.routes.playoffs.get_playoff_grid", empty_grid)
+        monkeypatch.setattr("app.routes.playoffs.get_playoff_grid_cached", empty_grid)
 
         ctx = await _compute_league_context("nba", db=object())
 
