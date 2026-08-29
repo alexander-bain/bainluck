@@ -183,7 +183,20 @@ from pathlib import Path
 #: so the board's memory is in one place rather than scattered per-queue under
 #: ``artifacts/cal-pNNN/``. A per-queue artifact is evidence of one session; a
 #: ledger is what the next session reads without knowing which session made it.
-LEDGER_PATH = Path("artifacts/calibration-scorecard/measured-sigma.json")
+#:
+#: Anchored to the REPOSITORY, not to the caller's working directory. It was
+#: relative until CAL-P129, which meant ``cd backend && python3
+#: scripts/calibration_scorecard.py`` -- the invocation CLAUDE.md documents for
+#: every backend script -- resolved it to a path that does not exist, and the
+#: board printed a complete, plausible, well-formed table with the entire
+#: measured-sigma overlay silently absent. A path to a COMMITTED artifact is a
+#: property of the repository.
+LEDGER_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "artifacts"
+    / "calibration-scorecard"
+    / "measured-sigma.json"
+)
 
 SCHEMA = 1
 
@@ -350,16 +363,31 @@ def validate(ledger: dict) -> list[str]:
     return problems
 
 
-def load(path: Path | str = LEDGER_PATH) -> dict:
+def load(path: Path | str = LEDGER_PATH, *, missing_ok: bool = False) -> dict:
     """Load and validate. A ledger that fails :func:`validate` raises.
 
     Refusing beats degrading. A silently-wrong SE would move cells across the
     ratified gate in the direction that makes the board look shorter, which is
     exactly the failure this program keeps having.
+
+    ``missing_ok`` is the same sentence applied to ABSENCE, which is the half
+    CAL-P128 left open: the malformed case raised, and the missing case returned
+    an empty ledger and let the board report it as "no cell has been measured".
+    That is gotcha #53 -- an absent file and an empty ledger are different facts
+    and they produced identical output. Only ``--build``, which legitimately
+    runs before any ledger exists, is entitled to the empty reading, and it asks
+    for it by name.
     """
     p = Path(path)
     if not p.exists():
-        return {"schema": SCHEMA, "entries": {}}
+        if missing_ok:
+            return {"schema": SCHEMA, "entries": {}}
+        raise FileNotFoundError(
+            f"sigma ledger not found: {p}\n"
+            "This is refused rather than read as 'nothing has been measured' — "
+            "an empty overlay is a claim about the board, not about a file. "
+            "Pass --no-sigma-ledger to score without it deliberately."
+        )
     ledger = json.loads(p.read_text())
     problems = validate(ledger)
     if problems:
@@ -421,7 +449,18 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.build:
-        paths = [Path(x) for x in args.build if Path(x).exists()]
+        # Third instance of the same class, fixed in the same commit: a
+        # mistyped or moved artifact used to be filtered out here and the run
+        # then printed "wrote ... (13 cells from 13 artifacts)" for fourteen
+        # arguments. Silently building a SHORTER ledger is how a cell loses its
+        # measurement without anybody deciding to drop it.
+        missing = [x for x in args.build if not Path(x).exists()]
+        if missing:
+            print("ARTIFACT(S) NOT FOUND — nothing written:")
+            for m in missing:
+                print(f"  {m}")
+            return 1
+        paths = [Path(x) for x in args.build]
         ledger = build(paths)
         problems = validate(ledger)
         if problems:
@@ -435,7 +474,7 @@ def main() -> int:
         print(f"wrote {out}  ({len(ledger['entries'])} cells from {len(paths)} artifacts)")
 
     if args.show or not args.build:
-        ledger = load(args.out if args.build else LEDGER_PATH)
+        ledger = load(args.out if args.build else LEDGER_PATH, missing_ok=True)
         entries = ledger.get("entries") or {}
         if not entries:
             print("ledger is empty")

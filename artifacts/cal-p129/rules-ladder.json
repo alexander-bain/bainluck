@@ -1,0 +1,1 @@
+{"classes": ["z_not_a_ladder"], "total": {"n": 8480, "ece": 5.1, "gap": 0.85}, "bar": 3.0, "floor_rows": 1, "searched": 1, "passing": [], "ranked": [{"keep": ["z_not_a_ladder"], "n": 8480, "ece": 5.1, "gap": 0.85, "dropped": 0, "dropped_pct": 0.0}]}
