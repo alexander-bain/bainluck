@@ -53,6 +53,19 @@ asserts it.
 Summing `max(0, gap − 300)` across the window: **4,687 s of 12,375 s — 37.9 % of
 wall-clock time the warm rail left the anonymous Discover entry uncovered.**
 
+Read **three** times across 75 minutes, on a rolling 49-fire window, so it is
+neither one bad hour nor one lucky arithmetic:
+
+| read | window | p50 gap | p90 gap | max gap | gaps > 300 s | uncovered |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 (01:26 UTC) | 12,000 s | 138 s | — | 2,511 s | 10 / 49 | — |
+| 2 (01:51 UTC) | 12,375 s | 152 s | 517 s | 2,511 s | 10 / 49 | **37.9 %** |
+| 3 (02:31 UTC) | 11,997 s | 126 s | 487 s | 2,511 s | 9 / 49 | **37.3 %** |
+
+Even the calmest slice is not calm: restricted to the last hour of read 3, the
+beat fired 14 times with a p50 of 116.5 s — and a **1,005 s** maximum, 3.35× the
+stale ceiling, inside the stretch that looked healthy.
+
 The control is what makes this a statement about the QUEUE rather than about
 the beat scheduler. Same scheduler, same 24 hours, same process family, same
 kind of work — and a beat on `realtime` held its declared period to the second
@@ -67,6 +80,32 @@ it too. But every one of those covering events is *somebody paying the build*.
 The hole is quietest-hours-shaped — it opens widest exactly when the live rail
 has nothing to republish and there is no traffic to accidentally repair it,
 which is when a brand-new install is most likely to be the first arrival.
+
+### 2b. What this session did NOT manage to catch, stated rather than omitted
+
+Two live probes ran for ~50 minutes against production and **caught zero
+misses**:
+
+* `/api/feed?limit=20&event_pct=0.15` anon, every 60 s, 24 samples: 20 `hit`,
+  4 `stale_hit`, **0 `miss`**.
+* The three **warmer-only** keys, every 90 s — `limit=50` anon shapes plus the
+  `limit=200` backfill. These are the sharpest available detector because
+  **nothing but the warmer ever writes them**: the web never sends `limit=50`
+  and native always sends an `x-session-id`, so a traffic lull cannot repair
+  them and a miss cannot be explained away. All `hit` for the duration.
+
+That is a real negative result and it does not weaken the finding — it locates
+it. The beat behaved for that stretch (01:44, 01:46, 01:48 — ~120 s gaps), which
+is exactly what a p50 of 126–152 s with a 2,511 s tail looks like from inside a
+good hour. **The hole is bursty and quietest-hours-shaped**: it opens widest
+when the live-republish rail has nothing to republish and there is no organic
+traffic to accidentally cover it — which is the same window in which a
+brand-new install is most likely to be the first arrival, and the window in
+which no human is running a probe.
+
+The evidence for the hole is therefore the 3.4-hour gap history above and the
+`miss` recorded in production's own always-sampled window, not a miss this
+session reproduced on demand.
 
 ## 3. The last-good rail does not cross the gap
 
@@ -168,3 +207,70 @@ the fact.
   publishing something the route would not — and that rolls back.
 * **The cause, unchanged.** P112-1 stays open regardless of the above. A green
   bar here means the consequence is covered, not that `background` is healthy.
+
+## 7. Gates
+
+* Full suite **20,901 passed / 0 failed / 116 skipped / 61 xfailed**, ONE run
+  (850.71 s), **EXIT CODE 0 read by VALUE**, on code tree `eaf8630d`.
+* `--collect-only` reconciles on BOTH sides, measured rather than assumed:
+  master @ `f0b512b8` = **21,057**, branch = **21,078**, delta **+21** = the new
+  gate file exactly. And 20,901 + 116 + 61 = 21,078.
+* Mutation battery **13/13 KILLED**, 0 survived, 0 not-applied. Control green on
+  unmutated source first; every restore verified SHA-identical.
+  🔴 **M10 survived its first run and the survivor was the finding.** An empty
+  remembered key was defended twice — a filter in the hash decode AND a check at
+  the use site — so mutating either left the other holding the line and neither
+  could be shown to be doing the work. The redundant guard was deleted, not the
+  mutant. Defence in depth reads as untested, and only a mutation says so.
+* `scan_mutation_residue.py`: **CLEAN**, 119 needles verified in place. (Two
+  pre-existing `typeahead_warmer_mutations` drift entries are master's, not
+  this branch's.)
+* ruff **ZERO NEW** — `All checks passed` on every touched and new file.
+* black: the new test file is clean. The new mutation harness is deliberately
+  NOT formatted (its whole family — `typeahead_warmer_mutations.py`,
+  `search_word_test_mutations.py` — keeps the compact `"M1", TARGET,` form and
+  is not black-clean); `precompute_category_pages.py` deliberately not
+  (master's own copy is not black-clean).
+* Merge compatibility, **tested rather than reasoned about**: merge-tree vs
+  `origin/master` exit 0, tree `87eca275`, 0 conflicts, HEAD not an ancestor.
+  Against both other unmerged latency branches, in BOTH orders, all exit 0 —
+  and each pair produces the **identical tree** either way
+  (`-95`↔`-97` → `b952bc29`; `-96`↔`-97` → `77ad137b`). A real three-way merge
+  of `-95` → `-96` → `-97` onto master was performed in a throwaway worktree:
+  clean, and all three `SHAPES` entries survive in
+  `scan_mutation_residue.py`, the one file all three touch.
+
+## 8. The needle refused four times, and the refusal is this cycle's second finding
+
+Four reads, spread across the session, all on `f0b512b8` (this branch has not
+deployed, so none of them measures it):
+
+| read | cold member paths | graded surfaces | would have published |
+|---|---:|---:|---:|
+| open | 2 of 7 (floor 4) | 2 of 3 | 41.5 ms raw pool, one 3,727 ms `discover_web` sample |
+| open-2 | 2 of 7 | 2 of 3 | 158.0 ms raw pool |
+| close | 1 of 7 | 1 of 3 | 14.0 ms |
+| close-2 | 1 of 7 | 1 of 3 | 12.0 ms |
+
+**`NEEDLE: latency REFUSED @ 2026-08-29T02:4x UTC` — 1 of 7 member paths, floor
+4; 1 of 3 graded surfaces.** Seventh consecutive refusal in this lane. Without
+LAT-P107's floors the closing read would have published **12 ms** off a single
+member and it would have been a lie.
+
+The refusal is not noise, and this cycle is the one that can say what it means.
+All four `/api/feed` members produced **zero** cold samples on every read, and
+the reason is the warm rails working — the 120 s pass, LAT-P101's prewarm,
+LAT-P103's cross-worker shared build and #2236's 40 s republish all reaching
+production. **The instrument cannot see the thing this cycle fixed, because the
+hole opens in the hours nobody is running the instrument.** The needle samples
+when a human is at a keyboard; the hole is widest when nobody is.
+
+That is a limitation of the needle as specified, not a reason to weaken its
+floors, and it is exactly why this ship's post-deploy bar is the `miss` count in
+production's own always-sampled window rather than a needle delta. It is raised
+in `YOUR-TURN.md` rather than decided here.
+
+**The one number that DID move within the pool:** `search_cold` read **351.5 ms**
+(6/6 cold) on the second open read, against LAT-P111's 544.5 ms. LAT-P111 is
+unmerged and undeployed, so that is term-set and hour variance on the same code
+— quoted so nobody later reads it as P111's fix arriving early.
