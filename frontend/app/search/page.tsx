@@ -14,6 +14,8 @@ import { familyShownIds } from "@/components/searchFamilyDisplay";
 import CategoryBrowser from "@/components/CategoryBrowser";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
+import SearchDegradedState from "@/components/SearchDegradedState";
+import { searchAnswerState } from "@/lib/searchAnswerState";
 import LeagueChips from "@/components/LeagueChips";
 import { END_OF_FEED_CATEGORIES } from "@/components/discover/EndOfFeedCard";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
@@ -385,7 +387,26 @@ function SearchContent() {
   const hasFamilies = families.length > 0;
   const hasFlatFutures = flatFutures.length > 0;
 
-  if (!results || (!hasEvents && !hasFutures && !hasTeams && !hasEventConcepts)) {
+  // #2239: an empty answer is two different facts and they had one rendering.
+  // `/api/events/search` sheds stages against its 20,000 ms deadline and names
+  // them in `degraded`; the page used to print "No results for X" over that —
+  // an absence claim built from a request that gave up. See
+  // `lib/searchAnswerState.ts` for why content still wins over `degraded`.
+  const answerState = searchAnswerState({
+    hasEvents: !!hasEvents,
+    hasFutures: !!hasFutures,
+    hasTeams: !!hasTeams,
+    hasEventConcepts,
+    degraded: results?.degraded,
+  });
+
+  if (results && answerState === "degraded") {
+    return (
+      <SearchDegradedState query={query} onRetry={() => window.location.reload()} />
+    );
+  }
+
+  if (!results || answerState === "empty") {
     return (
       <SearchZeroState
         query={query}
