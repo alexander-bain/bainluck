@@ -1,0 +1,1474 @@
+{
+  "_what": "UX-P171 \u2014 GET /api/economics, banked 2026-08-29 before a line of the fix was written.",
+  "_stability": "pulled 3x, byte-identical modulo updated_at",
+  "served_before": {
+    "total_markets": 1980,
+    "updated_at": "2026-08-29T13:27:15.118619+00:00",
+    "cross_source": [
+      {
+        "q": "Core inflation in August 2026 (Core CPI YoY)",
+        "kalshi": 98.0,
+        "poly": 31.5,
+        "delta": 66.5,
+        "category": "inflation",
+        "kalshi_market_id": 55686539,
+        "poly_market_id": 58900291
+      },
+      {
+        "q": "Mexico unemployment rate in August",
+        "kalshi": 98.5,
+        "poly": 36.5,
+        "delta": 62.0,
+        "category": "jobs",
+        "kalshi_market_id": 59699924,
+        "poly_market_id": 58602255
+      },
+      {
+        "q": "US real GDP growth in Q3 2026?",
+        "kalshi": 95.5,
+        "poly": 47.0,
+        "delta": 48.5,
+        "category": "recession",
+        "kalshi_market_id": 12573791,
+        "poly_market_id": 57783029
+      },
+      {
+        "q": "US trade deficit for 2026?",
+        "kalshi": 91.0,
+        "poly": 48.0,
+        "delta": 43.0,
+        "category": "trade",
+        "kalshi_market_id": 1153176,
+        "poly_market_id": 1432802
+      },
+      {
+        "q": "South African Reserve Bank rate decision in September",
+        "kalshi": 71.5,
+        "poly": 54.5,
+        "delta": 17.0,
+        "category": "fed",
+        "kalshi_market_id": 56943624,
+        "poly_market_id": 56995499
+      },
+      {
+        "q": "Which bank will lead Anthropic's IPO?",
+        "kalshi": 65.5,
+        "poly": 50.0,
+        "delta": 15.5,
+        "category": "other",
+        "kalshi_market_id": 31833106,
+        "poly_market_id": 30635308
+      },
+      {
+        "q": "Bank of England rate decision in November",
+        "kalshi": 73.5,
+        "poly": 61.5,
+        "delta": 12.0,
+        "category": "fed",
+        "kalshi_market_id": 59699739,
+        "poly_market_id": 57783008
+      },
+      {
+        "q": "Fed rate cut before 2027?",
+        "kalshi": 14.8,
+        "poly": 6.5,
+        "delta": 8.3,
+        "category": "fed",
+        "kalshi_market_id": 1630482,
+        "poly_market_id": 113339
+      }
+    ],
+    "themes": {
+      "fed": {
+        "count": 46,
+        "fomc_meetings": [
+          {
+            "date": "Jan 2027 meeting",
+            "mo": "Jan",
+            "dist": [
+              [
+                12.5,
+                "4.25%"
+              ],
+              [
+                19.5,
+                "4.00%"
+              ],
+              [
+                13.5,
+                "3.75%"
+              ],
+              [
+                29.0,
+                "3.50%"
+              ],
+              [
+                4.0,
+                "3.25%"
+              ],
+              [
+                10.5,
+                "3.00%"
+              ],
+              [
+                2.0,
+                "2.50%"
+              ],
+              [
+                1.0,
+                "1.75%"
+              ],
+              [
+                0.5,
+                "0.50%"
+              ],
+              [
+                2.5,
+                "0.00%"
+              ]
+            ],
+            "resolved": false,
+            "market_id": 108626,
+            "sort_key": 202701
+          },
+          {
+            "date": "Mar 2027 meeting",
+            "mo": "Mar",
+            "dist": [
+              [
+                7.0,
+                "4.25%"
+              ],
+              [
+                26.5,
+                "4.00%"
+              ],
+              [
+                9.0,
+                "3.75%"
+              ],
+              [
+                6.5,
+                "3.50%"
+              ],
+              [
+                29.0,
+                "3.25%"
+              ],
+              [
+                3.0,
+                "3.00%"
+              ],
+              [
+                6.5,
+                "2.50%"
+              ],
+              [
+                3.0,
+                "2.25%"
+              ],
+              [
+                3.0,
+                "2.00%"
+              ],
+              [
+                1.5,
+                "0.25%"
+              ]
+            ],
+            "resolved": false,
+            "market_id": 108581,
+            "sort_key": 202703
+          },
+          {
+            "date": "Apr 2027 meeting",
+            "mo": "Apr",
+            "dist": [
+              [
+                30.5,
+                "4.25%"
+              ],
+              [
+                16.5,
+                "4.00%"
+              ],
+              [
+                1.5,
+                "3.75%"
+              ],
+              [
+                24.5,
+                "3.25%"
+              ],
+              [
+                3.0,
+                "3.00%"
+              ],
+              [
+                4.5,
+                "2.75%"
+              ],
+              [
+                3.5,
+                "1.25%"
+              ],
+              [
+                2.0,
+                "1.00%"
+              ],
+              [
+                5.0,
+                "0.50%"
+              ],
+              [
+                1.0,
+                "0.25%"
+              ]
+            ],
+            "resolved": false,
+            "market_id": 108574,
+            "sort_key": 202704
+          }
+        ],
+        "rate_cuts": [],
+        "side_markets": [
+          {
+            "q": "Bank of Japan rate decision in September",
+            "prob": 54.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 58728428
+          },
+          {
+            "q": "Bank of England rate decision in September",
+            "prob": 89.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 58728429
+          },
+          {
+            "q": "Reserve Bank of India rate decision in October",
+            "prob": 17.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 58728392
+          },
+          {
+            "q": "Bank of Canada Rate Hike in 2026?",
+            "prob": 25.5,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 4000970
+          },
+          {
+            "q": "Bank of England decision in November?",
+            "prob": 61.5,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 57783008
+          },
+          {
+            "q": "ECB rate cut in 2026?",
+            "prob": 9.0,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 113999
+          }
+        ]
+      },
+      "inflation": {
+        "count": 75,
+        "cpi_releases": [
+          {
+            "mo": "Dec",
+            "brackets": [
+              [
+                2.5,
+                "0.0%"
+              ],
+              [
+                26.5,
+                "0.5%"
+              ],
+              [
+                37.0,
+                "2.0%"
+              ],
+              [
+                14.0,
+                "3.5%"
+              ],
+              [
+                3.5,
+                "4.0%"
+              ],
+              [
+                8.0,
+                "6.0%"
+              ]
+            ],
+            "upcoming": true,
+            "peakIs": 2,
+            "market_id": 57774216
+          },
+          {
+            "mo": "Dec",
+            "brackets": [
+              [
+                29.5,
+                "3.75%"
+              ],
+              [
+                20.5,
+                "4.25%"
+              ],
+              [
+                10.0,
+                "4.50%"
+              ],
+              [
+                13.0,
+                "4.75%"
+              ],
+              [
+                9.0,
+                "5.00%"
+              ],
+              [
+                13.0,
+                "5.50%"
+              ]
+            ],
+            "upcoming": true,
+            "peakIs": 0,
+            "market_id": 112816
+          },
+          {
+            "mo": "Aug",
+            "brackets": [
+              [
+                0.5,
+                "Headline: 0.2% or below, Core: Exactly 0.2%"
+              ],
+              [
+                0.5,
+                "Headline: 0.2% or below, Core: 0.1% or below"
+              ],
+              [
+                3.0,
+                "Headline: 0.5% or above, Core: Exactly 0.2%"
+              ]
+            ],
+            "upcoming": true,
+            "peakIs": 2,
+            "market_id": 59172920
+          },
+          {
+            "mo": "Aug",
+            "brackets": [
+              [
+                58.0,
+                "3.5%"
+              ],
+              [
+                11.4,
+                "3.7%"
+              ],
+              [
+                10.2,
+                "3.1%"
+              ],
+              [
+                6.8,
+                "3.8%"
+              ],
+              [
+                3.7,
+                "3.0%"
+              ],
+              [
+                3.7,
+                "3.9%"
+              ],
+              [
+                3.1,
+                "\u22642.9%"
+              ],
+              [
+                3.1,
+                "\u22654.0%"
+              ]
+            ],
+            "upcoming": true,
+            "peakIs": 0,
+            "market_id": 58897629
+          },
+          {
+            "mo": "Aug",
+            "brackets": [
+              [
+                26.4,
+                "2.4%"
+              ],
+              [
+                15.9,
+                "2.5%"
+              ],
+              [
+                13.8,
+                "2.6%"
+              ],
+              [
+                10.5,
+                "2.8%"
+              ],
+              [
+                10.0,
+                "2.2%"
+              ],
+              [
+                9.2,
+                "2.7%"
+              ],
+              [
+                5.4,
+                "\u22642.0%"
+              ],
+              [
+                5.4,
+                "2.1%"
+              ],
+              [
+                3.3,
+                "\u22652.9%"
+              ]
+            ],
+            "upcoming": true,
+            "peakIs": 0,
+            "market_id": 58900291
+          },
+          {
+            "mo": "Dec",
+            "brackets": [
+              [
+                10.0,
+                "0.0%"
+              ],
+              [
+                12.0,
+                "1.5%"
+              ],
+              [
+                15.0,
+                "2.0%"
+              ],
+              [
+                6.0,
+                "2.5%"
+              ],
+              [
+                10.0,
+                "4.0%"
+              ],
+              [
+                13.5,
+                "6.0%"
+              ]
+            ],
+            "upcoming": true,
+            "peakIs": 2,
+            "market_id": 57774192
+          }
+        ],
+        "side_markets": [
+          {
+            "q": "Will inflation in Brazil be below 4.00% in Dec 2026?",
+            "prob": 97.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 109628
+          },
+          {
+            "q": "How much will core PCE increase in Nov 2026?",
+            "prob": 93.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 109646
+          },
+          {
+            "q": "How much will core PCE increase in Oct 2026?",
+            "prob": 95.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 109675
+          },
+          {
+            "q": "Will core CPI fall below 2.2% in 2026?",
+            "prob": 15.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 12311937
+          },
+          {
+            "q": "Will Michigan consumer sentiment go above 65 in 2026?",
+            "prob": 11.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 12573253
+          },
+          {
+            "q": "Will core CPI be above headline CPI in August 2026?",
+            "prob": 2.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 59172919
+          }
+        ]
+      },
+      "jobs": {
+        "count": 26,
+        "markets": [
+          {
+            "q": "U.S. nonfarm productivity YoY above 3% in any 2026 quarter?",
+            "prob": 48.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 3970184
+          },
+          {
+            "q": "Will Wyoming's unemployment rate remain below 3.5% in 2026?",
+            "prob": 70.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 59164871
+          },
+          {
+            "q": "Will unemployment in Brazil be below 5.8% in Q4 2026?",
+            "prob": 65.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 109627
+          },
+          {
+            "q": "Will youth unemployment fall below 7.5% in 2026?",
+            "prob": 20.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 12339196
+          },
+          {
+            "q": "Will Canada have the highest unemployment rate since 2016 this year?",
+            "prob": 6.9,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 115357
+          },
+          {
+            "q": "July jobs report prints negative?",
+            "prob": 7.0,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 55288908
+          },
+          {
+            "q": "Canada unemployment rate in August",
+            "prob": 0.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 58728498
+          },
+          {
+            "q": "Mexico unemployment rate in July",
+            "prob": 0.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 58728542
+          }
+        ]
+      },
+      "recession": {
+        "count": 64,
+        "main_prob": 12.5,
+        "gdp_quarters": [
+          {
+            "q": "Germany GDP growth in Q3 2026?",
+            "dist": [
+              [
+                19.0,
+                "1.0-1.2%"
+              ],
+              [
+                18.5,
+                "0.1-0.3%"
+              ],
+              [
+                18.5,
+                "0.4-0.6%"
+              ],
+              [
+                18.2,
+                "\u22640.0%"
+              ],
+              [
+                13.6,
+                "0.7-0.9%"
+              ],
+              [
+                12.2,
+                "1.3%+"
+              ]
+            ],
+            "market_id": 57792410
+          },
+          {
+            "q": "Brazil GDP growth in Q4 2026 (YoY)",
+            "dist": [
+              [
+                7.0,
+                "0.5%"
+              ],
+              [
+                15.0,
+                "1.0%"
+              ],
+              [
+                30.0,
+                "1.5%"
+              ],
+              [
+                15.0,
+                "2.0%"
+              ],
+              [
+                10.0,
+                "2.5%"
+              ],
+              [
+                8.0,
+                "3.5%"
+              ]
+            ],
+            "market_id": 108591
+          },
+          {
+            "q": "US real GDP growth in 2026?",
+            "dist": [
+              [
+                0.6,
+                "3.1% to 3.5%"
+              ],
+              [
+                0.3,
+                "3.6% to 4.0%"
+              ],
+              [
+                0.1,
+                "6.1% or Above"
+              ]
+            ],
+            "market_id": 108594
+          },
+          {
+            "q": "Mexico GDP growth in Q3 2026?",
+            "dist": [
+              [
+                12.5,
+                "<0.5%"
+              ],
+              [
+                12.5,
+                "0.5-1.0%"
+              ],
+              [
+                12.5,
+                "1.0-1.5%"
+              ],
+              [
+                12.5,
+                "1.5-2.0%"
+              ],
+              [
+                12.5,
+                "2.0-2.5%"
+              ],
+              [
+                12.5,
+                "2.5-3.0%"
+              ],
+              [
+                12.5,
+                "3.0-3.5%"
+              ],
+              [
+                12.5,
+                "3.5%+"
+              ]
+            ],
+            "market_id": 57792468
+          }
+        ],
+        "side_markets": [
+          {
+            "q": "Will Trump bring back manufacturing?",
+            "prob": 19.4,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 108313
+          },
+          {
+            "q": "Recession this year?",
+            "prob": 7.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 108622
+          },
+          {
+            "q": "Recession in 2027?",
+            "prob": 27.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 12924898
+          },
+          {
+            "q": "US recession by end of 2027?",
+            "prob": 52.0,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 58605173
+          },
+          {
+            "q": "Which countries will have a recession before 2027?",
+            "prob": 85.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 109488
+          },
+          {
+            "q": "UK GDP growth in Q3 2026 (QoQ)?",
+            "prob": 6.0,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 58951130
+          }
+        ]
+      },
+      "markets": {
+        "count": 50,
+        "today": [
+          {
+            "sym": "S&P 500 (SPX)",
+            "prob": 51.0,
+            "dir": "up",
+            "range": "",
+            "src": "polymarket"
+          }
+        ],
+        "stocks": [],
+        "side_markets": [
+          {
+            "q": "Will S&P 500 (SPY) hit (HIGH) $780 in September?",
+            "prob": 50.0,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 59545884
+          },
+          {
+            "q": "Will the NASDAQ-100 finish positive in 2026?",
+            "prob": 78.8,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 109482
+          },
+          {
+            "q": "Will the S&P finish positive this year?",
+            "prob": 85.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 109483
+          },
+          {
+            "q": "Annual Return: S&P 500 Total Return Vs. Gold?",
+            "prob": 69.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 25924969
+          },
+          {
+            "q": "Bitcoin vs. Gold vs. S&P 500 in 2026",
+            "prob": 65.5,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 113891
+          },
+          {
+            "q": "Nasdaq-100 price range on Sep 4, 2026 at 4pm EDT?",
+            "prob": 0.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 59700637
+          },
+          {
+            "q": "S&P price range on Sep 4, 2026 at 4pm EDT?",
+            "prob": 0.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 59700641
+          },
+          {
+            "q": "NYSE marketwide circuit breaker before 2027?",
+            "prob": 12.5,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 113303
+          }
+        ]
+      },
+      "energy": {
+        "count": 35,
+        "gas": [
+          {
+            "label": "Natural gas price",
+            "val": "$2.970",
+            "prob": 15.0,
+            "brackets": [
+              [
+                3.0,
+                "$2.855"
+              ],
+              [
+                3.0,
+                "$2.865"
+              ],
+              [
+                3.0,
+                "$2.875"
+              ],
+              [
+                3.0,
+                "$2.890"
+              ],
+              [
+                2.5,
+                "$2.905"
+              ],
+              [
+                15.0,
+                "$2.970"
+              ]
+            ],
+            "src": "kalshi"
+          }
+        ],
+        "oil": [
+          {
+            "q": "Will Venezuelan crude oil production reach 1.2m barrels per day in 2026?",
+            "prob": 51.0,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 13793467
+          },
+          {
+            "sym": "Oil",
+            "prob": 12.4,
+            "range": "At least 370",
+            "src": "kalshi",
+            "q": "Number of US oil rigs at end of 2026"
+          },
+          {
+            "sym": "Brent",
+            "prob": 14.5,
+            "range": "$84.99",
+            "src": "kalshi",
+            "q": "Brent crude oil price"
+          },
+          {
+            "sym": "Oil",
+            "prob": 39.0,
+            "range": "5.8 million barrels/day",
+            "src": "kalshi",
+            "q": "Texas crude oil production in 2026"
+          }
+        ],
+        "side_markets": [
+          {
+            "q": "Will Venezuelan crude oil production reach 1.2m barrels per day in 2026?",
+            "prob": 51.0,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 13793467
+          },
+          {
+            "q": "Texas crude oil production in 2026",
+            "prob": 95.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 59164875
+          },
+          {
+            "q": "Will Alaska crude oil production increase YoY in 2026?",
+            "prob": 86.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 59693597
+          },
+          {
+            "q": "US crude oil inventories for the week ending August 28, 2026",
+            "prob": 0.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 59700277
+          },
+          {
+            "q": "WTI Oil Up or Down - 15 minutes",
+            "prob": 0.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 59713056
+          },
+          {
+            "q": "WTI Oil Up or Down - 15 minutes",
+            "prob": 0.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 59713711
+          },
+          {
+            "q": "What will WTI Crude Oil (WTI) hit Week of August 31 2026?",
+            "prob": 0.0,
+            "src": "polymarket",
+            "delta": null,
+            "market_id": 59703977
+          },
+          {
+            "q": "Will New Mexico crude oil production rise YoY?",
+            "prob": 95.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 59164945
+          }
+        ]
+      },
+      "housing": {
+        "count": 15,
+        "mortgage_brackets": [
+          [
+            11.4,
+            "Above 6.59%"
+          ],
+          [
+            11.3,
+            "Above 6.60%"
+          ],
+          [
+            10.8,
+            "Above 6.61%"
+          ],
+          [
+            10.6,
+            "Above 6.62%"
+          ],
+          [
+            10.0,
+            "Above 6.63%"
+          ],
+          [
+            9.5,
+            "Above 6.64%"
+          ],
+          [
+            8.7,
+            "Above 6.65%"
+          ],
+          [
+            7.6,
+            "Above 6.66%"
+          ],
+          [
+            6.4,
+            "Above 6.67%"
+          ],
+          [
+            5.1,
+            "Above 6.68%"
+          ],
+          [
+            3.8,
+            "Above 6.69%"
+          ],
+          [
+            2.7,
+            "Above 6.70%"
+          ],
+          [
+            1.9,
+            "Above 6.71%"
+          ]
+        ],
+        "markets": [
+          {
+            "q": "Freddie Mac 30Y fixed-rate mortgage average below 5.75% in 2026?",
+            "prob": 5.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 12370532
+          },
+          {
+            "q": "Canada home price above C$700K in December?",
+            "prob": 21.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 19527955
+          },
+          {
+            "q": "Will Canada housing starts go above 300K in 2026?",
+            "prob": 29.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 25923895
+          },
+          {
+            "q": "Calgary home price below C$550K in 2026?",
+            "prob": 39.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 34275687
+          },
+          {
+            "q": "Montreal single-family home price below C$625K in 2026?",
+            "prob": 21.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 52755854
+          },
+          {
+            "q": "Edmonton home price below C$440K in 2026?",
+            "prob": 22.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 52755855
+          }
+        ]
+      },
+      "trade": {
+        "count": 20,
+        "markets": [
+          {
+            "q": "What will the tariff rate on EU imports be on Jan 1, 2027?",
+            "prob": 76.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 56914132
+          },
+          {
+            "q": "What will the tariff rate on Chinese imports be on Jan 1, 2027?",
+            "prob": 94.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 56914129
+          },
+          {
+            "q": "What will the tariff rate on Mexican imports be on Jan 1, 2027?",
+            "prob": 79.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 56914130
+          },
+          {
+            "q": "What will the tariff rate on Indian imports be on Jan 1, 2027?",
+            "prob": 82.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 56914131
+          },
+          {
+            "q": "What will the tariff rate on Canadian imports be on Jan 1, 2027?",
+            "prob": 85.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 56914133
+          },
+          {
+            "q": "What will the tariff rate on Brazilian imports be on Jan 1, 2027?",
+            "prob": 79.5,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 56914134
+          },
+          {
+            "q": "When will the US and China reach a tariff agreement?",
+            "prob": 57.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 59165069
+          },
+          {
+            "q": "Which sectors will Trump tariff in 2026?",
+            "prob": 97.0,
+            "src": "kalshi",
+            "delta": null,
+            "market_id": 109271
+          }
+        ]
+      },
+      "government": {
+        "count": 3,
+        "markets": []
+      }
+    },
+    "by_source": {
+      "kalshi": 1387,
+      "polymarket": 593
+    }
+  },
+  "served_after_government": {
+    "count": 3,
+    "markets": [],
+    "distributions": [
+      {
+        "q": "Government spending increase in 2026",
+        "kind": "ladder",
+        "rows": [
+          [
+            97.0,
+            "At least $1 billion"
+          ],
+          [
+            96.8,
+            "At least $50 billion"
+          ],
+          [
+            95.0,
+            "At least $100 billion"
+          ],
+          [
+            89.4,
+            "At least $200 billion"
+          ],
+          [
+            79.1,
+            "At least $300 billion"
+          ],
+          [
+            57.2,
+            "At least $400 billion"
+          ],
+          [
+            34.1,
+            "At least $500 billion"
+          ],
+          [
+            15.2,
+            "At least $750 billion"
+          ],
+          [
+            7.5,
+            "At least $1 trillion"
+          ]
+        ],
+        "src": "kalshi",
+        "market_id": 539003
+      },
+      {
+        "q": "US Trade Deficit in 2026?",
+        "kind": "brackets",
+        "rows": [
+          [
+            38.7,
+            "800\u2013900B"
+          ],
+          [
+            24.2,
+            "700\u2013800B"
+          ],
+          [
+            15.3,
+            "900B\u20131T"
+          ],
+          [
+            7.8,
+            "600\u2013700B"
+          ],
+          [
+            3.8,
+            "500\u2013600B"
+          ],
+          [
+            3.8,
+            "1T\u20131.1T"
+          ],
+          [
+            3.1,
+            "1.1T+"
+          ],
+          [
+            3.1,
+            "<500B"
+          ]
+        ],
+        "src": "polymarket",
+        "market_id": 1432802
+      },
+      {
+        "q": "When will the debt limit be increased?",
+        "kind": "ladder",
+        "rows": [
+          [
+            90.5,
+            "Before Jan 1, 2028"
+          ],
+          [
+            61.5,
+            "Before Oct 1, 2027"
+          ],
+          [
+            45.5,
+            "Before Jul 1, 2027"
+          ],
+          [
+            30.0,
+            "Before Mar 1, 2027"
+          ],
+          [
+            28.0,
+            "Before Jan 1, 2027"
+          ],
+          [
+            9.0,
+            "Before Nov 1, 2026"
+          ]
+        ],
+        "src": "kalshi",
+        "market_id": 57774230
+      }
+    ]
+  },
+  "_section_census": {
+    "_what": "per economics section: the count the gate reads, and the rows the section renders",
+    "sections": {
+      "fed": {
+        "gate_count": 46,
+        "rendered_rows": 9,
+        "fields": {
+          "fomc_meetings": 3,
+          "rate_cuts": 0,
+          "side_markets": 6
+        }
+      },
+      "inflation": {
+        "gate_count": 75,
+        "rendered_rows": 12,
+        "fields": {
+          "cpi_releases": 6,
+          "side_markets": 6
+        }
+      },
+      "jobs": {
+        "gate_count": 26,
+        "rendered_rows": 8,
+        "fields": {
+          "markets": 8
+        }
+      },
+      "recession": {
+        "gate_count": 64,
+        "rendered_rows": 10,
+        "fields": {
+          "gdp_quarters": 4,
+          "side_markets": 6
+        }
+      },
+      "markets": {
+        "gate_count": 50,
+        "rendered_rows": 9,
+        "fields": {
+          "today": 1,
+          "stocks": 0,
+          "side_markets": 8
+        }
+      },
+      "energy": {
+        "gate_count": 35,
+        "rendered_rows": 13,
+        "fields": {
+          "gas": 1,
+          "oil": 4,
+          "side_markets": 8
+        }
+      },
+      "housing": {
+        "gate_count": 15,
+        "rendered_rows": 19,
+        "fields": {
+          "mortgage_brackets": 13,
+          "markets": 6
+        }
+      },
+      "trade": {
+        "gate_count": 20,
+        "rendered_rows": 8,
+        "fields": {
+          "markets": 8
+        }
+      },
+      "government": {
+        "gate_count": 3,
+        "rendered_rows": 0,
+        "fields": {
+          "markets": 0
+        }
+      }
+    }
+  },
+  "_government_population": {
+    "_what": "the route's full selection: classify -> should_exclude_from_featured -> _market_row",
+    "candidates_matching_government_signals": 13,
+    "classified_government": 5,
+    "excluded_probability_extreme": 2,
+    "surviving_government": 3,
+    "renderable_as_market_row": 0,
+    "reason": "_market_row returns None above five outcomes; the survivors have 6, 8 and 9",
+    "market_ids": [
+      539003,
+      1432802,
+      57774230
+    ]
+  },
+  "_raw_markets": [
+    {
+      "id": 539003,
+      "name": "Government spending increase in 2026",
+      "external_id": "KXGOVTSPEND-27",
+      "outcomes": [
+        {
+          "rank": 1,
+          "name": "At least $1 billion",
+          "current_probability": 0.97
+        },
+        {
+          "rank": 2,
+          "name": "At least $50 billion",
+          "current_probability": 0.968
+        },
+        {
+          "rank": 3,
+          "name": "At least $100 billion",
+          "current_probability": 0.9495
+        },
+        {
+          "rank": 4,
+          "name": "At least $200 billion",
+          "current_probability": 0.894
+        },
+        {
+          "rank": 5,
+          "name": "At least $300 billion",
+          "current_probability": 0.791
+        },
+        {
+          "rank": 6,
+          "name": "At least $400 billion",
+          "current_probability": 0.572
+        },
+        {
+          "rank": 7,
+          "name": "At least $500 billion",
+          "current_probability": 0.341
+        },
+        {
+          "rank": 8,
+          "name": "At least $750 billion",
+          "current_probability": 0.1515
+        },
+        {
+          "rank": 9,
+          "name": "At least $1 trillion",
+          "current_probability": 0.0755
+        }
+      ]
+    },
+    {
+      "id": 1432802,
+      "name": "US Trade Deficit in 2026?",
+      "external_id": "230330",
+      "outcomes": [
+        {
+          "rank": 1,
+          "name": "800\u2013900B",
+          "current_probability": 0.48
+        },
+        {
+          "rank": 2,
+          "name": "700\u2013800B",
+          "current_probability": 0.3
+        },
+        {
+          "rank": 3,
+          "name": "900B\u20131T",
+          "current_probability": 0.19
+        },
+        {
+          "rank": 4,
+          "name": "600\u2013700B",
+          "current_probability": 0.0965
+        },
+        {
+          "rank": 5,
+          "name": "500\u2013600B",
+          "current_probability": 0.0465
+        },
+        {
+          "rank": 6,
+          "name": "1T\u20131.1T",
+          "current_probability": 0.0465
+        },
+        {
+          "rank": 7,
+          "name": "1.1T+",
+          "current_probability": 0.039
+        },
+        {
+          "rank": 8,
+          "name": "<500B",
+          "current_probability": 0.0385
+        }
+      ]
+    },
+    {
+      "id": 57774230,
+      "name": "When will the debt limit be increased?",
+      "external_id": "KXDEBTLIMITINCREASE-26JUL",
+      "outcomes": [
+        {
+          "rank": 1,
+          "name": "Before Jan 1, 2028",
+          "current_probability": 0.905
+        },
+        {
+          "rank": 2,
+          "name": "Before Oct 1, 2027",
+          "current_probability": 0.615
+        },
+        {
+          "rank": 3,
+          "name": "Before Jul 1, 2027",
+          "current_probability": 0.455
+        },
+        {
+          "rank": 4,
+          "name": "Before Mar 1, 2027",
+          "current_probability": 0.3
+        },
+        {
+          "rank": 5,
+          "name": "Before Jan 1, 2027",
+          "current_probability": 0.28
+        },
+        {
+          "rank": 6,
+          "name": "Before Nov 1, 2026",
+          "current_probability": 0.09
+        }
+      ]
+    }
+  ]
+}
