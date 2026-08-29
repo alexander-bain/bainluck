@@ -74,11 +74,11 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     "typeahead_warmer_mutations": [("MUTATIONS", 3, 4, 1)],
 }
 
-# Harnesses that mutate NOTHING in the working tree — they exec a mutated
-# source string, or copy their target into a `tempfile.TemporaryDirectory`
-# first. `_mutation_guard.py` calls this strictly the better design, because
-# there is no backup to restore and therefore nothing a SIGKILL can leave
-# behind.
+# Harnesses that write NOTHING, anywhere — every mutant is a source string
+# held in memory, `exec`'d or passed straight to the oracle. Not "restores
+# carefully": no write at all, so there is no backup to restore and nothing a
+# SIGKILL can leave behind. `_mutation_guard.py` calls this strictly the better
+# design and asks new harnesses to prefer it.
 #
 # They need an entry here rather than an empty list in `SHAPES`. An empty list
 # harvests zero pairs and prints nothing, which is indistinguishable from the
