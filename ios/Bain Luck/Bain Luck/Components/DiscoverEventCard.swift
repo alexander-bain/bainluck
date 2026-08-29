@@ -199,11 +199,21 @@ struct NativeEventDiscoverCard: View {
                     // decides it; `renderedDuelPercents` is the fallback for a
                     // cached or pre-deploy payload, driven by the same contract
                     // table so it cannot answer differently.
-                    let duelFallback = renderedDuelPercents(
-                        away: awayProbability, home: homeProbability
+                    //
+                    // #2279 — BOTH SERVED OR NEITHER, and `duelPercents` is where
+                    // that is decided. This site used to coalesce per side, so a
+                    // payload carrying one field and not the other printed a
+                    // served value beside a derived one and summed to 101 again.
+                    // Both probabilities above come from `currentOdds`, so the
+                    // served pair describes exactly the pair being drawn.
+                    let duel = duelPercents(
+                        away: awayProbability,
+                        home: homeProbability,
+                        servedAway: event.currentOdds?.awayRenderedPercent,
+                        servedHome: event.currentOdds?.homeRenderedPercent
                     )
-                    let awayPct = event.currentOdds?.awayRenderedPercent ?? duelFallback[0]
-                    let homePct = event.currentOdds?.homeRenderedPercent ?? duelFallback[1]
+                    let awayPct = duel[0]
+                    let homePct = duel[1]
                     VStack(spacing: 6) {
                         HStack {
                             Text(formatProbability(awayProbability, renderedPercent: awayPct))

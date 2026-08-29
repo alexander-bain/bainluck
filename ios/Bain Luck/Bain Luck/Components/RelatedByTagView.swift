@@ -88,11 +88,20 @@ struct RelatedByTagView: View {
                let awayProbability = odds.awayProbability {
                 // UX-P114 — this row prints BOTH sides of one question separated by
                 // a slash, so it is the same 101 as the Discover card's strip.
-                let duelFallback = renderedDuelPercents(
-                    away: awayProbability, home: homeProbability
+                //
+                // #2279 — BOTH SERVED OR NEITHER. This row coalesced per side, so
+                // a payload with one field and not the other printed a served
+                // value beside a derived one — the same 101 from the other
+                // direction. Both probabilities come from `odds`, so the served
+                // pair describes the pair being drawn.
+                let duel = duelPercents(
+                    away: awayProbability,
+                    home: homeProbability,
+                    servedAway: odds.awayRenderedPercent,
+                    servedHome: odds.homeRenderedPercent
                 )
-                let awayPct = odds.awayRenderedPercent ?? duelFallback[0]
-                let homePct = odds.homeRenderedPercent ?? duelFallback[1]
+                let awayPct = duel[0]
+                let homePct = duel[1]
                 Text("\(formatProbability(awayProbability, renderedPercent: awayPct)) / \(formatProbability(homeProbability, renderedPercent: homePct))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)

@@ -127,3 +127,50 @@ nonisolated func renderedDuelPercents(
     let flipped = renderedCardPercents([home, away])
     return [flipped[1], flipped[0]]
 }
+
+/// The two whole percents a game strip prints, choosing between the SERVED pair
+/// and the local one — `[away, home]`, and the last word on both (#2279).
+///
+/// ## Both served values or neither
+///
+/// UX-P114 gave every game-card surface `current_odds.{away,home}_rendered_percent`
+/// so the two sides of one question are decided ONCE, by the server. Three surfaces
+/// adopted it and all three coalesced **per side**:
+///
+///     let awayPct = odds.awayRenderedPercent ?? duelFallback[0]
+///     let homePct = odds.homeRenderedPercent ?? duelFallback[1]
+///
+/// A payload carrying one field and not the other therefore prints a served value
+/// beside a locally derived one, and that re-opens the very 101 UX-P114 shipped to
+/// close — from the other direction. On `0.505 / 0.495` the served home is 51 and a
+/// naively derived away is 50. The struct's own comment
+/// (`Models/CommonTypes.swift`) says these fields are optional precisely because a
+/// Discover response is CACHED and this build can be installed against an older
+/// deploy; a response written across a partial rollout is the case the fallback
+/// exists for, and it is exactly the case the per-side form gets wrong.
+///
+/// So the two served values are ONE decision. Either both are present and both are
+/// used, or the pair falls back WHOLE to `renderedDuelPercents`. The web arm states
+/// the same rule in `lib/eventKeyStats.ts` and the event page states it inline;
+/// this is the native surfaces' shared copy of it (ruling 021 — share the DECISION,
+/// not the ingredient).
+///
+/// ## The served pair describes `current_odds` AND NOTHING ELSE
+///
+/// A caller whose probabilities came from somewhere else — `opening_odds`, a
+/// history row, a chart point — must pass `nil` for both served values. Handing in
+/// `current_odds`' rounding beside another source's probability prints a mismatched
+/// pair that still sums to 100, so no sum guard can see it. `servedAway`/`servedHome`
+/// are separate parameters rather than a `CurrentOdds` so that the caller has to
+/// make that choice at the branch that knows the answer.
+nonisolated func duelPercents(
+    away awayProbability: Double?,
+    home homeProbability: Double?,
+    servedAway: Int?,
+    servedHome: Int?
+) -> [Int?] {
+    if let servedAway, let servedHome {
+        return [servedAway, servedHome]
+    }
+    return renderedDuelPercents(away: awayProbability, home: homeProbability)
+}

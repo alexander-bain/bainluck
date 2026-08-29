@@ -114,21 +114,38 @@ struct MenuBarView: View {
             let feed = try await APIClient.shared.fetchFeed(limit: 10, myTeamsOnly: true, includeFutures: false)
             liveGames = feed.items.compactMap { item -> MenuBarGame? in
                 guard let event = item.event,
-                      (event.status == "live" || event.status == "scheduled"),
-                      let homeProbability = event.currentOdds?.homeProbability ?? event.openingOdds?.homeProbability else { return nil }
+                      (event.status == "live" || event.status == "scheduled") else { return nil }
+                // #2279 — WHICH SOURCE THE PROBABILITY CAME FROM DECIDES WHETHER
+                // THE SERVED PERCENTS APPLY. The guard below falls back to
+                // `openingOdds`, and the served percents describe `currentOdds`
+                // and nothing else, so reading them on that branch would print
+                // the current pair's rounding beside the OPENING pair's
+                // probability. It still sums to 100, so no sum guard could see
+                // it. Recorded at the branch that knows, not inferred afterwards.
+                let odds = event.currentOdds
+                let fromCurrentOdds = odds?.homeProbability != nil
+                guard let homeProbability = odds?.homeProbability ?? event.openingOdds?.homeProbability else { return nil }
                 let awayProbability = 1.0 - homeProbability
                 // UX-P114 — the menu bar prints both sides, and derives away from
                 // home right above, so it had the same 101. Prefer the server's
                 // card-level percents; `renderedDuelPercents` covers a cached or
                 // pre-deploy payload, and the openingOdds fallback in the guard
                 // above, which the server does not decide percents for.
-                let duelFallback = renderedDuelPercents(
-                    away: awayProbability, home: homeProbability
+                //
+                // #2279 — BOTH SERVED OR NEITHER. This site coalesced per side,
+                // and it also carried a THIRD tier — `?? Int((p * 100).rounded())`
+                // — that was a fourth, unshared implementation of the same
+                // rounding, reachable only when the contract rule declines to
+                // answer, and `Int(_:)` TRAPS on a non-finite Double. The pair
+                // rule is now the last word: if it declines, the row is dropped
+                // rather than re-derived by a copy nobody tests.
+                let duel = duelPercents(
+                    away: awayProbability,
+                    home: homeProbability,
+                    servedAway: fromCurrentOdds ? odds?.awayRenderedPercent : nil,
+                    servedHome: fromCurrentOdds ? odds?.homeRenderedPercent : nil
                 )
-                let homePct = event.currentOdds?.homeRenderedPercent
-                    ?? duelFallback[1] ?? Int((homeProbability * 100).rounded())
-                let awayPct = event.currentOdds?.awayRenderedPercent
-                    ?? duelFallback[0] ?? Int((awayProbability * 100).rounded())
+                guard let awayPct = duel[0], let homePct = duel[1] else { return nil }
                 return MenuBarGame(
                     id: event.id,
                     homeAbbrev: event.homeTeamData?.abbreviation ?? String(event.homeTeam.split(separator: " ").last ?? ""),
