@@ -153,6 +153,32 @@ THRESHOLD_RE = re.compile(rf"(?P<word>{_UP_WORDS}|{_DOWN_WORDS}){_NUM}", re.I)
 
 _DOWN_ONLY_RE = re.compile(rf"^(?:{_DOWN_WORDS})$", re.I)
 
+#: The two-sided ``O/U`` line, written as ONE token. Polymarket's sports book
+#: names a total this way — ``Trujillanos FC vs. Monagas SC: O/U 3.5``,
+#: ``Map 1 Total Rounds: Over/Under 24.5`` — and prices it with ``Over`` and
+#: ``Under`` legs rather than a ``Yes`` leg.
+#:
+#: 🔴 THIS PATTERN EXISTS TO FIX A SIGN INVERSION, NOT TO ADD COVERAGE. Measured
+#: by ``artifacts/cal-p135/polymarket-name-ladder-census.py``: on 19,766
+#: ``polymarket/esports`` names, :data:`THRESHOLD_RE` already matched — but it
+#: matched the ``Under`` half of the compound, because ``_NUM`` permits only
+#: whitespace between the direction word and the number, so the ``Over`` (with
+#: a ``/`` after it) cannot bind and the ``Under`` (adjacent to the number) can.
+#: The very tightness that stops "g-over-nment" binding to "April 30" is what
+#: picks the WRONG HALF of "Over/Under". The resulting rung was filed as
+#: ``inc`` — the exact inverse of the truth, since the Over price FALLS as the
+#: line rises — under a key that had silently swallowed the word ``Over``
+#: (``map 1 total rounds: over/ <RUNG>``).
+#:
+#: That inversion is latent rather than live: the ``duplicate_values`` guard
+#: currently marks nearly every such family ambiguous, so only 2 families were
+#: condemned. It detonates the moment a caller scopes the family key to a real
+#: event identity, which is the obvious next fix — measured, that turns 2
+#: condemned families into 1,296, and they are the ladders behaving CORRECTLY.
+#: Anyone adding an identity-scoped key must land this pattern with it.
+OVER_UNDER_RE = re.compile(
+    rf"(?<![a-z])(?:o\s*/\s*u|over\s*/\s*under){_NUM}", re.I)
+
 #: ``by <Month> <day>[, <year>]`` or ``by <year>``. A bare year is pinned to its
 #: last day so it sorts after every dated rung inside it.
 BY_DATE_RE = re.compile(
@@ -217,6 +243,29 @@ def parse_threshold(text: str | None) -> tuple[tuple[int, int], float, str] | No
     return m.span(), _magnitude(m.group("val"), m.group("unit")), direction
 
 
+def parse_over_under(text: str | None) -> tuple[tuple[int, int], float, str] | None:
+    """An ``O/U 3.5`` line as a DESCENDING rung, or ``None``.
+
+    Descending is not a convention, it is the containment argument: the priced
+    side of an over/under line is the OVER side, and "total over 4.5" is
+    contained in "total over 3.5", so the Over price can only fall as the line
+    rises. The sign therefore belongs to the compound token and is fixed here
+    rather than read off a direction word — which is the whole point, because
+    the direction word this compound presents LAST is ``Under``.
+
+    The span covers the entire ``O/U <line>`` token, not just the number, so
+    :func:`blanked_key` blanks the whole line and two rungs of one total agree
+    on a family key. Blanking only the number would leave ``over/`` in the key,
+    which is how the defect this function replaces stayed readable-looking.
+    """
+    if not text:
+        return None
+    m = OVER_UNDER_RE.search(text)
+    if not m:
+        return None
+    return m.span(), _magnitude(m.group("val"), m.group("unit")), DEC
+
+
 def parse_by_date(text: str | None) -> tuple[tuple[int, int], float, str] | None:
     """A ``by <date>`` rung as a sortable ``YYYYMMDD``, or ``None``.
 
@@ -251,7 +300,7 @@ def parse_plus_bracket(text: str | None) -> tuple[tuple[int, int], float, str] |
 #: The NAME-site grammars, in the order they are tried. A name may satisfy both
 #: — "hit (HIGH) $210B by June 30" is a rung of a threshold ladder AND a rung of
 #: a date ladder — and :func:`name_rungs` deliberately returns both.
-NAME_GRAMMARS = (parse_threshold, parse_by_date)
+NAME_GRAMMARS = (parse_over_under, parse_threshold, parse_by_date)
 
 
 def blanked_key(name: str, span: tuple[int, int]) -> str:
@@ -277,12 +326,25 @@ def name_rungs(name: str | None) -> list[tuple[tuple[str, str], float]]:
     """
     if not name:
         return []
-    out: list[tuple[tuple[str, str], float]] = []
+    parses = []
     for grammar in NAME_GRAMMARS:
         parsed = grammar(name)
-        if parsed is None:
+        if parsed is not None:
+            parses.append(parsed)
+
+    # A COMPOUND TOKEN OWNS ITS NUMBER. Where one grammar's span strictly
+    # contains another's, the inner parse is a fragment of the outer one and is
+    # dropped. This is what stops "Over/Under 24.5" yielding BOTH a descending
+    # O/U rung and the ascending "Under 24.5" rung that THRESHOLD_RE finds
+    # inside it — two families, opposite signs, from one line, one of them
+    # wrong. Containment rather than overlap is deliberate: the two-dimensional
+    # valuation grid ("hit (HIGH) $210B by June 30") produces DISJOINT spans and
+    # must keep contributing to both its threshold and its date family.
+    out: list[tuple[tuple[str, str], float]] = []
+    for span, value, direction in parses:
+        if any(other[0] <= span[0] and span[1] <= other[1] and other != span
+               for other, _, _ in parses):
             continue
-        span, value, direction = parsed
         out.append(((blanked_key(name, span), direction), value))
     return out
 

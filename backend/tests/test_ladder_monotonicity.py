@@ -25,6 +25,7 @@ from app.utils.ladder_monotonicity import (
     name_rungs,
     outcome_ladder,
     parse_by_date,
+    parse_over_under,
     parse_plus_bracket,
     parse_threshold,
     read_name_ladders,
@@ -798,3 +799,124 @@ def test_the_truth_dimension_names_its_own_leakage_status():
     cce = _rail()
     doc = cce.truth_dim.__doc__ or ""
     assert "NOT a leakage-free arm" in doc
+
+
+# ---------------------------------------------------------------------------
+# Grammar: the O/U compound, and the sign inversion it exists to fix.
+#
+# Every name below is copied from a real polymarket market in one of the four
+# cells CAL-P135 censused (baseball, esports, soccer, basketball).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,value", [
+    ("Trujillanos FC vs. Monagas SC: O/U 3.5", 3.5),
+    ("Liverpool FC vs. Club Atlético de Madrid: O/U 4.5", 4.5),
+    ("Paris Saint-Germain FC vs. ŠK Slovan Bratislava: O/U 0.5", 0.5),
+    ("Mexico vs. Colombia: O/U 160.5", 160.5),
+    ("Aguada Santeros vs. Vaqueros de Bayamon: O/U 170.5", 170.5),
+    ("Map 1 Total Rounds: Over/Under 24.5", 24.5),
+    ("Map 3 Total Rounds: Over/Under 21.5", 21.5),
+    ("Games Total: O/U 2.5", 2.5),
+    ("O/U 52.5", 52.5),
+])
+def test_over_under_lines_parse_as_rungs(name, value):
+    parsed = parse_over_under(name)
+    assert parsed is not None, f"{name!r} is the grammar the sports book writes"
+    assert parsed[1] == value
+
+
+@pytest.mark.parametrize("name", [
+    "Trujillanos FC vs. Monagas SC: O/U 3.5",
+    "Map 1 Total Rounds: Over/Under 24.5",
+])
+def test_an_over_under_line_is_descending_because_the_priced_side_is_over(name):
+    """The sign is the whole point of this grammar.
+
+    "total over 4.5" is contained in "total over 3.5", so the Over price can
+    only fall as the line rises. Measured: soccer and baseball O/U markets carry
+    ``Over``/``Under`` legs and no ``Yes`` leg at all.
+    """
+    assert parse_over_under(name)[2] == DEC
+    assert name_rungs(name)[0][0][1] == DEC
+
+
+def test_over_under_does_not_also_yield_the_under_half_as_an_ascending_rung():
+    """🔴 THE REGRESSION THIS GRAMMAR EXISTS FOR.
+
+    ``_NUM`` permits only whitespace between a direction word and its number, so
+    in "Over/Under 24.5" the ``Over`` cannot bind (a ``/`` follows it) and the
+    ``Under`` can. THRESHOLD_RE therefore matched the WRONG HALF of the compound
+    and filed the rung as ascending — the exact inverse of the truth — under a
+    key that had swallowed the word "Over" (``map 1 total rounds: over/ <RUNG>``).
+
+    Measured on polymarket/esports: 19,766 names took that path.
+    """
+    rungs = name_rungs("Map 1 Total Rounds: Over/Under 24.5")
+    assert len(rungs) == 1, f"one line must yield one rung, got {rungs}"
+    (key, direction), value = rungs[0]
+    assert direction == DEC
+    assert value == 24.5
+    assert "over/" not in key, (
+        f"the key kept a fragment of the compound: {key!r}")
+    assert INC not in {d for (_, d), _ in rungs}
+
+
+def test_two_rungs_of_one_total_share_a_family_key():
+    """Blanking the whole compound is what makes the family work; blanking only
+    the number would leave "over/" in the key on one form and not the other."""
+    a = name_rungs("Trujillanos FC vs. Monagas SC: O/U 1.5")[0][0]
+    b = name_rungs("Trujillanos FC vs. Monagas SC: O/U 3.5")[0][0]
+    assert a == b
+
+
+def test_two_different_matches_never_share_an_over_under_family():
+    a = name_rungs("Trujillanos FC vs. Monagas SC: O/U 3.5")[0][0]
+    b = name_rungs("Liverpool FC vs. Club Atlético de Madrid: O/U 3.5")[0][0]
+    assert a != b
+
+
+def test_a_context_free_name_DOES_collapse_across_matches_and_that_is_measured():
+    """A known limit, pinned so nobody reads the census as an all-clear.
+
+    Polymarket names sub-markets without their match ("Map 1 Total Rounds:
+    Over/Under 21.5" is written identically for every match), so the NAME site
+    alone CANNOT identify one ladder in these cells. Measured by CAL-P135:
+    49.2% of basketball's O/U keys and 100% of esports' span more than one
+    event. A caller folding these cells must scope the family key to an event
+    identity; ``read_name_ladders`` on names alone must not be trusted there.
+    """
+    a = name_rungs("Map 1 Total Rounds: Over/Under 21.5")[0][0]
+    b = name_rungs("Map 1 Total Rounds: Over/Under 24.5")[0][0]
+    assert a == b, (
+        "these two names are indistinguishable, which is the finding — if this "
+        "ever stops being true the collapse census needs re-running")
+
+
+def test_a_valuation_grid_still_contributes_to_both_of_its_axes():
+    """The containment suppression must drop FRAGMENTS, never disjoint spans."""
+    rungs = name_rungs("Will OpenAI valuation hit (HIGH) $210B by June 30?")
+    assert len(rungs) == 2
+    assert {d for (_, d), _ in rungs} == {DEC, INC}
+
+
+@pytest.mark.parametrize("name", [
+    "Will Anthropic provide Mythos to the US government by April 30, 2026?",
+    "at least 2000 measles cases",
+    "Will Broadcom Q2 AI revenue be above $10.5B?",
+])
+def test_the_over_under_grammar_does_not_disturb_the_existing_ones(name):
+    """The two guarded parser defects and a plain threshold are unchanged."""
+    assert parse_over_under(name) is None
+    assert name_rungs(name) == _rungs_without_over_under(name)
+
+
+def _rungs_without_over_under(name):
+    """What the pre-CAL-P135 grammar set produced, recomputed from the parts."""
+    out = []
+    for grammar in (parse_threshold, parse_by_date):
+        parsed = grammar(name)
+        if parsed is None:
+            continue
+        span, value, direction = parsed
+        out.append(((blanked_key(name, span), direction), value))
+    return out
