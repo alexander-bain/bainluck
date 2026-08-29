@@ -1,0 +1,159 @@
+    mono pre-pass [1] ids 112847-1112847
+    mono pre-pass [2] ids 1112847-2112847
+    mono pre-pass [3] ids 2112847-3112847
+    mono pre-pass [4] ids 3112847-4112847
+    mono pre-pass [5] ids 4112847-5112847
+    mono pre-pass [6] ids 5112847-6112847
+    mono pre-pass [7] ids 6112847-7112847
+    mono pre-pass [8] ids 7112847-8112847
+    mono pre-pass [9] ids 8112847-9112847
+    mono pre-pass [10] ids 9112847-10112847
+    mono pre-pass [11] ids 10112847-11112847
+    mono pre-pass [12] ids 11112847-12112847
+    mono pre-pass [13] ids 12112847-13112847
+    mono pre-pass [14] ids 13112847-14112847
+    mono pre-pass [15] ids 14112847-15112847
+    mono pre-pass [16] ids 15112847-16112847
+    mono pre-pass [17] ids 16112847-17112847
+    mono pre-pass [18] ids 17112847-18112847
+    mono pre-pass [19] ids 18112847-19112847
+    mono pre-pass [20] ids 19112847-20112847
+    mono pre-pass [21] ids 20112847-21112847
+    mono pre-pass [22] ids 21112847-22112847
+    mono pre-pass [23] ids 22112847-23112847
+    mono pre-pass [24] ids 23112847-24112847
+    mono pre-pass [25] ids 24112847-25112847
+    mono pre-pass [26] ids 25112847-26112847
+    mono pre-pass [27] ids 26112847-27112847
+    mono pre-pass [28] ids 27112847-28112847
+    mono pre-pass [29] ids 28112847-29112847
+    mono pre-pass [30] ids 29112847-30112847
+    mono pre-pass [31] ids 30112847-31112847
+    mono pre-pass [32] ids 31112847-32112847
+    mono pre-pass [33] ids 32112847-33112847
+    mono pre-pass [34] ids 33112847-34112847
+    mono pre-pass [35] ids 34112847-35112847
+    mono pre-pass [36] ids 35112847-36112847
+    mono pre-pass [37] ids 36112847-37112847
+    mono pre-pass [38] ids 37112847-38112847
+    mono pre-pass [39] ids 38112847-39112847
+    mono pre-pass [40] ids 39112847-40112847
+    mono pre-pass [41] ids 40112847-41112847
+    mono pre-pass [42] ids 41112847-42112847
+    mono pre-pass [43] ids 42112847-43112847
+    mono pre-pass [44] ids 43112847-44112847
+    mono pre-pass [45] ids 44112847-45112847
+    mono pre-pass [46] ids 45112847-46112847
+    mono pre-pass [47] ids 46112847-47112847
+    mono pre-pass [48] ids 47112847-48112847
+    mono pre-pass [49] ids 48112847-49112847
+    mono pre-pass [50] ids 49112847-50112847
+    mono pre-pass [51] ids 50112847-51112847
+    mono pre-pass [52] ids 51112847-52112847
+    mono pre-pass [53] ids 52112847-53112847
+    mono pre-pass [54] ids 53112847-54112847
+    mono pre-pass [55] ids 54112847-55112847
+    mono pre-pass [56] ids 55112847-56112847
+    mono pre-pass [57] ids 56112847-57112847
+    mono pre-pass [58] ids 57112847-58112847
+    mono pre-pass [59] ids 58112847-59112847
+    mono pre-pass [60] ids 59112847-59769513
+    [1/61] ids 112847-1112847 (0s elapsed)
+    [2/61] ids 1112847-2112847 (2s elapsed)
+    [3/61] ids 2112847-3112847 (3s elapsed)
+    [4/61] ids 3112847-4112847 (4s elapsed)
+    [5/61] ids 4112847-5112847 (5s elapsed)
+    [6/61] ids 5112847-6112847 (6s elapsed)
+    [7/61] ids 6112847-7112847 (7s elapsed)
+    [8/61] ids 7112847-8112847 (8s elapsed)
+    [9/61] ids 8112847-9112847 (9s elapsed)
+    [10/61] ids 9112847-10112847 (11s elapsed)
+    [11/61] ids 10112847-11112847 (12s elapsed)
+    [12/61] ids 11112847-12112847 (14s elapsed)
+    [13/61] ids 12112847-13112847 (16s elapsed)
+    [14/61] ids 13112847-14112847 (21s elapsed)
+    [15/61] ids 14112847-15112847 (29s elapsed)
+    [16/61] ids 15112847-16112847 (29s elapsed)
+    [17/61] ids 16112847-17112847 (31s elapsed)
+    [18/61] ids 17112847-18112847 (36s elapsed)
+    [19/61] ids 18112847-19112847 (37s elapsed)
+    [20/61] ids 19112847-20112847 (40s elapsed)
+    [21/61] ids 20112847-21112847 (41s elapsed)
+    [22/61] ids 21112847-22112847 (44s elapsed)
+    [23/61] ids 22112847-23112847 (46s elapsed)
+    [24/61] ids 23112847-24112847 (48s elapsed)
+    [25/61] ids 24112847-25112847 (49s elapsed)
+    [26/61] ids 25112847-26112847 (49s elapsed)
+    [27/61] ids 26112847-27112847 (58s elapsed)
+    [28/61] ids 27112847-28112847 (64s elapsed)
+    [29/61] ids 28112847-29112847 (67s elapsed)
+    [30/61] ids 29112847-30112847 (75s elapsed)
+    [31/61] ids 30112847-31112847 (76s elapsed)
+    [32/61] ids 31112847-32112847 (78s elapsed)
+    [33/61] ids 32112847-32676761 (81s elapsed)
+    [34/61] ids 32676761-33112847 (82s elapsed)
+    [35/61] ids 33112847-34112847 (89s elapsed)
+    [36/61] ids 34112847-35112847 (93s elapsed)
+    [37/61] ids 35112847-36112847 (99s elapsed)
+    [38/61] ids 36112847-37112847 (103s elapsed)
+    [39/61] ids 37112847-38112847 (124s elapsed)
+    [40/61] ids 38112847-39112847 (125s elapsed)
+    [41/61] ids 39112847-40112847 (125s elapsed)
+    [42/61] ids 40112847-41112847 (126s elapsed)
+    [43/61] ids 41112847-42112847 (126s elapsed)
+    [44/61] ids 42112847-43112847 (126s elapsed)
+    [45/61] ids 43112847-44112847 (127s elapsed)
+    [46/61] ids 44112847-45112847 (127s elapsed)
+    [47/61] ids 45112847-46112847 (128s elapsed)
+    [48/61] ids 46112847-47112847 (128s elapsed)
+    [49/61] ids 47112847-48112847 (129s elapsed)
+    [50/61] ids 48112847-49112847 (129s elapsed)
+    [51/61] ids 49112847-50112847 (129s elapsed)
+    [52/61] ids 50112847-51112847 (130s elapsed)
+    [53/61] ids 51112847-52112847 (130s elapsed)
+    [54/61] ids 52112847-53112847 (131s elapsed)
+    [55/61] ids 53112847-54112847 (131s elapsed)
+    [56/61] ids 54112847-55112847 (132s elapsed)
+    [57/61] ids 55112847-56112847 (132s elapsed)
+    [58/61] ids 56112847-57112847 (133s elapsed)
+    [59/61] ids 57112847-58112847 (137s elapsed)
+    [60/61] ids 58112847-59112847 (144s elapsed)
+    [61/61] ids 59112847-59769513 (172s elapsed)
+  MONO PRE-PASS — the shipped predicate, whole cell, one sweep
+    rows_scanned                           17911
+    families                               1970
+    families_singleton                     373
+    families_multi_rung                    1597
+    families_ambiguous                     22
+    families_untestable_duplicate_only     3
+    families_condemned                     747
+    violating_pairs                        1210
+    flat_pairs                             2716
+    markets_drop                           5731
+    markets_ambiguous                      294
+    markets_coherent                       4828
+    assumed_year                           2026
+
+polymarket/economics   (--by mono, width 1000000, 185s)
+  curve generated 2026-08-29T00:36:47.978149+00:00  population q268
+
+  SELF-CHECK — the producer's own chain against the payload it produced
+    exact replica    n=  12959  ECE=  3.92  gap=   +0.0
+    payload          n=  12882  ECE=   3.9  gap=  +0.14
+    delta            n=    +77 (+0.60%)  ECE=+0.02  gap=-0.14
+
+  class                    n   share     ECE      gap
+  z_not_in_a_ladder    11972   92.4%    4.53    -0.15
+  c_mono_coherent        511    3.9%    4.47    -0.71
+  a_drop_reversed        476    3.7%   10.87    +4.63
+
+  HOLDOUT on market_id 32676761
+    OLD
+      z_not_in_a_ladder     6210    3.44    +1.67
+      c_mono_coherent        146    13.6    -3.82
+      a_drop_reversed        118   18.24    +6.58
+    NEW
+      z_not_in_a_ladder     5762    6.77    -2.12
+      c_mono_coherent        365    5.93    +0.53
+      a_drop_reversed        358    9.78    +3.99
+
