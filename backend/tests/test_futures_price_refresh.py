@@ -547,8 +547,18 @@ class TestPolymarketAddressing:
         also lossless in the common case: measured over 92 live priced markets on
         the four curated prop events, `outcome_prices` summed to exactly 1 every
         time, so whenever Yes came from `outcome_prices` the two rules agree.
+
+        AMENDED BY Q432 (2026-08-28) — the specimen, not the claim. Q428 bounded
+        the last-trade escape hatch on Gamma's `volume24hr`, because
+        `lastTradePrice` carries no time and one $5 trade against a 7c/98c book
+        was putting Djokovic at 71% to reach the round of 16 above 79% to reach
+        the quarter-final. This specimen's own premise is a market that HAD
+        traded — a real 0.53 trade sitting at the ask of a live 2026-08-27 book —
+        so it now states the 24-hour volume it always implied. That restores the
+        specimen's fidelity to the row it was copied from; it does not relax the
+        bound. The twin below is the case that was silently riding on it.
         """
-        market = _poly_market("0xabc", 0.32, 0.68)
+        market = _poly_market("0xabc", 0.32, 0.68, volume_24h=1_450.0)
         market.best_bid = 0.11
         market.best_ask = 0.53
         market.last_trade_price = 0.53
@@ -560,13 +570,59 @@ class TestPolymarketAddressing:
         assert item["no"]["probability"] == pytest.approx(0.47)
         assert item["probability"] + item["no"]["probability"] == pytest.approx(1.0)
 
+    async def test_the_same_wide_book_untraded_publishes_neither_leg(self):
+        """Q432's twin of the test above, and the half this file could not see.
+
+        Identical quotes, identical last trade, nobody transacting in the last
+        24 hours. Q428's bound declines the trade, `_resolve_market_probability`
+        returns None, and the question this lane's ship exists to light up stays
+        dark — which is the right answer, because the alternative is printing
+        0.53 as a present-tense belief when the present tense is empty.
+
+        **The design call, stated rather than left to fall out of the code: the
+        declined market emits NOTHING — no Yes, no No, and no event key at all.**
+        Two reasons, and neither is "that is what the code happens to do".
+
+        1. There is no No leg to declare. This rail publishes `1 - accepted`,
+           and when nothing is accepted the complement is undefined. A "declared
+           decline" would have to invent the number it is declining to invent.
+        2. Silence here is not invisible, which is the only thing that would
+           make it wrong (gotcha #53). A market that is not refreshed keeps its
+           age, so the row renders `price_state: dark` on `More predictions`
+           with the staleness the user can see, and it is counted by the
+           `registered` arm of `/api/admin/source-health/futures-price-freshness`
+           that the same queue added. The decline is legible on both the page and
+           the operator surface without a sentinel value in the price channel.
+
+        So the assertion is the strong one — the event key is absent entirely,
+        not merely a Yes without a No.
+        """
+        # `volume_24h=None` is stated at the call site rather than inherited from
+        # the helper default. Relying on a default to carry a specimen's central
+        # premise is the exact bug class that bounced this branch — the premise
+        # goes unsaid, another lane changes what the unsaid value means, and two
+        # certs pass a combination that is red. This one says it out loud.
+        market = _poly_market("0xabc", 0.32, 0.68, volume_24h=None)
+        market.best_bid = 0.11
+        market.best_ask = 0.53
+        market.last_trade_price = 0.53
+        priced = await fpr._fetch_polymarket_prices(
+            _FakePolyService(_poly_event("910171", [market])), ["910171"]
+        )
+        assert priced == {}, f"an untraded wide book published {priced}"
+
     async def test_the_pair_always_sums_to_one(self):
         """The invariant a rendered binary card depends on, whatever the source."""
-        for yes, no, bid, ask, last in (
-            (0.575, 0.425, 0.57, 0.58, 0.575),  # accepted from outcome_prices
-            (0.32, 0.68, 0.11, 0.53, 0.53),  # refused midpoint -> last trade
+        for yes, no, bid, ask, last, vol in (
+            # accepted from outcome_prices — a tight book never reaches the
+            # Q428 volume gate, so this row means the same with or without it.
+            (0.575, 0.425, 0.57, 0.58, 0.575, None),
+            # refused midpoint -> last trade, and only because the market was
+            # still being traded. Its untraded twin is the test above, which
+            # asserts the pair is never published at all rather than summing.
+            (0.32, 0.68, 0.11, 0.53, 0.53, 1_450.0),
         ):
-            market = _poly_market("0xabc", yes, no)
+            market = _poly_market("0xabc", yes, no, volume_24h=vol)
             market.best_bid, market.best_ask, market.last_trade_price = bid, ask, last
             priced = await fpr._fetch_polymarket_prices(
                 _FakePolyService(_poly_event("910171", [market])), ["910171"]
@@ -648,7 +704,16 @@ class TestWriterResolvesBothOutcomeConventions:
 # --- fakes -------------------------------------------------------------------
 
 
-def _poly_market(condition_id: str, yes: float, no: float):
+def _poly_market(condition_id: str, yes: float, no: float, volume_24h: float | None = None):
+    """A Gamma market row, tight-booked by default.
+
+    ``volume_24h`` defaults to absent on purpose, matching ``_market`` in
+    ``tests/test_polymarket_untradeable_book.py``: since Q428 the last-trade
+    escape hatch is bounded on Gamma's 24-hour window, so a specimen that means
+    to exercise it has to SAY the market was being traded rather than inherit it
+    from a helper. Every specimen here that keeps a tight book never reaches
+    that gate, so the default costs them nothing.
+    """
     from app.services.polymarket_api import PolymarketMarket
 
     return PolymarketMarket(
@@ -659,6 +724,7 @@ def _poly_market(condition_id: str, yes: float, no: float):
         best_bid=yes - 0.005,
         best_ask=yes + 0.005,
         last_trade_price=yes,
+        volume_24h=volume_24h,
     )
 
 
