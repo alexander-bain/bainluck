@@ -1,0 +1,477 @@
+{
+  "_source": "backend/scripts one-off over live futures_outcomes rows pulled 2026-08-29 via /api/admin/db-query; `after` produced by calling the REAL browse_futures route, `before` by the shipped pre-fix formatter.",
+  "markets": [
+    {
+      "id": 10853985,
+      "name": "FedEx Cup Playoffs: Winner",
+      "llm_sport_category": "golf",
+      "db_rows": [
+        {
+          "id": 69805719,
+          "name": "Other",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 61042797,
+          "name": "Scottie Scheffler",
+          "probability": 0.23,
+          "movement": 0.0
+        },
+        {
+          "id": 61042813,
+          "name": "Chris Gotterup",
+          "probability": 0.109,
+          "movement": 0.0
+        },
+        {
+          "id": 61042817,
+          "name": "Collin Morikawa",
+          "probability": 0.105,
+          "movement": 0.0005
+        },
+        {
+          "id": 61042802,
+          "name": "Ryan Gerard",
+          "probability": 0.094,
+          "movement": 0.0
+        },
+        {
+          "id": 61042799,
+          "name": "Cameron Young",
+          "probability": 0.079,
+          "movement": 0.0
+        },
+        {
+          "id": 61042803,
+          "name": "Ludvig Åberg",
+          "probability": 0.047,
+          "movement": 0.0
+        },
+        {
+          "id": 61042809,
+          "name": "Matt Fitzpatrick",
+          "probability": 0.029,
+          "movement": -0.0005
+        },
+        {
+          "id": 61042819,
+          "name": "Daniel Berger",
+          "probability": 0.026,
+          "movement": 0.0
+        },
+        {
+          "id": 61042824,
+          "name": "Sam Burns",
+          "probability": 0.023,
+          "movement": 0.0
+        },
+        {
+          "id": 61042806,
+          "name": "Adam Scott",
+          "probability": 0.02,
+          "movement": 0.0
+        },
+        {
+          "id": 61042805,
+          "name": "Justin Rose",
+          "probability": 0.0165,
+          "movement": 0.0
+        },
+        {
+          "id": 61042815,
+          "name": "Gary Woodland",
+          "probability": 0.0145,
+          "movement": 0.0
+        },
+        {
+          "id": 61042822,
+          "name": "Hideki Matsuyama",
+          "probability": 0.0115,
+          "movement": 0.0
+        },
+        {
+          "id": 61042821,
+          "name": "Min Woo Lee",
+          "probability": 0.0105,
+          "movement": 0.0
+        },
+        {
+          "id": 61042798,
+          "name": "Rory McIlroy",
+          "probability": 0.0095,
+          "movement": 0.0
+        },
+        {
+          "id": 61042826,
+          "name": "Russell Henley",
+          "probability": 0.0095,
+          "movement": 0.0
+        },
+        {
+          "id": 61042804,
+          "name": "Tommy Fleetwood",
+          "probability": 0.0085,
+          "movement": 0.0
+        },
+        {
+          "id": 61042820,
+          "name": "Sudarshan Yellamaraju",
+          "probability": 0.007,
+          "movement": 0.0
+        },
+        {
+          "id": 61042807,
+          "name": "J.J. Spaun",
+          "probability": 0.007,
+          "movement": -0.0015
+        },
+        {
+          "id": 61042811,
+          "name": "Robert MacIntyre",
+          "probability": 0.0065,
+          "movement": 0.0
+        },
+        {
+          "id": 61042801,
+          "name": "Akshay Bhatia",
+          "probability": 0.006,
+          "movement": 0.0
+        },
+        {
+          "id": 61042800,
+          "name": "Xander Schauffele",
+          "probability": 0.006,
+          "movement": 0.0
+        },
+        {
+          "id": 61042823,
+          "name": "Nico Echavarria",
+          "probability": 0.006,
+          "movement": 0.0
+        },
+        {
+          "id": 61042812,
+          "name": "Si Woo Kim",
+          "probability": 0.005,
+          "movement": -0.002
+        },
+        {
+          "id": 61042816,
+          "name": "Jacob Bridgeman",
+          "probability": 0.004,
+          "movement": -0.0065
+        },
+        {
+          "id": 61042825,
+          "name": "Sahith Theegala",
+          "probability": 0.003,
+          "movement": 0.0
+        },
+        {
+          "id": 61042808,
+          "name": "Jake Knapp",
+          "probability": 0.002,
+          "movement": 0.0
+        },
+        {
+          "id": 61042818,
+          "name": "Ryo Hisatsune",
+          "probability": 0.002,
+          "movement": 0.0
+        },
+        {
+          "id": 61042810,
+          "name": "Sepp Straka",
+          "probability": 0.002,
+          "movement": 0.0
+        },
+        {
+          "id": 61042814,
+          "name": "Nicolai Højgaard",
+          "probability": 0.001,
+          "movement": 0.0
+        }
+      ],
+      "before": {
+        "top_outcomes": [
+          {
+            "id": 69805719,
+            "name": "Other",
+            "probability": 1.0,
+            "movement": null
+          },
+          {
+            "id": 61042797,
+            "name": "Scottie Scheffler",
+            "probability": 0.23,
+            "movement": null
+          },
+          {
+            "id": 61042813,
+            "name": "Chris Gotterup",
+            "probability": 0.109,
+            "movement": null
+          }
+        ],
+        "outcome_count": 31
+      },
+      "after": {
+        "top_outcomes": [
+          {
+            "id": 61042797,
+            "name": "Scottie Scheffler",
+            "probability": 0.23,
+            "movement": null
+          },
+          {
+            "id": 61042813,
+            "name": "Chris Gotterup",
+            "probability": 0.109,
+            "movement": null
+          },
+          {
+            "id": 61042817,
+            "name": "Collin Morikawa",
+            "probability": 0.105,
+            "movement": 0.0005
+          }
+        ],
+        "outcome_count": 31
+      }
+    },
+    {
+      "id": 113738,
+      "name": "Massachusetts Governor Republican Primary Winner",
+      "llm_sport_category": "politics",
+      "db_rows": [
+        {
+          "id": 69766458,
+          "name": "Candidate Z",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766447,
+          "name": "Candidate P",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766448,
+          "name": "Candidate Q",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766457,
+          "name": "Candidate X",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766456,
+          "name": "Candidate V",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766459,
+          "name": "Candidate A",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766461,
+          "name": "Candidate E",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766462,
+          "name": "Candidate G",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766453,
+          "name": "Candidate N",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766471,
+          "name": "Candidate L",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766454,
+          "name": "Candidate R",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766455,
+          "name": "Candidate T",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766469,
+          "name": "Candidate H",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766460,
+          "name": "Candidate C",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766463,
+          "name": "Candidate I",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766464,
+          "name": "Candidate K",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766465,
+          "name": "Other",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766466,
+          "name": "Candidate B",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766467,
+          "name": "Candidate D",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766468,
+          "name": "Candidate F",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766470,
+          "name": "Candidate J",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766449,
+          "name": "Candidate S",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766450,
+          "name": "Candidate U",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766451,
+          "name": "Candidate W",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766452,
+          "name": "Candidate Y",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766446,
+          "name": "Candidate O",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 69766445,
+          "name": "Candidate M",
+          "probability": 1.0,
+          "movement": 0.0
+        },
+        {
+          "id": 1630928,
+          "name": "Michael Minogue",
+          "probability": 0.981,
+          "movement": 0.0
+        },
+        {
+          "id": 1630930,
+          "name": "Brian Shortsleeve",
+          "probability": 0.0165,
+          "movement": 0.0
+        },
+        {
+          "id": 1630929,
+          "name": "Mike Kennealy",
+          "probability": 0.0065,
+          "movement": 0.0
+        }
+      ],
+      "before": {
+        "top_outcomes": [
+          {
+            "id": 69766458,
+            "name": "Candidate Z",
+            "probability": 1.0,
+            "movement": null
+          },
+          {
+            "id": 69766447,
+            "name": "Candidate P",
+            "probability": 1.0,
+            "movement": null
+          },
+          {
+            "id": 69766448,
+            "name": "Candidate Q",
+            "probability": 1.0,
+            "movement": null
+          }
+        ],
+        "outcome_count": 30
+      },
+      "after": {
+        "top_outcomes": [
+          {
+            "id": 1630928,
+            "name": "Michael Minogue",
+            "probability": 0.981,
+            "movement": null
+          },
+          {
+            "id": 1630930,
+            "name": "Brian Shortsleeve",
+            "probability": 0.0165,
+            "movement": null
+          },
+          {
+            "id": 1630929,
+            "name": "Mike Kennealy",
+            "probability": 0.0065,
+            "movement": null
+          }
+        ],
+        "outcome_count": 4
+      }
+    }
+  ]
+}
