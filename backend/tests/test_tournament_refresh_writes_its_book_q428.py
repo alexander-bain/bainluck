@@ -155,7 +155,15 @@ def _market(**kw) -> PolymarketMarket:
 async def _run(monkeypatch, market=None, rows=None):
     rows = rows if rows is not None else [(YES_ID, "Yes"), (NO_ID, "No")]
     session = _arm(monkeypatch, rows)
-    stats = {"outcomes_updated": 0, "snapshots_written": 0, "unpriced": 0}
+    # `volume_observed` added by UX-P158, which gave this rail a third
+    # thing to write: the venue's 24h volume figure and the stamp that says
+    # when it was asked for. Mirrors the task's own stats literal.
+    stats = {
+        "outcomes_updated": 0,
+        "snapshots_written": 0,
+        "unpriced": 0,
+        "volume_observed": 0,
+    }
     await _write_refreshed_prices(
         [market or _market()], stats, now=datetime(2026, 8, 28, 21, 30, tzinfo=timezone.utc)
     )
@@ -273,15 +281,69 @@ class TestNothingIsInvented:
         for snap in _by_table(session, "futures_odds_snapshots"):
             assert snap["last_price"] is None
 
-    async def test_an_unpriced_market_writes_nothing_at_all(self, monkeypatch):
+    async def test_an_unpriced_market_writes_no_price_and_no_snapshot(
+        self, monkeypatch
+    ):
         """gotcha #21, forward-only: declining to price must SKIP, never NULL a
-        stored price. A wide book with no trade in 24h is Q428's declined case."""
+        stored price. A wide book with no trade in 24h is Q428's declined case.
+
+        AMENDED BY UX-P158, and the amendment is deliberate rather than a
+        specimen loosened to let a change through. This test used to be called
+        `..._writes_nothing_at_all` and asserted three absences; the third —
+        that no `futures_markets` row is touched — stopped being true when the
+        volume observation moved onto this rail, and it stopped being true ON
+        PURPOSE. Whether we can resolve a probability is a fact about the book;
+        how much of the market traded is a fact about the market, and the rows
+        this rail declines to price are exactly the near-dead ones the
+        illiquidity mark most needs a current reading for. The two assertions
+        Q428 actually made — no price write, no snapshot write — are unchanged
+        and still here.
+        """
         session, stats = await _run(
             monkeypatch,
-            market=_market(outcome_prices=[0.50, 0.50], best_bid=0.01,
-                           best_ask=0.99, last_trade_price=0.17,
-                           volume_24h=None),
+            market=_market(
+                outcome_prices=[0.50, 0.50],
+                best_bid=0.01,
+                best_ask=0.99,
+                last_trade_price=0.17,
+                volume_24h=None,
+            ),
         )
         assert stats["unpriced"] == 1
         assert _by_table(session, "futures_outcomes") == []
         assert _by_table(session, "futures_odds_snapshots") == []
+
+    async def test_an_unpriced_market_is_still_observed(self, monkeypatch):
+        """The other half of the amendment above, asserted rather than implied.
+
+        `volume_24h=None` from a venue we just asked is the MEASURED zero the
+        mark's second grade is built on (UX-P158: 328/328 against the trade
+        tape). It lands as NULL beside a stamp, never as a fabricated 0 — the
+        stamp is what makes the NULL readable, and inventing the figure would
+        destroy the distinction it exists to preserve.
+        """
+        session, stats = await _run(
+            monkeypatch,
+            market=_market(
+                outcome_prices=[0.50, 0.50],
+                best_bid=0.01,
+                best_ask=0.99,
+                last_trade_price=0.17,
+                volume_24h=None,
+            ),
+        )
+        assert stats["volume_observed"] == 1
+        written = _by_table(session, "futures_markets")
+        assert len(written) == 1
+        assert written[0]["volume_24h"] is None
+        assert written[0]["volume_updated_at"] == datetime(
+            2026, 8, 28, 21, 30, tzinfo=timezone.utc
+        )
+
+    async def test_a_priced_market_records_the_figure_it_was_served(self, monkeypatch):
+        """And when Gamma DOES serve the figure, it is written as served."""
+        session, stats = await _run(monkeypatch)
+        assert stats["volume_observed"] == 1
+        written = _by_table(session, "futures_markets")
+        assert len(written) == 1
+        assert written[0]["volume_24h"] == 321

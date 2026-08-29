@@ -104,9 +104,20 @@ POLL_STAMP_COUNTS = {
     #     `FuturesOutcome.last_updated` — a different table and a different
     #     column from `FuturesMarket.volume_updated_at`. Neither of the two new
     #     sites writes `last_updated`.
-    #   • `volume_updated_at` has exactly ONE reader in the tree
+    #   • `volume_updated_at` had exactly ONE reader in the tree
     #     (`routes/calibration.py`'s zero-volume admin diagnostic) and it
     #     DISPLAYS the value; it never gates on it. Grepped, not assumed.
+    #
+    #     ⚠️ SUPERSEDED THE NEXT DAY, and the census is why it is written down
+    #     rather than discovered later: UX-P158 gave the column a SECOND reader
+    #     that DOES gate on it. `routes/tournaments._load_prices` refuses to
+    #     read a NULL `volume_24h` as "nobody traded it" unless this stamp says
+    #     the venue was asked within the last 24 hours. So the "when the poller
+    #     last looked" semantics above are now load-bearing on a user-visible
+    #     surface, and a writer that stamped this column WITHOUT having looked
+    #     would put a mark on a number nobody measured. Both existing writers
+    #     stamp it in the same statement that writes the figure; a future one
+    #     must too.
     #   • The new sites carry #2024's own ambiguity — a conflict-update stamps
     #     on every poll whether or not the figure moved — and that is
     #     deliberate consistency with the parent row, whose semantics for this

@@ -27,11 +27,21 @@ sitting outside their own stored ``[bid, ask]`` and its commit says in as many
 words that Alex's ask was *"unbuildable for want of the column"*.
 
   1. **Did anybody trade it.**  ``FuturesMarket.volume_24h``, the venue's own
-     figure.  A **presence** test — ``> 0`` — and deliberately not a dollar
-     floor.  Q428 measured the 24h-volume distribution across the 328 live
-     ladder markets and found it running continuously from $0 to $1,900 with no
-     empty band to put a threshold in; any floor would be a knob wearing a
-     principle.  Presence is not a knob.
+     figure, read together with ``volume_updated_at`` — *when we asked*.  A
+     **presence** test — ``> 0`` — and deliberately not a dollar floor.  Q428
+     measured the 24h-volume distribution across the 328 live ladder markets
+     and found it running continuously from $0 to $1,900 with no empty band to
+     put a threshold in; any floor would be a knob wearing a principle.
+     Presence is not a knob.
+
+     **UX-P158 measured what an ABSENT figure means, and it means zero.**  See
+     the note on ``REASON_NO_TRADES_24H``: Gamma omits the field rather than
+     serving ``0``, and the Polymarket trade tape separates the three cohorts
+     with no exceptions at all.  So an absence, *observed recently enough to be
+     about the last day*, is now a failing fact rather than an unreadable one.
+     That second clause is the whole of the change and it is why this fact
+     takes a timestamp: an observation is only evidence about the window it
+     describes while it is younger than that window.
 
   2. **Is the book wider than the number it quotes.**  ``ask - bid >= midpoint``
      — a comparison of two measured quantities with **no constant in it at
@@ -71,7 +81,8 @@ constant of its own:
     traded  (0)  — checked, and nothing is wrong.  Draws nothing.
     thin    (1)  — one of the two failed.
     barely  (2)  — both failed.  The near-dead book.
-    unknown      — neither fact was checkable (no book AND no volume figure).
+    unknown      — neither fact was checkable (no book AND no volume
+                   observation recent enough to speak about the last day).
 
 ``unknown`` draws nothing, and that is a deliberate, stated limit rather than a
 verdict: we can only mark a number where the venue publishes a book, and an
@@ -109,6 +120,7 @@ __all__ = [
     "LIQUIDITY_UNKNOWN",
     "REASON_NO_TRADES_24H",
     "REASON_SPREAD_EXCEEDS_PRICE",
+    "VOLUME_OBSERVATION_MAX_AGE_HOURS",
     "grade_liquidity",
     "thinnest_liquidity",
 ]
@@ -134,29 +146,76 @@ LIQUIDITY_LEVELS = (
 
 #: The venue reported no trades at all in the last 24 hours.
 #:
-#: ⚠️ MEASURED 2026-08-28, AND IT DOES NOT FIRE ON POLYMARKET YET. Across all
-#: 336 US Open ladder markets, Gamma serves ``volume24hr`` as **positive on 66
-#: and ABSENT on 270** — never as an explicit ``0``. Absent is uncheckable here,
-#: not zero, so on the surface this signal was built for the second level is
-#: currently unreachable and every mark is a ``thin``.
+#: ⚠️ AN ABSENT ``volume24hr`` IS A ZERO, AND THAT IS MEASURED, NOT ASSUMED.
+#: UX-P157 shipped this reason unable to fire on Polymarket: Gamma served
+#: ``volume24hr`` positive on 66 of 336 US Open ladder markets and ABSENT on
+#: 270, never as an explicit ``0``, so the fact was uncheckable on the very
+#: surface the ruling was about and every real mark could only be a ``thin``.
+#: It banked the suspected disambiguation rather than inferring it.
 #:
-#: That is gotcha #53 being obeyed rather than a bug: Gamma returns the same
-#: shape for "nobody traded this" and "we do not compute this field", and a
-#: mark that could not tell them apart would be inventing the half we do not
-#: have. Q428 reads the same absence in the opposite direction — it DECLINES a
-#: last-trade escape hatch when ``volume24hr`` is not positive — and that is
-#: sound, because failing closed on an ambiguous signal costs nothing while
-#: *asserting* on one costs the reader's trust.
+#: UX-P158 went and measured it, and the answer was cleaner than the suspicion.
+#: Every one of the 328 markets Gamma still served was cross-checked against
+#: the Polymarket **trade tape** (``data-api.polymarket.com/trades``), which is
+#: an independent instrument — trades, not a computed aggregate:
 #:
-#: THE DISAMBIGUATION IS AVAILABLE AND IS NOT TAKEN HERE: Gamma also serves
-#: lifetime ``volume``, and a market with lifetime volume but no 24h figure is
-#: strong evidence of genuinely zero recent trading. That is a third ingredient
-#: and a change to the rule, so it needs its own measurement rather than a
-#: last-minute inference. Banked for the next queue; see the UX-P157 report.
+#:     ``volume24hr`` present (always > 0)   64 markets — 64/64 traded in 24h
+#:     absent, lifetime ``volume`` present  133 markets —  0/133 traded in 24h,
+#:                                                       133/133 traded at some
+#:                                                       point
+#:     both absent                          131 markets — 131/131 have NEVER
+#:                                                       traded, not once
+#:
+#: Three cohorts, zero exceptions, 328/328. Gamma **omits a zero-valued volume
+#: field rather than serialising it**, and the same signature shows on its
+#: other numerics on this population (no explicit ``0`` ever appears for
+#: ``bestBid`` or ``oneDayPriceChange`` either — they are simply absent).
+#:
+#: This is gotcha #53 discharged the way the gotcha itself prescribes, not
+#: waived. The gotcha does not say "never read an absence"; it says an absence
+#: and a zero share a response shape, so **disambiguate with a second signal**
+#: before writing a claim. The trade tape is that second signal, and it is a
+#: different endpoint measuring a different thing.
+#:
+#: WHAT THE INFERENCE STILL NEEDS, AND WHY THIS FACT NOW TAKES A TIMESTAMP.
+#: "The venue reported no 24h volume" is only a statement about *the last day*
+#: while the observation is younger than a day. Measured on the same surface on
+#: 2026-08-29: 115 of the 336 ladder rows carried a price — and therefore a book
+#: and a volume figure — last written on 2026-08-25, 83 hours earlier. Reading a
+#: NULL on one of those as "nobody traded it today" would be exactly the
+#: invention this module refuses, so the fact is checkable only against a
+#: current observation.
+#:
+#: Those 115 are not a register gap; all 336 are pinned. The rail's own summary
+#: accounts for them exactly — 8 Gamma no longer serves, and 107 are Q428's
+#: decline, a book it will not publish a price from. Which means the STALEST
+#: books on the surface belonged to the markets this mark most needs to
+#: describe, and it is why ``tournament_price_refresh`` now records the volume
+#: observation for every market Gamma RETURNS rather than every market it
+#: prices.
+#:
+#: NOT USED, DELIBERATELY: lifetime ``volume`` separates "traded once, not
+#: today" (133) from "never traded at all" (131), and that is a real third
+#: state. It is not a third LEVEL — Alex asked for a graded symbol, the grade
+#: is the count of two failing facts, and a third level would be a different
+#: ruling rather than this one implemented. Banked in the fixture for whoever
+#: needs it.
 REASON_NO_TRADES_24H = "no_trades_24h"
 #: The gap between the best bid and the best ask is at least as large as the
 #: number being quoted.
 REASON_SPREAD_EXCEEDS_PRICE = "spread_exceeds_price"
+
+#: How old a volume observation may be and still be evidence about "the last
+#: day".
+#:
+#: NOT A TUNED THRESHOLD, and the distinction matters because this module's
+#: whole claim is that it has no knobs in it. ``volume24hr`` measures a
+#: 24-hour window; an observation of it taken ``h`` hours ago describes the
+#: window ``[now-24-h, now-h]``, which stops overlapping *today* at all once
+#: ``h`` passes 24. The number is the field's own definition, and it is the
+#: LOOSEST bound that keeps the sentence true rather than a value picked off a
+#: distribution. Moving it would not re-tune the mark; it would make the mark
+#: say something the venue did not.
+VOLUME_OBSERVATION_MAX_AGE_HOURS = 24.0
 
 #: Said ONCE per surface, never per cell. The limit is part of the definition:
 #: a number with no mark on it has not been cleared, it has been left alone.
@@ -188,13 +247,21 @@ def grade_liquidity(
     bid: Any = None,
     ask: Any = None,
     volume_24h: Any = None,
+    volume_observed_age_hours: Any = None,
 ) -> dict[str, Any]:
     """One outcome's book → ``{"level": str, "reasons": list[str]}``.
 
-    Every argument is keyword-only and optional, because the three of them
-    arrive from three different columns on two different tables and a
-    positional call site would be a silent bid/ask transposition waiting to
-    happen.
+    Every argument is keyword-only and optional, because they arrive from four
+    different columns on two different tables and a positional call site would
+    be a silent bid/ask transposition waiting to happen.
+
+    ``volume_observed_age_hours`` is how long ago the venue was asked for this
+    market's volume — ``FuturesMarket.volume_updated_at`` differenced against
+    now by the caller, which owns the clock so this module does not have to.
+    It gates the volume fact in BOTH directions, and the symmetry is the point:
+    a figure read four days ago is no more a statement about today when it is
+    positive than when it is absent.  A negative age is a disagreement between
+    two clocks rather than a measurement, so it is refused, not clamped.
 
     Never raises.  A poison value (a string, a NaN, a dict) is an
     *uncheckable* fact, not a failing one — a mark invented from a parse error
@@ -204,9 +271,16 @@ def grade_liquidity(
     checked = 0
 
     volume = _as_float(volume_24h)
-    if volume is not None:
+    age = _as_float(volume_observed_age_hours)
+    observation_is_current = (
+        age is not None and 0.0 <= age <= VOLUME_OBSERVATION_MAX_AGE_HOURS
+    )
+    if observation_is_current:
         checked += 1
-        if volume <= 0:
+        # `volume is None` is the measured absence, not a missing read: we know
+        # the venue was asked, we know when, and we know from 328/328 against
+        # the trade tape that it omits the field instead of serving a zero.
+        if volume is None or volume <= 0:
             reasons.append(REASON_NO_TRADES_24H)
 
     best_bid = _as_float(bid)

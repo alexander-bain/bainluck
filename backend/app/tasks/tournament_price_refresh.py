@@ -146,6 +146,12 @@ async def _refresh_registered_tournament_prices(
         "tournaments": 0,
         "conditions_requested": 0,
         "markets_returned": 0,
+        # UX-P158: how many markets had their venue volume figure written down
+        # with a stamp. Counted separately from `outcomes_updated` because the
+        # two can diverge — an unpriced market is observed but not re-priced —
+        # and a rail whose volume writes silently stopped would otherwise look
+        # exactly like one whose prices are fine.
+        "volume_observed": 0,
         "outcomes_updated": 0,
         "snapshots_written": 0,
         "unpriced": 0,
@@ -241,6 +247,46 @@ async def _write_refreshed_prices(
 
     async with get_task_session() as session:
         for market in markets:
+            # ── THE VOLUME OBSERVATION TRAVELS WITH THE PRICE TOO (UX-P158).
+            #
+            # Q428 taught this rail to write the BOOK alongside the price it
+            # produced, for the reason its own comment gives: two observations
+            # must not wear one timestamp. The venue's 24h volume is the third
+            # thing in that same Gamma response and it was still being thrown
+            # away, so the illiquidity mark's "did anybody trade it" half was
+            # reading a column the hourly scan last wrote on 2026-08-25 —
+            # measured 83 hours stale on every one of the 336 US Open ladder
+            # rows, against a price this task had refreshed nine minutes
+            # earlier. A fact graded from those two together is not one
+            # observation, and `market_liquidity` now refuses it as such.
+            #
+            # `volume_updated_at` is what makes the NULL readable. UX-P158
+            # measured, on 328 markets against the Polymarket trade tape with
+            # no exceptions, that Gamma OMITS a zero-valued `volume24hr` rather
+            # than serving it — so "asked at 05:10, no figure came back" is a
+            # measured zero, while "never asked" is nothing at all. The stamp
+            # is the only thing that separates them, which is why it is written
+            # unconditionally and the figure is written NULL-preserving.
+            #
+            # Written for every market Gamma RETURNED, including one this task
+            # cannot price: whether we could resolve a probability is a fact
+            # about the book, and how much of it traded is a fact about the
+            # market. Skipping the unpriced ones would leave the stalest rows
+            # on the surface permanently unreadable.
+            await session.execute(
+                update(FuturesMarket)
+                .where(FuturesMarket.external_id == market.condition_id)
+                .values(
+                    volume_24h=(
+                        int(market.volume_24h)
+                        if market.volume_24h is not None
+                        else None
+                    ),
+                    volume_updated_at=now,
+                )
+            )
+            stats["volume_observed"] += 1
+
             probability = _resolve_market_probability(market)
             if probability is None:
                 # A placeholder or an untradeable book. Not an error, and not a

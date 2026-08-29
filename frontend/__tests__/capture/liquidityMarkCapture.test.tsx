@@ -1,37 +1,41 @@
 /**
- * UX-P157 — THE ILLIQUIDITY MARK, RENDERED FOR ALEX'S EYEBALL.
+ * UX-P158 — THE ILLIQUIDITY MARK, ACTUALLY GRADED, FOR ALEX'S EYEBALL.
  *
- * ═══ WHAT HE ASKED FOR ═══
+ * ═══ WHAT HE ASKED FOR, AND WHAT HE WOULD HAVE GOT ═══
  *
  * *"A really clean, universal signal for illiquidity"* — graded (at least two
  * levels, because illiquidity is not uniform), with a reveal that says
  * **precisely when the probability was last updated**, and a **non-hover
- * equivalent for native designed at the same time, not later**. He asked for
- * both treatments mocked. #2256 is his issue in his own words; #2257 is the
- * open presentation question this answers.
+ * equivalent for native designed at the same time, not later**. #2256 is his
+ * issue in his own words; #2257 is the presentation question it answers.
+ *
+ * UX-P157 built all of that and shipped a page with **one** reachable level.
+ * The fact behind the second is "did anybody trade it in the last day", and
+ * Gamma answers that question by omitting the field rather than serving a zero,
+ * so it was unreadable on 264 of the 328 markets this surface is made of. The
+ * previous version of this rig rendered two levels anyway, because its legend
+ * is hand-written — so the artifact looked graded and the page was not. That is
+ * the failure this rig now exists to make impossible: **panels 1, 2 and 3 are
+ * the same real bracket graded three ways, and the assertions at the bottom
+ * check the hollow mark against the corpus rather than the legend.**
  *
  * ═══ WHAT THIS RENDERS, AND HOW FAITHFUL EACH PANEL IS ═══
  *
- * Every panel is the SHIPPED component with the app's own compiled stylesheet,
- * and every number and every book in it was measured, not invented:
+ * Every panel is the SHIPPED component with the app's own compiled stylesheet:
  *
  *   • the grid rows come from `payload-2026-08-28.json`, which
  *     `capture_tournament_payload.py` read from production through the route's
  *     own `build_grids`;
- *   • the books come from `ladder-books-2026-08-28.json`, pulled 2026-08-28 for
- *     all 336 US Open ladder markets — the STORED bid/ask/volume out of
- *     production Postgres, and Gamma's LIVE bid/ask/volume24hr for the same
- *     markets, side by side;
- *   • the grade on every cell is `market_liquidity.grade_liquidity` applied to
- *     those books, run in Python and stamped into the fixture — the same rule
- *     the route runs, not a re-implementation.
+ *   • the books come from `ladder-books-2026-08-29.json` — all 336 US Open
+ *     ladder markets, pulled by `backend/scripts/pull_ladder_books.py`: the
+ *     STORED book, volume and volume STAMP out of production Postgres, Gamma's
+ *     LIVE book and volume fields, and the Polymarket TRADE TAPE beside both;
+ *   • the grade on every cell is `market_liquidity.grade_liquidity`'s rule
+ *     applied to those books.
  *
- * SYNTHETIC, and captioned as such on the page: nothing. The one thing the
- * panels do that production does not yet is show the **live** book alongside
- * the **stored** one, because those two disagree on 320 of 325 comparable
- * markets until PR #2259 (Q428, CERT-431 GREEN, unmerged) lands. That
- * disagreement is Q428's own finding and both states are on screen precisely
- * so the difference is Alex's to look at rather than a footnote.
+ * SYNTHETIC, and captioned as such on the page: the questions panel and the
+ * phone mock, whose LEVELS are hand-set because those cards' markets are not in
+ * the ladder fixture. Every grid cell in panels 1-3 is measured.
  *
  *   UX_CAPTURE_DIR=<dir> TZ=UTC npx jest --testPathPatterns=liquidityMarkCapture
  *
@@ -56,40 +60,71 @@ const FRONTEND = path.join(__dirname, "..", "..");
 const REPO = path.join(FRONTEND, "..");
 const MOCKS = path.join(REPO, "docs", "mocks", "us-open");
 const PAYLOAD_PATH = path.join(MOCKS, "payload-2026-08-28.json");
-const BOOKS_PATH = path.join(MOCKS, "ladder-books-2026-08-28.json");
+const BOOKS_PATH = path.join(MOCKS, "ladder-books-2026-08-29.json");
+
+/** UX-P158's window, mirroring `market_liquidity.VOLUME_OBSERVATION_MAX_AGE_HOURS`. */
+const VOLUME_WINDOW_HOURS = 24;
 
 interface Book {
   stored_bid: number | null;
   stored_ask: number | null;
   stored_volume_24h: number | null;
+  /** `null` on every ladder row today — see the PRODUCTION TODAY panel. */
+  stored_volume_updated_at?: string | null;
   live_bid: number | null;
   live_ask: number | null;
   live_volume_24h: number | null;
+  live_present?: boolean;
 }
 
-function loadBooks(): Record<string, Book> {
-  return JSON.parse(fs.readFileSync(BOOKS_PATH, "utf8")) as Record<string, Book>;
+interface BooksMeta {
+  pulled_at_utc: string;
+  condition_ids: number;
+  live_served: number;
+}
+
+function loadBooks(): { books: Record<string, Book>; meta: BooksMeta } {
+  const raw = JSON.parse(fs.readFileSync(BOOKS_PATH, "utf8")) as Record<string, unknown>;
+  const meta = raw._meta as unknown as BooksMeta;
+  const books: Record<string, Book> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (key !== "_meta") books[key] = value as Book;
+  }
+  return { books, meta };
 }
 
 /**
  * `market_liquidity.grade_liquidity`, restated for the rig ONLY.
  *
  * Deliberately not imported: the rule is Python and lives in the backend,
- * where 27 tests guard it. This is a fixture-stamping helper, and the tests
+ * where 53 tests guard it. This is a fixture-stamping helper, and the tests
  * below assert it agrees with the shipped constants on the specimens that
  * matter — a rig that silently disagreed with the route would render a
  * beautiful, wrong picture.
+ *
+ * `ageHours` is UX-P158's addition and it is the whole point of this queue: an
+ * ABSENT volume figure is a measured zero when we know we asked recently, and
+ * nothing at all when we do not. `undefined` means "no observation" and is how
+ * the PRODUCTION TODAY panel below is graded.
  */
 function grade(
   bid: number | null,
   ask: number | null,
-  volume: number | null
+  volume: number | null,
+  ageHours?: number
 ): { liquidity: string; liquidity_reasons: string[] } {
   const reasons: string[] = [];
   let checked = 0;
-  if (volume !== null && Number.isFinite(volume)) {
+  const observed =
+    ageHours !== undefined &&
+    Number.isFinite(ageHours) &&
+    ageHours >= 0 &&
+    ageHours <= VOLUME_WINDOW_HOURS;
+  if (observed) {
     checked += 1;
-    if (volume <= 0) reasons.push("no_trades_24h");
+    if (volume === null || !Number.isFinite(volume) || volume <= 0) {
+      reasons.push("no_trades_24h");
+    }
   }
   if (bid !== null && ask !== null && ask >= bid) {
     checked += 1;
@@ -110,13 +145,34 @@ function thinnest(levels: string[]): string {
   return worst < 0 ? "unknown" : WORST[worst];
 }
 
+/**
+ * The three ways the same real grid can be graded, and why each is a PANEL
+ * rather than a variant:
+ *
+ *   `today`   — the stored book and the stored volume STAMP. Production, right
+ *               now. Every ladder row's stamp is null, so the volume fact is
+ *               never checked and the second grade cannot appear.
+ *   `shipped` — the live book with a fresh observation beside it, which is what
+ *               the 10-minute refresh rail writes once this queue deploys. The
+ *               page Alex will see.
+ *   `p157`    — the live book graded the way UX-P157 graded it, with an absent
+ *               figure unreadable. The counterfactual, so the change is a
+ *               comparison rather than a claim.
+ */
+type Reading = "today" | "shipped" | "p157";
+
 /** Stamp a grade onto every priced cell of a real grid, from a real book. */
-function gradedGrid(draw: string, which: "stored" | "live"): GridModel {
+function gradedGrid(draw: string, which: Reading): GridModel {
   const payload = JSON.parse(fs.readFileSync(PAYLOAD_PATH, "utf8")) as TournamentPayload;
   const raw = (payload.grids as Record<string, unknown>)[draw];
   const grid = readPlayoffGrid(raw as never);
   if (!grid) throw new Error(`payload no longer carries the ${draw} grid`);
-  const books = loadBooks();
+  const { books, meta } = loadBooks();
+  const pulledAt = new Date(meta.pulled_at_utc).getTime();
+  const storedAge = (b: Book): number | undefined =>
+    b.stored_volume_updated_at
+      ? (pulledAt - new Date(b.stored_volume_updated_at).getTime()) / 3_600_000
+      : undefined;
 
   for (const row of grid.rows) {
     for (const cell of Object.values(row.cells) as GridCell[]) {
@@ -124,11 +180,24 @@ function gradedGrid(draw: string, which: "stored" | "live"): GridModel {
       const graded = (cell.sources ?? [])
         .map((s) => books[String(s.market_external_id)])
         .filter(Boolean)
-        .map((b) =>
-          which === "stored"
-            ? grade(b.stored_bid, b.stored_ask, b.stored_volume_24h)
-            : grade(b.live_bid, b.live_ask, b.live_volume_24h)
-        );
+        .map((b) => {
+          if (which === "today") {
+            return grade(b.stored_bid, b.stored_ask, b.stored_volume_24h, storedAge(b));
+          }
+          if (which === "p157") {
+            // UX-P157 read a figure and never a stamp: a present figure was
+            // checked, an absent one was not.
+            return grade(
+              b.live_bid,
+              b.live_ask,
+              b.live_volume_24h,
+              b.live_volume_24h === null ? undefined : 0
+            );
+          }
+          // The live half IS the observation — read from Gamma seconds before
+          // it was written into the fixture.
+          return grade(b.live_bid, b.live_ask, b.live_volume_24h, 0);
+        });
       cell.liquidity = thinnest(graded.map((g) => g.liquidity));
       cell.liquidity_reasons = Array.from(
         new Set(graded.flatMap((g) => g.liquidity_reasons))
@@ -138,14 +207,18 @@ function gradedGrid(draw: string, which: "stored" | "live"): GridModel {
   return grid;
 }
 
-function markedCount(grid: GridModel): number {
+function levelCount(grid: GridModel, level: string): number {
   let n = 0;
   for (const row of grid.rows) {
     for (const cell of Object.values(row.cells) as GridCell[]) {
-      if (cell.liquidity === "thin" || cell.liquidity === "barely") n += 1;
+      if (cell.liquidity === level) n += 1;
     }
   }
   return n;
+}
+
+function markedCount(grid: GridModel): number {
+  return levelCount(grid, "thin") + levelCount(grid, "barely");
 }
 
 /** Two questions cards: one traded, one barely, so the grade is on one screen. */
@@ -211,15 +284,15 @@ function appStylesheet(): string {
   }
 }
 
-describe("UX-P157 — the illiquidity mark, on the surfaces it was built for", () => {
+describe("UX-P158 — the illiquidity mark, graded on the surfaces it was built for", () => {
   it("the rig's grade agrees with the shipped rule on the specimens", () => {
     // #2257's shape: a book eight cents wide under a four-cent number.
-    expect(grade(0.0, 0.08, 0)).toEqual({
+    expect(grade(0.0, 0.08, 0, 0.5)).toEqual({
       liquidity: "barely",
       liquidity_reasons: ["no_trades_24h", "spread_exceeds_price"],
     });
     // Ben Shelton's cell — one of the sixteen, and deliberately unmarked.
-    expect(grade(0.69, 0.71, 7)).toEqual({
+    expect(grade(0.69, 0.71, 7, 0.5)).toEqual({
       liquidity: "traded",
       liquidity_reasons: [],
     });
@@ -227,8 +300,35 @@ describe("UX-P157 — the illiquidity mark, on the surfaces it was built for", (
     expect(grade(null, null, null).liquidity).toBe("unknown");
   });
 
+  it("UX-P158: an OBSERVED absence is the second grade; an unobserved one is silence", () => {
+    // The ship, in the rig's own mirror of the rule. Same book, same absent
+    // figure; the only difference is whether we know when we last asked.
+    expect(grade(0.0, 0.08, null, 0.5).liquidity).toBe("barely");
+    expect(grade(0.0, 0.08, null).liquidity).toBe("thin");
+    // And the observation stops being evidence past the window it describes.
+    expect(grade(0.0, 0.08, null, 83).liquidity).toBe("thin");
+  });
+
+  it("THE SECOND GRADE REACHES THE REAL GRID — the defect UX-P157 shipped", () => {
+    /**
+     * UX-P157's mark was graded and its page was not: on these same real books
+     * every marked cell could only be `thin`, because the fact behind the
+     * second level was uncheckable. This is that, asserted as a count on the
+     * production payload rather than described in a report.
+     */
+    const before = gradedGrid("womens-singles", "p157");
+    const after = gradedGrid("womens-singles", "shipped");
+    expect(levelCount(before, "barely")).toBe(0);
+    expect(levelCount(after, "barely")).toBeGreaterThan(0);
+    // And it is a GRADE, not a repaint: both levels have to be on the page at
+    // once or the reader has nothing to compare.
+    expect(levelCount(after, "thin")).toBeGreaterThan(0);
+    // The mark still has to be able to say nothing.
+    expect(levelCount(after, "traded")).toBeGreaterThan(0);
+  });
+
   it("the grid draws the mark, and the key only when there is one to explain", () => {
-    const grid = gradedGrid("womens-singles", "live");
+    const grid = gradedGrid("womens-singles", "shipped");
     const marked = markedCount(grid);
     expect(marked).toBeGreaterThan(0);
 
@@ -247,7 +347,7 @@ describe("UX-P157 — the illiquidity mark, on the surfaces it was built for", (
      * The failure a signal like this dies of: marking everything. The same
      * real grid with every book healthy must render zero marks and zero key.
      */
-    const grid = gradedGrid("womens-singles", "live");
+    const grid = gradedGrid("womens-singles", "shipped");
     for (const row of grid.rows) {
       for (const cell of Object.values(row.cells) as GridCell[]) {
         cell.liquidity = "traded";
@@ -266,8 +366,8 @@ describe("UX-P157 — the illiquidity mark, on the surfaces it was built for", (
      * about 120) and refused it. So the same grid graded two ways renders the
      * same numbers.
      */
-    const thin = gradedGrid("womens-singles", "live");
-    const clean = gradedGrid("womens-singles", "live");
+    const thin = gradedGrid("womens-singles", "shipped");
+    const clean = gradedGrid("womens-singles", "shipped");
     for (const row of clean.rows) {
       for (const cell of Object.values(row.cells) as GridCell[]) {
         cell.liquidity = "traded";
@@ -306,8 +406,9 @@ describe("UX-P157 — the illiquidity mark, on the surfaces it was built for", (
     fs.mkdirSync(dir, { recursive: true });
 
     const css = appStylesheet();
-    const stored = gradedGrid("womens-singles", "stored");
-    const live = gradedGrid("womens-singles", "live");
+    const today = gradedGrid("womens-singles", "today");
+    const p157 = gradedGrid("womens-singles", "p157");
+    const live = gradedGrid("womens-singles", "shipped");
     const framed = (markup: string) =>
       `<div class="max-w-content mx-auto px-3 md:px-6 py-4"><div class="w-full"><div class="px-4 lg:px-6">${markup}</div></div></div>`;
     const panel = (kind: string, label: string, note: string, markup: string) =>
@@ -336,7 +437,7 @@ describe("UX-P157 — the illiquidity mark, on the surfaces it was built for", (
     const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>UX-P157 — the illiquidity mark</title>
+<title>UX-P158 — the illiquidity mark, actually graded</title>
 <style>${css}</style>
 <style>
   body{background:#F5F5F7;margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Segoe UI,Roboto,sans-serif}
@@ -361,33 +462,52 @@ describe("UX-P157 — the illiquidity mark, on the surfaces it was built for", (
 </style></head>
 <body>
 <div class="banner">
-  <span class="tag mark">UX-P157</span> <b>A number nobody is trading now says so, and says how badly.</b>
+  <span class="tag mark">UX-P158</span> <b>The illiquidity mark stops having one grade.</b>
   <br><br>
-  Alex's ruling, 2026-08-28: a <b>symbol</b> carries illiquidity, it <b>grades</b>, the reveal says
-  <b>precisely when the probability was last updated</b>, and native gets a <b>non-hover</b>
-  equivalent designed at the same time. One component draws it everywhere — the bracket grid, the
-  championship board, the match slate and the questions section.
+  Alex's ruling, 2026-08-28, asked for a symbol that <b>grades</b> — at least two levels.
+  UX-P157 built two, and only one of them could ever appear on the page: the fact behind the second
+  is "did anybody trade it in the last day", and Gamma answers that by <b>omitting</b> the field
+  rather than serving a zero, so on 264 of these 328 markets it was unreadable. The three panels
+  below are the same real bracket under the same real books, graded three ways, so the change is
+  something to look at rather than something to take my word for.
   <ul class="key">${specimens}</ul>
-  Every number and every book below was measured, not invented: the grid is production's own
-  <code>payload-2026-08-28.json</code>, and the books are all 336 US Open ladder markets pulled the
-  same day — <b>stored</b> (production Postgres) and <b>live</b> (Gamma) side by side.
+  <b>How the absence was made readable, and why it is a measurement and not an assumption:</b>
+  every one of the 328 markets Gamma still serves was cross-checked against the Polymarket
+  <b>trade tape</b> — a different endpoint, listing trades rather than computing an aggregate.
+  <b>64</b> carry a 24h figure and <b>64 of 64</b> traded in the last day; <b>133</b> carry only a
+  lifetime figure and <b>0 of 133</b> traded in the last day; <b>131</b> carry neither and
+  <b>131 of 131</b> have never traded at all. Three cohorts, 328 of 328, no exceptions. So an
+  absence <i>we know we asked for recently</i> is a zero. An absence with no record of asking is
+  still nothing, and still draws nothing.
+  <br><br>
+  Every number and book below is production's own: the grid is
+  <code>payload-2026-08-28.json</code>, the books are all 336 US Open ladder markets in
+  <code>ladder-books-2026-08-29.json</code>.
+  <b>The one place levels are hand-set is the questions panel and the phone mock at the bottom</b>,
+  which are there to show the component rather than the corpus — captioned as such where they sit.
 </div>
 ${panel(
+  "pending",
+  "1 · WHAT THE PAGE SHOWS RIGHT NOW — " + markedCount(today) + " cells marked, of which " + levelCount(today, "barely") + " are hollow",
+  "Production, this minute, from the stored book and the stored volume stamp. Every ladder row's volume stamp is <b>null</b> — the hourly Polymarket scan last touched these markets on <b>2026-08-25</b>, and the 10-minute refresh rail wrote the price and the book but never the volume — so the trading fact is never checked and the hollow mark cannot appear. This is the gap between the artifact UX-P157 shipped and the page it shipped. The <b>115</b> rows whose book is still four days old are not a coverage gap: 8 are markets Gamma no longer serves and <b>107 are the ones Q428 declines to price</b>, which is to say the deadest books on the board had the oldest data about them.",
+  renderToStaticMarkup(<PlayoffGrid grid={today} initialExpanded />)
+)}
+${panel(
+  "control",
+  "2 · THE SAME GRID ON TODAY'S LIVE BOOK, GRADED THE OLD WAY — " + markedCount(p157) + " marked, " + levelCount(p157, "barely") + " hollow",
+  "The counterfactual, and the control for panel 3. Same books, same rule, one difference: an absent volume figure is treated as unreadable, exactly as UX-P157 treated it. The count of hollow marks is <b>zero</b>, and it is zero for a reason no amount of fresher data would fix.",
+  renderToStaticMarkup(<PlayoffGrid grid={p157} initialExpanded />)
+)}
+${panel(
   "mark",
-  "THE WOMEN'S BRACKET, graded from the LIVE book — " + markedCount(live) + " of " + live.rows.length * live.columns.length + " cells marked",
-  "This is what the page looks like once <b>PR #2259 (Q428)</b> lands and the stored book travels with the number it produced. Venus Williams' 0.8% to reach the quarter-final sits above a 3.6% semi-final; both are what the market says, and the reader can now see why neither is worth much.",
+  "3 · WHAT IT SHOWS ONCE THIS DEPLOYS — " + markedCount(live) + " of " + live.rows.length * live.columns.length + " cells marked, " + levelCount(live, "barely") + " of them hollow",
+  "The live book with a volume observation beside it, which is what the 10-minute refresh rail writes from now on — the figure and the price come off <b>one</b> Gamma response, so the mark is never grading a book from a different observation than the number it sits next to. Venus Williams' 0.8% to reach the quarter-final still sits above a 3.6% semi-final; both are still printed, unchanged, and the reader can now see how little either is worth.",
   renderToStaticMarkup(<PlayoffGrid grid={live} initialExpanded />)
 )}
 ${panel(
-  "pending",
-  "THE SAME GRID, graded from the STORED book — " + markedCount(stored) + " cells marked",
-  "Fewer marks, and the gap is the finding: the stored book differs from the live one on <b>320 of 325</b> comparable markets, because the 10-minute re-pricing rail moves the number and leaves bid/ask frozen. That is Q428's own defect, and #2259 fixes it. Both panels are here so the difference is visible rather than described.",
-  renderToStaticMarkup(<PlayoffGrid grid={stored} initialExpanded />)
-)}
-${panel(
   "mark",
-  "THE QUESTIONS SECTION — the card is marked, and so is each row",
-  "A field card's leader can be heavily traded while the tail it is printed above is quoted by nobody, so the mark is on both. The definition is printed once, under the section, and only when something on screen needs it.",
+  "4 · THE QUESTIONS SECTION — the card is marked, and so is each row",
+  "A field card's leader can be heavily traded while the tail it is printed above is quoted by nobody, so the mark is on both. The definition is printed once, under the section, and only when something on screen needs it. <b>Levels here are hand-set</b>: these cards' markets are not in the ladder fixture, so this panel demonstrates the component, not a measurement.",
   renderToStaticMarkup(<TournamentProps markets={propCards()} draw="mens-singles" />)
 )}
 <div class="panel">
@@ -396,7 +516,8 @@ ${panel(
   than in a popover — a popover covers the number the reader just asked about, and the sentence is
   only meaningful while that number is on screen. Long-press does the same thing without moving
   focus. The Swift component is <code>LiquidityMarkView.swift</code>; it draws the same two glyphs
-  from the same two levels and reads the same sentence.</div>
+  from the same two levels and reads the same sentence. <b>Hand-set, like panel 4</b> — this is the
+  interaction, not a measurement.</div>
   <div class="phone">
     <div class="row"><span>Iga Swiatek</span><span class="num">70%</span></div>
     <div class="row"><span>Venus Williams</span><span>${renderToStaticMarkup(
@@ -416,7 +537,7 @@ ${panel(
 <div class="banner"><b>What the mark means, once:</b> ${LIQUIDITY_DEFINITION}</div>
 </body></html>`;
 
-    const out = path.join(dir, "p157-illiquidity-mark.html");
+    const out = path.join(dir, "p158-illiquidity-mark.html");
     fs.writeFileSync(out, html, "utf8");
 
     // THE RIG ASSERTS ITS OWN ARTIFACT. A capture that wrote an empty file, or
@@ -431,5 +552,16 @@ ${panel(
     expect(written).toContain("Last number: ");
     // The stylesheet is the app's, not a hand-rolled approximation.
     expect(css.length).toBeGreaterThan(1_000);
+
+    // UX-P158's OWN CLAIM, asserted against the file that will be looked at
+    // rather than against the model behind it. The failure this catches is the
+    // exact one UX-P157 hit: a page whose second grade appears only in a
+    // hand-written legend. Panel 3 must carry hollow marks drawn from measured
+    // books, and panel 2 must carry none.
+    expect(levelCount(live, "barely")).toBeGreaterThan(0);
+    expect(levelCount(p157, "barely")).toBe(0);
+    expect(levelCount(today, "barely")).toBe(0);
+    expect(written).toContain("3 · WHAT IT SHOWS ONCE THIS DEPLOYS");
+    expect(written).toContain("1 · WHAT THE PAGE SHOWS RIGHT NOW");
   });
 });
