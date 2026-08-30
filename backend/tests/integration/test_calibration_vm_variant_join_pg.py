@@ -113,6 +113,39 @@ LEG_CATEGORY = {
 ALL_LEGS = {**CRICKET_LEGS, **BASEBALL_LEGS}
 ALL_IDS = sorted(ALL_LEGS)
 
+# ── CERT-485 P1-a: the ASYMMETRIC fixture ────────────────────────────────────
+# The fixture above cannot see the residual class, and the cert said so by line
+# number: every variant it seeds has ``has_winner == 2``, so every variant is
+# admitted to `clean_vms` on its own and the five-column join can only ever
+# REMOVE a duplicate. The class D5 changes is the one where a variant is NOT
+# admitted and the old two-column join let its outcomes ride a SIBLING
+# variant's admission row.
+#
+# So: one more virtual market, on its own event, whose two variants are
+# asymmetric.
+#
+#   * the LOSS variant — two one-outcome markets, both graded FALSE by an
+#     eligible authority. `has_winner = 0`, so the `has_winner >= 1` arm
+#     refuses it; `market_count = 2`, so D13's lone-claim arm
+#     (`market_count = 1 AND total_outcomes = 1 AND graded >= 1`) refuses it
+#     too — the counts in `vm_stats` are per VARIANT, not per market.
+#   * the WINNER variant — two one-outcome markets that won, so it IS admitted.
+#
+# Single-outcome markets on purpose: `no_winner_markets` (Queue 299 rung 1)
+# needs `n_outcomes >= 2`, and `malformed_binaries` needs exactly 2. Neither
+# fires here, so what these rows do or do not do is attributable to the join
+# and to `clean_vms`, and to nothing else.
+ASYM_EVENT_ID = 771500011
+ASYM_SPORT_ID = 77151
+ASYM_LOSS_LEGS = {771511: 0.15, 771512: 0.35}
+ASYM_WIN_LEGS = {771513: 0.55, 771514: 0.75}
+ASYM_LEG_CATEGORY = {
+    **{mid: "cricket" for mid in ASYM_LOSS_LEGS},
+    **{mid: "baseball" for mid in ASYM_WIN_LEGS},
+}
+ASYM_LEGS = {**ASYM_LOSS_LEGS, **ASYM_WIN_LEGS}
+ASYM_IDS = sorted(ASYM_LEGS)
+
 # Four DISTINCT prices on purpose. `mode_prices` deletes a price shared by more
 # than GREATEST(eligible/2, 2) legs; with every price unique no mode can form,
 # so nothing this gate publishes or withholds is attributable to that mechanism.
@@ -155,13 +188,20 @@ def _reverted(ctes: str) -> str:
     return ctes.replace(FIXED_JOIN, REVERTED_JOIN, 1)
 
 
-async def _seed_leg(session, market_id, *, price, category):
+async def _seed_leg(session, market_id, *, price, category, event_id=None, winner=True):
     """One resolved single-outcome market on the shared event.
 
-    Carries its own winner, so it is not a market that "graded nobody"
+    ``winner`` is the CERT-485 P1-a parameter. At its default the leg carries
+    its own winner, so it is not a market that "graded nobody"
     (`is_no_winner_market` requires n_outcomes >= 2 anyway) and not a 2-outcome
     mex binary with a bad winner count. `mutually_exclusive` false and
     `market_type='binary'` keep it out of the mex/field normalization arm.
+
+    ``winner=False`` writes `is_winner = false` — an AFFIRMATIVE graded loss,
+    not the nullable default. That distinction is the whole point of the
+    asymmetric fixture: `vm_stats.graded` counts `is_winner IS NOT NULL`, so a
+    row nothing ever graded and a row graded a loss are different rows, and only
+    the second may be published (gotcha #21).
     """
     from sqlalchemy import text
 
@@ -177,7 +217,7 @@ async def _seed_leg(session, market_id, *, price, category):
             "id": market_id,
             "xid": f"test-d5-{market_id}",
             "nm": f"market-{market_id}",
-            "ev": EVENT_ID,
+            "ev": EVENT_ID if event_id is None else event_id,
             "cat": category,
         },
     )
@@ -186,7 +226,7 @@ async def _seed_leg(session, market_id, *, price, category):
             "INSERT INTO futures_outcomes (id, market_id, external_id, name, "
             "opening_probability, calibration_probability, is_winner, "
             "resolution_source, volume) VALUES "
-            "(:id, :mid, :xid, :nm, :p, :p, true, 'api_settlement', 10)"
+            "(:id, :mid, :xid, :nm, :p, :p, :win, 'api_settlement', 10)"
         ),
         {
             "id": market_id,
@@ -194,6 +234,7 @@ async def _seed_leg(session, market_id, *, price, category):
             "xid": f"test-d5-out-{market_id}",
             "nm": f"leg-{market_id}",
             "p": price,
+            "win": winner,
         },
     )
     # A real trade: without it the Polymarket legs are never-traded placeholders
@@ -276,23 +317,79 @@ async def _rows(session, ctes, ids):
     ]
 
 
-async def _with_seeded_db(body):
+async def _seed_asym(session):
+    """The CERT-485 P1-a fixture: one vm, a LOSS-ONLY variant and a WINNER variant."""
+    from sqlalchemy import text
+
+    await session.execute(
+        text("INSERT INTO sports (id, key, name, active) VALUES (:id, :k, :n, true)"),
+        {"id": ASYM_SPORT_ID, "k": f"test_d5_{ASYM_SPORT_ID}", "n": "Test D5 asym"},
+    )
+    await session.execute(
+        text(
+            "INSERT INTO events (id, sport_id, home_team_name, away_team_name, "
+            "commence_time, status) VALUES "
+            "(:id, :sid, 'Home D5a', 'Away D5a', :ct, 'completed')"
+        ),
+        {
+            "id": ASYM_EVENT_ID,
+            "sid": ASYM_SPORT_ID,
+            "ct": datetime(2026, 1, 2, 3, 4, tzinfo=timezone.utc).replace(tzinfo=None),
+        },
+    )
+    for mid, price in ASYM_LEGS.items():
+        await _seed_leg(
+            session,
+            mid,
+            price=price,
+            category=ASYM_LEG_CATEGORY[mid],
+            event_id=ASYM_EVENT_ID,
+            winner=mid in ASYM_WIN_LEGS,
+        )
+    await session.commit()
+
+
+async def _cleanup_asym(session):
+    from sqlalchemy import text
+
+    await session.execute(
+        text("DELETE FROM futures_odds_snapshots WHERE outcome_id = ANY(:ids)"),
+        {"ids": ASYM_IDS},
+    )
+    await session.execute(
+        text("DELETE FROM futures_outcomes WHERE id = ANY(:ids)"), {"ids": ASYM_IDS}
+    )
+    await session.execute(
+        text("DELETE FROM futures_markets WHERE id = ANY(:ids)"), {"ids": ASYM_IDS}
+    )
+    await session.execute(
+        text("DELETE FROM events WHERE id = :id"), {"id": ASYM_EVENT_ID}
+    )
+    await session.execute(
+        text("DELETE FROM sports WHERE id = :id"), {"id": ASYM_SPORT_ID}
+    )
+    await session.commit()
+
+
+async def _with_seeded_db(body, *, seed=None, cleanup=None):
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.models.models import Base
 
+    seed = seed or _seed
+    cleanup = cleanup or _cleanup
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     Session = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with Session() as session:
-            await _cleanup(session)
-            await _seed(session)
+            await cleanup(session)
+            await seed(session)
             try:
                 await body(session)
             finally:
-                await _cleanup(session)
+                await cleanup(session)
     finally:
         await engine.dispose()
 
@@ -425,3 +522,168 @@ async def test_the_cricket_shape_deduplicates_and_loses_nothing():
         assert {c for _, c in after} == {"cricket"}
 
     await _with_seeded_db(body)
+
+
+# =============================================================================
+# CERT-485 P1-a — the residual class, seeded and RULED.
+#
+# THE FINDING. `clean_vms` admits a variant only when it has a winner, or when
+# D13's lone-claim arm fires (`market_count = 1 AND total_outcomes = 1 AND
+# graded >= 1`). Those counts are per VARIANT. So a variant holding TWO
+# independently-graded lone claims that both LOST is admitted by neither arm,
+# and D5's exact five-column join — correctly — finds no `clean_vms` row for
+# it. Under the old two-column join those rows published anyway, by matching a
+# SIBLING variant's admission row. D5 does not create the exclusion; it removes
+# the accident that was hiding it.
+#
+# 🔴 WHY THE GATE ABOVE CANNOT SEE THIS, quoted from the cert: every variant the
+# main fixture seeds has `has_winner == 2`
+# (`test_the_premise_one_virtual_market_really_does_hold_two_variants`, the
+# `for v in variants` block). A fixture in which every variant is admitted can
+# only ever exercise de-duplication. This section is the asymmetric case, and it
+# is deliberately NOT a narrowing of the fixture above — the cert named that
+# escape by name and refused it in advance.
+#
+# THE RULING (alex-inbox/calibration-919, option B — the lane's recommendation,
+# taken on the "if you say nothing" default). The exclusion STANDS and is
+# written down as ruled rather than accidental:
+#
+#   * Per-VARIANT is the shipped behaviour. A variant is the unit `vm_stats`
+#     aggregates and the unit `clean_vms` admits; admitting a lone claim
+#     per-MARKET instead would change the published population by an unmeasured
+#     amount, and the freeze-lift it would ride is mid-cert.
+#   * Per-MARKET (option A) is arguably more correct by D13's own argument —
+#     each of these rows IS "a complete, scoreable prediction" — and it is
+#     staged as its own queue, behind its own rebuild, not smuggled in here.
+#   * What is NOT acceptable is either one being true by accident. Hence this
+#     gate: if the arm is ever changed to per-market, the assertion below fails
+#     and names the ruling it is reversing.
+# =============================================================================
+
+
+async def test_the_asymmetric_premise_a_loss_only_variant_is_not_admitted():
+    """CERT-485 P1-a, the premise — asserted, because it is what the cert found.
+
+    Two variants of one virtual market. One is admitted, one is refused, and the
+    refused one is refused for the stated reason and no other: `has_winner = 0`
+    closes the first arm, `market_count = 2` closes D13's. `graded = 2` is
+    asserted too — these are AFFIRMATIVE losses, so the row is not being
+    excluded as unknown truth (Queue 299 rung 1), which is a different and
+    already-ruled exclusion.
+    """
+    from sqlalchemy import text
+
+    from app.tasks.precompute_calibration import _calibration_population_ctes
+
+    async def body(session):
+        ctes = _calibration_population_ctes()
+        stats = (
+            await session.execute(
+                text(
+                    "WITH "
+                    + ctes
+                    + " SELECT category, market_count, total_outcomes, has_winner, "
+                    "graded, eligible FROM vm_stats WHERE vm_id = :vm "
+                    "ORDER BY category"
+                ),
+                {"vm": f"e:{ASYM_EVENT_ID}"},
+            )
+        ).all()
+        assert [s.category for s in stats] == ["baseball", "cricket"], (
+            "PREMISE GONE: the asymmetric vm must still hold two variants "
+            f"(got {stats!r})"
+        )
+        loss = {s.category: s for s in stats}["cricket"]
+        win = {s.category: s for s in stats}["baseball"]
+
+        assert loss.has_winner == 0 and loss.graded == 2, (
+            "the loss variant must carry two AFFIRMATIVE graded losses and no "
+            f"winner, or this gate is testing unknown truth instead (got {loss!r})"
+        )
+        assert loss.market_count == 2 and loss.total_outcomes == 2, (
+            "the loss variant must hold TWO lone claims — one would be admitted "
+            f"by D13's arm and there would be no finding (got {loss!r})"
+        )
+        assert loss.eligible == 2
+        assert win.has_winner == 2 and win.market_count == 2
+
+        admitted = [
+            r.category
+            for r in (
+                await session.execute(
+                    text(
+                        "WITH "
+                        + ctes
+                        + " SELECT category FROM clean_vms WHERE vm_id = :vm "
+                        "ORDER BY category"
+                    ),
+                    {"vm": f"e:{ASYM_EVENT_ID}"},
+                )
+            ).all()
+        ]
+        assert admitted == ["baseball"], (
+            "PREMISE GONE: `clean_vms` must admit exactly the winner variant. "
+            "If the loss variant is now admitted, D13's arm was changed to "
+            "per-market (option A of alex-inbox/calibration-919) — that is a "
+            "ruling reversal and a published-population change, and it must be "
+            f"landed with a rebuild and a measured headline, not here. got={admitted!r}"
+        )
+
+    await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)
+
+
+async def test_loss_only_variant_rows_are_excluded_and_the_old_join_published_them():
+    """CERT-485 P1-a, the behaviour — and the row loss stated out loud.
+
+    RED-FIRST IN REVERSE. Every other arm in this file executes the reverted
+    join to prove the DEFECT comes back. Here the reverted join is what proves
+    the finding is real: under the two-column key the loss-only variant's rows
+    published, riding the sibling variant's admission row. So this arm is the
+    evidence for the cert's claim and the fixed arm is the disclosed
+    consequence — the population D5 ships is two rows smaller on this fixture,
+    on purpose.
+
+    THE FALSIFIER, and it is the one that matters. D5 must not lose the WINNER
+    variant's rows. A join that removes duplicates by removing rows nobody
+    ruled on is the failure mode this whole file is written against, so the
+    surviving set is asserted exactly, not merely counted.
+    """
+    from app.tasks.precompute_calibration import _calibration_population_ctes
+
+    async def body(session):
+        ctes = _calibration_population_ctes()
+
+        before = await _rows(session, _reverted(ctes), ASYM_IDS)
+        after = await _rows(session, ctes, ASYM_IDS)
+
+        assert sorted(oid for oid, _ in before) == ASYM_IDS, (
+            "the two-column join must publish ALL FOUR outcomes — the loss-only "
+            "variant's two rows ride the winner variant's `clean_vms` row. If "
+            "they do not, the P1-a finding is no longer reproducible by this "
+            f"fixture and the disclosure below is describing nothing. got={before!r}"
+        )
+        # Multiplicity, so the two effects are not confused. The loss rows match
+        # exactly ONE clean_vms row (the sibling), so nothing here is doubled —
+        # this fixture isolates row LOSS from row duplication.
+        assert len(before) == len(ASYM_IDS), (
+            f"the asymmetric fixture must not also duplicate (got {before!r})"
+        )
+        # And they published under the SIBLING's category, which is the tell:
+        # the row was admitted by a variant its market is not a member of.
+        assert {oid: cat for oid, cat in before if oid in ASYM_LOSS_LEGS} == {
+            oid: "baseball" for oid in ASYM_LOSS_LEGS
+        }, (
+            "the loss rows must publish under the sibling variant's category "
+            f"under the old join — that IS the accident. got={before!r}"
+        )
+
+        assert sorted(oid for oid, _ in after) == sorted(ASYM_WIN_LEGS), (
+            "RULED (alex-inbox/calibration-919, option B): the loss-only variant "
+            "is excluded per-VARIANT and the winner variant is untouched. A "
+            "change here is a change to the published population — if the loss "
+            "rows came back, D13's arm went per-market; if a winner row went "
+            f"missing, D5 is losing rows nobody ruled on. got={after!r}"
+        )
+        assert all(cat == "baseball" for _, cat in after)
+
+    await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)

@@ -2434,6 +2434,30 @@ def _calibration_population_ctes(
                         -- still removed downstream by ``no_winner_markets``,
                         -- exactly as rung 1 intends. ``graded >= 1`` refuses a
                         -- row whose ``is_winner`` was never written at all.
+                        --
+                        -- 🔴 THE COUNTS ARE PER VARIANT, NOT PER MARKET, AND
+                        -- THAT IS RULED — not accidental (CERT-485 P1-a,
+                        -- alex-inbox/calibration-919 option B, #1978 CAL-P151).
+                        -- TWO independently-graded lone claims that land in the
+                        -- SAME variant carry ``market_count = 2``, so this arm
+                        -- refuses both; if neither won, the variant has no
+                        -- ``has_winner`` either and the whole variant is
+                        -- excluded. Each of those rows is individually the
+                        -- thing this arm calls "a complete, scoreable
+                        -- prediction", so the exclusion is a real one and it is
+                        -- disclosed here rather than discovered later.
+                        -- Before D5 they published anyway — the two-column join
+                        -- below matched a SIBLING variant's admission row. D5
+                        -- did not create this exclusion, it removed the
+                        -- accident that hid it.
+                        -- Admitting per MARKET (option A) is arguably more
+                        -- correct by this arm's own argument, but it MOVES THE
+                        -- PUBLISHED POPULATION and therefore wants its own
+                        -- queue, its own rebuild and its own measured headline.
+                        -- Pinned both directions by ``tests/integration/
+                        -- test_calibration_vm_variant_join_pg.py`` (the
+                        -- asymmetric fixture): flipping this arm to per-market
+                        -- fails there by name.
                         OR (market_count = 1 AND total_outcomes = 1
                             AND graded >= 1)
                   )

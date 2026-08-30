@@ -1,5 +1,12 @@
 # CAL-P151 — cricket's miss is one family, and that family's markets carry other markets as their outcomes
 
+> ⚠️ **THIS FILE HAS TWO PARTS AND §1–§7 ARE PART ONE.** They were written
+> before `CERT-485` came back `BLOCK — TOKEN WITHHELD` (18:26Z). §6's
+> "did NOT touch the five commits / `.gitleaksignore`" is TRUE OF PART ONE ONLY
+> and was overtaken the same session — **read §8 for the current state of the
+> branch.** Part one's measurements (the cricket fold, the window, the read
+> rail) are unaffected and still stand.
+
 **TL;DR.** The directive's one named fold is done, and it answers more than it
 asked. The producer's own chain now runs on the admin read rail — it never had —
 and on the DEPLOYED predicate it reproduces the published `polymarket/cricket`
@@ -253,3 +260,120 @@ query that returned in 2.0 s returned `statement_timeout` minutes later. This
 lane's reads are bounded SELECTs on the 10 s rail and beat 20 was killed by a
 release, not by contention — but the coincidence is recorded rather than
 explained away.
+
+---
+
+# PART TWO — the CERT-485 rework
+
+**TL;DR.** `CERT-485` came back **`BLOCK — TOKEN WITHHELD`** at 18:26Z with three
+P1s. All three are now discharged, in the order the directive named, and the
+head is **green in mandatory CI** for the first time in the branch's life. The
+third P1 was not a bug — it was an undeclared ruling, and it is now declared.
+
+| P1 | verdict | commit |
+|---|---|---|
+| **c** — the head is RED in mandatory CI (gitleaks + mutation residue) | ✅ both reds were INHERITED FALSE POSITIVES | `49b24691` |
+| **b** — D21 mis-handles valid JSON of the wrong shape | ✅ every shape now degrades by name, on BOTH paths | `1a64d027` |
+| **a** — D5 can DELETE graded loss rows | ✅ real; **ruled per-VARIANT, disclosed, and pinned** | §8.3 |
+
+**D22 / D13 / D12 were not touched.** They were green on their reviewed deltas
+and the directive said so.
+
+## 8.1 P1-c — two CI reds, neither of them ours, and the ride is over
+
+* **gitleaks** fired on two tracked CAL-P147 **lane tokens** — the `pgrep` tags
+  this lane publishes in argv on purpose (`render-banker.py:75`,
+  `banker-heartbeat.json`), both from ancestor `f5a465ac`. They are not
+  credentials: **nothing to rotate**, and the standing rule's ROTATE branch does
+  not apply. Allowlisted by fingerprint in `.gitleaksignore`.
+* **Mutation residue** (shard 3, four candidates) was a **prefix false
+  positive** that exists ONLY in the merge composition: the scanner lives on
+  master, four of this lane's artifact scripts contain `raise RuntimeError(...)`,
+  and the mutation's replacement token is the bare `raise` prefix. Reproduced
+  red in a merge worktree and green after. 🔴 **The shared scanner was
+  deliberately NOT weakened** — a scanner loosened to clear one lane's artifacts
+  is a scanner that stops catching the thing it exists for.
+
+915 and 916 both said "ride it with the next change to that file." That was
+spent the moment a cert made it token-blocking, which is the general lesson:
+**an inherited red stops being inheritable when someone else's gate blocks on it.**
+
+## 8.2 P1-b — a valid JSON document of the wrong shape
+
+`json.loads` at `precompute_calibration.py:199` returned, and nothing then
+checked that `raw` was a list of mappings.
+
+* `{}` → `([], 0, None)` — a **silent zero**, which recreated the exact 96K
+  shortfall D21 was written to end;
+* `null` → `TypeError`, `[1]` → `AttributeError` — **and both raised on the
+  PUBLIC fallback too**, with `refuse=False`.
+
+Now: a non-empty list of mappings with the required row shape is required, and
+every other shape routes through the EXISTING unreadable/absent degradation
+contract, on the producer AND the serve path. The cert also corrected the
+test's premise — the writer (`backfill_winners.py:7126`) only writes when
+`buckets` is non-empty, so `[]` is **not** the writer's valid no-work answer.
+17 red → 31 green.
+
+## 8.3 P1-a — a real row loss, and it turns out to be an undeclared ruling
+
+**THE FINDING IS REAL AND IT IS THE MISSION'S OWN ADMITTED RESIDUAL CLASS.**
+`clean_vms` admits a variant on `has_winner >= 1`, or on D13's lone-claim arm
+(`market_count = 1 AND total_outcomes = 1 AND graded >= 1`). **Those counts are
+per VARIANT.** So a variant holding TWO independently-graded lone claims that
+both LOST is admitted by neither arm, and D5's exact five-column join correctly
+finds no row for it. Under the old two-column join those outcomes published
+anyway — by matching a **sibling** variant's admission row. **D5 did not create
+the exclusion; it removed the accident that hid it.**
+
+**Why the PG gate could not see it, quoted by line number in the cert:** every
+variant the fixture seeds has `has_winner == 2`. A fixture in which every
+variant is admitted can only ever exercise de-duplication.
+
+**What shipped:**
+
+1. **The asymmetric fixture, added to the real-PG gate** — a second virtual
+   market whose two variants are a LOSS-ONLY variant (two one-outcome markets
+   graded FALSE by an eligible authority) and a WINNER variant. Two new arms:
+   the premise (the loss variant is refused, and refused for the stated reason —
+   `graded = 2` is asserted so it is not being excluded as unknown truth
+   instead), and the behaviour (**the reverted two-column join publishes all
+   four, under the sibling's category — that is the accident, executed**; the
+   shipped join publishes only the winners). 🔴 It is **not** a narrowing of the
+   existing fixture; the cert refused that escape in advance and it was not taken.
+2. **The ruling, written into the SQL.** `alex-inbox/calibration-919` put the
+   call to Alex with a stated default — **B, per-variant, leave it** — and B is
+   what the lane does when he says nothing. The `clean_vms` comment now says
+   per-variant is RULED, says option A (per-market) is arguably more correct by
+   D13's own argument, and says why A is not smuggled in here: **A moves the
+   published population**, so it wants its own queue, its own rebuild and its own
+   measured headline. Flipping the arm now fails the gate BY NAME.
+3. **The magnitude is PARKED, not dropped** —
+   `.claude/handoff/PARKED-MEASUREMENTS.md`, entry `CAL-P151-P1a`. How many rows
+   the exclusion costs is a third arm on `cricket-population-fold.py` (the chain
+   already runs on the read rail), it is measurement rather than a build gate
+   (ruling 134), and it decides nothing until someone proposes option A — at
+   which point that number IS A's headline.
+
+**Tripwires.** The derived fingerprint map was regenerated and the **only**
+field that moved is `source_sha256`: `uncovered_sql_shaping` (22),
+`covered_by_value` (4), `input_count` and every per-input row are identical. The
+change is a comment, so it adds no SQL-shaping constant — and it adds no
+semicolon either, which matters because the read rail counts them lexically
+(gotcha #149).
+
+## 8.4 The window, the gates, and what is STILL not takeable
+
+* **Beat 21 landed 19:41:06Z and is CLEAN**, margin **86,133 ms** — the roomiest
+  since beat 5. Window: **21 beats, 17 clean, 4 misses** (4=B, 7=C, 15=B, 20=C),
+  all attributed. **18 gauged, 18 agreements, 0 disagreements.** Beat 19 is still
+  the tightest clean margin at 2,691 ms.
+* `board-d15.py` **exit 0** · `promotion-datapoint.py` **exit 0** ·
+  `refusal-register.py` **exit 0**.
+* Watcher 3016/3019, banker 75909/75911, probe 37525/37527 — alive with
+  advancing heartbeats. **Zero restarts across the whole session.**
+* ⛔ **The headline is STILL not takeable and E2's scope is still not derivable.**
+  Nothing is deployed. `origin/master` is the latency lane's `1b38f6fb`;
+  `program/calibration-119` is not an ancestor of it. The board reads 1.88 pp on
+  q268 and **all six commits are still ONE deploy** — each moves
+  `_main_input_fingerprint`, and D22 must ride with D13 regardless.
