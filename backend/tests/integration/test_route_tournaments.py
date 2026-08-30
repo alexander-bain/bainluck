@@ -101,9 +101,26 @@ class TestFreshnessSource:
         assert ".last_updated" not in source.replace("_outcomes.last_updated", "")
 
     def test_route_reads_captured_at_from_snapshots(self):
+        """Follows the CALL, because the statement moved (LAT-P147, #2328).
+
+        This used to read `FuturesOddsSnapshot.captured_at` and `max` straight
+        out of `_load_prices`, which pinned the freshness source and the
+        AGGREGATE SPELLING together. The spelling was the defect — `max() ...
+        GROUP BY` read 342,059 rows to return 514 — so a guard that could only
+        stay green while it survived was pinning the wrong half.
+
+        Rewritten to follow the delegation instead: `_load_prices` must get its
+        freshness from the shared top-1 loader, and that loader must read
+        `captured_at` off the snapshot table. Same property, one indirection,
+        and it no longer red-lights the fix for the bug it was guarding.
+        """
         source = inspect.getsource(tournaments._load_prices)
-        assert "FuturesOddsSnapshot.captured_at" in source
-        assert "max" in source
+        assert "load_latest_observed_at" in source
+
+        from app.utils import latest_observation
+
+        loader = inspect.getsource(latest_observation.latest_observed_at_subquery)
+        assert "FuturesOddsSnapshot.captured_at" in loader
 
 
 class TestRegisteredTournaments:
