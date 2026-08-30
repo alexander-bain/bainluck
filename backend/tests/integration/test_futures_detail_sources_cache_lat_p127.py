@@ -86,9 +86,15 @@ class RecordingDB:
     def __init__(self, breakdown_rows):
         self._rows = breakdown_rows
         self.executes = 0
+        self.params = []
 
-    async def execute(self, _stmt):
+    async def execute(self, _stmt, params=None):
+        # LAT-P148 made the breakdown statement a parameterised `text()`, so the
+        # double takes the bind dict the way `AsyncSession.execute` does. It is
+        # RECORDED rather than ignored: `TestTheStatementIsTheLooseScan` reads
+        # `params` to prove the outcome ids are bound, not interpolated.
         self.executes += 1
+        self.params.append(params)
 
         class _Result:
             def __init__(self, rows):
