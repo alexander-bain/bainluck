@@ -479,30 +479,40 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
         according to how the user navigated to it, off the same global identity
         finding.
 
-        FOUR call sites, and the number is the assertion:
+        SEVEN call sites, and the number is the assertion:
 
-          `/search`    `event_scope_conditions`  — the list the two UNION recall
-                       arms, the outer entity query, the identity-only count and
-                       the substring-existence guard are all built from
-          `/search`    `fuzzy_conditions`        — replaces `query` and
-                       `total_count` wholesale, so it needs its own
-          `/typeahead` the dropdown event pool
-          `/typeahead` the dropdown's fuzzy pool
+          `/search`             `event_scope_conditions` — the list the two UNION
+                                recall arms, the outer entity query, the
+                                identity-only count and the substring-existence
+                                guard are all built from
+          `/search`             `fuzzy_conditions` — replaces `query` and
+                                `total_count` wholesale, so it needs its own
+          `/typeahead`          the dropdown event pool
+          `/typeahead`          the dropdown's fuzzy pool
+          `/search-suggestions` live close games · starting soon · recent upsets
+                                — the search box's zero state, eight chips across
+                                four sources
 
-        A source count rather than a compiled statement because all four are
-        built inline inside their request handlers, exactly as the team rails
-        are. What this cannot prove is that the clause changes the ANSWER —
-        that is `tests/integration/test_search_proven_duplicate_pg.py`, which
-        drives both routes against a real PostgreSQL with a tagged/untagged
-        control. This one catches the deletion; that one catches the lie.
+        All three suggestion sources carry it, not only "starting soon" — the
+        one a twin reaches today. "This query cannot return a tagged row anyway"
+        is an argument about the SHAPE of the twins we have seen (bare,
+        score-less, source-less), and the tag makes no claim about shape. It
+        says this row is not a game to print.
+
+        A source count rather than a compiled statement because every one is
+        built inline inside its request handler, exactly as the team rails are.
+        What this cannot prove is that the clause changes the ANSWER — that is
+        `tests/integration/test_search_proven_duplicate_pg.py`, which drives the
+        routes against a real PostgreSQL with a tagged/untagged control. This
+        one catches the deletion; that one catches the lie.
         """
         import inspect
 
         from app.routes import events
 
         source = inspect.getsource(events)
-        assert source.count("not_a_proven_duplicate()") == 4, (
-            "one of the four search-surface call sites is gone — see CERT-439"
+        assert source.count("not_a_proven_duplicate()") == 7, (
+            "one of the seven search-surface call sites is gone — see CERT-439"
         )
 
     def test_the_behavioural_search_gate_exists_and_is_wired_into_ci(self):
