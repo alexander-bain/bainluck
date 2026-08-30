@@ -217,9 +217,26 @@ window being unlucky. It is the rate being wrong.
 the second miss cost roughly a factor of five at the optimistic end and the
 last of the margin everywhere else.
 
-**Caveat, stated rather than buried: the operative band is 13 beats.** Three
-misses in thirteen is a thin base and the true rate could be materially lower.
-It cannot plausibly be 0.05.
+### The band is short, so the band was bootstrapped rather than caveated
+
+The obvious objection is that the operative band is a handful of beats and a
+rate read off it is noise. So it is measured: a **moving-block bootstrap**,
+block 3, 2,000 draws, seeded `20260830`, over the operative band's actual miss
+sequence — blocks rather than i.i.d. beats because misses cluster (releases
+arrive in bursts; a squeezed window stays squeezed while the rebuild is heavy),
+and i.i.d. resampling would under-state the spread. It is the same instrument
+the amendment used to choose 22/24, pointed at the question the amendment left
+open: what the rate is *now*.
+
+```
+operative miss rate 0.467, 90% CI [0.333, 0.600]   (15 beats)
+  P(22/24) at 0.333 — the optimistic end — = 0.0010
+  P(22/24) at 0.600 — the pessimistic end — = 0.0000
+```
+
+**The conclusion does not depend on where in the CI the truth sits.** The band
+being short is a real limitation on the point estimate and it is not a
+limitation on the verdict.
 
 ### The mechanism behind class B, and why it is not random
 

@@ -22,10 +22,20 @@ CAL-P140 WINDOW ODDS — 22 of 24
       B_WINDOW_EXHAUSTION      1
       C_DEPLOY_KILL            1
 
+  operative miss rate 0.467, 90% CI [0.333, 0.600] (15 beats, 2000 moving-block draws, block 3, seed 20260830)
+
   live window: 7/24 beats, 2 misses, 0 of 2 budget left, 17 beats to go
 
     at miss rate 0.467  (measured rate carried forward)
       expected further misses: 7.93 against a budget of 0
+      P(condition met) = 0.0000
+
+    at miss rate 0.333  (optimistic end of the measured rate's 90% CI (15 beats, moving-block bootstrap))
+      expected further misses: 5.67 against a budget of 0
+      P(condition met) = 0.0010
+
+    at miss rate 0.600  (pessimistic end of the same CI)
+      expected further misses: 10.2 against a budget of 0
       P(condition met) = 0.0000
 
     at miss rate 0.273  (no releases during the window (class C suppressed))

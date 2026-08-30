@@ -52,6 +52,7 @@ import datetime
 import json
 import math
 import os
+import random
 import sys
 import urllib.error
 import urllib.request
@@ -130,6 +131,53 @@ def classify(obs: dict) -> str:
 def binom_at_most(k: int, n: int, p: float) -> float:
     """P(X <= k) for X ~ Bin(n, p). Exact; n is 24."""
     return sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k + 1))
+
+
+#: Moving-block bootstrap settings. The block length is the point: misses are
+#: CLUSTERED — deploy kills arrive in bursts of releases, and a squeezed window
+#: stays squeezed for as long as the futures rebuild is heavy — so resampling
+#: individual beats i.i.d. would under-state the spread. Blocks of 3 preserve
+#: short runs. This is the same instrument the amendment used to choose 22/24,
+#: applied to the question the amendment left open: what the rate is NOW.
+BOOTSTRAP_BLOCK = 3
+BOOTSTRAP_DRAWS = 2000
+BOOTSTRAP_SEED = 20260830
+
+
+def bootstrap_miss_rate(sequence: list[bool], *, draws=BOOTSTRAP_DRAWS,
+                        block=BOOTSTRAP_BLOCK, seed=BOOTSTRAP_SEED) -> dict:
+    """CI for the miss rate of a short, autocorrelated beat sequence.
+
+    ``sequence`` is one bool per beat, True for a miss. Seeded, so the banked
+    artifact is reproducible; a CI that moves between runs is not evidence.
+
+    Returns ``None`` when the band is shorter than one block — a bootstrap over
+    two beats is a number with no information in it, and printing one would give
+    a thin band the appearance of a measured one.
+    """
+    n = len(sequence)
+    if n < block:
+        return None
+    rng = random.Random(seed)
+    rates = []
+    for _ in range(draws):
+        drawn: list[bool] = []
+        while len(drawn) < n:
+            start = rng.randrange(n)
+            # Circular blocks, so every beat is equally likely to be sampled;
+            # non-circular blocks systematically under-weight both ends, which
+            # on a 13-beat band is most of the band.
+            drawn.extend(sequence[(start + i) % n] for i in range(block))
+        rates.append(sum(drawn[:n]) / n)
+    rates.sort()
+    return {
+        "point": round(sum(sequence) / n, 4),
+        "ci90": [round(rates[int(draws * 0.05)], 4), round(rates[int(draws * 0.95)], 4)],
+        "draws": draws,
+        "block": block,
+        "seed": seed,
+        "n_beats": n,
+    }
 
 
 def band(observations, *, start=None, end=None, exclude=None):
@@ -217,6 +265,25 @@ def main(argv=None) -> int:
         project(operative["miss_rate"], beats_remaining=beats_remaining,
                 misses_spent=live["misses"]),
     ]
+
+    # How much of the headline number is the band being 13 beats long? Answered
+    # rather than caveated: the CI is carried into the forecast so a reader sees
+    # the range of conclusions the evidence actually supports.
+    operative_beats = band(observations, start=parse(V3921_AT), exclude=outage)
+    misses_sequence = [classify(o) != "CLEAN" for o in operative_beats]
+    boot = bootstrap_miss_rate(misses_sequence)
+    if boot:
+        forecasts.append({
+            **project(boot["ci90"][0], beats_remaining=beats_remaining,
+                      misses_spent=live["misses"]),
+            "counterfactual": f"optimistic end of the measured rate's 90% CI "
+                              f"({boot['n_beats']} beats, moving-block bootstrap)",
+        })
+        forecasts.append({
+            **project(boot["ci90"][1], beats_remaining=beats_remaining,
+                      misses_spent=live["misses"]),
+            "counterfactual": "pessimistic end of the same CI",
+        })
     # The optimistic counterfactual: deploy kills are the one class a human can
     # choose to stop, by not releasing during the window. Priced separately
     # because it is the only lever anyone actually holds.
@@ -248,6 +315,7 @@ def main(argv=None) -> int:
         "condition": f"{CLEAN_REQUIRED} of {WINDOW}",
         "deadline_ms": DEADLINE_MS,
         "bands": bands,
+        "operative_rate_bootstrap": boot,
         "live_window": {
             "beats_so_far": live["beats"],
             "misses_so_far": live["misses"],
@@ -268,6 +336,11 @@ def main(argv=None) -> int:
               + (f", miss rate {b['miss_rate']:.3f}" if b["miss_rate"] is not None else ""))
         for cls, n in sorted(b["class_counts"].items(), key=lambda kv: -kv[1]):
             print(f"      {cls:<24} {n}")
+    if boot:
+        print(f"\n  operative miss rate {boot['point']:.3f}, 90% CI "
+              f"[{boot['ci90'][0]:.3f}, {boot['ci90'][1]:.3f}] "
+              f"({boot['n_beats']} beats, {boot['draws']} moving-block draws, "
+              f"block {boot['block']}, seed {boot['seed']})")
     print(f"\n  live window: {live['beats']}/{WINDOW} beats, {live['misses']} misses, "
           f"{MISSES_ALLOWED - live['misses']} of {MISSES_ALLOWED} budget left, "
           f"{beats_remaining} beats to go")
