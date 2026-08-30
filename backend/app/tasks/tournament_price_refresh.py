@@ -66,7 +66,32 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.utils.futures_liveness import LIVE_MARKET_SQL
+
 logger = logging.getLogger(__name__)
+
+#: 🔴 THIS TASK IS A PRICE ASKER AND MUST ASK THE SHARED QUESTION (CERT-452).
+#:
+#: `futures_price_refresh` and the freshness guard compose
+#: `futures_liveness.LIVE_MARKET_SQL`, and a census test asserts that every
+#: asker does. That census enumerated a fixed dictionary of six, so it could not
+#: discover a seventh — and this task was the seventh. It runs every ten
+#: minutes, it neither imported the predicate nor filtered on market status,
+#: resolution date, the venue-settled stamp or `is_winner`, so a registered
+#: market that the hourly refresher and its guard had both correctly retired
+#: kept being fetched here and its settled outcomes overwritten. The bound was
+#: real and something was walking round it on a faster cadence.
+#:
+#: The register pins identities BY ID, which is exactly why this needs saying:
+#: an id does not expire, so nothing about being register-pinned makes a market
+#: still live. Filtering happens BEFORE the venue fetch, so a retired market
+#: also stops costing a Gamma request.
+_LIVE_REGISTERED_CONDITIONS_SQL = f"""
+    SELECT fm.external_id
+      FROM futures_markets fm
+     WHERE fm.external_id = ANY(:conditions)
+       AND {LIVE_MARKET_SQL}
+"""
 
 #: How many condition ids per Gamma request.  See
 #: ``PolymarketAPIService.get_markets_by_conditions``.
@@ -168,8 +193,21 @@ async def _refresh_registered_tournament_prices(
         # of the named ones loads, something is broken here, not absent upstream.
         return _refresh_terminal(stats, "failed", "no_readable_register")
 
-    conditions = sorted(wanted)[:MAX_MARKETS]
+    pinned = sorted(wanted)[:MAX_MARKETS]
+    # CERT-452: the register says which markets the page renders, not which are
+    # still worth asking a venue about. Drop the settled ones here, before the
+    # fetch, through the SAME predicate the hourly refresher and the freshness
+    # guard compose — a second answer to "can this be priced" is a second answer.
+    conditions = await _live_conditions(pinned)
     stats["conditions_requested"] = len(conditions)
+    # Reported, not merely dropped: a rail that quietly shrinks its own input is
+    # one whose "refreshed everything" cannot be checked against anything.
+    stats["conditions_settled"] = len(pinned) - len(conditions)
+    if not conditions and pinned:
+        # Every pinned identity is retired. Authoritative UNKNOWN, not failed
+        # and never green: a finished tournament whose register is still
+        # committed is the honest case, and it has nothing to refresh.
+        return _refresh_terminal(stats, "no_work", "all_registered_markets_settled")
     if not conditions:
         # A loaded register that pins no Polymarket identity. Authoritative
         # UNKNOWN rather than failed — a retired tournament is the honest case —
@@ -216,6 +254,44 @@ async def _refresh_registered_tournament_prices(
     return _refresh_terminal(stats, "complete", "prices_written")
 
 
+async def _live_conditions(conditions: list[str]) -> list[str]:
+    """The subset of these Polymarket condition ids still worth pricing.
+
+    Order-preserving and NULL-safe by construction: it returns the members of
+    the input that the shared predicate admits, so a condition with no
+    `futures_markets` row at all is simply absent rather than silently kept.
+
+    FAILS OPEN on a read error, deliberately. If the database cannot answer
+    "which of these are live", the honest fallback is to refresh everything and
+    let `_write_prices`' per-outcome `is_winner` refusal hold the line — a
+    filter that fails CLOSED would blank the grid on a transient error, which is
+    the loud version of the silent staleness this whole task exists to end.
+    """
+    if not conditions:
+        return []
+    from sqlalchemy import text
+
+    from app.tasks.base import get_task_session
+
+    try:
+        async with get_task_session() as session:
+            rows = (
+                await session.execute(
+                    text(_LIVE_REGISTERED_CONDITIONS_SQL),
+                    {"conditions": list(conditions)},
+                )
+            ).all()
+    except Exception:  # noqa: BLE001 — see the fail-open note above
+        logger.exception(
+            "tournament price refresh: liveness filter failed, refreshing all "
+            "%d pinned conditions",
+            len(conditions),
+        )
+        return list(conditions)
+    live = {r[0] for r in rows}
+    return [c for c in conditions if c in live]
+
+
 def _refresh_terminal(stats: dict[str, Any], terminal: str, reason: str) -> dict[str, Any]:
     """Stamp the contract fields and log once. Every return goes through here."""
     stats["terminal"] = terminal
@@ -252,7 +328,22 @@ async def _write_refreshed_prices(
                 await session.execute(
                     select(FuturesOutcome.id, FuturesOutcome.name)
                     .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
-                    .where(FuturesMarket.external_id == market.condition_id)
+                    .where(
+                        FuturesMarket.external_id == market.condition_id,
+                        # CERT-452: never overwrite a graded outcome. The
+                        # condition filter above is the market-level bound; this
+                        # is the per-outcome one, and both are needed — a market
+                        # can be live while one of its legs has already resolved,
+                        # which is the whole reason the market-level winner
+                        # shortcut had to be narrowed in `futures_liveness`.
+                        #
+                        # `IS NOT TRUE`, never `= FALSE`: `is_winner` is nullable
+                        # with `default=False`, so FALSE is ambiguous between
+                        # "lost" and "nobody has looked". This is the same
+                        # refusal `futures_price_refresh._write_prices` makes,
+                        # said the same way.
+                        FuturesOutcome.is_winner.is_not(True),
+                    )
                 )
             ).all()
             if not rows:

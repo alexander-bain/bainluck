@@ -19,6 +19,7 @@ from app.utils.feed_market_quality import (
 )
 from app.utils.winner_field_coherence import count_near_certain, field_is_incoherent
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.pair_opening_coherence import (
     OK as PAIR_OPENING_OK,
     classify_pair_opening,
@@ -948,7 +949,13 @@ async def _process_event_batch(
                     "group_id": poly_group_id,
                     "group_type": poly_group_type,
                     "group_position": 0,
-                    "market_metadata": poly_metadata if poly_metadata else None,
+                    # #2222: see the kalshi poll's twin of this line. A REPLACE
+                    # drops the venue-settled stamp; merge it back so the bound
+                    # does not depend on this poll never reaching the market.
+                    "market_metadata": preserve_venue_settled(
+                        poly_metadata if poly_metadata else None,
+                        FuturesMarket.market_metadata,
+                    ),
                     "updated_at": func.now(),
                     "volume": poly_volume,
                     "volume_24h": poly_volume_24h,

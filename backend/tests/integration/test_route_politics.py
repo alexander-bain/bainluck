@@ -6,6 +6,7 @@ method rejection.
 Uses the shared ``client`` / ``mock_db`` fixtures from conftest.py.
 """
 
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -590,3 +591,111 @@ class TestPoliticsQueryParams:
         assert resp.status_code == 200
         body = resp.json()
         assert "themes" in body
+
+
+# ============================================================================
+# CERT-452 — a decided election must not render as an open question
+# ============================================================================
+
+
+def _settled_outcome(name, probability, *, outcome_id, rank, winner=False,
+                     resolution_source=None):
+    """A politics outcome carrying the two grading columns `_outcome` omits."""
+    return SimpleNamespace(
+        id=outcome_id,
+        name=name,
+        current_probability=probability,
+        probability_change_24h=0,
+        rank=rank,
+        is_winner=winner,
+        resolution_source=resolution_source,
+    )
+
+
+def _georgia_specimen(*, winner: bool):
+    """Market 12925046, `KXGAPRIMARY1R-26MAY19`, as production holds it.
+
+    One graded winner, three rendered outcomes, and a resolution date in 2027
+    for a primary that was held in May 2026 — so neither `status` (gotcha #33
+    keeps it `'open'`) nor the stale cutoff can see that this is over.
+    """
+    now = datetime.now(timezone.utc)
+    return _market(
+        market_id=12925046,
+        name="Which Georgia primary elections will have a first-round winner?",
+        external_id="KXGAPRIMARY1R-26MAY19",
+        source="kalshi",
+        llm_sport_category="politics",
+        resolution_date=datetime(2027, 5, 31, tzinfo=timezone.utc),
+        outcomes=[
+            _settled_outcome("Governor", 0.98, outcome_id=1, rank=1,
+                             winner=winner, resolution_source="kalshi"),
+            _settled_outcome("Senate", 0.62, outcome_id=2, rank=2,
+                             resolution_source="kalshi"),
+            _settled_outcome("Lt. Governor", 0.41, outcome_id=3, rank=3,
+                             resolution_source="kalshi"),
+        ],
+    ) if now else None
+
+
+class TestPoliticsHidesSettledMarkets:
+    """CERT-452 P1. The route consumed neither winner state nor the venue stamp.
+
+    `/api/politics` served this market at 98% next to genuinely live ones, off
+    prices captured 37 days earlier, with our own database already holding the
+    winner. #2222 stopped writing new snapshots to it; stopping the writes never
+    stopped the READ, and the read is what a person sees.
+    """
+
+    async def test_the_georgia_primary_stops_rendering(self, client, mock_db):
+        """Asserted on `themes`, which is what the page draws.
+
+        NOT on `total_markets`: that is `len(all_markets)` taken before every
+        filter in this route, so it already over-counts for
+        `should_exclude_from_featured` and the stale cutoff too. Pre-existing and
+        left alone here rather than quietly redefined by a cert repair.
+        """
+        mock_db.execute.side_effect = [
+            _query_result([_georgia_specimen(winner=True)]),
+            _query_result([]),
+        ]
+        body = (await client.get("/api/politics")).json()
+        rendered = json.dumps(body["themes"])
+        assert "12925046" not in rendered
+        assert "Georgia primary" not in rendered
+
+    async def test_the_same_market_ungraded_still_renders(self, client, mock_db):
+        """The kill. The rule has to be settlement and not the market's shape,
+        its 2027 resolution date, or its name — change ONLY `is_winner` and the
+        card comes back."""
+        mock_db.execute.side_effect = [
+            _query_result([_georgia_specimen(winner=False)]),
+            _query_result([]),
+        ]
+        body = (await client.get("/api/politics")).json()
+        assert "Georgia primary" in json.dumps(body["themes"])
+
+    async def test_an_independent_bundle_with_live_legs_still_renders(self, client, mock_db):
+        """The other kill. One leg resolving must not retire the card when the
+        remaining legs are ungraded — 25 open politics markets are this shape,
+        and the read-side rule keeps them."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.side_effect = [
+            _query_result([_market(
+                market_id=771,
+                name="Which parties will win a seat in the 2027 election?",
+                external_id="KXSEATS-27",
+                source="kalshi",
+                llm_sport_category="politics",
+                resolution_date=now + timedelta(days=200),
+                outcomes=[
+                    _settled_outcome("Labour", 0.90, outcome_id=1, rank=1,
+                                     winner=True, resolution_source="kalshi"),
+                    _settled_outcome("Conservative", 0.44, outcome_id=2, rank=2),
+                    _settled_outcome("Reform", 0.31, outcome_id=3, rank=3),
+                ],
+            )]),
+            _query_result([]),
+        ]
+        body = (await client.get("/api/politics")).json()
+        assert "2027 election" in json.dumps(body["themes"])

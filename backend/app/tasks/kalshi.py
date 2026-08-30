@@ -29,6 +29,7 @@ from app.utils.editorial_patterns import (
 )  # noqa: E402
 from app.utils.kalshi_market_status import all_terminal  # noqa: E402
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.futures_liveness import preserve_venue_settled  # noqa: E402  # #2222
 
 
 def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
@@ -838,7 +839,15 @@ async def _poll_kalshi_markets():
                         "group_id": kalshi_group_id,
                         "group_type": kalshi_group_type,
                         "group_position": 0,
-                        "market_metadata": kalshi_metadata if kalshi_metadata else None,
+                        # #2222: a REPLACE, so any key this poll does not know
+                        # about is deleted. Merge the venue-settled stamp back —
+                        # without this the bound survives only for as long as
+                        # this poll fails to reach the market, which is the very
+                        # starvation #2199 exists to fix.
+                        "market_metadata": preserve_venue_settled(
+                            kalshi_metadata if kalshi_metadata else None,
+                            FuturesMarket.market_metadata,
+                        ),
                         "updated_at": func.now(),
                         "volume": total_volume,
                         "volume_24h": total_volume_24h,
