@@ -97,6 +97,20 @@ POLL_STAMP_COUNTS = {
     # to declare itself — it exists precisely because the three above cannot
     # reach every market they are assumed to cover.
     "app/tasks/futures_price_refresh.py": 1,
+    # Q460: the two WebSocket consumers. They were price writers all along —
+    # they have been writing `current_probability` on the `worker-ws` dyno since
+    # they shipped — and they were writing it WITHOUT either stamp. This census
+    # did not catch them because a file with no `func.now()` at all is invisible
+    # to it: the tripwire fires on drift in a declared count, and an undeclared
+    # writer of zero stamps declares nothing.
+    #
+    # Measured on production 2026-08-30, which is what a missing touch-stamp
+    # actually cost: live Kalshi outcomes whose price had moved SECONDS earlier
+    # carried `last_updated` between 1.6 hours and 1.8 days old.
+    # `routes/playoffs.py` gates the grid on exactly that column, so the rows
+    # the socket kept freshest read to it as the deadest on the board.
+    "app/tasks/kalshi_ws.py": 1,
+    "app/tasks/polymarket_ws.py": 1,
 }
 
 
@@ -301,6 +315,13 @@ PRICE_CHANGE_STAMPERS = {
     # stamp, and this writer's whole cohort is the tier-1 championship fields
     # that grid renders.
     "app/tasks/futures_price_refresh.py": 1,
+    # Q460: the WebSocket consumers, now routed through the shared helper like
+    # every other price writer. They are the FASTEST-moving writers of this
+    # column — sub-second, versus the polls' 120s — so they are also the ones
+    # whose absence made `price_changed_at` least able to answer its own
+    # question for Kalshi and Polymarket game markets.
+    "app/tasks/kalshi_ws.py": 1,
+    "app/tasks/polymarket_ws.py": 1,
 }
 
 
