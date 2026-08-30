@@ -212,7 +212,15 @@ describe("registry — a fourth copy cannot appear undeclared", () => {
   // looks for, so a lane with scratch on disk got a red here while CI — which
   // checks out clean and has no scratch — stayed green. A gate that fails only
   // on the machine doing the work teaches people to ignore it.
-  const isScratch = (entry: string) => entry.startsWith("artifacts");
+  //
+  // CERT-489 blocked the first version of this exclusion: `startsWith("artifacts")`
+  // also swallows `artifactsReal/`, `artifactsProduction/` and anything else
+  // merely BEGINNING with the word, so a real fourth implementation parked under
+  // such a directory would evade the registry with every test still green. The
+  // scratch dirs are exactly `artifacts` or `artifacts-<queue>`; nothing else is
+  // scratch, and the separator is what makes it decidable.
+  const isScratch = (entry: string) =>
+    entry === "artifacts" || entry.startsWith("artifacts-");
   const EXT = [".py", ".ts", ".tsx", ".swift"];
   const VOCAB = [
     '"event"',
@@ -299,6 +307,31 @@ describe("registry — a fourth copy cannot appear undeclared", () => {
 
     for (const impl of CONTRACT.implementations) {
       expect(hits).toContain(impl.path);
+    }
+  });
+
+  it("the scratch exclusion skips scratch and NOTHING else", () => {
+    // CERT-489's blocking condition, as a unit. The exclusion has to be wide
+    // enough that a working lane is not permanently red, and narrow enough that
+    // it cannot become a place to hide a fourth implementation. Both directions
+    // are asserted, because widening this predicate is the cheapest way for a
+    // future author to make an inconvenient red go away.
+    for (const scratch of [
+      "artifacts",
+      "artifacts-ux-p197",
+      "artifacts-lat-p153",
+      "artifacts-cal-p128",
+    ]) {
+      expect(isScratch(scratch)).toBe(true);
+    }
+    for (const source of [
+      "artifactsReal", // ← the exact directory CERT-489 named
+      "artifactsProduction",
+      "artifacts_real",
+      "artifact",
+      "app",
+    ]) {
+      expect(isScratch(source)).toBe(false);
     }
   });
 
