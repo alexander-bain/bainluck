@@ -65,21 +65,17 @@ enum LiquidityLevel: String {
     /// Only two of the four draw anything.
     var isMarked: Bool { self == .thin || self == .barely }
 
-    /// "Traded" rather than "liquid" — Alex's own word is *illiquid*, but that
-    /// is the same class of vocabulary as "props/futures", which ruling 7
-    /// removed from these surfaces for requiring a sportsbook to parse.
-    var label: String? {
-        switch self {
-        case .thin: return "Thinly traded"
-        case .barely: return "Barely traded"
-        default: return nil
-        }
-    }
-
+    /// What to do with a marked number, and the only place the GRADE survives
+    /// in words. Alex's own register, 2026-08-29: *less reliable*.
+    ///
+    /// The two-word verdict ("Thinly traded") that used to open the reveal went
+    /// with the mechanism he cut. The glyph already grades; *less* versus *much
+    /// less* is the same ordering in the half of the sentence a reader acts on.
+    /// Mirrors `lib/liquidity.LIQUIDITY_MEANING`.
     var meaning: String? {
         switch self {
-        case .thin: return "Treat this as a rough guide."
-        case .barely: return "Treat this as little more than a guess."
+        case .thin: return "treat it as less reliable"
+        case .barely: return "treat it as much less reliable"
         default: return nil
         }
     }
@@ -98,15 +94,20 @@ enum LiquidityLevel: String {
 // MARK: - Copy
 
 enum Liquidity {
-    /// Mirrors `lib/liquidity.REASON_TEXT`.
-    static func reasonText(_ reason: String) -> String? {
+    /// The one clause that says what is wrong, said the way Alex asked for it
+    /// on 2026-08-29 — *the number isn't moving* — and never as the arithmetic
+    /// that found it. Mirrors `lib/liquidity.REASON_STEM`.
+    ///
+    /// The wide-book stem deliberately makes no claim about movement: a market
+    /// can be quoting an absurd range and still have traded this morning.
+    static let noTradesStem = "This number hasn't moved in a while"
+    static let wideBookStem = "Barely anybody is trading this market"
+
+    static func reasonStem(_ reason: String) -> String? {
         switch reason {
-        case "no_trades_24h":
-            return "nobody has traded it in the last day"
-        case "spread_exceeds_price":
-            return "the gap between what buyers offer and what sellers want is wider than the number itself"
-        default:
-            return nil
+        case "no_trades_24h": return noTradesStem
+        case "spread_exceeds_price": return wideBookStem
+        default: return nil
         }
     }
 
@@ -114,15 +115,14 @@ enum Liquidity {
     /// `lib/liquidity.LIQUIDITY_DEFINITION` and
     /// `market_liquidity.LIQUIDITY_DEFINITION`.
     ///
-    /// The second half is the load-bearing part: where a venue publishes
+    /// The last sentence is the load-bearing part: where a venue publishes
     /// nothing to check we cannot mark, so an UNMARKED number has not been
     /// cleared — it has been left alone.
     static let definition = """
-        We mark a number when the market behind it is barely being traded — nobody has traded it in \
-        the last day, or the gap between what buyers offer and what sellers want is wider than the \
-        number itself. A half mark means one of those is true; a hollow mark means both are. Where a \
-        venue publishes nothing to check against we cannot mark, so a number with no mark is one we \
-        have not been able to question.
+        We mark a number when the market behind it is barely being traded, which usually means it \
+        hasn't moved in a while and is less reliable. A half mark means we found one sign of that; \
+        a hollow mark means we found both. Where a venue publishes nothing to check against we \
+        cannot mark, so a number with no mark is one we have not been able to question.
         """
 
     /// "27 Aug, 2:14 PM" in the READER's own timezone.
@@ -138,12 +138,19 @@ enum Liquidity {
         return formatter.string(from: observedAt)
     }
 
-    /// The whole reveal, in ONE string — verdict, why, and precisely when.
+    /// The whole reveal, in ONE string — what is wrong, what to do about it,
+    /// and precisely when.
     ///
     /// One string because it has to survive three disclosure paths on this
     /// platform (the tap sheet, the accessibility label, an inline caption) and
     /// a structured value would let two of them drift. Mirrors
     /// `lib/liquidity.liquidityReveal`, sentence for sentence.
+    ///
+    /// ONE REASON, never both — Alex, 2026-08-29, on the version that listed
+    /// both: *way too verbose*. The second clause bought the reader nothing,
+    /// because the two facts do not lead to two different responses.
+    /// `no_trades_24h` wins the tie and every `barely` carries it, so a hollow
+    /// mark always reads as "hasn't moved".
     ///
     /// `nil` for `traded` and `unknown`, which is what makes "no mark" the
     /// cheap default rather than a case every caller has to remember.
@@ -152,21 +159,16 @@ enum Liquidity {
         reasons: [String],
         observedAt: Date? = nil
     ) -> String? {
-        guard level.isMarked, let label = level.label, let meaning = level.meaning else {
-            return nil
-        }
-        let texts = reasons.compactMap(reasonText)
-        let because: String
-        switch texts.count {
-        case 0: because = ""
-        case 1: because = " — \(texts[0])"
-        default: because = " — \(texts[0]), and \(texts[1])"
-        }
+        guard level.isMarked, let meaning = level.meaning else { return nil }
+        // A payload that lost its reasons still gets a true sentence: the
+        // wide-book stem claims only that the market is barely traded, which is
+        // what being marked at all already means.
+        let stem = reasons.contains("no_trades_24h") ? noTradesStem : wideBookStem
         // "Last number" and not "last traded": we do not receive trades, and the
         // timestamp is when a probability last reached us. Over-claiming here is
         // the easy mistake, and it is the one `FRESHNESS_DEFINITION` exists for.
         let last = preciseObservedAt(observedAt).map { " Last number: \($0)." } ?? ""
-        return "\(label)\(because). \(meaning)\(last)"
+        return "\(stem) — \(meaning).\(last)"
     }
 }
 

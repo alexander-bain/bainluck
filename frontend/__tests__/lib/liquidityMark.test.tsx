@@ -15,6 +15,11 @@
  *      so the four disclosure mechanisms cannot drift apart.
  *   4. **It never crashes a grid.** A poison payload is an unmarked cell, not a
  *      thrown render — one bad cell must not blank 336 of them.
+ *   5. **The reveal stays SHORT and says none of our arithmetic.** Alex,
+ *      2026-08-29, on the version this replaced: *"the mouseover text is way to
+ *      verbose. no need to reference buyers and sellers. can just clarify that
+ *      the numbers isn't moving and is less reliable."* The bans below are that
+ *      ruling with a test around it, because copy that nobody pins grows back.
  */
 
 import React from "react";
@@ -62,22 +67,45 @@ describe("the reveal", () => {
     expect(liquidityReveal({}, OBSERVED)).toBeNull();
   });
 
-  it("names the level, the reason, and precisely when the number reached us", () => {
+  it("says the number is not moving, that it is less reliable, and when it reached us", () => {
     const sentence = liquidityReveal(
       { liquidity: "thin", liquidity_reasons: ["no_trades_24h"] },
       OBSERVED
-    );
-    expect(sentence).toContain("Thinly traded");
-    expect(sentence).toContain("nobody has traded it in the last day");
-    expect(sentence).toContain("Treat this as a rough guide.");
-    // ALEX'S CONSTRAINT: "mouse-over reveals precisely when the probability was
-    // last updated". An absolute clock time, not "32 hours ago" — the relative
-    // age is the phrasing he called ambiguous in the first place.
+    ) as string;
+    // ALEX, 2026-08-29, in as many words: *clarify that the number isn't moving
+    // and is less reliable*. That is the whole sentence, and this is it.
+    expect(sentence).toContain("This number hasn't moved in a while");
+    expect(sentence).toContain("treat it as less reliable");
+    // ALEX'S EARLIER CONSTRAINT, which survives the trim: "mouse-over reveals
+    // precisely when the probability was last updated". An absolute clock time,
+    // not "32 hours ago" — the relative age is the phrasing he called ambiguous.
     expect(sentence).toContain("Last number: ");
     expect(sentence).toContain(preciseObservedAt(OBSERVED) as string);
   });
 
-  it("names BOTH reasons when both are true", () => {
+  it("GRADES in words: much less reliable is the hollow mark's half of it", () => {
+    const barely = liquidityReveal(
+      {
+        liquidity: "barely",
+        liquidity_reasons: ["no_trades_24h", "spread_exceeds_price"],
+      },
+      OBSERVED
+    ) as string;
+    const thin = liquidityReveal(
+      { liquidity: "thin", liquidity_reasons: ["no_trades_24h"] },
+      OBSERVED
+    ) as string;
+    expect(barely).toContain("treat it as much less reliable");
+    expect(thin).toContain("treat it as less reliable");
+    expect(thin).not.toContain("much less");
+  });
+
+  it("says ONE reason even when both facts failed — the verbosity Alex cut", () => {
+    /**
+     * The old sentence listed both, and the second clause bought the reader
+     * nothing: two failing facts do not lead to two different responses. The
+     * grade carries "worse", not the enumeration.
+     */
     const sentence = liquidityReveal(
       {
         liquidity: "barely",
@@ -85,20 +113,60 @@ describe("the reveal", () => {
       },
       OBSERVED
     ) as string;
-    expect(sentence).toContain("Barely traded");
-    expect(sentence).toContain("nobody has traded it in the last day");
-    expect(sentence).toContain(
-      "the gap between what buyers offer and what sellers want is wider than the number itself"
-    );
-    expect(sentence).toContain("little more than a guess");
+    expect(sentence).toContain("This number hasn't moved in a while");
+    expect(sentence).not.toContain("Barely anybody is trading this market");
+    expect(sentence).not.toContain(", and ");
+    // Short enough to read in a tooltip without scanning: the old one ran past
+    // 230 characters on this exact payload.
+    expect(sentence.length).toBeLessThan(120);
+  });
+
+  it("makes no movement claim for a number marked only on its book", () => {
+    /**
+     * A market can be quoting an absurd range and still have traded this
+     * morning. "Hasn't moved" on that outcome would be a claim we never
+     * measured — the over-claim `FRESHNESS_DEFINITION` exists to refuse.
+     */
+    const sentence = liquidityReveal(
+      { liquidity: "thin", liquidity_reasons: ["spread_exceeds_price"] },
+      OBSERVED
+    ) as string;
+    expect(sentence).toContain("Barely anybody is trading this market");
+    expect(sentence).not.toContain("hasn't moved");
+    expect(sentence).toContain("treat it as less reliable");
+  });
+
+  it("carries none of the arithmetic that produced the grade", () => {
+    // ALEX'S BAN, 2026-08-29: no buyers, no sellers — and by the same logic no
+    // bid, ask or spread, which is the same sportsbook vocabulary arriving by a
+    // different door. Ruling 138's `price` stem and ruling 141's venue names
+    // are banned here too, for the reasons the definition's own test gives.
+    for (const facts of [
+      { liquidity: "thin", liquidity_reasons: ["no_trades_24h"] },
+      { liquidity: "thin", liquidity_reasons: ["spread_exceeds_price"] },
+      {
+        liquidity: "barely",
+        liquidity_reasons: ["no_trades_24h", "spread_exceeds_price"],
+      },
+    ]) {
+      const sentence = liquidityReveal(facts, OBSERVED) as string;
+      expect(sentence).not.toMatch(/\bbuyers?\b|\bsellers?\b/i);
+      expect(sentence).not.toMatch(/\bbids?\b|\basks?\b|\bspreads?\b|\bmidpoints?\b/i);
+      expect(sentence).not.toMatch(/\b(un)?pric(e|es|ed|ing)\b/i);
+      expect(sentence).not.toMatch(/\b(Kalshi|Polymarket)\b/);
+      expect(sentence).not.toMatch(/\bstale\b/i);
+    }
   });
 
   it("stays a readable sentence when the reasons are missing or poisoned", () => {
+    // The wide-book stem is the fallback because it claims only what being
+    // marked already means. It must never fall back to the movement claim.
     const sentence = liquidityReveal(
       { liquidity: "barely", liquidity_reasons: ["not-a-reason"] as string[] },
       OBSERVED
     ) as string;
-    expect(sentence).toContain("Barely traded.");
+    expect(sentence).toContain("Barely anybody is trading this market");
+    expect(sentence).toContain("treat it as much less reliable");
     expect(sentence).not.toContain("undefined");
     expect(sentence).not.toContain("  ");
   });
@@ -109,7 +177,7 @@ describe("the reveal", () => {
         { liquidity: "thin", liquidity_reasons: ["no_trades_24h"] },
         bad
       ) as string;
-      expect(sentence).toContain("Thinly traded");
+      expect(sentence).toContain("This number hasn't moved in a while");
       expect(sentence).not.toContain("Last number");
       expect(sentence).not.toContain("Invalid Date");
     }
@@ -172,7 +240,10 @@ describe("the glyph", () => {
     expect(html).toContain("<button");
     expect(html).toContain('type="button"');
     expect(html).toContain("aria-label=");
-    expect(html).toContain("Barely traded");
+    // The rendered apostrophe is an entity, so the assertion sits either side
+    // of it — a pin that breaks on HTML escaping is a pin on the wrong thing.
+    expect(html).toContain("moved in a while");
+    expect(html).toContain("much less reliable");
     // …and the mouse path is on the same element.
     expect(html).toContain("title=");
   });
@@ -228,5 +299,18 @@ describe("the definition line", () => {
     expect(LIQUIDITY_DEFINITION).not.toMatch(/\b(un)?pric(e|es|ed|ing)\b/i);
     expect(LIQUIDITY_DEFINITION).not.toMatch(/\b(Kalshi|Polymarket)\b/);
     expect(LIQUIDITY_DEFINITION).not.toMatch(/\bstale\b/i);
+    // ALEX, 2026-08-29: no buyers and no sellers, here as well as in the
+    // reveal. The key sits under the same grid the tooltip belongs to, so a
+    // ban the tooltip keeps and the key breaks is not a ban.
+    expect(LIQUIDITY_DEFINITION).not.toMatch(/\bbuyers?\b|\bsellers?\b/i);
+    expect(LIQUIDITY_DEFINITION).not.toMatch(/\bbids?\b|\basks?\b|\bspreads?\b/i);
+  });
+
+  it("says what the marks mean without teaching the two facts underneath", () => {
+    // "One sign of that" and "both" is the whole of what a reader needs to
+    // order two symbols; the count's ingredients are ours to carry.
+    expect(LIQUIDITY_DEFINITION).toContain("hasn't moved in a while");
+    expect(LIQUIDITY_DEFINITION).toContain("less reliable");
+    expect(LIQUIDITY_DEFINITION).not.toContain("in the last day");
   });
 });

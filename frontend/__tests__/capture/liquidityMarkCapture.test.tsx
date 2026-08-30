@@ -337,8 +337,11 @@ describe("UX-P158 — the illiquidity mark, graded on the surfaces it was built 
     expect(html).toContain('data-testid="grid-liquidity-key"');
     expect(html).toContain(`data-marked="${marked}"`);
     // The reveal rides the cell's own tooltip, because an 8px mark in a 46px
-    // value track is not a hover target anybody can find.
-    expect(html).toMatch(/Barely traded|Thinly traded/);
+    // value track is not a hover target anybody can find. (The apostrophe in
+    // "hasn't" is an HTML entity by the time it lands here, so the assertion
+    // sits either side of it.)
+    expect(html).toMatch(/moved in a while|Barely anybody is trading this market/);
+    expect(html).toContain("less reliable");
     expect(html).toContain("Last number: ");
   });
 
@@ -470,6 +473,14 @@ describe("UX-P158 — the illiquidity mark, graded on the surfaces it was built 
   rather than serving a zero, so on 264 of these 328 markets it was unreadable. The three panels
   below are the same real bracket under the same real books, graded three ways, so the change is
   something to look at rather than something to take my word for.
+  <br><br>
+  <b>The words changed on 2026-08-29, on Alex's ruling looking at this page:</b> <i>"the mouseover
+  text is way to verbose … can just clarify that the numbers isn't moving and is less
+  reliable."</i> (The elided clause is the one banning the two market-mechanics nouns the old
+  sentence leaned on — this page now contains neither, and a test asserts that about this file.)
+  The reveal below is the short form: one clause about the market, one about what to do with the
+  number, and the timestamp. The grade did not change and the glyph did not change; the two levels
+  now read as <b>less</b> versus <b>much less</b> reliable.
   <ul class="key">${specimens}</ul>
   <b>How the absence was made readable, and why it is a measurement and not an assumption:</b>
   every one of the 328 markets Gamma still serves was cross-checked against the Polymarket
@@ -548,8 +559,10 @@ ${panel(
     expect(written).toContain('data-level="barely"');
     expect(written).toContain('data-level="thin"');
     expect(written).toContain('data-testid="grid-liquidity-key"');
-    expect(written).toContain("Barely traded");
+    expect(written).toContain("much less reliable");
     expect(written).toContain("Last number: ");
+    // UX-P184: Alex's copy ruling, asserted against the file he will look at.
+    expect(written).not.toMatch(/\bbuyers?\b|\bsellers?\b/i);
     // The stylesheet is the app's, not a hand-rolled approximation.
     expect(css.length).toBeGreaterThan(1_000);
 

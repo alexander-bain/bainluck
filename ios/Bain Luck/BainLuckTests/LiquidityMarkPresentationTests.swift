@@ -72,23 +72,57 @@ final class LiquidityMarkPresentationTests: XCTestCase {
         // Verbatim from `frontend/lib/liquidity.ts`. If either side is reworded
         // without the other, this fails — which is the only mechanism keeping
         // one signal from becoming two.
+        //
+        // ALEX, 2026-08-29: *"the mouseover text is way to verbose … can just
+        // clarify that the numbers isn't moving and is less reliable."* Both
+        // facts failed here and the sentence still names ONE of them: two
+        // failing facts do not lead to two different responses, and the grade
+        // carries "worse" in `much less reliable`.
         let sentence = Liquidity.reveal(
             level: .barely,
             reasons: ["no_trades_24h", "spread_exceeds_price"]
         )
         XCTAssertEqual(
             sentence,
-            "Barely traded — nobody has traded it in the last day, and the gap between what "
-                + "buyers offer and what sellers want is wider than the number itself. "
-                + "Treat this as little more than a guess."
+            "This number hasn't moved in a while — treat it as much less reliable."
         )
     }
 
-    func testTheThinSentenceMatchesTooAndNamesOnlyItsOwnReason() {
+    func testTheThinSentenceMatchesTooAndGradesBelowTheHollowOne() {
         XCTAssertEqual(
             Liquidity.reveal(level: .thin, reasons: ["no_trades_24h"]),
-            "Thinly traded — nobody has traded it in the last day. Treat this as a rough guide."
+            "This number hasn't moved in a while — treat it as less reliable."
         )
+    }
+
+    func testABookOnlyMarkMakesNoMovementClaim() {
+        // A market can be quoting an absurd range and still have traded this
+        // morning. "Hasn't moved" there would be a claim we never measured.
+        XCTAssertEqual(
+            Liquidity.reveal(level: .thin, reasons: ["spread_exceeds_price"]),
+            "Barely anybody is trading this market — treat it as less reliable."
+        )
+    }
+
+    func testTheRevealCarriesNoneOfTheArithmeticThatProducedTheGrade() {
+        // Alex's ban, 2026-08-29: no buyers, no sellers — and by the same logic
+        // no bid, ask or spread, which is the same vocabulary by another door.
+        let reasonSets = [["no_trades_24h"], ["spread_exceeds_price"],
+                          ["no_trades_24h", "spread_exceeds_price"]]
+        for reasons in reasonSets {
+            for level in [LiquidityLevel.thin, .barely] {
+                let text = (Liquidity.reveal(
+                    level: level,
+                    reasons: reasons,
+                    observedAt: Date(timeIntervalSince1970: 1_787_000_040)
+                ) ?? "").lowercased()
+                for banned in ["buyer", "seller", "bid", "ask", "spread", "price", "stale"] {
+                    XCTAssertFalse(text.contains(banned), "banned in the reveal: \(banned)")
+                }
+                // Short enough to read in a tap sheet without scanning.
+                XCTAssertLessThan(text.count, 120)
+            }
+        }
     }
 
     func testItSaysPreciselyWhenTheNumberReachedUs() {
@@ -131,8 +165,13 @@ final class LiquidityMarkPresentationTests: XCTestCase {
     }
 
     func testAnUnrecognisedReasonIsDroppedNotPrinted() {
+        // The fallback is the book stem, never the movement claim: it asserts
+        // only what being marked at all already means.
         let sentence = Liquidity.reveal(level: .barely, reasons: ["cosmic-rays"]) ?? ""
-        XCTAssertTrue(sentence.hasPrefix("Barely traded."))
+        XCTAssertEqual(
+            sentence,
+            "Barely anybody is trading this market — treat it as much less reliable."
+        )
         XCTAssertFalse(sentence.contains("cosmic-rays"))
         XCTAssertFalse(sentence.contains("  "))
     }
@@ -154,9 +193,20 @@ final class LiquidityMarkPresentationTests: XCTestCase {
     func testTheDefinitionCarriesNoBannedTradingVocabulary() {
         // Ruling 138: the `price` stem is banned — the word is PROBABILITY.
         // Ruling 141: no venue name is the subject of reader copy.
+        // Alex 2026-08-29: no buyers and no sellers, in the key as well as in
+        // the reveal — they sit under the same grid.
         let text = Liquidity.definition.lowercased()
-        for banned in ["price", "priced", "unpriced", "kalshi", "polymarket", "stale"] {
+        for banned in ["price", "priced", "unpriced", "kalshi", "polymarket", "stale",
+                       "buyer", "seller", "bid", "spread"] {
             XCTAssertFalse(text.contains(banned), "banned in reader copy: \(banned)")
         }
+    }
+
+    func testTheDefinitionSaysWhatTheMarksMeanWithoutTheFactsUnderneath() {
+        // "One sign of that" and "both" is the whole of what a reader needs to
+        // order two symbols; the count's ingredients are ours to carry.
+        XCTAssertTrue(Liquidity.definition.contains("hasn't moved in a while"))
+        XCTAssertTrue(Liquidity.definition.contains("less reliable"))
+        XCTAssertFalse(Liquidity.definition.contains("in the last day"))
     }
 }
