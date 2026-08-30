@@ -68,6 +68,25 @@ LEDGER_DERIVED_PREFIX = "measured_sigma."
 
 EXIT_UNREADABLE_DATAPOINT = 4
 
+#: Promotions whose loss is CLOSED and unrepairable, each with the reason it can
+#: never be recovered. Nothing goes in here because it is inconvenient -- the
+#: only admissible reason is that the render which would bracket it can no
+#: longer be created by anyone.
+#:
+#: A NEW entry here needs that argument written out. If a promotion is merely
+#: unbracketed *so far*, it is not permanent: leave it red.
+PERMANENTLY_UNREADABLE = {
+    14: (
+        "CAL-P146 §3 — the bracket is beat 8 -> beat 16 and the confound is "
+        "within-census drift between beats 8 and 13. Closing it needs a render "
+        "of the payload served at beat 13 and at beat 15; both censuses have "
+        "since been evicted from the 1 h serve cache and the producer cannot be "
+        "asked to re-serve them (?bust=1 is gone from the public route and the "
+        "admin variant QUEUES the heavy task, which would corrupt this window). "
+        "No action available to any future session recovers it."
+    ),
+}
+
 
 def _ts(s: str) -> datetime:
     return datetime.fromisoformat(s)
@@ -215,8 +234,26 @@ def main() -> int:
               f"{len(in_window)} renders)")
 
     print("\n" + "=" * 88)
-    if unreadable:
-        for n, why in unreadable:
+
+    # CAL-P147 amendment. As written, `unreadable` accumulated EVERY measurement
+    # beat including beat 14, whose loss is permanent and unrepairable -- so this
+    # guard could never return to 0 again. A guard that is red forever is a guard
+    # that gets ignored, and the thing it would then fail to announce is the NEXT
+    # promotion being missed the same way. Beat 14 is therefore acknowledged as a
+    # closed permanent loss (loudly, never silently), and the exit code is
+    # reserved for a promotion that can still be saved.
+    permanent = [(n, why) for n, why in unreadable if n in PERMANENTLY_UNREADABLE]
+    live = [(n, why) for n, why in unreadable if n not in PERMANENTLY_UNREADABLE]
+
+    for n, why in permanent:
+        print(f"⚫ MEASUREMENT beat {n} was COUNTED and can never be READ — {why}.")
+        print(f"   PERMANENT, acknowledged: {PERMANENTLY_UNREADABLE[n]}")
+        print("   Not counted toward the exit code — nothing anyone does now recovers it.")
+    if permanent and live:
+        print()
+
+    if live:
+        for n, why in live:
             print(f"🔴 MEASUREMENT beat {n} was COUNTED but cannot be READ — {why}.")
         print()
         print("A promotion is readable only if a render is banked on the beat either side")
@@ -225,7 +262,9 @@ def main() -> int:
         print(f"EXIT {EXIT_UNREADABLE_DATAPOINT}")
         return EXIT_UNREADABLE_DATAPOINT
 
-    print("Every MEASUREMENT beat in the window is cleanly bracketed and read.")
+    print("No RECOVERABLE measurement beat is unread.")
+    if permanent:
+        print(f"({len(permanent)} permanent loss(es) above stand on the record, unrepairable.)")
     print("EXIT 0")
     return 0
 

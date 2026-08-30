@@ -1,0 +1,56 @@
+========================================================================================
+CAL-P146 — the freeze window's MEASUREMENT beats, and whether they can be read
+========================================================================================
+beats logged: 17   banked renders on disk: 10   mapped to a window beat: 6
+
+Renders mapped into the window:
+   beat   3  2026-08-30T01:35:22.816  census 2026-08-29T20:18:32  artifacts/cal-p139/scorecard.txt
+   beat   6  2026-08-30T04:35:25.200  census 2026-08-29T20:18:32  artifacts/cal-p141/scorecard.txt
+   beat   6  2026-08-30T04:35:25.200  census 2026-08-29T20:18:32  artifacts/cal-p140/scorecard.txt
+   beat   8  2026-08-30T06:38:17.787  census 2026-08-29T20:18:32  artifacts/cal-p142/scorecard.txt
+   beat  16  2026-08-30T14:38:38.114  census 2026-08-30T12:24:39  artifacts/cal-p145/scorecard-live.txt
+   beat  16  2026-08-30T14:38:38.114  census 2026-08-30T12:24:39  artifacts/cal-p147-renders/scorecard-20260830T143838-114919.txt
+
+MEASUREMENT beats (a staged_at transition — a NEW census was promoted): 1
+
+  --- beat 14  2026-08-30T12:25:53.019
+      promoted census : 2026-08-30T12:24:39+00:00
+      attribution     : published — a NEW census was promoted at 2026-08-30T12:24:39+00:00 (previous 2026-08-29T20:18:32+00:
+      bracketed by    : beat 8 (artifacts/cal-p142/scorecard.txt)  ->  beat 16 (artifacts/cal-p145/scorecard-live.txt)
+      bracket gap     : 6 beat(s) before, 2 beat(s) after
+      🔴 bracket is 6+2 beats wide — what moved across it is
+         CONFOUNDED with ordinary within-census drift and cannot be
+         attributed to the promotion. Reported, not claimed:
+           (unattributable) counts.cells_at_bar                30 -> 29
+           (unattributable) counts.cells_material_outcomes     885492 -> 888668
+           (unattributable) counts.cells_queued                19 -> 20
+           (unattributable) counts.cells_unestablished         13 -> 12
+           (unattributable) counts.queued_excess_outcomes      461049 -> 472104
+           (unattributable) per_class.B_exchange_contest.outcomes 660816 -> 663051
+           (unattributable) per_class.C_exchange_standalone.at_bar 6 -> 5
+           (unattributable) per_class.C_exchange_standalone.outcomes 118949 -> 119890
+           (unattributable) per_class.C_exchange_standalone.queued 5 -> 6
+           (unattributable) total_outcomes                     926007 -> 929294
+      (excluded — CAL-P128 ledger overlay, not census output:)
+           measured_sigma.queued_cells_measured         11 -> 12
+           measured_sigma.queued_cells_refuted          2 -> 3
+           measured_sigma.refuted_cells                 ('polymarket/soccer', 'kalshi/golf') -> ('polymarket/soccer', 'kalshi/golf', 'polymarket/economics')
+           measured_sigma.refuted_excess_outcomes       54706 -> 67944
+
+----------------------------------------------------------------------------------------
+WHAT SURVIVES THE CONFOUND — identical in every in-window render, so no
+gap can be hiding a move. This is the part of the datapoint that IS read:
+   HELD  headline_mce_closing_line              = 1.88
+   HELD  headline_ci                            = (0.86, 1.97)
+   HELD  headline_pass                          = True
+   HELD  headline_target_pp                     = 2.0
+   HELD  population_version                     = q268
+   (+ 28 further fields identical across all 6 renders)
+
+========================================================================================
+⚫ MEASUREMENT beat 14 was COUNTED and can never be READ — bracket 6+2 beats wide.
+   PERMANENT, acknowledged: CAL-P146 §3 — the bracket is beat 8 -> beat 16 and the confound is within-census drift between beats 8 and 13. Closing it needs a render of the payload served at beat 13 and at beat 15; both censuses have since been evicted from the 1 h serve cache and the producer cannot be asked to re-serve them (?bust=1 is gone from the public route and the admin variant QUEUES the heavy task, which would corrupt this window). No action available to any future session recovers it.
+   Not counted toward the exit code — nothing anyone does now recovers it.
+No RECOVERABLE measurement beat is unread.
+(1 permanent loss(es) above stand on the record, unrepairable.)
+EXIT 0
