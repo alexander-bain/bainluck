@@ -14,11 +14,21 @@ it changes two asks, not one:
 | cell | class today | class restored | cell today | cell restored | |
 |---|---|---|---|---|---|
 | `kalshi/entertainment` (CAL-P122) | 395, 100.0% W | 827, 47.8% W | ECE 5.21 | **6.30** | worse 1.09 |
-| `polymarket/economics` (CAL-P143) | 514, 99.6% W | 592, 86.5% W | ECE 3.90 | **3.68** | **better 0.22** |
 | `polymarket/esports` (CAL-P143) | 219, 100.0% W | 360, 60.8% W | ECE 7.03 | **7.37** | worse 0.34 |
+| `polymarket/economics` (CAL-P143) | 514, 99.6% W | 592, 86.5% W | ECE 3.90 | **3.68** | better 0.22 |
+| `kalshi/economics` (CAL-P143) | 76, 100.0% W | 140, 54.3% W | ECE 5.39 | **5.34** | better 0.05 |
 
-Every cell measured is two-sided once the filter is removed. **No cell measured is 100%
-winners in truth; three are 100%-or-99.6% winners on the page.**
+**Four cells, two sources, 715 dropped losers, and this is the shape of it:**
+
+* **every** cell is two-sided in truth — 47.8%, 54.3%, 60.8%, 86.5% winners — while the page
+  shows every one of them at 100% or 99.6%;
+* the cell-level headline effect is **small and its sign disagrees**: −0.05, −0.22, +0.34,
+  +1.09. Two better, two worse, and the largest move is 1.09 pp on one cell.
+
+That second line is the one that should decide D13. The question was never "does this cost
+us headline"; it costs between −0.22 and +1.09 pp on a cell, in both directions. The
+question is whether a page that reports a class of forecasts as **100% correct** when it is
+48–87% correct is one we are willing to keep publishing.
 
 ---
 
@@ -109,11 +119,12 @@ winners" — which is E2's premise — would not even match this cell cleanly.
 
 13-CAL asks Alex to HOLD **RULE E2**, whose stated justification is *"a population that is
 100% winners is not a set of Yes/No claims being scored, it is one-sided capture."* That
-premise has now been tested on three cells and failed on all three:
+premise has now been tested on four cells and failed on all four:
 
 * `polymarket/esports`: 100% winners published, **60.8%** restored — **and this is the cell
   E2 was written on**, the "453/453" claim;
 * `kalshi/entertainment`: 100% winners published, **47.8%** restored;
+* `kalshi/economics`: 100% winners published, **54.3%** restored;
 * `polymarket/economics`: 99.6% winners published, **86.5%** restored.
 
 In every cell the capture is two-sided and the **population filter** is the one-sided thing.
@@ -122,23 +133,27 @@ it was generalised to, but not about the cell it was generalised FROM.
 
 13-CAL blocks 143,495 excess outcomes — 18,763 in its own cell plus two banked designs
 (`polymarket/esports` 59,902, `kalshi/economics` 64,830) whose own shipping clauses say E2
-ships with them. **13-CAL cannot be answered before 12-CAL, and 12-CAL now has three cells
-of evidence instead of one.**
+ships with them. **Both of those two are now measured and both carry the defect**, so E2
+would ship onto two cells whose lone-claim class it mis-describes. **13-CAL cannot be
+answered before 12-CAL, and 12-CAL now has four cells of evidence instead of one.**
 
 ## Coverage, stated rather than implied
 
-Measured exactly and completely: `kalshi/entertainment` (CAL-P122), `polymarket/economics`
-and `polymarket/esports` (this session, `missing-losers-*.json` + logs in this directory).
-`kalshi/economics` — the other banked design that cannot land — was still sweeping at
-hand-off and its log is `census-economics.log`; one command resumes it. **The other 45
-material cells are unmeasured** and are PARKED, not estimated — CAL-P122-1 in
-`PARKED-MEASUREMENTS.md`, one command per cell.
+Measured exactly and completely: `kalshi/entertainment` (CAL-P122), plus
+`polymarket/economics`, `polymarket/esports` and `kalshi/economics` this session
+(`missing-losers-*.json` + logs in this directory). **Both banked designs that cannot land
+until 13-CAL are now measured, and both carry the defect** — esports 141, kalshi/economics
+64. **The other 45 material cells are unmeasured** and are PARKED, not estimated —
+CAL-P122-1 in `PARKED-MEASUREMENTS.md`, one command per cell.
 
-Two properties worth carrying into the next cell, because both held on all three:
+Three properties worth carrying into the next cell, because all three held every time:
 
-* the `A_also_no_winner` arm dwarfs the defect (1,754 vs 78 here; **14,884 vs 141** on
-  esports — 106×). A census that reports one number reports the wrong one by two orders of
-  magnitude;
-* the self-check against the live payload holds within a few percent every time
-  (−1.41% on economics, −3.32% on esports), so the counterfactual is being computed over
-  the population the page actually publishes.
+* the `A_also_no_winner` arm dwarfs the defect — 1,754 vs 78, **14,884 vs 141** (106×),
+  1,494 vs 64. A census that reports one number here reports the wrong one by two orders of
+  magnitude, which is why the instrument splits the arms and why the repair's predicate
+  restores only the second;
+* the self-check against the live payload holds every time, and on `kalshi/economics` it is
+  **exact** — `delta n +0 (+0.00%), ECE +0.00, gap +0.00`. The counterfactual is being
+  computed over the population the page actually publishes, not a lookalike;
+* the restored class always lands between 47% and 87% winners. Nothing measured so far
+  restores to something that looks like one-sided capture.

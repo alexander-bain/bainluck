@@ -6,10 +6,11 @@ patched producer under `/tmp` and runs the shipped guards against it — RED on 
 chain, GREEN on the patched one. Three findings the directive did not know:
 
 1. 🔴 **RULE E2's premise is false on the cell E2 was written on**, and "the fix makes our
-   number worse" is cell-dependent. Three cells measured, two sources: esports 100% → 60.8%
-   winners restored (ECE 7.03 → 7.37), entertainment 100% → 47.8% (5.21 → 6.30),
-   economics 99.6% → 86.5% (3.90 → **3.68, better**). The direction is not declarable and
-   the guard now says `unknown_direction` rather than a guess.
+   number worse" is cell-dependent. **Four cells measured, two sources, 715 dropped
+   losers**; every class is two-sided in truth (47.8 / 54.3 / 60.8 / 86.5% winners) while
+   the page shows all four at 100% or 99.6%. The cell headline moves −0.05, −0.22, +0.34,
+   +1.09 — **two better, two worse**. The direction is not declarable and the guard now says
+   `unknown_direction` rather than a guess.
 2. 🔴 **Landing D13 discards the staged futures bank** (`_calibration_population_ctes` is
    hashed into `_main_input_fingerprint`), manufacturing ~10 heavy rebuild beats — exactly
    the condition the class-B diagnostics timeout fires under. **D22 before D13, or both on
@@ -76,15 +77,21 @@ patch newly admits — so a seeded row count in them may legitimately move. They
 
 ## 2. 🔴 The generality runs changed the ask
 
-`GENERALITY-12CAL.md`. Three cells now, two sources, every one of them two-sided once the
-filter is removed:
+`GENERALITY-12CAL.md`. Four cells now, two sources, **715 dropped losers**, every one of
+them two-sided once the filter is removed:
 
 ```
   cell                    class today       class restored     cell ECE
-  polymarket/esports      219, 100.0% W     360, 60.8% W       7.03 -> 7.37
-  kalshi/entertainment    395, 100.0% W     827, 47.8% W       5.21 -> 6.30
-  polymarket/economics    514,  99.6% W     592, 86.5% W       3.90 -> 3.68
+  kalshi/entertainment    395, 100.0% W     827, 47.8% W       5.21 -> 6.30   worse
+  polymarket/esports      219, 100.0% W     360, 60.8% W       7.03 -> 7.37   worse
+  polymarket/economics    514,  99.6% W     592, 86.5% W       3.90 -> 3.68   better
+  kalshi/economics         76, 100.0% W     140, 54.3% W       5.39 -> 5.34   better
 ```
+
+**The framing that should decide D13 is in the two right-hand columns.** The headline cost
+is −0.22 to +1.09 pp on a cell, in both directions — two better, two worse. The truth gain
+is a class the page reports as **100% correct** that is really 48–87% correct. The question
+was never whether this costs headline.
 
 **`polymarket/esports` is the one that settles 13-CAL.** RULE E2 was written on that cell —
 CAL-P112's *"453 markets, 453 outcomes, 453 winners … not a set of Yes/No claims being
@@ -191,13 +198,12 @@ CAL-P143 rests on any of it.
 * **Landed nothing.** Both patches are artifacts. No freeze exception requested or taken.
 * **Did not answer D13 or D22** — they are Alex's, and the pre-build exists so the answer
   is cheap, not so the answer is assumed.
-* **Did not extrapolate the repair board-wide.** Three cells measured, 45 unmeasured and
-  PARKED (CAL-P122-1). Three cells whose signs disagree are not a direction.
+* **Did not extrapolate the repair board-wide.** Four cells measured, 45 unmeasured and
+  PARKED (CAL-P122-1). Four cells whose signs disagree are not a direction.
 * **Did not re-baseline the freeze window**, and §4 is why that would have been the wrong
   move today.
-* **Did not finish `kalshi/economics`** — the fourth census was still sweeping at hand-off
-  (`census-economics.log`; `polymarket/esports` ahead of it took 2,069 s). It is the other
-  banked design that cannot land, so it is the obvious next command.
+* **Did not measure the other 45 cells.** Four are exact; the rest are one command each and
+  belong to the measurement lane (ruling 134).
 
 ## 8. Gate
 
