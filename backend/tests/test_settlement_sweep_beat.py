@@ -549,7 +549,35 @@ BACKGROUND_INTERVAL_FLOOR = frozenset(
 #: evaluated and is not this queue's to take: :31 was chosen by CERT-419 on a
 #: full enumeration and re-confirmed at INT-139, and one lane trading somebody
 #: else's placement for its own beat is how that argument gets lost.
-SWEEP_WINDOW_COFIRE_CEILING = 14
+#:
+#: 🔴 RE-DERIVED AGAIN (LAT-P137, 2026-08-30): 14 -> **16**. `warm-futures-categories`
+#: (`*/5`, background) puts TWO extra fires in this window, at 10:35 and 10:40.
+#: RE-DERIVED BY RUNNING THE CENSUS over the assembled schedule, three ways, not
+#: by incrementing (#1910): baseline with the beat removed = **14**, with `*/10`
+#: = **15**, with `*/5` = **16**. The 16, by beat: 7x
+#: `precompute-discover-candidate-base`, 2x `warm-event-concepts`, 2x
+#: `warm-futures-categories`, and one each of `discover-new-events`,
+#: `link-tournament-matchups`, `refresh-registered-tournament-prices`,
+#: `run-freshness-watchdog`, `update-max-movement`.
+#:
+#: 🔴 THE CHEAPER CADENCE WAS EVALUATED — Q426's move, above, is the precedent —
+#: AND REFUSED, WITH THE ARITHMETIC. This period is not a taste: it is
+#: `stale_serve_ceiling_seconds() // (MISSED_DELIVERY_ALLOWANCE + 1)` over the
+#: census tier's own 1,500 s mirror ceiling, and the beat spells `*/N`, so N must
+#: divide 60. 1500/5 = 300 s is the ONLY whole-minute period that divides an hour
+#: under an allowance above one: 1500/2 = 750 s, /3 = 500 s and /6 = 250 s are all
+#: fractional minutes. `*/10` is therefore not a cheaper spelling of the same
+#: contract — it is an allowance of one missed delivery, on the queue LAT-P112
+#: measured delivering p50 138-152 s against a declared 120 s. Q426 could move
+#: because five minutes of latency bought its reader nothing; here the cadence IS
+#: the coverage.
+#:
+#: COST OF THE TWO FIRES, stated rather than waved: the added task is one census
+#: build, measured 1.37-1.59 s, so it takes ~2.8 s of one slot inside a 780 s
+#: window on a two-slot queue — ~0.36 % of one slot for the window, against a
+#: sweep whose own deadline is the 780. If a later queue needs this window back,
+#: the lever is this beat's allowance, and it is one constant with a test on it.
+SWEEP_WINDOW_COFIRE_CEILING = 16
 
 
 def _effective_queue(entry):
