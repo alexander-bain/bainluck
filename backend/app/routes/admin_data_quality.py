@@ -2040,8 +2040,14 @@ async def trigger_score_resolution(
     except Exception as e:
         repair_stats["errors"].append(str(e))
 
-    score_stats = await _resolve_kalshi_from_scores()
-    spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    # LAT-P154: the two resolvers run the SAME candidate statement (46 s each
+    # measured on production); share one execution of it.
+    _game_scan: dict = {}
+    score_stats = await _resolve_kalshi_from_scores(scan_out=_game_scan)
+    spread_total_stats = await _resolve_kalshi_spread_total_from_scores(
+        scan_in=_game_scan
+    )
+    _game_scan.clear()
     # #140: grade ungraded Polymarket full-game Over/Under from linked scores.
     poly_total_stats = await _resolve_polymarket_total_from_scores()
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()

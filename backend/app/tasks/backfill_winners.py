@@ -1205,7 +1205,44 @@ async def _resolve_golf_matchups_from_datagolf():
     return stats
 
 
-async def _resolve_kalshi_from_scores():
+_OUTCOME_PREFETCH_BLOCK = 2000
+
+
+async def _prefetch_outcomes(session, market_ids):
+    """Load ``(id, name)`` for a BLOCK of markets in ONE round trip.
+
+    LAT-P154: the two game-score resolvers used to issue
+    ``SELECT id, name FROM futures_outcomes WHERE market_id = :mid`` once per
+    candidate market. Measured on production 2026-08-30 that statement costs
+    1.114 ms; the shared candidate scan returns **91,776** markets, so the
+    spread/total resolver alone spent ~102 s per cycle inside that loop — a
+    quarter of the whole `score_resolution` phase (397.0 s of a 553.6 s
+    pipeline), which is why `backfill_winners` never reached its calibration
+    half. Fetching a block at a time turns 91,776 round trips into ~46.
+
+    Returns ``{market_id: [row, ...]}`` with each market's outcomes ordered by
+    id. The moneyline resolver already ordered by id; the spread/total resolver
+    left the order to the index scan, so this also makes that order
+    deterministic (it was already id-ordered in practice — the plan's index is
+    ``ix_futures_outcomes_market_id``, whose heap order tracks insertion).
+    """
+    by_market: dict = {}
+    ids = list(market_ids)
+    if not ids:
+        return by_market
+    result = await session.execute(
+        text("""
+            SELECT market_id, id, name FROM futures_outcomes
+            WHERE market_id = ANY(:ids) ORDER BY market_id, id
+        """),
+        {"ids": ids},
+    )
+    for row in result.all():
+        by_market.setdefault(row.market_id, []).append(row)
+    return by_market
+
+
+async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
     """Resolve Kalshi game markets from actual Event scores.
 
     For Kalshi markets linked to Events (via event_id) where the Kalshi
@@ -1214,14 +1251,28 @@ async def _resolve_kalshi_from_scores():
     - Moneyline (2 outcomes per team): match outcome name to home/away
     - BTTS (ticker contains 'btts'): both scores > 0
     - Single-outcome moneyline ("Yes"): use ticker team abbreviation
+
+    ``scan_out`` (LAT-P154): an optional dict the caller supplies to receive
+    this run's candidate scan so `_resolve_kalshi_spread_total_from_scores`
+    can reuse it instead of re-running the identical 46 s statement. It is
+    populated with ``{"candidates": rows, "locked_market_ids": set}`` — see
+    that function's ``scan_in`` for why the locked set is the exact stand-in
+    for re-running the HAVING clause after this function's commits.
     """
     stats = {"moneyline": 0, "btts": 0, "skipped": 0, "errors": []}
+    # Markets this run has just given a non-overwritable winner. A market only
+    # leaves the shared candidate set when SOME outcome ends up
+    # `is_winner AND resolution_source NOT IN (overwritable)` — and every write
+    # below stamps 'game_score', which is not overwritable. So "wrote a True"
+    # is exactly the HAVING clause's exclusion, and nothing else is.
+    locked_market_ids: set = set()
 
     try:
         async with get_task_session() as session:
             result = await session.execute(text("""
                     SELECT fm.id AS market_id, fm.name AS market_name,
                            fm.external_id AS ticker,
+                           e.id AS event_id,
                            e.home_team_name, e.away_team_name,
                            e.home_score, e.away_score,
                            COUNT(fo.id) AS n_outcomes
@@ -1233,7 +1284,7 @@ async def _resolve_kalshi_from_scores():
                       AND e.home_score IS NOT NULL
                       AND e.away_score IS NOT NULL
                       AND fo.current_probability IS NOT NULL
-                    GROUP BY fm.id, fm.name, fm.external_id,
+                    GROUP BY fm.id, fm.name, fm.external_id, e.id,
                              e.home_team_name, e.away_team_name,
                              e.home_score, e.away_score
                     HAVING SUM(CASE WHEN fo.is_winner
@@ -1243,15 +1294,26 @@ async def _resolve_kalshi_from_scores():
                     LIMIT 100000
                 """))
             markets = result.all()
+            if scan_out is not None:
+                scan_out["candidates"] = markets
 
             # Commit incrementally so a long run drains the full backlog (was
             # starved by a 10K row cap vs ~41K selectable, #907) and partial
             # progress survives a timeout/error instead of rolling back the
             # whole batch (gotcha #6). Check is at the top of the loop so the
             # body's many `continue` paths can't skip it.
+            block_outcomes: dict = {}
             for i, row in enumerate(markets):
                 if i and i % 500 == 0:
                     await session.commit()
+                if i % _OUTCOME_PREFETCH_BLOCK == 0:
+                    # LAT-P154: one round trip per block instead of one per
+                    # market. Bounded memory: a block is 2,000 markets.
+                    block_outcomes = await _prefetch_outcomes(
+                        session,
+                        [m.market_id for m in
+                         markets[i:i + _OUTCOME_PREFETCH_BLOCK]],
+                    )
                 ticker_lower = (row.ticker or "").lower()
 
                 # BTTS: both teams to score
@@ -1264,6 +1326,8 @@ async def _resolve_kalshi_from_scores():
                         """),
                         {"won": btts_yes, "mid": row.market_id},
                     )
+                    if btts_yes:
+                        locked_market_ids.add(row.market_id)
                     stats["btts"] += 1
                     continue
 
@@ -1316,14 +1380,11 @@ async def _resolve_kalshi_from_scores():
 
                 home_won = row.home_score > row.away_score
 
-                outcomes = await session.execute(
-                    text("""
-                        SELECT id, name FROM futures_outcomes
-                        WHERE market_id = :mid ORDER BY id
-                    """),
-                    {"mid": row.market_id},
-                )
-                outs = outcomes.all()
+                # LAT-P154: was one round trip per market
+                # (`SELECT id, name FROM futures_outcomes WHERE market_id = :mid
+                # ORDER BY id`); the block prefetch above returns exactly that,
+                # id-ordered, for 2,000 markets at a time.
+                outs = block_outcomes.get(row.market_id, [])
                 if len(outs) != 2:
                     stats["skipped"] += 1
                     continue
@@ -1361,6 +1422,8 @@ async def _resolve_kalshi_from_scores():
                         {"won": won, "oid": out.id, "src": "game_score"},
                     )
                     resolved_any = True
+                    if won:
+                        locked_market_ids.add(row.market_id)
 
                 if resolved_any:
                     stats["moneyline"] += 1
@@ -1372,6 +1435,9 @@ async def _resolve_kalshi_from_scores():
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Kalshi score resolution error: %s", e)
+
+    if scan_out is not None:
+        scan_out["locked_market_ids"] = locked_market_ids
 
     total = stats["moneyline"] + stats["btts"]
     logger.info(
@@ -1557,6 +1623,20 @@ async def _resolve_polymarket_total_from_scores(limit: int = 20000):
     Writes is_winner + resolution_source='poly_total_score' via Core UPDATE,
     per-batch commits (#13) so partial progress survives a timeout (gotcha #6).
     Idempotent: once a side is set True the market's BOOL_OR excludes it next run.
+
+    LAT-P154 — the name filter is now IN THE STATEMENT, and it is a correctness
+    fix as much as a cost one. Measured on production 2026-08-30: the query
+    returned its full ``LIMIT 20000`` and **all 20,000 rows failed
+    ``_poly_total_line``**. Unparseable markets can never be graded, so they can
+    never leave the ungraded set — they came back every 6-hour cycle, saturated
+    the limit, and starved every genuinely gradable market behind them while
+    costing 56 s of the 397 s `score_resolution` phase. The SQL predicate
+    ``m.name ~* ':[[:space:]]*o/u'`` is strictly LOOSER than the Python regex
+    (which is ``:\\s*o/u\\s*(\\d+\\.?\\d*)\\s*$`` — anything it matches contains
+    the colon-o/u anchor), so it can only drop rows the loop below already
+    skipped. The Python check stays as the authority; ``no_parse`` should now
+    read ~0. It is served by the existing ``ix_futures_name_trgm`` GIN index —
+    no DDL.
     """
     stats = {"graded": 0, "push_skip": 0, "no_parse": 0, "errors": []}
     try:
@@ -1570,6 +1650,7 @@ async def _resolve_polymarket_total_from_scores(limit: int = 20000):
                     JOIN futures_outcomes u ON u.market_id = m.id
                     WHERE m.source = 'polymarket'
                       AND m.status = 'resolved'
+                      AND m.name ~* ':[[:space:]]*o/u'
                       AND e.status IN ('completed', 'closed')
                       AND e.home_score IS NOT NULL
                       AND e.away_score IS NOT NULL
@@ -1633,7 +1714,7 @@ async def _resolve_polymarket_total_from_scores(limit: int = 20000):
     return stats
 
 
-async def _resolve_kalshi_spread_total_from_scores():
+async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
     """Resolve Kalshi spread and total markets from actual game scores.
 
     Handles both full-game and 1H markets:
@@ -1642,6 +1723,20 @@ async def _resolve_kalshi_spread_total_from_scores():
     - 1H spreads: "{team} wins the 1H by over N points" → reconstruct
       halftime score from scoring_plays
     - 1H totals: "Over N 1H points scored" → same
+
+    ``scan_in`` (LAT-P154): the candidate scan `_resolve_kalshi_from_scores`
+    already ran, as ``{"candidates": rows, "locked_market_ids": set}``. The
+    statement below is byte-identical in FROM/WHERE/HAVING to that one and cost
+    a measured 46 s on production — running it twice per cycle was 46 s of the
+    397 s `score_resolution` phase for nothing.
+
+    Reusing it is EXACT, not approximate. The only way a market can drop out of
+    the set between the two runs is by acquiring an outcome that is
+    ``is_winner AND resolution_source NOT IN (overwritable)``; the sibling
+    resolver's only writes stamp 'game_score', which is not overwritable, so
+    the markets it set a True on are precisely the ones the re-run would have
+    dropped — and it hands them over as ``locked_market_ids``. When ``scan_in``
+    is absent (standalone/tests) the statement runs as before.
     """
     stats = {
         "spread": 0,
@@ -1653,9 +1748,13 @@ async def _resolve_kalshi_spread_total_from_scores():
         "errors": [],
     }
 
+    reused = (scan_in or {}).get("candidates")
+    locked = (scan_in or {}).get("locked_market_ids") or frozenset()
+
     try:
         async with get_task_session() as session:
-            result = await session.execute(text("""
+            if reused is None:
+                result = await session.execute(text("""
                     SELECT fm.id AS market_id, fm.external_id AS ticker,
                            fm.name AS market_name,
                            e.id AS event_id,
@@ -1678,27 +1777,33 @@ async def _resolve_kalshi_spread_total_from_scores():
                                THEN 1 ELSE 0 END) = 0
                     LIMIT 100000
                 """))
-            markets = result.all()
+                markets = result.all()
+            else:
+                markets = [m for m in reused if m.market_id not in locked]
 
             # Commit incrementally so a long run drains the full backlog (was
             # starved by a 10K row cap vs ~41K selectable, #907) and partial
             # progress survives a timeout/error instead of rolling back the
             # whole batch (gotcha #6). Check is at the top of the loop so the
             # body's many `continue` paths can't skip it.
+            block_outcomes: dict = {}
             for i, row in enumerate(markets):
                 if i and i % 500 == 0:
                     await session.commit()
+                if i % _OUTCOME_PREFETCH_BLOCK == 0:
+                    # LAT-P154: one round trip per block instead of one per
+                    # market — this loop's per-market fetch was a measured
+                    # 102 s of the phase at 91,776 candidates.
+                    block_outcomes = await _prefetch_outcomes(
+                        session,
+                        [m.market_id for m in
+                         markets[i:i + _OUTCOME_PREFETCH_BLOCK]],
+                    )
                 ticker_lower = (row.ticker or "").lower()
                 is_1h = "1h" in ticker_lower or "1half" in ticker_lower
 
-                # Get all outcomes for this market
-                out = await session.execute(
-                    text(
-                        "SELECT id, name FROM futures_outcomes WHERE market_id = :mid"
-                    ),
-                    {"mid": row.market_id},
-                )
-                outcomes_list = out.all()
+                # Get all outcomes for this market (block-prefetched above)
+                outcomes_list = block_outcomes.get(row.market_id, [])
                 if not outcomes_list:
                     stats["no_parse"] += 1
                     continue
@@ -2999,6 +3104,21 @@ async def _resolve_kalshi_player_props_from_boxscore():
             # event's box score ONCE in bounded batches so peak memory is
             # O(batch of events), not O(all outcomes x JSONB) — letting #937 broaden
             # the re-grade beyond kxnhlpts without re-introducing the OOM.
+            #
+            # LAT-P154: `e.box_score_data IS NOT NULL` as an inline predicate
+            # made the planner drive the whole thing off a SEQ SCAN of
+            # futures_markets (917K rows / 1.6 GB) to apply the ticker LIKE —
+            # 44.7 s measured on production, 11% of the `score_resolution`
+            # phase. Reading the box-score event ids FIRST (7,692 of them,
+            # 0.32 s) and passing them as `= ANY` turns that into a nested loop
+            # on ix_futures_markets_event_id: 2.71 s, same rows. The two reads
+            # are not one snapshot, so a box score written in the ~0.3 s
+            # between them waits for the next cycle; the resolver runs every
+            # 6 h and is idempotent, so that is a lag, not a loss.
+            bs_ids_result = await session.execute(
+                text("SELECT id FROM events WHERE box_score_data IS NOT NULL")
+            )
+            bs_event_ids = [r[0] for r in bs_ids_result.all()]
             result = await session.execute(
                 text("""
                     SELECT fo.id AS outcome_id, fo.name AS outcome_name,
@@ -3008,7 +3128,7 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     JOIN futures_markets fm ON fm.id = fo.market_id
                     JOIN events e ON e.id = fm.event_id
                     WHERE fm.status = 'resolved'
-                      AND e.box_score_data IS NOT NULL
+                      AND fm.event_id = ANY(:bs_event_ids)
                       AND (fo.resolution_source IS NULL
                            OR fo.resolution_source IN
                                """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
@@ -3035,7 +3155,10 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     ORDER BY e.id
                     LIMIT 50000
                 """),
-                {"prefixes": [p + "%" for p in all_prop_prefixes]},
+                {
+                    "prefixes": [p + "%" for p in all_prop_prefixes],
+                    "bs_event_ids": bs_event_ids,
+                },
             )
             from collections import defaultdict as _defaultdict
             rows = result.all()  # small now — no box_score JSONB
@@ -3197,6 +3320,15 @@ async def _resolve_kalshi_total_bases_from_boxscore():
 
     try:
         async with get_task_session() as session:
+            # LAT-P154: same rewrite as the player-prop resolver above, and for
+            # the same reason — the inline `e.box_score_data IS NOT NULL` made
+            # the planner seq-scan futures_markets to apply the ticker prefix,
+            # 17.9 s on production TO RETURN ZERO ROWS. Reading the box-score
+            # event ids first and passing them as `= ANY` costs 0.3 s + 5.8 s.
+            bs_ids_result = await session.execute(
+                text("SELECT id FROM events WHERE box_score_data IS NOT NULL")
+            )
+            bs_event_ids = [r[0] for r in bs_ids_result.all()]
             result = await session.execute(
                 text("""
                     SELECT fo.id AS outcome_id, fo.name AS outcome_name,
@@ -3205,12 +3337,13 @@ async def _resolve_kalshi_total_bases_from_boxscore():
                     JOIN futures_markets fm ON fm.id = fo.market_id
                     JOIN events e ON e.id = fm.event_id
                     WHERE fm.status = 'resolved'
-                      AND e.box_score_data IS NOT NULL
+                      AND fm.event_id = ANY(:bs_event_ids)
                       AND fo.is_winner IS NULL
                       AND LOWER(fm.external_id) LIKE 'kxmlbtb%'
                     ORDER BY fm.id
                     LIMIT 50000
                 """),
+                {"bs_event_ids": bs_event_ids},
             )
             rows = result.all()
 
@@ -5729,9 +5862,14 @@ async def _resolve_winners_only(limit: int = 2000):
     except Exception as e:
         stats["kalshi_link_error"] = str(e)[:200]
 
-    # Score-based resolution
-    score_stats = await _resolve_kalshi_from_scores()
-    spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    # Score-based resolution. LAT-P154: the two resolvers share ONE candidate
+    # scan — the statement is identical in both and cost 46 s per run.
+    _game_scan: dict = {}
+    score_stats = await _resolve_kalshi_from_scores(scan_out=_game_scan)
+    spread_total_stats = await _resolve_kalshi_spread_total_from_scores(
+        scan_in=_game_scan
+    )
+    _game_scan.clear()  # ~92K rows; don't carry them through the rest (#899)
     # #140: grade the ungraded Polymarket full-game Over/Under cohort from the
     # linked event's final score (deterministic, no Gamma API — #137 residual
     # resolution-completeness gap, not model bias).
@@ -6110,6 +6248,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                 k: v for k, v in _phase_times.items()
                 if isinstance(v, (int, float)) and v < 100000
             },
+            # LAT-P154: which of score_resolution's six resolvers spent the
+            # phase's seconds — the question the flat 397.0 s could not answer.
+            "score_resolution_sub_s": dict(_score_sub),
         }
 
     # ========================================================================
@@ -6123,14 +6264,53 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # is the task's primary purpose, so it MUST run before any maintenance
     # work and is no longer at the mercy of upstream-phase timing.
     # ========================================================================
+    # LAT-P154: `score_resolution` is SIX resolvers behind one timer, and the
+    # phase map could only ever say "397.0 s" — which of the six owned it took
+    # a separate read-only production probe to answer. These sub-timers make
+    # the next regression self-locating. They are recorded separately from
+    # `_phase_times` on purpose: adding them there would double-count against
+    # `score_resolution` and break the `sum(phase_times) ~= pipeline_elapsed_s`
+    # falsifiability the Queue-357 comment below depends on.
+    _score_sub: dict = {}
+
+    async def _timed_sub(name, coro):
+        _sub_t0 = _t.monotonic()
+        try:
+            return await coro
+        finally:
+            _score_sub[name] = round(_t.monotonic() - _sub_t0, 1)
+            logger.info(
+                "score_resolution sub %s: %.1fs (cum %.1fs)",
+                name, _score_sub[name], _t.monotonic() - _pipeline_start,
+            )
+
     _start_phase("score_resolution")
-    score_stats = await _resolve_kalshi_from_scores()
-    spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    # The two game-score resolvers run the SAME candidate statement; share one
+    # execution of it (LAT-P154 — 46 s a cycle, measured on production).
+    _game_scan: dict = {}
+    score_stats = await _timed_sub(
+        "game_scores", _resolve_kalshi_from_scores(scan_out=_game_scan)
+    )
+    spread_total_stats = await _timed_sub(
+        "spread_total",
+        _resolve_kalshi_spread_total_from_scores(scan_in=_game_scan),
+    )
+    # ~92K candidate rows; drop them before the ~14-minute maintenance tail
+    # rather than carrying them into the 512MB worker's peak (#899).
+    _game_scan.clear()
     # #140: grade ungraded Polymarket full-game Over/Under from linked scores.
-    poly_total_stats = await _resolve_polymarket_total_from_scores()
-    player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
-    total_bases_stats = await _resolve_kalshi_total_bases_from_boxscore()
-    period_prop_stats = await _resolve_kalshi_period_props()
+    poly_total_stats = await _timed_sub(
+        "poly_total", _resolve_polymarket_total_from_scores()
+    )
+    player_prop_stats = await _timed_sub(
+        "player_props", _resolve_kalshi_player_props_from_boxscore()
+    )
+    total_bases_stats = await _timed_sub(
+        "total_bases", _resolve_kalshi_total_bases_from_boxscore()
+    )
+    period_prop_stats = await _timed_sub(
+        "period_props", _resolve_kalshi_period_props()
+    )
     _end_phase("score_resolution")
 
     # Authoritative API settlement — run BEFORE probability passes so API
@@ -6881,6 +7061,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
             **{k: v for k, v in _phase_times.items() if isinstance(v, (int, float))},
             "total": round(_t.monotonic() - _pipeline_start, 1),
         },
+        # LAT-P154: the six-way split inside score_resolution.
+        "score_resolution_sub_s": dict(_score_sub),
     }
 
 
