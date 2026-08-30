@@ -81,15 +81,59 @@ def _run(tmp_path, dump_rows):
     return result, out
 
 
-# The real Sinner ladder as the venue and our database hold it: the answer leg,
-# the graded leg, and the delisted leg.
-_SINNER_LADDER = [
-    [53795, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open",
+# ═══ RE-POINTED AT THE UX-P151/P154 UNION, AND WHY THE PROPERTY IS UNCHANGED ══
+#
+# Q443 proved the subset pin on `sinner-second-major`, pinning the answer leg of
+# `KXGRANDSLAM-JSIN26` and leaving its graded `1+` and delisted `3+` unpinned.
+# That card no longer exists: UX-P151 retired the two separate `*-second-major`
+# cards into one combined card, and UX-P154 made the grouping automatic — the
+# two grand-slam markets are now detected as the template family
+# `"{} grand slam wins in 2026"`, and a family names ONE `compare_outcome` per
+# member, so the ladder's unrefreshable rungs cannot be pinned by construction.
+#
+# The subset mechanism itself is untouched and still load-bearing — on Q443's
+# OWN women's cards. `sabalenka-title-defence` pins one contender out of the
+# whole `KXWTAGRANDSLAM-26` field, which is the same shape the Sinner ladder
+# tested (one named leg kept, every sibling dropped) on a card the union
+# actually has. So the assertions move markets and keep their property.
+#
+# WHAT WOULD HAVE HAPPENED IF THEY HAD SIMPLY BEEN DELETED: the union would have
+# shipped `sabalenka-title-defence` and `usa-women-quarterfinal-count`, both of
+# which pin a subset, with nothing at all guarding the pin.
+
+#: The grand-slam family, as the venue and our database hold it. Every dump
+#: below carries it because UX-P154's staleness guard REFUSES a curated family
+#: that the dump does not contain — correctly: a curated family nobody quotes
+#: any more is a decision to re-make, not a card to skip. The production dump
+#: always holds both members (see this script's module docstring), so a fixture
+#: without them was never a shape the pass runs against.
+_GRAND_SLAM_FAMILY = [
+    [53796, "KXGRANDSLAM-CALC26", "kalshi",
+     "Carlos Alcaraz: Grand Slam wins in 2026", "open",
+     848773, "2+ Grand Slam wins", "0.27"],
+    [53796, "KXGRANDSLAM-CALC26", "kalshi",
+     "Carlos Alcaraz: Grand Slam wins in 2026", "open",
+     848772, "3+ Grand Slam wins", "0.02"],
+    [53795, "KXGRANDSLAM-JSIN26", "kalshi",
+     "Jannik Sinner: Grand Slam wins in 2026", "open",
      848769, "2+ Grand Slam wins", "0.01"],
-    [53795, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open",
-     848770, "1+ Grand Slam wins", "0.99"],
-    [53795, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open",
+    [53795, "KXGRANDSLAM-JSIN26", "kalshi",
+     "Jannik Sinner: Grand Slam wins in 2026", "open",
      848768, "3+ Grand Slam wins", "0.01"],
+]
+
+#: The WTA grand-slam FIELD. `sabalenka-title-defence` pins exactly one of these
+#: legs; the other two exist so "only the legs it names" has something to drop.
+_WTA_FIELD = [
+    [194, "KXWTAGRANDSLAM-26", "kalshi",
+     "Who will win a WTA Grand Slam in 2026?", "open",
+     1181, "Aryna Sabalenka", "0.235"],
+    [194, "KXWTAGRANDSLAM-26", "kalshi",
+     "Who will win a WTA Grand Slam in 2026?", "open",
+     1182, "Iga Swiatek", "0.210"],
+    [194, "KXWTAGRANDSLAM-26", "kalshi",
+     "Who will win a WTA Grand Slam in 2026?", "open",
+     1183, "Coco Gauff", "0.160"],
 ]
 
 
@@ -100,14 +144,22 @@ def test_a_curation_pins_only_the_legs_it_names(tmp_path):
     card carried the graded `1+` and the delisted `3+` as freshness
     contributors that nothing is allowed or able to refresh.
     """
-    result, out = _run(tmp_path, _SINNER_LADDER)
+    result, out = _run(tmp_path, _GRAND_SLAM_FAMILY + _WTA_FIELD)
     assert result.returncode == 0, result.stderr
 
-    card = next(p for p in out["props"] if p["key"] == "sinner-second-major")
-    assert [o["display_name"] for o in card["outcomes"]] == ["2+ Grand Slam wins"]
-    assert [o["outcome_id"] for o in card["outcomes"]] == [848769]
+    card = next(p for p in out["props"] if p["key"] == "sabalenka-title-defence")
+    assert [o["display_name"] for o in card["outcomes"]] == ["Aryna Sabalenka"]
+    assert [o["outcome_id"] for o in card["outcomes"]] == [1181]
     # And the one leg it kept is still the leg that answers the question.
     assert [o["is_answer"] for o in card["outcomes"]] == [True]
+
+    # THE OTHER HALF OF THE SAME PROPERTY, which is now the family's to keep:
+    # the combined card names ONE outcome per member market, so the rungs
+    # nothing can refresh (Sinner's graded `1+`, his delisted `3+`) are not
+    # pinned either. This is the assertion that would have caught a family
+    # card built by dumping every leg of both markets.
+    combined = next(p for p in out["props"] if p["key"] == "second-major")
+    assert sorted(o["outcome_id"] for o in combined["outcomes"]) == [848769, 848773]
 
 
 def test_a_subset_naming_an_outcome_the_market_does_not_have_is_refused(tmp_path):
@@ -123,15 +175,16 @@ def test_a_subset_naming_an_outcome_the_market_does_not_have_is_refused(tmp_path
     sides of this change and prove nothing about the pin. The rest of the
     sentence is shared on purpose: one class of refusal, one wording.
     """
-    renamed = [
-        [53795, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open",
-         848769, "Two or more Grand Slam wins", "0.01"],
+    renamed = _GRAND_SLAM_FAMILY + [
+        [194, "KXWTAGRANDSLAM-26", "kalshi",
+         "Who will win a WTA Grand Slam in 2026?", "open",
+         1181, "A. Sabalenka", "0.235"],
     ]
     result, out = _run(tmp_path, renamed)
 
     assert result.returncode == 1, result.stdout
     assert "REFUSED" in result.stderr
-    assert "curated outcome '2+ Grand Slam wins'" in result.stderr, result.stderr
+    assert "curated outcome 'Aryna Sabalenka'" in result.stderr, result.stderr
     assert "is not an outcome of this market" in result.stderr
     # Refused means REFUSED: nothing was written.
     assert out is None
@@ -144,7 +197,7 @@ def test_an_unpinned_curation_still_writes_every_leg(tmp_path):
     from a silent truncation of every card. `sinner-competes` names no subset
     and must keep the shape it has always had.
     """
-    result, out = _run(tmp_path, [
+    result, out = _run(tmp_path, _GRAND_SLAM_FAMILY + [
         [59172808, "KXATPCOMPETE-26USOSIN", "kalshi", "Sinner competes", "open",
          219796782, "Yes", "0.01"],
         [59172808, "KXATPCOMPETE-26USOSIN", "kalshi", "Sinner competes", "open",
@@ -157,7 +210,7 @@ def test_an_unpinned_curation_still_writes_every_leg(tmp_path):
 
 
 def test_the_subset_pass_writes_a_register_that_still_validates(tmp_path):
-    result, out = _run(tmp_path, _SINNER_LADDER)
+    result, out = _run(tmp_path, _GRAND_SLAM_FAMILY + _WTA_FIELD)
     assert result.returncode == 0, result.stderr
     assert validate_register(out, us_open_2026_contract()) == []
 
