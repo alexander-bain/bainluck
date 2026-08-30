@@ -7569,6 +7569,9 @@ def _extract_threshold(outcome_name: str) -> Optional[float]:
 # data). Ordered longest-first so "home runs" wins over a bare "runs".
 _PROP_NAME_STAT_COMBOS = [
     ("points + rebounds + assists", ["points", "rebounds", "assists"]),
+    # #1728: without this, the singles loop below matched the bare "hits" in
+    # "Hits + Runs + RBIs" and graded a three-part composite as one statistic.
+    ("hits + runs + rbis", ["hits", "runs", "rbis"]),
     ("points + rebounds", ["points", "rebounds"]),
     ("points + assists", ["points", "assists"]),
     ("rebounds + assists", ["rebounds", "assists"]),
@@ -7581,7 +7584,7 @@ _NON_PLAYER_OUTCOME_NAMES = frozenset(
 _PROP_NAME_STAT_SINGLES = [
     "home runs", "three pointers", "double doubles", "triple doubles",
     "strikeouts", "rebounds", "assists", "points", "blocks", "steals",
-    "goals", "saves", "hits",
+    "goals", "saves", "hits", "rbis",
 ]
 
 
@@ -7599,8 +7602,8 @@ def _build_prop_grade_context(event) -> Optional[dict]:
     # Local import at function scope to avoid an import cycle with tasks/.
     from app.tasks.backfill_winners import (
         _normalize_player_name,
-        _PROP_TICKER_TO_STAT,
-        _COMBO_STATS,
+        _prop_stats_for_ticker,
+        _sum_prop_stats,
     )
     norm_box = {
         _normalize_player_name(k): v
@@ -7612,8 +7615,11 @@ def _build_prop_grade_context(event) -> Optional[dict]:
     return {
         "norm_box": norm_box,
         "normalize": _normalize_player_name,
-        "ticker_to_stat": _PROP_TICKER_TO_STAT,
-        "combo_stats": _COMBO_STATS,
+        # #1728: the route and the authoritative resolver now share ONE
+        # ticker->stat rule and ONE summing rule. They had two copies of each,
+        # and the copies disagreed the moment either was corrected.
+        "stats_for_ticker": _prop_stats_for_ticker,
+        "sum_stats": _sum_prop_stats,
     }
 
 
@@ -7621,12 +7627,9 @@ def _prop_stat_keys(market, ctx: dict) -> Optional[list]:
     """Determine the ESPN box-score stat key(s) for a player-prop market.
     Ticker prefix is authoritative; falls back to parsing the market name."""
     ticker_lower = (getattr(market, "external_id", None) or "").lower()
-    for prefix, stat in ctx["ticker_to_stat"].items():
-        if ticker_lower.startswith(prefix):
-            return [stat]
-    for prefix, stat_list in ctx["combo_stats"].items():
-        if ticker_lower.startswith(prefix):
-            return list(stat_list)
+    from_ticker = ctx["stats_for_ticker"](ticker_lower)
+    if from_ticker:
+        return from_ticker
     name_lower = (getattr(market, "name", None) or "").lower()
     for phrase, stats in _PROP_NAME_STAT_COMBOS:
         if phrase in name_lower:
@@ -7736,17 +7739,13 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
             break
     if not isinstance(player_stats, dict):
         return result
-    total = 0.0
-    found = False
-    for s in stat_keys:
-        v = player_stats.get(s)
-        if v is not None:
-            try:
-                total += float(v)
-                found = True
-            except (TypeError, ValueError):
-                pass
-    if not found:
+    # #1728: `found = any leg resolved` published a PARTIAL sum as a confident
+    # actual — a "Hits + Runs + RBIs" prop whose rbis leg was missing rendered
+    # the hits+runs subtotal and a red MISS off it. A composite grades only
+    # when every leg resolves; otherwise `result` is returned untouched, so
+    # `actual`/`hit` stay None and the client renders the withheld state.
+    total = ctx["sum_stats"](player_stats, stat_keys)
+    if total is None:
         return result
     result["actual"] = total
     if threshold is not None:
