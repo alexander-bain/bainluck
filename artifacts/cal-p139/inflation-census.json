@@ -53,5 +53,16 @@
   "payload_n": 14864,
   "payload_ece": 7.03,
   "replica_vs_payload_pct": -4.225
+ },
+ "polymarket/baseball": {
+  "cell": "polymarket/baseball",
+  "rows_published": 41177,
+  "distinct_outcomes": 24902,
+  "distinct_markets": 5426,
+  "inflation": 1.6536,
+  "seconds": 619.3,
+  "payload_n": 45240,
+  "payload_ece": 4.73,
+  "replica_vs_payload_pct": -8.981
  }
 }
