@@ -859,6 +859,30 @@ export function getNameForCategory(categoryKey: string): string {
 }
 
 /**
+ * The label for a market's category chip — the ONE formatter for it (UX-P190).
+ *
+ * `sport_name` is the curated `Sport.name` ("MLB", "NFL") and stays preferred
+ * when present. It is null for every market with no linked sport, and the raw
+ * `llm_sport_category` key was then printed VERBATIM: 14,588 open markets carry
+ * an underscored category key (14,584 of them `table_tennis`, the 5th largest
+ * category at 103,674 markets), so `/search?q=Kikawada` rendered `TABLE_TENNIS`
+ * under the card's `uppercase`, and the market page and its OpenGraph share
+ * image rendered `table_tennis`.
+ *
+ * Six call sites had open-coded `sport_name || llm_sport_category || <fallback>`
+ * — three of them character-for-character identical. Returns undefined when
+ * neither is present so each caller keeps its own fallback word.
+ */
+export function getMarketCategoryLabel(
+  sportName: string | null | undefined,
+  categoryKey: string | null | undefined,
+): string | undefined {
+  if (sportName) return sportName;
+  if (categoryKey) return getNameForCategory(categoryKey);
+  return undefined;
+}
+
+/**
  * Group an array of league keys by their category.
  * Returns a map of categoryKey -> leagueKeys[]
  */

@@ -24,6 +24,7 @@ import type {
 } from "@/lib/types";
 import { trackEvent } from "@/lib/analytics";
 import { shareContent } from "@/lib/share";
+import { getMarketCategoryLabel } from "@/lib/sportCategories";
 import { useEngagementTime, usePageTracking, useScrollDepth } from "@/hooks";
 import { Button } from "@/components/ui/button";
 
@@ -176,7 +177,7 @@ function asDailyQuestion(item: FeedItem): DailyQuestion | null {
       contentType: "futures",
       title: data.name,
       subject: leader.name,
-      category: data.sport_name || data.llm_sport_category || "Markets",
+      category: getMarketCategoryLabel(data.sport_name, data.llm_sport_category) || "Markets",
       probability,
       detailHref: `/futures/${data.id}`,
       context: item.context_summary || item.headline || item.reason || data.hook_description || "",

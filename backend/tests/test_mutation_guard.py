@@ -236,6 +236,45 @@ def test_no_mutant_is_sitting_in_a_harness_target_right_now():
     )
 
 
+def test_pass_b_never_sweeps_a_harness_own_source():
+    """A harness's own source holds every replacement literal BY CONSTRUCTION.
+
+    That is what a mutant table is. So Pass B — which sweeps files CHANGED vs
+    the base — must never include `scripts/evals/*_mutations.py`, or a harness
+    reports its own table as residue.
+
+    UX-P190 found this the only way it can be found. Every harness already in
+    `SHAPES` escapes it because its branch MERGED and it dropped out of
+    `diff origin/master...HEAD`; the window is open exactly once per harness, on
+    the branch that introduces it. So the bug is invisible forever after, and
+    `test_no_mutant_is_sitting_in_a_harness_target_right_now` above stops
+    exercising this path the moment that branch lands. This test does not
+    depend on any branch's diff state.
+
+    This is NOT a narrowing of coverage: harness files are never mutation
+    TARGETS, and Pass A verifies every declared target directly.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "scan_mutation_residue", EVALS / "scan_mutation_residue.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # --all-tracked is the widest possible file set, so if the exclusion holds
+    # here it holds for any narrower diff base.
+    files = mod._files("origin/master", all_tracked=True, suffixes=[".py"])
+
+    # Vacuity companion: an exclusion asserted over an empty list proves nothing.
+    assert len(files) > 100, f"expected a broad .py sweep, got {len(files)}"
+    harnesses = sorted(p.name for p in EVALS.glob("*_mutations.py"))
+    assert len(harnesses) >= 5, f"expected several harnesses on disk, got {harnesses}"
+
+    leaked = sorted(p.name for p in files if p.name in set(harnesses))
+    assert leaked == [], f"Pass B is sweeping harness source: {leaked}"
+
+
 def test_an_unresolvable_base_exits_2_not_1():
     """A scan that CANNOT RUN must not borrow the code that means "residue found".
 

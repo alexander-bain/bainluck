@@ -135,6 +135,13 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     "search_word_test_mutations": [("MUTANTS", 2, 3, 1)],
     "typeahead_concept_provenance_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "typeahead_warmer_mutations": [("MUTATIONS", 3, 4, 1)],
+    # UX-P190. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above. Eight targets in one table, carried
+    # per-entry at index 1: the split-table shape that
+    # `event_hero_duel_percent_mutations` uses stops reading at eight constants.
+    # Targets are `.ts`/`.tsx`, which Pass A reads directly and Pass B reaches
+    # via the LAT-P119 narrowing — unlike the `.swift` case two entries up.
+    "uxp190_category_label_mutations": [("MUTANTS", 2, 3, 1)],
 }
 
 # Harnesses that write NOTHING, anywhere — every mutant is a source string
@@ -292,7 +299,25 @@ def _files(base: str, all_tracked: bool, suffixes: list[str]) -> list[Path]:
         )
         raise SystemExit(2)
     paths = [REPO / line for line in out.stdout.split("\n") if line.strip()]
-    return [p for p in paths if p.is_file()]
+    paths = [p for p in paths if p.is_file()]
+
+    # A harness's OWN source is never scannable, because it holds every
+    # replacement literal by construction — that is what a mutant table IS.
+    #
+    # UX-P190 found this the only way it can be found: a harness added on an
+    # UNMERGED branch is a changed file, so Pass B swept it and reported two of
+    # its own mutants as residue sitting "outside a declared target". Every
+    # harness already in SHAPES escapes this only because its branch merged and
+    # it dropped out of `diff origin/master...HEAD` — the window is open exactly
+    # once per harness, on the branch that introduces it, which is also the only
+    # branch where anyone would notice.
+    #
+    # Excluding them is not a narrowing of coverage: harness files are never
+    # mutation TARGETS (Pass A verifies every declared target directly, and a
+    # target is always app/component source). A scanner that reports its own
+    # tables as findings spends its result code on itself.
+    harness_sources = {p.resolve() for p in EVALS.glob("*_mutations.py")}
+    return [p for p in paths if p.resolve() not in harness_sources]
 
 
 def _base_already_has(base: str, rel: str, literal: str) -> bool:

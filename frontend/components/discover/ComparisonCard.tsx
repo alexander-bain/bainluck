@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { getCat } from "./constants";
+import { getMarketCategoryLabel } from "@/lib/sportCategories";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
 import { DismissBtn, TrendBadge, ExpandableContextText, ActionBar, SignalBars } from "./shared";
 import type { CardActionCallbacks } from "./types";
@@ -23,7 +24,7 @@ export function ComparisonCard({
   onDetailClick, onShare, onContextExpand, onContextCollapse,
 }: ComparisonCardProps) {
   const catStyle = getCat(data.llm_sport_category);
-  const category = data.sport_name || data.llm_sport_category || "Markets";
+  const category = getMarketCategoryLabel(data.sport_name, data.llm_sport_category) || "Markets";
   const contextSnippet = feedContextSnippet(item);
   const expandedContext = feedExpandedContext(item);
   const resolveText = resolvesLabel(data.resolution_date);

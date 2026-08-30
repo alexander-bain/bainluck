@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { trackEvent } from "@/lib/analytics";
 import LoadingState from "@/components/LoadingState";
+import { getNameForCategory } from "@/lib/sportCategories";
 
 interface DetailedStats {
   total: number;
@@ -201,7 +202,13 @@ export default function PredictionStatsPage() {
             <div className="space-y-2">
               {categories.map(([cat, data]) => (
                 <div key={cat} className="flex items-center gap-3 p-3 rounded-xl bg-surface-card border border-surface-border">
-                  <span className="text-sm font-semibold capitalize w-24 shrink-0">{cat}</span>
+                  {/* UX-P190: the row prints a LABEL, not the payload key. The
+                      key is FuturesMarket.llm_sport_category, so a guess on any
+                      of the 103,674 table-tennis markets rendered
+                      "Table_tennis" — the `capitalize` class could not reach the
+                      underscore, and now that the labeller cases its own output
+                      it would only corrupt "Track and Field". */}
+                  <span className="text-sm font-semibold w-24 shrink-0">{getNameForCategory(cat)}</span>
                   <div className="flex-1 h-3 rounded-full bg-surface-border overflow-hidden">
                     <div className="h-full rounded-full bg-accent-brand transition-all" style={{ width: `${data.accuracy * 100}%` }} />
                   </div>

@@ -25,6 +25,7 @@ import {
   sportPagePath,
 } from "@/lib/eventKey";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
+import { getMarketCategoryLabel, getNameForCategory } from "@/lib/sportCategories";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -37,7 +38,6 @@ import ProgressionTable from "@/components/ProgressionTable";
 import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
 import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
-import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import { movementExplanation as movementExplanationHelper, pickHeroOutcome } from "@/lib/futuresDetailDisplay";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
@@ -545,7 +545,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         // prevalence claim.
         resolveDate={isResolved ? undefined : formatResolvesLabel(market.resolution_date) || undefined}
         categoryEmoji={getCategoryEmoji(market.llm_sport_category)}
-        categoryLabel={market.sport_name || market.llm_sport_category || undefined}
+        categoryLabel={getMarketCategoryLabel(market.sport_name, market.llm_sport_category)}
         isMultiOutcome={(market.outcome_count ?? 0) > 2}
         sparklinePoints={ambientPoints}
         resolved={isResolved}
@@ -823,7 +823,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           excludeId={market.id}
           excludeType="futures"
           limit={4}
-          title={`More ${toTitleCaseAcronymSafe(market.llm_sport_category)}`}
+          // UX-P190: the SAME labeller as the header chip above. This read
+          // `toTitleCaseAcronymSafe`, which de-underscores but skips the
+          // curated table — so one page called a category two different names:
+          // the chip said "Tech & Science" and this heading said "More Tech",
+          // and the chip said "AFL" while this said "More Aussierules".
+          title={`More ${getNameForCategory(market.llm_sport_category)}`}
         />
       )}
 
