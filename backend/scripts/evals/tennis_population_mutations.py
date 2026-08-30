@@ -128,6 +128,41 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
         "    _write_cached(rc, fresh)\n    return fresh",
         POP,
     ),
+    # --- serve-stale on the ordinary expiry ---------------------------------
+    (
+        "M6b",
+        "a TTL expiry walks the reader into the scan instead of the mirror",
+        """    mirrored = _read_cached(rc, MIRROR_KEY)
+    if mirrored is not None and serve_stale_and_refresh(
+        SLOT_KEYS, lambda: _refresh_shared_arm(widened), rc=rc
+    ):""",
+        """    mirrored = _read_cached(rc, MIRROR_KEY)
+    if False:""",
+        POP,
+    ),
+    (
+        "M6c",
+        "serve the mirror with NOTHING behind it — serve-stale-forever",
+        """    if mirrored is not None and serve_stale_and_refresh(
+        SLOT_KEYS, lambda: _refresh_shared_arm(widened), rc=rc
+    ):""",
+        """    if mirrored is not None:""",
+        POP,
+    ),
+    (
+        "M6d",
+        "the rebuild behind the mirror narrows the window it re-caches",
+        "        SLOT_KEYS, lambda: _refresh_shared_arm(widened), rc=rc",
+        "        SLOT_KEYS, lambda: _refresh_shared_arm(cutoff), rc=rc",
+        POP,
+    ),
+    (
+        "M6e",
+        "the rebuild scans and throws the rows away",
+        "        rows = await fetch_resolved_arm(session, widened)\n    _write_cached(_get_client(), rows)",
+        "        rows = await fetch_resolved_arm(session, widened)\n    _ = rows",
+        POP,
+    ),
     # --- the shared slot ---------------------------------------------------
     (
         "M7",

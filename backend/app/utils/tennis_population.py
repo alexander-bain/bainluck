@@ -92,8 +92,20 @@ CUTOFF_SLACK_SECONDS = RESOLVED_MIRROR_TTL_SECONDS + 3600
 #: older generation reads as a miss rather than as a row with shifted columns.
 CACHE_GENERATION = "v1"
 
-PRIMARY_KEY = f"tennis:pop:resolved:{CACHE_GENERATION}"
-MIRROR_KEY = f"tennis:pop:resolved:{CACHE_GENERATION}:stale"
+#: The four keys this slot owns, laid out by the policy home rather than
+#: re-derived here (ruling 005 — `event_concept_cache.cache_keys` exists because
+#: a second tier adopting the policy must not have to re-invent the layout).
+#: Only `primary`, `stale` and `refresh_lock` are used; there is no negative
+#: slot, because "no tennis markets" is a population, not a 404.
+def _slot_keys():
+    from app.utils.event_concept_cache import cache_keys
+
+    return cache_keys(CACHE_GENERATION, prefix="bainluck:tennis_pop:resolved:")
+
+
+SLOT_KEYS = _slot_keys()
+PRIMARY_KEY = SLOT_KEYS.primary
+MIRROR_KEY = SLOT_KEYS.stale
 
 #: The statuses the resolved arm admits — the adapter's own list, kept here so the
 #: cached query and the caller's re-filter cannot drift apart.
@@ -417,16 +429,42 @@ def _within(rows: Iterable[MarketRow], cutoff: datetime) -> list[MarketRow]:
     ]
 
 
+async def _refresh_shared_arm(widened: datetime) -> None:
+    """Re-scan and re-store the shared arm, on its OWN session.
+
+    Never the request's session — `serve_stale_and_refresh`'s docstring names
+    that as how a background task ends up writing into a closed one. `widened` is
+    the cutoff the reader that kicked this refresh would itself have used, passed
+    in rather than re-derived, so the window has exactly one definition
+    (`_RESOLVED_WINDOW_DAYS`, in the adapter) and cannot drift into a second.
+    """
+    from app.tasks.base import get_task_session
+
+    async with get_task_session() as session:
+        rows = await fetch_resolved_arm(session, widened)
+    _write_cached(_get_client(), rows)
+
+
 async def resolved_arm(db, cutoff: datetime, *, rc: Any = None) -> list[MarketRow]:
     """The resolved arm for `cutoff`, shared across tennis builds.
 
     Order of attempts, and each one is a deliberate answer to a measured failure:
 
     1. the primary slot, inside its TTL;
-    2. a live fetch, which fills both slots;
-    3. the 24 h mirror, if the live fetch raised — a scan that failed must not
+    2. the 24 h mirror with exactly ONE rebuild behind it — LAT-P021's lesson
+       applied one layer down. That fix exists because a plain TTL expiry, the
+       overwhelmingly common cache event, was walking a reader into an 18.5 s
+       rebuild; here it would be an 8.4-15.5 s sequential scan, and the reader
+       who arrives one second past the TTL must not pay what the refresh is
+       about to pay anyway. Single-flight across the FLEET, not per worker:
+       `serve_stale_and_refresh` takes the shared Redis lock;
+    3. a live fetch, when there is no mirror to serve or nothing could run behind
+       one — a cold miss must still SERVE, so this stays synchronous;
+    4. the mirror again, if that live fetch raised. A scan that failed must not
        take the page down when a day-old identity list would have rendered it.
     """
+    from app.utils.event_concept_cache import serve_stale_and_refresh
+
     rc = _get_client() if rc is None else rc
 
     cached = _read_cached(rc, PRIMARY_KEY)
@@ -434,13 +472,19 @@ async def resolved_arm(db, cutoff: datetime, *, rc: Any = None) -> list[MarketRo
         return _within(cached, cutoff)
 
     widened = cutoff - timedelta(seconds=CUTOFF_SLACK_SECONDS)
+
+    mirrored = _read_cached(rc, MIRROR_KEY)
+    if mirrored is not None and serve_stale_and_refresh(
+        SLOT_KEYS, lambda: _refresh_shared_arm(widened), rc=rc
+    ):
+        return _within(mirrored, cutoff)
+
     try:
         fresh = await fetch_resolved_arm(db, widened)
     except Exception:
-        rescued = _read_cached(rc, MIRROR_KEY)
-        if rescued is not None:
+        if mirrored is not None:
             logger.warning("tennis population: scan failed — serving the mirror")
-            return _within(rescued, cutoff)
+            return _within(mirrored, cutoff)
         raise
 
     _write_cached(rc, fresh)

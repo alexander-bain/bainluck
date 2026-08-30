@@ -59,6 +59,19 @@ class FakeRedis:
         self.store[key] = value
         self.ttls[key] = ttl
 
+    def set(self, key, value, nx=False, ex=None):
+        """The refresh lock's `SET NX` — one rebuild across the fleet."""
+        if nx and key in self.store:
+            return None
+        self.store[key] = value
+        return True
+
+    def eval(self, _script, _numkeys, key, token):
+        if self.store.get(key) == token:
+            del self.store[key]
+            return 1
+        return 0
+
 
 class FakeResult:
     def __init__(self, rows):
@@ -307,13 +320,20 @@ class TestSupersetWindow:
         # BOTH were cached — the cache is the wider set, the filter is the narrow one.
         assert [r.id for r in tp._read_cached(rc, tp.PRIMARY_KEY)] == [1, 2]
 
-    async def test_a_failed_scan_serves_the_mirror(self, caplog):
+    async def test_a_failed_scan_serves_the_mirror(self, caplog, monkeypatch):
+        """Path 4: the live scan raised and nothing could run behind the mirror.
+        Serve-stale is refused here (no rebuild started), so this is the rescue
+        arm and not the ordinary expiry arm above it."""
         cutoff = NOW - timedelta(days=30)
         rc = FakeRedis()
         tp._write_cached(
             rc, [tp.MarketRow(5, "m", "resolved", NOW - timedelta(days=1), None, "k", 0)]
         )
         rc.store.pop(tp.PRIMARY_KEY)  # primary expired, mirror survives
+        monkeypatch.setattr(
+            "app.utils.event_concept_cache.serve_stale_and_refresh",
+            lambda *a, **k: False,
+        )
 
         class Boom(FakeDb):
             async def execute(self, *a, **k):
@@ -331,6 +351,101 @@ class TestSupersetWindow:
 
         with pytest.raises(RuntimeError):
             await tp.resolved_arm(Boom([]), NOW - timedelta(days=30), rc=FakeRedis())
+
+
+class TestServeStaleOnExpiry:
+    """LAT-P021's lesson one layer down: a plain TTL expiry is the common cache
+    event, and it must not walk a reader into the sequential scan."""
+
+    def _mirror_only(self):
+        rc = FakeRedis()
+        tp._write_cached(
+            rc, [tp.MarketRow(5, "m", "resolved", NOW - timedelta(days=1), None, "k", 0)]
+        )
+        rc.store.pop(tp.PRIMARY_KEY)
+        return rc
+
+    async def test_an_expiry_serves_the_mirror_and_never_scans_inline(self, monkeypatch):
+        refreshed = []
+
+        async def _fake_refresh(widened):
+            refreshed.append(widened)
+
+        monkeypatch.setattr(tp, "_refresh_shared_arm", _fake_refresh)
+        rc = self._mirror_only()
+        db = FakeDb([[market_row(99, "should-never-be-read")]])
+
+        rows = await tp.resolved_arm(db, NOW - timedelta(days=30), rc=rc)
+
+        assert [r.id for r in rows] == [5]
+        assert db.statements == [], "the reader paid the scan it was meant to skip"
+
+    async def test_exactly_one_rebuild_runs_behind_the_mirror(self, monkeypatch):
+        import asyncio
+
+        started = []
+
+        async def _fake_refresh(widened):
+            started.append(widened)
+
+        monkeypatch.setattr(tp, "_refresh_shared_arm", _fake_refresh)
+        rc = self._mirror_only()
+
+        for _ in range(3):
+            await tp.resolved_arm(FakeDb([]), NOW - timedelta(days=30), rc=rc)
+        await asyncio.sleep(0)  # let the background tasks run
+
+        assert len(started) == 1, f"{len(started)} rebuilds for one expiry"
+
+    async def test_the_rebuild_uses_the_widened_window(self, monkeypatch):
+        import asyncio
+
+        seen = []
+
+        async def _fake_refresh(widened):
+            seen.append(widened)
+
+        monkeypatch.setattr(tp, "_refresh_shared_arm", _fake_refresh)
+        cutoff = NOW - timedelta(days=30)
+        await tp.resolved_arm(FakeDb([]), cutoff, rc=self._mirror_only())
+        await asyncio.sleep(0)
+
+        assert seen and cutoff - seen[0] == timedelta(seconds=tp.CUTOFF_SLACK_SECONDS)
+
+    async def test_the_rebuild_re_stores_both_slots_on_its_own_session(self, monkeypatch):
+        """It must NOT reuse the request's session — that is how a background
+        task ends up writing into a closed one."""
+        import contextlib
+
+        rc = FakeRedis()
+        session = FakeDb([[market_row(7, "rebuilt", status="resolved", resolution=NOW)]])
+
+        @contextlib.asynccontextmanager
+        async def _task_session():
+            yield session
+
+        monkeypatch.setattr("app.tasks.base.get_task_session", _task_session)
+        monkeypatch.setattr(tp, "_get_client", lambda: rc)
+
+        await tp._refresh_shared_arm(NOW - timedelta(days=31))
+
+        assert [r.id for r in tp._read_cached(rc, tp.PRIMARY_KEY)] == [7]
+        assert [r.id for r in tp._read_cached(rc, tp.MIRROR_KEY)] == [7]
+
+    async def test_serve_stale_is_refused_when_nothing_can_run_behind_it(
+        self, monkeypatch
+    ):
+        """`serve_stale_and_refresh` returning False means no rebuild started, so
+        the mirror must NOT be served — serving it would be serve-stale-forever."""
+        monkeypatch.setattr(
+            "app.utils.event_concept_cache.serve_stale_and_refresh",
+            lambda *a, **k: False,
+        )
+        rc = self._mirror_only()
+        db = FakeDb([[market_row(42, "scanned", status="resolved", resolution=NOW)]])
+        rows = await tp.resolved_arm(db, NOW - timedelta(days=30), rc=rc)
+        assert [r.id for r in rows] == [42]
+        assert len(db.statements) == 1
 
 
 # ---------------------------------------------------------------------------
