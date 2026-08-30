@@ -124,8 +124,10 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M6",
         "the fresh fetch is served unfiltered while the cache is filtered",
-        "    _write_cached(rc, fresh)\n    return _within(fresh, cutoff)",
-        "    _write_cached(rc, fresh)\n    return fresh",
+        """    _write_cached(rc, fresh)
+    return _within(fresh, cutoff)""",
+        """    _write_cached(rc, fresh)
+    return fresh""",
         POP,
     ),
     # --- serve-stale on the ordinary expiry ---------------------------------
@@ -161,16 +163,20 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M6e",
         "the rebuild scans and throws the rows away",
-        "        rows = await fetch_resolved_arm(session, widened)\n    _write_cached(_get_client(), rows)",
-        "        rows = await fetch_resolved_arm(session, widened)\n    _ = rows",
+        """        rows = await fetch_resolved_arm(session, widened)
+    _write_cached(_get_client(), rows)""",
+        """        rows = await fetch_resolved_arm(session, widened)
+    _ = rows""",
         POP,
     ),
     # --- the shared slot ---------------------------------------------------
     (
         "M7",
         "store an EMPTY population — a broken read freezes into a 24 h mirror",
-        "    if rc is None or not rows:\n        return",
-        "    if rc is None:\n        return",
+        """    if rc is None or not rows:
+        return""",
+        """    if rc is None:
+        return""",
         POP,
     ),
     (
@@ -190,8 +196,10 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M10",
         "no Redis reads as an EMPTY population instead of a miss",
-        "    if rc is None:\n        return None",
-        "    if rc is None:\n        return []",
+        """    if rc is None:
+        return None""",
+        """    if rc is None:
+        return []""",
         POP,
     ),
     (
@@ -205,7 +213,8 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
         "M12",
         "one malformed cached row empties the whole population",
         "    rows = [r for r in (_decode_row(item) for item in decoded) if r is not None]",
-        "    rows = [_decode_row(item) for item in decoded]\n    rows = [] if None in rows else rows",
+        """    rows = [_decode_row(item) for item in decoded]
+    rows = [] if None in rows else rows""",
         POP,
     ),
     (
@@ -232,7 +241,9 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M13d",
         "a compressed payload is no longer readable as plain JSON on the way back",
-        "    if isinstance(raw, bytes) and raw[:1] == _ZLIB_MAGIC:\n        return _loads(zlib.decompress(raw))\n    return _loads(raw)",
+        """    if isinstance(raw, bytes) and raw[:1] == _ZLIB_MAGIC:
+        return _loads(zlib.decompress(raw))
+    return _loads(raw)""",
         "    return _loads(zlib.decompress(raw))",
         POP,
     ),
@@ -248,23 +259,31 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M13f",
         "a Redis that cannot answer reads as FRESH — serve-stale never engages",
-        "        logger.warning(\"tennis population: freshness read failed\")\n        return False",
-        "        logger.warning(\"tennis population: freshness read failed\")\n        return True",
+        """        logger.warning("tennis population: freshness read failed")
+        return False""",
+        """        logger.warning("tennis population: freshness read failed")
+        return True""",
         POP,
     ),
     # --- identity only -----------------------------------------------------
     (
         "M14",
         "a naive cached timestamp is left naive — it cannot be compared",
-        "        if when.tzinfo is None:\n            when = when.replace(tzinfo=timezone.utc)",
-        "        if False:\n            when = when.replace(tzinfo=timezone.utc)",
+        """        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)""",
+        """        if False:
+            when = when.replace(tzinfo=timezone.utc)""",
         POP,
     ),
     (
         "M15",
         "the reader destroys outcomes the row already carried",
-        "    carried = getattr(row, \"outcomes\", None)\n    if carried:\n        market.outcomes = list(carried)",
-        "    carried = None\n    if carried:\n        market.outcomes = list(carried)",
+        """    carried = getattr(row, "outcomes", None)
+    if carried:
+        market.outcomes = list(carried)""",
+        """    carried = None
+    if carried:
+        market.outcomes = list(carried)""",
         POP,
     ),
     # --- the population ----------------------------------------------------
@@ -278,8 +297,10 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M17",
         "the arms are not deduplicated — a status change renders twice",
-        "        if row.id in seen:\n            continue",
-        "        if False:\n            continue",
+        """        if row.id in seen:
+            continue""",
+        """        if False:
+            continue""",
         POP,
     ),
     (
@@ -293,8 +314,12 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M19",
         "the prefetch drops the exact-slug arm — #1793's direct request goes cold",
-        "        exact = clean_slug(m.name or \"\") == slug\n        subset = bool(slug_tokens) and slug_tokens <= canonical_tokens(m.name)\n        if exact or subset:",
-        "        exact = False\n        subset = bool(slug_tokens) and slug_tokens <= canonical_tokens(m.name)\n        if exact or subset:",
+        '''        exact = clean_slug(m.name or "") == slug
+        subset = bool(slug_tokens) and slug_tokens <= canonical_tokens(m.name)
+        if exact or subset:''',
+        """        exact = False
+        subset = bool(slug_tokens) and slug_tokens <= canonical_tokens(m.name)
+        if exact or subset:""",
         POP,
     ),
     (
@@ -313,8 +338,10 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M21",
         "the prefetch adds the field floor the resolver applies AFTER counting",
-        "        if exact or subset:\n            ids.append(m.id)",
-        "        if (exact or subset) and len(m.outcomes or []) >= 2:\n            ids.append(m.id)",
+        """        if exact or subset:
+            ids.append(m.id)""",
+        """        if (exact or subset) and len(m.outcomes or []) >= 2:
+            ids.append(m.id)""",
         POP,
     ),
     # --- the two-phase loaders ---------------------------------------------
@@ -338,8 +365,10 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M24",
         "attach EMPTIES a market the other phase already loaded",
-        "        rows = loaded.get(market.id)\n        if rows:",
-        "        rows = loaded.get(market.id)\n        if rows is not None:",
+        """        rows = loaded.get(market.id)
+        if rows:""",
+        """        rows = loaded.get(market.id)
+        if rows is not None:""",
         POP,
     ),
     # --- the adapter -------------------------------------------------------
