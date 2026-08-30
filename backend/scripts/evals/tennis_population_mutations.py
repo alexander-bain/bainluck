@@ -297,10 +297,17 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M17",
         "the arms are not deduplicated — a status change renders twice",
+        # ⚠️ The obvious `if False:` form of this mutant is byte-identical to
+        # `search_tier_split_mutations:M4-no-dedup`'s replacement, and the
+        # residue scan's Pass B correctly reported this file as holding another
+        # harness's mutant with its needle absent. Deleting the guard outright
+        # is the same defect, reads more like the tidy-up a later edit would
+        # actually make, and its replacement is a substring of its own needle —
+        # so it can never be mistaken for residue.
         """        if row.id in seen:
-            continue""",
-        """        if False:
-            continue""",
+            continue
+        seen.add(row.id)""",
+        """        seen.add(row.id)""",
         POP,
     ),
     (
