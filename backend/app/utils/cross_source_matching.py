@@ -14,6 +14,7 @@ from collections import defaultdict
 from typing import Callable, Sequence
 
 from app.models import FuturesMarket
+from app.utils.outcome_display import drop_duplicate_binary_legs
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -86,8 +87,10 @@ def is_resolved(market: FuturesMarket) -> bool:
 
 
 def clean_outcomes(outcomes: list) -> list:
-    """Filter garbage placeholder outcomes."""
-    return [o for o in outcomes if not GARBAGE_OUTCOME_RE.match(o.name or "")]
+    """Filter garbage placeholder outcomes, and the duplicate Yes/No legs of a
+    condition the list already carries under its real name (UX-P188)."""
+    kept = [o for o in outcomes if not GARBAGE_OUTCOME_RE.match(o.name or "")]
+    return drop_duplicate_binary_legs(kept, lambda o: o.external_id)
 
 
 def normalize_question(q: str) -> str:

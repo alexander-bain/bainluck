@@ -24,8 +24,18 @@ from app.utils.cross_source_matching import (
 # ---------------------------------------------------------------------------
 
 
-def _outcome(name: str, probability: float) -> SimpleNamespace:
-    return SimpleNamespace(name=name, current_probability=probability)
+def _outcome(
+    name: str, probability: float, external_id: str | None = None
+) -> SimpleNamespace:
+    # `external_id` is NOT optional on the real FuturesOutcome, and UX-P188's leg
+    # drop reads it, so the stub carries one. Defaulting it off the NAME keeps every
+    # pre-existing caller distinct-by-construction (two outcomes in one market never
+    # share a name), which is what the drop's sibling lookup needs.
+    return SimpleNamespace(
+        name=name,
+        current_probability=probability,
+        external_id=external_id if external_id is not None else f"xid-{name}",
+    )
 
 
 def _market(

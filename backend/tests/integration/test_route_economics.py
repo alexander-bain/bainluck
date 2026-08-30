@@ -42,13 +42,18 @@ def _query_result(items):
     return _MockResult(items)
 
 
-def _outcome(name, probability, *, outcome_id=1, rank=1, change_24h=0):
+def _outcome(name, probability, *, outcome_id=1, rank=1, change_24h=0, external_id=None):
     return SimpleNamespace(
         id=outcome_id,
         name=name,
         current_probability=probability,
         probability_change_24h=change_24h,
         rank=rank,
+        # Non-nullable on the real FuturesOutcome, and UX-P188's duplicate-leg drop
+        # reads it. Keyed off the NAME, not `outcome_id`, which defaults to 1 for
+        # every outcome here — siblings must not share an id or they would look
+        # like each other's binary legs.
+        external_id=external_id if external_id is not None else f"xid-{name}",
     )
 
 
