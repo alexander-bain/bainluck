@@ -73,6 +73,18 @@ WINDOW_HOURS = 18
 #: names it is left unclaimed rather than assigned to the wrong day.
 MAX_NAME_SKEW_HOURS = 6.0
 
+#: How close a row's recorded start must sit to a fixture's published kickoff
+#: before the clock IDENTIFIES the two as the same game rather than merely
+#: preferring them. Feeds disagree about the start of one game by minutes — a
+#: listed :05 against a broadcast :00, a half-hour rounding — and that is what
+#: this admits. They do not disagree by an hour: an hour is a DELAY, and a
+#: delayed row is exactly the row whose own fixture cannot be read off its
+#: clock. Deliberately distinct from :data:`MAX_NAME_SKEW_HOURS`, which asks a
+#: different question — how far a row may reach to be BOUND at all. Binding is
+#: allowed on evidence; naming one fixture missing and its sibling duplicated
+#: takes identity (CERT-449, see :func:`_attach`).
+IDENTITY_SKEW_HOURS = 0.5
+
 #: Bounds on the one-to-one assignment in :func:`_attach`. A same-matchup group
 #: bigger than this on a single day is not a doubleheader, it is a data
 #: pathology, and the honest answer to a pathology is a refusal rather than an
@@ -396,6 +408,22 @@ def _attach(fixtures: list[dict], events: list[dict]) -> list[FixtureRow]:
       three hours' skew, two ways, at identical cost. Reading one rank further
       down recovers the true answer — 17:00 missing, 20:00 duplicated — which
       is what the pre-fix binder reported and what this must not lose.
+    * **…but a worse rank may not manufacture certainty** (CERT-449). The
+      descent settles the leftovers; it does not settle the question the better
+      rank was tied on. Two rows both stamped 19:00 beside fixtures at 17:00 and
+      20:00 descend to a unanimous rank and publish "17:00 missing, 20:00
+      duplicated" with ``ambiguous=False`` — the exactly-inverted reading of a
+      rain-delayed first game, filing a repair against the healthy fixture and
+      calling the genuinely absent game a duplicate. Stable ordering rather than
+      a coin flip, but the same fabricated verdict. So the empty-fixture verdict
+      now has to be backed by the clock and not merely preferred by it: if any
+      fixture in the group ends up with nothing, every row in that group must
+      sit within :data:`IDENTITY_SKEW_HOURS` of the fixture it landed on, or the
+      group is refused. 20:00 and 20:05 rows on a 20:00 fixture are identified
+      and the case above survives untouched; 19:00 rows on a 20:00 fixture are
+      merely nearer, and nearer is not a name. The rule is deliberately silent
+      whenever every fixture holds a row, because then no healthy fixture is
+      being charged with a defect — a two-hour delay still binds.
     * **Duplicates still surface.** Rows left over once every fixture in the
       group holds one land on their nearest fixture anyway, so three rows for a
       two-game doubleheader still read ``dupes=2`` on one of them. The fix must
@@ -522,6 +550,38 @@ def _attach(fixtures: list[dict], events: list[dict]) -> list[FixtureRow]:
                 placement, tied = candidates[0]
                 settled = True
                 break
+        # A rank that speaks is not the same thing as evidence that identifies
+        # (CERT-449). Descending past a materially-tied better rank means the
+        # data did NOT settle the top question; the rank that eventually agreed
+        # with itself only settled the leftovers. So before this group is
+        # allowed to say "that fixture is missing and this one is duplicated",
+        # the clock has to back the claim: every row must sit on a fixture it is
+        # time-IDENTIFIED with. Two rows stamped 19:00 beside fixtures at 17:00
+        # and 20:00 are nearer the second, and are equally well a first game
+        # delayed two hours — the descent picks one reading and publishes it
+        # with ambiguous=false, filing a repair against the healthy fixture and
+        # calling the genuinely absent game a duplicate.
+        #
+        # Bound tightly so it cannot become a way of hiding real defects: it
+        # fires ONLY when some fixture in this group ends up empty, which is the
+        # only verdict that costs a healthy fixture something. A doubleheader
+        # where every fixture holds a row is unaffected however skewed the rows
+        # are (a two-hour rain delay still binds, CERT-434), and so is the
+        # ordinary case of two rows sitting on their own fixture's minute while
+        # a third fixture is genuinely absent.
+        if not (truncated or not settled or tied):
+            some_fixture_empty = any(
+                not ges and not claims[fx_idxs[gi]]
+                for gi, ges in enumerate(placement)
+            )
+            if some_fixture_empty and any(
+                (skews.get((gi, ge)) is None)
+                or skews[(gi, ge)] > IDENTITY_SKEW_HOURS
+                for gi, ges in enumerate(placement)
+                for ge in ges
+            ):
+                settled = False
+
         if truncated or not settled or tied:
             ambiguous.update(fx_idxs)
 
@@ -890,6 +950,18 @@ def _reconcile(day: str, axiom_cards: list[dict]) -> list[dict]:
     ``red`` reads False, the rail takes the green path, and an open roll-call
     issue gets CLOSED with a comment saying the league is clean — on a day the
     league was never graded at all.
+
+    **A PARTIAL refusal holds the green path too** (CERT-449). The whole-slate
+    skip above left the ordinary case open: one refused doubleheader on an
+    otherwise clean slate still reads ``pass``, and ``pass`` CLOSES the open
+    issue. Closing asserts recovery, and a league with an ungraded fixture has
+    not observed the fixture the breakage could still be living on — the very
+    fixture the binder refused because it could not tell a missing game from a
+    duplicated one. Mentioning the refusal in the closing comment does not
+    repair that: the issue is shut either way. So a green card carrying any
+    refusal files nothing and closes nothing, and says which it was. RED is
+    unaffected — a defect proven on the graded fixtures is still a defect, and
+    holding that back would be the cover-up running the other way.
     """
     from app.tasks.sentinel_filing import fetch_open_alert_issues, reconcile_issue
 
@@ -905,6 +977,14 @@ def _reconcile(day: str, axiom_cards: list[dict]) -> list[dict]:
         league = card["league"]
         offenders = card.get("offenders") or []
         red = card["verdict"] == "red"
+        if not red and int(card.get("ambiguous", 0) or 0):
+            out.append({
+                "league": league,
+                "action": "skipped_partial_ambiguous",
+                "ambiguous": int(card["ambiguous"]),
+                "graded": card.get("graded", card.get("events_external")),
+            })
+            continue
         fp = rollcall_fingerprint(league, offenders)
         try:
             result = reconcile_issue(

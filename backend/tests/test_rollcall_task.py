@@ -239,6 +239,102 @@ class TestAttach:
         assert [r.event_ids for r in rows] == [[], [1, 2]]
         assert [r.ambiguous for r in rows] == [False, False]
 
+    def test_two_delayed_rows_beside_an_empty_fixture_are_refused(self):
+        """CERT-449's BLOCK specimen, verbatim.
+
+        Fixtures at 17:00 and 20:00; two id-less rows for the rain-delayed game
+        1, both stamped 19:00; game 2 genuinely absent. The rank descent settles
+        this DETERMINISTICALLY the wrong way round — ``g1=[]``, ``g2=[101,102]``,
+        ``ambiguous=False`` in both input orders — so the sentinel files a repair
+        against the healthy first fixture and calls the genuinely missing second
+        game a duplicate. Stable ordering rather than CERT-434's coin flip, but
+        the identical fabricated verdict.
+
+        19:00 is nearer 20:00 than 17:00 and that is ALL the data says. Nearer is
+        not a name: these rows are equally well a first game pushed two hours.
+        The better rank was tied on materially different readings, and a worse
+        rank agreeing with itself about the leftovers does not go back and settle
+        that. So the group is refused — not graded, not an offender, and now
+        (see `TestFiling`) not able to close an issue either.
+        """
+        for order in ([101, 102], [102, 101]):
+            rows = _attach(
+                [
+                    _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                        kickoff="2026-08-28T17:00:00+00:00"),
+                    _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                        kickoff="2026-08-28T20:00:00+00:00"),
+                ],
+                [
+                    _ev(i, "Detroit Tigers", "Los Angeles Dodgers",
+                        commence_time="2026-08-28T19:00:00+00:00")
+                    for i in order
+                ],
+            )
+            assert [r.ambiguous for r in rows] == [True, True], order
+
+    def test_one_delayed_row_beside_an_empty_fixture_is_refused_too(self):
+        """The same defect one row smaller, because the cert named a specimen
+        and the specimen is not the class. One row at 19:00 against fixtures at
+        17:00 and 20:00 reaches the top rank unanimously — there is only one way
+        to bind one row — and confidently publishes "17:00 missing, 20:00
+        matched". It is exactly as well a first game delayed two hours, in which
+        case the row is healthy and it is the SECOND game that is absent. The
+        clock cannot tell, so nothing here may say it can."""
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T20:00:00+00:00"),
+            ],
+            [_ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                 commence_time="2026-08-28T19:00:00+00:00")],
+        )
+        assert [r.ambiguous for r in rows] == [True, True]
+
+    def test_an_identified_row_beside_an_empty_fixture_still_reports_missing(self):
+        """The kill for the fix above. The refusal is bought with time identity,
+        not with an empty fixture: a row sitting on its own fixture's minute
+        IDENTIFIES that fixture, so the sibling with nothing is a genuine
+        `missing` and must still be named. A rule that refused here would trade
+        CERT-449's false alarm for a missed defect."""
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T20:00:00+00:00"),
+            ],
+            [_ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                 commence_time="2026-08-28T20:00:00+00:00")],
+        )
+        assert [r.event_ids for r in rows] == [[], [1]]
+        assert [r.ambiguous for r in rows] == [False, False]
+
+    def test_a_two_hour_delay_still_binds_when_no_fixture_goes_empty(self):
+        """The other kill, and the reason the rule is scoped to an empty
+        fixture. CERT-434's specimen has a row two hours off its fixture — far
+        outside time identity — but every fixture in the group holds a row, so
+        no healthy fixture is being charged with a defect and there is nothing
+        to refuse. Identity is required to make an ACCUSATION, not to bind."""
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T20:00:00+00:00"),
+            ],
+            [
+                _ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T19:00:00+00:00"),
+                _ev(2, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T20:00:00+00:00"),
+            ],
+        )
+        assert [r.event_ids for r in rows] == [[1], [2]]
+        assert [r.ambiguous for r in rows] == [False, False]
+
     def test_an_unbreakable_tie_is_refused_not_decided_by_list_order(self):
         """Both rows sit exactly between both fixtures, so the two pairings cost
         the same and nothing in the data prefers either. Deciding it by list
@@ -453,9 +549,16 @@ class TestFiling:
         assert calls == []
         assert out[0]["action"] == "skipped_ambiguous"
 
-    def test_a_partly_refused_league_still_reconciles_on_what_it_graded(self, monkeypatch):
-        """The refusal is per fixture, not a mute switch: a league with one
-        refused fixture and four clean ones is still observed and still speaks."""
+    def test_a_partly_refused_league_does_not_close_on_the_green_path(self, monkeypatch):
+        """CERT-449. This test used to assert the OPPOSITE — that a league with
+        one refused fixture and four clean ones went down the green path and
+        merely mentioned the refusal in the closing comment. It closed the
+        issue. The whole-slate skip above therefore covered the rare case and
+        left the ordinary one open: the breakage that issue was filed for could
+        be living on exactly the fixture the binder refused, because a refusal
+        is the binder saying it cannot tell a missing game from a duplicated
+        one. Recovery was asserted about a fixture nobody looked at.
+        """
         calls = []
         monkeypatch.setattr(
             "app.tasks.sentinel_filing.fetch_open_alert_issues", lambda: []
@@ -464,15 +567,37 @@ class TestFiling:
             "app.tasks.sentinel_filing.reconcile_issue",
             lambda **kw: calls.append(kw) or {"action": "resolved"},
         )
-        _reconcile("2026-08-26", [
+        out = _reconcile("2026-08-26", [
             {"league": "mlb", "verdict": "pass", "offenders": [],
              "events_external": 5, "graded": 4, "ambiguous": 1, "clean": 4,
              "per_source": {}, "axiom_sources": ["kalshi"], "truth_url": "u"},
         ])
-        assert len(calls) == 1 and calls[0]["red"] is False
-        # The green comment must not claim five fixtures were verified.
-        assert "4/4 graded fixtures" in calls[0]["green_comment"]
-        assert "1 further fixture(s) refused" in calls[0]["green_comment"]
+        assert calls == []
+        assert out[0]["action"] == "skipped_partial_ambiguous"
+        # The hold is legible: how much was refused, out of how much was graded.
+        assert out[0]["ambiguous"] == 1 and out[0]["graded"] == 4
+
+    def test_a_partly_refused_league_still_FILES_what_it_did_grade(self, monkeypatch):
+        """The other direction, and the reason the hold is green-only. A defect
+        proven on the four graded fixtures is proven; withholding it because a
+        fifth was refused would be the same cover-up running backwards."""
+        calls = []
+        monkeypatch.setattr(
+            "app.tasks.sentinel_filing.fetch_open_alert_issues", lambda: []
+        )
+        monkeypatch.setattr(
+            "app.tasks.sentinel_filing.reconcile_issue",
+            lambda **kw: calls.append(kw) or {"action": "filed"},
+        )
+        _reconcile("2026-08-26", [
+            {"league": "mlb", "verdict": "red", "offenders": [
+                {"fixture": "A @ B", "gaps": ["missing"], "event_ids": []}],
+             "events_external": 5, "graded": 4, "ambiguous": 1, "clean": 3,
+             "per_source": {}, "axiom_sources": ["kalshi"], "truth_url": "u"},
+        ])
+        assert len(calls) == 1 and calls[0]["red"] is True
+        # And the body still counts only what was graded.
+        assert "| …graded (the denominator for every row below) | 4 |" in calls[0]["body"]
 
     def test_a_red_league_files_and_a_clean_one_resolves(self, monkeypatch):
         seen = []
