@@ -28,6 +28,8 @@ import pytest
 
 from app.tasks.backfill_winners import (
     _PERIOD_SPREAD_NAME_RE,
+    _PERIOD_TICKER_PATTERN,
+    _PERIOD_TICKER_RE,
     _SPREAD_RE,
     _spread_outcome_is_winner,
 )
@@ -211,6 +213,10 @@ PRODUCTION_PERIOD_NAMES = [
     "Arizona wins 4Q by over 6.5 points",
     "Los Angeles wins 1Q by over 1.5 points",
     "Minnesota wins 3Q by over 1.5 points",
+    # CERT-506: the family the first version of this fix missed. Kalshi writes
+    # MLB first-five-innings spreads in a different grammar entirely.
+    "Arizona -1.5 first 5 innings",
+    "Atlanta -1.5 first 5 innings",
 ]
 
 FULL_GAME_NAMES = [
@@ -299,8 +305,9 @@ async def _run_rail(rows, monkeypatch):
     return rec, stats
 
 
-def _rail_row(oid, name, home, away, hs, as_, cur):
-    return _Row(oid=oid, oc_name=name, home=home, away=away, hs=hs, as_=as_, cur=cur)
+def _rail_row(oid, name, home, away, hs, as_, cur, ticker="KXMLBSPREAD-26JUN05"):
+    return _Row(oid=oid, oc_name=name, home=home, away=away, hs=hs, as_=as_,
+                cur=cur, ticker=ticker)
 
 
 @pytest.mark.asyncio
@@ -352,8 +359,12 @@ class TestRegradeRail:
         assert sql is not None
         # The widened scope...
         assert re.search(r"external_id\s*~\s*'SPREAD'", sql), sql
-        # ...and the exclusion that makes it safe.
-        assert re.search(r"external_id\s*!~\s*'\[0-9\]\(H\|Q\|HALF\)SPREAD'", sql), sql
+        # ...and the exclusion that makes it safe. Asserted as the SHARED
+        # literal, not as a copy of the pattern text: CERT-506's finding was
+        # that two hand-written definitions had drifted, and a guard that
+        # re-types the pattern here would be a third copy free to drift again.
+        assert re.search(r"external_id\s*!~\s*'[^']+'", sql), sql
+        assert _PERIOD_TICKER_PATTERN in sql, sql
 
     async def test_the_select_ticker_predicate_actually_excludes_the_period_families(
         self, monkeypatch
@@ -627,3 +638,141 @@ class TestTheVerdictSurfacesTheCounters:
         block = block[: block.index("}")]
         for key in ("checked", "flipped", "unresolved", "skipped_period"):
             assert f'"{key}"' in block, f"{key} is not surfaced in the task verdict"
+
+
+# --------------------------------------------------------------------------
+# CERT-506 — the period family the first version of this fix missed.
+# --------------------------------------------------------------------------
+
+
+class TestF5IsAPeriodFamily:
+    """`KXMLBF5SPREAD` is MLB's first-five-innings market, not a full game.
+
+    CERT-506 withheld a token because #2352's first ticker exclusion was
+    hand-written as `[0-9](H|Q|HALF)SPREAD` and omitted F5 — while this same
+    module classifies `kxmlbf5*` as period work in
+    `_resolve_kalshi_period_props`. That is the signature of a DUPLICATED
+    definition, so the pattern is now a single literal and both consumers derive
+    from it.
+
+    Zero `KXMLBF5SPREAD` rows are in the `game_score` cohort today (measured:
+    0 of 20,632), and their outcome names read "Arizona -1.5 first 5 innings",
+    which `_SPREAD_RE` does not match. Both of those are ACCIDENTS, not filters
+    anyone chose, and either could stop being true. These guards make the
+    exclusion deliberate.
+    """
+
+    F5_TICKERS = [
+        "KXMLBF5SPREAD-26JUN05ARIATL",
+        "KXMLBF5SPREAD-26AUG12NYYBOS",
+    ]
+
+    @pytest.mark.parametrize("ticker", F5_TICKERS)
+    def test_the_ticker_pattern_recognises_f5(self, ticker):
+        assert _PERIOD_TICKER_RE.search(ticker) is not None
+
+    @pytest.mark.parametrize(
+        "ticker",
+        [
+            "KXNBA1HSPREAD-26FEB01DETBOS",
+            "KXNCAAMB1HSPREAD-26JAN02",
+            "KXNBA2HSPREAD-26FEB01",
+            "KXNFL1QSPREAD-26SEP07",
+            "KXWNBA3QSPREAD-26JUN01",
+        ],
+    )
+    def test_the_ticker_pattern_still_recognises_the_hq_families(self, ticker):
+        assert _PERIOD_TICKER_RE.search(ticker) is not None
+
+    @pytest.mark.parametrize(
+        "ticker",
+        [
+            "KXNCAAMBSPREAD-26JAN02",
+            "KXNBASPREAD-26FEB01",
+            "KXMLBSPREAD-26JUN05",
+            "KXNHLSPREAD-26MAR01",
+            "KXMLSSPREAD-26MAY01",
+            # A digit immediately before SPREAD, and a FULL-GAME market. The
+            # digit in the pattern is anchored to an H/Q/HALF that follows it
+            # precisely so this one survives.
+            "KXLIGUE1SPREAD-26MAR01",
+        ],
+    )
+    def test_full_game_families_are_not_excluded(self, ticker):
+        assert _PERIOD_TICKER_RE.search(ticker) is None
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Arizona -1.5 first 5 innings",
+            "Atlanta -1.5 first five innings",
+            "Arizona wins F5 by over 1.5 runs",
+        ],
+    )
+    def test_the_name_filter_also_catches_f5_wording(self, name):
+        """The second filter has to move too.
+
+        If it did not, a `KXMLBF5SPREAD` market renamed into the
+        "wins by over N runs" grammar would pass the name test, and the only
+        thing standing between it and a permanently wrong full-time grade would
+        be the ticker pattern — i.e. back to one filter.
+        """
+        assert _PERIOD_SPREAD_NAME_RE.search(name) is not None
+
+    def test_full_game_names_are_still_not_flagged(self):
+        for name in FULL_GAME_NAMES:
+            assert _PERIOD_SPREAD_NAME_RE.search(name) is None
+
+
+@pytest.mark.asyncio
+class TestTheRailExcludesF5TwoWays:
+    async def test_the_select_predicate_excludes_f5(self, monkeypatch):
+        rec, _ = await _run_rail([], monkeypatch)
+        m = re.search(r"external_id\s*!~\s*'([^']+)'", rec.select_sql)
+        assert m, rec.select_sql
+        exclude = re.compile(m.group(1), re.IGNORECASE)
+        assert exclude.search("KXMLBF5SPREAD-26JUN05ARIATL")
+        assert not exclude.search("KXLIGUE1SPREAD-26MAR01")
+
+    async def test_the_select_predicate_is_the_shared_literal(self, monkeypatch):
+        """The SQL and the Python guard must come from ONE definition.
+
+        This is the actual defect CERT-506 found — not "F5 was missing" but
+        "there were two definitions and only one of them knew about F5".
+        """
+        rec, _ = await _run_rail([], monkeypatch)
+        assert _PERIOD_TICKER_PATTERN in rec.select_sql
+
+    async def test_an_f5_row_that_reaches_the_loop_is_still_skipped(
+        self, monkeypatch
+    ):
+        """Belt and braces: the SQL should never return this row at all.
+
+        If it does — a regex-flavour disagreement between Postgres and Python —
+        the loop must not grade it off the full-game score.
+        """
+        rows = [
+            _rail_row(
+                1, "Arizona wins by over 1.5 runs",
+                "Arizona Diamondbacks", "Atlanta Braves", 9, 2, False,
+                ticker="KXMLBF5SPREAD-26JUN05ARIATL",
+            ),
+        ]
+        rec, stats = await _run_rail(rows, monkeypatch)
+        assert rec.writes == {}, "a first-five-innings leg was graded off the full-game score"
+        assert stats["skipped_period"] == 1
+
+    async def test_a_full_game_row_with_a_digit_ticker_still_grades(
+        self, monkeypatch
+    ):
+        """`KXLIGUE1SPREAD` must not be collateral damage of the F5 exclusion."""
+        rows = [
+            _rail_row(
+                1, "Paris wins by over 1.5 goals",
+                "Paris Saint-Germain", "Olympique Lyonnais", 4, 1, False,
+                ticker="KXLIGUE1SPREAD-26MAR01PSGOL",
+            ),
+        ]
+        rec, stats = await _run_rail(rows, monkeypatch)
+        assert rec.writes == {1: True}
+        assert stats["skipped_period"] == 0

@@ -1455,17 +1455,40 @@ _SPREAD_RE = re.compile(
     re.IGNORECASE,
 )
 
-#: #2352: does this spread outcome name describe a PERIOD rather than the full
+#: CERT-506: the SINGLE authority on "this Kalshi spread ticker is a PERIOD
+#: market, not a full game". It exists because #2352's first attempt hand-wrote
+#: the character class `[0-9](H|Q|HALF)SPREAD` in the SQL and a matching notion
+#: in Python, and the pair silently omitted **F5** — Kalshi's MLB first-five-
+#: innings family. That omission was not a typo, it was a duplicated definition:
+#: this module ALREADY knows `kxmlbf5*` is period work (`_resolve_kalshi_period_
+#: props` sets `period_key = "f5"` on exactly that prefix), and the widened rail
+#: below did not consult it. So there is now one literal, and both the SQL
+#: predicate and the Python guard are derived from it.
+#:
+#: `[0-9](H|Q|HALF)` covers 1H/2H/1Q-4Q/1HALF; `F5` covers `KXMLBF5SPREAD`. No
+#: full-game family in production matches either — in particular
+#: `KXLIGUE1SPREAD` has a digit immediately before SPREAD and is correctly KEPT,
+#: which is why the digit is anchored to an H/Q/HALF that follows it.
+_PERIOD_TICKER_PATTERN = r"([0-9](H|Q|HALF)|F5)SPREAD"
+_PERIOD_TICKER_RE = re.compile(_PERIOD_TICKER_PATTERN, re.IGNORECASE)
+
+#: #2352: does this spread outcome NAME describe a PERIOD rather than the full
 #: game? Kalshi writes "Detroit wins the 1H by over 9.5 points",
-#: "GB Packers wins 2H by over 9.5 points", "Spurs wins 2Q by over 3.5 points".
-#: Only the first of those three is matched by ``_SPREAD_RE`` (its optional
-#: ``the 1H`` group), and that is deliberate — the MAIN resolver detects `1h` in
-#: the ticker and grades it against a reconstructed halftime score. Any consumer
-#: holding only the FULL-TIME score must exclude these, and must do it on the
-#: NAME: a ticker allowlist silently admits the next Kalshi period family, a name
-#: test does not. Verified against all 13 distinct period shapes in production.
+#: "GB Packers wins 2H by over 9.5 points", "Spurs wins 2Q by over 3.5 points",
+#: and — the shape CERT-506 caught — "Arizona -1.5 first 5 innings".
+#: Only the `the 1H` form is matched by ``_SPREAD_RE`` today, and that is
+#: deliberate: the MAIN resolver detects `1h` in the ticker and grades it against
+#: a reconstructed halftime score.
+#:
+#: This is the SECOND filter, and it is deliberately independent of the ticker
+#: one. A ticker pattern silently admits the next Kalshi period family the day it
+#: appears; a name test does not. Verified against all 13 distinct period name
+#: shapes in production plus the F5 wording.
 _PERIOD_SPREAD_NAME_RE = re.compile(
-    r"\bwins\s+(?:the\s+)?[1-4]\s*(?:H|Q|HALF)\b", re.IGNORECASE
+    r"\bwins\s+(?:the\s+)?[1-4]\s*(?:H|Q|HALF)\b"
+    r"|\bfirst\s+(?:5|five)\s+innings\b"
+    r"|\bF5\b",
+    re.IGNORECASE,
 )
 _TOTAL_RE = re.compile(
     r"^(?P<dir>Over|Under)\s+(\d+\.?\d*)\s+(?:1H\s+)?(?:2H\s+)?(?:team\s+)?(?:total\s+)?(?:points|runs|goals|maps|rounds|kills)(?:\s+scored)?$",
@@ -2371,6 +2394,19 @@ async def _regrade_kalshi_nhl_spread_inversions():
     and NCAAMB is both the largest family (6,972 rows) and the one the
     ``SHARED_CITY_DIFFERENT_CLUB`` catalogue names twice (Boston College / Boston
     University). Measured cost of the widening: 2,576 ms -> 2,678 ms.
+
+    CERT-506: the widening's period exclusion is derived from
+    ``_PERIOD_TICKER_PATTERN`` rather than hand-written here. The first version
+    hand-wrote it and omitted **F5** — Kalshi's MLB first-five-innings family,
+    which this very module classifies as period work eleven hundred lines below.
+    No `KXMLBF5SPREAD` row is in the `game_score` cohort today (measured: 0 of
+    20,632), so nothing was mis-graded, but they were being admitted to the query
+    and kept out only by two ACCIDENTS — their outcome names read
+    "Arizona -1.5 first 5 innings" and so miss ``_SPREAD_RE``, and none of them
+    carries a `game_score` winner. Neither is a filter anyone chose, and both
+    would fail open the day Kalshi changes its outcome wording. Three filters
+    now, all deliberate: the SQL ticker predicate, the same pattern re-applied in
+    Python so the two cannot drift, and the independent NAME test.
     """
     stats = {
         "checked": 0,
@@ -2383,6 +2419,7 @@ async def _regrade_kalshi_nhl_spread_inversions():
         async with get_task_session() as session:
             rows = await session.execute(text("""
                 SELECT fo.id AS oid, fo.name AS oc_name, fo.is_winner AS cur,
+                       fm.external_id AS ticker,
                        e.home_team_name AS home, e.away_team_name AS away,
                        e.home_score AS hs, e.away_score AS as_
                 FROM futures_outcomes fo
@@ -2390,13 +2427,21 @@ async def _regrade_kalshi_nhl_spread_inversions():
                 JOIN events e ON e.id = fm.event_id
                 WHERE fm.source = 'kalshi'
                   AND fm.external_id ~ 'SPREAD'
-                  AND fm.external_id !~ '[0-9](H|Q|HALF)SPREAD'
+                  AND fm.external_id !~ '""" + _PERIOD_TICKER_PATTERN + """'
                   AND fo.resolution_source = 'game_score'
                   AND e.home_score IS NOT NULL
                   AND e.away_score IS NOT NULL
             """))
             for r in rows.all():
                 stats["checked"] += 1
+                # CERT-506: re-apply the SAME pattern in Python. The SQL
+                # predicate and this guard are built from one literal, so they
+                # cannot drift, and a row that reaches here with a period ticker
+                # means the database's regex flavour disagreed with Python's —
+                # which is a thing to find out about, not to grade through.
+                if _PERIOD_TICKER_RE.search(r.ticker or ""):
+                    stats["skipped_period"] += 1
+                    continue
                 # #2352: this rail holds only the FULL-TIME score, and `_SPREAD_RE`
                 # deliberately also matches Kalshi's halftime shape ("Detroit wins
                 # the 1H by over 9.5 points") because the MAIN resolver grades
