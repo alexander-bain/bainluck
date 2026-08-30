@@ -744,11 +744,11 @@ describe("the built bundle — the bytes Vercel uploads", () => {
     // OWED only. `EXEMPT` is a statement about what the ruling ALLOWS on a
     // surface, not a measurement of what it currently says, so an exemption
     // that stops firing is not stale — it is a page that happened to reword.
-    const live = new Set(scanDir(dir).map((h) => `${h.surface} ${h.ban.id}`));
+    const live = new Set(scanDir(dir).map((h) => `${h.surface}\u0000${h.ban.id}`));
     const dead: string[] = [];
     for (const [surface, ids] of Object.entries(OWED)) {
       for (const id of ids) {
-        if (!live.has(`${surface} ${id}`)) dead.push(`${surface} → ${id}`);
+        if (!live.has(`${surface}\u0000${id}`)) dead.push(`${surface} → ${id}`);
       }
     }
     if (dead.length > 0) {
