@@ -70,6 +70,57 @@ class TestSelectionPredicate:
                 assert clause.lower() in guard_sql, f"{name} is missing {clause!r}"
                 assert clause.lower() in task_sql
 
+    def test_every_liveness_asker_composes_the_one_shared_string(self):
+        """#2222 — clause-by-clause agreement is not the same as one predicate.
+
+        The test above checks that five named clauses appear on both sides. It
+        passed throughout the month `futures-price-freshness` was stuck red,
+        because the clause the two sides were *missing* was missing from both.
+        Six hand-copied WHERE blocks agree until the day one of them needs a
+        sixth clause.
+
+        This asserts something the clause list cannot: that every selector and
+        every guard interpolates the SAME STRING, so a bound added in
+        `futures_liveness` reaches all of them or none of them. Normalised
+        because the f-strings indent it differently at each site.
+        """
+        import app.routes.admin_source_health as _health
+        from app.utils.futures_liveness import LIVE_MARKET_SQL
+
+        shared = _normalise(LIVE_MARKET_SQL)
+        assert shared, "the shared predicate must not be empty"
+
+        askers = {
+            "task._CANDIDATE_SQL": fpr._CANDIDATE_SQL.text,
+            "task._REGISTERED_CANDIDATE_SQL": fpr._REGISTERED_CANDIDATE_SQL.text,
+            "guard._PRICE_DARK_SQL": _health._PRICE_DARK_SQL,
+            "guard._PRICE_DARK_WORST_SQL": _health._PRICE_DARK_WORST_SQL,
+            "guard._REGISTERED_DARK_SQL": _health._REGISTERED_DARK_SQL,
+            "guard._REGISTERED_ELIGIBLE_SQL": _health._REGISTERED_ELIGIBLE_SQL,
+        }
+        for name, sql in askers.items():
+            assert shared in _normalise(sql), f"{name} does not compose LIVE_MARKET_SQL"
+
+    def test_the_remaining_stale_census_is_an_asker_too(self):
+        """The task's own closing count is the number the run REPORTS.
+
+        It was the third copy of the predicate inside the task, and a census
+        that measures a different set than the selector makes the run's own
+        `remaining_stale` a number about nobody.
+        """
+        from app.utils.futures_liveness import LIVE_MARKET_SQL
+
+        source = _normalise(_MODULE_SRC)
+        # The census is built with an f-string, so the source carries the
+        # interpolation and the module carries the result. Assert on the source:
+        # there is no module-level constant to read for this one.
+        assert "{LIVE_MARKET_SQL}" in _MODULE_SRC
+        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 3, (
+            "two selectors plus the remaining_stale census"
+        )
+        assert _normalise(LIVE_MARKET_SQL) in _normalise(fpr._CANDIDATE_SQL.text)
+        assert "select count(*) from futures_markets fm" in source
+
     def test_guard_endpoint_reads_snapshots_not_updated_at(self):
         """`futures_markets.updated_at` is what made this class invisible.
 
@@ -777,9 +828,24 @@ class _FakeResult:
 
 
 def _extract_sql_literal(source: str, name: str) -> str:
-    match = re.search(rf'^{name} = """(.*?)"""', source, re.S | re.M)
-    assert match, f"{name} not found — did the constant get renamed?"
-    return match.group(1)
+    """The RENDERED constant, not the source text it was typed as.
+
+    #2222 turned the guard's four SQL constants into f-strings that interpolate
+    the shared liveness predicate, at which point reading the source gave back
+    the literal characters ``{LIVE_MARKET_SQL}`` and every clause assertion
+    below started failing against code that was correct. Reading the module
+    attribute tests the string that actually reaches Postgres, which is what
+    these assertions were always trying to say.
+
+    ``source`` is kept in the signature because the callers name which module
+    they mean, and losing that would make the call sites ambiguous.
+    """
+    import app.routes.admin_source_health as _health
+
+    assert source is _ADMIN_SRC, "only the admin-health module is extractable here"
+    sql = getattr(_health, name, None)
+    assert sql, f"{name} not found — did the constant get renamed?"
+    return sql
 
 
 def _normalise(sql: str) -> str:
