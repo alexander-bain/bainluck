@@ -2,38 +2,58 @@
 
 WHY THIS EXISTS
 ---------------
-The board has TWO instruments that answer "how many of this cell's published rows
-are duplicates?", they have never been compared, and they disagree — in different
-directions on different cells:
+The board has TWO instruments that both answer "how many of this cell's rows are
+duplicates?", they have never been compared, and they disagree by up to 36%:
 
-* **exact** — ``backend/scripts/calibration_phantom_curve.py --cell`` (CAL-P126).
-  Enumerates the payload's own rows. Verified internally consistent: for all
-  twelve CAL-P126 cells ``sum(bucket.n_ship) == published_rows`` and
-  ``sum(bucket.n_dedup) == distinct_outcomes``, exactly. It is the reference.
-* **cheap** — ``artifacts/cal-p139/inflation-census.py`` (CAL-P139). Asks a
-  replica population for two scalars per chunk. Its stated purpose is triage:
-  *"it gives the INFLATION, which is the number that says whether the ECE fold is
-  worth 11 minutes."*
+* **payload basis** — ``backend/scripts/calibration_phantom_curve.py --cell``
+  (CAL-P126, twelve cells; CAL-P141 added ``polymarket/hockey``). Verified
+  internally consistent: for every cell ``sum(bucket.n_ship) == published_rows``
+  and ``sum(bucket.n_dedup) == distinct_outcomes``, exactly.
+* **replica basis** — ``artifacts/cal-p139/inflation-census.py`` (CAL-P139), and
+  its exact sibling ``outcome-grain-fold.py``. Both read the producer's
+  ``_calibration_population_ctes`` replica. Stated purpose: triage — *"it gives
+  the INFLATION, which is the number that says whether the ECE fold is worth 11
+  minutes."*
 
-This instrument puts them side by side on every cell both have measured and
-classifies HOW they disagree. That matters because the disagreement is not one
-failure — it is two, and only one of them is documented.
+🔴 **They are not two attempts at one number. They are one number over two
+different populations, and nothing on either side says so.** The proof is in the
+data and the instrument re-checks it every run: the payload-basis
+``published_rows`` equals the census's own ``payload_n`` to +0.000% on the two
+cells with no population drift between the runs, while the census's
+``rows_published`` — the replica — is short by 0 to 36% depending on the cell.
+
+So "the cheap one is a lower bound on the exact one" is the wrong frame. The
+cheap one is exact about a population that is not the one the curve publishes.
+
+WHICH BASIS ANSWERS WHICH QUESTION
+----------------------------------
+``alex-inbox/calibration-911`` §3 asks for the per-cell duplication **of the
+published curve** — its whole argument is that ``total_outcomes: 925,446`` on the
+public page "is not a count of outcomes". That is a payload-basis question, and
+only the payload-basis instrument answers it. 911 §5 item 1 nominates the census
+to extend §3; the census cannot, however long it runs.
+
+The reason this was invisible: on ``polymarket/baseball`` — the one cell 911
+folded — the two bases nearly coincide (replica is short 9.2%), so 911's fold
+(1.651×) and the census (1.654×) agree to 0.15% and both look right. On
+``polymarket/basketball`` the replica is short 35.8% and the census reads 1.13
+where the payload is 1.77. Same instrument, no warning either way.
 
 THE TWO DISCREPANCY MODES
 -------------------------
-``DISTINCT_INFLATED`` — rows agree, the cheap run reports MORE distinct outcomes.
-    This is the documented caveat: chunking on ``fm.id`` can drop an identity
-    group below the ``>= 3`` threshold, collapsing its ``vm_id`` to the per-market
-    ``m:`` arm, which has one identity and therefore no duplication. Splitting a
-    duplicate group manufactures distinct outcomes. Predicted by the docstring.
+``REPLICA_SHORT`` — distinct agree, the replica holds FEWER rows than the payload.
+    The population-basis gap above, and the dominant mode. Note what it implies:
+    the replica is short only on DUPLICATE rows, because outcome coverage stays at
+    1.00. This is the correction to CAL-P128's ``coverage 0.641`` — that figure is
+    a row coverage, and it was read as the rail being unable to see the cell.
 
-``ROW_LOSS`` — distinct agree, the cheap run selects FEWER rows than the payload
-    publishes. NOT the documented caveat, and it is the dominant mode. The
-    replica's population CTEs simply do not reproduce every row the payload ships.
-
-Both modes push the cheap inflation DOWN, so the cheap number is a lower bound —
-but by a per-cell amount that has no bound of its own, which is what makes it
-unsafe for the one job it was built for.
+``DISTINCT_INFLATED`` — rows agree, the census reports MORE distinct outcomes.
+    A genuine census artifact, and the one its own docstring predicts: chunking on
+    ``fm.id`` can drop an identity group below the ``>= 3`` threshold, collapsing
+    its ``vm_id`` to the per-market ``m:`` arm, which has one identity and
+    therefore no duplication. Splitting a duplicate group manufactures distinct
+    outcomes. Only ``kalshi/baseball`` shows it, and it is the largest cell — most
+    chunk boundaries, most groups split.
 
 THE TRIAGE-SAFETY TEST, AND WHY IT IS THE EXIT CODE
 ---------------------------------------------------
@@ -110,7 +130,7 @@ def classify(row_drift_pct: float, distinct_drift_pct: float) -> str:
     if rows_agree and distinct_drift_pct > 0:
         return "DISTINCT_INFLATED"
     if distinct_agree and row_drift_pct < 0:
-        return "ROW_LOSS"
+        return "REPLICA_SHORT"
     return "BOTH"
 
 
@@ -164,12 +184,23 @@ def main(argv=None) -> int:
             "outcome_coverage": round(c["distinct_outcomes"] / e_dist, 4),
         })
 
-    print(f"\n  {'cell':24} {'exact':>7} {'cheap':>7} {'understated':>12}  "
+    # The basis proof, re-checked every run rather than asserted once in prose:
+    # if the payload-basis instrument's row count stops matching the census's own
+    # view of the payload, the two are no longer differing only by population and
+    # every reading below needs redoing.
+    exact_pop = [r for r in rows if abs(r["population_drift_pct"]) < 0.001]
+    print(f"\n  BASIS PROOF — on {len(exact_pop)} cell(s) with zero population drift, the "
+          f"payload-basis\n  instrument's row count equals the census's own payload_n exactly:")
+    for r in exact_pop:
+        print(f"    {r['cell']:24} exact rows {r['exact_rows']:>9,}  ==  census payload_n "
+              f"(drift {r['population_drift_pct']:+.3f}%)   replica holds {r['cheap_rows']:,}")
+
+    print(f"\n  {'cell':24} {'payload':>8} {'replica':>8} {'basis gap':>10}  "
           f"{'rowcov':>7} {'outcov':>7}  mode")
     for r in sorted(rows, key=lambda r: -r["exact_inflation"]):
-        under = (1 - r["cheap_inflation"] / r["exact_inflation"]) * 100
-        print(f"  {r['cell']:24} {r['exact_inflation']:7.4f} "
-              f"{r['cheap_inflation']:7.4f} {under:11.1f}%  "
+        gap = (1 - r["cheap_inflation"] / r["exact_inflation"]) * 100
+        print(f"  {r['cell']:24} {r['exact_inflation']:8.4f} "
+              f"{r['cheap_inflation']:8.4f} {gap:9.1f}%  "
               f"{r['row_coverage']:7.4f} {r['outcome_coverage']:7.4f}  {r['mode']}")
 
     for cell, d in withdrawn:
@@ -187,9 +218,10 @@ def main(argv=None) -> int:
                 discordant.append((a["cell"], b["cell"]))
 
     npairs = len(rows) * (len(rows) - 1) // 2
-    print(f"\n  TRIAGE-SAFETY: {len(discordant)}/{npairs} ranked pairs discordant")
+    print(f"\n  ORDERING: {len(discordant)}/{npairs} ranked pairs discordant between the "
+          f"two bases")
     for a, b in discordant:
-        print(f"    🔴 {a} vs {b} — the cheap census orders these backwards")
+        print(f"    🔴 {a} vs {b} — the replica basis orders these backwards")
 
     out = {
         "cells": rows,
@@ -204,11 +236,14 @@ def main(argv=None) -> int:
             json.dump(out, fh, indent=1)
 
     if discordant:
-        print("\n  🔴 EXIT 4 — the cheap census does not preserve the exact "
-              "ordering, so it cannot be used to choose which cell to fold next. "
-              "Its lower bound is still true; its ranking is not.")
+        print("\n  🔴 EXIT 4 — the replica basis does not preserve the payload "
+              "basis's ordering, so it cannot pick which cell to fold next and it "
+              "cannot extend calibration-911 §3. Both numbers are correct; they "
+              "are correct about different populations.")
         return 4
-    print("\n  EXIT 0 — ordering preserved; the cheap census is safe for triage.")
+    print("\n  EXIT 0 — the two bases agree on ordering on the cells measured so "
+          "far. Re-run when a cell is added; one discordant pair is enough to "
+          "withdraw the replica basis from triage again.")
     return 0
 
 

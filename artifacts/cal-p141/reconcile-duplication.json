@@ -26,7 +26,7 @@
    "cheap_inflation": 1.4793,
    "row_drift_pct": -16.422,
    "distinct_drift_pct": -0.681,
-   "mode": "ROW_LOSS",
+   "mode": "REPLICA_SHORT",
    "row_coverage": 0.8358,
    "outcome_coverage": 0.9932
   },
@@ -41,7 +41,7 @@
    "cheap_inflation": 1.1347,
    "row_drift_pct": -35.758,
    "distinct_drift_pct": 0.094,
-   "mode": "ROW_LOSS",
+   "mode": "REPLICA_SHORT",
    "row_coverage": 0.6424,
    "outcome_coverage": 1.0009
   },
@@ -56,7 +56,7 @@
    "cheap_inflation": 1.0608,
    "row_drift_pct": -22.008,
    "distinct_drift_pct": 0.419,
-   "mode": "ROW_LOSS",
+   "mode": "REPLICA_SHORT",
    "row_coverage": 0.7799,
    "outcome_coverage": 1.0042
   }
