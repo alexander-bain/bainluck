@@ -96,105 +96,125 @@ MUTANTS: list[tuple[str, str, str, str]] = [
         "        return len(suggestions) >= _MAX_SUGGESTIONS",
         "        return len(suggestions) >= 8",
     ),
+    # ---------------------------------------------------------------------
+    # M8-M14 — THE CACHE HALF, RE-TARGETED BY LAT-P139 RATHER THAN RETIRED.
+    #
+    # Every one of these was written against the inline `_cache_key` / `_rc` /
+    # `_json` block that used to live in `search_suggestions`. LAT-P139 replaced
+    # that block with `utils/search_suggestions_cache` plus a mirror, so all
+    # seven anchors drifted at once and `scan_mutation_residue.py` reported them
+    # — which is the scanner doing its job, and the reason it is a gate.
+    #
+    # 🔴 THEY ARE RE-POINTED, NOT DELETED, AND THE PROPERTY IS WHAT IS PRESERVED.
+    # Deleting a mutant because its anchor moved is how a battery quietly stops
+    # covering the thing it was written for; LAT-P115's note ("a survivor is the
+    # finding, not the mutant's fault") cuts the same way for drift. Each id
+    # below keeps its original PROPERTY and gets the shape that property lives in
+    # now. Two of them changed meaning where the new design changed the question,
+    # and each says so on its own line.
+    #
+    # The oracle now runs BOTH route suites (see `SUITES`), because the mirror's
+    # serve decision is pinned in the LAT-P139 file and the skip in the LAT-P124
+    # one, and a route mutant should be graded by everything that guards the
+    # route.
+    # ---------------------------------------------------------------------
     (
         "M8",
         "the cache read is dropped — the original defect, restored",
-        "        _cached = _rc.get(_cache_key)\n"
-        "        if _cached:\n"
-        "            return _json.loads(_cached)\n"
-        "    except Exception:\n"
-        "        pass\n"
-        "\n"
-        "    now = datetime.now(timezone.utc)",
-        "    except Exception:\n"
-        "        pass\n"
-        "\n"
-        "    now = datetime.now(timezone.utc)",
+        """    body, state = ssc.read()
+    if state == "live" and body is not None:
+        return body""",
+        """    body, state = ssc.read()
+    if False:
+        return body""",
     ),
-    # 🔴 M9 and M10 carry the KEY LINE in their anchors, and that is not padding.
-    # Written against the read block alone they each matched TWICE — the block is
-    # byte-identical to `team_progression`'s, which is the whole reason the
-    # original defect was invisible to a reviewer. The harness reported them as
-    # NOT APPLIED rather than skipping them, so the two-match was seen instead of
-    # being quietly counted out of the denominator.
     (
         "M9",
-        "the cached string is returned unparsed — the chips render as characters",
-        '    _cache_key = "bainluck:search_suggestions:v1"\n'
-        "    try:\n"
-        "        _rc = get_redis_client()\n"
-        "        _cached = _rc.get(_cache_key)\n"
-        "        if _cached:\n"
-        "            return _json.loads(_cached)",
-        '    _cache_key = "bainluck:search_suggestions:v1"\n'
-        "    try:\n"
-        "        _rc = get_redis_client()\n"
-        "        _cached = _rc.get(_cache_key)\n"
-        "        if _cached:\n"
-        "            return _cached",
+        "the mirror is served with NO rebuild behind it — LAT-P139's meaning of "
+        "M9's old property (a serve path that returns something it should not) "
+        "on the new design: the stale copy is handed out until it ages past the "
+        "ceiling and nothing is ever scheduled to replace it",
+        # 🔴 THE ANCHOR CARRIES `ssc.read()` BECAUSE THE LINE BELOW IT IS NOT
+        # UNIQUE. `if state == "live" and body is not None:` appears three times
+        # in this file — the two event-page tiers read exactly the same way, on
+        # purpose. The harness reported the three-match as NOT APPLIED rather
+        # than mutating an unrelated tier, which is the same protection M9 and
+        # M10 needed against `team_progression` before LAT-P139 moved them.
+        """    body, state = ssc.read()
+    if state == "live" and body is not None:""",
+        """    body, state = ssc.read()
+    if state in ("live", "stale_ok") and body is not None:""",
     ),
     (
         "M10",
-        "an unparseable slot 500s the route instead of rebuilding",
-        '    _cache_key = "bainluck:search_suggestions:v1"\n'
-        "    try:\n"
-        "        _rc = get_redis_client()\n"
-        "        _cached = _rc.get(_cache_key)\n"
-        "        if _cached:\n"
-        "            return _json.loads(_cached)\n"
-        "    except Exception:\n"
-        "        pass",
-        '    _cache_key = "bainluck:search_suggestions:v1"\n'
-        "    try:\n"
-        "        _rc = get_redis_client()\n"
-        "        _cached = _rc.get(_cache_key)\n"
-        "        if _cached:\n"
-        "            return _json.loads(_cached)\n"
-        "    except KeyError:\n"
-        "        pass",
+        "the stale copy is served even when NOTHING can rebuild behind it — the "
+        "fail-closed half removed. This is the new shape of M10's old property "
+        "(a slot the route should have rejected reaching the reader): with no "
+        "running loop the mirror would be served forever and never replaced",
+        """        if _serve_stale_and_refresh(
+            "search_suggestions", _rebuild_search_suggestions
+        ):
+            return body""",
+        """        _serve_stale_and_refresh(
+            "search_suggestions", _rebuild_search_suggestions
+        )
+        return body""",
     ),
-    (
-        "M11",
-        "the TTL is widened to ten minutes — a baked countdown goes ten minutes wrong",
-        '        _rc.setex(_cache_key, 60, _json.dumps(_response, default=str))',
-        '        _rc.setex(_cache_key, 600, _json.dumps(_response, default=str))',
-    ),
-    # 🔴 M12's needle is a LITERAL multi-line string, not an escaped one, and
-    # that is not a style choice. Its replacement is a single line, so the
-    # replacement appears verbatim in this harness — and with an escaped needle
-    # the needle does NOT, so `scan_mutation_residue.py` Pass B correctly
-    # reported this file as holding a loose mutant. Writing the needle verbatim
-    # too puts both halves in the file and clears the pair. Same lesson as
-    # `cache_refresh_behind_mutations`' M5/M8, one queue later.
+    # 🔴 M11 AND M14 EMIGRATED. They are the only two of the seven whose property
+    # is no longer a property of THIS FILE: the TTL and the key name moved into
+    # `app/utils/search_suggestions_cache.py` with the tier. A mutant has to be
+    # applicable to its harness's target, and this harness's target is
+    # `routes/events.py`; pointing them at a second file would need the
+    # two-target `SHAPES` shape for two entries, which is more machinery than
+    # the facts justify.
+    #
+    # They are NOT dropped — they are re-homed one for one, and both are proven
+    # KILLED in their new battery on the run that shipped this change:
+    #
+    #     M11 "the TTL is widened"      -> search_suggestions_mirror_mutations
+    #                                      :the-fresh-ttl-is-widened
+    #     M14 "the key is per-process"  -> search_suggestions_mirror_mutations
+    #                                      :the-primary-key-is-renamed
+    #
+    # The denominator below therefore reads 12, not 14, and that is a move and
+    # not a loss. If either line above stops being true, this comment is the
+    # thing that makes the hole findable.
     (
         "M12",
         "the write is dropped — reads stay cold forever, the defect from the other side",
-        """        _rc = get_redis_client()
-        _rc.setex(_cache_key, 60, _json.dumps(_response, default=str))""",
-        "        _rc = get_redis_client()",
+        """    enveloped = jsonable_encoder(ssc.stamp(response))
+    ssc.write(enveloped)""",
+        """    enveloped = jsonable_encoder(ssc.stamp(response))""",
     ),
     (
         "M13",
         "the slot is written with a payload that is not the one served",
-        '        _rc.setex(_cache_key, 60, _json.dumps(_response, default=str))',
-        '        _rc.setex(\n'
-        '            _cache_key,\n'
-        '            60,\n'
-        '            _json.dumps({"suggestions": suggestions[:4]}, default=str),\n'
-        "        )",
+        """    enveloped = jsonable_encoder(ssc.stamp(response))
+    ssc.write(enveloped)""",
+        """    enveloped = jsonable_encoder(ssc.stamp(response))
+    ssc.write(jsonable_encoder(ssc.stamp({"suggestions": response["suggestions"][:4]})))""",
     ),
-    (
-        "M14",
-        "the key is parameterised per process — one slot per worker, 2N rebuilds",
-        '    _cache_key = "bainluck:search_suggestions:v1"',
-        '    _cache_key = f"bainluck:search_suggestions:v1:{id(search_suggestions)}"',
-    ),
+]
+
+
+#: LAT-P139: the oracle is BOTH route suites, not one.
+#:
+#: The route's guards are split across two files now — the skip and the window
+#: constant in the LAT-P124 suite, the mirror's serve decision and the one-writer
+#: rule in the LAT-P139 one — and a mutant of the route should be graded by
+#: everything that guards the route. Running only the first would have let M8,
+#: M9 and M10 survive against assertions that exist three directories away, and
+#: a survivor that is really "the oracle was not looking" is the worst output
+#: this battery can produce.
+SUITES = [
+    SUITE,
+    ROOT / "tests" / "test_search_suggestions_mirror_lat_p139.py",
 ]
 
 
 def _run_suite() -> int:
     return subprocess.run(
-        [sys.executable, "-m", "pytest", str(SUITE), "-q", "--no-header", "-x"],
+        [sys.executable, "-m", "pytest", *[str(s) for s in SUITES], "-q", "--no-header", "-x"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -217,7 +237,11 @@ def _main() -> int:
     # no denominator in front of it is how a battery that skipped half its
     # mutants reads as a clean sweep.
     print(f"queued: {len(MUTANTS)} mutants against {TARGET.relative_to(ROOT)}")
-    print(f"oracle: {SUITE.relative_to(ROOT)}\n")
+    print(
+        "oracle: "
+        + ", ".join(str(s.relative_to(ROOT)) for s in SUITES)
+        + "\n"
+    )
 
     baseline = _run_suite()
     if baseline != 0:

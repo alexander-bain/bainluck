@@ -1432,8 +1432,61 @@ def _build_futures_name_filter(ilike_futures_filter, fts_q: str):
     The lever is therefore REJECTED on measurement, and the DDL is not merely the
     convenient fix — it is the only one that preserves the recall the census
     pins. Full working: `docs/audits/latency/lat-p097-*`.
+
+    ⚠️ THE DDL LANDED 2026-08-29 AND IT DID NOT FINISH THE JOB. `ix_futures_name_fts_open`
+    exists in production and the numbers above are now history for SELECTIVE terms
+    (`werder` 4,722 -> 5.7 ms, BitmapOr over both GINs). But the planner ABANDONS
+    both GINs whenever either half is estimated non-selective, because the flat
+    `ix_futures_markets_status` scan has a fixed cost (37,715) that a broad
+    BitmapOr's union exceeds — and that is precisely the class of short, common
+    prefix a person actually types. Measured the day the index landed:
+
+        chi      1,283 rows  1,250.1 ms   no BitmapOr, ix_futures_markets_status
+        chicago    220 rows    917.9 ms   no BitmapOr  (row count is NOT the trigger)
+        winner   4,762 rows    881.5 ms   no BitmapOr
+        yan        311 rows    115.0 ms   BitmapOr over both GINs
+
+    So this OR is still the arm that has to be kept off the hot path — see
+    `_futures_name_arms`, which is how callers do it. Do NOT read the index as
+    having retired this warning.
     """
-    return or_(_fts_filter(FuturesMarket.name, fts_q), ilike_futures_filter)
+    return or_(*_futures_name_arms(ilike_futures_filter, fts_q))
+
+
+def _futures_name_arms(ilike_futures_filter, fts_q: str) -> list:
+    """The futures NAME arm's two halves as a LIST, ready to UNION (LAT-P140).
+
+    ONE definition of what the halves ARE, shared with `_build_futures_name_filter`
+    so the two can never drift — that helper is now this list folded with `or_`.
+    The docstring above is the canonical account of WHY both halves exist; this
+    one is only about the SHAPE a caller wants them in.
+
+    WHY A CALLER WANTS THE LIST. `or_` and `UNION` are set-identical, so this is
+    not a recall or precision change — it is the same rows by a plan the planner
+    can actually index. Exactly the LAT-P007 treatment already applied one level
+    up in `/typeahead` ("UNION, not OR — a top-level OR blocks the hash-semi-join
+    transformation"), applied one level further in. Each half then gets costed and
+    indexed on its OWN selectivity instead of the union's, which is what stops the
+    common-prefix fallback documented above.
+
+    Measured on production 2026-08-29 with both GINs live, `count(*)` + `md5` of
+    the ORDER-BY-id id set, server-side so the 1,000-row cap cannot flatter it —
+    **all ten terms byte-identical, OR vs UNION**:
+
+        chi      1,250.1 ->  22.9 ms  (54.6x)     chiefs      6.7 ->  32.6 ms
+        chicago    917.9 ->  34.4 ms  (26.7x)     werder      8.7 ->  18.1 ms
+        winner     881.5 ->  64.1 ms  (13.7x)     election   45.3 ->  42.0 ms
+        win        796.1 ->  74.2 ms  (10.7x)     fed        23.3 ->  88.7 ms
+        champions  116.2 ->  24.5 ms   (4.7x)     trump      90.4 ->  38.3 ms
+
+    ⚠️ READ THE TAIL, NOT THE MEDIAN. Four terms get SLOWER (`fed` 23.3 -> 88.7 ms)
+    because a UNION pays for two index probes where a lucky OR paid for one. That
+    is the trade and it is the right one on a keystroke path: the worst case falls
+    from **1,250 ms to 88.7 ms (14x)**, and the terms it rescues — `chi`,
+    `chicago`, `win`, `winner` — are the ones a user types on the way to a real
+    query. A p50 would hide this entirely; the bound is the product.
+    """
+    return [_fts_filter(FuturesMarket.name, fts_q), ilike_futures_filter]
 
 
 def _alias_futures_arms(terms: list[str]) -> list:
@@ -5006,7 +5059,12 @@ async def typeahead_search(
         fts_event_f = or_(fts_event_f, Sport.key.in_(sport_alias_keys))
     event_team_filter = or_(fts_event_f, ilike_event_filter)
 
-    futures_name_filter = _build_futures_name_filter(ilike_futures_filter, ta_fts_q)
+    # LAT-P140: the two halves go in as SEPARATE arms of the UNION built below,
+    # not as one OR'd arm. `_futures_name_arms` carries the measurement; the short
+    # version is that after `ix_futures_name_fts_open` landed, the OR still made
+    # the planner abandon both GINs on common prefixes (`chi` 1,250 ms) and the
+    # split costs each half on its own selectivity (`chi` 22.9 ms, same rows).
+    futures_name_arms = _futures_name_arms(ilike_futures_filter, ta_fts_q)
 
     # --- Collect candidates into separate pools (all 3 queries run) ---
     _TIER_LABELS = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
@@ -5152,7 +5210,7 @@ async def typeahead_search(
     # fetches the correct-league market ("nba mvp" → NBA "MVP Winner", ticker
     # kxnba%, no "nba" in the name) that the shared reranker then surfaces over the
     # WNBA substring-cousin. Prefix LIKE (index-friendly) — keystroke-budget-safe.
-    ta_futures_where = [futures_name_filter]
+    ta_futures_where = [*futures_name_arms]
 
     # LAT-P007/#1494: the outcome-name arm is NON-CORRELATED, and it is SKIPPED
     # for a sub-3-character query. Both measured in production 2026-08-08.
@@ -5758,51 +5816,111 @@ _MAX_SUGGESTIONS = 8
 async def search_suggestions(
     db: AsyncSession = Depends(get_db),
 ):
-    """Return 6-8 smart, data-driven search suggestions for the search zero-state.
+    """The `/search` zero-state chips — the CACHE POLICY.
+
+    The build is `_build_search_suggestions` below and its five sections are
+    unchanged apart from where section 2's label comes from (see there).
+
+    LAT-P139 closes the half LAT-P124 named and left. That queue gave this route
+    a cache that finally wrote — its `setex` had referenced two unbound names
+    behind a bare `except`, so three consecutive production reads measured
+    12.2 s / 14.5 s / 7.5 s — and its own closing sentence said what remained:
+    *"this degrades to slow once a minute, never to wrong."*
+
+    Measured on production `b7a7bbd0`, 2026-08-30, `x-timing-split` server time:
+
+        first touch, cold slot                 12,782 ms
+        +2 s / +4 s / +6 s / +8 s (in TTL)         15-24 ms
+        after 65 s idle — ONE TTL EXPIRY        8,338 ms
+
+    The wait did not go away, it acquired a schedule: every ~60 s the next
+    person to open Search pays the whole build. Serve order now, fastest first:
+
+      L1  Redis primary  — 60 s, unchanged, and the SAME production key.
+      L1s Redis mirror   — 24 h, served while young enough, with ONE rebuild
+                           scheduled behind it. This is the new one and it is
+                           what makes the 61st-second reader not pay.
+      build              — what that reader used to do.
+
+    🔴 WHY THE MIRROR IS LEGAL, WHEN LAT-P124 CORRECTLY SAID IT WOULD NOT BE.
+    Its objection was that `label` bakes a countdown, so an old copy prints a
+    wrong minute count. That objection is not argued with — the constraint is
+    dissolved: section 2 now stores its DEADLINE and the label is rendered at
+    SERVE time by `search_suggestions_cache.render`, from the serving clock. The
+    full enumeration of what else in this payload can age, and why 300 s bounds
+    it, is in that module's docstring.
+
+    There is no in-process L1 dict here and one is not added: the payload is
+    principal-free and one shared Redis slot already serves the fleet.
+    """
+    from app.utils import search_suggestions_cache as ssc
+
+    body, state = ssc.read()
+    if state == "live" and body is not None:
+        return body
+    if state == "stale_ok" and body is not None:
+        # Exactly one rebuild behind the mirror per process; the shared slot the
+        # rebuild publishes is what keeps the other processes from re-doing it
+        # once it lands.
+        if _serve_stale_and_refresh(
+            "search_suggestions", _rebuild_search_suggestions
+        ):
+            return body
+        # No running loop to refresh behind us — fall through and build, rather
+        # than serve stale with nothing coming to replace it.
+
+    response = await _build_search_suggestions(db)
+    return _publish_search_suggestions(response)
+
+
+def _publish_search_suggestions(response: dict) -> dict:
+    """Stamp a fresh build, publish it, and return what a reader gets.
+
+    🔴 WHAT IS STORED AND WHAT IS SERVED DIFFER BY EXACTLY THE RENDER, AND THAT
+    IS THE POINT. The stored artifact keeps `countdown_from` on its
+    time-relative items so a later reader can re-derive the minute count; the
+    served body has it stripped and its labels rendered from this instant. On a
+    fresh build the render is a no-op on the text — same clock, same function —
+    which `test_render_is_a_no_op_on_a_payload_built_this_instant` pins.
+
+    `jsonable_encoder` before storing is LAT-P121's rule: the tier's codec is
+    `json.dumps(payload, default=str)`, so running FastAPI's own encoder here
+    makes what is stored, what is served now and what is served an hour from now
+    one dict rather than three shapes.
+    """
+    from fastapi.encoders import jsonable_encoder
+
+    from app.utils import search_suggestions_cache as ssc
+
+    enveloped = jsonable_encoder(ssc.stamp(response))
+    ssc.write(enveloped)
+    return ssc.with_availability(ssc.render(enveloped), ssc.AVAILABILITY_LIVE)
+
+
+async def _rebuild_search_suggestions() -> None:
+    """Rebuild the chips behind a stale serve.
+
+    Opens its OWN session: the request's `AsyncSession` is not ours to hold past
+    the response (`_serve_stale_and_refresh`'s contract, and the reason that
+    helper takes a zero-arg coroutine function rather than a coroutine).
+    """
+    from app.services.database import async_session_maker
+
+    async with async_session_maker() as session:
+        _publish_search_suggestions(await _build_search_suggestions(session))
+
+
+async def _build_search_suggestions(db: AsyncSession) -> dict:
+    """Build the chips from scratch. Everything below is the pre-LAT-P139 route
+    body, moved unchanged except for section 2's label and the removed cache
+    head and tail, which are now the caller's job.
 
     Sources: live close games, live upsets, starting soon, futures movers,
-    recent upsets, popular championship markets.
+    recent upsets, popular championship markets — two of which have never run
+    (#2286, and `TestSectionsThatHaveNeverRun` pins both).
     """
     from app.utils.highlights import LEAGUE_TIERS
-
-    # LAT-P124/#2285: THE CACHE THIS ROUTE ALREADY TRIED TO WRITE, MADE REAL.
-    #
-    # The `setex` at the bottom of this function referenced `_cache_key` and
-    # `_json`, and NEITHER NAME EXISTED in this scope. The block is a copy of
-    # `team_progression`'s WRITE half without its HEAD half — the head is where
-    # the import, the key and the READ live — and the bare `except Exception:
-    # pass` around it turned the resulting `NameError` into silence. So the
-    # cache never wrote, there was never a read path at all, and every visitor
-    # to `/search` paid the whole build.
-    #
-    # That is not an inference. Three consecutive production reads two seconds
-    # apart, slug `d9b76e9b`, measured **12.2s / 14.5s / 7.5s** against a
-    # measured 0.32s transport floor. A 60s cache that worked would have made
-    # reads two and three free; they were not. No cache at all is the only
-    # shape that fits.
-    #
-    # The key is SHARED and unparameterised because the answer is: this
-    # endpoint takes no argument, reads no principal, and every section below
-    # is keyed on `now()` alone. One slot serves the fleet.
-    #
-    # 🔴 THE TTL STAYS 60s BECAUSE THE PAYLOAD CARRIES A RENDERED COUNTDOWN.
-    # `label` is baked at build time — "Tips off in 12 min", "Starts in 2h" —
-    # so a mirror older than a minute prints a minute count that is wrong. A
-    # longer TTL would buy latency with a formatting lie, which is the trap
-    # LAT-P122 and LAT-P123 both named on the surface next door. 60s is the TTL
-    # the original (dead) write chose; it is KEPT, not widened, and the reason
-    # it cannot be widened is written here so the next reader does not have to
-    # rediscover it from a wrong minute count in production.
-    import json as _json
-    from app.tasks.redis_state import get_redis_client
-    _cache_key = "bainluck:search_suggestions:v1"
-    try:
-        _rc = get_redis_client()
-        _cached = _rc.get(_cache_key)
-        if _cached:
-            return _json.loads(_cached)
-    except Exception:
-        pass
+    from app.utils import search_suggestions_cache as ssc
 
     now = datetime.now(timezone.utc)
     suggestions: list[dict] = []
@@ -5941,14 +6059,33 @@ async def search_suggestions(
         for ev in soon_rows:
             if len(suggestions) >= _MAX_SUGGESTIONS:
                 break
-            minutes = int((ev.commence_time - now).total_seconds() / 60)
-            if minutes < 60:
-                time_label = f"Tips off in {minutes} min"
-            else:
-                hours = minutes // 60
-                time_label = f"Starts in {hours}h"
+            # 🔴 LAT-P139: THE ONLY CLOCK-RELATIVE TEXT THIS ROUTE PRODUCES, AND
+            # IT NO LONGER STOPS THE PAYLOAD BEING CACHED PAST A MINUTE.
+            #
+            # The four lines that used to be here rendered "Tips off in N min" /
+            # "Starts in Nh" inline, which is why LAT-P124 could not widen the
+            # TTL: a stored copy of this label goes wrong as soon as the clock
+            # moves. The same text now comes from `ssc.countdown_label`, and the
+            # DEADLINE travels with the suggestion so the label can be rendered
+            # again from the serving clock. Same function on both sides, so a
+            # build and a mirror of that build cannot print different strings.
+            #
+            # `countdown_label` returns None for a game that has already
+            # started. It cannot here — the query is `BETWEEN now AND now + 3h`
+            # and `now` is the same object — and the item is skipped rather than
+            # labelled anyway, so the build agrees with the renderer on the
+            # boundary instead of relying on that argument.
+            time_label = ssc.countdown_label(ev.commence_time, now)
+            if time_label is None:
+                continue
             short = _shorter_team(ev.home_team_name, ev.away_team_name)
-            _add(short, time_label, "event", event_id=ev.id)
+            _add(
+                short,
+                time_label,
+                "event",
+                event_id=ev.id,
+                **{ssc.COUNTDOWN_FIELD: ev.commence_time},
+            )
     except Exception:
         pass
 
@@ -6101,18 +6238,11 @@ async def search_suggestions(
     except Exception:
         pass
 
-    _response = {"suggestions": suggestions[:_MAX_SUGGESTIONS]}
-    # LAT-P124: unchanged text, and for the first time it EXECUTES — `_cache_key`,
-    # `_json` and `get_redis_client` are all bound at the top of this function
-    # now. The `except Exception: pass` stays, because a Redis outage must not
-    # take the suggestion chips down; what changes is that it is no longer
-    # catching a `NameError` on every single request.
-    try:
-        _rc = get_redis_client()
-        _rc.setex(_cache_key, 60, _json.dumps(_response, default=str))
-    except Exception:
-        pass
-    return _response
+    # LAT-P139: the write that used to be here is the caller's job now
+    # (`_publish_search_suggestions`), so that a build reached through the
+    # stale-refresh path publishes through exactly the same writer as one
+    # reached through a request. Two writers for one tier is LAT-P001's defect.
+    return {"suggestions": suggestions[:_MAX_SUGGESTIONS]}
 
 
 @router.get("/debug/sport-keys")

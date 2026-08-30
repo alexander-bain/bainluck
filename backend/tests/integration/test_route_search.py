@@ -739,12 +739,32 @@ class TestSearchSuggestionsEndpoint:
         assert resp.status_code == 200
 
     async def test_response_has_suggestions_key(self, client):
-        """Response has a 'suggestions' key containing a list."""
+        """Response has a 'suggestions' key containing a list, plus the envelope.
+
+        🔴 LAT-P139 WIDENED THIS ASSERTION AND THAT IS A CONTRACT CHANGE, NOT A
+        TEST FIX. It read `set(body.keys()) == {"suggestions"}`. The route now
+        publishes the cache envelope (`docs/contracts/cache-envelope.md`) in its
+        body the way `/related-futures`, `/game-markets`, `/hub/{slug}` and the
+        concept pages already do — the producer states `availability` so a
+        consumer never re-derives freshness from a timestamp (contract rule 1),
+        and this route needed it because it can now serve a mirror.
+
+        Additive is safe here and that was checked rather than assumed:
+        `frontend/lib/types.ts:823` types the response as
+        `{ suggestions: SearchSuggestion[] }` and `app/search/page.tsx` reads
+        only `.suggestions`; there is no iOS caller. The key set is still pinned
+        — it is pinned to TWO names, so a third arriving unannounced still fails.
+        """
+        from app.utils.event_concept_cache import ENVELOPE_FIELD, is_servable_envelope
+
         resp = await client.get("/api/events/search-suggestions")
         body = resp.json()
-        assert set(body.keys()) == {"suggestions"}
-        assert "suggestions" in body
+        assert set(body.keys()) == {"suggestions", ENVELOPE_FIELD}
         assert isinstance(body["suggestions"], list)
+        assert is_servable_envelope(body), (
+            f"the envelope this route now publishes is malformed: "
+            f"{body.get(ENVELOPE_FIELD)!r}"
+        )
 
     async def test_at_most_8_suggestions(self, client):
         resp = await client.get("/api/events/search-suggestions")

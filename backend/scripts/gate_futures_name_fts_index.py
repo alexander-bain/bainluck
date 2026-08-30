@@ -89,11 +89,47 @@ in the teams DDL (`::text` vs `CAST(... AS VARCHAR)`).
 
 SEMANTICS ARE CHECKED BY SERVER-SIDE SIGNATURE, NOT BY ROW EXTRACTION
 ----------------------------------------------------------------------
-`winner` matches 3,530 open markets and `/api/admin/db-query` silently truncates
-at 1,000 rows. Pulling ids and comparing lists would compare the first 1,000 of
-each and report agreement it never checked. The gate compares
+`winner` matches thousands of open markets and `/api/admin/db-query` silently
+truncates at 1,000 rows. Pulling ids and comparing lists would compare the first
+1,000 of each and report agreement it never checked. The gate compares
 `count(*)` plus `md5(string_agg(id::text, ',' ORDER BY id))` computed IN the
 database, which is cap-proof.
+
+⚠️ AMENDED 2026-08-29: THE COMPARAND IS A FORCED SCAN, NOT THE FROZEN BASELINE.
+Criterion 3 originally compared today's digest against one recorded by
+`--write-baseline`. Run three days later it reported DRIFT on 8 of 10 terms and
+every one was an artefact: the graded predicate contains **`now()`**, and the
+open-market population churns continuously, so `winner` had legitimately moved
+3,530 -> 4,762 rows. A frozen digest over a clock-dependent population is
+gotcha #44's anchor-that-branches-on-the-clock, and it fails for every reason
+except the one it is watching for.
+
+It now compares the INDEXED answer against a FORCED-SCAN answer taken at the
+SAME INSTANT (`_ground_truth_sql`). That is the actual claim an expression index
+makes — change the plan, never the rows — and churn can neither forge agreement
+nor fake a difference, because neither read is frozen. Strictly harder than the
+old check, and it holds on any date.
+
+WHAT THE INDEX ACTUALLY DID, MEASURED 2026-08-29 AFTER ALEX RAN THE DDL
+------------------------------------------------------------------------
+GREEN on shape/budget for 9 of 10 terms, and the win is large: `werder`
+4,722 -> 5.7 ms, `mvp` 6,527 -> 4.1 ms, all under a BitmapOr over both GINs.
+Cold typeahead p50 on the charter instrument fell 3,251 -> 674.5 ms.
+
+RED on `winner`, and it is a REAL finding rather than noise: the planner used
+NEITHER GIN, taking `ix_futures_markets_status` and scanning all 55,102 open
+rows. The rule, established across twelve terms, is that the flat status scan
+has a FIXED cost (37,715) which a broad BitmapOr's union exceeds — so the
+planner abandons both indexes whenever EITHER half of the OR is estimated
+non-selective. Row count is not the trigger: `chicago` (220 rows) falls back
+while `yan` (311 rows) does not.
+
+That residual is a CODE fix and it shipped as LAT-P140: the two halves now enter
+`/typeahead`'s existing UNION as separate arms, so each is costed on its own
+selectivity (`chi` 1,250 -> 22.9 ms, identical rows). This gate still grades the
+OR form, which is correct — the OR remains the definition of the arm and other
+callers use it. A RED on a high-frequency term here means "the OR still cannot
+be trusted on the hot path", which is true and is why the UNION split exists.
 """
 
 from __future__ import annotations
@@ -318,12 +354,75 @@ def _signature_sql(term: str) -> str:
     )
 
 
+def _ground_truth_sql(term: str) -> str:
+    """The SAME logical row set, by a predicate NEITHER index can serve.
+
+    ``|| ''`` is a no-op on the value and a wrecking ball to expression matching:
+    `to_tsvector(..., coalesce(name,'') || '')` no longer matches
+    `ix_futures_name_fts_open`'s indexed expression, and `(name || '') ILIKE ...`
+    no longer matches `ix_futures_name_trgm`. So this compiles to a forced scan
+    computing the answer from the heap, which is the ground truth the indexed
+    path must agree with.
+
+    Built by string surgery on the compiled arm rather than through the ORM on
+    purpose: the point is to produce SQL the planner treats as DIFFERENT while a
+    reader can see it is logically THE SAME. Going through `_arm()` again would
+    just rebuild the indexable form.
+    """
+    sql = _signature_sql(term)
+    sql = sql.replace(
+        "to_tsvector('english', coalesce(futures_markets.name, ''))",
+        "to_tsvector('english', coalesce(futures_markets.name, '') || '')",
+    )
+    sql = sql.replace(
+        "futures_markets.name ILIKE", "(futures_markets.name || '') ILIKE"
+    )
+    return sql
+
+
 def _signature(term: str) -> dict:
+    """Count + id digest by the INDEXED path and by a forced scan, same instant.
+
+    ⚠️ WHY THIS NO LONGER GRADES AGAINST THE FROZEN BASELINE. It used to, and on
+    2026-08-29 that produced a RED on 8 of 10 terms which was entirely an
+    artefact. The graded predicate is `status = 'open' AND (resolution_date IS
+    NULL OR resolution_date >= now())` — it contains **`now()`**, and the open
+    market population churns continuously (ingest every 1-2 h, settlement
+    continuous). Three days after `--write-baseline`, `winner` had moved
+    3,530 -> 4,762 rows and `schalke` 34 -> 53. A frozen id digest over a
+    clock-dependent population cannot survive its own baseline, so criterion 3
+    was guaranteed to fail for any reason EXCEPT the one it was watching for.
+    That is gotcha #44's shape — an anchor that branches on the clock — and a
+    criterion that always fails is exactly as useless as one that always passes.
+
+    The replacement tests the real claim, and tests it STRICTLY HARDER: an
+    expression index must change PLANS and never ROWS, so the indexed answer and
+    a forced-scan answer taken at the SAME INSTANT over the SAME population must
+    agree exactly. Churn cannot forge agreement (both reads see it) and cannot
+    fake a difference (neither is frozen). Verified in production the day the
+    index landed: `werder` n=38, `champions` n=596 and `winner` n=4,762 all
+    matched digest-for-digest.
+
+    Still server-side `count(*)` + `md5(string_agg(...))`, for the original
+    reason: `winner` matches thousands of rows and `/api/admin/db-query`
+    truncates at 1,000, so pulling ids would compare the first 1,000 of each and
+    report an agreement it never checked.
+    """
     rows = _post(_signature_sql(term), analyze=False).get("rows") or []
     if not rows:
         print(f"ERROR: signature read returned no rows for {term!r}", file=sys.stderr)
         sys.exit(2)
-    return {"n": rows[0][0], "sig": rows[0][1]}
+    truth = _post(_ground_truth_sql(term), analyze=False).get("rows") or []
+    if not truth:
+        print(f"ERROR: ground-truth read returned no rows for {term!r}", file=sys.stderr)
+        sys.exit(2)
+    return {
+        "n": rows[0][0],
+        "sig": rows[0][1],
+        "ground_truth_n": truth[0][0],
+        "ground_truth_sig": truth[0][1],
+        "agrees_with_forced_scan": (rows[0][0] == truth[0][0] and rows[0][1] == truth[0][1]),
+    }
 
 
 def main() -> int:
@@ -341,15 +440,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # The baseline is no longer REQUIRED — criterion 3 grades against a
+    # same-instant forced scan (see `_signature`). It is still read when present,
+    # because the row-count delta against it is the cheapest available read on
+    # how much the open-market population moved since the red was recorded, and
+    # that is the context a reader needs to interpret everything else. Reported,
+    # never graded: grading it is what made the 2026-08-29 run a false RED.
     baseline: dict = {}
-    if not args.write_baseline:
-        if not os.path.exists(BASELINE):
-            print(
-                f"ERROR: no baseline at {BASELINE}. Run once with --write-baseline "
-                "BEFORE the DDL, or semantics cannot be graded.",
-                file=sys.stderr,
-            )
-            sys.exit(2)
+    if not args.write_baseline and os.path.exists(BASELINE):
         with open(BASELINE) as handle:
             baseline = json.load(handle)["terms"]
 
@@ -392,10 +490,10 @@ def main() -> int:
         if not args.skip_semantics:
             signature = _signature(term)
             if not args.write_baseline:
-                semantics_ok = (
-                    signature["n"] == baseline[term]["signature"]["n"]
-                    and signature["sig"] == baseline[term]["signature"]["sig"]
-                )
+                # Same instant, same population, indexed vs forced scan. See
+                # `_signature` for why the frozen baseline is no longer the
+                # comparand (it graded a clock-dependent population).
+                semantics_ok = signature["agrees_with_forced_scan"]
 
         if not shape_ok:
             shape_fail.append(term)
@@ -422,9 +520,16 @@ def main() -> int:
 
         flag = "PASS" if (shape_ok and budget_ok and semantics_ok) else "FAIL"
         shape_note = "ok" if shape_ok else ("MISSING:" + ",".join(missing) if missing else "no BitmapOr")
+        # Population drift is REPORTED, never graded — it is context for reading
+        # the row, not a verdict about the index.
+        drift = ""
+        if signature and term in baseline:
+            delta = signature["n"] - baseline[term]["signature"]["n"]
+            drift = f" pop{delta:+d}" if delta else " pop=0"
         print(
             f"  {term:<12} {klass:<16} arm={arm_med:8.1f}ms ctrl={ctrl_med:8.1f}ms "
-            f"ratio={ratio:6.2f}  shape={shape_note:<34} sem={'ok' if semantics_ok else 'DRIFT'}  {flag}"
+            f"ratio={ratio:6.2f}  shape={shape_note:<34} "
+            f"sem={'ok' if semantics_ok else 'ROWS CHANGED'}{drift}  {flag}"
         )
 
     if args.write_baseline:
