@@ -171,6 +171,42 @@ market **live** — noisy rather than silently retired.
 
 ---
 
+## 7b. The stamp would have been deleted by the polls
+
+Found while writing the cert's own attack list. Both ingest polls SET `market_metadata` to a
+freshly built dict on every upsert — `"market_metadata": kalshi_metadata if kalshi_metadata else
+None` — which is a **replace**, not a merge, so any key the poll does not know about is deleted.
+
+Measured before changing anything:
+
+| writer | reaches these rows? | how it writes `market_metadata` |
+|---|---|---|
+| `poll_kalshi_markets` | **no** (that is #2199's founding premise) | wholesale REPLACE |
+| `poll_polymarket_markets` | **no** | wholesale REPLACE |
+| `backfill_market_shapes` | **yes** — it is what moved `updated_at` on `KXHOUSENJ11SPECIAL-26` to 2026-08-30T00:30Z | merges with `\|\|` — safe |
+| `kalshi.py` third writer | n/a | `on_conflict_do_nothing` — never updates |
+
+`updated_at` on `KXHOUSENJ11SPECIAL-26` was `2026-08-30 00:30:22.990749Z` at 02:40Z and **identical**
+at 03:32Z, so the polls are demonstrably not reaching it. The stamp therefore survives today —
+**because of the very starvation #2199 exists to fix.** When discovery coverage improves the poll
+reaches the row, the blob is replaced, the 48h clock resets to nothing, and #2222 returns silently.
+
+Fixed rather than noted: both UPDATE paths now merge the key back. Validated against production
+PostgreSQL 17.10, read-only:
+
+```
+NULL + absent key         -> NULL              (contract unchanged — still writes SQL NULL)
+{"ticker":"X"} + absent   -> {"ticker": "X"}   (no-op for every market without a stamp)
+{"ticker":"X"} + present  -> both keys         (the stamp is carried across the replace)
+```
+
+`NULLIF(..., '{}')` is what keeps the first line true. Without it the polls would begin writing
+`{}` where they wrote NULL, and every reader testing `market_metadata IS NULL` would change
+behaviour — a repo-wide side effect from a fix about nineteen markets. jsonb subscripting is PG14+;
+production is 17.10.
+
+---
+
 ## 8. Parked, deliberately
 
 * **The `resolution_date` corruption** (§3). A writer bug in the ingest; needs its own measurement
