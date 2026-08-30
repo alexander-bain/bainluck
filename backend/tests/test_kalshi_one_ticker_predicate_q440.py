@@ -22,10 +22,12 @@ wrong — the other 75 are ``KXNBAPTSLEADER``, which is a per-game prop correctl
 attached to its own game. That split is the finding, not a footnote: the naive
 repair unlinks all 78.
 
-The reverse collision holds 143 times (``kxmlbrfi`` extends the FUTURES prefix
-``kxmlb``), so "refuse if any futures prefix matches" is wrong in the other
-direction and fails silently — 143 real game families would stop anchoring while
-every counter still read healthy. That control is asserted here too.
+The reverse collision is the COMMON one (``kxmlbrfi`` extends the FUTURES prefix
+``kxmlb``) — 143 pairs measured 2026-08-29, 155 after Q435's tennis additions —
+so "refuse if any futures prefix matches" is wrong in the other direction and
+fails silently: every one of those real game families would stop anchoring while
+every counter still read healthy. That control is asserted here too, as a
+property over the maps rather than a pinned count (Q462).
 
 One member of the eight is a MIS-FILED MAP ENTRY rather than a predicate bug:
 ``kxnbaptsleader`` ("Atlanta at New York: Points Leader") is a per-game prop, and
@@ -192,13 +194,50 @@ class TestReverseDirectionDoesNotRegress:
         assert ticker.lower().startswith(shadowed_futures)
 
     def test_reverse_collisions_are_the_bulk(self):
-        """Asserted as a count so a map reshape fails loudly instead of silently.
+        """The reverse direction dominates — so "refuse on any futures prefix" is wrong.
 
-        Measured 2026-08-29: 143 pairs. The issue quotes 134 — the maps have grown
-        since. The number is pinned to what the maps say TODAY; a change to it is
-        a map change and wants a human reading, not a green test.
+        RE-DERIVED (Q462). This asserted `== 143`, a literal measured 2026-08-29.
+        Q435 then added twelve `kxatp*`/`kxwta*` tennis prefixes — a routine and
+        correct map addition — and the literal read 155. `155 - 143 = 12`: the
+        arithmetic closed exactly, so the count was never reporting a defect, only
+        reporting that the maps had grown. A literal census in an assertion breaks
+        on every future ticker addition, which trains the reader to re-baseline it
+        without looking.
+
+        So assert the PROPERTY the count was standing in for. The claim this test
+        makes on behalf of the queue is that the reverse collision is the common
+        case, which is why "refuse if any futures prefix matches" would fail
+        silently across a large population of real game families rather than in a
+        corner. Measured today: 155 reverse pairs against 8 forward. The bar is
+        deliberately far below that ratio — it is a direction check, not a
+        re-pinned number.
         """
-        assert len(_game_extending_futures_pairs()) == 143
+        reverse = _game_extending_futures_pairs()
+        forward = _futures_extending_game_pairs()
+
+        assert forward, "forward collisions gone: this queue's whole class vanished"
+        assert len(reverse) > 10 * len(forward), (
+            f"reverse {len(reverse)} vs forward {len(forward)}: the reverse "
+            "direction is no longer the bulk, so the argument for "
+            "longest-prefix-wins over a blanket futures refusal needs re-reading"
+        )
+
+    def test_every_reverse_collision_still_reads_game_level(self):
+        """The half that fails quietly, asserted over the whole map, not specimens.
+
+        This is what the `== 143` literal was really protecting: not the size of
+        the population but that none of it regressed. Walking the pairs says so
+        directly and needs no edit when a ticker is added.
+        """
+        offenders = sorted(
+            g
+            for g, _futures in _game_extending_futures_pairs()
+            if not is_kalshi_game_level_ticker(f"{g}-26TEST")
+        )
+        assert offenders == [], (
+            f"{len(offenders)} game families that extend a futures prefix stopped "
+            f"reading as game-level: {offenders}"
+        )
 
 
 class TestTheThreePredicatesAgree:
@@ -299,10 +338,20 @@ class TestTheRepairArmIsNarrow:
     `kxboxing` (220), `kxcbagame` (189). Every one of them is a correct link. An
     arm keyed on the broad predicate would delete all of them and every counter
     it reports would still read healthy.
+
+    AMENDED (Q462): `kxwtasetwinner` and `kxatpgtotal` were name-linked when that
+    census was taken and are ticker-linked now — Q435 added them to the game map,
+    which is the correct fix for that pair and shrinks the broad arm's blast
+    radius by their 2,813 rows. It does not change the conclusion: the seven
+    remaining census prefixes are still name-linked, and the narrow predicate is
+    still the only one the arm may use. The census is left at its measured
+    2026-08-29 values rather than silently restated — a re-measure belongs to the
+    measurement lane, not to a test edit.
     """
 
-    # The census head, verbatim from the production reading. These are prefixes
-    # with NO game prefix — the repair must be blind to them.
+    # The census head, verbatim from the production reading. These were prefixes
+    # with NO game prefix at measure time; two have since acquired one (see the
+    # Q462 amendment above), which the tests below derive rather than assume.
     NAME_LINKED_PREFIXES = [
         "kxwtasetwinner",
         "kxatpgtotal",
@@ -317,14 +366,66 @@ class TestTheRepairArmIsNarrow:
 
     @pytest.mark.parametrize("prefix", NAME_LINKED_PREFIXES)
     def test_name_linked_markets_are_not_repair_candidates(self, prefix):
+        """The arm must be blind to every one of these, whatever else changed.
+
+        RE-DERIVED (Q462). This used to assert, for all nine, that the broad
+        predicate calls the prefix not-game-level — stated as the "premise" that
+        makes the narrow arm necessary. That premise was true when written and
+        Q435 expired two of them: `kxwtasetwinner` and `kxatpgtotal` are now game
+        prefixes in their own right, so the broad predicate calls them game-level
+        and they were never the broad arm's victims. The guard was working — it
+        reported that its own reasoning had gone stale — but a premise that has to
+        be retyped whenever the map grows is the wrong shape for it.
+
+        The invariant that does NOT expire, and the one the ship rests on, is the
+        second assertion: the narrow predicate refuses all nine. That is asserted
+        unconditionally. The premise is now READ off the map instead of
+        remembered, and split, because the two groups make different arguments.
+        """
         from app.utils.sport_keys import is_kalshi_shadowed_futures_ticker
 
         ticker = f"{prefix.upper()}-26MAY10BOSPHI"
-        assert is_kalshi_game_level_ticker(ticker) is False, (
-            "premise: the broad predicate DOES call this not-game-level, which "
-            "is exactly why the arm may not be keyed on it"
-        )
+
+        # The load-bearing assertion: unconditional, for every census prefix.
         assert is_kalshi_shadowed_futures_ticker(ticker) is False
+
+        # The premise, derived. A prefix is at risk from a broad-predicate arm
+        # exactly when it has no game prefix of its own.
+        has_game_prefix = any(
+            prefix.startswith(g) for g in set(KALSHI_GAME_TICKER_PREFIXES)
+        )
+        assert is_kalshi_game_level_ticker(ticker) is has_game_prefix, (
+            f"{prefix}: the broad predicate disagrees with the game map about "
+            "whether this prefix is game-level — longest-prefix-wins should make "
+            "these two answers the same question"
+        )
+
+    def test_the_broad_arm_would_still_destroy_most_of_this_census(self):
+        """Non-vacuity for the test above: the danger it describes is still real.
+
+        If every census prefix acquired a game prefix, the split above would go
+        all-True and stop arguing anything. Measured 2026-08-29 the census head
+        was nine name-linked prefixes; Q435 correctly moved two into the game map.
+        The remaining seven are still linked BY NAME under a ticker with no game
+        prefix at all, and a repair keyed on `not is_kalshi_game_level_ticker`
+        still takes every one of them.
+        """
+        game = set(KALSHI_GAME_TICKER_PREFIXES)
+        at_risk = [
+            p
+            for p in self.NAME_LINKED_PREFIXES
+            if not any(p.startswith(g) for g in game)
+        ]
+        assert at_risk, (
+            "every census prefix now has a game prefix, so this census no longer "
+            "demonstrates the broad arm's blast radius — re-measure it before "
+            "trusting the narrow-arm argument"
+        )
+        # All of them read not-game-level, which is exactly the broad arm's key.
+        assert all(
+            not is_kalshi_game_level_ticker(f"{p.upper()}-26MAY10BOSPHI")
+            for p in at_risk
+        )
 
     @pytest.mark.parametrize("ticker,name,_event_id", SEASON_SPECIMENS)
     def test_the_three_production_rows_are_repair_candidates(
