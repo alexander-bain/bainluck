@@ -115,19 +115,16 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "M8",
         "drop the bound on the build — a wedged census holds the slot to the task limit",
         WARM,
-        # 🔴 SPELLED AS A TRIPLE-QUOTED LITERAL, NOT AS CONCATENATED FRAGMENTS,
-        # AND THE RESIDUE SCANNER IS THE REASON. Pass B flags any file holding a
-        # replacement whose needle is absent — and this replacement is a single
-        # line of 40 characters, so its text appears verbatim in THIS file. With
-        # the needle spelled as escaped fragments it did not, and the scan went
-        # red on the harness itself. Both halves now appear contiguously here,
-        # which is the `game_markets_shared_cache:M4` shape. The general rule for
-        # the next author: a single-line replacement of 24+ characters needs its
-        # needle written contiguously.
-        """        await asyncio.wait_for(
-            _rebuild_futures_categories(), timeout=BUILD_TIMEOUT_SECONDS
-        )""",
-        "        await _rebuild_futures_categories()",
+        # 🔴 THE NEEDLE IS SPELLED CONTIGUOUSLY, AND THE RESIDUE SCANNER IS THE
+        # REASON. Pass B flags any file holding a replacement whose needle is
+        # absent. An earlier draft of this entry had a 40-character single-line
+        # replacement — whose text therefore appeared verbatim in THIS file —
+        # against a needle spelled as escaped fragments, which did not; the scan
+        # went red on the harness itself. The rule for the next author: a
+        # single-line replacement of 24+ characters needs its needle written
+        # contiguously, which is the `game_markets_shared_cache:M4` shape.
+        """        await asyncio.wait_for(_rebuild(), timeout=BUILD_TIMEOUT_SECONDS)""",
+        "        await _rebuild()",
     ),
     (
         "M9",
@@ -138,12 +135,18 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
     ),
     (
         "M10",
-        "warm through something other than the route's own rebuild — the bytes drift",
+        "publish past the route's own writer — the warm's bytes stop being the reader's",
         WARM,
-        "    from app.routes.futures import _rebuild_futures_categories",
-        "    from app.routes.futures import (\n"
-        "        _publish_futures_categories as _rebuild_futures_categories,\n"
-        "    )",
+        "    from app.routes.futures import _build_futures_categories, _publish_futures_categories",
+        "    from app.routes.futures import _build_futures_categories\n"
+        "    from app.utils.futures_categories_cache import write as _publish_futures_categories",
+    ),
+    (
+        "M15",
+        "open the WEB process's session maker in a worker — the loop bug this ship nearly shipped",
+        WARM,
+        "    from app.tasks.base import get_task_session",
+        "    from app.services.database import async_session_maker as get_task_session",
     ),
     (
         "M11",

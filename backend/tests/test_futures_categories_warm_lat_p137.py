@@ -162,7 +162,16 @@ def _client(rc):
 
 @contextmanager
 def _session_maker(session):
-    """Point `_rebuild_futures_categories`'s own session factory at `session`."""
+    """Point the warmer's WORKER session factory at `session`.
+
+    `app.tasks.base.get_task_session`, not `services.database.async_session_maker`
+    — and the distinction is the ship's own bug report. The first draft of the
+    warmer called the route's `_rebuild_futures_categories`, which opens the
+    module-level session maker bound to the web process's loop; a Celery task
+    that reuses it earns the "attached to a different loop" failures
+    `app/tasks/base.py` exists to prevent. Patching the name the task actually
+    uses is what makes this suite able to notice a regression back to it.
+    """
 
     class _Maker:
         def __call__(self):
@@ -174,9 +183,9 @@ def _session_maker(session):
         async def __aexit__(self, *_exc):
             return False
 
-    import app.services.database as database
+    import app.tasks.base as task_base
 
-    with patch.object(database, "async_session_maker", _Maker()):
+    with patch.object(task_base, "get_task_session", _Maker()):
         yield session
 
 
@@ -318,12 +327,12 @@ def test_a_build_that_raises_reads_failed_and_does_not_propagate():
     a place to raise."""
     rc = _FakeRedis()
 
-    async def _boom():
+    async def _boom(_db):
         raise RuntimeError("the census statement was cancelled")
 
     async def _go():
-        with _client(rc), patch.object(
-            futures_route, "_rebuild_futures_categories", _boom
+        with _client(rc), _session_maker(_CountingSession()), patch.object(
+            futures_route, "_build_futures_categories", _boom
         ):
             return await warm._warm_futures_categories(rc)
 
@@ -339,15 +348,15 @@ def test_a_build_that_hangs_is_bounded_and_reads_failed_with_a_reason():
     by the task limit with nothing to say about it."""
     rc = _FakeRedis()
 
-    async def _hang():
+    async def _hang(_db):
         # Five seconds, not sixty: with the bound in place this sleep is never
         # reached past 10 ms, and the number is only paid by the mutation run
         # that DELETES the bound — where it is the harness's own wall.
         await asyncio.sleep(5)
 
     async def _go():
-        with _client(rc), patch.object(
-            futures_route, "_rebuild_futures_categories", _hang
+        with _client(rc), _session_maker(_CountingSession()), patch.object(
+            futures_route, "_build_futures_categories", _hang
         ), patch.object(warm, "BUILD_TIMEOUT_SECONDS", 0.01):
             return await warm._warm_futures_categories(rc)
 
@@ -365,12 +374,12 @@ def test_a_build_whose_write_was_swallowed_reads_failed():
     rc = _FakeRedis()
     fcc.write(_stamped(age_s=30), rc=rc)
 
-    async def _write_nothing():
-        return None
+    def _write_nothing(response):
+        return response
 
     async def _go():
-        with _client(rc), patch.object(
-            futures_route, "_rebuild_futures_categories", _write_nothing
+        with _client(rc), _session_maker(_CountingSession()), patch.object(
+            futures_route, "_publish_futures_categories", _write_nothing
         ):
             return await warm._warm_futures_categories(rc)
 
@@ -469,16 +478,54 @@ def test_a_redis_that_raises_on_get_is_already_swallowed_by_the_tier():
 
 
 def test_the_warmer_holds_no_copy_of_the_census_statement():
-    """It calls the route's own rebuild, so the warmed bytes and the reader's
-    bytes cannot drift. A second copy of the query here would pass every other
-    test in this file and then rot on the first predicate change."""
+    """It calls the route's own builder and publisher, so the warmed bytes and
+    the reader's bytes cannot drift. A second copy of the query here would pass
+    every other test in this file and then rot on the first predicate change."""
     source = inspect.getsource(warm)
 
-    assert "_rebuild_futures_categories" in source
+    assert "_build_futures_categories" in source
+    assert "_publish_futures_categories" in source
     for forbidden in ("FuturesMarket", "group_by", "ilike", "select("):
         assert forbidden not in source, (
             f"the warmer spells its own census ({forbidden!r}) instead of calling the route's"
         )
+
+
+def test_the_warmer_opens_a_WORKER_session_and_not_the_web_processs():
+    """🔴 THIS TEST IS A BUG REPORT AGAINST THIS SHIP'S OWN FIRST DRAFT.
+
+    That draft called `routes.futures._rebuild_futures_categories`, which is the
+    route's serve-stale dispatch and opens `services.database.async_session_maker`
+    — the module-level maker bound to the WEB process's event loop. Reusing it
+    from a Celery task is what `app/tasks/base.get_task_session` exists to
+    prevent ("attached to a different loop"), and it is the shape every other
+    worker-side rebuild in this repo already uses (`refresh_league`).
+
+    Nothing else in this file could have caught it: with the session patched out,
+    both spellings pass every behavioural assertion here and the failure appears
+    only on a real worker.
+
+    🔴 READ OUT OF THE AST, NOT OUT OF THE TEXT. The module's docstring NAMES
+    the helper it must not call, in the paragraph explaining why — so a
+    substring test would fail on the explanation and pass on a rewrite that
+    deleted it. What is asserted is what the module IMPORTS.
+    """
+    import ast
+
+    source = inspect.getsource(warm)
+    imported = {
+        alias.asname or alias.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+
+    assert "get_task_session" in imported
+    assert "async_session_maker" not in imported
+    assert "_rebuild_futures_categories" not in imported, (
+        "the warmer is back on the route's web-loop rebuild helper"
+    )
+    assert {"_build_futures_categories", "_publish_futures_categories"} <= imported
 
 
 def test_the_warmer_publishes_through_the_routes_own_writer():

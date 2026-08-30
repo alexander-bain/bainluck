@@ -44,11 +44,20 @@ silently becoming too slow.
 WHAT THIS DOES NOT DO, named so it is a decision rather than an oversight.
 
 * It does not change the route, the payload, the keys, the predicate or the
-  TTLs. It calls ``routes.futures._rebuild_futures_categories`` — the same
-  zero-argument coroutine the route's own serve-stale path dispatches — so the
-  bytes a warm publishes and the bytes a reader's rebuild publishes cannot
-  drift. Turning this beat off restores exactly today's behaviour: slow for
-  whoever arrives after a quiet 25 minutes, never wrong.
+  TTLs. It calls the route's OWN ``_build_futures_categories`` and
+  ``_publish_futures_categories``, so the bytes a warm publishes and the bytes a
+  reader's rebuild publishes cannot drift. Turning this beat off restores
+  exactly today's behaviour: slow for whoever arrives after a quiet 25 minutes,
+  never wrong.
+
+  🔴 IT DOES NOT CALL ``_rebuild_futures_categories``, AND THE DIFFERENCE IS THE
+  EVENT LOOP. That helper is the route's serve-stale dispatch and opens its
+  session from the module-level ``async_session_maker``, which is bound to the
+  web process's loop; a Celery task that reuses it earns the "attached to a
+  different loop" failures ``app/tasks/base.py`` exists to prevent. Worker-side
+  rebuilds go through ``get_task_session`` — the shape ``refresh_league`` uses
+  for exactly this reason — so the SESSION comes from the worker and everything
+  else comes from the route.
 * It does not touch ``/api/feed/tag-counts``, whose futures half is the same
   predicate family with no cache of any kind (parked P136-2). That surface needs
   a cache before it needs a producer, which is a different ship.
@@ -146,16 +155,19 @@ async def _warm_futures_categories(rc=None) -> dict[str, Any]:
     returned. ``terminal`` is ``complete`` only when the census reads back with a
     ``created_at`` this run put there.
     """
-    from app.routes.futures import _rebuild_futures_categories
+    from app.routes.futures import _build_futures_categories, _publish_futures_categories
+    from app.tasks.base import get_task_session
 
     started = time.monotonic()
     before = _census_created_at(rc)
     error: str | None = None
 
+    async def _rebuild() -> None:
+        async with get_task_session() as db:
+            _publish_futures_categories(await _build_futures_categories(db))
+
     try:
-        await asyncio.wait_for(
-            _rebuild_futures_categories(), timeout=BUILD_TIMEOUT_SECONDS
-        )
+        await asyncio.wait_for(_rebuild(), timeout=BUILD_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         error = "timeout"
         logger.warning(
