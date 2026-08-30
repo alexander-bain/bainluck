@@ -5812,6 +5812,126 @@ async def get_trending_searches():
 _MAX_SUGGESTIONS = 8
 
 
+#: How many "biggest mover" chips section 3 may contribute. Unchanged from the
+#: `.limit(5)` literal it replaces; named because the pool below is sized
+#: against it.
+_SUGGESTION_MOVERS_LIMIT = 5
+
+#: The market pool section 3 ranks inside — see `app/utils/movement_pool.py` for
+#: why the pool is a provable SUPERSET of the answer rather than a sample.
+#:
+#: 400 is `/api/futures/movers`' own floor (`_MOVERS_POOL_MIN`), reused rather
+#: than re-derived, and it is 80x this section's ask of five. Verified on
+#: production 2026-08-30, one atomic statement per probe so both arms read the
+#: same snapshot (`sql_fingerprint` b2e02339a8f83f30 and siblings):
+#:
+#:     legacy top-5  -> 5 of 5 inside the pool of 400
+#:     legacy top-20 -> 20 of 20 inside the pool of 400
+#:     legacy top-50 -> 50 of 50 inside the pool of 400
+#:
+#: i.e. the bound still held with ten times, and then twenty-five times, the
+#: rows this section can actually use.
+_SUGGESTION_MOVERS_POOL = 400
+
+#: Statuses section 3 counts. `open` alone, which is what this section has always
+#: asked for — deliberately NOT widened to `/movers`' `('open','active')`, because
+#: this queue ships a cost change and widening the status list would change which
+#: chips a person sees.
+_SUGGESTION_MOVERS_STATUSES = ("open",)
+
+#: Reversible without a deploy, and the legacy arm is also the ORACLE the
+#: equivalence gate drives both paths through — the same arrangement LAT-P108
+#: shipped for `/api/futures/movers` under `FUTURES_MOVERS_POOLED`.
+_SUGGESTION_MOVERS_POOLED = os.getenv(
+    "SEARCH_SUGGESTIONS_MOVERS_POOLED", "1"
+).strip().lower() not in ("0", "false", "no")
+
+
+def _build_suggestion_movers_query(*, pooled: bool):
+    """Section 3's query: the five biggest 24h movers in open futures markets.
+
+    🔴 THIS IS THE 1.14 GB THAT LAT-P124 MEASURED AND COULD NOT REMOVE, REMOVED.
+
+    The legacy arm (`pooled=False`, kept verbatim below) is the statement this
+    route has always issued. `abs()` is not indexed, and the `futures_markets`
+    join sits ABOVE the sort, so `LIMIT 5` cannot bound it: PostgreSQL reads all
+    of `futures_outcomes` and sorts every survivor to disk to emit five rows.
+    Production `EXPLAIN (ANALYZE, BUFFERS)`, 2026-08-30, fingerprint
+    775d6ff2b74e14cd::
+
+        Limit                                      9,498 ms
+          Nested Loop  (futures_markets, ABOVE the sort)
+            Gather Merge
+              Sort   external merge, 5,736 kB to DISK
+                parallel Seq Scan futures_outcomes
+        146,425 shared blocks (~1.14 GB)   Shared I/O Read Time 15,428 ms
+
+    LAT-P124 wrote down the right diagnosis and the wrong conclusion: it named an
+    expression index as the permanent form, parked it as **P124-1** because DDL
+    is integrator-owned (ruling 080), and LAT-P139 then parked it a second time
+    while shipping a cache in front of the same 9 s. Neither queue noticed that
+    `/api/futures/movers` — one route file over — had already SOLVED this exact
+    statement in LAT-P108 without any DDL, and shipped the proof.
+
+    ✅ The pooled arm restricts the ranking to the top 400 markets by
+    `max_movement_24h`, which is a provable superset of the answer (the argument,
+    and why it is a bound and not a sample, is `app/utils/movement_pool.py`).
+    Same production minute, fingerprint 8dcd7c6b-class plan::
+
+        Limit                                        588 ms
+          Sort   top-N heapsort, in MEMORY
+            Nested Loop
+              Index Scan ix_futures_markets_max_movement   400 rows,   7.7 ms
+              Index Scan ix_fo_market_movement
+        3,629 shared blocks
+
+    **9,498 ms -> 588 ms, 146,425 blocks -> 3,629.** No migration, no new beat,
+    no cache change, and P124-1 stops being the thing this surface is waiting on.
+
+    ⚠️ WHAT THE BOUND COSTS, STATED RATHER THAN DISCOVERED LATER: an outcome in a
+    market whose `max_movement_24h` has never been written is outside the pool and
+    therefore outside the answer, however far it has moved. That is the same trade
+    `/api/futures/movers` has shipped since 2026-08-28, and it is the reason the
+    rollback flag above exists.
+    """
+    from app.utils.movement_pool import market_pool_subquery
+
+    conditions = [
+        FuturesOutcome.probability_change_24h.isnot(None),
+        func.abs(FuturesOutcome.probability_change_24h) > 0.02,
+    ]
+
+    if pooled:
+        # `market_id IN pool` carries the status filter — the pool is already
+        # restricted to `_SUGGESTION_MOVERS_STATUSES` — so the join is not
+        # re-stated here. Re-stating it would put `futures_markets` back above
+        # the sort, which is the whole defect.
+        query = select(FuturesOutcome).where(
+            *conditions,
+            FuturesOutcome.market_id.in_(
+                market_pool_subquery(
+                    pool_size=_SUGGESTION_MOVERS_POOL,
+                    statuses=_SUGGESTION_MOVERS_STATUSES,
+                )
+            ),
+        )
+    else:
+        query = (
+            select(FuturesOutcome)
+            .join(FuturesMarket)
+            .where(
+                FuturesMarket.status.in_(_SUGGESTION_MOVERS_STATUSES),
+                *conditions,
+            )
+        )
+
+    return (
+        query.order_by(func.abs(FuturesOutcome.probability_change_24h).desc())
+        .options(selectinload(FuturesOutcome.market))
+        .limit(_SUGGESTION_MOVERS_LIMIT)
+    )
+
+
 @router.get("/search-suggestions")
 async def search_suggestions(
     db: AsyncSession = Depends(get_db),
@@ -5834,7 +5954,18 @@ async def search_suggestions(
         after 65 s idle — ONE TTL EXPIRY        8,338 ms
 
     The wait did not go away, it acquired a schedule: every ~60 s the next
-    person to open Search pays the whole build. Serve order now, fastest first:
+    person to open Search pays the whole build.
+
+    🔴 LAT-P151 (2026-08-30) MADE THAT BUILD ~0.6 s, so the three numbers above
+    are history and the fourth column of this route's story is closed. The
+    mechanism is `_build_suggestion_movers_query`; the short version is that
+    section 3's `ORDER BY abs(probability_change_24h) DESC` now ranks inside the
+    top 400 markets by `max_movement_24h` instead of sorting 1.14 GB of
+    `futures_outcomes` to disk. Measured on production the same day:
+    **9,498 ms -> 588 ms.** The serve order below is unchanged — a cheap build
+    does not make a cache pointless, it makes a cache MISS survivable.
+
+    Serve order, fastest first:
 
       L1  Redis primary  — 60 s, unchanged, and the SAME production key.
       L1s Redis mirror   — 24 h, served while young enough, with ONE rebuild
@@ -6091,51 +6222,23 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
 
     # --- 3. Futures big movers (|probability_change_24h| > 0.02) ---
     try:
-        movers_q = (
-            select(FuturesOutcome)
-            .join(FuturesMarket)
-            .where(
-                FuturesMarket.status == "open",
-                FuturesOutcome.probability_change_24h.isnot(None),
-                func.abs(FuturesOutcome.probability_change_24h) > 0.02,
-            )
-            .order_by(func.abs(FuturesOutcome.probability_change_24h).desc())
-            .options(selectinload(FuturesOutcome.market))
-            .limit(5)
-        )
-        # 🔴 LAT-P124/#2285: THIS IS THE ONE THAT MATTERS — 99.5% OF THE REQUEST.
+        movers_q = _build_suggestion_movers_query(pooled=_SUGGESTION_MOVERS_POOLED)
+        # 🔴 LAT-P124/#2285 MEASURED THIS AT 99.5% OF THE REQUEST; LAT-P151 TOOK
+        # IT OUT. The statement, both arms of it, its two production plans and
+        # the superset argument are `_build_suggestion_movers_query` above.
         #
-        # `ORDER BY abs(probability_change_24h) DESC` cannot be served by any
-        # index on `futures_outcomes` (the only one that mentions the column,
-        # `ix_fo_market_movement`, leads with `market_id`), so Postgres reads the
-        # whole table and sorts it to keep FIVE rows. Production
-        # `EXPLAIN (ANALYZE, BUFFERS)`, slug `d9b76e9b`:
+        # What is worth keeping HERE is the other half of LAT-P124's finding,
+        # because it belongs to the loop rather than to the query: on the read
+        # that motivated the skip, all eight slots were already filled by
+        # section 2, so the whole statement bought nothing at all. Skipping it
+        # when the window is full is not an approximation — the loop below
+        # breaks on its first iteration in exactly that case, so the rows were
+        # being read and then discarded.
         #
-        #     Limit -> Nested Loop -> Gather Merge -> Sort -> parallel Seq Scan
-        #       futures_outcomes: 116,462 rows kept, 1,808,454 Rows Removed by Filter
-        #       Sort: external merge, 4,352 kB to DISK on the worker
-        #       146,437 shared blocks (~1.14 GB), 5 rows out
-        #
-        # Against the other four sections, measured the same way and the same
-        # day: 94 blocks, ~272, 346, and section 5 which cannot run at all (see
-        # below). Read the BLOCKS, not the milliseconds — two reads of this same
-        # statement reported 1,833 ms and 13,099 ms as the buffer cache warmed,
-        # while the block count moved by 15 (146,452 vs 146,437).
-        #
-        # And on the read that motivated this change, all eight slots were
-        # already filled by section 2, so those 1.14 GB bought nothing at all.
-        # Skipping the statement when the window is full is not an
-        # approximation: the loop below breaks on its first iteration in exactly
-        # that case, so the rows were being read and then discarded.
-        #
-        # The permanent form is an expression index —
-        # `CREATE INDEX ON futures_outcomes (abs(probability_change_24h) DESC)
-        #  WHERE probability_change_24h IS NOT NULL` — which would make the
-        # unskippable case cheap too. That is DDL and the migration slot is
-        # Integrator-owned (ruling 080): REQUESTED and parked as P124-1, NOT
-        # taken here. Until it lands, the cache above is what bounds the reader
-        # who arrives when sections 1 and 2 came up short: this degrades to
-        # slow once a minute, never to wrong.
+        # The skip and the cheaper statement are not alternatives. The skip
+        # covers the reads where sections 1-2 fill the window; the pooled bound
+        # covers the reads where they do not, which is the case the person who
+        # waited nine seconds was in.
         movers_rows = []
         if not _window_full():
             movers_result = await db.execute(movers_q)
