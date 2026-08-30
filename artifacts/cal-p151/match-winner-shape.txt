@@ -1,0 +1,98 @@
+========================================================================================
+CAL-P151 — the shape of polymarket/cricket `match_winner`
+========================================================================================
+    chunk 56,000,000-58,000,000 hit the row cap; halving to 1,000,000
+
+resolved Polymarket cricket markets: 6,644
+
+[1/3] RAW winner-count distribution over the match-winner family
+
+  n_outcomes  win_count  mutually_excl   markets
+           1          0          False        92
+           1          1          False       118
+           2          0          False         2
+           2          0           True       308
+           2          1          False         1
+           2          1           True       334
+           2          2          False        18
+           3          0          False        65
+           3          1          False       198
+           3          1           True        18
+           3          2          False       395
+           3          3          False       231
+           8          1           True         1
+           8          4          False         1
+           9          1           True         1
+          11          1           True         1
+          33          1           True         1
+          36          1           True         1
+          41          1           True         1
+
+  markets total: 1,787
+  win_count != 1: 1,112 (62.2%)
+    caught by the malformed-binary rung (n_outcomes=2 AND mex): 308
+    🔴 INVISIBLE to it: 804
+
+[2/3] SAMPLES — read from the book, not inferred from the count
+
+  market 129554: 'T20 World Cup: Sri Lanka vs Zimbabwe (Game 1)'
+     is_winner=False open=None   cal=None   outcome='T20 World Cup: Sri Lanka vs Zimbabwe (Game 1)'
+     is_winner=True  open=None   cal=None   outcome='T20 World Cup: Sri Lanka vs Zimbabwe (Game 1) - Completed ma'
+     is_winner=True  open=None   cal=None   outcome='T20 World Cup: Sri Lanka vs Zimbabwe (Game 1) - Who wins the'
+
+  market 129558: 'T20 World Cup: Italy vs West Indies (Game 1)'
+     is_winner=True  open=None   cal=None   outcome='T20 World Cup: Italy vs West Indies (Game 1) - Who wins the '
+     is_winner=True  open=None   cal=None   outcome='T20 World Cup: Italy vs West Indies (Game 1) - Completed mat'
+     is_winner=False open=None   cal=None   outcome='T20 World Cup: Italy vs West Indies (Game 1)'
+
+  market 129562: 'T20 World Cup: Afghanistan vs Canada (Game 1)'
+     is_winner=True  open=None   cal=None   outcome='T20 World Cup: Afghanistan vs Canada (Game 1) - Completed ma'
+     is_winner=True  open=None   cal=None   outcome='T20 World Cup: Afghanistan vs Canada (Game 1)'
+     is_winner=False open=None   cal=None   outcome='T20 World Cup: Afghanistan vs Canada (Game 1) - Who wins the'
+
+  market 129934: 'T20 World Cup: Australia vs Oman (Game 1)'
+     is_winner=True  open=None   cal=None   outcome='T20 World Cup: Australia vs Oman (Game 1)'
+     is_winner=True  open=None   cal=None   outcome='T20 World Cup: Australia vs Oman (Game 1) - Completed match'
+     is_winner=True  open=None   cal=None   outcome='T20 World Cup: Australia vs Oman (Game 1) - Who wins the tos'
+
+  🔴 the outcomes are the names of SIBLING MARKETS, not the legs of a duel.
+
+[3/3] PUBLISHED — the same distribution among rows that reach `deduped`
+
+  === base: DEPLOYED — the cell as served ===
+   legs_pub  winners_pub   markets
+          1            0        37
+          1            1        75
+          2            0        15
+          2            1        11
+          2            2        19
+          3            1        24
+          3            2        35
+          3            3        17
+          4            0         3
+          4            2        21
+          4            4        22
+          6            2        20
+          6            4        43
+          6            6        15
+         10            1         1
+         12            1         1
+         20            1         1
+  published match_winner markets: 360;  win_count != 1: 247 (68.6%)
+
+  === head: AFTER THE LIFT ===
+   legs_pub  winners_pub   markets
+          1            0        62
+          1            1        85
+          2            0         4
+          2            1        25
+          2            2        20
+          3            1        52
+          3            2        85
+          3            3        41
+         10            1         1
+         12            1         1
+         20            1         1
+  published match_winner markets: 377;  win_count != 1: 212 (56.2%)
+
+banked -> /Users/bain/bainluck-dev/calibration/artifacts/cal-p151/match-winner-shape.json

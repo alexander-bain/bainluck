@@ -84,8 +84,8 @@ def q(sql, limit=CAP):
         capture_output=True, text=True)
     try:
         return json.loads(r.stdout)
-    except Exception:
-        raise RuntimeError(r.stdout[:400])
+    except Exception as exc:
+        raise RuntimeError(r.stdout[:400]) from exc
 
 
 # One row per market: the YES leg's price, plus the two identity columns.

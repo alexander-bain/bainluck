@@ -43,8 +43,8 @@ def q(sql, limit=CAP):
         capture_output=True, text=True)
     try:
         return json.loads(r.stdout)
-    except Exception:
-        raise RuntimeError(r.stdout[:400])
+    except Exception as exc:
+        raise RuntimeError(r.stdout[:400]) from exc
 
 
 ROWS_SQL = """
