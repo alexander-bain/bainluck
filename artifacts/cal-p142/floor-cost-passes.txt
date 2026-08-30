@@ -1,0 +1,24 @@
+=== PASS 2 ===
+  cell                        floor   headroom  reps
+  polymarket/soccer          10.3s       -0.3s  3.9s 3.6s 10.3s 🔴
+  polymarket/baseball         4.9s        5.1s  4.9s 2.8s 2.4s
+  polymarket/basketball       2.2s        7.8s  2.0s 2.1s 2.2s
+  polymarket/hockey           4.5s        5.5s  2.9s 4.5s 2.5s
+  kalshi/baseball             6.4s>       3.6s  TIMEOUT 6.4s 2.5s
+
+=== PASS 3 ===
+  cell                        floor   headroom  reps
+  polymarket/soccer           4.4s        5.6s  4.4s 3.1s 3.1s
+  polymarket/baseball         2.3s        7.7s  2.3s 2.0s 2.3s
+  polymarket/basketball       6.9s        3.1s  3.8s 6.9s 2.8s 🔴
+  polymarket/hockey           7.0s        3.0s  1.9s 1.9s 7.0s 🔴
+  kalshi/baseball            10.0s>       0.0s  TIMEOUT TIMEOUT TIMEOUT 🔴
+
+=== PASS 4 ===
+  cell                        floor   headroom  reps
+  polymarket/soccer           8.2s        1.8s  8.2s 3.7s 3.7s 🔴
+  polymarket/baseball         3.3s        6.7s  3.3s 2.7s 2.9s
+  polymarket/basketball       2.1s        7.9s  2.1s 1.9s 2.0s
+  polymarket/hockey           1.7s        8.3s  1.7s 1.6s 1.7s
+  kalshi/baseball             2.0s        8.0s  2.0s 1.5s 1.5s
+
