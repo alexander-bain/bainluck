@@ -287,7 +287,10 @@ def _is_tradeable_opening(prob: Optional[float], has_trading: bool) -> bool:
 
 
 def sub_market_metadata(
-    *, event_id, matchup_title: Optional[str]
+    *,
+    event_id,
+    matchup_title: Optional[str],
+    clob_token_ids: Optional[list] = None,
 ) -> Optional[dict]:
     """``market_metadata`` for a decomposed Polymarket sub-market, at mint time.
 
@@ -316,12 +319,36 @@ def sub_market_metadata(
     Returns ``None`` rather than ``{}`` when there is nothing to say: the caller
     passes this straight into the insert, and an empty object would overwrite
     populated metadata on re-ingest.
+
+    ── ``clob_token_ids`` (Q460) ────────────────────────────────────────────
+
+    The CLOB WebSocket subscribes by **asset id**, not by condition id, and
+    ``_run_polymarket_ws_consumer`` reads those ids from exactly this key. They
+    were never written. Measured on production 2026-08-30: of **687**
+    live-or-starting-within-6h Polymarket markets, **0** carried
+    ``clob_token_ids`` (or the camelCase spelling the consumer also accepts), so
+    the consumer returned ``no_asset_ids`` and slept, every 60 seconds, forever.
+    The Polymarket fast lane has never once streamed a price — which is why
+    Alex's Hawaii @ Stanford card, whose blend carried Polymarket and nothing
+    else, moved on a four-to-twenty-minute cadence.
+
+    The Gamma payload has carried these ids the whole time;
+    ``PolymarketAPIService`` already parses them into
+    ``PolymarketMarket.clob_token_ids``. Nothing persisted them. Stamping them
+    here is the whole unblock: the ingest re-serves open events continuously and
+    the caller MERGES rather than clobbers, so live markets acquire the key on
+    the next poll without a separate backfill.
     """
     meta: dict = {}
     if matchup_title:
         meta["matchup_title"] = matchup_title
     if event_id is not None and str(event_id) != "":
         meta["polymarket_event_id"] = str(event_id)
+    if clob_token_ids:
+        # Strings, always: Gamma returns these as decimal strings far wider than
+        # a float64 can hold, and a token id that has been through a JSON number
+        # is a token id that no longer subscribes to anything.
+        meta["clob_token_ids"] = [str(t) for t in clob_token_ids if str(t)]
     return meta or None
 
 
@@ -904,6 +931,16 @@ async def _process_event_batch(
                     poly_metadata["neg_risk"] = True
                 if len(event.markets) > 1:
                     poly_metadata["market_count"] = len(event.markets)
+                # Q460: a single-market event's PARENT row is the market, so it
+                # is the row the CLOB socket must subscribe by. Multi-market
+                # events get theirs per sub-market in the loop below; the parent
+                # there is only a group anchor and has no asset id of its own.
+                if len(event.markets) == 1:
+                    _single_tokens = getattr(event.markets[0], "clob_token_ids", None)
+                    if _single_tokens:
+                        poly_metadata["clob_token_ids"] = [
+                            str(t) for t in _single_tokens if str(t)
+                        ]
 
                 # #173/#1024: matchup-title write-hook AT INGEST. A game event's
                 # decomposed sub-markets (spread/prop rows) don't name both
@@ -1063,6 +1100,10 @@ async def _process_event_batch(
                         sub_meta_insert = sub_market_metadata(
                             event_id=event.id,
                             matchup_title=_group_matchup_title,
+                            # Q460: the CLOB WebSocket's subscription key. Absent
+                            # on all 687 live/upcoming rows measured 2026-08-30,
+                            # which is why the Polymarket fast lane never ran.
+                            clob_token_ids=getattr(market, "clob_token_ids", None),
                         )
                         sub_set = {
                             "name": sub_name,
@@ -1083,10 +1124,21 @@ async def _process_event_batch(
                             # slice of the historical class for free — the one-shot
                             # group_id backfill still owns the rest, including every
                             # row whose event has since closed.
+                            import json as _json
                             from sqlalchemy import cast as _sa_cast, literal as _sa_literal
                             from sqlalchemy.dialects.postgresql import JSONB as _PG_JSONB
                             _sub_meta_pairs: list = []
                             for _k, _v in sub_meta_insert.items():
+                                if isinstance(_v, (list, dict)):
+                                    # `jsonb_build_object` takes SQL scalars; a
+                                    # bound Python list arrives as a Postgres
+                                    # ARRAY, not a JSON array, and the key comes
+                                    # back shaped wrong (or the bind refuses).
+                                    # Serialise and cast so the merged value is
+                                    # the same JSON the plain insert writes.
+                                    _v = _sa_cast(
+                                        _sa_literal(_json.dumps(_v)), _PG_JSONB,
+                                    )
                                 _sub_meta_pairs.extend([_k, _v])
                             sub_set["market_metadata"] = func.coalesce(
                                 FuturesMarket.market_metadata,

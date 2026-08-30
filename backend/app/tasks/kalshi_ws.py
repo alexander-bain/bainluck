@@ -20,6 +20,16 @@ from app.utils.kalshi_market_status import is_terminal
 logger = logging.getLogger(__name__)
 
 
+#: Q460 — how long a WS consumer run keeps one subscription list before handing
+#: control back so the slate can be re-read. Ten minutes bounds the "game went
+#: live after we connected" hole to ten minutes; the cost is one reconnect per
+#: consumer per ten minutes, which is ordinary client behaviour on both venues'
+#: published sockets and adds no REST calls at all.
+SUBSCRIPTION_REFRESH_SECONDS = int(
+    os.getenv("WS_SUBSCRIPTION_REFRESH_SECONDS", "600")
+)
+
+
 async def _run_kalshi_ws_consumer():
     """Main WebSocket consumer loop.
 
@@ -28,7 +38,7 @@ async def _run_kalshi_ws_consumer():
     3. Buffer price updates, flush every 2s
     4. Process settlements immediately
     """
-    from sqlalchemy import select, update, text, or_, and_
+    from sqlalchemy import select, update, text, or_, and_, func
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.models.models import (
@@ -36,6 +46,10 @@ async def _run_kalshi_ws_consumer():
     )
     from app.services.kalshi_ws import KalshiWebSocket
     from app.tasks.base import get_task_session
+    from app.tasks.live_blend_refresh import (
+        LiveBlendRefresher, event_ids_for_outcomes,
+    )
+    from app.utils.price_change_stamp import price_changed_at_value
 
     api_key_id = os.getenv("KALSHI_API_KEY_ID")
     has_key = os.getenv("KALSHI_RSA_PRIVATE_KEY") or os.getenv("KALSHI_PRIVATE_KEY_PATH")
@@ -52,6 +66,7 @@ async def _run_kalshi_ws_consumer():
             select(
                 FuturesMarket.external_id,
                 FuturesMarket.id,
+                FuturesMarket.event_id,
             )
             .join(Event, FuturesMarket.event_id == Event.id)
             .where(
@@ -75,6 +90,11 @@ async def _run_kalshi_ws_consumer():
 
     event_tickers = list({row[0] for row in rows})
     market_id_by_ext = {row[0]: row[1] for row in rows}
+    # Q460: the linked event behind each market, so a flushed price can be
+    # traced back to the card it belongs on and the blend re-stamped there.
+    event_id_by_market: dict[int, int] = {
+        row[1]: row[2] for row in rows if row[2] is not None
+    }
 
     # Load outcome tickers for subscription
     all_market_ids = list(market_id_by_ext.values())
@@ -112,6 +132,13 @@ async def _run_kalshi_ws_consumer():
     # -- Buffered price updates --
     price_buffer: dict[int, float] = {}  # outcome_id → probability
     buffer_lock = asyncio.Lock()
+    # Q460: outcome → linked event, for the blend re-stamp after each flush.
+    event_id_by_outcome: dict[int, int] = {
+        outcome_id: event_id_by_market[market_id]
+        for market_id, outcome_id in ticker_to_ids.values()
+        if market_id in event_id_by_market
+    }
+    blend_refresher = LiveBlendRefresher("kalshi")
 
     async def flush_prices():
         """Write buffered price updates to DB in one batch."""
@@ -127,13 +154,37 @@ async def _run_kalshi_ws_consumer():
                     await session.execute(
                         update(FuturesOutcome)
                         .where(FuturesOutcome.id == outcome_id)
-                        .values(current_probability=prob)
+                        .values(
+                            current_probability=prob,
+                            # This socket IS a live writer of this row, so it
+                            # owes both stamps the polls owe (#2024). Without
+                            # `last_updated` the playoff grid's liveness gate
+                            # read actively-streaming rows as days stale —
+                            # measured 2026-08-30 at up to 23 days on rows whose
+                            # price had moved seconds earlier.
+                            last_updated=func.now(),
+                            price_changed_at=price_changed_at_value(
+                                FuturesOutcome.current_probability,
+                                FuturesOutcome.price_changed_at,
+                                prob,
+                            ),
+                        )
                     )
             stats["flushes"] += 1
             stats["price_updates"] += len(batch)
         except Exception:
             stats["errors"] += 1
             logger.exception("Kalshi WS: flush error (%d updates)", len(batch))
+            return
+
+        # Q460 — THE SHIP. Prices in `futures_outcomes` are invisible; the card
+        # renders `Event.win_probability_sources`. Push the freshly-flushed
+        # prices through to that blend so the number on screen moves with the
+        # action instead of waiting for the next 120s poll. Failures are counted
+        # inside the refresher and never interrupt streaming.
+        await blend_refresher.refresh(
+            event_ids_for_outcomes(event_id_by_outcome, batch.keys())
+        )
 
     def _parse_dollar(val) -> float | None:
         if val is None or val == "":
@@ -264,7 +315,20 @@ async def _run_kalshi_ws_consumer():
     stats_task = asyncio.create_task(stats_loop())
 
     try:
-        await ws.run(market_tickers=market_tickers)
+        # Q460: RECYCLE, don't run forever. The subscription list above is built
+        # ONCE, from events that are live or start within 6 hours, and `ws.run`
+        # reconnects internally without ever rebuilding it — so a socket that
+        # stays healthy keeps yesterday's slate. Heroku cycles this dyno about
+        # daily, which means a restart at (say) 11:17am subscribes nothing that
+        # starts after 5:17pm, and every evening game silently misses the fast
+        # lane. Returning on a timer hands control back to `run_kalshi_ws.py`,
+        # which re-invokes this function and re-reads the slate.
+        await asyncio.wait_for(
+            ws.run(market_tickers=market_tickers),
+            timeout=SUBSCRIPTION_REFRESH_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        stats["status"] = "resubscribe"
     except asyncio.CancelledError:
         pass
     finally:

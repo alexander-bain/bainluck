@@ -14,6 +14,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from app.tasks.kalshi_ws import SUBSCRIPTION_REFRESH_SECONDS
 from app.tasks.polymarket import _poly_book_is_untradeable
 
 logger = logging.getLogger(__name__)
@@ -96,13 +97,17 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
 
 async def _run_polymarket_ws_consumer():
     """Main Polymarket WebSocket consumer loop."""
-    from sqlalchemy import select, update, text, or_, and_
+    from sqlalchemy import select, update, text, or_, and_, func
 
     from app.models.models import (
         Event, FuturesMarket, FuturesOutcome,
     )
     from app.services.polymarket_ws import PolymarketWebSocket
     from app.tasks.base import get_task_session
+    from app.tasks.live_blend_refresh import (
+        LiveBlendRefresher, event_ids_for_outcomes,
+    )
+    from app.utils.price_change_stamp import price_changed_at_value
 
     ws = PolymarketWebSocket()
 
@@ -114,6 +119,7 @@ async def _run_polymarket_ws_consumer():
                 FuturesOutcome.market_id,
                 FuturesOutcome.external_id,
                 FuturesMarket.external_id.label("market_ext_id"),
+                FuturesMarket.event_id.label("linked_event_id"),
             )
             .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
             .join(Event, FuturesMarket.event_id == Event.id)
@@ -142,10 +148,14 @@ async def _run_polymarket_ws_consumer():
     # Build lookup: condition_id → (market_id, outcome_id)
     condition_to_ids: dict[str, tuple[int, int]] = {}
     market_ids = set()
-    for outcome_id, market_id, ext_id, market_ext_id in rows:
+    # Q460: linked event per market, so a flushed price can re-stamp the blend.
+    event_id_by_market: dict[int, int] = {}
+    for outcome_id, market_id, ext_id, market_ext_id, linked_event_id in rows:
         if ext_id:
             condition_to_ids[ext_id] = (market_id, outcome_id)
         market_ids.add(market_id)
+        if linked_event_id is not None:
+            event_id_by_market[market_id] = linked_event_id
 
     # Load clob_token_ids from market_metadata
     asset_ids: list[str] = []
@@ -206,6 +216,13 @@ async def _run_polymarket_ws_consumer():
     # Buffered price updates
     price_buffer: dict[int, float] = {}
     buffer_lock = asyncio.Lock()
+    # Q460: outcome → linked event, for the blend re-stamp after each flush.
+    event_id_by_outcome: dict[int, int] = {
+        outcome_id: event_id_by_market[market_id]
+        for market_id, outcome_id in condition_to_ids.values()
+        if market_id in event_id_by_market
+    }
+    blend_refresher = LiveBlendRefresher("polymarket")
 
     async def flush_prices():
         async with buffer_lock:
@@ -219,12 +236,31 @@ async def _run_polymarket_ws_consumer():
                     await session.execute(
                         update(FuturesOutcome)
                         .where(FuturesOutcome.id == outcome_id)
-                        .values(current_probability=prob)
+                        .values(
+                            current_probability=prob,
+                            # Same contract as every other price writer (#2024):
+                            # a live socket owes the touch-stamp AND the
+                            # change-stamp, or downstream liveness gates read a
+                            # streaming row as long dead.
+                            last_updated=func.now(),
+                            price_changed_at=price_changed_at_value(
+                                FuturesOutcome.current_probability,
+                                FuturesOutcome.price_changed_at,
+                                prob,
+                            ),
+                        )
                     )
             stats["price_updates"] += len(batch)
         except Exception:
             stats["errors"] += 1
             logger.exception("Polymarket WS: flush error")
+            return
+
+        # Q460 — THE SHIP. Carry the freshly-flushed prices through to
+        # `Event.win_probability_sources`, the JSONB the card actually renders.
+        await blend_refresher.refresh(
+            event_ids_for_outcomes(event_id_by_outcome, batch.keys())
+        )
 
     async def handle_price(msg: dict):
         """Handle best_bid_ask event."""
@@ -354,7 +390,15 @@ async def _run_polymarket_ws_consumer():
     stats_task = asyncio.create_task(stats_loop())
 
     try:
-        await ws.run(asset_ids=asset_ids)
+        # Q460: recycle on a timer so the slate is re-read — same reasoning as
+        # `kalshi_ws.SUBSCRIPTION_REFRESH_SECONDS`, and the same constant, so the
+        # two sockets on this dyno cannot drift to different coverage windows.
+        await asyncio.wait_for(
+            ws.run(asset_ids=asset_ids),
+            timeout=SUBSCRIPTION_REFRESH_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        stats["status"] = "resubscribe"
     except asyncio.CancelledError:
         pass
     finally:

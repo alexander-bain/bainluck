@@ -40,6 +40,11 @@ from app.utils.prediction_market_matching import (
     MAX_TIME_DELTA,
     MAX_PAST_GAME_DELTA,
 )
+from app.utils.live_blend import (
+    MarketOutcomes as _LiveBlendGroup,
+    compute_source_home_probability as _compute_source_home_probability,
+    select_primary_market as _select_primary_market,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -3109,86 +3114,44 @@ async def _poll_live_prediction_market_prices():
                 all_per_event_source_live[key] = []
             all_per_event_source_live[key].append((market, event))
 
-        def _is_game_winner_market(m) -> bool:
-            if m.source != "kalshi" or not m.external_id:
-                return False
-            return feeds_win_prob_blend(m.external_id)
+        # Q460: primary selection + moneyline + devig now live in
+        # `app/utils/live_blend.py`, because the WebSocket fast lane writes this
+        # same blend key between polls and the two writers must agree exactly.
+        # A second copy of this arithmetic would not throw when it drifted — the
+        # hero would just flicker between two opinions every two minutes.
+        def _group_for(key) -> list[_LiveBlendGroup]:
+            return [
+                _LiveBlendGroup(market=m, outcomes=outcomes_by_market.get(m.id, []))
+                for m, _e in all_per_event_source_live.get(key, [])
+            ]
 
         best_per_event_source: dict[tuple[int, str], tuple] = {}
         for key, group in all_per_event_source_live.items():
-            primary = group[0]
-            for market, event in group[1:]:
-                pri_is_gw = _is_game_winner_market(primary[0])
-                cur_is_gw = _is_game_winner_market(market)
-                if cur_is_gw and not pri_is_gw:
-                    primary = (market, event)
-                elif pri_is_gw == cur_is_gw and market.id < primary[0].id:
-                    primary = (market, event)
-            best_per_event_source[key] = primary
+            primary_entry = _select_primary_market(
+                [
+                    _LiveBlendGroup(market=m, outcomes=outcomes_by_market.get(m.id, []))
+                    for m, _e in group
+                ]
+            )
+            if primary_entry is None:
+                continue
+            for market, event in group:
+                if market.id == primary_entry.market.id:
+                    best_per_event_source[key] = (market, event)
+                    break
 
         for market, event in best_per_event_source.values():
             try:
-                # Only write snapshots for moneyline/game-winner markets
-                # (team-sport …game + combat fight winners; props excluded).
-                if market.source == "kalshi" and market.external_id:
-                    if not feeds_win_prob_blend(market.external_id):
-                        continue
-
-                # Uses ticker fallback for generic-named Kalshi markets
-                matchup = extract_matchup_with_ticker_fallback(
-                    market.name, external_id=market.external_id,
+                reading = _compute_source_home_probability(
+                    _group_for((event.id, market.source)),
+                    event.home_team_name,
+                    event.away_team_name,
                 )
-                if not matchup:
+                if reading is None:
                     continue
-
-                # Use batch-loaded outcomes (loaded at line ~1346)
-                all_outcomes = sorted(
-                    outcomes_by_market.get(market.id, []),
-                    key=lambda o: o.rank or 999,
-                )
-                if not all_outcomes:
-                    continue
-
-                # Find moneyline outcome and determine home/away mapping
-                ml_result = find_moneyline_outcome(
-                    all_outcomes, matchup,
-                    event.home_team_name, event.away_team_name,
-                )
-                if not ml_result:
-                    continue
-
-                outcome, yes_is_home = ml_result
-                yes_prob = float(outcome.current_probability)
-
-                if yes_is_home:
-                    home_prob = yes_prob
-                else:
-                    home_prob = 1.0 - yes_prob
-
-                # Devig: average both dual markets to cancel vig
-                es_key = (event.id, market.source)
-                siblings = all_per_event_source_live.get(es_key, [])
-                if len(siblings) == 2:
-                    home_probs = [home_prob]
-                    for sib_market, sib_event in siblings:
-                        if sib_market.id == market.id:
-                            continue
-                        sib_outcomes = sorted(
-                            outcomes_by_market.get(sib_market.id, []),
-                            key=lambda o: o.rank or 999,
-                        )
-                        if sib_outcomes:
-                            sib_ml = find_moneyline_outcome(
-                                sib_outcomes, matchup,
-                                event.home_team_name, event.away_team_name,
-                            )
-                            if sib_ml:
-                                sib_outcome, sib_yes_is_home = sib_ml
-                                sib_prob = float(sib_outcome.current_probability)
-                                sib_home = sib_prob if sib_yes_is_home else 1.0 - sib_prob
-                                home_probs.append(sib_home)
-                    if len(home_probs) == 2:
-                        home_prob = sum(home_probs) / 2.0
+                home_prob = reading.home_probability
+                outcome = reading.outcome
+                yes_prob = reading.yes_probability
 
                 # Cross-check against sportsbook consensus to catch inversions
                 home_prob = await _check_and_fix_inversion(
