@@ -1048,6 +1048,7 @@ def record_task_failure(
     error: str,
     verdict: str = "thrown",
     verdict_reason: str = "",
+    result_summary: dict | None = None,
 ):
     """Record a failed task execution.
 
@@ -1103,6 +1104,23 @@ def record_task_failure(
             # `generated_at`) and the cause could not be named at all, from a
             # record that had held it twenty-five minutes earlier.
             "last_failure_type": (verdict_reason or verdict)[:200],
+            # #2222: the summary of the run that FAILED.
+            #
+            # `record_task_success` and `record_task_incomplete` both keep
+            # `last_result_summary`. This recorder was the only one that threw it
+            # away — and it is the one that fires for the runs an operator
+            # actually needs to read. `futures_price_refresh` returned
+            # `terminal: failed` on every run for a month while its own summary
+            # held the answer (`unknown_outcomes` vs `not_found` vs
+            # `unpriceable`), and diagnosing it required clearing the task's
+            # Redis attempt markers and re-running it by hand to watch what the
+            # counters did — a live experiment to recover a number the failing
+            # run had already computed and discarded.
+            #
+            # Named `last_failure_*` for the CAL-P080 reason directly above: a
+            # later SUCCESS overwrites `last_result_summary`, and the failure's
+            # own copy has to survive the recovery that erases the shared field.
+            "last_failure_summary": json.dumps(result_summary or {})[:4000],
         })
         pipe.expire(key, TASK_METRICS_TTL)
         _bump_window_counter(pipe, failure_key)

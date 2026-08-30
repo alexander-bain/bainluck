@@ -167,10 +167,15 @@ def _tracked_run(task_name: str, async_fn):
                 verdict=COMPLETE, verdict_reason=verdict.reason,
             )
         elif verdict.verdict == FAILED:
+            # #2222: pass the summary. A RETURNED failure has one — it is the
+            # task's own account of what it did — and it is the single most
+            # useful thing an operator can read. Only the thrown path below has
+            # nothing to pass, because there the result is the exception.
             record_task_failure(
                 task_name, duration_ms,
                 f"task returned a failed terminal ({verdict.reason})",
                 verdict=FAILED, verdict_reason=verdict.reason,
+                result_summary=summary,
             )
         elif verdict.verdict == UNKNOWN and not verdict.authoritative:
             # Legacy shape: preserve the pre-300H recording so ~100 tasks that
