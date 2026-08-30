@@ -1454,6 +1454,19 @@ _SPREAD_RE = re.compile(
     r"(.+?) wins(?: the 1H)? by over (\d+\.?\d*)\s+(?:points|runs|goals)",
     re.IGNORECASE,
 )
+
+#: #2352: does this spread outcome name describe a PERIOD rather than the full
+#: game? Kalshi writes "Detroit wins the 1H by over 9.5 points",
+#: "GB Packers wins 2H by over 9.5 points", "Spurs wins 2Q by over 3.5 points".
+#: Only the first of those three is matched by ``_SPREAD_RE`` (its optional
+#: ``the 1H`` group), and that is deliberate — the MAIN resolver detects `1h` in
+#: the ticker and grades it against a reconstructed halftime score. Any consumer
+#: holding only the FULL-TIME score must exclude these, and must do it on the
+#: NAME: a ticker allowlist silently admits the next Kalshi period family, a name
+#: test does not. Verified against all 13 distinct period shapes in production.
+_PERIOD_SPREAD_NAME_RE = re.compile(
+    r"\bwins\s+(?:the\s+)?[1-4]\s*(?:H|Q|HALF)\b", re.IGNORECASE
+)
 _TOTAL_RE = re.compile(
     r"^(?P<dir>Over|Under)\s+(\d+\.?\d*)\s+(?:1H\s+)?(?:2H\s+)?(?:team\s+)?(?:total\s+)?(?:points|runs|goals|maps|rounds|kills)(?:\s+scored)?$",
     re.IGNORECASE,
@@ -1545,6 +1558,17 @@ def _spread_outcome_is_winner(
 
     Returns True/False, or None when the name isn't a spread outcome or the
     named team can't be matched to either side (caller should skip).
+
+    #2352: side selection goes through ``_exclusive_team_side``, the same helper
+    the team-total grader uses. This function used to pick with a bare token
+    intersection, home first — so wherever the two clubs share a city, the city
+    tokens alone satisfied the home branch and **every away leg was graded off
+    the home margin**. ``New York M wins by over 1.5`` in Yankees(H) 6 – Mets(A) 2
+    took the Yankees' +4. The class is catalogued in this repo as
+    ``SHARED_CITY_DIFFERENT_CLUB`` (``tests/test_names_match_authority_2046.py``);
+    it is not an edge case. Refusing an ambiguous leg is the designed outcome —
+    ``is_winner`` here is Tier-1 ``game_score`` and gotcha #21 says an ungraded
+    row beats a confidently wrong one.
     """
     sm = _SPREAD_RE.search(outcome_name or "")
     if not sm:
@@ -1561,12 +1585,12 @@ def _spread_outcome_is_winner(
     home_tokens = set(normalize_team_name(home_team_name or "").split())
     away_tokens = set(normalize_team_name(away_team_name or "").split())
     team_tokens = set(normalize_team_name(team_name).split())
-    if team_tokens & home_tokens:
-        margin = home_score - away_score
-    elif team_tokens & away_tokens:
-        margin = away_score - home_score
-    else:
+    side = _exclusive_team_side(team_tokens, home_tokens, away_tokens)
+    if side is None:
         return None
+    margin = (
+        home_score - away_score if side == "home" else away_score - home_score
+    )
     return margin > line
 
 
@@ -1921,6 +1945,9 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
         # phase summary instead of silence.
         "team_total_unresolved_legs": 0,
         "team_total_deferred_markets": 0,
+        # #2352: the same counter for the SPREAD grader, which gained the same
+        # exclusivity rule and therefore the same ability to decline a leg.
+        "spread_unresolved_team": 0,
         "errors": [],
     }
 
@@ -2086,6 +2113,15 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                             a_for_spread,
                         )
                         if won is None:
+                            # #2352 / CERT-499: the regex already matched, so this
+                            # IS a spread leg and we declined to grade it — almost
+                            # always because `_exclusive_team_side` could not tell
+                            # the two clubs apart. Count it. A silently-skipped leg
+                            # is not deferred for later: `game_score` is not in
+                            # OVERWRITABLE_WINNER_SOURCES_SQL and the candidate scan
+                            # drops any market already holding one, so once a
+                            # SIBLING leg is graded this one is stranded for good.
+                            stats["spread_unresolved_team"] += 1
                             continue
                         await session.execute(
                             text(
@@ -2324,8 +2360,25 @@ async def _regrade_kalshi_nhl_spread_inversions():
     markets whose event_id was corrected by the #944 relink against the now-right
     game.) resolution_source stays ``game_score`` — re-resolve from authoritative
     scores in place, never a bare ``is_winner`` reset (gotcha #21, #899 cohort scope).
+
+    #2352: the ticker scope is now EVERY full-game Kalshi spread family, not just
+    NHL/NBA/MLB. This rail is the only thing that can repair a wrong ``game_score``
+    spread row — that source is not in ``OVERWRITABLE_WINNER_SOURCES_SQL``, so the
+    main resolver's candidate scan will never pull the market again. Measured
+    2026-08-30 over all 17,064 production rows: the shared-city collision left 39
+    rows wrong, and the old ``^KX(NHL|NBA|MLB)SPREAD`` scope could only reach 21 of
+    them. The other 18 (17 ``KXNCAAMBSPREAD``, 1 ``KXMLSSPREAD``) were unreachable —
+    and NCAAMB is both the largest family (6,972 rows) and the one the
+    ``SHARED_CITY_DIFFERENT_CLUB`` catalogue names twice (Boston College / Boston
+    University). Measured cost of the widening: 2,576 ms -> 2,678 ms.
     """
-    stats = {"checked": 0, "flipped": 0, "errors": []}
+    stats = {
+        "checked": 0,
+        "flipped": 0,
+        "skipped_period": 0,
+        "unresolved": 0,
+        "errors": [],
+    }
     try:
         async with get_task_session() as session:
             rows = await session.execute(text("""
@@ -2336,17 +2389,35 @@ async def _regrade_kalshi_nhl_spread_inversions():
                 JOIN futures_markets fm ON fm.id = fo.market_id
                 JOIN events e ON e.id = fm.event_id
                 WHERE fm.source = 'kalshi'
-                  AND fm.external_id ~ '^KX(NHL|NBA|MLB)SPREAD'
+                  AND fm.external_id ~ 'SPREAD'
+                  AND fm.external_id !~ '[0-9](H|Q|HALF)SPREAD'
                   AND fo.resolution_source = 'game_score'
                   AND e.home_score IS NOT NULL
                   AND e.away_score IS NOT NULL
             """))
             for r in rows.all():
                 stats["checked"] += 1
+                # #2352: this rail holds only the FULL-TIME score, and `_SPREAD_RE`
+                # deliberately also matches Kalshi's halftime shape ("Detroit wins
+                # the 1H by over 9.5 points") because the MAIN resolver grades
+                # those against a reconstructed halftime score. The ticker
+                # predicate above already excludes `KXNBA1HSPREAD` /
+                # `KXNCAAMB1HSPREAD` (3,098 production rows); this NAME test is the
+                # second, independent filter, and unlike the ticker pattern it
+                # cannot be fooled by a Kalshi family we have not seen yet.
+                if _PERIOD_SPREAD_NAME_RE.search(r.oc_name or ""):
+                    stats["skipped_period"] += 1
+                    continue
                 won = _spread_outcome_is_winner(
                     r.oc_name, r.home, r.away, r.hs, r.as_
                 )
                 if won is None:
+                    # #2352 / CERT-499's lesson: a leg we decline to grade must be
+                    # COUNTED, not silently dropped. `game_score` is not
+                    # overwritable, so a row this rail refuses keeps whatever it
+                    # already holds, forever — the refusal IS the final state and
+                    # it must be visible in the task verdict.
+                    stats["unresolved"] += 1
                     continue
                 # write-on-change: skip rows already on the correct side
                 if r.cur is not None and bool(r.cur) == won:
@@ -3737,24 +3808,33 @@ async def _resolve_kalshi_period_props():
                 if sm:
                     team_name = sm.group(1).strip()
                     line = float(sm.group(2))
-                    home_tokens = (
-                        set(row.home_team_name.lower().split())
-                        if row.home_team_name
-                        else set()
+                    # #2352: this was the THIRD copy of the home-first token
+                    # intersection — the one the issue did not name. It picked a
+                    # side with a bare `team_tokens & home_tokens`, so every away
+                    # leg of a shared-city matchup took the home margin, and it
+                    # matched on raw `.lower().split()` rather than
+                    # `normalize_team_name`, so it also carried the #939 accent bug
+                    # ("Montréal" never token-matched the ASCII outcome name).
+                    # Production damage is zero — no `scoring_plays` row has ever
+                    # been written for a spread outcome (measured 2026-08-30: the
+                    # source does not appear in the cohort at all) — so this is
+                    # prevention, not repair. Converting it keeps one side-picker
+                    # in this module instead of two.
+                    from app.utils.name_normalization import normalize_team_name
+
+                    side = _exclusive_team_side(
+                        set(normalize_team_name(team_name).split()),
+                        set(normalize_team_name(row.home_team_name or "").split()),
+                        set(normalize_team_name(row.away_team_name or "").split()),
                     )
-                    away_tokens = (
-                        set(row.away_team_name.lower().split())
-                        if row.away_team_name
-                        else set()
-                    )
-                    team_tokens = set(team_name.lower().split())
-                    if team_tokens & home_tokens:
-                        margin = period_home - period_away
-                    elif team_tokens & away_tokens:
-                        margin = period_away - period_home
-                    else:
+                    if side is None:
                         stats["no_parse"] += 1
                         continue
+                    margin = (
+                        period_home - period_away
+                        if side == "home"
+                        else period_away - period_home
+                    )
                     won = margin > line
                     await session.execute(
                         text(
@@ -6068,6 +6148,13 @@ async def _resolve_winners_only(limit: int = 2000):
     stats["nhl_spread_regrade"] = {
         "checked": nhl_spread_regrade_stats.get("checked", 0),
         "flipped": nhl_spread_regrade_stats.get("flipped", 0),
+        # #2352: a counter the verdict does not surface is the same problem one
+        # layer up from a refusal nobody counts. `unresolved` rows keep whatever
+        # they hold forever (`game_score` is not overwritable), and
+        # `skipped_period` is the halftime filter — if it ever climbs, the ticker
+        # predicate has stopped excluding a Kalshi period family.
+        "unresolved": nhl_spread_regrade_stats.get("unresolved", 0),
+        "skipped_period": nhl_spread_regrade_stats.get("skipped_period", 0),
     }
     # #945: re-grade Kalshi TOTAL game_score (same HAVING-skip staleness as the
     # spread cohort; never re-pulled). Idempotent + write-on-change.
