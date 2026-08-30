@@ -204,7 +204,15 @@ describe("the table is worth answering to", () => {
  * question being asked at all.
  */
 describe("registry — a fourth copy cannot appear undeclared", () => {
-  const SKIP = ["node_modules", ".next", ".git", "DerivedData", "build", "artifacts"];
+  const SKIP = ["node_modules", ".next", ".git", "DerivedData", "build"];
+  // Per-queue scratch directories are `artifacts-ux-p177/`, `artifacts-lat-p…/`
+  // and so on — not the bare `artifacts/` this list used to name, so every one
+  // of them was being walked as if it were source. They hold mutation batteries
+  // whose whole job is to contain planted copies of the vocabulary this scan
+  // looks for, so a lane with scratch on disk got a red here while CI — which
+  // checks out clean and has no scratch — stayed green. A gate that fails only
+  // on the machine doing the work teaches people to ignore it.
+  const isScratch = (entry: string) => entry.startsWith("artifacts");
   const EXT = [".py", ".ts", ".tsx", ".swift"];
   const VOCAB = [
     '"event"',
@@ -238,7 +246,7 @@ describe("registry — a fourth copy cannot appear undeclared", () => {
 
   function walk(dir: string, out: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {
-      if (SKIP.includes(entry)) continue;
+      if (SKIP.includes(entry) || isScratch(entry)) continue;
       const full = join(dir, entry);
       let st;
       try {

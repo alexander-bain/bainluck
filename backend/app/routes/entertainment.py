@@ -312,19 +312,51 @@ def _score_for_trending(row: dict) -> float:
     return score
 
 
+def _has_reported_trading(row: dict) -> bool:
+    """Whether the venue reported any 24h volume for this market.
+
+    `volume_24h` is None when the venue reported nothing traded; no row carries
+    a literal 0 (measured on the live corpus, 2026-08-30). Both sources
+    populate it for most of their markets — kalshi 46 of 83, polymarket 19 of
+    25 — so an absent figure is a fact about the market, not an artifact of
+    which venue it came from. That is what makes it safe to rank on: it does
+    not systematically demote one source.
+    """
+    volume = row.get("volume_24h")
+    return isinstance(volume, (int, float)) and not isinstance(volume, bool) and volume > 0
+
+
 def _build_trending(all_rows: list[dict], limit: int = 5) -> list[dict]:
-    """Pick top N trending markets with kind diversity."""
-    scored = sorted(all_rows, key=_score_for_trending, reverse=True)
-    result = []
+    """Pick top N trending markets with kind diversity.
+
+    Markets the venue reports as traded are considered first; a market with no
+    reported 24h volume can only reach the hero once every traded candidate has
+    been seen. `_score_for_trending` pays up to 100 points for sitting near 50%
+    and at most 50 — in practice under 6, since the median 24h volume is ~360 —
+    for volume, so without this split a market nobody is trading outranks one
+    people are, and the section at the top of the page calls it trending.
+
+    The untraded pool is a BACKFILL, never a cap. Both passes scan every
+    candidate under the same per-kind ceiling, so the number of rows returned is
+    exactly what it would be without the split — only the composition changes.
+    That matters: the hero renders nothing at all below two rows.
+    """
+    traded: list[dict] = []
+    untraded: list[dict] = []
+    for row in all_rows:
+        (traded if _has_reported_trading(row) else untraded).append(row)
+
+    result: list[dict] = []
     kind_counts: dict[str, int] = defaultdict(int)
 
-    for row in scored:
-        if len(result) >= limit:
-            break
-        if kind_counts[row["kind"]] >= 2:
-            continue
-        result.append(row)
-        kind_counts[row["kind"]] += 1
+    for pool in (traded, untraded):
+        for row in sorted(pool, key=_score_for_trending, reverse=True):
+            if len(result) >= limit:
+                return result
+            if kind_counts[row["kind"]] >= 2:
+                continue
+            result.append(row)
+            kind_counts[row["kind"]] += 1
 
     return result
 
