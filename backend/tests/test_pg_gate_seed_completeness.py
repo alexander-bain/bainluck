@@ -40,6 +40,7 @@ from app.models.models import Base
 COVERED = (
     "test_calibration_mode_price_source_scope_pg.py",
     "test_calibration_mode_price_source_scope_peers_pg.py",
+    "test_calibration_vm_variant_join_pg.py",
     "test_create_wave_insert_bind_contract.py",
     "test_kalshi_cliff_bind_contract.py",
 )

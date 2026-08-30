@@ -405,6 +405,39 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration vm-variant join, one outcome one row (real Postgres)
+        # D5 / ruling 125 with the sign reversed — CAL-P150, #1978. The two steps
+        # above guard a join whose coarse key DELETED rows. This one guards the
+        # same coarse-key mistake three CTEs earlier, where it MULTIPLIES:
+        # `vm_stats` GROUPs BY five columns, `clean_vms` was joined on two, and
+        # every outcome of a virtual market whose members disagree on category,
+        # is_grouped or mutually_exclusive was emitted once per variant. Measured
+        # before the fix: 99.9% of >=3-market groups carry mixed identity, and
+        # the 13 cells folded exactly hold 420,081 published rows against 266,137
+        # distinct — 36.65% phantom.
+        #
+        # Real Postgres and not a string assertion, for the reason written into
+        # the file: the producer's own comment MISDESCRIBED this pair, ruling
+        # 125's text repeated the misdescription, and a string assertion drafted
+        # from either would have been green for months. The claim is relational.
+        #
+        # Two-armed like both steps above: it EXECUTES the reverted two-column
+        # join and asserts the duplication returns, so a green run means
+        # red-first was proved here rather than asserted in a report. It also
+        # carries the cricket regression control the 2026-08-30 directive
+        # requires — cricket's published SET must not move under a change that
+        # is only allowed to change multiplicity, or the D14 reinvestigation
+        # loses its baseline.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_calibration_vm_variant_join_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/vmvariant.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/vmvariant.txt; then
+            echo "::error::calibration vm-variant join gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: tag-counts statements execute (real Postgres)
         # LAT-P114 / #2267. `/api/feed/tag-counts` returned a plain-text 500 on
         # every request from the day it was written (c536d738, 2026-03-01), so

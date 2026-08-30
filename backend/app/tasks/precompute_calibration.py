@@ -2189,7 +2189,38 @@ def _calibration_population_ctes(
                     ) AS rn_distance_rank
                 FROM futures_outcomes fo
                 JOIN virtual_market vm ON vm.market_id = fo.market_id
-                JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
+                -- D5 / ruling 125 (the sign reversed) — #1978, CAL-P150.
+                -- ``vm_stats`` GROUPs BY FIVE columns; this join carried TWO.
+                -- A virtual market whose members disagree on ``category``,
+                -- ``is_grouped`` or ``mutually_exclusive`` therefore holds one
+                -- ``clean_vms`` row PER VARIANT, and a two-column join matched
+                -- every one of them: every outcome in that virtual market was
+                -- emitted once per variant. Measured (alex-inbox/calibration-911,
+                -- artifacts/cal-p139 + cal-p141 + cal-p142): 18,363 of 18,378
+                -- groups of >=3 resolved markets (99.9%) carry mixed identity,
+                -- and on the 13 cells folded exactly, 420,081 published rows
+                -- are 266,137 distinct — 36.65% phantom, 1.5784x.
+                --
+                -- Ruling 125 says a join that can DELETE a row must carry every
+                -- dimension that identifies the row. The same coarse key three
+                -- CTEs earlier MULTIPLIES instead, and the remedy is the same:
+                -- carry every dimension the aggregate is grouped on.
+                --
+                -- ``IS NOT DISTINCT FROM``, not ``=``, on the two nullable
+                -- dimensions. ``GROUP BY`` puts NULLs in one group, so a plain
+                -- equality join would match NO variant for those rows and turn
+                -- this de-duplication into a silent row LOSS — the failure mode
+                -- that is strictly worse than the defect. ``category`` is
+                -- COALESCEd to 'uncategorized' in ``market_info`` and
+                -- ``is_grouped`` is a COALESCEd boolean expression, so neither
+                -- is nullable today; they are written NULL-safe anyway because
+                -- the guarantee lives in another function.
+                JOIN clean_vms cv
+                  ON cv.vm_id = vm.vm_id
+                 AND cv.source = vm.source
+                 AND cv.category IS NOT DISTINCT FROM vm.category
+                 AND cv.is_grouped IS NOT DISTINCT FROM vm.is_grouped
+                 AND cv.mutually_exclusive IS NOT DISTINCT FROM vm.mutually_exclusive
                 {curve_price_join}
                 LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
                 LEFT JOIN esports_multi_bundles emb ON emb.market_id = fo.market_id
@@ -2315,8 +2346,18 @@ def _calibration_population_ctes(
             -- while ``event_sizes`` counts per ``(event_id, source)``), so two
             -- sources carrying >=3 resolved markets on one event share a vm_id.
             -- Every neighbouring aggregate is source-scoped deliberately —
-            -- ``vm_stats`` GROUPs BY ``(vm_id, source)``, ``clean_vms`` JOINs on
-            -- both — and this one was not: it grouped on ``vm_id`` alone and the
+            -- ``vm_stats`` GROUPs BY ``(vm_id, source, category, is_grouped,
+            -- mutually_exclusive)`` and ``clean_vms`` JOINs on all five —
+            -- 🔴 CORRECTED 2026-08-30 (D5, CAL-P150): this sentence used to read
+            -- "GROUPs BY ``(vm_id, source)``, ``clean_vms`` JOINs on both", and
+            -- it was false in BOTH halves. The aggregate always grouped on five;
+            -- the join carried two. The comment cited the pair as the model
+            -- citizen, ruling 125's own text repeated it, and a dedicated audit
+            -- read the first two columns of the ``GROUP BY`` and stopped — which
+            -- is how a 36.65% row duplication survived directly under a ruling
+            -- written about coarse join keys. The join is fixed above; this
+            -- correction stays because the wrong sentence is what hid it.
+            -- — and this one was not: it grouped on ``vm_id`` alone and the
             -- join below matched on ``vm_id`` alone. A mode detected among one
             -- source's legs therefore DELETED the other source's legs sitting at
             -- the same price. Measured whole-domain (CAL-P087,
