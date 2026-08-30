@@ -1,0 +1,95 @@
+{
+  "competition": "tennis",
+  "upcoming": [
+    {
+      "key": "event:tennis:wta-washington-winner",
+      "name": "WTA Washington Winner",
+      "domain": "tennis",
+      "status": "live",
+      "start_date": null,
+      "end_date": "2026-09-05T14:00:00+00:00",
+      "is_major": false
+    },
+    {
+      "key": "event:tennis:wta-1000-toronto-winner",
+      "name": "WTA 1000 Toronto: Winner",
+      "domain": "tennis",
+      "status": "live",
+      "start_date": null,
+      "end_date": "2026-09-12T15:00:00+00:00",
+      "is_major": false
+    },
+    {
+      "key": "event:tennis:2026-women-s-us-open-winner-tennis",
+      "name": "2026 Women\u2019s US Open Winner (Tennis)",
+      "domain": "tennis",
+      "status": "live",
+      "start_date": null,
+      "end_date": "2026-09-13T00:00:00+00:00",
+      "is_major": true
+    },
+    {
+      "key": "event:tennis:atp-1000-montreal-winner",
+      "name": "ATP 1000 Montreal: Winner",
+      "domain": "tennis",
+      "status": "live",
+      "start_date": null,
+      "end_date": "2026-09-13T15:00:00+00:00",
+      "is_major": false
+    },
+    {
+      "key": "event:tennis:wta-cincinnati-winner",
+      "name": "WTA Cincinnati Winner",
+      "domain": "tennis",
+      "status": "upcoming",
+      "start_date": null,
+      "end_date": "2026-09-22T14:00:00+00:00",
+      "is_major": false
+    },
+    {
+      "key": "event:tennis:atp-cincinnati-winner",
+      "name": "ATP Cincinnati Winner",
+      "domain": "tennis",
+      "status": "upcoming",
+      "start_date": null,
+      "end_date": "2026-09-22T14:00:00+00:00",
+      "is_major": false
+    },
+    {
+      "key": "event:tennis:us-open-men-s-singles-winner",
+      "name": "US Open Men's Singles Winner",
+      "domain": "tennis",
+      "status": "upcoming",
+      "start_date": null,
+      "end_date": "2026-09-28T02:00:00+00:00",
+      "is_major": true
+    },
+    {
+      "key": "event:tennis:atp-winston-salem-winner",
+      "name": "ATP Winston Salem Winner",
+      "domain": "tennis",
+      "status": "upcoming",
+      "start_date": null,
+      "end_date": "2026-10-03T15:00:00+00:00",
+      "is_major": false
+    },
+    {
+      "key": "event:tennis:wta-monterrey-winner",
+      "name": "WTA Monterrey Winner",
+      "domain": "tennis",
+      "status": "upcoming",
+      "start_date": null,
+      "end_date": "2026-10-03T19:05:00+00:00",
+      "is_major": false
+    },
+    {
+      "key": "event:tennis:cincinnati-open-winner",
+      "name": "Cincinnati Open: Winner",
+      "domain": "tennis",
+      "status": "upcoming",
+      "start_date": null,
+      "end_date": null,
+      "is_major": false
+    }
+  ]
+}
