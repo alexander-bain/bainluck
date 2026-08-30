@@ -1,6 +1,6 @@
 {
-  "last_cycle_at": "2026-08-30T20:51:58.882492+00:00",
-  "last_event": "banked",
+  "last_cycle_at": "2026-08-30T21:46:29.373049+00:00",
+  "last_event": "already_banked",
   "last_census_seen": "2026-08-30T20:43:06.399219+00:00",
   "censuses_banked": 13,
   "pid": 75911,
