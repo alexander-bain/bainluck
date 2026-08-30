@@ -1490,16 +1490,39 @@ class TestScoreResolutionOverwritesGuess:
             )
 
     def test_period_spread_uses_team_matching(self):
-        """Period prop spread must match the specific team, not either team."""
-        import inspect
-        from app.tasks.backfill_winners import _resolve_kalshi_period_props
-        src = inspect.getsource(_resolve_kalshi_period_props)
+        """Period prop spread must match the specific team, not either team.
 
-        spread_section = src[src.index("Try spread pattern"):src.index("Try total pattern")]
-        assert "home_tokens" in spread_section, (
-            "Period spread must use team token matching"
+        #2352: this guard used to read `inspect.getsource(...)` and assert the
+        LITERAL STRINGS "home_tokens" and "away_tokens" appeared in the spread
+        section. That is a guard on a local variable's NAME, not on the property
+        in its own docstring — and it was watching the wrong thing twice over:
+
+        * it passed while the code it was guarding graded every AWAY leg of a
+          shared-city matchup off the HOME margin (the whole of #2352), because
+          the defective code also contained those two names; and
+        * it went red the moment the side-picker moved into
+          ``_exclusive_team_side`` and the locals were inlined — i.e. it failed
+          on a strict improvement.
+
+        Replaced with the behavioural property: the two sides must get DIFFERENT
+        verdicts from the same period score. The full shared-city matrix for this
+        path lives in ``test_spread_shared_city_2352.py``.
+        """
+        from app.tasks.backfill_winners import _spread_outcome_is_winner
+
+        # Celtics(H) won the quarter 30-20 — a 10-point margin for exactly one
+        # of the two teams. A grader that matches "either team" gives the same
+        # answer twice; a grader that matches the NAMED team does not.
+        home_leg = _spread_outcome_is_winner(
+            "Boston wins by over 5.5 points",
+            "Boston Celtics", "Los Angeles Lakers", 30, 20,
         )
-        assert "away_tokens" in spread_section
+        away_leg = _spread_outcome_is_winner(
+            "Los Angeles wins by over 5.5 points",
+            "Boston Celtics", "Los Angeles Lakers", 30, 20,
+        )
+        assert home_leg is True
+        assert away_leg is False, "the away leg was graded off the home margin"
 
     def test_moneyline_resolution_logic(self):
         """Moneyline: home team wins when home_score > away_score."""
