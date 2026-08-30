@@ -2230,6 +2230,13 @@ def _calibration_population_ctes(
                     COUNT(DISTINCT vm.market_id) AS market_count,
                     COUNT(*) AS total_outcomes,
                     COUNT(*) FILTER (WHERE fo.is_winner = true) AS has_winner,
+                    -- 12-CAL: an AFFIRMATIVE grade, which is NOT the complement
+                    -- of has_winner. ``is_winner`` is nullable with a False
+                    -- default, so "not a winner" spans a graded loss and a row
+                    -- nothing ever graded. Only the first may be published as a
+                    -- loss (gotcha #21), and until the lone-claim arm below,
+                    -- nothing in this chain ever had to tell them apart.
+                    COUNT(*) FILTER (WHERE fo.is_winner IS NOT NULL) AS graded,
                     COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL
                                       AND fo.opening_probability > 0
                                       AND fo.opening_probability < 1) AS eligible
@@ -2241,7 +2248,29 @@ def _calibration_population_ctes(
             clean_vms AS (
                 SELECT * FROM vm_stats
                 WHERE eligible >= 1
-                  AND has_winner >= 1
+                  AND (
+                        has_winner >= 1
+                        -- 12-CAL (YOUR-TURN D13). A LONE CLAIM -- one market,
+                        -- one captured outcome, ungrouped -- is a complete,
+                        -- scoreable prediction, and under the bare
+                        -- ``has_winner >= 1`` gate it published if and ONLY if
+                        -- it WON. Queue 299 rung 1 declines to exclude it on
+                        -- purpose ("a lone Yes/No claim that legitimately
+                        -- resolved No is not an authority failure" -- it
+                        -- requires n_outcomes >= 2) and rung 3 declines it too
+                        -- (market_type = 'field' only). BOTH carve-outs were
+                        -- dead letters: this gate predates Queue 299 by three
+                        -- months (#691, 2026-05-28) and deleted the row three
+                        -- CTEs before either predicate could be evaluated.
+                        --
+                        -- This does NOT admit unknown truth. A >=2-outcome vm
+                        -- that graded nobody still fails this predicate, and is
+                        -- still removed downstream by ``no_winner_markets``,
+                        -- exactly as rung 1 intends. ``graded >= 1`` refuses a
+                        -- row whose ``is_winner`` was never written at all.
+                        OR (market_count = 1 AND total_outcomes = 1
+                            AND graded >= 1)
+                  )
             ),
             ranked_outcomes AS MATERIALIZED (
                 SELECT

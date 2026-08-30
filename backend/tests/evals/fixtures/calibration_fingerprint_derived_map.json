@@ -595,7 +595,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "7f629f6ad1b1dbff16584ed4b02bd660719fd36b79bb109f578553fcecf4edb4",
+  "source_sha256": "79a6811d62491d6bd9e0b7e6ee2b54b4293045ac17001443eb780f06503885e6",
   "uncovered_behavior_or_evidence": 26,
   "uncovered_count": 48,
   "uncovered_sql_shaping": 22

@@ -59,30 +59,35 @@ cce = mlc.cce
 # 1. THE PREMISE. Three carve-outs in the frozen producer, pinned.
 # ---------------------------------------------------------------------------
 
-def test_clean_vms_still_carries_the_vm_level_winner_gate():
-    """The one line the whole instrument is about.
+def test_clean_vms_no_longer_drops_a_claim_for_losing():
+    """The one line the whole instrument WAS about, now repaired (12-CAL / D13).
 
-    Read from the built SQL rather than the source text, so a gate that moves
-    to another CTE but keeps its effect still satisfies it, and a gate that is
-    deleted fails it.
+    This guard used to pin the defect's existence, with a docstring saying that
+    if the gate were ever repaired the instrument would be "obsolete and must be
+    retired, not left printing zeros". The gate was repaired. So the guard is
+    inverted rather than deleted: the same reading of the same CTE, asserting
+    the bare gate is GONE and the lone-claim arm is present. Deleting it would
+    leave the repair unpinned by the suite that found the defect.
 
-    The literal is spelled out here as well as imported. Asserting only
-    ``mlc.CLEAN_VMS_GATE_FRAGMENT in sql`` checks the constant against itself:
-    widening it to ``"SELECT"`` would keep this green while the premise went
-    unpinned.
+    Read from the built SQL rather than the source text, so a gate that moves to
+    another CTE but keeps its effect still satisfies it.
     """
     from app.tasks.precompute_calibration import _calibration_population_ctes
 
     sql = _calibration_population_ctes()
-    assert mlc.CLEAN_VMS_GATE_FRAGMENT == "AND has_winner >= 1"
-    assert "AND has_winner >= 1" in sql, (
-        "clean_vms no longer filters on has_winner >= 1. If that is a "
-        "deliberate repair, this instrument is obsolete and must be retired, "
-        "not left printing zeros."
+    assert mlc.CLEAN_VMS_GATE_RETIRED not in sql, (
+        "clean_vms still carries the bare `eligible >= 1 AND has_winner >= 1` "
+        "gate — the 12-CAL repair is not in this build."
     )
-    # And it is the gate on clean_vms specifically, not some other CTE's.
-    body = sql.split("clean_vms AS (", 1)[1].split("),", 1)[0]
+    # And it is the gate on clean_vms specifically, not some other CTE's. The
+    # terminator is a LINE: splitting on a bare ")," truncates the body at the
+    # first parenthesised aside inside a comment.
+    body = sql.split("clean_vms AS (", 1)[1].split("\n            ),", 1)[0]
     assert mlc.CLEAN_VMS_GATE_FRAGMENT in body
+    assert "graded >= 1" in body, (
+        "the restored arm must require an AFFIRMATIVE grade; without it a row "
+        "nothing ever graded publishes as a confident loss"
+    )
 
 
 def test_rung_one_still_exempts_the_one_outcome_market():

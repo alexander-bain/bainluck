@@ -138,7 +138,39 @@ ARM_OTHER = "A_also_no_winner"
 #: asserts it is still in the frozen file: if the gate is ever repaired, this
 #: script is measuring a defect that no longer exists and must say so loudly
 #: rather than print a zero (gotcha #53 -- an empty answer is a response shape).
-CLEAN_VMS_GATE_FRAGMENT = "AND has_winner >= 1"
+CLEAN_VMS_GATE_FRAGMENT = "OR (market_count = 1 AND total_outcomes = 1"
+
+#: CAL-P143 (12-CAL / D13): the gate was REPAIRED, so the fragment above pins
+#: the repaired predicate and the guard that used to prove the defect exists now
+#: proves it is gone. Pinned as a pair on purpose: a partial revert that restores
+#: the bare gate while leaving the new comment block behind would satisfy a
+#: presence-only check. The retired text must be ABSENT.
+CLEAN_VMS_GATE_RETIRED = "WHERE eligible >= 1\n                  AND has_winner >= 1"
+
+#: What the instrument MEANS after the repair. ``B_lone_claim`` was the
+#: population the producer dropped; it is now the population the producer
+#: publishes, so the census reads as a RECONCILIATION (dropped should be 0) and
+#: its verdict line inverts. Stated as a constant so the report text and the
+#: guard cannot drift apart.
+CENSUS_MODE_AFTER_REPAIR = "reconciliation"
+
+#: The repaired gate's restored arm, as the producer spells it. Pinned here so
+#: the pure mirror below and the SQL cannot drift apart silently.
+RESTORED_ARM_SQL = "OR (market_count = 1 AND total_outcomes = 1\n                            AND graded >= 1)"
+
+
+def lone_claim_is_restorable(market_count: int, total_outcomes: int,
+                             graded: int) -> bool:
+    """The repaired gate's second arm, as a pure function.
+
+    The SQL is the authority; this is its mirror, so the boundary can be tested
+    without a database and so :func:`classify_vm` and the producer can be held
+    to the SAME boundary by one assertion instead of two readings of two
+    languages. ``graded`` is the affirmative-grade count
+    (``is_winner IS NOT NULL``) and is the conjunct that keeps a row nothing
+    ever graded out of the published curve: "not a winner" is not "a loss".
+    """
+    return market_count == 1 and total_outcomes == 1 and graded >= 1
 
 
 def classify_vm(market_count: int, total_outcomes: int) -> str:
