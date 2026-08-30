@@ -5,25 +5,35 @@
 Alex, 2026-08-28: *"During an MLB game, don't we show the odds of each team
 advancing to each stage of the playoff grid?"*
 
-**Yes.**  ``GET /api/events/{id}/team-progression`` (``routes/events.py``) reads
-``LeagueContextService`` and returns, per team, one row per playoff stage with a
-probability and a 24h move.  ``GridPlayoffPathPair`` (then in
-``components/RelatedFutures.tsx``, extracted by this queue to
-``components/event/AdvancementPair.tsx``) renders it as two side-by-side cards
-on the event page: stage label, probability, ``done`` at >= 95%, a trend delta,
-and a source-count dot row.
+**Yes — but not through the endpoint the code makes it look like.**  Checked in
+the source rather than recalled, because the two answers differ:
 
-It does **not** fire for tennis: ``team-progression`` needs a
-``league_configs`` entry and a ``teams`` table anchor, and a tennis draw has
-neither.  Measured 2026-08-28, ``/api/events/15293845/team-progression``
-returns ``{"league": null, "home_team": null, "away_team": null}``.
+* What SHIPS is the ``CHAMPIONSHIP PATH`` block inside each team's card in the
+  Related Futures section of an event page — one row per playoff stage, a
+  label, a bar, the probability, the 24h move, and ``✓ clinched`` at >= 99.5%.
+  It is fed by the **related-futures** payload's playoff-stage markets
+  (``buildPathEntries``), and it existed as two verbatim copies, one per card.
+  This queue lifted it into ``components/event/AdvancementPath``.
 
-So this module answers the same question from the other data we already have —
-the register's pinned ``reaches``, which the tournament page's playoff grid is
-already built from (UX-P139).  **It emits the existing contract rather than a
-new one**, so the same component renders both and the pattern stays one
-pattern app-wide.  That is the point: not a tennis advancement strip that
-resembles the MLB one, but the MLB one, fed.
+* What does NOT ship is ``GET /api/events/{id}/team-progression``.  The
+  endpoint is real, the event page fetches it on every render, and the
+  component written to draw it — ``GridPlayoffPathPair`` in
+  ``RelatedFutures.tsx`` — was **never mounted**.  Dead since it was written.
+  Its own docstring, and this route's, both claimed it rendered on event
+  pages.  UX-P152 deleted it; the fetch is still a live gate on other sections
+  and is left alone.
+
+Neither fires for tennis anyway: ``team-progression`` needs a
+``league_configs`` entry and a ``teams`` anchor, and a draw has neither —
+measured 2026-08-28, ``/api/events/15293845/team-progression`` returns
+``{"league": null, "home_team": null, "away_team": null}``.
+
+So this module answers the same question from the data we do have: the
+register's pinned ``reaches``, which the tournament page's playoff grid is
+already built from (UX-P139).  It emits rows in the shape ``AdvancementPath``
+takes, so the tennis strip and the league path are **one component with two
+callers** rather than two implementations that agree today.  That is what Alex
+asked for by "same component family": not a resemblance, the component.
 
 ═══ WHAT THE DATA CAN AND CANNOT COVER ═══
 
@@ -36,11 +46,11 @@ cells, against 96 R128 fixtures.  Of those fixtures:
 
 A reach board is the field markets' top of the draw; an unseeded first-round
 player is simply not quoted to reach the quarter-finals, and no amount of
-plumbing conjures that number.  ``GridPlayoffPathPair`` already renders ``<div/>``
-for a side with no stages, so the one-sided case is the existing component's
-existing behaviour and needs nothing.  The section suppresses itself entirely
-when NEITHER side has a cell, because two empty columns is a promise of
-something that is not there.
+plumbing conjures that number.  A side with no cells renders as an empty half
+of the grid — so the one player who IS quoted keeps his own column rather than
+stretching across the row and reading as the only entrant — and the section
+suppresses itself entirely when NEITHER side has a cell, because two empty
+columns is a promise of something that is not there.
 
 ═══ WHICH CARD GOES ON WHICH SIDE ═══
 
@@ -166,7 +176,42 @@ def _build_row(
         "record": (f"Seed {seed}" if isinstance(seed, int) else None),
         "conference": None,
         "stages": stages,
+        # ── A LADDER THAT CLIMBS (see `monotonic`) ──
+        "monotonic": is_monotonic(stages),
     }
+
+
+def is_monotonic(stages: list[dict[str, Any]]) -> bool:
+    """Does this ladder fall the way a draw must — never likelier later?
+
+    A player cannot be likelier to reach the final than the semis.
+    ``tournament_grid.evaluate_monotonicity`` already measures this across the
+    whole board and its ruling is **report, not correct**: measured 2026-08-26,
+    21 of 84 ladder players violate it, all in the sub-5% tail where a thin
+    binary prices "reach the final" a point above "reach the semis". That is
+    the market's own incoherence and correcting it would be the page lying on
+    the market's behalf.
+
+    Reported here too, and for a reason the grid does not have. On the grid a
+    2% against a 4% is two cells in an 84-row table and reads as noise. On a
+    match page it is five large rows on one of two cards, and it reads as a
+    contradiction the page has not noticed — the same numbers, at a
+    magnification where silence stops being neutral. So the strip carries the
+    verdict and prints one sentence, rather than either hiding a row or
+    printing the inversion with a straight face.
+
+    Same epsilon as the grid's, imported rather than restated: two surfaces
+    disagreeing about whether a ladder is coherent is worse than either answer.
+    """
+    from app.utils.tournament_grid import MONOTONICITY_EPSILON  # noqa: PLC0415
+
+    priced = [
+        s["probability"] for s in stages if isinstance(s.get("probability"), (int, float))
+    ]
+    return all(
+        before >= after - MONOTONICITY_EPSILON
+        for before, after in zip(priced, priced[1:])
+    )
 
 
 def build_advancement(
