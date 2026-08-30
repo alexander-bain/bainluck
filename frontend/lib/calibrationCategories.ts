@@ -30,30 +30,7 @@
 // `"use client"` component behind SWR and a guard that cannot call the function
 // is a guard that asserts against a copy of it.
 
-import { getLeagueDisplay, LEAGUE_DISPLAY } from "@/lib/sportCategories";
-
-/**
- * L2-103 Item 3b (Alex D5): a thin sub-league (e.g.
- * `icehockey_sweden_hockey_league`, ~730 outcomes) must NOT collapse to its
- * parent sport's display name ("Hockey"), because the parent sport is already
- * graded in the Category Breakdown above — that made a niche chip read as
- * "Hockey is still coming soon". Prefer the specific league label; only fall
- * back to a prettified raw key for bare single-word categories (chess,
- * commodities, health).
- */
-export function nicheCatLabel(raw: string): string {
-  if (raw.includes("_") || LEAGUE_DISPLAY[raw]) {
-    // getLeagueDisplay returns proper-cased mapped names (SHL, NCAA Lacrosse)
-    // and an ALL-CAPS generated fallback for unmapped keys — title-case the
-    // latter while preserving short acronyms (NBA, UFL, NRL, AFL).
-    return getLeagueDisplay(raw).replace(/\w\S*/g, (w) =>
-      w.length <= 4 && w === w.toUpperCase()
-        ? w
-        : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
-    );
-  }
-  return raw.replace(/_/g, " ");
-}
+import { LEAGUE_DISPLAY } from "@/lib/sportCategories";
 
 export const SPORT_KEY_MAP: Record<string, string> = {
   basketball_nba: "basketball", basketball_ncaab: "basketball",
@@ -79,6 +56,124 @@ export const DISPLAY_NAMES: Record<string, string> = {
   // UX-P075 item (e), Alex 2026-08-13.
   table_tennis: "Table Tennis",
 };
+
+// ## UX-P189 — why this no longer routes through `getLeagueDisplay`
+//
+// The previous implementation asked `getLeagueDisplay()` for a name and then
+// title-cased the answer, "preserving short acronyms (NBA, UFL, NRL, AFL)" with
+// the rule `w.length <= 4 && w === w.toUpperCase()`. That rule cannot work, and
+// not because the threshold is wrong — because by the time it runs the
+// information it needs is gone.
+//
+// `getLeagueDisplay` is a LEAGUE-key parser. For an unmapped key it (a) drops
+// segment 0 as the sport prefix and (b) UPPERCASES every remaining segment. So
+// the caller receives `OPEN`, `CUP`, `AND`, `OF`, `DEL` and `NCAAF` with no way
+// to tell an acronym from an ordinary word it shouted a moment earlier. Any
+// length threshold therefore mis-classifies in BOTH directions, necessarily:
+// short English words stay shouted, long acronyms get de-capitalised. Measured
+// on the live `/api/calibration` payload 2026-08-30, that produced
+// `WTA Cincinnati OPEN` (the FIRST parked chip on the page), `FIFA World CUP`,
+// `Spain COPA DEL REY`, `League OF Ireland`, and `Ncaaf` — whose correct label
+// `NCAAF` was sitting in `LEAGUE_DISPLAY` and got de-capitalised on the way out.
+//
+// Worse, (a) fires on keys that are not `sport_league` at all. Calibration
+// categories include plain two-word concepts, and dropping segment 0 turned
+// `track_and_field` into `AND Field`, `ai_safety` into `Safety`, `horse_racing`
+// into `Racing` and `figure_skating` into `Skating`. The old guard suite's own
+// three "unknown key" examples rendered `POLO`, `Volleyball` and `NEW Sport` —
+// and PASSED, because it asserted the label was not the raw key and that its
+// first character was uppercase, never that it kept the words.
+//
+// So the label is now built from the raw key directly and never round-trips
+// through the all-caps generator. Two consequences worth stating: a curated
+// `LEAGUE_DISPLAY` name is returned VERBATIM (we do not re-case an opinion), and
+// the sport prefix is dropped by MEMBERSHIP in a known-prefix set rather than by
+// POSITION, so `horse_racing` keeps its horse.
+
+/**
+ * Sport prefixes that may be dropped from a compound key.
+ *
+ * Derived from the two maps that already enumerate our sports rather than
+ * hand-listed, so a sport added to `LEAGUE_DISPLAY` becomes droppable without a
+ * second edit here. Membership is the whole point: segment 0 of
+ * `track_and_field` is not in this set, so it survives.
+ */
+const DROPPABLE_SPORT_PREFIXES: ReadonlySet<string> = new Set(
+  [...Object.keys(LEAGUE_DISPLAY), ...Object.keys(SPORT_KEY_MAP)]
+    .filter((k) => k.includes("_"))
+    .map((k) => k.split("_")[0])
+);
+
+/**
+ * Tokens printed in capitals.
+ *
+ * The sports half is derived from the all-caps words we already print in
+ * curated `LEAGUE_DISPLAY` values — an acronym is a token we have already
+ * decided to shout somewhere — so NFL, NCAAB, WNCAAB, ATP, WTA, US and T20 cost
+ * nothing to maintain. The explicit half below is for tokens that appear only
+ * inside payload KEYS and so have no curated value to be read out of.
+ */
+const CURATED_ACRONYMS: ReadonlySet<string> = new Set([
+  ...Object.values(LEAGUE_DISPLAY)
+    .flatMap((v) => v.split(/\s+/))
+    .map((w) => w.replace(/[^A-Za-z0-9:]/g, ""))
+    .filter((w) => w.length >= 2 && /[A-Z]/.test(w) && w === w.toUpperCase())
+    .map((w) => w.toLowerCase()),
+  // Present in category keys only: no curated value spells these out.
+  // `fa` and `conmebol` are here because dropping the old all-caps round-trip
+  // would otherwise have turned the wrong "FA CUP" into the equally wrong
+  // "Fa Cup" — a governing body is an acronym whichever word follows it.
+  "ai", "bmx", "conmebol", "dfb", "efl", "epl", "fa", "fcs", "fifa", "mls",
+  "spl", "uefa", "usa",
+]);
+
+/**
+ * Words that stay lowercase inside a title — unless they lead, where they are
+ * capitalised like any other first word.
+ *
+ * `la` is deliberately ABSENT: `soccer_spain_la_liga` is "Spain La Liga", and
+ * the old code's "Spain LA LIGA" is the failure this list must not invert into
+ * "Spain la Liga".
+ */
+const TITLE_SMALL_WORDS: ReadonlySet<string> = new Set([
+  "and", "da", "de", "del", "di", "du", "of", "the",
+]);
+
+function labelToken(token: string, isFirst: boolean): string {
+  if (CURATED_ACRONYMS.has(token)) return token.toUpperCase();
+  if (!isFirst && TITLE_SMALL_WORDS.has(token)) return token;
+  return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+}
+
+/**
+ * L2-103 Item 3b (Alex D5): a thin sub-league (e.g.
+ * `icehockey_sweden_hockey_league`, ~730 outcomes) must NOT collapse to its
+ * parent sport's display name ("Hockey"), because the parent sport is already
+ * graded in the Category Breakdown above — that made a niche chip read as
+ * "Hockey is still coming soon". Prefer the specific league label.
+ *
+ * **Never returns a lowercase or underscored key** — including for the bare
+ * single-word categories (chess, crypto, commodities) the previous version
+ * passed straight through. Those only looked fixed on the parked chips, which
+ * carried a CSS `capitalize` class; in the By Category tabs and the breakdown
+ * table, which do not, `crypto` reached the reader lowercase.
+ */
+export function nicheCatLabel(raw: string): string {
+  // A curated name is an opinion. Return it verbatim — re-casing it is what
+  // turned LEAGUE_DISPLAY's own "NCAAF" into "Ncaaf".
+  const curated = LEAGUE_DISPLAY[raw];
+  if (curated) return curated;
+
+  const tokens = raw.split("_").filter(Boolean);
+  if (tokens.length === 0) return raw;
+  // Drop the sport prefix only when something is left to name the row with.
+  const named =
+    tokens.length > 1 && DROPPABLE_SPORT_PREFIXES.has(tokens[0])
+      ? tokens.slice(1)
+      : tokens;
+
+  return named.map((t, i) => labelToken(t, i === 0)).join(" ");
+}
 
 /**
  * Fold a payload category onto the key the page groups and labels by.
