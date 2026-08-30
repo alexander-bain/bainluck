@@ -305,6 +305,6 @@ suites, which import the real modules.
 |---|---|
 | `board-d15.py` / `.json` / `.txt` | §6 — the rebuilt board, exit 0 |
 | `cricket-shape-fold.py` / `.json` / `.txt` | §5b — the family fold, adaptive halving |
-| `legswap-cricket.log` | §5a — the fold that returned 0 families |
+| `legswap-cricket-log.txt` | §5a — the fold that returned 0 families. Banked as `.txt` because `.gitignore:79` is `*.log`, so the `.log` beside it is untracked and would have vanished with the worktree |
 | `../cal-p138/published-legswap-cricket.json` | §5a — its banked output |
 | `full-suite.txt` | §8 |
