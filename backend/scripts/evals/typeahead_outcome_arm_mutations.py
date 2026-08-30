@@ -204,11 +204,23 @@ MUTANTS: list[tuple[str, str, str, str]] = [
         "        await _recover_search_session(db, deadline)\n        return None",
         "        return None",
     ),
+    # 🔴 TRIPLE-QUOTED, WITH REAL NEWLINES, AND THAT IS NOT A STYLE CHOICE.
+    # `scan_mutation_residue.py` Pass B flags any file that contains a
+    # REPLACEMENT literal but not its NEEDLE. This is the only mutant here whose
+    # replacement is a single line while its needle spans three, so writing the
+    # needle with `\n` escapes put the escaped form in this file and the
+    # replacement's real text in it — and the scanner correctly reported THIS
+    # HARNESS as residue. Real newlines put both literals in the file verbatim,
+    # so the pair cancels. Caught by running the scan; it is exactly the
+    # false-positive shape the scanner's own `_base_already_has` comment
+    # describes from the other direction.
     (
         "M16-SWALLOWS-REAL-BUGS-AS-TIMEOUTS",
         "a genuine exception laundered into a quietly narrower dropdown",
-        "        if not _is_query_timeout(exc):\n            raise\n        await _recover_search_session(db, deadline)",
-        "        await _recover_search_session(db, deadline)",
+        """        if not _is_query_timeout(exc):
+            raise
+        await _recover_search_session(db, deadline)""",
+        """        await _recover_search_session(db, deadline)""",
     ),
     (
         "M17-SHED-ANSWER-IS-CACHED",
