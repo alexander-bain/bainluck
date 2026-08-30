@@ -35,8 +35,13 @@ class _Recorder:
         self.summaries.append(("incomplete", result_summary))
 
     def failure(self, task_name, duration_ms, error, verdict="thrown",
-                verdict_reason=""):
+                verdict_reason="", result_summary=None):
+        # #2222: the failure recorder takes a summary too. It was the only one
+        # that did not, and it is the one that fires for a task returning
+        # `terminal: failed` — so the run whose account you most need was the
+        # one run whose account was discarded.
         self.calls.append(("failure", task_name, verdict, error))
+        self.summaries.append(("failure", result_summary))
 
 
 @pytest.fixture
@@ -98,6 +103,50 @@ class TestEnforcedCalibrationTasks:
         kind, _task, verdict, _error = recorder.calls[0]
         assert kind == "failure"
         assert verdict == "failed"
+
+    def test_a_returned_failure_keeps_its_own_summary(self, recorder):
+        """#2222 — the failing run's account must reach the recorder.
+
+        `futures_price_refresh` returned `terminal: failed` on every run for a
+        month while its summary held the answer, and the summary went nowhere.
+        Diagnosing it needed a live re-run with the task's Redis markers cleared
+        by hand, to recover a number the failing run had already computed.
+
+        Driven through the real `_tracked_run` rather than asserted against its
+        source, so a future refactor that stops passing it fails here.
+        """
+        summary = {
+            "terminal": "failed",
+            "markets_attempted": 19,
+            "snapshots_written": 0,
+            "venue_settled": 18,
+            "not_found": 1,
+        }
+        _tracked_run("futures_price_refresh", _returns(summary))
+        kind, captured = recorder.summaries[0]
+        assert kind == "failure"
+        assert captured == summary, "the failed path must forward the summary verbatim"
+
+    def test_a_thrown_failure_has_no_summary_to_forward(self, recorder):
+        """The control. A raise has no returned account, and inventing one would
+        make an exception indistinguishable from a task reporting on itself."""
+
+        def _raises():
+            raise RuntimeError("boom")
+
+        async def _async_raises():
+            _raises()
+
+        # `_tracked_run` records a terminal and then RE-RAISES, which is the
+        # long-standing contract for a thrown failure and is not changed here.
+        with pytest.raises(RuntimeError):
+            _tracked_run("coverage_metrics", _async_raises())
+        kind, _task, verdict, _error = recorder.calls[0]
+        assert kind == "failure"
+        assert verdict == "thrown"
+        assert recorder.summaries == [("failure", None)], (
+            "a thrown failure must not fabricate a summary"
+        )
 
     def test_complete_build_without_a_durable_generation_is_not_a_success(self, recorder):
         _tracked_run(
