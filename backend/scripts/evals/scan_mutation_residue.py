@@ -152,6 +152,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     "search_suggestions_cold_mutations": [("MUTANTS", 2, 3, "TARGET")],
     "search_word_test_mutations": [("MUTANTS", 2, 3, 1)],
     "typeahead_concept_provenance_mutations": [("MUTATIONS", 2, 3, "TARGET")],
+    # LAT-P143. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above — it sorts between the two
+    # `typeahead_*` entries already here, and honouring that is what keeps
+    # consecutive latency branches off one hunk. Single target carried as a
+    # module constant, the `cache_refresh_behind_mutations` shape.
+    "typeahead_outcome_arm_mutations": [("MUTANTS", 2, 3, "TARGET")],
     "typeahead_warmer_mutations": [("MUTATIONS", 3, 4, 1)],
 }
 
