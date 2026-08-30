@@ -117,6 +117,17 @@ What it deliberately does not do:
 Both are the same shape as CAL-P144's lesson: an instrument that has never run its default path is
 a document.
 
+**Liveness proven, not assumed.** A heartbeat written once at startup looks identical to a healthy
+one, so the loop was checked for actual iteration: `last_cycle_at` advanced
+`16:00:57 -> 16:03:59` (one 180 s cycle) with both pids still up and the watcher untouched.
+
+**Operational note — disk.** Each render is ~136 KB and censuses change roughly hourly, so the
+banker adds ~3 MB/day of tracked artifacts. Over the ~8 beats to the next promotion that is
+~1–3 MB, which is fine; if this ever runs for a week unattended, prune renders that are not
+adjacent to a promotion rather than letting `artifacts/cal-p147-renders/` grow without bound.
+Compressing them is NOT a fix — the guard discovers renders with `artifacts/*/scorecard*.txt` and
+would silently stop finding them.
+
 ## 4. 🔴 The serve lags, and may skip
 
 This is measured and unresolved, and the next session should read it rather than assume:
