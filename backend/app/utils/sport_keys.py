@@ -1630,37 +1630,36 @@ def get_sport_key_from_ticker(external_id: str) -> Optional[str]:
     return None
 
 
-def is_kalshi_game_ticker(external_id: str) -> bool:
-    """Check whether a Kalshi ``external_id`` is a game-level ticker."""
-    if not external_id:
-        return False
-    ext_lower = external_id.lower()
-    return any(ext_lower.startswith(prefix) for prefix in KALSHI_GAME_TICKER_PREFIXES)
-
-
 def is_kalshi_game_level_ticker(external_id: str) -> bool:
     """Is this ticker game-level *unambiguously* — longest prefix wins.
 
-    CERT-409 [P1]. `is_kalshi_game_ticker()` above answers "does any game
-    prefix match", which is the right question for the matching scan and the
-    wrong one for a canonical identity key. Two ways it says yes about a
-    non-game:
+    CERT-409 [P1], widened to every caller by #2231. The obvious test — "does
+    any game prefix match" — says yes about two kinds of non-game, and the
+    counts run in opposite directions:
 
       * A futures prefix can STRICTLY EXTEND a game prefix. `kxmlbhrderby`
-        (the Home Run Derby) starts with the game prefix `kxmlbhr`, so a
-        `startswith` test calls the Derby a game. Eight futures prefixes have
-        this shape.
-      * The reverse also happens 134 times (`kxmlbrfi` extends the futures
+        (the Home Run Derby) starts with the game prefix `kxmlbhr`, so a bare
+        `startswith` calls the Derby a game. **8 futures prefixes** have this
+        shape.
+      * The reverse happens **146 times** (`kxmlbrfi` extends the futures
         prefix `kxmlb`), so "refuse if any futures prefix matches" is not the
-        fix either — it would silently stop anchoring 134 real game families.
+        fix either — it would stop 146 real game families from being
+        recognised, and it would do it silently (gotcha #53).
 
     So neither map is consulted for a boolean; both are consulted for a
-    LENGTH, and the more specific one wins. The two maps share no exact key
-    (asserted in `test_sport_keys.py`), so there is no tie to break.
+    LENGTH, and the more specific one wins.
 
-    Used by the `event_provider_anchors` key builder, where a false positive is
-    not a mislabeled row but an absorption — one game claiming another's
-    identity, the outcome ruling 048 exists to prevent (gotcha #32).
+    **A tie resolves to futures**, i.e. not game-level. The two maps share no
+    exact key today (asserted here and in `test_sport_keys.py`), so no tie is
+    reachable — but the behaviour is defined and tested rather than left to
+    whichever comparison operator happened to be written, because refusing on
+    a tie costs a missed link while accepting on one corrupts identity.
+
+    Both consumers want that same direction. For the `event_provider_anchors`
+    key builder a false positive is not a mislabeled row but an absorption —
+    one game claiming another's identity, the outcome ruling 048 exists to
+    prevent (gotcha #32). For the Phase 1 matching gates it binds a
+    season-long market to a single night's fixture.
     """
     if not external_id:
         return False
@@ -1681,6 +1680,23 @@ def is_kalshi_game_level_ticker(external_id: str) -> bool:
         default=0,
     )
     return longest_game > longest_futures
+
+
+def is_kalshi_game_ticker(external_id: str) -> bool:
+    """Check whether a Kalshi ``external_id`` is a game-level ticker.
+
+    ONE predicate, two names (#2231). This was a bare `startswith` against the
+    game map while `is_kalshi_game_level_ticker()` used longest-prefix-wins, so
+    the two disagreed about 8 futures families and every caller that asked this
+    one — the Phase 1 matching gates, the grammar adapters, the routes — was
+    told the Home Run Derby and the NBA Pacific Division title were games.
+
+    Kept as a name rather than deleted because it reads correctly at its call
+    sites and is the spelling three modules already import; it delegates so the
+    two can never drift again. `test_kalshi_game_ticker_agreement.py` walks both
+    maps and asserts the agreement rather than trusting this line.
+    """
+    return is_kalshi_game_level_ticker(external_id)
 
 
 def get_sport_keys_for_category(category: Optional[str]) -> Optional[list[str]]:
