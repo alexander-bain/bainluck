@@ -263,6 +263,31 @@ jobs:
             exit 1
           }
 
+      - name: Proven-duplicate search contract (real Postgres)
+        # CERT-439 / #2263. The registry proves two rows are one game and tags
+        # the loser `provenance:duplicate-of:<id>`. The league, team and feed
+        # rails stopped printing it; search and typeahead did not, so the
+        # product answered "one game" or "two games" according to how the user
+        # navigated to it.
+        #
+        # This cannot be a unit test or a source assertion — both were green
+        # while the twin was still a separate search result. The search route
+        # runs on PostgreSQL and nothing else: `ts_rank_cd(to_tsvector(...))`
+        # ordering, pg_trgm-servable ILIKE recall arms, and a "did you mean"
+        # fallback behind `SET LOCAL pg_trgm.similarity_threshold`.
+        #
+        # Same skip detection as every gate in this job: pytest exits 0 when
+        # each test skips, and a gate that silently did not run reads exactly
+        # like one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_proven_duplicate_pg.py \
+            -v -rs 2>&1 | tee /tmp/dupsearch.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/dupsearch.txt; then
+            echo "::error::proven-duplicate search contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Provenance enum contract (real Postgres)
         # C-ADHOC-PROV-CORE. The receiver accepted `play` while the migration's
         # enum declared six values without it, and the route specimen STORED it
