@@ -75,6 +75,57 @@ TENNIS_MATCH_WINNER_PREFIXES = frozenset({
 })
 
 
+# ── Q453: the one LLM category that may not invent an event ──────────────────
+# `llm_sport_category` is a per-market guess over a closed vocabulary in which
+# ``football`` means AMERICAN football and ``soccer`` means soccer. Everywhere
+# outside the US the word means the other sport, so ``football`` is the one
+# category whose errors are systematic rather than random — and the auto-creator
+# spends them minting events.
+#
+# Measured on production 2026-08-30: every one of the 25 newest
+# `americanfootball_other` events is a soccer match (NCAA men's soccer, KNVB
+# Cup, Slovak Cup, Serie C, Argentine Primera Nacional, English non-league), and
+# NO Kalshi ticker prefix maps to `americanfootball_other` at all — the bucket is
+# populated exclusively by this fallback, and it is wrong essentially always.
+#
+# The refusal is narrow by construction, because the ticker is consulted FIRST:
+# of the 80 live series the LLM calls ``football``, 55 are ticker-mapped
+# (1,275 markets, every one real NFL/NCAAF) and are untouched by this rule. The
+# 25 that are not mapped are either soccer, or NFL/NCAAF season markets whose
+# matchup-shaped names ("Will Ole Miss beat LSU?") were minting DUPLICATES of
+# real Odds-API games in `_other` — laundering past the
+# `_ODDS_API_COVERED_PREFIXES` refusal below, which only knows the covered keys
+# themselves. Specimen: events 15297604/15297605, both created 2026-08-30
+# 09:36Z as twins of the real `americanfootball_ncaaf` event 14792803.
+#
+# So: refuse. A market whose only evidence of sport is the word ``football``
+# does not get to create an event. It stays unlinked, which is strictly better
+# than a wrong-sport row a user can see (cf. Q435 — a prop may not invent the
+# match). A league we genuinely want gets a ticker mapping in `sport_keys.py`,
+# which is the declared single source of truth for ticker → sport.
+LLM_CATEGORIES_THAT_MAY_NOT_CREATE_EVENTS = frozenset({"football"})
+
+
+def auto_create_sport_key_from_category(
+    llm_sport_category: Optional[str],
+) -> Optional[str]:
+    """Sport key for an auto-created event when the ticker gave us nothing.
+
+    Returns an ``<prefix>_other`` sport key, or ``None`` when the category is
+    absent, unknown, or one the LLM is not trusted to create events from
+    (see :data:`LLM_CATEGORIES_THAT_MAY_NOT_CREATE_EVENTS`).
+    """
+    if not llm_sport_category:
+        return None
+    category = llm_sport_category.strip().lower()
+    if category in LLM_CATEGORIES_THAT_MAY_NOT_CREATE_EVENTS:
+        return None
+    prefix = _SPORT_CATEGORY_TO_KEY_PREFIX.get(category)
+    if not prefix:
+        return None
+    return f"{prefix}_other"
+
+
 def _ticker_prefix(external_id: Optional[str]) -> str:
     """Lowercased ticker prefix (the token before the first ``-``)."""
     return (external_id or "").lower().split("-", 1)[0]
