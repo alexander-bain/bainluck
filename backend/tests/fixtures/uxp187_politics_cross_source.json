@@ -1,0 +1,209 @@
+{
+ "_source": "GET https://api.bainluck.com/api/politics, precompute generated_at 2026-08-30T09:25:04.584703+00:00; pair census + outcome names via /api/admin/db-query, 2026-08-30",
+ "_what_this_is": "The cross-source spotlight before UX-P187. Each served row pairs two markets and subtracts one leading outcome from the other; `_kalshi_leader` and `_poly_leader` are what those two numbers were actually the price of.",
+ "served_before": [
+  {
+   "q": "Will Trump talk to Mojtaba Khamenei?",
+   "kalshi": 4.5,
+   "poly": 86.0,
+   "delta": 81.5,
+   "category": "presidential",
+   "kalshi_market_id": 52755865,
+   "poly_market_id": 3961814,
+   "_kalshi_leader": "Before Jan 1, 2027",
+   "_poly_leader": "No",
+   "_leaders_agree": false,
+   "_shared_outcome_names": []
+  },
+  {
+   "q": "Next President of Estonia?",
+   "kalshi": 97.5,
+   "poly": 34.6,
+   "delta": 62.9,
+   "category": "presidential",
+   "kalshi_market_id": 59165073,
+   "poly_market_id": 57305363,
+   "_kalshi_leader": "Ülle Madise",
+   "_poly_leader": "Ülle Madise",
+   "_leaders_agree": true,
+   "_shared_outcome_names": [
+    "hannes hanso",
+    "indrek laul",
+    "indrek tarand",
+    "jonatan vseviov",
+    "maive rute",
+    "mart helme",
+    "riho ühtegi",
+    "ülle madise"
+   ]
+  },
+  {
+   "q": "How many House seats will Democrats win in Louisiana?",
+   "kalshi": 92.5,
+   "poly": 36.0,
+   "delta": 56.5,
+   "category": "congressional",
+   "kalshi_market_id": 16755287,
+   "poly_market_id": 58840985,
+   "_kalshi_leader": "Will Democrats win exactly 1 seats in the 2026 U.S. House of Representatives elections in Louisiana?",
+   "_poly_leader": "9",
+   "_leaders_agree": false,
+   "_shared_outcome_names": []
+  },
+  {
+   "q": "How many House seats will Democrats win in Georgia?",
+   "kalshi": 88.0,
+   "poly": 37.5,
+   "delta": 50.5,
+   "category": "congressional",
+   "kalshi_market_id": 59693678,
+   "poly_market_id": 58840989,
+   "_kalshi_leader": "Will Democrats win exactly 5 seats in the 2026 U.S. House of Representatives elections in Georgia?",
+   "_poly_leader": "1",
+   "_leaders_agree": false,
+   "_shared_outcome_names": []
+  },
+  {
+   "q": "Will the federal gas tax be suspended?",
+   "kalshi": 16.0,
+   "poly": 66.4,
+   "delta": 50.4,
+   "category": "other",
+   "kalshi_market_id": 19528696,
+   "poly_market_id": 20569038,
+   "_kalshi_leader": "Before Jan 1, 2027",
+   "_poly_leader": "No",
+   "_leaders_agree": false,
+   "_shared_outcome_names": []
+  },
+  {
+   "q": "How many House seats will Democrats win in Illinois?",
+   "kalshi": 92.5,
+   "poly": 43.0,
+   "delta": 49.5,
+   "category": "congressional",
+   "kalshi_market_id": 59693677,
+   "poly_market_id": 58835465,
+   "_kalshi_leader": "Will Democrats win exactly 14 seats in the 2026 U.S. House of Representatives elections in Illinois?",
+   "_poly_leader": "3",
+   "_leaders_agree": false,
+   "_shared_outcome_names": []
+  },
+  {
+   "q": "Massachusetts Democratic Senate primary margin of victory?",
+   "kalshi": 66.5,
+   "poly": 18.5,
+   "delta": 48.0,
+   "category": "presidential",
+   "kalshi_market_id": 52755634,
+   "poly_market_id": 59329605,
+   "_kalshi_leader": "Ed Markey, ≥20%",
+   "_poly_leader": "Markey 10–15%",
+   "_leaders_agree": false,
+   "_shared_outcome_names": []
+  },
+  {
+   "q": "How many House seats will Democrats win in Utah?",
+   "kalshi": 95.0,
+   "poly": 49.0,
+   "delta": 46.0,
+   "category": "congressional",
+   "kalshi_market_id": 16755285,
+   "poly_market_id": 58835467,
+   "_kalshi_leader": "Will Democrats win exactly 1 seats in the 2026 U.S. House of Representatives elections in Utah?",
+   "_poly_leader": "5",
+   "_leaders_agree": false,
+   "_shared_outcome_names": []
+  }
+ ],
+ "pair_census": {
+  "pairs_total": 122,
+  "leaders_agree": 24,
+  "leaders_differ": 98,
+  "no_shared_outcome": 95,
+  "comparable": 27
+ },
+ "after_top8": [
+  {
+   "q": "Next President of Estonia?",
+   "outcome": "Ülle Madise",
+   "k": 97.5,
+   "p": 34.6,
+   "delta": 62.9,
+   "old_delta": 57.5,
+   "kid": 59165073,
+   "pid": 57305363
+  },
+  {
+   "q": "Next Governing Mayor of Berlin?",
+   "outcome": "Elif Eralp",
+   "k": 76.0,
+   "p": 43.5,
+   "delta": 32.5,
+   "old_delta": 32.5,
+   "kid": 59164650,
+   "pid": 58833970
+  },
+  {
+   "q": "Kraków mayoral election winner?",
+   "outcome": "Łukasz Gibała",
+   "k": 65.5,
+   "p": 33.5,
+   "delta": 32.0,
+   "old_delta": 42.5,
+   "kid": 59164656,
+   "pid": 58547558
+  },
+  {
+   "q": "Rio de Janeiro Governor winner?",
+   "outcome": "Eduardo Paes",
+   "k": 94.0,
+   "p": 63.8,
+   "delta": 30.2,
+   "old_delta": 0.7,
+   "kid": 12926842,
+   "pid": 34676430
+  },
+  {
+   "q": "Kelowna mayoral election winner?",
+   "outcome": "Tom Dyas",
+   "k": 39.5,
+   "p": 67.0,
+   "delta": 27.5,
+   "old_delta": 12.5,
+   "kid": 59164645,
+   "pid": 58761828
+  },
+  {
+   "q": "Will the Supreme Court rule in favor of Trump's tariffs?",
+   "outcome": "Yes",
+   "k": 25.5,
+   "p": 0.1,
+   "delta": 25.4,
+   "old_delta": 25.4,
+   "kid": 108496,
+   "pid": 112981
+  },
+  {
+   "q": "Nigerian Senate election winner?",
+   "outcome": "APC",
+   "k": 61.0,
+   "p": 85.0,
+   "delta": 24.0,
+   "old_delta": 24.0,
+   "kid": 108593,
+   "pid": 59704039
+  },
+  {
+   "q": "Will another country leave OPEC in 2026?",
+   "outcome": "Yes",
+   "k": 30.5,
+   "p": 11.5,
+   "delta": 19.0,
+   "old_delta": 19.0,
+   "kid": 13786112,
+   "pid": 13641462
+  }
+ ],
+ "after_available": 27
+}
