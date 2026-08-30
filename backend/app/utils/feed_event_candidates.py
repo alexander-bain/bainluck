@@ -173,11 +173,36 @@ def survivor_order():
     this row" from "this row is a schedule entry".  It is deliberately a proxy
     for richness rather than a measure of it; true source-count ranking stays
     declined on the cost grounds above, which still hold for the 25,610-row
-    Discover pool.  Placed BELOW ``has_sources`` and ABOVE ``has_score`` so it
-    only ever breaks ties the existing keys leave open, and it is inert for every
-    pre-existing test in ``test_feed_event_candidates.py`` (their fixtures set no
-    opening odds) — which is the check that it widens the order rather than
-    reorders it.
+    Discover pool.
+
+    WHERE IT SITS, AND WHY IT MOVED (CERT-407)
+    ------------------------------------------
+    The first version of this placed ``has_opening`` directly below
+    ``has_sources`` and therefore ABOVE ``has_score``.  CERT-407 blocked on that
+    ordering and the finding was right: it makes a row that has merely been
+    PRICED outrank a row that has actually been PLAYED.  Driven on a real pair,
+    it kept an opening-priced scoreless row and suppressed the only row carrying
+    ``2–1`` — trading #2213's duplicate bug for a fresher one in which My Stuff
+    shows a live card that does not know the score.
+
+    The two keys answer different questions and the order between them is the
+    whole content of the repair:
+
+    ``has_score``    is direct evidence about the FIXTURE — this row knows what
+                     is happening in the game.
+    ``has_opening``  is evidence about the PIPELINE that wrote the row — some
+                     betting source has priced it at least once.
+
+    Direct evidence about the game wins, so ``has_score`` leads.  The #2213 pair
+    is untouched by the swap because BOTH of its rows carry a score: the tie
+    ``has_opening`` was added to break is still the tie it breaks, one key later.
+    That non-obvious fact is why the repair keeps two separate tests — one for
+    the key's POSITION, one for its PRESENCE — since a corpus that proves either
+    alone will happily pass with the other broken.
+
+    The key remains inert for every pre-existing test in
+    ``test_feed_event_candidates.py`` (their fixtures set no opening odds), which
+    is the check that it widens the order rather than reordering it.
     """
     sources_text = func.cast(Event.win_probability_sources, String)
     has_sources = case(
@@ -200,8 +225,8 @@ def survivor_order():
     )
     return [
         has_sources.desc(),
-        has_opening.desc(),
         has_score.desc(),
+        has_opening.desc(),
         Event.id.asc(),
     ]
 

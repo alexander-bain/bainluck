@@ -54,6 +54,7 @@ from app.utils.feed_event_candidates import (  # noqa: E402
     deduplicated_event_ids,
     event_candidate_ids,
     status_tier_expr,
+    survivor_order,
 )
 
 NOW = datetime(2026, 8, 21, 19, 0, 0, tzinfo=timezone.utc)
@@ -772,3 +773,223 @@ def test_the_two_arms_cannot_drift_apart(mystuff):
     is — and the surface with the looser key silently grows them back.
     """
     assert _mystuff_admitted(mystuff) == _admitted(mystuff)
+
+
+# ---------------------------------------------------------------------------
+# 7 — CERT-407: the cross-signal tiebreak the first version of this got backwards
+# ---------------------------------------------------------------------------
+#
+# `has_opening` was introduced above to break the #2213 tie, and it was placed
+# ABOVE `has_score`. CERT-407 blocked on that placement with an executed
+# specimen, and the finding is correct: with the keys in that order a row that
+# has only been PRICED outranks a row that has actually been PLAYED. The pair it
+# drove kept an opening-priced scoreless row and suppressed the only row
+# carrying `2–1`.
+#
+# The repair is a reordering, not a deletion. Both signals still matter and they
+# answer different questions:
+#
+#   has_score   — "does this row know what is happening in the game?"
+#   has_opening — "has a betting source ever priced this row?"
+#
+# A score is direct evidence about the fixture; an opening price is evidence
+# about the pipeline that wrote the row. When they disagree, the row that knows
+# the score is the better card, and #2213's own pair is untouched by the swap
+# because BOTH of its rows carried a score — the tie it was added to break is
+# still broken, one key later.
+#
+# Both tests below are non-vacuous by construction: in each, the row that SHOULD
+# win carries the HIGHER id, so `Event.id.asc()` cannot produce the expected
+# answer by accident if a key is dropped.
+
+_CROSS_SIGNAL_START = NOW - timedelta(hours=1)
+_SRC = {"betting": {"home_probability": 0.6}}
+
+
+def test_a_played_row_beats_a_merely_priced_one(engine):
+    """CERT-407's specimen. Pre-repair this returns the scoreless row.
+
+    The two rows tie on `has_sources`, so the decision falls to the next key.
+    Under `has_opening` -> `has_score` the priced row wins and the card renders
+    no score for a game that is 2-1. Under `has_score` -> `has_opening` the row
+    that knows the score wins, which is the answer a reader of the card wants.
+    """
+    with Session(engine) as s:
+        _seed(
+            s,
+            [
+                # Priced, but has no idea what the score is. LOWER id, so it also
+                # wins the final tiebreak — this test fails loudly if `has_score`
+                # is ever demoted again.
+                _event(
+                    1,
+                    S_LIGUE1,
+                    "H",
+                    "A",
+                    _CROSS_SIGNAL_START,
+                    "live",
+                    _SRC,
+                    opening_home_probability=0.55,
+                ),
+                # Played: the only row carrying the actual 2-1.
+                _event(
+                    2,
+                    S_LIGUE1,
+                    "H",
+                    "A",
+                    _CROSS_SIGNAL_START,
+                    "live",
+                    _SRC,
+                    home_score=2,
+                    away_score=1,
+                ),
+            ],
+        )
+        assert _admitted(s) == {2}
+
+
+def test_opening_still_breaks_the_tie_when_both_rows_are_played(engine):
+    """The #2213 control — the repair must not undo what `has_opening` is for.
+
+    This is the Red Sox-Marlins shape: both rows carry sources AND a score, so
+    `has_score` ties and the decision falls through to `has_opening`. Delete
+    `has_opening` and the lowest id wins, which is the StatPal row: a 50/50 card
+    replacing a real blend. So this test pins the key's PRESENCE while the test
+    above pins its POSITION, and neither alone is sufficient.
+    """
+    with Session(engine) as s:
+        _seed(
+            s,
+            [
+                _event(
+                    1,
+                    S_LIGUE1,
+                    "H",
+                    "A",
+                    _CROSS_SIGNAL_START,
+                    "live",
+                    _SRC,
+                    home_score=0,
+                    away_score=1,
+                ),
+                _event(
+                    2,
+                    S_LIGUE1,
+                    "H",
+                    "A",
+                    _CROSS_SIGNAL_START,
+                    "live",
+                    _SRC,
+                    home_score=0,
+                    away_score=1,
+                    opening_home_probability=0.4209,
+                ),
+            ],
+        )
+        assert _admitted(s) == {2}
+
+
+def test_the_survivor_keys_are_in_the_certified_order():
+    """The order itself, asserted on the compiled SQL.
+
+    The two executing tests above each pin one property of one key. This pins
+    the whole sequence, so a reordering that happens to leave both of those
+    corpora answering correctly still fails here rather than shipping.
+    """
+    keys = [
+        str(clause.compile(dialect=postgresql.dialect()))
+        for clause in survivor_order()
+    ]
+    assert len(keys) == 4, keys
+    assert "win_probability_sources" in keys[0]
+    assert "home_score" in keys[1] and "away_score" in keys[1]
+    assert "opening_home_probability" in keys[2]
+    assert "events.id ASC" in keys[3]
+
+
+# ---------------------------------------------------------------------------
+# 8 — the wiring itself, because a library guard cannot see the route
+# ---------------------------------------------------------------------------
+#
+# Every test above drives `deduplicated_event_ids` directly. None of them can
+# tell whether `_score_events` still CALLS it: delete the one `query.where(...)`
+# line in the My Stuff arm and all thirty stay green while the surface regrows
+# the duplicate pair Alex reported. The feed's own harness mocks `db.execute`,
+# so there is no cheap way to execute that route end to end here — the honest
+# substitute is to assert the wiring structurally, on the parsed route, rather
+# than to assert nothing.
+#
+# `ast` rather than a substring count: this has to know WHICH arm the call is
+# in. A count would stay green if the two calls were swapped, which is precisely
+# the failure — Discover would get no quotas and My Stuff would get them.
+
+import ast  # noqa: E402
+import pathlib  # noqa: E402
+
+
+#: `_score_events` tests `my_teams_only` four separate times — cutoff windows,
+#: the candidate query, and two later shaping steps. The branch this guard is
+#: about is identified by a landmark that belongs to it for an INDEPENDENT
+#: reason: the tier-1/2 sport allowlist (BR42/BR43), which exists to stop
+#: "Boston" matching Boston College hockey. Anchoring on the dedup call instead
+#: would make the guard assert its own premise.
+_MY_STUFF_ARM_LANDMARK = "MY_STUFF_ALLOWED_SPORT_KEYS"
+
+
+def _score_events_arms():
+    """The two branches of `_score_events`'s candidate-query `if my_teams_only:`."""
+    src = pathlib.Path(
+        pathlib.Path(__file__).parent.parent / "app" / "routes" / "feed.py"
+    ).read_text()
+    tree = ast.parse(src)
+
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AsyncFunctionDef) or node.name != "_score_events":
+            continue
+        for stmt in ast.walk(node):
+            if (
+                isinstance(stmt, ast.If)
+                and isinstance(stmt.test, ast.Name)
+                and stmt.test.id == "my_teams_only"
+            ):
+                body = "\n".join(ast.unparse(s) for s in stmt.body)
+                if _MY_STUFF_ARM_LANDMARK in body:
+                    found.append(
+                        (body, "\n".join(ast.unparse(s) for s in stmt.orelse))
+                    )
+
+    assert len(found) == 1, (
+        f"expected exactly one `if my_teams_only:` arm carrying "
+        f"{_MY_STUFF_ARM_LANDMARK}, found {len(found)}. The route was "
+        f"restructured, so this guard is stale and My Stuff's duplicate "
+        f"protection needs re-checking by hand rather than silently."
+    )
+    return found[0]
+
+
+def test_the_my_stuff_arm_calls_the_collapse():
+    """THE ship, asserted where it can actually be deleted."""
+    my_stuff_arm, _ = _score_events_arms()
+    assert "deduplicated_event_ids(" in my_stuff_arm
+
+
+def test_the_discover_arm_still_gets_the_quotas():
+    """The control: the repair must not move Discover onto the quota-less pass.
+
+    The two arms want different things — My Stuff is already bounded to one
+    user's teams, Discover is not — so a swap here would be silent in every
+    other test and would re-open #2065 on the flagship surface.
+    """
+    my_stuff_arm, discover_arm = _score_events_arms()
+    assert "event_candidate_ids(" in discover_arm
+    assert "deduplicated_event_ids(" not in discover_arm
+    assert "event_candidate_ids(" not in my_stuff_arm
+
+
+def test_the_my_stuff_arm_keeps_its_own_safety_cap():
+    """The collapse replaces no existing bound. 200 is the pool's only ceiling
+    now that the quotas are deliberately not inherited, so losing it would make
+    a user with many teams unbounded."""
+    my_stuff_arm, _ = _score_events_arms()
+    assert "limit(200)" in my_stuff_arm
