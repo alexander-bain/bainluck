@@ -461,24 +461,33 @@ class TestWorkerSessionDiscipline:
 
 
 class TestWarmerVerdicts:
-    async def test_dispatches_one_task_per_selected_team_with_a_token(self):
+    async def test_rebuilds_every_selected_team_inline(self):
         from app.tasks import prop_families_warm as warm
 
         rc = _FakeRedis()
-        sent = []
-        with patch.object(warm, "__name__", warm.__name__), \
-             patch("app.utils.event_concept_cache.get_client", return_value=rc), \
-             patch("app.tasks.celery_app.send_task",
-                   side_effect=lambda *a, **k: sent.append(k)), \
-             patch("app.tasks.base.get_task_session", _session_yielding([1, 2, 3])):
+        built: list[int] = []
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2, 3])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build(built)):
             out = await warm._warm_prop_families()
         assert out["terminal"] == "complete"
-        assert out["selected"] == 3 and out["dispatched"] == 3
-        for call in sent:
-            assert call["queue"] == "background"
-            team_id, cap, token = call["args"]
-            assert cap == warm.WARM_CAP
-            assert isinstance(token, str) and token
+        assert out["selected"] == 3 and out["rebuilt"] == 3
+        assert built == [1, 2, 3]
+
+    async def test_the_producer_never_dispatches_another_task(self):
+        """`tests/test_celery_result_retention.py::test_no_task_dispatches_
+        another_task` is a repo-wide rule and the first draft of this producer
+        broke it — it fanned out one message per team. Pinned HERE too, next to
+        the thing it constrains, so the next person to reach for a fan-out reads
+        the reason rather than a scanner's line number."""
+        source = open(_WARM_PATH).read()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                name = getattr(fn, "attr", None) or getattr(fn, "id", None)
+                assert name not in ("send_task", "delay", "apply_async"), name
 
     async def test_a_team_whose_lock_is_held_is_skipped_not_double_built(self):
         from app.tasks import prop_families_warm as warm
@@ -486,26 +495,109 @@ class TestWarmerVerdicts:
         rc = _FakeRedis()
         held = route.prop_families_cache_keys(2, warm.WARM_CAP)
         rc.set(held.refresh_lock, "reader", nx=True, ex=120)
-        sent = []
+        built: list[int] = []
         with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
-             patch("app.tasks.celery_app.send_task",
-                   side_effect=lambda *a, **k: sent.append(k)), \
-             patch("app.tasks.base.get_task_session", _session_yielding([1, 2, 3])):
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2, 3])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build(built)):
             out = await warm._warm_prop_families()
-        assert out["dispatched"] == 2 and out["locked_out"] == 1
-        assert len(sent) == 2
+        assert out["rebuilt"] == 2 and out["locked_out"] == 1
+        assert built == [1, 3]
+
+    async def test_the_lock_is_released_after_each_team(self):
+        """Otherwise the second pass finds every team locked by the first."""
+        from app.tasks import prop_families_warm as warm
+
+        rc = _FakeRedis()
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build([])):
+            await warm._warm_prop_families()
+        for team_id in (1, 2):
+            keys = route.prop_families_cache_keys(team_id, warm.WARM_CAP)
+            assert rc.store.get(keys.refresh_lock) is None
+
+    async def test_the_budget_defers_the_rest_and_says_so(self):
+        """A pass that ran out of time must report what it did NOT do. Silent
+        truncation reads as 'covered everything'."""
+        from app.tasks import prop_families_warm as warm
+
+        rc = _FakeRedis()
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2, 3, 4])), \
+             patch.object(warm, "PASS_BUDGET_SECONDS", 0), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build([])):
+            out = await warm._warm_prop_families()
+        assert out["rebuilt"] == 0 and out["deferred"] == 4
+
+    async def test_the_cursor_rotates_so_the_tail_gets_a_turn(self):
+        """gotcha #34: one position shared across a loop starves whatever comes
+        late. A pass resumes AFTER the id the last one finished on."""
+        from app.tasks import prop_families_warm as warm
+
+        rc = _FakeRedis()
+        rc.setex(warm.CURSOR_KEY, 100, "2")
+        built: list[int] = []
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2, 3, 4])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build(built)):
+            await warm._warm_prop_families()
+        assert built == [3, 4, 1, 2]
+
+    async def test_the_cursor_is_written_with_where_the_pass_stopped(self):
+        """The rotation test above cannot carry this assertion and a mutation
+        battery proved it: its pass wraps back to the id it started after, so
+        "the cursor was written" and "the cursor was never touched" leave the
+        key looking identical. Started from an ABSENT cursor, the two are
+        distinguishable — which is the whole point of the survivor rule."""
+        from app.tasks import prop_families_warm as warm
+
+        rc = _FakeRedis()
+        assert warm.CURSOR_KEY not in rc.store
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([5, 6, 7])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build([])):
+            await warm._warm_prop_families()
+        assert rc.store[warm.CURSOR_KEY] == b"7"
+        assert rc.ttls[warm.CURSOR_KEY] == warm.CURSOR_TTL_SECONDS
+
+    async def test_one_bad_team_does_not_wipe_the_pass(self):
+        """gotcha #42, and the siblings are asserted, not just the survival."""
+        from app.tasks import prop_families_warm as warm
+
+        rc = _FakeRedis()
+        built: list[int] = []
+
+        async def _explode_on_two(team, db, cap, client=None):
+            if team.id == 2:
+                raise RuntimeError("boom")
+            built.append(team.id)
+            return {"families": []}, False
+
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2, 3])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_explode_on_two):
+            out = await warm._warm_prop_families()
+        assert built == [1, 3]
+        assert out["rebuilt"] == 2 and out["failed"] == 1
 
     async def test_the_cap_is_reported_never_silent(self):
         from app.tasks import prop_families_warm as warm
 
         rc = _FakeRedis()
-        many = list(range(warm.MAX_TEAMS_PER_PASS + 7))
+        many = list(range(1, warm.MAX_TEAMS_PER_PASS + 8))
         with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
-             patch("app.tasks.celery_app.send_task", side_effect=lambda *a, **k: None), \
-             patch("app.tasks.base.get_task_session", _session_yielding(many)):
+             patch.object(warm, "PASS_BUDGET_SECONDS", 0), \
+             patch("app.tasks.base.get_task_session", _session_for_warm(many)), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build([])):
             out = await warm._warm_prop_families()
         assert out["selected"] == len(many)
-        assert out["dispatched"] == warm.MAX_TEAMS_PER_PASS
         assert out["truncated"] == 7
 
     async def test_a_failed_selection_reads_failed_not_empty(self):
@@ -522,9 +614,24 @@ class TestWarmerVerdicts:
         from app.tasks import prop_families_warm as warm
 
         with patch("app.utils.event_concept_cache.get_client", return_value=_FakeRedis()), \
-             patch("app.tasks.base.get_task_session", _session_yielding([])):
+             patch("app.tasks.base.get_task_session", _session_for_warm([])):
             out = await warm._warm_prop_families()
-        assert out["terminal"] == "complete" and out["dispatched"] == 0
+        assert out["terminal"] == "complete" and out["rebuilt"] == 0
+
+    async def test_a_pass_that_rebuilt_nothing_but_had_work_reads_failed(self):
+        from app.tasks import prop_families_warm as warm
+
+        rc = _FakeRedis()
+
+        async def _always_degraded(team, db, cap, client=None):
+            return {"families": []}, True
+
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_always_degraded):
+            out = await warm._warm_prop_families()
+        assert out["terminal"] == "failed" and out["rebuilt"] == 0 and out["failed"] == 2
 
 
 class TestRefreshVerdicts:
@@ -585,23 +692,46 @@ class TestEnrolmentAndBeat:
         assert entry["task"] == "app.tasks.warm_prop_families"
         assert entry["options"]["queue"] == "background"
 
-    def test_the_period_is_derived_from_what_the_mirror_must_survive(self):
-        """The cadence is not a taste. The mirror is `STALE_TTL` (24h) and the
-        reader's cost when it lapses is a 2.6-16.8 s rebuild, so the period must
-        leave room for missed deliveries on a rail LAT-P112 measured at p50
-        138-152 s against a declared 120 s. Three missed passes of headroom.
+    def test_the_cadence_covers_the_reachable_set_inside_the_mirror(self):
+        """The cadence is not a taste, and it is not "often enough" either.
 
-        Asserted as a DERIVATION, so tightening `STALE_TTL` tightens this too
-        instead of leaving a literal behind in another file (#2236).
+        Each pass is budgeted in SECONDS because the build is 2.6-16.8 s and
+        varies with roster size, so the contract the cadence has to satisfy is a
+        COVERAGE one: at the pessimistic rate of one slowest-measured build per
+        team, every team in a maxed-out reachable set must be rebuilt before the
+        24 h mirror can lapse.
+
+        Asserted as the arithmetic, from the constants — widening the cap or
+        shrinking the budget then moves the cadence instead of quietly leaving
+        teams uncovered, and re-measuring the slowest build re-derives all of it
+        (#2236).
         """
-        from app.tasks import celery_app
+        import math
+
+        from app.tasks import celery_app, prop_families_warm as warm
 
         entry = celery_app.conf.beat_schedule["warm-prop-families"]
-        hours = entry["schedule"].hour
-        # crontab(hour="*/6") expands to {0, 6, 12, 18} — four fires a day.
-        assert len(hours) == 4
-        period_seconds = 86400 // len(hours)
-        assert period_seconds <= cache_mod.STALE_TTL // 4
+        sched = entry["schedule"]
+        assert len(sched.hour) == 24, "hourly — every hour is a fire"
+        period_seconds = 3600 // len(sched.minute)
+
+        teams_per_pass = warm.PASS_BUDGET_SECONDS // warm.SLOWEST_MEASURED_BUILD_SECONDS
+        assert teams_per_pass >= 1
+        passes_to_cover = math.ceil(warm.MAX_TEAMS_PER_PASS / teams_per_pass)
+        assert passes_to_cover * period_seconds <= cache_mod.STALE_TTL, (
+            f"{passes_to_cover} passes x {period_seconds}s exceeds the "
+            f"{cache_mod.STALE_TTL}s mirror — teams would go cold between warms"
+        )
+
+    def test_the_budget_and_the_slowest_build_fit_the_task_limits(self):
+        """A pass that starts a team on the last tick of its budget must still
+        finish inside the soft limit, and the soft limit must stay under the
+        300 s hard `task_time_limit` that arrives as an untracked SIGKILL."""
+        from app.tasks import celery_app, prop_families_warm as warm
+
+        task = celery_app.tasks["app.tasks.warm_prop_families"]
+        worst = warm.PASS_BUDGET_SECONDS + warm.PER_TEAM_TIMEOUT_SECONDS
+        assert worst <= task.soft_time_limit < task.time_limit < 300
 
     def test_the_inner_rebuild_is_bounded_inside_its_own_task_budget(self):
         """A wedged build must be reported by its own timeout, not arrive as a
@@ -647,6 +777,44 @@ class _AsyncCM:
 
     async def __aexit__(self, *exc):
         return False
+
+
+def _recording_build(sink):
+    """Stand in for `build_and_cache_prop_families`, recording the team ORDER."""
+    async def _inner(team, db, cap, client=None):
+        sink.append(team.id)
+        return {"families": []}, False
+    return _inner
+
+
+def _session_for_warm(team_ids):
+    """The warmer opens one session for the id sweep and one per team.
+
+    The first `execute` answers with the id list; every later one answers with
+    the team row whose id the caller asked for — matched out of the statement so
+    the double cannot silently hand back the wrong team and make an ordering
+    assertion pass for the wrong reason.
+    """
+    ids = [int(t) for t in team_ids]
+
+    class _WarmDB(_RecordingDB):
+        def __init__(self):
+            super().__init__()
+            self._first = True
+
+        async def execute(self, stmt, *args, **kwargs):
+            self.statements.append(stmt)
+            if self._first:
+                self._first = False
+                return _rows_result(ids)
+            wanted = [
+                v for v in stmt.compile().params.values() if isinstance(v, int)
+            ]
+            tid = wanted[0] if wanted else (ids[0] if ids else 0)
+            return _rows_result([_team(tid=tid, name=f"Team {tid}", slug=f"t{tid}")])
+
+    db = _WarmDB()
+    return lambda *a, **k: _AsyncCM(db)
 
 
 def _session_yielding(team_ids):

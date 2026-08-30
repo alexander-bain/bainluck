@@ -3240,7 +3240,7 @@ def refresh_prop_families(self, team_id: int, cap: int = 400, token: str | None 
 
 
 @celery_app.task(
-    bind=True, soft_time_limit=120, time_limit=180,
+    bind=True, soft_time_limit=260, time_limit=290,
     name="app.tasks.warm_prop_families",
 )
 def warm_prop_families(self):
@@ -3249,10 +3249,19 @@ def warm_prop_families(self):
     Unlike `refresh_hub` above, this tier HAS a scheduled producer, and the
     reason is size, not preference: a hub rebuild was 2.7s at its worst, a
     prop-families rebuild is 2.6-16.8s. The race a second producer would create
-    is closed by taking the SAME refresh lock the route takes, so a beat pass
-    arriving while a reader's rebuild is in flight dispatches nothing for that
-    team. The dispatcher itself does no building — it selects and sends — so it
-    stays far inside its own limits however many teams it selects.
+    is closed by taking the SAME refresh lock the route takes, so a pass arriving
+    while a reader's rebuild is in flight skips that team.
+
+    It rebuilds INLINE rather than fanning out one message per team, because
+    `test_no_task_dispatches_another_task` forbids intra-task dispatch — the
+    result-consumer set is derived by scanning routes, services and utils, so a
+    task that dispatches a task can grow a consumer that scan never sees.
+
+    The limits are derived from the work, not chosen: `PASS_BUDGET_SECONDS` (180)
+    plus one whole `PER_TEAM_TIMEOUT_SECONDS` (60) for a team that starts on the
+    last tick of the budget is 240 s, so the soft limit is 260 and the hard one
+    290 — both inside the 300 s global `task_time_limit` that arrives as an
+    untracked SIGKILL (project_celery_sigkill_untracked).
     """
     from app.tasks.prop_families_warm import _warm_prop_families
     return _tracked_run("warm_prop_families", _warm_prop_families())
@@ -3784,13 +3793,19 @@ celery_app.conf.beat_schedule = {
     },
     "warm-prop-families": {
         "task": "app.tasks.warm_prop_families",
-        # Every 6h at :43 (LAT-P138). THE PERIOD IS DERIVED FROM WHAT THE MIRROR
-        # HAS TO SURVIVE, not chosen: the tier's job here is that a reachable
-        # team's 24h stale mirror never lapses, because the reader's cost when it
-        # does is a 2.6-16.8s rebuild. `STALE_TTL // 4` gives three missed
-        # deliveries of headroom on the `background` rail LAT-P112 measured at
-        # p50 138-152s against a declared 120s — a period of 12h would leave a
-        # single missed pass one lapse away from the thing this exists to prevent.
+        # Hourly at :43 (LAT-P138). THE PERIOD IS DERIVED FROM COVERAGE, not
+        # chosen. Each pass is budgeted in SECONDS (the build is 2.6-16.8s and
+        # varies with roster size), so what the cadence has to satisfy is:
+        #
+        #   passes to cover a full list x period  <=  the mirror's lifetime
+        #   ceil(200 / (180 // 17)) x 3600 = 20 x 3600 = 72,000s  <=  86,400s
+        #
+        # i.e. even at the pessimistic rate of one slowest-measured build per
+        # team, every team in a maxed-out reachable set is rebuilt inside the 24h
+        # mirror with four hours to spare. `test_the_cadence_covers_the_reachable
+        # _set_inside_the_mirror` asserts that arithmetic from the constants, so
+        # widening the cap or shrinking the budget moves the cadence instead of
+        # quietly leaving teams uncovered.
         #
         # It is NOT sub-TTL of the 900s primary, on purpose. Past the primary a
         # reader gets the mirror in milliseconds and schedules one rebuild, so
@@ -3798,10 +3813,16 @@ celery_app.conf.beat_schedule = {
         # be 82 multi-second rebuilds every fifteen minutes to save nobody
         # anything.
         #
-        # The odd minute is deliberate: :43 puts this pass outside the :00/:25/:30
-        # cluster the hourly precomputes already occupy, so a heavy-ish fan-out
-        # does not land on top of them.
-        "schedule": crontab(minute=43, hour="*/6"),
+        # 🔴 THE FIRE MINUTE IS :53 AND IT WAS MOVED THERE BY A CENSUS, NOT
+        # CHOSEN. The first draft fired at :43, which lands inside the nightly
+        # settlement sweep's own 10:31+13m window — `test_the_run_window_does_
+        # not_sit_under_a_growing_pile` went red at 15 co-fires against a
+        # declared ceiling of 14. Ceilings like that exist to be respected, not
+        # re-derived upward for the convenience of the beat that broke them
+        # (#1910), so this moved instead. A minute census over the assembled
+        # schedule says :53 carries one other beat, against 33 at :00, 24 at :30
+        # and 15 at :45.
+        "schedule": crontab(minute=53),
         "options": {"queue": "background"},
     },
     "warm-event-concepts": {

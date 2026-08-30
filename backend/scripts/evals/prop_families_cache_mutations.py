@@ -231,8 +231,9 @@ async def resolve_team""",
     (
         "M16",
         WARM,
-        "dispatch even when a reader already holds the lock — the race the hub "
-        "module warns a second producer would create, reopened",
+        "rebuild even when a reader already holds the lock — the race the hub "
+        "module warns a second producer would create, reopened, and it costs a "
+        "duplicated multi-second build",
         """        token = acquire_refresh_lock(rc, keys)
         if not token:""",
         """        token = acquire_refresh_lock(rc, keys) or "unowned"
@@ -244,18 +245,55 @@ async def resolve_team""",
         "a selection that blew up reads complete — `selected: 0` because nothing "
         "is reachable and `selected: 0` because the query died stop being "
         "different facts (gotcha #53)",
-        '        return {"terminal": "failed", "selected": 0, "dispatched": 0}',
-        '        return {"terminal": "complete", "selected": 0, "dispatched": 0}',
+        '        return {"terminal": "failed", "selected": 0, "rebuilt": 0}',
+        '        return {"terminal": "complete", "selected": 0, "rebuilt": 0}',
     ),
     (
         "M18",
         WARM,
-        "a degraded rebuild reads complete — nothing was written, the mirror is "
-        "as old as it was, and the pass claims success (#1884)",
-        '        return {"terminal": "failed", "team_id": team_id, "rebuilt": 0, '
-        '"degraded": True}',
-        '        return {"terminal": "complete", "team_id": team_id, "rebuilt": 1, '
-        '"degraded": True}',
+        "a pass whose every build degraded reads complete — nothing was written, "
+        "every mirror is as old as it was, and the pass claims success (#1884)",
+        """    elif rebuilt or (locked_out and not failed):
+        terminal = "complete\"""",
+        """    elif True:
+        terminal = "complete\"""",
+    ),
+    (
+        "M18b",
+        WARM,
+        "never advance the cursor — every pass re-warms the same head and the "
+        "tail of the list is never reached at all (gotcha #34)",
+        """    if last_done is not None:
+        _write_cursor(rc, last_done)""",
+        """    if last_done is None:
+        _write_cursor(rc, last_done)""",
+    ),
+    (
+        "M18c",
+        WARM,
+        "ignore the cursor on read — same starvation, from the other end",
+        """    cursor = _read_cursor(rc)
+    start = 0""",
+        """    cursor = -1
+    start = 0""",
+    ),
+    (
+        "M18d",
+        WARM,
+        "drop the budget check — the pass runs the whole list and a maxed-out "
+        "reachable set walks straight through the soft limit into a SIGKILL",
+        "        if time.monotonic() - started >= PASS_BUDGET_SECONDS:",
+        "        if False:",
+    ),
+    (
+        "M18e",
+        WARM,
+        "let one bad team wipe the pass — gotcha #42, on a loop where the "
+        "survivors are the whole point",
+        """        except Exception:
+            # One bad team must never wipe the pass (gotcha #42).""",
+        """        except ZeroDivisionError:
+            # One bad team must never wipe the pass (gotcha #42).""",
     ),
     (
         "M19",
@@ -293,10 +331,27 @@ async def resolve_team""",
     (
         "M22",
         WIRING,
-        "halve the producer's frequency to twice a day — one missed delivery on "
-        "a rail measured at p50 138-152 s and a 24h mirror lapses",
-        '        "schedule": crontab(minute=43, hour="*/6"),',
-        '        "schedule": crontab(minute=43, hour="*/12"),',
+        "drop the producer to every six hours — at the pessimistic build rate a "
+        "maxed-out reachable set then needs 120 h to cover and teams go cold "
+        "behind a 24 h mirror",
+        '        "schedule": crontab(minute=53),',
+        '        "schedule": crontab(minute=53, hour="*/6"),',
+    ),
+    (
+        "M22b",
+        WARM,
+        "quarter the pass budget — the arithmetic stops closing and the coverage "
+        "contract is broken without the cadence moving",
+        "PASS_BUDGET_SECONDS = 180",
+        "PASS_BUDGET_SECONDS = 40",
+    ),
+    (
+        "M22c",
+        WARM,
+        "quadruple the cap — the same break from the other side: more teams to "
+        "cover, same budget, same cadence",
+        "MAX_TEAMS_PER_PASS = 200",
+        "MAX_TEAMS_PER_PASS = 800",
     ),
     (
         "M23",

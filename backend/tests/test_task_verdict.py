@@ -376,6 +376,17 @@ class TestEnforcementScope:
             # sweep is BY DESIGN and returns cleanly every night, so without
             # enforcement a growing backlog would read as a healthy task.
             "settlement_sweep",
+            # LAT-P138 (#1249 follow-up): the team prop-families producer and
+            # the per-team rebuild the route dispatches. Enrolled at BIRTH in
+            # the same change that gives them beats and terminals, because a
+            # warmer's failure is INVISIBLE from the surface it protects — the
+            # route answers 200 either way, just 2.6-16.8 s instead of
+            # milliseconds. The zero this really separates: a build that hits
+            # the statement timeout deliberately does NOT write, so the mirror
+            # is exactly as old as before and the pass must read `failed`, not
+            # `complete` over a payload nobody stored.
+            "warm_prop_families",
+            "refresh_prop_families",
         }
 
     def test_enforced_task_partial_blocks_success(self):

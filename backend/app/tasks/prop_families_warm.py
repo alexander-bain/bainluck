@@ -1,13 +1,29 @@
 """Producer for the team prop-families tier (LAT-P138, #1249 follow-up).
 
-Two tasks, and the difference between them is who decided the rebuild:
+Two entry points, and the difference between them is who decided the rebuild:
 
 * ``_refresh_prop_families`` — ONE team, dispatched by ``routes/prop_families.py``
   under a single-flight lock after it has served the 24h mirror. A burst of
   readers behind one TTL expiry produces one rebuild rather than one per reader.
-* ``_warm_prop_families`` — the BEAT. It selects the reachable team set and
-  dispatches the per-team task for each one, so the mirror never lapses on a page
-  a person can actually reach.
+* ``_warm_prop_families`` — the BEAT. It walks the reachable team set and rebuilds
+  each one **INLINE**, so the mirror never lapses on a page a person can reach.
+
+🔴 THE BEAT REBUILDS INLINE RATHER THAN FANNING OUT, AND THAT IS A REPO RULE, NOT
+A PREFERENCE. `tests/test_celery_result_retention.py::test_no_task_dispatches_
+another_task` scans every module under `app/tasks/` for `.delay(`, `.apply_async(`
+and `send_task(` and fails on any of them: results are suppressed for tasks
+nothing reads, and the consumer set is re-derived by AST-walking dispatch sites
+under `app/routes`, `app/services` and `app/utils` ONLY — so a task that
+dispatches a task can grow a result consumer that scan will never see. The first
+draft of this file fanned out one message per team and the full suite caught it.
+
+Building inline means the pass must live inside a Celery time limit, and the
+slowest single build measured is 16.8 s. So the pass is BUDGETED and RESUMABLE:
+it works a rotating slice of the reachable set until `PASS_BUDGET_SECONDS` is
+spent, records where it stopped, and starts there next time. That is the
+oldest-first-within-a-floor discipline of gotcha #41 applied to a warm list —
+what matters is that no team waits longer than the mirror, not that one pass
+covers everyone.
 
 🔴 WHY THIS TIER GETS A PRODUCER AND `routes/hub.py` DELIBERATELY DOES NOT.
 The hub module says, in as many words, that its stale-while-revalidate keeps
@@ -57,11 +73,41 @@ REACHABLE_HORIZON_DAYS = 14
 #: a result card, and its prop families are exactly what a person checks after.
 REACHABLE_LOOKBACK_DAYS = 1
 
-#: Hard ceiling on one pass's fan-out. Not a target — a backstop, so a roster
-#: backfill or a schedule import cannot turn one beat tick into thousands of
-#: multi-second rebuilds. When it binds, the pass says so out loud (no silent
+#: Hard ceiling on how many teams one pass will consider. Not a target — a
+#: backstop, so a roster backfill or a schedule import cannot turn one beat tick
+#: into an unbounded walk. When it binds, the pass says so out loud (no silent
 #: caps): the verdict carries `truncated` and the count that was dropped.
 MAX_TEAMS_PER_PASS = 200
+
+#: The slowest cold build this lane has measured: Chiefs, 16,797 ms, first touch
+#: on production `64b7a034`. Rounded UP to whole seconds. Everything below is
+#: derived from it, so re-measuring it re-derives the budget and the cadence
+#: instead of leaving three literals to drift apart (#2236).
+SLOWEST_MEASURED_BUILD_SECONDS = 17
+
+#: 🔴 THE PASS IS BUDGETED, NOT COUNTED, BECAUSE THE BUILD IS NOT UNIFORM.
+#: Measured first touch across seven teams: 2,627 ms (Celtics) to 16,797 ms
+#: (Chiefs), driven by roster size. A pass counted in TEAMS would be 20 s on one
+#: sample of the population and five minutes on another; a pass counted in
+#: SECONDS is the same length whichever teams come up.
+#:
+#: 180 s is the smallest budget that satisfies the coverage contract with the
+#: hourly beat: at the pessimistic rate of `SLOWEST_MEASURED_BUILD_SECONDS` per
+#: team it clears 10 teams a pass, so a FULL `MAX_TEAMS_PER_PASS` list is covered
+#: in 20 passes = 20 h, inside the 24 h mirror with four hours to spare. The
+#: guard asserts that arithmetic rather than the number.
+PASS_BUDGET_SECONDS = 180
+
+#: Where the last pass stopped, so the next one does not re-warm the same head
+#: while the tail never gets a turn (gotcha #34: one counter shared across a loop
+#: starves whatever comes late). Plain Redis rather than the cache tier — this is
+#: producer bookkeeping, not a served payload, and it must not look like one.
+CURSOR_KEY = "bainluck:prop_families:warm_cursor"
+
+#: A cursor that outlives a fortnight of fixtures is describing a team set that
+#: no longer exists. Long enough to survive a deploy gap, short enough that a
+#: stale position self-heals.
+CURSOR_TTL_SECONDS = 86400
 
 #: The `limit=` the warmer builds for. The route's default, and therefore the
 #: only cap value a browser ever asks for; a `?limit=` reader gets its own key
@@ -143,23 +189,55 @@ async def _refresh_prop_families(team_id: int, cap: int, token: str | None = Non
     return {"terminal": "complete", "team_id": team_id, "rebuilt": 1}
 
 
+def _read_cursor(rc) -> int:
+    """Where the previous pass stopped. Any unreadable value is position 0 —
+    a broken cursor must degrade to "start again", never to "warm nothing"."""
+    if rc is None:
+        return 0
+    try:
+        raw = rc.get(CURSOR_KEY)
+        return int(raw) if raw is not None else 0
+    except Exception:
+        return 0
+
+
+def _write_cursor(rc, team_id: int) -> None:
+    if rc is None:
+        return
+    try:
+        rc.setex(CURSOR_KEY, CURSOR_TTL_SECONDS, str(int(team_id)))
+    except Exception:
+        logger.warning("warm_prop_families: cursor write failed", exc_info=True)
+
+
 async def _warm_prop_families() -> dict:
-    """Dispatch one rebuild per reachable team. Never raises.
+    """Rebuild a budgeted slice of the reachable team set, INLINE. Never raises.
 
     Returns the verdict the beat reports: how many teams the predicate selected,
-    how many were dispatched, and how many were skipped because somebody else
-    already held that team's refresh lock (a reader beat us to it — the correct
-    outcome, not a miss).
+    how many were rebuilt, how many were skipped because a reader already held
+    that team's refresh lock (the correct outcome, not a miss), and how many were
+    deferred to the next pass because the budget ran out.
     """
+    import asyncio
+    import time
     from datetime import datetime, timedelta, timezone
 
     from sqlalchemy import func, or_, select
 
     from app.models import Event, Team
+    from app.routes.prop_families import (
+        build_and_cache_prop_families,
+        prop_families_cache_keys,
+    )
     from app.tasks.base import get_task_session
-    from app.utils.event_concept_cache import acquire_refresh_lock, get_client
+    from app.utils.event_concept_cache import (
+        acquire_refresh_lock,
+        get_client,
+        release_refresh_lock,
+    )
 
     now = datetime.now(timezone.utc)
+    started = time.monotonic()
     rc = get_client()
 
     try:
@@ -179,11 +257,12 @@ async def _warm_prop_families() -> dict:
                     <= now + timedelta(days=REACHABLE_HORIZON_DAYS),
                 )
                 .distinct()
+                .order_by(Team.id)
             )
             team_ids = [int(t) for t in (await db.execute(q)).scalars().all()]
     except Exception:
         logger.exception("warm_prop_families: could not select the reachable set")
-        return {"terminal": "failed", "selected": 0, "dispatched": 0}
+        return {"terminal": "failed", "selected": 0, "rebuilt": 0}
 
     selected = len(team_ids)
     truncated = max(0, selected - MAX_TEAMS_PER_PASS)
@@ -196,11 +275,30 @@ async def _warm_prop_families() -> dict:
         )
     team_ids = team_ids[:MAX_TEAMS_PER_PASS]
 
-    from app.routes.prop_families import prop_families_cache_keys
+    # Rotate: start after the id the last pass finished on, wrapping. Without
+    # this every pass warms the same budget-worth of low ids and the tail of the
+    # list is never reached at all (gotcha #34).
+    cursor = _read_cursor(rc)
+    start = 0
+    for index, team_id in enumerate(team_ids):
+        if team_id > cursor:
+            start = index
+            break
+    ordered = team_ids[start:] + team_ids[:start]
 
-    dispatched = 0
+    rebuilt = 0
     locked_out = 0
-    for team_id in team_ids:
+    failed = 0
+    deferred = 0
+    last_done: int | None = None
+
+    for position, team_id in enumerate(ordered):
+        if time.monotonic() - started >= PASS_BUDGET_SECONDS:
+            # Out of budget, not out of work. The remainder is DEFERRED and
+            # counted, and the cursor already points at where to resume.
+            deferred = len(ordered) - position
+            break
+
         keys = prop_families_cache_keys(team_id, WARM_CAP)
         token = acquire_refresh_lock(rc, keys)
         if not token:
@@ -208,34 +306,54 @@ async def _warm_prop_families() -> dict:
             # is the race `routes/hub.py` warns a beat would create, closed by
             # taking the same lock the route takes.
             locked_out += 1
+            last_done = team_id
             continue
         try:
-            from app.tasks import celery_app
-
-            celery_app.send_task(
-                "app.tasks.refresh_prop_families",
-                args=[team_id, WARM_CAP, token],
-                queue="background",
-            )
-            dispatched += 1
+            async with get_task_session() as db:
+                team = (
+                    await db.execute(select(Team).where(Team.id == team_id))
+                ).scalars().first()
+                if team is None:
+                    continue
+                _payload, degraded = await asyncio.wait_for(
+                    build_and_cache_prop_families(team, db, WARM_CAP, rc),
+                    timeout=PER_TEAM_TIMEOUT_SECONDS,
+                )
+            if degraded:
+                failed += 1
+            else:
+                rebuilt += 1
         except Exception:
-            from app.utils.event_concept_cache import release_refresh_lock
-
+            # One bad team must never wipe the pass (gotcha #42).
             logger.warning(
-                "warm_prop_families: dispatch failed for team %s", team_id,
+                "warm_prop_families: rebuild failed for team %s", team_id,
                 exc_info=True,
             )
+            failed += 1
+        finally:
             release_refresh_lock(rc, keys, token)
+            last_done = team_id
 
-    # A pass that dispatched nothing while it had teams to warm is a FAILED pass.
-    # `send_task` reports that the broker took the message, never that a worker
-    # ran it, so this is the strongest claim this task is entitled to make — and
-    # it is still stronger than "it returned" (`app/utils/task_verdict.py`).
-    terminal = "complete" if (dispatched or not team_ids) else "failed"
+    if last_done is not None:
+        _write_cursor(rc, last_done)
+
+    # A pass that had teams to warm and rebuilt none of them is a FAILED pass —
+    # unless every one of them was already being rebuilt by a reader, which is
+    # the tier working. "It returned" is not "it worked"
+    # (`app/utils/task_verdict.py`).
+    if not ordered:
+        terminal = "complete"
+    elif rebuilt or (locked_out and not failed):
+        terminal = "complete"
+    else:
+        terminal = "failed"
     return {
         "terminal": terminal,
         "selected": selected,
-        "dispatched": dispatched,
+        "rebuilt": rebuilt,
         "locked_out": locked_out,
+        "failed": failed,
+        "deferred": deferred,
         "truncated": truncated,
+        "seconds": round(time.monotonic() - started, 1),
     }

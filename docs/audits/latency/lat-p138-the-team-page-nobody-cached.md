@@ -94,20 +94,39 @@ producer did not warm permanently cold.
 and empty-because-it-timed-out is indistinguishable from empty-because-there-are-none once it is
 bytes in Redis. It is served (an empty section beats a 500) and dropped.
 
-**(c) A producer — `warm-prop-families`, `*/6h` at :43, `background`.** This is where the tier
+**(c) A producer — `warm-prop-families`, hourly at :53, `background`.** This is where the tier
 departs from the hub's, and the hub module argues the opposite in as many words: no scheduled
 warmer, because stale-while-revalidate keeps hubs warm off real traffic and a beat would race the
 route's lock. LAT-P137 measured that assumption on a sibling tier and it did not hold — across 32
 minutes every rebuild of `/api/futures/categories` was the measuring session's own probe. The two
 arguments are reconciled by SIZE: a hub rebuild is 2.7 s at worst across five hubs; this is
 2.6-16.8 s across 82. The race is closed by taking the SAME single-flight lock the route takes, so
-a pass arriving while a reader's rebuild is in flight dispatches nothing for that team.
+a pass arriving while a reader's rebuild is in flight skips that team.
 
-🔴 **THE PERIOD IS DERIVED, NOT CHOSEN.** The mirror is `STALE_TTL` (24 h) and the reader's cost
-when it lapses is the whole table in §2, so the period is `STALE_TTL // 4` — three missed
-deliveries of headroom on the `background` rail LAT-P112 measured at p50 138-152 s against a
-declared 120 s. The guard asserts the DERIVATION, so tightening the mirror tightens the cadence
-instead of leaving a literal behind in another file (#2236).
+🔴 **THE PASS REBUILDS INLINE, AND THAT IS A REPO RULE RATHER THAN A CHOICE.** The first draft
+fanned out one `refresh_prop_families` message per team; the full suite caught it.
+`test_no_task_dispatches_another_task` scans every module under `app/tasks/` for `.delay(`,
+`.apply_async(` and `send_task(` and fails on all three — the result-consumer set is re-derived by
+AST-walking dispatch sites under `app/routes`, `app/services` and `app/utils` only, so a task that
+dispatches a task can grow a consumer that scan never sees. §5.
+
+Building inline means the pass has to live inside a Celery time limit against a 16.8 s worst-case
+build, so it is **budgeted and resumable**: 180 s of work per pass, a Redis cursor recording where
+it stopped, and the next pass resumes after that id (gotcha #34 — a shared position starves
+whatever comes late). What it could not reach is `deferred` and counted, never dropped in silence.
+
+🔴 **AND THE CADENCE IS DERIVED FROM COVERAGE.** Not "often enough": at the pessimistic rate of one
+`SLOWEST_MEASURED_BUILD_SECONDS` per team a pass clears `180 // 17 = 10` teams, so a maxed-out list
+takes `ceil(200 / 10) = 20` passes, and `20 × 3600 s = 72,000 s ≤ 86,400 s` — every team rebuilt
+inside the 24 h mirror with four hours to spare. The guard asserts that arithmetic from the
+constants, so widening the cap or shrinking the budget moves the cadence instead of quietly leaving
+teams uncovered (#2236).
+
+🔴 **THE FIRE MINUTE WAS MOVED BY A CENSUS.** :43 landed inside the nightly settlement sweep's own
+`10:31+13m` window and took `SWEEP_WINDOW_COFIRE_CEILING` to 15 against a declared 14. A protective
+ceiling is not re-derived upward for the convenience of the beat that broke it (#1910), so the beat
+moved: a minute census over the assembled schedule says :53 carries one other beat, against 33 at
+:00, 24 at :30 and 15 at :45.
 
 **The reachable set, declared:** teams with a non-empty roster AND a fixture in
 `[-1d, +14d]` — **82 of 9,625** on 2026-08-30, hard-capped at 200 with the truncation REPORTED
@@ -123,15 +142,35 @@ not cached.
 
 | gate | result |
 |---|---|
-| guards `test_prop_families_cache_lat_p138.py` | **37 passed, exit 0** |
-| red-first, pristine master | **35 failed / 1 passed, exit 1** — the one pass is `_MAX_ROSTER_PATTERNS == 40`, an invariant master already holds |
-| battery `prop_families_cache_mutations` | **23/23 killed, 0 survived, 0 harness, exit 0** |
+| guards `test_prop_families_cache_lat_p138.py` | **45 passed, exit 0** |
+| red-first, pristine master | **35 failed / 1 passed, exit 1** (taken at 36 guards, before the producer redesign added nine) — the one pass is `_MAX_ROSTER_PATTERNS == 40`, an invariant master already holds |
+| battery `prop_families_cache_mutations` | **29/29 killed, 0 survived, 0 harness, exit 0** — one SURVIVOR on the previous run rewrote a test (§5) |
 | `test_mutation_guard.py` (incl. the residue scan) | **9 passed, exit 0** |
-| siblings (wiring · beat budget · sweep cofire · prop-family contract · startup) | **177 passed, exit 0** |
+| siblings (task verdict · result retention · wiring · beat budget · sweep cofire · prop-family contract · startup · mutation guard) | **228 passed, exit 0** |
+| ruff, superset of changed files | **29 → 29**; the four new files contribute **zero** |
 | full backend suite | see §7 |
 | frontend gates | **NOT RUN — zero `frontend/`, zero `ios/` diff.** Stated, not fudged; CI runs both |
 
-## 5. Two things went wrong, and what caught each
+## 5. Four things went wrong, and what caught each
+
+⚠️ **THE PRODUCER'S FIRST DRAFT BROKE A REPO-WIDE RULE AND ONLY THE FULL SUITE SAW IT.** It
+dispatched one `refresh_prop_families` message per team — the obvious shape, and the one
+`routes/hub.py`'s sibling task is written for. `test_no_task_dispatches_another_task` forbids it:
+results are suppressed for tasks nothing reads, and the consumer set is derived by scanning
+`app/routes`, `app/services` and `app/utils` **only**, so a task that dispatches a task can grow a
+consumer that scan will never see. Two more of the same run's three failures were the same class of
+pin — the result-consumer set (`refresh_prop_families` is dispatched from a ROUTE and had to be
+declared) and the exactly-pinned `ENFORCED_TASKS`. 🔴 **All three are guards doing their job, and
+none of them is reachable from the sub-suites this cycle had been running.** The redesign — inline,
+budgeted, cursor-resumable — is strictly better than what it replaced, and it exists because a gate
+refused the first draft.
+
+⚠️ **A MUTANT SURVIVED, AND THE SURVIVOR REWROTE THE TEST.** `M18b` deletes the cursor write. The
+rotation test kept passing, because its pass wraps around to the id it started after: "the cursor
+was written" and "the cursor was never touched" leave the key byte-identical. The test was proving
+the ORDER, not the write. Per LAT-P115's rule the survivor is the finding — there is now a second
+test that starts from an ABSENT cursor, where the two are distinguishable, and the rotation test
+keeps the order assertion it was actually making.
 
 ⚠️ **THE FIRST RESIDUE SCAN WENT RED ON MY OWN HARNESS, TWICE OVER, AND BOTH ARE KNOWN CLASSES.**
 `M6`'s needle was spelled as two implicitly-concatenated fragments, so its one-line replacement
