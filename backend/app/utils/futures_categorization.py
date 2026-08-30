@@ -852,6 +852,110 @@ _NON_SPORT_ACTION_RE = re.compile(
 )
 
 
+# ============================================================================
+# Misfiled SUBJECT — when the venue's own tag names the wrong non-sport shelf
+# ============================================================================
+#
+# `_non_sport_override` above fixes "a sport keyword appears but this is not a
+# sport". This fixes the other half: the venue tagged the market with a real,
+# non-sport category, and that category is not what the market is about.
+#
+# THE MEASUREMENT (CAL-P132, re-measured 2026-08-29). 104 Polymarket markets carry
+# `llm_sport_category = 'tech'` while being nothing of the kind:
+#
+#     71  epidemiology     "Flu Hospitalization Rate Week 32, 2026?"
+#                          "Measles cases in U.S. by February 28?"
+#     26  seismic/volcanic "10.0 or above earthquake before 2027?"
+#      7  weather hazard   "How many acres will Palisades wildfire burn by Friday?"
+#                          "How many Tornadoes in the US in June?"
+#
+# It is not the tag map's fault and cannot be fixed there: Polymarket tags
+# "Flu Hospitalization Rate Week 10" with the single tag `tech`, and the earthquake
+# markets with `['earthquakes', 'tech']`. There is no tag to remap. The title is the
+# only place the subject is actually written down.
+#
+# ONLY THE UNAMBIGUOUS TWO SHIP. Epidemiology has a `health` shelf and weather
+# hazards have a `weather` shelf, both already populated by the tag map. The 26
+# seismic and volcanic markets do NOT have a right shelf — an earthquake is not
+# weather — and routing them to `other` would be a no-op anyway, because the
+# Polymarket writer only updates `llm_sport_category` when the new value is not
+# "other". They are left where they are and raised as a taxonomy question rather
+# than moved somewhere else that is also wrong.
+_EPIDEMIOLOGY_RE = re.compile(
+    r"\b(?:measles|influenza|\bflu\b|h5n1|bird\s+flu|covid|coronavirus|"
+    r"polio|ebola|mpox|monkeypox|cholera|dengue|malaria|"
+    r"outbreak|epidemic|pandemic|hospitalization\s+rate|"
+    r"cdc\b|who\s+declares?)\b",
+    re.I,
+)
+
+_WEATHER_HAZARD_RE = re.compile(
+    r"\b(?:hurricane|tropical\s+storm|named\s+storm|tornado(?:es)?|"
+    r"wildfire|blizzard|heat\s+wave|heatwave|"
+    r"snowfall|rainfall|drought)\b",
+    re.I,
+)
+
+# A WORD-BINGO market is about who says a word, not about the word's subject.
+# "Will Trump say 'Flu' this week?" is politics; "Will Leavitt say 'CDC' or 'WHO'
+# during the next White House Press Briefing?" is politics. Both were moved to
+# `health` by the first cut of this rule, measured on production, which is what put
+# this guard here. Alex's D19 covers what to do with the 867 of these on Polymarket;
+# this only refuses to re-shelve them.
+_WORD_BINGO_RE = re.compile(
+    r"\b(?:say|says|said|mention|mentions|mentioned|utter|utters)\b",
+    re.I,
+)
+
+#: Shelves this override is allowed to correct, and NO MORE.
+#:
+#: Kept to the two that the CAL-P132 measurement actually named. A wider set was
+#: built and measured first: adding `politics` and `geopolitics` moved ten more open
+#: markets, of which two were plainly wrong ("Will Trump say 'Fever' or 'Flu' this
+#: week?") and the rest were a product question about where a tropical-storm-landfall
+#: market belongs, not a defect. Re-shelving politics is somebody's decision, not a
+#: side effect of fixing tech.
+#:
+#: A market already filed under `health` or `weather` is left alone — re-deciding a
+#: correct answer is how two classifiers start disagreeing — and a SPORT category is
+#: never touched here, because the caller's sport-promotion arms run first and win.
+_SUBJECT_OVERRIDE_SOURCES = frozenset({"tech", "other"})
+
+
+def misfiled_subject(market_name: str, current_category: Optional[str]) -> Optional[str]:
+    """The shelf this market's TITLE says it belongs on, or None to leave it alone.
+
+    Returns `"health"` or `"weather"` only, and only when the title says so
+    unambiguously and the market is currently on one of the shelves this override is
+    allowed to correct. Everything else returns None, so the function can only move a
+    market between two named destinations and never invents a third.
+
+    Deliberately conservative in both directions:
+
+    * It never fires on a market already filed under `health` or `weather` — there is
+      nothing to correct, and re-deciding a correct answer is how two classifiers
+      start disagreeing.
+    * It never fires on a sport category. A "Flu Game" basketball market stays
+      basketball, because the caller only consults this after its sport-promotion
+      arms have had their turn.
+    * It never fires on a word-bingo market, whose subject is the speaker.
+    * Epidemiology beats weather when a title somehow contains both, because a
+      disease outbreak during a hurricane is a health market. Stated rather than
+      left to pattern order.
+    """
+    if not market_name:
+        return None
+    if (current_category or "other") not in _SUBJECT_OVERRIDE_SOURCES:
+        return None
+    if _WORD_BINGO_RE.search(market_name):
+        return None
+    if _EPIDEMIOLOGY_RE.search(market_name):
+        return "health"
+    if _WEATHER_HAZARD_RE.search(market_name):
+        return "weather"
+    return None
+
+
 def _non_sport_override(market_name: str) -> Optional[str]:
     """Detect markets about a political figure's civic action that only mention a
     sport keyword incidentally (venue name, pardoned athlete, etc.).

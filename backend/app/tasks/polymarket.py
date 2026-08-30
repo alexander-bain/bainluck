@@ -350,6 +350,112 @@ def _tags_to_category(tags: list[str]) -> tuple[str, Optional[str]]:
     return "other", None
 
 
+# Categories that must never flip a market to `category="championship"`. Module-level
+# and named once: it used to be re-declared inside the poller loop's function body,
+# which is a copy waiting to disagree with the one above it.
+NON_SPORT_CATEGORIES = frozenset(
+    {
+        "other", "politics", "economics", "tech", "crypto",
+        "weather", "health", "geopolitics", "legal",
+        "culture", "entertainment",
+    }
+)
+
+
+def resolve_event_category(
+    category: str,
+    llm_sport_category: Optional[str],
+    title: Optional[str],
+    group_names: list[str],
+) -> tuple[str, Optional[str], str]:
+    """The rest of the category cascade, after the tags have had their say.
+
+    Takes `_tags_to_category`'s answer and the event's titles, and returns
+    `(category, llm_sport_category, arm)` — the two values the writer will store,
+    plus which arm decided them. The caller needs the arm because
+    `stats["by_category"]` counts the FALLBACK arm only, and that has been its
+    meaning since before the extraction; returning it is cheaper and more honest
+    than the caller re-deriving the condition and calling
+    `detect_table_tennis_group` a second time.
+
+    Four arms, in order — each one only allowed to act when the arms above it
+    did not:
+
+      1. TABLE TENNIS at the group level (#1230). Setka/TT-Cup matches have a bare
+         "Player vs. Player" parent title that `categorize_by_rules` routes to
+         baseball via summer seasonal inference; their child props carry the
+         unambiguous "Total Games O/U N" tell. Must run before the baseball
+         fallback below.
+      2. NO USABLE TAG -> pattern match, then league inference.
+      3. A NON-SPORT TAG BUT A SPORT TITLE -> promote ("Pro Baseball: 2026 AL Cy
+         Young Winner", tagged `awards`).
+      4. A NON-SPORT TAG ON THE WRONG NON-SPORT SHELF -> `misfiled_subject`.
+
+    EXTRACTED FROM THE POLLER LOOP (Q446) so arm 4 could be tested against arms 1-3
+    rather than in isolation from them. Ordering is the whole substance of this
+    cascade and it was only reachable by running a 200-line async loop with a live
+    database, which is why the loop had grown four inline arms that no test drove.
+    Behaviour is unchanged for arms 1-3; `tests/test_polymarket_category_cascade.py`
+    pins the order.
+    """
+    from app.utils.futures_categorization import (
+        categorize_by_rules,
+        detect_league as _detect_league,
+        detect_table_tennis_group,
+        infer_sport_from_league as _infer,
+        misfiled_subject,
+    )
+
+    _NON_SPORT = NON_SPORT_CATEGORIES
+    # `categorize_by_rules` and `detect_league` both regex the raw string and raise
+    # TypeError on None. The poller has always passed `event.title` straight in, so
+    # a titleless event would have taken the whole batch's `except` — visible only as
+    # a swallowed error count. Normalising here rather than at each call site.
+    title = title or ""
+
+    # 1 — table tennis, at the group level, before anything can guess baseball.
+    if detect_table_tennis_group(group_names):
+        return "championship", "table_tennis", "table_tennis"
+
+    # 2 — the tags said nothing usable.
+    if not llm_sport_category or llm_sport_category == "other":
+        rules_result = categorize_by_rules(title)
+        if rules_result:
+            llm_sport_category = rules_result
+        else:
+            _league = _detect_league(title)
+            if _league:
+                _sport = _infer(_league)
+                if _sport:
+                    llm_sport_category = _sport
+        if llm_sport_category and llm_sport_category not in _NON_SPORT:
+            category = "championship"
+        return category, llm_sport_category, "fallback"
+
+    # 3 — a non-sport tag on a market whose title clearly names a sport.
+    if llm_sport_category in _NON_SPORT:
+        rules_result = categorize_by_rules(title)
+        if rules_result and rules_result not in _NON_SPORT:
+            return "championship", rules_result, "promoted"
+        _league = _detect_league(title)
+        if _league:
+            _sport = _infer(_league)
+            if _sport and _sport not in _NON_SPORT:
+                return "championship", _sport, "promoted"
+
+        # 4 — Q446 / CAL-P132. The venue named a real non-sport shelf and it is the
+        # wrong one: 104 markets carry `tech` while being flu hospitalization rates,
+        # measles counts and wildfire acreage. There is no tag to remap — Polymarket
+        # tags "Flu Hospitalization Rate Week 10" `tech` and nothing else — so the
+        # title is the only place the subject is written down. LAST, so no sport can
+        # ever lose a market to it.
+        subject = misfiled_subject(title, llm_sport_category)
+        if subject:
+            return subject, subject, "subject"
+
+    return category, llm_sport_category, "tag"
+
+
 # =========================================================================
 # Polling implementation
 # =========================================================================
@@ -705,23 +811,13 @@ async def _process_event_batch(
 ):
     """Process and commit a batch of Polymarket events."""
     from app.utils.futures_categorization import (
-        categorize_by_rules, detect_league as _detect_league,
-        infer_sport_from_league as _infer,
         detect_league, detect_season,
         compute_canonical_market_key,
         detect_market_type,
         extract_olympic_discipline,
         generate_category_tags,
-        detect_table_tennis_group,
     )
     from app.utils.editorial_patterns import matches_editorial_recall as _matches_editorial_recall
-
-    # Non-sport categories that shouldn't flip to "championship"
-    _NON_SPORT_CATEGORIES = {
-        "other", "politics", "economics", "tech", "crypto",
-        "weather", "health", "geopolitics", "legal",
-        "culture", "entertainment",
-    }
 
     async with get_task_session() as session:
         now = datetime.now(timezone.utc)
@@ -740,51 +836,19 @@ async def _process_event_batch(
                     stats["crypto_skipped"] += 1
                     continue
 
-                # #1230 / Queue #249 Item 3: table-tennis PREVENTION at ingest.
-                # Setka/TT-Cup matches have a bare "Player vs. Player" parent
-                # title that categorize_by_rules routes to baseball via summer
-                # seasonal inference. Their child props carry the unambiguous
-                # "Total Games O/U N" tell, so classify the whole group as
-                # table_tennis here — BEFORE the baseball fallback below — mirroring
-                # the retag's safe MLB-protecting predicate at the source. This
-                # makes retag_table_tennis a fix, not just a repair.
                 _group_names = [event.title or ""] + [
                     (m.question or "") for m in event.markets
                 ]
-                if detect_table_tennis_group(_group_names):
-                    llm_sport_category = "table_tennis"
-
-                # Fall back to pattern matching + league inference if tags didn't help
-                if not llm_sport_category or llm_sport_category == "other":
-                    rules_result = categorize_by_rules(event.title)
-                    if rules_result:
-                        llm_sport_category = rules_result
-                    else:
-                        _league = _detect_league(event.title)
-                        if _league:
-                            _sport = _infer(_league)
-                            if _sport:
-                                llm_sport_category = _sport
-
-                    # If we found a sport category, ensure category is "championship"
-                    stats["by_category"][llm_sport_category or "unknown"] = stats["by_category"].get(llm_sport_category or "unknown", 0) + 1
-                    if llm_sport_category and llm_sport_category not in _NON_SPORT_CATEGORIES:
-                        category = "championship"
-
-                # Override non-sport tags when the title clearly contains a sport
-                # (e.g., "Pro Baseball: 2026 AL Cy Young Winner" tagged "awards" → "entertainment")
-                elif llm_sport_category in _NON_SPORT_CATEGORIES:
-                    rules_result = categorize_by_rules(event.title)
-                    if rules_result and rules_result not in _NON_SPORT_CATEGORIES:
-                        llm_sport_category = rules_result
-                        category = "championship"
-                    else:
-                        _league = _detect_league(event.title)
-                        if _league:
-                            _sport = _infer(_league)
-                            if _sport and _sport not in _NON_SPORT_CATEGORIES:
-                                llm_sport_category = _sport
-                                category = "championship"
+                category, llm_sport_category, _arm = resolve_event_category(
+                    category, llm_sport_category, event.title, _group_names
+                )
+                # The FALLBACK arm only. That is what this counter has always meant
+                # — it lived inside the tagless branch before the extraction — and
+                # widening an ops metric is not this queue's to do.
+                if _arm == "fallback":
+                    stats["by_category"][llm_sport_category or "unknown"] = (
+                        stats["by_category"].get(llm_sport_category or "unknown", 0) + 1
+                    )
 
                 # Compute market tier
                 market_tier = compute_market_tier(
