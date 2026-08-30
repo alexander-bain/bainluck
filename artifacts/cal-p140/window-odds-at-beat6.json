@@ -7,80 +7,79 @@
       "band": "whole-ring",
       "note": "all three regimes pooled \u2014 printed only so the pooling error is visible",
       "beats": 168,
-      "clean": 66,
-      "misses": 102,
-      "miss_rate": 0.6071,
+      "clean": 67,
+      "misses": 101,
+      "miss_rate": 0.6012,
       "class_counts": {
-        "CLEAN": 66,
+        "CLEAN": 67,
         "BD_EARLY_CANCEL": 18,
         "B_WINDOW_EXHAUSTION": 15,
-        "C_DEPLOY_KILL": 33,
+        "C_DEPLOY_KILL": 32,
         "A_GATE_REFUSAL": 35,
         "UNCLASSIFIED": 1
       },
-      "oldest": "2026-08-23T06:39:33.220341+00:00",
-      "newest": "2026-08-30T05:26:33.752872+00:00"
+      "oldest": "2026-08-23T05:37:42.986098+00:00",
+      "newest": "2026-08-30T04:35:25.646347+00:00"
     },
     {
       "band": "post-v3921, key-outage excluded",
       "note": "THE OPERATIVE BAND: D repaired, A's key-outage saturation removed",
-      "beats": 15,
+      "beats": 14,
       "clean": 8,
-      "misses": 7,
-      "miss_rate": 0.4667,
+      "misses": 6,
+      "miss_rate": 0.4286,
       "class_counts": {
         "B_WINDOW_EXHAUSTION": 2,
         "CLEAN": 8,
         "BD_EARLY_CANCEL": 1,
-        "C_DEPLOY_KILL": 4
+        "C_DEPLOY_KILL": 3
       },
       "oldest": "2026-08-28T19:40:52.750701+00:00",
-      "newest": "2026-08-30T05:26:33.752872+00:00"
+      "newest": "2026-08-30T04:35:25.646347+00:00"
     },
     {
       "band": "post-rebaseline",
       "note": "the live window itself \u2014 too short to be a rate, printed as the check",
-      "beats": 7,
+      "beats": 6,
       "clean": 5,
-      "misses": 2,
-      "miss_rate": 0.2857,
+      "misses": 1,
+      "miss_rate": 0.1667,
       "class_counts": {
         "CLEAN": 5,
-        "B_WINDOW_EXHAUSTION": 1,
-        "C_DEPLOY_KILL": 1
+        "B_WINDOW_EXHAUSTION": 1
       },
       "oldest": "2026-08-29T23:35:53.922062+00:00",
-      "newest": "2026-08-30T05:26:33.752872+00:00"
+      "newest": "2026-08-30T04:35:25.646347+00:00"
     }
   ],
   "live_window": {
-    "beats_so_far": 7,
-    "misses_so_far": 2,
+    "beats_so_far": 6,
+    "misses_so_far": 1,
     "budget": 2,
-    "beats_remaining": 17
+    "beats_remaining": 18
   },
   "forecasts": [
     {
-      "miss_rate": 0.4667,
-      "beats_remaining": 17,
-      "budget_left": 0,
-      "expected_further_misses": 7.93,
-      "p_condition_met": 0.0
+      "miss_rate": 0.4286,
+      "beats_remaining": 18,
+      "budget_left": 1,
+      "expected_further_misses": 7.71,
+      "p_condition_met": 0.0006
     },
     {
       "miss_rate": 0.2727,
-      "beats_remaining": 17,
-      "budget_left": 0,
-      "expected_further_misses": 4.64,
-      "p_condition_met": 0.0045,
+      "beats_remaining": 18,
+      "budget_left": 1,
+      "expected_further_misses": 4.91,
+      "p_condition_met": 0.0251,
       "counterfactual": "no releases during the window (class C suppressed)"
     },
     {
       "miss_rate": 0.05,
-      "beats_remaining": 17,
-      "budget_left": 0,
-      "expected_further_misses": 0.85,
-      "p_condition_met": 0.4181,
+      "beats_remaining": 18,
+      "budget_left": 1,
+      "expected_further_misses": 0.9,
+      "p_condition_met": 0.7735,
       "counterfactual": "the amendment's own healthy 0.95 publish rate \u2014 a ceiling, not a forecast"
     }
   ]

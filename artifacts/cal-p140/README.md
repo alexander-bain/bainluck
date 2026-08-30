@@ -32,9 +32,15 @@ Re-baseline `2026-08-29T23:35:53Z`, the first beat that published after Alex's
 one-off rewrote `bainluck:bookmaker_calibration`.
 
 ```
-###B##   <- oldest ... newest
-5/6 clean, 1 miss, 1 of 2 budget left, 18 beats to go
+###B##C   <- oldest ... newest
+5/7 clean, 2 misses, 0 of 2 budget left, 17 beats to go
 ```
+
+**The budget is gone, and it went in the seventh hour.** 22/24 is still arithmetically
+reachable — 5 clean + 17 remaining = exactly 22 — but only if **every one of the
+next 17 beats publishes cleanly.** §3 prices that.
+
+The two misses are from two different classes, and neither is the repaired one.
 
 Beat #4, `2026-08-30T02:38:29.994681Z`, is **class B**, and it is attributed from
 the producer's own ledger rather than from its shape:
@@ -53,6 +59,27 @@ That is `precompute_calibration.py:4025`, run at
 CAL-P118-2 named for its class-B beat n=1. **Not the fix's failure mode (D), not
 a deploy kill (C), not a gate refusal (A), not the key outage.** `3200b840`'s
 class has still fired zero times since CAL-P139 measured it.
+
+### Beat #7 — class C, corroborated to the second
+
+`2026-08-30T05:26:33.752872Z`, `terminal: cancelled` after 693,263 ms. Against
+`heroku releases -a bainluck`:
+
+```
+v3945   Deploy 427ec421   2026-08-29 22:26:17 -0700  =  2026-08-30T05:26:17Z
+beat #7 cancelled                                       2026-08-30T05:26:33.752Z
+                                                        ------------------------
+                                                        16.7 s after the release
+```
+
+Which is the same signature CAL-P139 §2 recorded for the two `cancelled` beats
+before this window — 16 s and 17 s after v3940 and v3941. A release lands, the
+in-flight build dies, and the beat is a miss.
+
+**Class C is counted, and that is correct even though it is nobody's bug.** The
+amendment is explicit: *"No beat is excused; that is the point of a budget."*
+Suppressing releases is the only lever anyone holds over this window, and it was
+not pulled — nine releases yesterday, two more since the re-baseline.
 
 ### 🔴 The attribution has a one-beat shelf life, and that is now instrumented
 
@@ -170,26 +197,25 @@ missing Redis key, and only what is left describes now.
 | **post-v3921, key-outage excluded** | 13 | **0.429** | C 3, B-exhaustion 2, BD-early 1 |
 | post-rebaseline (the live window) | 6 | 0.167 | B-exhaustion 1 |
 
-Carrying the operative rate forward over 18 remaining beats against a budget of
-**one**:
+Carrying the operative rate forward over 17 remaining beats against a budget of
+**zero** — every one of them must publish:
 
 ```
-at 0.429 (measured)                       expect 7.71 more misses   P(22/24) = 0.0006
-at 0.273 (no releases during the window)  expect 4.91 more misses   P(22/24) = 0.0251
-at 0.050 (the amendment's own "healthy")  expect 0.90 more misses   P(22/24) = 0.7735
+at 0.467 (measured)                       expect 7.93 more misses   P(22/24) = 0.0000
+at 0.273 (no releases during the window)  expect 4.64 more misses   P(22/24) = 0.0045
+at 0.050 (the amendment's own "healthy")  expect 0.85 more misses   P(22/24) = 0.4181
 ```
 
 The third line is the one that reframes it. Even a producer performing exactly
 as well as ruling 009's amendment imagines — its own `P_AT_HEALTHY_RATE`
-constant — clears this window only ~77% of the time **once one of two misses is
-already spent, on beat four**. The gap between 0.77 and 0.0006 is not the
+constant — is now a **coin flip**, because seventeen consecutive clean beats is
+a hard thing to ask of anything. The gap between 0.42 and 0.0000 is not the
 window being unlucky. It is the rate being wrong.
 
-Class C is counted, deliberately. A deploy-killed beat is exogenous and it
-spends budget exactly like any other; the amendment is explicit that *"No beat
-is excused; that is the point of a budget."* Suppressing releases for 24 hours
-is the only lever anyone actually holds, and it is priced separately — it buys
-a factor of 40 and still lands at 2.5%.
+**Measured at beat six, before the deploy kill, the same three lines read
+0.0006 / 0.0251 / 0.7735 against a budget of one.** Both readings are banked;
+the second miss cost roughly a factor of five at the optimistic end and the
+last of the margin everywhere else.
 
 **Caveat, stated rather than buried: the operative band is 13 beats.** Three
 misses in thirteen is a thin base and the true rate could be materially lower.

@@ -5,22 +5,21 @@
   "baseline_at": "2026-08-29T23:35:53+00:00",
   "verdict": "WINDOW_NOT_FULL",
   "clean": 5,
-  "misses": 2,
+  "misses": 1,
   "misses_allowed": 2,
-  "misses_remaining": 0,
-  "beats_in_window": 7,
+  "misses_remaining": 1,
+  "beats_in_window": 6,
   "window": 24,
-  "excluded_pre_baseline": 161,
+  "excluded_pre_baseline": 162,
   "ring_observations": 168,
   "class_counts": {
     "CLEAN": 5,
-    "B_DIAGNOSTICS_TRUTH_CENSUS": 1,
-    "C_DEPLOY_KILL": 1
+    "B_DIAGNOSTICS_TRUTH_CENSUS": 1
   },
   "datapoint_counts": {
     "MEASUREMENT_UNKNOWN": 1,
     "REPUBLISH": 4,
-    "MISS": 2
+    "MISS": 1
   },
   "measurement_events": 0,
   "republishes": 4,
@@ -139,22 +138,6 @@
       "class": "CLEAN",
       "datapoint": "REPUBLISH",
       "attribution": "published \u2014 re-served the census promoted at 2026-08-29T20:18:32+00:00; the rebuild stands at 43/128"
-    },
-    {
-      "n": 7,
-      "generated_at": "2026-08-30T05:26:33.752872+00:00",
-      "terminal": "cancelled",
-      "gate": "not_evaluated",
-      "elapsed_ms": 693263,
-      "staged_at": "2026-08-29T20:18:32+00:00",
-      "frozen_over_drift": true,
-      "rebuild_units_banked": 50,
-      "units_banked": 128,
-      "beats_to_publish": 5,
-      "input_fingerprint": "b18200401ebc91463ff094163ab90afc",
-      "class": "C_DEPLOY_KILL",
-      "datapoint": "MISS",
-      "attribution": "task cancelled mid-flight after 693263 ms \u2014 a release, not the producer"
     }
   ],
   "live_error_stamp": "2026-08-30T02:38:30.113985+00:00"

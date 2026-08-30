@@ -4,3 +4,12 @@
 [2026-08-30T04:49:04Z] beat #4 2026-08-30T02:38:29.994681+00:00 -> B_DIAGNOSTICS_TRUTH_CENSUS / MISS
 [2026-08-30T04:49:04Z] beat #5 2026-08-30T03:37:54.723349+00:00 -> CLEAN / REPUBLISH
 [2026-08-30T04:49:04Z] beat #6 2026-08-30T04:35:25.646347+00:00 -> CLEAN / REPUBLISH
+[2026-08-30T04:56:05Z] no new beat; 5/6 clean, 1 budget left
+[2026-08-30T05:03:06Z] no new beat; 5/6 clean, 1 budget left
+[2026-08-30T05:10:08Z] no new beat; 5/6 clean, 1 budget left
+[2026-08-30T05:17:09Z] no new beat; 5/6 clean, 1 budget left
+[2026-08-30T05:24:11Z] no new beat; 5/6 clean, 1 budget left
+[2026-08-30T05:31:12Z] no new beat; 5/6 clean, 1 budget left
+[2026-08-30T05:38:13Z] no new beat; 5/6 clean, 1 budget left
+[2026-08-30T05:45:14Z] no new beat; 5/6 clean, 1 budget left
+[2026-08-30T05:52:15Z] beat #7 2026-08-30T05:26:33.752872+00:00 -> C_DEPLOY_KILL / MISS

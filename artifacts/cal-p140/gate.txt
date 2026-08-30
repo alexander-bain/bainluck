@@ -284,5 +284,5 @@ tests/test_calibration_publish_gate_297.py: 9 warnings
   See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-= 2964 passed, 24 skipped, 19249 deselected, 96 warnings in 135.99s (0:02:15) ==
+= 2964 passed, 24 skipped, 19249 deselected, 96 warnings in 133.99s (0:02:13) ==
 EXIT CODE: 0
