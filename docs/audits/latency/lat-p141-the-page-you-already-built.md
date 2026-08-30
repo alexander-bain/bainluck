@@ -64,12 +64,45 @@ sports p2     5     992.0    3625.0  {'miss': 5}
 HEADLINE  first page p50 39.0 ms  ·  PAGES 2+ p50 941.0 ms
 ```
 
-Three things in that table and only the first is the headline.
+### 2.1 🔴 That read was taken 8-13 minutes after a deploy, so it was re-taken
 
-**The ratio is 24×, and the cache-state column is why it is not a fluke.**
-`miss` **25 of 25** on every page past the first. Not "usually cold" — never
-warm, on any surface, on any sample. Ruling 127's rule cuts the other way here
-for once: a p50 over mixed states is a statement about the hit rate, and this
+INT-159 shipped LAT-P140 as **v3946** mid-session; `/api/health` put the dyno's
+start at 06:52:25Z and the first probe ran at ~07:0x. Past the five-minute
+window a post-deploy read is usually treated as regression-shaped by default,
+but "usually" is not a control. Re-run at 25 minutes' uptime, same shapes, same
+n:
+
+```
+shape         n   p50 srv       max  cache states
+native p1     5      69.0     121.0  {'shared_hit': 3, 'shared_stale_hit': 2}
+native p2     5    1298.0    3085.0  {'miss': 5}
+native p3     5    1226.0    1862.0  {'miss': 5}
+web p1        5      53.0      91.0  {'shared_hit': 3, 'shared_stale_hit': 2}
+web p2        5    1136.0    1274.0  {'miss': 5}
+web p3        5    1132.0    1498.0  {'miss': 5}
+sports p2     5     969.0    1465.0  {'miss': 5}
+
+first page p50 61 ms   ·   pages 2+ p50 1,136 ms
+```
+
+**The warm-dyno control is WORSE, not better** — 1,136 ms against 941 ms. So the
+first read did not inflate the finding, it understated it, and the cold-dyno
+confound points the opposite way to the one that would have been convenient.
+Across both runs **`miss` on 50 of 50 samples** past the first page.
+
+The two runs are quoted as two runs and never averaged: they are different
+minutes with different warmth and a mean over them would be a statement about
+the dyno, not about the route.
+
+## 2.2 What the two tables say
+
+Three things, and only the first is the headline.
+
+**The ratio is 24× on the first read and 19× on the control, and the
+cache-state column is why neither is a fluke.** `miss` on every single sample
+past the first page — 25 of 25, then 25 of 25 again. Not "usually cold": never
+warm, on any surface, in any minute. Ruling 127's rule cuts the other way here
+for once — a p50 over mixed states is a statement about the hit rate, and this
 one is over a *pure* state.
 
 🔴 **`native p2` peaked at 6,665 ms, and 6,000 is a hard client deadline.**
@@ -260,7 +293,7 @@ Alex), **P140-2** (the typeahead top-20 is underdetermined), **P140-3**,
   endpoints, 6 typeahead (`debug_timing` + origin → 0 trending votes), 6
   `/api/events/search` (origin header sent), 4 `/api/health`. Organic
   `latency-stats` read taken **before** it (ruling 127).
-* `lat_p141_pagination_probe.py --n 5`: **35 `/api/feed`**, all always-sampled.
+* `lat_p141_pagination_probe.py --n 5`, run TWICE: **70 `/api/feed`**, all always-sampled.
   A second organic `latency-stats` read was taken immediately before it.
 * Ranking probes: ~20 single reads of `/api/politics`, `/api/entertainment`,
   `/api/economics`, `/api/calibration`, `/api/futures/browse`,
