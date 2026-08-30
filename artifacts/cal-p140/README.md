@@ -3,9 +3,9 @@
 Published number at session start and end: **1.88 pp, FLAT** (`headline_pass: true`,
 CI `[0.86, 1.97]`, population `q268`). The payload moved — `04:35:25.200044Z`,
 **925,466** outcomes against CAL-P139's 925,446 — and **not one beat in this
-window is a datapoint about the calibration.** All six re-serve the census
-promoted at `2026-08-29T20:18:32Z`. §2 explains why, and why the discriminator
-CAL-P139 and I both reached for first is the wrong one.
+window is a datapoint about the calibration.** Every clean beat re-serves the
+census promoted at `2026-08-29T20:18:32Z`. §2 explains why, and why the
+discriminator CAL-P139 and I both reached for first is the wrong one.
 
 The freeze is **NOT lifted** and I took no exception. `precompute_calibration.py`
 is untouched — `git diff --stat` for this session is `artifacts/` only.
@@ -22,11 +22,11 @@ is untouched — `git diff --stat` for this session is `artifacts/` only.
 | self-check | `ok: true` — 34/34 by_category, 7/7 by_source reproduced exactly |
 | `availability` | `stale` |
 | `producer_beats_missed` | 0 |
-| freeze score | **5/6 clean, 1 miss, WINDOW_NOT_FULL** (18 beats to go) |
+| freeze score | **5/7 clean, 2 misses, 0 budget left, WINDOW_NOT_FULL** (17 beats to go) |
 
 ---
 
-## 1. THE WINDOW, CLASSIFIED LIVE — AND ONE MISS ALREADY SPENT
+## 1. THE WINDOW, CLASSIFIED LIVE — AND THE BUDGET IS ALREADY GONE
 
 Re-baseline `2026-08-29T23:35:53Z`, the first beat that published after Alex's
 one-off rewrote `bainluck:bookmaker_calibration`.
@@ -173,11 +173,11 @@ gauge, not the function that resets it.
 | REPUBLISH beats | **4** |
 | UNKNOWN (no prior published beat to compare) | **1** |
 
-The rebuild stands at **43/128** after 9 beats (~4.8/beat, and the unit cost is
-climbing: `unit_ms_mean` 153k → 216k across this cycle). The next promotion is
-~18 beats out, which lands within a beat or two of the window's own end at
-~`22:35Z`. **The 24-beat freeze window will contain at most one datapoint about
-the calibration, at its very last beat.** That is not an argument against the
+The rebuild stood at **43/128** after 9 beats (~4.8/beat, and the unit cost is
+climbing: `unit_ms_mean` 153k → 216k across this cycle). At that pace the next
+promotion is ~18 beats out, which lands within a beat or two of the window's own
+end at ~`22:35Z`. **The 24-beat freeze window will contain at most one datapoint
+about the calibration, at its very last beat.** That is not an argument against the
 window — ruling 009 asks about the producer, and re-publishes answer that
 question correctly — but any reading of the *number* over this window is one
 reading, not twenty-four.
@@ -191,11 +191,11 @@ the mistake it exists to avoid: pre-v3921 has class D live, `01:38Z-20:27Z` on
 08-29 is saturated with A's that CAL-P139 §2 proved were measurements of a
 missing Redis key, and only what is left describes now.
 
-| band | beats | miss rate | classes |
+| band | beats | miss rate | miss classes |
 |---|---|---|---|
-| whole ring (pooled — shown to make the error visible) | 168 | 0.601 | A 35, C 32, B-exhaustion 15, BD-early 18 |
-| **post-v3921, key-outage excluded** | 13 | **0.429** | C 3, B-exhaustion 2, BD-early 1 |
-| post-rebaseline (the live window) | 6 | 0.167 | B-exhaustion 1 |
+| whole ring (pooled — shown to make the error visible) | 168 | 0.607 | A 35, C 33, B-exhaustion 15, BD-early 18 |
+| **post-v3921, key-outage excluded — the operative band** | 15 | **0.467** | C 4, B-exhaustion 2, BD-early 1 |
+| post-rebaseline (the live window) | 7 | 0.286 | B-exhaustion 1, C 1 |
 
 Carrying the operative rate forward over 17 remaining beats against a budget of
 **zero** — every one of them must publish:
