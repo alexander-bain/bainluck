@@ -17,6 +17,7 @@ only re-asserted the map against a copy of itself would stay green through every
 interesting way this can break.
 """
 
+import ast
 import pathlib
 import re
 
@@ -354,6 +355,56 @@ AUTO_CREATE_SITES = (
 )
 
 
+def _sport_name_arguments(rel: str) -> list[ast.AST]:
+    """Every expression that can reach the `name=` of a `Sport(...)` in `rel`.
+
+    One level of local binding is resolved: `admin_events.py` computes
+    `display_name` a line above and passes `name=display_name`, so a scan that
+    stopped at the argument would see a bare `Name` and conclude the helper is
+    not used — a false red that would push the next author to weaken the arm.
+
+    Resolution is deliberately shallow and scoped to the enclosing function. It
+    is not a general dataflow analysis and must not grow into one; if a fourth
+    site ever needs two levels, inline the call at that site instead.
+    """
+    tree = ast.parse((REPO / rel).read_text())
+
+    functions = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+
+    def enclosing(call: ast.Call):
+        return [f for f in functions if any(n is call for n in ast.walk(f))]
+
+    out: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Sport"
+        ):
+            continue
+        for kw in node.keywords:
+            if kw.arg != "name":
+                continue
+            if not isinstance(kw.value, ast.Name):
+                out.append(kw.value)
+                continue
+            # A bare local — resolve it to every assignment in scope. An
+            # unresolvable name yields nothing, which reds rather than passes.
+            target = kw.value.id
+            for func in enclosing(node):
+                for stmt in ast.walk(func):
+                    if isinstance(stmt, ast.Assign) and any(
+                        isinstance(t, ast.Name) and t.id == target
+                        for t in stmt.targets
+                    ):
+                        out.append(stmt.value)
+    return out
+
+
 class TestNoCreationSiteMintsAKeyShapedName:
     """Residue scan over the three places a `Sport` row is born.
 
@@ -369,8 +420,45 @@ class TestNoCreationSiteMintsAKeyShapedName:
 
     @pytest.mark.parametrize("rel", AUTO_CREATE_SITES)
     def test_the_helper_is_what_names_the_row(self, rel):
-        src = (REPO / rel).read_text()
-        assert "sport_display_name(" in src, rel
+        """Structural, not textual — read the `name=` argument, not the file.
+
+        `CERT-483` blocked a sibling ship on precisely the weakness a textual
+        version of this arm would have: `{false && <Component/>}` left every
+        containment check green because the scan saw the tag while the user
+        could not reach it. The Python spelling is the same trick — leave a dead
+        `sport_display_name(...)` call somewhere in the module, name the row with
+        a literal, and a `"sport_display_name(" in src` assertion never notices.
+
+        So this parses the file and walks to the `name=` keyword of the actual
+        `Sport(...)` construction. Dead code elsewhere in the module is invisible
+        to it, because it is not looking at the module — it is looking at the
+        argument. `admin_events.py` wraps the call in `sport_name or ...`, hence
+        `ast.walk` over the argument's own subtree rather than an identity check.
+        """
+        calls = _sport_name_arguments(rel)
+        assert calls, f"no Sport(name=...) construction found in {rel}"
+        for node in calls:
+            named_by = [
+                n
+                for n in ast.walk(node)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and n.func.id == "sport_display_name"
+            ]
+            assert named_by, (
+                f"{rel}: a Sport(...) row is named by "
+                f"`{ast.unparse(node)}`, which never calls sport_display_name"
+            )
+
+    def test_the_ast_scan_sees_every_construction(self):
+        """Vacuity companion for the arm above.
+
+        A parse that finds nothing passes a `for node in []` loop silently. There
+        is exactly one `Sport(...)` construction per site; if that stops being
+        true, the arm above is checking a subset and does not know it.
+        """
+        found = {rel: len(_sport_name_arguments(rel)) for rel in AUTO_CREATE_SITES}
+        assert found == {rel: 1 for rel in AUTO_CREATE_SITES}, found
 
     def test_there_are_no_other_sport_constructions_to_miss(self):
         """The scan above is only complete if these are all of them.
