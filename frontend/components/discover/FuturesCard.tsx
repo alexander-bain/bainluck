@@ -10,6 +10,7 @@ import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
+import { getMarketCategoryLabel } from "@/lib/sportCategories";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
 import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars } from "./shared";
 import QuantityGroup from "../QuantityGroup";
@@ -101,7 +102,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     setVariantB(computeVariantB(data.id, readSessionSeed()));
   }, [data.id]);
   const catStyle = getCat(data.llm_sport_category);
-  const category = data.sport_name || data.llm_sport_category || "Markets";
+  const category = getMarketCategoryLabel(data.sport_name, data.llm_sport_category) || "Markets";
   const leader = data.top_outcomes?.[0];
   const prob = leader?.probability ?? null;
   const contextSnippet = feedContextSnippet(item);

@@ -7,6 +7,7 @@ import { formatProbability } from "@/lib/api";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
 import { isNonSportsCategory } from "@/lib/images";
+import { getNameForCategory } from "@/lib/sportCategories";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
@@ -117,7 +118,16 @@ export default function FuturesCard({
             <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
               {showSport && (
                 <span className="text-micro-xs text-text-muted uppercase tracking-widest truncate">
-                  {market.llm_sport_category || formatSportName(market.sport, market.sport_name)}
+                  {/* UX-P190: the category key is LABELLED, not printed. This
+                      card is /search, /my-stuff and /preferences, and the raw
+                      key reached the reader through the `uppercase` above as
+                      "TABLE_TENNIS" (q=Kikawada returns 9 such markets today).
+                      The existing preference order — LLM category before the
+                      linked sport — is deliberately unchanged; under `uppercase`
+                      the only visible difference is the underscore. */}
+                  {market.llm_sport_category
+                    ? getNameForCategory(market.llm_sport_category)
+                    : formatSportName(market.sport, market.sport_name)}
                 </span>
               )}
               {market.category && (

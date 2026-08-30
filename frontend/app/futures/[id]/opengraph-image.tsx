@@ -2,6 +2,7 @@
 import { ImageResponse } from "next/og";
 import type { FuturesMarketDetailResponse, FuturesOutcome } from "@/lib/types";
 import { formatShareProbability, truncateShareText } from "@/lib/share";
+import { getMarketCategoryLabel } from "@/lib/sportCategories";
 
 export const runtime = "edge";
 export const alt = "Bain Luck market probability";
@@ -95,7 +96,8 @@ export default async function Image({ params }: { params: { id: string } }) {
     130
   );
 
-  const categoryLabel = market?.sport_name || market?.llm_sport_category || "Discover";
+  const categoryLabel =
+    getMarketCategoryLabel(market?.sport_name, market?.llm_sport_category) || "Discover";
 
   return new ImageResponse(
     (
@@ -136,7 +138,12 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontSize: 19,
                 fontWeight: 700,
                 color: accent,
-                textTransform: "capitalize",
+                // UX-P190: the capitalize text-transform that used to sit here
+                // is gone. It was compensating for a raw payload key — and it
+                // could not even reach the underscore, so the pill rendered
+                // "Table_tennis". getMarketCategoryLabel now cases its own
+                // output, which leaves a transform here able only to corrupt a
+                // label it does not own ("Track and Field" → "Track And Field").
               }}
             >
               {categoryLabel}

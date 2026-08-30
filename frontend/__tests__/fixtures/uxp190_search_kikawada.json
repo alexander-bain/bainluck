@@ -1,0 +1,456 @@
+{
+ "_source": "GET https://api.bainluck.com/api/events/search?q=Kikawada \u2014 captured 2026-08-30, verbatim.",
+ "_why": "Seven of these ten rows carry llm_sport_category=\"table_tennis\" with sport_name=null, which is exactly the population that made the search card print TABLE_TENNIS.",
+ "futures": [
+  {
+   "id": 59715947,
+   "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko Kikawada vs Clarissa Blomqvist",
+   "sport": null,
+   "sport_name": null,
+   "category": "championship",
+   "llm_sport_category": "table_tennis",
+   "market_tier": 5,
+   "market_type_label": "Prop",
+   "status": "open",
+   "source": "polymarket",
+   "resolution_date": "2026-09-05T08:00:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 222513760,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko Kikawada vs Clarissa Blomqvist Set 1 O/U 8.5",
+     "probability": 1.0,
+     "american_odds": null,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222513761,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko Kikawada vs Clarissa Blomqvist Set 1 O/U 10.5",
+     "probability": 0.905,
+     "american_odds": -953,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222513762,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko Kikawada vs Clarissa Blomqvist Set 1 O/U 9.5",
+     "probability": 0.9005,
+     "american_odds": -905,
+     "rank": 3,
+     "movement": null
+    },
+    {
+     "id": 222404151,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko Kikawada vs Clarissa Blomqvist Set 1 Winner",
+     "probability": 0.48,
+     "american_odds": 108,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222400338,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko K",
+     "probability": 0.48,
+     "american_odds": 108,
+     "rank": 4,
+     "movement": -0.065
+    }
+   ],
+   "outcome_count": 7,
+   "updated_at": "2026-08-29T20:50:00.356332+00:00"
+  },
+  {
+   "id": 59622025,
+   "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko Kikawada vs Marie Villet",
+   "sport": null,
+   "sport_name": null,
+   "category": "championship",
+   "llm_sport_category": "table_tennis",
+   "market_tier": 5,
+   "market_type_label": "Prop",
+   "status": "open",
+   "source": "polymarket",
+   "resolution_date": "2026-09-03T07:00:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 221962928,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko Kikawada vs Marie Villet Set Handicap +/-1.5",
+     "probability": 0.5,
+     "american_odds": -100,
+     "rank": 5,
+     "movement": null
+    },
+    {
+     "id": 222009575,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko Kikawada vs Marie Villet Set 2 O/U 8.5",
+     "probability": 0.5,
+     "american_odds": -100,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 221960031,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko Kikawada vs Marie Villet Set 1 Winner",
+     "probability": 0.5,
+     "american_odds": -100,
+     "rank": 4,
+     "movement": null
+    },
+    {
+     "id": 222009576,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko Kikawada vs Marie Villet Set 2 Winner",
+     "probability": 0.5,
+     "american_odds": -100,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 221960028,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Riko Kikawada vs Marie Villet Set 1 O/U 8.5",
+     "probability": 0.5,
+     "american_odds": -100,
+     "rank": 3,
+     "movement": null
+    }
+   ],
+   "outcome_count": 14,
+   "updated_at": "2026-08-27T10:19:59.678229+00:00"
+  },
+  {
+   "id": 59661283,
+   "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Elyse Tse vs Riko Kikawada",
+   "sport": null,
+   "sport_name": null,
+   "category": "championship",
+   "llm_sport_category": "table_tennis",
+   "market_tier": 5,
+   "market_type_label": "Prop",
+   "status": "open",
+   "source": "polymarket",
+   "resolution_date": "2026-09-04T08:00:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 222149773,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Elyse ",
+     "probability": 0.145,
+     "american_odds": 590,
+     "rank": 1,
+     "movement": -0.62
+    },
+    {
+     "id": 222225325,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Elyse Tse vs Riko Kikawada Set 1 Winner",
+     "probability": 0.0005,
+     "american_odds": 199900,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222225326,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Elyse Tse vs Riko Kikawada Set 1 O/U 8.5",
+     "probability": 0.0005,
+     "american_odds": 199900,
+     "rank": 3,
+     "movement": null
+    },
+    {
+     "id": 222225327,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Elyse Tse vs Riko Kikawada Set 1 O/U 9.5",
+     "probability": 0.0005,
+     "american_odds": 199900,
+     "rank": 4,
+     "movement": null
+    },
+    {
+     "id": 222225328,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Elyse Tse vs Riko Kikawada Set 1 O/U 10.5",
+     "probability": 0.0005,
+     "american_odds": 199900,
+     "rank": 5,
+     "movement": null
+    }
+   ],
+   "outcome_count": 5,
+   "updated_at": "2026-08-28T09:20:49.970827+00:00"
+  },
+  {
+   "id": 59792067,
+   "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Sofia Camila Rojas vs Riko Kikawada",
+   "sport": null,
+   "sport_name": null,
+   "category": "championship",
+   "llm_sport_category": "table_tennis",
+   "market_tier": 5,
+   "market_type_label": "Prop",
+   "status": "open",
+   "source": "polymarket",
+   "resolution_date": "2026-09-06T07:30:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 222885062,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Sofia Camila Rojas vs Riko Kikawada Set 1 Winner",
+     "probability": 1.0,
+     "american_odds": null,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222885063,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Sofia Camila Rojas vs Riko Kikawada Set 1 O/U 8.5",
+     "probability": 1.0,
+     "american_odds": null,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222747864,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Sofia ",
+     "probability": 0.9995,
+     "american_odds": -199900,
+     "rank": 3,
+     "movement": 0.0745
+    },
+    {
+     "id": 222846489,
+     "name": "Completed Match",
+     "probability": 0.9995,
+     "american_odds": -199900,
+     "rank": 4,
+     "movement": 0.0595
+    },
+    {
+     "id": 222885066,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Sofia Camila Rojas vs Riko Kikawada Set 2 Winner",
+     "probability": 0.9995,
+     "american_odds": -199900,
+     "rank": 5,
+     "movement": null
+    }
+   ],
+   "outcome_count": 13,
+   "updated_at": "2026-08-30T09:18:27.641688+00:00"
+  },
+  {
+   "id": 59574286,
+   "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Daniela Darta Feldmane vs Riko Kikawada",
+   "sport": null,
+   "sport_name": null,
+   "category": "championship",
+   "llm_sport_category": "table_tennis",
+   "market_tier": 5,
+   "market_type_label": "Prop",
+   "status": "open",
+   "source": "polymarket",
+   "resolution_date": "2026-09-02T16:00:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 221724097,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Daniela Darta Feldmane vs Riko Kikawada Set 1 O/U 8.5",
+     "probability": 0.59,
+     "american_odds": -144,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 221724099,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Daniela Darta Feldmane vs Riko Kikawada Set 1 Winner",
+     "probability": 0.505,
+     "american_odds": -102,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 221724098,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Daniel",
+     "probability": 0.495,
+     "american_odds": 102,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 221724100,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Daniela Darta Feldmane vs Riko Kikawada Match O/U 21.5",
+     "probability": 0.44,
+     "american_odds": 127,
+     "rank": 3,
+     "movement": null
+    },
+    {
+     "id": 221730028,
+     "name": "ITF WOMEN - SINGLES: W15 Monastir 23 (Tunisia), hard: Daniela Darta Feldmane vs Riko Kikawada Total Sets: O/U 2.5",
+     "probability": 0.355,
+     "american_odds": 182,
+     "rank": 4,
+     "movement": null
+    }
+   ],
+   "outcome_count": 7,
+   "updated_at": "2026-08-26T11:17:55.475983+00:00"
+  },
+  {
+   "id": 59709107,
+   "name": "Kikawada vs Blomqvist",
+   "sport": null,
+   "sport_name": null,
+   "category": "championship",
+   "llm_sport_category": "tennis",
+   "market_tier": 5,
+   "market_type_label": "Prop",
+   "status": "open",
+   "source": "kalshi",
+   "resolution_date": "2026-09-12T08:00:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 222377174,
+     "name": "Clarissa Blomqvist",
+     "probability": 0.51,
+     "american_odds": -104,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222377175,
+     "name": "Riko Kikawada",
+     "probability": 0.49,
+     "american_odds": 104,
+     "rank": 2,
+     "movement": null
+    }
+   ],
+   "outcome_count": 2,
+   "updated_at": "2026-08-29T07:09:37.219739+00:00"
+  },
+  {
+   "id": 59821734,
+   "name": "Set 2 Winner: Rojas vs Kikawada",
+   "sport": null,
+   "sport_name": null,
+   "category": "game_prop",
+   "llm_sport_category": "table_tennis",
+   "market_tier": 1,
+   "market_type_label": "Championship",
+   "status": "open",
+   "source": "polymarket",
+   "resolution_date": "2026-09-06T07:30:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 222885034,
+     "name": "Yes",
+     "probability": 0.9995,
+     "american_odds": -199900,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222885035,
+     "name": "No",
+     "probability": 0.0005,
+     "american_odds": 199900,
+     "rank": 2,
+     "movement": null
+    }
+   ],
+   "outcome_count": 2,
+   "updated_at": "2026-08-30T10:09:13.536079+00:00"
+  },
+  {
+   "id": 59821738,
+   "name": "Set 1 Winner: Rojas vs Kikawada",
+   "sport": null,
+   "sport_name": null,
+   "category": "game_prop",
+   "llm_sport_category": "table_tennis",
+   "market_tier": 1,
+   "market_type_label": "Championship",
+   "status": "open",
+   "source": "polymarket",
+   "resolution_date": "2026-09-06T07:30:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 222885042,
+     "name": "Yes",
+     "probability": 1.0,
+     "american_odds": null,
+     "rank": 1,
+     "movement": null
+    },
+    {
+     "id": 222885043,
+     "name": "No",
+     "probability": null,
+     "american_odds": null,
+     "rank": 2,
+     "movement": null
+    }
+   ],
+   "outcome_count": 2,
+   "updated_at": "2026-08-30T10:09:13.536079+00:00"
+  },
+  {
+   "id": 59717442,
+   "name": "Set 1 Winner: Kikawada vs Blomqvist",
+   "sport": null,
+   "sport_name": null,
+   "category": "game_prop",
+   "llm_sport_category": "table_tennis",
+   "market_tier": 1,
+   "market_type_label": "Championship",
+   "status": "open",
+   "source": "polymarket",
+   "resolution_date": "2026-09-05T08:00:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 222404145,
+     "name": "No",
+     "probability": 0.52,
+     "american_odds": -108,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222404144,
+     "name": "Yes",
+     "probability": 0.48,
+     "american_odds": 108,
+     "rank": 1,
+     "movement": null
+    }
+   ],
+   "outcome_count": 2,
+   "updated_at": "2026-08-29T07:39:14.608810+00:00"
+  },
+  {
+   "id": 59677266,
+   "name": "Set 1 Winner: Tse vs Kikawada",
+   "sport": null,
+   "sport_name": null,
+   "category": "game_prop",
+   "llm_sport_category": "table_tennis",
+   "market_tier": 1,
+   "market_type_label": "Championship",
+   "status": "open",
+   "source": "polymarket",
+   "resolution_date": "2026-09-04T08:00:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 222225317,
+     "name": "No",
+     "probability": 0.9995,
+     "american_odds": -199900,
+     "rank": 2,
+     "movement": null
+    },
+    {
+     "id": 222225316,
+     "name": "Yes",
+     "probability": 0.0005,
+     "american_odds": 199900,
+     "rank": 1,
+     "movement": null
+    }
+   ],
+   "outcome_count": 2,
+   "updated_at": "2026-08-28T09:37:22.033369+00:00"
+  }
+ ]
+}
