@@ -458,11 +458,37 @@ def test_the_phase_caller_hands_down_the_pipelines_wall(monkeypatch):
         bw._precompute_bookmaker_calibration
     ).parameters, "the callee can no longer be told a caller's wall"
 
-    src = inspect.getsource(bw._backfill_all_winners)
-    assert "deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S" in src, (
+    # Anchored on the CALL, via the AST, and not on a substring of the enclosing
+    # function. `_backfill_all_winners` hands the identical
+    # `_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S` expression to three
+    # OTHER callees, so a containment check passes whether or not this call site
+    # still has it — measured: deleting the argument entirely left a substring
+    # form of this guard green. A guard its own defect cannot turn red is not a
+    # guard.
+    import ast
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(bw._backfill_all_winners)))
+    calls = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and getattr(n.func, "id", None) == "_precompute_bookmaker_calibration"
+    ]
+    assert len(calls) == 1, (
+        f"expected exactly one bookmaker_closing call site, found {len(calls)}"
+    )
+    kwargs = {k.arg: k.value for k in calls[0].keywords}
+    assert "deadline" in kwargs, (
         "the bookmaker_closing phase stopped passing the pipeline's wall; the "
         "callee would fall back to its standalone 1800s budget inside an 840s "
         "task and take the whole pipeline down with it"
+    )
+    assert (
+        ast.unparse(kwargs["deadline"])
+        == "_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S"
+    ), (
+        f"the phase passes a wall this guard does not recognise: "
+        f"{ast.unparse(kwargs['deadline'])}"
     )
 
 
