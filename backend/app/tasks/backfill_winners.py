@@ -1458,6 +1458,14 @@ _TOTAL_RE = re.compile(
     r"^(?P<dir>Over|Under)\s+(\d+\.?\d*)\s+(?:1H\s+)?(?:2H\s+)?(?:team\s+)?(?:total\s+)?(?:points|runs|goals|maps|rounds|kills)(?:\s+scored)?$",
     re.IGNORECASE,
 )
+# CERT-495: the TEAM-total leg — "{Team} over N runs scored". Distinct from
+# `_TOTAL_RE` (which is game total, home + away, and carries no team) and from
+# `_SPREAD_RE` (margin, not raw score). The direction group mirrors `_TOTAL_RE`
+# so the three graders read the same way.
+_TEAM_TOTAL_RE = re.compile(
+    r"(.+?)\s+(?P<dir>over|under)\s+(\d+\.?\d*)\s+(?:points|runs|goals)",
+    re.IGNORECASE,
+)
 
 _FIRST_HALF_PERIODS = {
     "q1",
@@ -1580,6 +1588,81 @@ def _total_outcome_is_winner(outcome_name, home_score, away_score):
     line = float(tm.group(2))
     total = home_score + away_score
     return total > line if direction == "over" else total < line
+
+
+def _team_total_outcome_is_winner(
+    outcome_name, home_team_name, away_team_name, home_score, away_score
+):
+    """CERT-495: grade ONE "{Team} over N runs scored" TEAM-total outcome alone.
+
+    This is the third instance of one bug class in this module, and the first two
+    are already fixed twelve hundred lines below: #939 (spreads) and #947 (totals)
+    both used to grade the FIRST matching outcome and then flip every sibling to
+    ``not won``, so a whole market landed all-True or all-False by insertion order.
+    The team-total branch kept doing exactly that until now. The committed capture
+    proves the shape is real and common: ``KXMLBTEAMTOTAL-26JUN052015CINSTL``
+    (`docs/mockups/data/reds.json`) carries **fourteen** outcomes —
+
+        St. Louis over 1.5 … 7.5 runs scored   (7 legs)
+        Cincinnati over 1.5 … 7.5 runs scored  (7 legs)
+
+    — every one of them an "over" leg. The old code derived a single boolean from
+    whichever leg it happened to see first and wrote that boolean to all fourteen,
+    so with St. Louis 5 – Cincinnati 3 it graded "Cincinnati over 7.5" a WINNER.
+    LAT-P154's ``ORDER BY market_id, id`` on the shared prefetch did not create
+    the defect, but it changed which leg comes first, which changes which way a
+    market is corrupted — and it made the broken loop faster, which widens the
+    reach. Order must not be able to matter at all, so it no longer can: each leg
+    is graded on ITS OWN named team and ITS OWN line.
+
+    A leg we cannot parse is returned as ``None`` and the caller SKIPS it. It is
+    deliberately not assigned the complement of some other leg's verdict — that
+    inference is the bug, not a fallback. ``is_winner`` is a Tier-1 column
+    (gotcha #21); leaving a row alone is always safer than writing a value
+    derived from a different question.
+
+    Spread names are refused here rather than by the caller (#947: the greedy
+    "(.+?) over N" also matches "Carolina wins by over 1.5 goals", which would
+    grade a SPREAD by the team's raw score and shadow the correct spread branch).
+
+    "Under" grades as ``score < line``, byte-for-byte the semantic
+    :func:`_total_outcome_is_winner` uses for its own under leg — the three
+    graders must not disagree about what "under" means. No live
+    ``KXMLBTEAMTOTAL`` line in the capture is a whole number, so the push case
+    this exposes is theoretical; when it does occur, both legs reading False is
+    the truthful answer and matches the sibling.
+
+    Returns True/False, or None when the name isn't a team-total leg, the named
+    team matches neither side, or a score is missing (caller skips).
+    """
+    if home_score is None or away_score is None:
+        return None
+    if _SPREAD_RE.search(outcome_name or ""):
+        return None
+    tm = _TEAM_TOTAL_RE.match(outcome_name or "")
+    if not tm:
+        return None
+    # Same normalization as `_spread_outcome_is_winner` — strips diacritics
+    # ("Montréal" -> "montreal") and periods ("St. Louis" -> "st louis"). The
+    # branch this replaces used a raw `.lower().split()`, which is the accented
+    # -name miss #939 already paid for once.
+    from app.utils.name_normalization import normalize_team_name
+
+    team_tokens = set(normalize_team_name(tm.group(1).strip()).split())
+    home_tokens = set(normalize_team_name(home_team_name or "").split())
+    away_tokens = set(normalize_team_name(away_team_name or "").split())
+    if team_tokens & home_tokens:
+        team_score = home_score
+    elif team_tokens & away_tokens:
+        team_score = away_score
+    else:
+        return None
+    line = float(tm.group(3))
+    return (
+        team_score > line
+        if tm.group("dir").lower() == "over"
+        else team_score < line
+    )
 
 
 # #140: Polymarket decomposes game totals into markets named "{A} vs. {B}: O/U N"
@@ -1808,62 +1891,48 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                     stats["no_parse"] += 1
                     continue
 
-                # Team total: "{Team} over N points scored" in any outcome name
+                # Team total: "{Team} over N runs scored" — every leg graded on
+                # ITS OWN team and ITS OWN line.
+                #
+                # CERT-495: this used to pick the FIRST matching leg, derive one
+                # boolean from that leg's team/line, and write it to every
+                # sibling — the same "flip the siblings" defect #939 fixed for
+                # spreads and #947 for totals, left standing in the third branch.
+                # A real `KXMLBTEAMTOTAL` carries 14 all-"over" legs across two
+                # teams and seven lines, so one leg decided fourteen `is_winner`
+                # rows and half of them were wrong by construction. Which half
+                # depended on iteration order, which is why LAT-P154's
+                # `ORDER BY market_id, id` on the shared prefetch surfaced it.
+                #
+                # Order-independent by construction now: each write is a pure
+                # function of one outcome, so any permutation of `outcomes_list`
+                # produces the identical write set. Legs that do not parse are
+                # SKIPPED, never assigned another leg's complement — see
+                # `_team_total_outcome_is_winner`.
+                #
+                # `stats["total"]` stays a per-MARKET count, exactly as before,
+                # so the phase summary keeps its old meaning; only correctness
+                # moves in this change.
                 resolved_team_total = False
                 for oc in outcomes_list:
-                    # #947: this greedy regex also matches SPREAD outcomes
-                    # ("Carolina wins by over 1.5 goals" → team="Carolina wins by"),
-                    # grading a spread by the team's RAW score instead of the MARGIN
-                    # and shadowing the correct per-outcome spread branch below
-                    # (the spread inverter the #944 re-grade band-aided). Skip any
-                    # spread-pattern name so it falls through to the spread branch.
-                    if _SPREAD_RE.search(oc.name or ""):
-                        continue
-                    _tt_re = re.match(
-                        r"(.+?)\s+over\s+(\d+\.?\d*)\s+(?:points|runs|goals)",
-                        oc.name or "",
-                        re.IGNORECASE,
+                    won = _team_total_outcome_is_winner(
+                        oc.name,
+                        row.home_team_name,
+                        row.away_team_name,
+                        row.home_score,
+                        row.away_score,
                     )
-                    if _tt_re:
-                        team_name = _tt_re.group(1).strip()
-                        line = float(_tt_re.group(2))
-                        home_tokens = (
-                            set(row.home_team_name.lower().split())
-                            if row.home_team_name
-                            else set()
-                        )
-                        away_tokens = (
-                            set(row.away_team_name.lower().split())
-                            if row.away_team_name
-                            else set()
-                        )
-                        team_tokens = set(team_name.lower().split())
-
-                        team_score = None
-                        if team_tokens & home_tokens:
-                            team_score = row.home_score
-                        elif team_tokens & away_tokens:
-                            team_score = row.away_score
-
-                        if team_score is not None:
-                            over = team_score > line
-                            for oc2 in outcomes_list:
-                                is_over_outcome = bool(
-                                    re.match(
-                                        r".+\s+over\s+", oc2.name or "", re.IGNORECASE
-                                    )
-                                )
-                                won = over if is_over_outcome else not over
-                                await session.execute(
-                                    text(
-                                        "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
-                                    ),
-                                    {"won": won, "oid": oc2.id},
-                                )
-                            stats["total"] += 1
-                            resolved_team_total = True
-                            break
+                    if won is None:
+                        continue
+                    await session.execute(
+                        text(
+                            "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                        ),
+                        {"won": won, "oid": oc.id},
+                    )
+                    resolved_team_total = True
                 if resolved_team_total:
+                    stats["total"] += 1
                     continue
 
                 # For spread/total parsing, try each outcome until one matches
