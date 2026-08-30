@@ -132,7 +132,20 @@ export default function WildCards() {
               className="flex items-end justify-between"
               style={{ marginBottom: 12 }}
             >
-              <ProbabilityNumber value={card.prob} size={42} />
+              <div style={{ minWidth: 0 }}>
+                <ProbabilityNumber value={card.prob} size={42} />
+                {/* "Min Arctic sea ice extent this summer? — 16%" is not an
+                    answer; "16% · 4.0-4.2m sq km" is. See FeaturedMarket.leader. */}
+                {card.leader ? (
+                  <p
+                    className="text-text-secondary mt-1 truncate"
+                    style={{ fontSize: 12.5, fontWeight: 500 }}
+                    title={card.leader}
+                  >
+                    {card.leader}
+                  </p>
+                ) : null}
+              </div>
               <Sparkline
                 data={spark}
                 color={color}

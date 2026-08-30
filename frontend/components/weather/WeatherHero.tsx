@@ -156,8 +156,22 @@ export default function WeatherHero() {
 
             {/* Probability + sparkline row */}
             <div className="flex items-end justify-between gap-4">
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <ProbabilityNumber value={current.prob} size={64} />
+                {/* What the number is ABOUT. Under "Where will it rain on Aug
+                    29, 2026?" a bare 78% answers nothing; "78% Minneapolis"
+                    answers the question that was asked. Omitted entirely when
+                    the backend has nothing worth naming (binary market) or is
+                    still serving a cached payload from before the field. */}
+                {current.leader ? (
+                  <p
+                    className="text-text-secondary mt-1 truncate"
+                    style={{ fontSize: 14, fontWeight: 500, maxWidth: 240 }}
+                    title={current.leader}
+                  >
+                    {current.leader}
+                  </p>
+                ) : null}
                 <div className="flex items-center gap-2 mt-1.5">
                   <span
                     className="text-xs font-semibold px-2 py-0.5 rounded-full"

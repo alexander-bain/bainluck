@@ -323,6 +323,82 @@ def _clean_outcomes(outcomes: list) -> list:
     return [o for o in outcomes if not _GARBAGE_OUTCOME_RE.match(o.name or "")]
 
 
+# A leader name that would tell the reader nothing they don't already have.
+# "Yes"/"No" only restate the binary framing the question itself carries, so
+# naming them adds a word and no information.
+_UNINFORMATIVE_LEADER_RE = re.compile(r"^(?:yes|no)$", re.I)
+
+
+def _adds_to_the_question(name: str, question: str | None) -> bool:
+    """Would printing ``name`` under ``question`` tell the reader anything new?
+
+    False when the question already spells out the leader's name, which would
+    render the same words twice in two type sizes.
+
+    The match is on WHOLE TOKENS, not a bare substring. Outcome names on these
+    markets get very short — "How many large volcano eruptions (VEI >=4) in
+    2026?" is priced across the outcomes "0", "1", "2" and "4", and its leader
+    is "0" at 71.5%. A substring test finds that "0" inside "2026" and
+    suppresses the only word that makes the 72% mean anything.
+    """
+    normalized = re.sub(r"\s+", " ", name).strip().lower()
+    if not normalized:
+        return False
+    haystack = re.sub(r"\s+", " ", question or "").lower()
+    # Lookarounds rather than \b: a name may begin or end with punctuation
+    # ("<4m sq km", "41°C or higher"), where \b asserts the opposite thing.
+    return re.search(rf"(?<!\w){re.escape(normalized)}(?!\w)", haystack) is None
+
+
+def _leader_outcome_name(market: FuturesMarket) -> str | None:
+    """Name of the outcome whose probability ``_highest_prob`` prints, or None.
+
+    A bare percentage is a complete answer only when the question already says
+    what the number is about. Production, 2026-08-30: every one of the five
+    markets the featured hero rotates was multi-outcome, so the biggest number
+    on the weather page had no referent — "Where will it rain on Aug 29, 2026?"
+    showed 78% (Minneapolis, of twenty-two cities) and "Major volcano eruption
+    in 2026?" showed 68%, which is the price of "At least 2", not of an eruption
+    happening at all.
+
+    The test is NOT how many outcomes there are. It was, briefly, and production
+    showed why that is wrong: of the 40 open two-outcome weather markets, 39 are
+    hurricane-category pairs — "Hurricane Marie category?" priced across
+    "Category 4 or above" / "Category 5 or above" — where the bare 95% is the
+    least readable number on the page and the outcome name is the whole answer.
+    An outcome name earns its place by ADDING to the question, whatever the
+    market's shape: a "Yes"/"No" restates it, a name already spelled out in the
+    question repeats it, and a `_GARBAGE_OUTCOME_RE` placeholder is not a name.
+
+    Returns None when there is nothing worth naming, so the caller emits a null
+    the reader never sees rather than noise under the number.
+
+    The scan deliberately mirrors ``_highest_prob``'s: same ``0.0`` floor, same
+    strict ``>`` so the FIRST of a tie wins. The two must not be able to
+    disagree about which outcome is the leader, or the card prints a number
+    attached to the wrong name — strictly worse than printing no name at all.
+    ``TestTheNamedLeaderIsThePrintedNumber`` holds them together.
+    """
+    best = None
+    best_prob = 0.0
+    for outcome in market.outcomes or []:
+        probability = float(outcome.current_probability or 0)
+        if probability > best_prob:
+            best_prob = probability
+            best = outcome
+    if best is None:
+        return None
+
+    name = (best.name or "").strip()
+    if not name:
+        return None
+    if _UNINFORMATIVE_LEADER_RE.match(name) or _GARBAGE_OUTCOME_RE.match(name):
+        return None
+    if not _adds_to_the_question(name, market.name):
+        return None
+    return name
+
+
 def _is_resolved(market: FuturesMarket) -> bool:
     """A market is effectively resolved if excluded by staleness/extremes."""
     from datetime import datetime, timezone as _tz
@@ -487,6 +563,11 @@ async def get_featured(db: AsyncSession):
         items.append({
             "q": m.name,
             "prob": _highest_prob(m),
+            # Which outcome `prob` belongs to. Always present, explicitly null
+            # when there is nothing worth naming — an absent key would be
+            # indistinguishable from a payload served out of the pre-UX-P186
+            # Redis cache, which the hero must also survive.
+            "leader": _leader_outcome_name(m),
             "src": _market_source(m),
             "tag": _derive_tag(m.name),
             "closes": _format_closes(m.resolution_date),
@@ -792,6 +873,10 @@ async def get_events(db: AsyncSession):
         item = {
             "q": m.name,
             "prob": _highest_prob(m),
+            # The sharpest instance of the defect on the whole page: "Hurricane
+            # Marie category? — 95%" is 95% of "Category 4 or above", and
+            # Category 4 and Category 5 are not the same forecast.
+            "leader": _leader_outcome_name(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
             "_res_date": m.resolution_date,
@@ -943,6 +1028,10 @@ async def get_wildcards(db: AsyncSession):
         items.append({
             "q": m.name,
             "prob": _highest_prob(m),
+            # Same defect as the hero's, on the same page: "Min Arctic sea ice
+            # extent this summer?" led with a bare 16% off a seven-way ladder
+            # whose top four sit within 1.2 points of each other.
+            "leader": _leader_outcome_name(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
             "tag": _derive_tag(m.name),

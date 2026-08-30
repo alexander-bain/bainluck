@@ -157,8 +157,23 @@ export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
               borderTop: i > 0 ? "1px solid var(--surface-border)" : undefined,
             }}
           >
-            <div className="flex items-center" style={{ gap: 8 }}>
+            <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
               <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{item.q}</span>
+              {/* "Hurricane Marie category? — 95%" prices "Category 4 or
+                  above", not the storm existing. See EventMarket.leader. */}
+              {item.leader ? (
+                <span
+                  className="truncate"
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "var(--text-primary)",
+                  }}
+                  title={item.leader}
+                >
+                  {item.leader}
+                </span>
+              ) : null}
               <SourceBadge src={item.src} />
             </div>
 
