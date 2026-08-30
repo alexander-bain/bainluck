@@ -4507,6 +4507,16 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         )
         return None
 
+    # NOTE (integrator/224 D52 rescue, 2026-09-06): this branch originally carried a
+    # `_COMPREHENSIVELY_COVERED_FAMILIES` guard here, refusing auto-create when the
+    # sport key came from the `llm_sport_category` fallback in a family the Odds API
+    # covers end to end ("Missouri State vs. Texas A&M" would otherwise duplicate the
+    # real americanfootball_ncaaf_fcs event). Master reached the same refusal first,
+    # by a cleaner route: Q453's `auto_create_sport_key_from_category` returns None for
+    # `football` (`LLM_CATEGORIES_THAT_MAY_NOT_CREATE_EVENTS`), so `sport_key` stays
+    # unset and the "no sport key determinable" return above fires. The guard and the
+    # `cat_prefix` it read were dropped as superseded by content, not as unwanted.
+
     # ── Unified event matching via Event Registry ──
     # Determine commence_time: use market's commence_time if reasonable,
     # otherwise use now (the market is probably live)
