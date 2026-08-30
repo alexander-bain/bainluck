@@ -1,11 +1,20 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { fetchFuturesBrowse, fetchFuturesCategories, formatProbability } from "@/lib/api";
+import { createSearchDebouncer } from "@/lib/searchDebounce";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import type { FuturesBrowseItem } from "@/lib/types";
+
+/**
+ * How long the in-category search box waits for typing to settle before it asks
+ * the server anything (LAT-P142). Exported so a test asserts the SHIPPED number
+ * rather than a copy of it. 200 ms is `MobileSearchOverlay`'s value — the other
+ * input in this app that gates a network call behind a debounce.
+ */
+export const SEARCH_DEBOUNCE_MS = 200;
 
 const CATEGORY_EMOJI: Record<string, string> = {
   basketball: "🏀",
@@ -132,16 +141,48 @@ export default function CategoryBrowser() {
   );
 }
 
-function CategoryMarkets({ category, onClose }: { category: string; onClose: () => void }) {
+// Exported (named — the default export is still CategoryBrowser) so the debounce
+// guards drive the SHIPPED component rather than a re-implementation of it. Same
+// reason UX-P165 exported `CompactMarketCard` below. No behaviour change.
+export function CategoryMarkets({ category, onClose }: { category: string; onClose: () => void }) {
   const [offset, setOffset] = useState(0);
   const [allItems, setAllItems] = useState<FuturesBrowseItem[]>([]);
+  // What the user has typed (renders instantly) vs what we have actually asked
+  // the server for. LAT-P142 split these: the SWR key below reads the COMMITTED
+  // one, so a keystroke no longer IS a request.
   const [searchQuery, setSearchQuery] = useState("");
+  const [committedQuery, setCommittedQuery] = useState("");
+
+  // LAT-P142 — why the SWR key reads `committedQuery` and not `searchQuery`.
+  // Every keystroke used to BE a request, and the first two letters of a search
+  // are the expensive ones: below three characters the trigram index cannot
+  // serve `name ILIKE '%q%'` and Postgres scans (4,821 buffers vs 40, measured).
+  // Full plan evidence and the deliberate absence of a minimum-length gate:
+  // `lib/searchDebounce.ts`.
+  const debouncerRef = useRef(createSearchDebouncer(SEARCH_DEBOUNCE_MS));
+
+  useEffect(() => {
+    // Already asked for: nothing to schedule. This also covers MOUNT, where both
+    // are "" — without it the timer would fire and wipe the first page that had
+    // just loaded.
+    if (searchQuery === committedQuery) return;
+    const debouncer = debouncerRef.current;
+    debouncer.schedule(searchQuery, (q) => {
+      setCommittedQuery(q);
+      // Paging restarts with the query it belongs to. Held here rather than in
+      // the keystroke handler so the list survives typing instead of flashing
+      // skeletons on every letter.
+      setOffset(0);
+      setAllItems([]);
+    });
+    return () => debouncer.cancel();
+  }, [searchQuery, committedQuery]);
 
   const { data, isLoading } = useSWR(
-    ["futures-browse", category, offset, searchQuery],
+    ["futures-browse", category, offset, committedQuery],
     () => fetchFuturesBrowse({
       category,
-      q: searchQuery || undefined,
+      q: committedQuery || undefined,
       limit: 20,
       offset,
     }),
@@ -160,12 +201,6 @@ function CategoryMarkets({ category, onClose }: { category: string; onClose: () 
     if (data?.has_more) {
       setOffset(prev => prev + 20);
     }
-  };
-
-  const handleSearch = (q: string) => {
-    setSearchQuery(q);
-    setOffset(0);
-    setAllItems([]);
   };
 
   return (
@@ -195,7 +230,7 @@ function CategoryMarkets({ category, onClose }: { category: string; onClose: () 
       <input
         type="text"
         value={searchQuery}
-        onChange={(e) => handleSearch(e.target.value)}
+        onChange={(e) => setSearchQuery(e.target.value)}
         placeholder={`Search ${category}...`}
         aria-label={`Search within ${category}`}
         className="w-full px-3 py-1.5 text-xs border border-surface-border rounded-lg bg-surface-deep focus:outline-none focus:border-accent-brand/40 transition-colors mb-3"
