@@ -186,8 +186,12 @@ def test_the_write_applies_the_ttl_the_answer_earns():
 
 
 def test_write_then_read_round_trips_the_ids():
+    # `write` publishes to Redis, so the call stays OUT of the assert: `-O`
+    # strips assertions and would take the publication with them, leaving the
+    # read below with nothing to find. Assert the returned flag instead.
     rc = _FakeRedis()
-    assert smd.write("baseball_mlb", False, [7, 8, 9], rc=rc) is True
+    wrote = smd.write("baseball_mlb", False, [7, 8, 9], rc=rc)
+    assert wrote is True
     assert smd.read("baseball_mlb", False, rc=rc) == [7, 8, 9]
 
 
@@ -208,7 +212,8 @@ def test_no_redis_at_all_is_a_miss_and_not_a_crash():
     """No client configured — every request runs the query, as before."""
     with patch.object(smd, "_client", lambda: None):
         assert smd.read("baseball_mlb", False) is None
-        assert smd.write("baseball_mlb", False, [1]) is False
+        wrote = smd.write("baseball_mlb", False, [1])
+        assert wrote is False
 
 
 def test_a_sick_redis_costs_a_rebuild_never_a_500():
@@ -216,14 +221,16 @@ def test_a_sick_redis_costs_a_rebuild_never_a_500():
     behaviour that existed before it, which is 'run the query'."""
     rc = _Boom()
     assert smd.read("baseball_mlb", False, rc=rc) is None
-    assert smd.write("baseball_mlb", False, [1], rc=rc) is False
+    wrote = smd.write("baseball_mlb", False, [1], rc=rc)
+    assert wrote is False
 
 
 def test_write_reports_attempted_not_durable():
     """`write` returning True means 'there was a client and we handed it the
     bytes'. Only the next read can establish that Redis has them."""
     rc = _FakeRedis()
-    assert smd.write("baseball_mlb", False, [1], rc=rc) is True
+    wrote = smd.write("baseball_mlb", False, [1], rc=rc)
+    assert wrote is True
     assert smd.read("baseball_mlb", False, rc=rc) == [1]
 
 
