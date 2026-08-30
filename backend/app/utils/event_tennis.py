@@ -166,8 +166,72 @@ def shares_tournament(name: str | None, tokens: set[str]) -> bool:
     return bool(tournament_tokens(name) & tokens)
 
 
-def select_winner_field(markets, slug: str, real_outcome_count):
-    """Pick the market that IS the tournament named by `slug`, or None.
+def group_end_at(winner, group, now):
+    """When the tournament ENDS, read off the whole GROUP and not one rendering.
+
+    A tournament is carried by several source markets and they do not all know
+    the same facts. `winner` is chosen for the fullest DRAW — that decides
+    identity, name and slug — and it does NOT follow that the richest draw also
+    carries the date. Measured on production 2026-08-30 (the corpus in
+    `tests/fixtures/tennis_group_date_corpus.json`), three of the ten live
+    tournaments are exactly that shape: "ATP 1000 Montreal: Winner" has 69
+    outcomes and `resolution_date = NULL` while "ATP Montreal Winner" has 46 and
+    knows the tournament ends 2026-09-13; Toronto and Cincinnati repeat it.
+
+    So: the winner's own date when it has one, else the earliest a sibling
+    rendering knows. This is not guessing a date we do not have — it is reading
+    one we DO have, off another rendering of the same tournament.
+
+    ⚠️ THIS FUNCTION EXISTS BECAUSE THE RULE WAS WRITTEN TWICE AND ONLY ONCE.
+    UX-P178 taught the rail to borrow a sibling's date, and `build_event` went on
+    reading `winner.resolution_date` directly — so the Montreal CARD said "live,
+    ends 13 Sep" and the PAGE it links to said "upcoming" with no date at all
+    (CERT-500 [P1]; reproduced over the real corpus at 4 of 10 concepts). Two
+    layers deriving one fact from one field, independently, is how they drift.
+    Both call this now, and both feed the result to `tennis_status` as well as to
+    `end_date` — a status derived from a different date than the one printed
+    beside it is the same bug wearing the other hat.
+
+    ⚠️ AN OPEN MARKET NEVER BORROWS A DATE THAT HAS ALREADY PASSED. A sibling
+    saying the tournament ended last week, while the market we actually selected
+    is still open with a full draw, is a rendering that contradicts the one we
+    are serving — and `tennis_status` reads a past date as settled. Real case in
+    the same corpus: `WTA Cincinnati Winner` exists twice, once with 55 outcomes
+    resolving 2026-09-22 and once with 7 resolving 2026-08-25 (five days before
+    the measurement). Borrowing the stale one would print "ends 25 Aug" under a
+    live draw. Between no date and a date the market's own openness contradicts,
+    no date is the honest answer — absence is legible, a confident wrong date is
+    not. A settled winner keeps borrowing freely: there the past date is the
+    point.
+    """
+    if getattr(winner, "resolution_date", None) is not None:
+        return winner.resolution_date
+    dates = [
+        m.resolution_date
+        for m in group
+        if getattr(m, "resolution_date", None) is not None
+    ]
+    if (getattr(winner, "status", None) or "").lower() == "open":
+        try:
+            dates = [d for d in dates if d >= now]
+        except TypeError:
+            pass
+    return min(dates) if dates else None
+
+
+def select_winner_group(markets, slug: str, real_outcome_count):
+    """The market that IS the tournament named by `slug`, and its whole group.
+
+    `group` is every market that IS that tournament — the candidate set the
+    winner was chosen from, winner included — and `(None, [])` when the slug
+    names no tournament we hold, which is the #1793 answer and a first-class
+    one. `select_winner_field` is this function's winner half and remains the
+    signature every other caller uses.
+
+    Returning the group is what let the two layers stop disagreeing:
+    `build_event` could not see the sibling renderings it needed, so it could not
+    borrow a date the group knew and its own chosen market did not, and the card
+    and the page drifted apart (`group_end_at`, CERT-500 [P1]).
 
     Canonical resolution (L2-65 Item 2): collect every winner FIELD whose slug
     matches (exact `clean_slug` OR identity-token subset), then take the RICHEST.
@@ -239,7 +303,7 @@ def select_winner_field(markets, slug: str, real_outcome_count):
         candidates.append(m)
 
     if not candidates:
-        return None
+        return None, []
 
     # Richest wins: most real competitors, then higher 24h volume, then an
     # exact-slug match, then lowest id (stable / deterministic).
@@ -266,7 +330,17 @@ def select_winner_field(markets, slug: str, real_outcome_count):
         vol = float(getattr(m, "volume_24h", None) or getattr(m, "volume", None) or 0.0)
         return (real_outcome_count(m), vol, clean_slug(m.name or "") == slug, -(m.id or 0))
 
-    return max(candidates, key=_rank)
+    return max(candidates, key=_rank), candidates
+
+
+def select_winner_field(markets, slug: str, real_outcome_count):
+    """The market that IS the tournament named by `slug`, or None.
+
+    `select_winner_group` carries the resolution rule and why it is shaped the
+    way it is; use that one when you also need the other renderings of the same
+    tournament.
+    """
+    return select_winner_group(markets, slug, real_outcome_count)[0]
 
 
 def tennis_gender(text: str | None) -> str:
@@ -417,30 +491,13 @@ async def list_tennis_tournament_concepts(
         slug = clean_slug(winner.name or "")
         if not slug:
             continue
-        # A group can hold one tournament as rendered by SEVERAL sources, and they
-        # do not all know the same facts. `winner` is chosen for the fullest DRAW
-        # (the L2-65 alias-convergence tie-break) — that decides identity, name and
-        # slug, and it must keep deciding them. It does NOT follow that the richest
-        # draw also carries the date: measured 2026-08-29, the two markets that the
-        # tier-token fix merges are exactly the ones where it does not. "ATP 1000
-        # Montreal: Winner" has 69 outcomes and `resolution_date = NULL`; "ATP
-        # Montreal Winner" has 46 and knows the tournament ends 2026-09-13. Reading
-        # the date off `winner` alone would have merged the duplicate card and, in
-        # the same move, downgraded the survivor from `live` with a date to
-        # `upcoming` with none — trading a visible duplicate for a silent
-        # subtraction, which is a worse bug than the one being fixed.
-        #
-        # So identity comes from the winner and the DATE comes from the group: the
-        # winner's own date when it has one, else the earliest a sibling knows.
-        # This is not guessing a date we do not have — it is reading one we DO
-        # have, off another rendering of the same tournament.
-        end_at = winner.resolution_date
-        if end_at is None:
-            sibling_dates = [
-                m.resolution_date for m in ms if m.resolution_date is not None
-            ]
-            if sibling_dates:
-                end_at = min(sibling_dates)
+        # Identity comes from the winner and the DATE comes from the group —
+        # `group_end_at` carries the rule and the measurements behind it. It is a
+        # shared helper and not four lines inline because `build_event` needs the
+        # identical answer: when this rail borrowed a date and the adapter did
+        # not, the Montreal card said "live, ends 13 Sep" and the page one click
+        # later said "upcoming" with no date (CERT-500 [P1]).
+        end_at = group_end_at(winner, ms, now)
         status = tennis_status(winner.status, end_at, now)
         if status not in statuses:
             continue
@@ -544,7 +601,7 @@ class TennisEventAdapter:
                 and not is_placeholder_outcome_name(o.name)
             )
 
-        winner = select_winner_field(markets, slug, _real_outcome_count)
+        winner, group = select_winner_group(markets, slug, _real_outcome_count)
         if winner is None:
             return None
 
@@ -552,9 +609,21 @@ class TennisEventAdapter:
         # differently-named-per-source) reports the same event key.
         canonical_slug = clean_slug(winner.name or "") or slug
 
+        # The tournament's end date, read off the whole GROUP and not just the
+        # market we selected — `group_end_at` carries the rule. The rail computes
+        # it the same way from the same helper, which is the only reason the card
+        # and this page can be relied on to say the same thing (CERT-500 [P1]).
+        end_at = group_end_at(winner, group, now)
+
         # L2-83: compute the event status once, up front — the settled-winner crown
         # below references it, and the envelope reuses it (single source of truth).
-        event_status = tennis_status(winner.status, winner.resolution_date, now)
+        #
+        # ⚠️ Derived from `end_at`, NOT from `winner.resolution_date`. A status
+        # computed off a different date than the one printed beside it is the
+        # rail/detail drift again, one layer down: Montreal's chosen market is
+        # undated, so this read "upcoming" while the very next field served the
+        # group's date under it.
+        event_status = tennis_status(winner.status, end_at, now)
 
         # Competitors = real players (drop the field-remainder "Other" + placeholders).
         competitors = []
@@ -723,10 +792,7 @@ class TennisEventAdapter:
                 "name": winner.name,
                 "status": event_status,
                 "start_date": None,
-                "end_date": (
-                    winner.resolution_date.isoformat()
-                    if winner.resolution_date is not None else None
-                ),
+                "end_date": (end_at.isoformat() if end_at is not None else None),
                 "venue": None,
                 "location": None,
                 "is_major": tennis_is_major(winner.name),

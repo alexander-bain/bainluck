@@ -1,0 +1,233 @@
+{
+  "_measured_at": "2026-08-30 22:22:30.869596+00:00",
+  "_measured": "production api.bainluck.com via admin db-query, 2026-08-30 22:22:30 UTC. `_measured_at` is the DATABASE's own clock, read in the same batch, and it is the anchor every date below is relative to.",
+  "_query": "the exact corpus TennisEventAdapter.build_event sees: llm_sport_category='tennis' AND (status='open' OR (status IN ('resolved','closed','settled') AND resolution_date >= now() - 30 days)), narrowed in SQL to winner-shaped non-matchup names and re-filtered in Python with the real is_winner_market regex (28 in, 28 kept). real_outcome_count is computed from the real futures_outcomes names with the real is_field_outcome / is_placeholder_outcome_name helpers, never from a bare row count. Outcomes fetched in four market_id %% 4 chunks, none truncated.",
+  "_why": "UX-P202 / CERT-500 [P1]. The 2026-08-12 corpus (tennis_production_corpus.json) carries NO resolution_date at all, so no date-shaped tennis guard had a real-data witness and the rail/detail agreement test had to invent one — which is precisely why it could not see the bug (UX-P200-7). This corpus carries the real dates and it carries the defect: THREE tournaments (Montreal, Toronto, Cincinnati) are rendered by one source with the FULLEST draw and NO date, and by another with a smaller draw and a real date. It also carries the stale rendering that makes the past-date rule load-bearing: `WTA Cincinnati Winner` exists twice, open and resolving 2026-09-22, and resolved and dated 2026-08-25.",
+  "_how_to_use": "Dates are FIXED calendar instants and would go stale (gotcha #44): shift every resolution_date by (now - _measured_at) so the corpus's RELATIVE structure — which is what any guard here is about — is preserved without a clock branch. Offset first, never an `if`.",
+  "markets": [
+    {
+      "id": 114159,
+      "name": "2026 Men’s US Open Winner (Tennis)",
+      "status": "open",
+      "volume_24h": 68734,
+      "real_outcome_count": 22,
+      "resolution_date": "2026-09-13 00:00:00+00:00"
+    },
+    {
+      "id": 114160,
+      "name": "2026 Women’s US Open Winner (Tennis)",
+      "status": "open",
+      "volume_24h": 33208,
+      "real_outcome_count": 40,
+      "resolution_date": "2026-09-13 00:00:00+00:00"
+    },
+    {
+      "id": 34277822,
+      "name": "US Open Men's Singles Winner",
+      "status": "open",
+      "volume_24h": 17789,
+      "real_outcome_count": 33,
+      "resolution_date": "2026-09-28 02:00:00+00:00"
+    },
+    {
+      "id": 34277839,
+      "name": "US Open Women's Singles Winner",
+      "status": "open",
+      "volume_24h": 5855,
+      "real_outcome_count": 23,
+      "resolution_date": "2026-09-27 02:00:00+00:00"
+    },
+    {
+      "id": 52755891,
+      "name": "Serena Williams to Win a Tournament in 2026",
+      "status": "open",
+      "volume_24h": 31,
+      "real_outcome_count": 1,
+      "resolution_date": "2027-01-15 15:00:00+00:00"
+    },
+    {
+      "id": 55686626,
+      "name": "ATP Bastad Winner",
+      "status": "resolved",
+      "volume_24h": 2501,
+      "real_outcome_count": 16,
+      "resolution_date": "2026-08-23 08:30:00+00:00"
+    },
+    {
+      "id": 55686627,
+      "name": "WTA Iasi Winner",
+      "status": "resolved",
+      "volume_24h": 280,
+      "real_outcome_count": 15,
+      "resolution_date": "2026-08-23 07:00:00+00:00"
+    },
+    {
+      "id": 55686636,
+      "name": "ATP Umag Winner",
+      "status": "resolved",
+      "volume_24h": 2399,
+      "real_outcome_count": 16,
+      "resolution_date": "2026-08-22 15:00:00+00:00"
+    },
+    {
+      "id": 55686637,
+      "name": "2026 WTA Athens Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 16,
+      "resolution_date": "2026-08-22 13:00:00+00:00"
+    },
+    {
+      "id": 55686643,
+      "name": "ATP Gstaad Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 16,
+      "resolution_date": "2026-08-22 08:00:00+00:00"
+    },
+    {
+      "id": 56943663,
+      "name": "WTA Hamburg Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 10,
+      "resolution_date": "2026-08-30 08:00:00+00:00"
+    },
+    {
+      "id": 56943665,
+      "name": "ATP Estoril Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 8,
+      "resolution_date": "2026-08-29 11:00:00+00:00"
+    },
+    {
+      "id": 56943666,
+      "name": "ATP Kitzbuhel Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 15,
+      "resolution_date": "2026-08-29 09:30:00+00:00"
+    },
+    {
+      "id": 56943667,
+      "name": "WTA Prague Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 14,
+      "resolution_date": "2026-08-29 09:05:00+00:00"
+    },
+    {
+      "id": 57718610,
+      "name": "ATP 1000 Montreal: Winner",
+      "status": "open",
+      "volume_24h": 3294,
+      "real_outcome_count": 69,
+      "resolution_date": null
+    },
+    {
+      "id": 57718620,
+      "name": "Cincinnati Open: Winner",
+      "status": "open",
+      "volume_24h": null,
+      "real_outcome_count": 78,
+      "resolution_date": null
+    },
+    {
+      "id": 58036886,
+      "name": "ATP Los Cabos Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 29,
+      "resolution_date": "2026-09-06 01:00:00+00:00"
+    },
+    {
+      "id": 58036887,
+      "name": "ATP Washington Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 16,
+      "resolution_date": "2026-09-05 14:10:00+00:00"
+    },
+    {
+      "id": 58076256,
+      "name": "WTA 1000 Toronto: Winner",
+      "status": "open",
+      "volume_24h": 840,
+      "real_outcome_count": 89,
+      "resolution_date": null
+    },
+    {
+      "id": 58728642,
+      "name": "ATP Montreal Winner",
+      "status": "open",
+      "volume_24h": 67053,
+      "real_outcome_count": 46,
+      "resolution_date": "2026-09-13 15:00:00+00:00"
+    },
+    {
+      "id": 58728643,
+      "name": "WTA Toronto Winner",
+      "status": "open",
+      "volume_24h": 42852,
+      "real_outcome_count": 16,
+      "resolution_date": "2026-09-12 15:00:00+00:00"
+    },
+    {
+      "id": 58728786,
+      "name": "WTA Memphis Winner",
+      "status": "resolved",
+      "volume_24h": null,
+      "real_outcome_count": 12,
+      "resolution_date": "2026-09-05 15:00:00+00:00"
+    },
+    {
+      "id": 58728792,
+      "name": "WTA Washington Winner",
+      "status": "open",
+      "volume_24h": null,
+      "real_outcome_count": 31,
+      "resolution_date": "2026-09-05 14:00:00+00:00"
+    },
+    {
+      "id": 59172922,
+      "name": "WTA Cincinnati Winner",
+      "status": "open",
+      "volume_24h": 31476,
+      "real_outcome_count": 55,
+      "resolution_date": "2026-09-22 14:00:00+00:00"
+    },
+    {
+      "id": 59172923,
+      "name": "ATP Cincinnati Winner",
+      "status": "open",
+      "volume_24h": 83267,
+      "real_outcome_count": 55,
+      "resolution_date": "2026-09-22 14:00:00+00:00"
+    },
+    {
+      "id": 59234465,
+      "name": "WTA Cincinnati Winner",
+      "status": "resolved",
+      "volume_24h": 65,
+      "real_outcome_count": 7,
+      "resolution_date": "2026-08-25 00:00:00+00:00"
+    },
+    {
+      "id": 59699988,
+      "name": "WTA Monterrey Winner",
+      "status": "open",
+      "volume_24h": 1064,
+      "real_outcome_count": 9,
+      "resolution_date": "2026-10-03 19:05:00+00:00"
+    },
+    {
+      "id": 59699997,
+      "name": "ATP Winston Salem Winner",
+      "status": "open",
+      "volume_24h": 2876,
+      "real_outcome_count": 15,
+      "resolution_date": "2026-10-03 15:00:00+00:00"
+    }
+  ]
+}
