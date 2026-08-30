@@ -1,4 +1,9 @@
-# CAL-P152 — the CERT-497 rework: a list of dicts is not a list of bookmaker rows
+# CAL-P152 — the CERT-497 rework, then the CERT-502 rework: shape is not provenance
+
+> 🔴 **THIS FILE HAS TWO PARTS. `CERT-502` BLOCKED THE FIRST ONE.** §1–§6 are the
+> CERT-497 rework and are still accurate. **§7 is the CERT-502 rework and is the
+> current state of the branch.** Read §7 before acting on anything above it — it
+> withdraws a tripwire raise that §3b argues *for*, and it corrects two numbers.
 
 **Pillar: TRUTH. Ship: the published calibration curve stops being able to go out
 ~96,026 outcomes short without saying so.**
@@ -118,10 +123,13 @@ the wrong shape" turned out to have a second, narrower reading nobody checked.
   field arriving unclassified. Both carry PREMISE-GONE messages: re-aim, never
   delete.
 
-**RED-FIRST, MEASURED:** with the source reverted to `HEAD` and the new tests in
-place — **30 failed / 32 passed, exit 1**. A result, not a harness story
-(gotcha #124). The controls are among the 32 that passed, which is what makes the
-30 meaningful.
+**RED-FIRST, MEASURED:** with the source reverted and the new tests in place —
+exit 1. A result, not a harness story (gotcha #124). The controls are among the
+passing 32, which is what makes the failures meaningful.
+
+> ⚠️ **The count first written here (30/32) was STALE and CERT-502 caught it** —
+> it was measured before the last guard was added and never re-run. See §7c. The
+> current, re-measured figure is **45 failed / 32 passed** against `1fc970e4`.
 
 ---
 
@@ -272,3 +280,105 @@ phantom producer run into the beat log.
 ancestors), **and the pattern must be LANE-UNIQUE.** A bare `pytest tests/`
 pattern matched three other lanes today; the latency lane was running a filtered
 suite concurrently with this one, which is why the suite ETA ran long.
+
+---
+
+# 7. THE CERT-502 REWORK — shape is not provenance
+
+`CERT-502` came back **BLOCK — TOKEN WITHHELD** at 22:11Z on `5a2b38a5`, with a
+**[P1] and a [P2]**. Both are accepted in full; neither is disputed. It also
+corrected two of my own numbers, and those corrections are carried below rather
+than argued with.
+
+**What CERT-502 confirmed as repaired:** "the exact CERT-497 missing-key/
+silent-zero finding is repaired". The block is a **new, same-class** hole plus a
+measurement-integrity regression I introduced.
+
+## 7a. [P1] A wrong-source row was still admitted, and it contaminates another curve
+
+`_bookmaker_row_defect` checked `isinstance(row["source"], str)` — a TYPE check
+where a **PROVENANCE** check was needed. The sole writer emits the literal
+`"source": "odds_api_bookmaker"`, and `r.source` is **part of the merge key**. So
+on the graded head a **complete, type-correct** row carrying `source="kalshi"`
+returned one row, `excluded=0`, **`degraded=None`** — and was merged into
+**Kalshi's published calibration curve**.
+
+🔴 **The damage is the quiet kind, and it is worse than the one I fixed.** The
+outcome COUNT is unchanged, so the population gate that guards this build
+**cannot see it**; ~96K outcomes of bookmaker mass simply become another source's
+calibration, and the named unreadable refusal never fires. **Proving a row is
+well-formed is not proving it came from its only writer** — every other check in
+the validator proves the former and none proved the latter.
+
+Fixed with a new module constant `BOOKMAKER_CURVE_SOURCE`, checked for exact
+equality (case-sensitive, empty string included) before conversion, on **both**
+the producer and serve arms. `test_the_expected_source_is_the_literal_the_writer_
+actually_emits` pins the constant against the writer's own literal read from
+source — the same treatment the required-key set already gets, for the same
+reason: a reader asserting a source the writer stopped emitting would refuse
+every row of a healthy sweep.
+
+## 7b. [P2] The tripwire raise was NOT earned, and it is WITHDRAWN
+
+**§3b of this document argues for raising `uncovered_sql_shaping` 22 → 23. That
+argument is wrong and the cert was right to block it.**
+
+The count's stated contract is that it moves *"only when an input reaches the
+emitted SQL"*. `_BOOKMAKER_ROW_REQUIRED_KEYS` does not reach SQL — **my own
+raising docstring said so in as many words** — and counting it anyway would have
+left the guard green while its category stopped meaning what downstream reviewers
+read it to mean. **A tripwire you widen the definition of is not a tripwire.** My
+"fresh argument" was really a redefinition of the measure.
+
+The constant is no longer interpolated into the refusal message (the message
+names the offending key, and the fixed prose already names the curve, so nothing
+an operator needs was lost), so the detector now classifies it correctly.
+`BOOKMAKER_CURVE_SOURCE` was written the same way for the same reason.
+
+**`uncovered_sql_shaping` is back to 22.** Totals move 52 → **54**, uncovered
+48 → **50**, in-module 43 → **45**; `covered_by_value` stays **4** and the
+cross-module **FIVE** is untouched. Both new constants are behaviour-only and
+neither moves the SQL-shaping count — which is the separation those tests promise.
+
+🔴 **THE HONEST RESIDUE, LEFT VISIBLE:** D21's entry that took this pin 21 → 22
+has the identical problem — `BOOKMAKER_CURVE_REDIS_KEY` is a Redis key, not SQL,
+and its own paragraph concedes "It is NOT SQL". **It is left counted on purpose.**
+Unwinding it is a question about the DETECTOR (it cannot tell diagnostic
+interpolation from emitted SQL), not about this repair, and **quietly lowering a
+pin while being blocked for quietly raising one would be the same error twice.**
+CERT-502's fix-sketch names the detector change as the real remedy; it is not
+this queue's cargo.
+
+## 7c. TWO NUMBERS OF MINE THAT THE CERT CORRECTED
+
+| I staged | actually |
+|---|---|
+| red-first **30** failed / 32 passed | **31** / 32 — I quoted a measurement taken *before* the last guard was added and never re-ran it |
+| "`ruff` clean on every changed file" | `test_calibration_field_completeness_257.py` has one unused `AsyncMock` import — **pre-existing at base `682c0b37`**, verified, and NOT introduced here |
+
+The ruff finding is **deliberately not fixed**: it is unrelated to this repair,
+and widening a twice-blocked branch is how it earns a third finding. The claim is
+restated instead of the diff being widened.
+
+**Red-first at the CURRENT head, re-measured rather than re-quoted: 45 failed /
+32 passed against `1fc970e4`, EXIT 1.**
+
+## 7d. Evidence at this head
+
+| gate | result |
+|---|---|
+| **red-first** vs `1fc970e4` | **45 failed / 32 passed, EXIT 1** — re-measured, not carried forward |
+| focused (reader + soccer + both fingerprint files + 257) | **123 passed**, exit 0 |
+| `scripts/evals/scan_mutation_residue.py` | **CLEAN — 0 residual mutants**, 216 needles, 17,710 checks, exit 0 |
+| full backend suite | *(banked in the cert block)* |
+
+## 7e. What CERT-502 explicitly left GREEN — do not re-derive
+
+* The three CERT-497 reproductions "now refuse/degrade by name".
+* **The inverted null-`n` test is CORRECT** — the cert ruled on it directly: "the
+  sole writer cannot emit null or zero `n`, so the old healthy expectation pinned
+  a corrupt row as acceptable." §3a stands.
+* Ancestry, the artifacts-only tip, `git diff --check`, merge-tree, exact-head CI,
+  CodeQL, gitleaks, the broad 2,782 sweep and the residue scan were all clean.
+* **R3 / P1-a is still GREEN and option A is still not a queue.** The
+  `CAL-P151-P1a` magnitude remains parked and owed.
