@@ -105,10 +105,33 @@ class _Rows:
 
 
 class _Row:
-    """A result row addressed by attribute, the way the loaders read them."""
+    """A result row addressed by attribute, the way the loaders read them.
+
+    🔴 A COLUMN THIS TEST DID NOT SET READS AS `None`, NOT AS AN AttributeError,
+    and that is the point rather than a convenience. A real SQLAlchemy `Row`
+    carries whatever the SELECT asked for, and `_load_prices`'s SELECT is a
+    SHARED one — the ux stack adds `current_yes_bid`, `volume_24h` and
+    `volume_updated_at` to it for a liquidity mark. A strict double turns "a
+    sibling branch selected one more column" into five red tests in a file that
+    has no opinion about liquidity, which is a test claiming ownership of a
+    statement it merely borrows.
+
+    Found by RUNNING the three-way merge against
+    `program/ux-135-raw-category-keys` rather than reading it: the strict version
+    of this class died five times with
+    `AttributeError: '_Row' object has no attribute 'current_yes_bid'`.
+
+    The columns this file DOES assert on are set explicitly and checked by value,
+    so a typo surfaces as a wrong answer rather than a silent `None`.
+    """
 
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return None
 
 
 class _RecordingSession:
