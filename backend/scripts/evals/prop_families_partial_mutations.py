@@ -148,15 +148,23 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M8",
         "a partial overwrites a complete mirror — a warmed team loses its content",
-        """        mirror=not _mirror_is_full(rc, keys),""",
-        """        mirror=True,""",
+        """    if not mirror_is_full and not publish_mirror_if_unchanged(
+        rc, keys, stamped, mirror_raw
+    ):""",
+        """    if not publish_mirror_if_unchanged(
+        rc, keys, stamped, mirror_raw
+    ):""",
         ROUTE,
     ),
     (
         "M9",
         "a partial never gets a mirror — the Giants go cold again every 15 minutes",
-        """        mirror=not _mirror_is_full(rc, keys),""",
-        """        mirror=False,""",
+        """    if not mirror_is_full and not publish_mirror_if_unchanged(
+        rc, keys, stamped, mirror_raw
+    ):""",
+        """    if False and not publish_mirror_if_unchanged(
+        rc, keys, stamped, mirror_raw
+    ):""",
         ROUTE,
     ),
     (
@@ -209,21 +217,11 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
         "M16",
         "a partial with rows reports degraded — the route re-serves the mirror "
         "and the warmer counts a healthy build as failed",
-        """    write_payload(
-        rc,
-        keys,
-        stamped,
-        primary_ttl=PROP_FAMILIES_PRIMARY_TTL,
-        mirror=not _mirror_is_full(rc, keys),
-    )
+        """            team.id, ",".join(reasons),
+        )
     return stamped, False""",
-        """    write_payload(
-        rc,
-        keys,
-        stamped,
-        primary_ttl=PROP_FAMILIES_PRIMARY_TTL,
-        mirror=not _mirror_is_full(rc, keys),
-    )
+        """            team.id, ",".join(reasons),
+        )
     return stamped, True""",
         ROUTE,
     ),
@@ -232,9 +230,9 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
         "NO mirror counts as a full one — a partial then refuses to write the only "
         "answer there is, and the page stays uncacheable",
         """    if not isinstance(stored, dict):
-        return False""",
+        return raw, False""",
         """    if not isinstance(stored, dict):
-        return True""",
+        return raw, True""",
         ROUTE,
     ),
     (
@@ -276,6 +274,78 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
         "the wire as an undeclared public field",
         """    losses = result.pop(BUILD_LOSS_FIELD, None)""",
         """    losses = result.get(BUILD_LOSS_FIELD, None)""",
+        CACHE,
+    ),
+    # --- CERT-480 finding 1: the mirror decision must be atomic --------------
+    (
+        "M22",
+        "the caller judges the mirror, then RE-READS it to write — two round trips "
+        "is the check-then-act CERT-480 blocked, restored",
+        """    mirror_raw, mirror_is_full = _stored_mirror(rc, keys)""",
+        """    mirror_is_full = _mirror_is_full(rc, keys)
+    mirror_raw = _stored_mirror(rc, keys)[0]""",
+        ROUTE,
+    ),
+    (
+        "M23",
+        "the compare-and-set is anchored to `None` instead of the bytes that were "
+        "judged — a fresher partial can never replace a stale one",
+        """    if not mirror_is_full and not publish_mirror_if_unchanged(
+        rc, keys, stamped, mirror_raw
+    ):""",
+        """    if not mirror_is_full and not publish_mirror_if_unchanged(
+        rc, keys, stamped, None
+    ):""",
+        ROUTE,
+    ),
+    (
+        "M24",
+        "the absent-key precondition collapses into the byte comparison — the "
+        "Giants' empty slot stops matching and never gets its first mirror",
+        """            "1" if expected is None else "0",""",
+        """            "0",""",
+        CACHE,
+    ),
+    (
+        "M25",
+        "an unrunnable compare-and-set reports success — the caller believes a "
+        "write happened that did not",
+        """        logger.warning(
+            "event-concept cache: conditional write failed for %s; leaving it alone", key
+        )
+        return False""",
+        """        logger.warning(
+            "event-concept cache: conditional write failed for %s; leaving it alone", key
+        )
+        return True""",
+        CACHE,
+    ),
+    (
+        "M26",
+        "unreadable mirror bytes are reported as NO bytes — the conditional write "
+        "then demands an absent key and a corrupt mirror becomes permanent",
+        """    payload = decode_payload(raw)
+    if payload is None:
+        return raw, None""",
+        """    payload = decode_payload(raw)
+    if payload is None:
+        return None, None""",
+        CACHE,
+    ),
+    (
+        "M27",
+        "the Lua guard is deleted and the script writes unconditionally — the "
+        "atomicity is decoration",
+        """local current = redis.call('get', KEYS[1])
+if ARGV[1] == '1' then
+    if current then return 0 end
+elseif current ~= ARGV[2] then
+    return 0
+end
+redis.call('setex', KEYS[1], ARGV[3], ARGV[4])
+return 1""",
+        """redis.call('setex', KEYS[1], ARGV[3], ARGV[4])
+return 1""",
         CACHE,
     ),
 ]

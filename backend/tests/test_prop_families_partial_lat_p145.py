@@ -37,6 +37,7 @@ complete builds fail.
 """
 
 import json
+import re
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -52,6 +53,10 @@ from app.utils.statement_timeout import is_statement_timeout
 # Doubles — local, because coupling two test modules makes collection order
 # load-bearing.
 # ---------------------------------------------------------------------------
+
+
+def _as_bytes(value):
+    return value.encode() if isinstance(value, str) else value
 
 
 class _FakeRedis:
@@ -81,8 +86,27 @@ class _FakeRedis:
         return int(self.store.pop(k, None) is not None)
 
     def eval(self, script, numkeys, *args):
-        key, token = args[0], args[1]
-        expected = token.encode() if isinstance(token, str) else token
+        """Both Lua scripts, dispatched on script IDENTITY.
+
+        Modelled on Redis's documented semantics, not on what the caller happens
+        to want: a missing key reads as false inside Lua, so a byte comparison
+        against an absent key is unequal and the guarded write does NOT happen.
+        Getting that arm wrong is what would make the race guards vacuous.
+        """
+        key = args[0]
+        if script is cache_mod._SETEX_IF_UNCHANGED_LUA:
+            absent_only, expected, ttl, value = args[1], args[2], args[3], args[4]
+            current = self.store.get(key)
+            if absent_only == "1":
+                if current is not None:
+                    return 0
+            elif current != _as_bytes(expected):
+                return 0
+            self.writes.append(key)
+            self.ttls[key] = int(ttl)
+            self.store[key] = _as_bytes(value)
+            return 1
+        expected = _as_bytes(args[1])
         if self.store.get(key) == expected:
             self.store.pop(key, None)
             self.ttls.pop(key, None)
@@ -627,6 +651,293 @@ class TestWritePayloadMirrorFlag:
         keys = cache_mod.cache_keys("k")
         cache_mod.write_payload(rc, keys, {"a": 1}, primary_ttl=60)
         assert rc.ttls[keys.stale] == cache_mod.STALE_TTL
+
+
+# ---------------------------------------------------------------------------
+# 6b. CERT-480 finding 1 — the mirror decision must survive a CONCURRENT WRITER
+#
+# The guards in section 5 all drive ONE worker, so they can only ever observe
+# sequential orderings: full-then-partial, partial-then-partial. The defect they
+# cannot see is a partial and a full build interleaving on two web dynos with no
+# lock between them. `_mirror_is_full()` answered truthfully at the instant it
+# was asked, and the answer was acted on one round trip later:
+#
+#     partial worker   reads mirror -> absent/partial, decides "publish"
+#     full  worker                     writes primary + FULL mirror
+#     partial worker   writes ------------------------> partial over the full
+#
+# The mirror is then partial for 24 hours — the exact downgrade section 5 exists
+# to prevent, arrived at by a legal ordering. `_RacingRedis` makes that window
+# deterministic by committing the full build INSIDE the read the decision is
+# taken on, which is the worst case and the only one worth pinning.
+# ---------------------------------------------------------------------------
+
+
+def _full_stamped(label="complete"):
+    return cache_mod.stamp_envelope(
+        {"team": {"id": 547}, "families": [{"family_key": label, "rows": []}],
+         "total_families": 1},
+        created_at=cache_mod._utcnow(),
+        lifecycle_watermark=None,
+        quality=cache_mod.QUALITY_FULL,
+    )
+
+
+class _RacingRedis(_FakeRedis):
+    """A Redis that lets a COMPLETE build land between a reader's GET and its write.
+
+    The interleaving is injected at the narrowest possible point — the mirror
+    read itself — and exactly ONCE, so a fix cannot pass by simply re-reading in
+    a loop. The value returned to the caller is the pre-race one, because that is
+    what a real reader would have received.
+    """
+
+    def __init__(self, mirror_key, full_bytes):
+        super().__init__()
+        self._mirror_key = mirror_key
+        self._full_bytes = full_bytes
+        self.raced = False
+
+    def get(self, k):
+        seen = super().get(k)
+        if k == self._mirror_key and not self.raced:
+            self.raced = True
+            super().setex(k, cache_mod.STALE_TTL, self._full_bytes)
+        return seen
+
+
+class TestAConcurrentFullBuildIsNotOverwritten:
+    def _racer(self, keys):
+        return _RacingRedis(keys.stale, cache_mod.encode_payload(_full_stamped()))
+
+    async def test_a_full_landing_mid_decision_survives_when_the_mirror_was_absent(self):
+        """The Giants arm. The partial reads "nothing here", which is the branch
+        that decides to PUBLISH — so this is the ordering that actually loses
+        data, and the one the sequential guards cannot reach."""
+        keys = route.prop_families_cache_keys(547, 400)
+        rc = self._racer(keys)
+        await _build_and_cache([FK_ROWS, _timeout(), MARKET_NAME_ROWS], rc)
+        assert rc.raced is True, "the interleaving never happened — guard is vacuous"
+        assert _envelope(_stored(rc, keys.stale))["quality"] == cache_mod.QUALITY_FULL, (
+            "a partial overwrote a complete mirror that landed mid-decision"
+        )
+
+    async def test_a_full_landing_mid_decision_survives_over_a_stale_partial(self):
+        """The other publishing arm: a partial mirror IS replaceable, so the
+        decision is again "publish", and again it can be wrong by the time it is
+        acted on."""
+        keys = route.prop_families_cache_keys(547, 400)
+        rc = self._racer(keys)
+        rc.setex(keys.stale, cache_mod.STALE_TTL, cache_mod.encode_payload(
+            cache_mod.stamp_envelope(
+                {"team": {"id": 547}, "families": [{"family_key": "old", "rows": []}],
+                 "total_families": 1},
+                created_at=cache_mod._utcnow(),
+                lifecycle_watermark=None,
+                quality=cache_mod.QUALITY_PARTIAL,
+            )
+        ))
+        await _build_and_cache([FK_ROWS, _timeout(), MARKET_NAME_ROWS], rc)
+        assert rc.raced is True
+        assert _envelope(_stored(rc, keys.stale))["quality"] == cache_mod.QUALITY_FULL
+
+    async def test_losing_the_mirror_race_still_writes_the_primary(self):
+        """Declining the mirror must not resurrect the twelve-second loop. The
+        primary is uncontested and is what stops the NEXT reader rebuilding."""
+        keys = route.prop_families_cache_keys(547, 400)
+        rc = self._racer(keys)
+        await _build_and_cache([FK_ROWS, _timeout(), MARKET_NAME_ROWS], rc)
+        assert rc.store.get(keys.primary) is not None
+        assert _envelope(_stored(rc, keys.primary))["quality"] == (
+            cache_mod.QUALITY_PARTIAL
+        )
+
+    async def test_losing_the_mirror_race_is_not_an_error(self):
+        keys = route.prop_families_cache_keys(547, 400)
+        rc = self._racer(keys)
+        payload, degraded = await _build_and_cache(
+            [FK_ROWS, _timeout(), MARKET_NAME_ROWS], rc
+        )
+        assert degraded is False, "losing a benign race must not degrade the response"
+        assert payload["total_families"] >= 1
+
+    async def test_with_no_racer_the_partial_still_publishes(self):
+        """The fix must not close the race by simply never writing — that would
+        be the original defect wearing a lock."""
+        keys = route.prop_families_cache_keys(547, 400)
+        rc = _FakeRedis()
+        await _build_and_cache([FK_ROWS, _timeout(), MARKET_NAME_ROWS], rc)
+        assert _envelope(_stored(rc, keys.stale))["quality"] == (
+            cache_mod.QUALITY_PARTIAL
+        )
+
+    async def test_the_mirror_decision_costs_exactly_one_read(self):
+        """Judging the mirror and proving it unchanged come from ONE observation.
+        A second GET would be a second window, i.e. the same defect one level in."""
+        keys = route.prop_families_cache_keys(547, 400)
+        rc = _FakeRedis()
+        reads = []
+        inner = rc.get
+
+        def counting_get(k):
+            reads.append(k)
+            return inner(k)
+
+        rc.get = counting_get
+        await _build_and_cache([FK_ROWS, _timeout(), MARKET_NAME_ROWS], rc)
+        assert reads.count(keys.stale) == 1, f"mirror read {reads.count(keys.stale)}x"
+
+
+# ---------------------------------------------------------------------------
+# 6c. `setex_if_unchanged` / `publish_mirror_if_unchanged` — the primitive itself
+# ---------------------------------------------------------------------------
+
+
+class TestSetexIfUnchanged:
+    def test_writes_when_the_key_is_still_absent(self):
+        rc = _FakeRedis()
+        assert cache_mod.setex_if_unchanged(rc, "k", None, 30, "v") is True
+        assert rc.store["k"] == b"v"
+        assert rc.ttls["k"] == 30
+
+    def test_declines_when_something_appeared_under_an_absent_expectation(self):
+        rc = _FakeRedis()
+        rc.setex("k", 30, "landed-first")
+        assert cache_mod.setex_if_unchanged(rc, "k", None, 30, "v") is False
+        assert rc.store["k"] == b"landed-first"
+
+    def test_writes_when_the_bytes_still_match(self):
+        rc = _FakeRedis()
+        rc.setex("k", 30, "before")
+        assert cache_mod.setex_if_unchanged(rc, "k", b"before", 30, "after") is True
+        assert rc.store["k"] == b"after"
+
+    def test_declines_when_the_bytes_changed(self):
+        rc = _FakeRedis()
+        rc.setex("k", 30, "changed-under-us")
+        assert cache_mod.setex_if_unchanged(rc, "k", b"before", 30, "after") is False
+        assert rc.store["k"] == b"changed-under-us"
+
+    def test_declines_when_the_key_vanished_under_a_byte_expectation(self):
+        """An expired key is not "unchanged". Writing here would resurrect a
+        value the TTL had already retired."""
+        rc = _FakeRedis()
+        assert cache_mod.setex_if_unchanged(rc, "k", b"before", 30, "after") is False
+        assert "k" not in rc.store
+
+    def test_a_dead_cache_declines_rather_than_raising(self):
+        assert cache_mod.setex_if_unchanged(None, "k", None, 30, "v") is False
+
+    def test_an_unrunnable_compare_and_set_fails_CLOSED(self):
+        """If the CAS cannot run we do not fall back to an unguarded write —
+        that is the check-then-act again, with the check deleted."""
+        rc = _FakeRedis()
+        rc.setex("k", 30, "keep")
+        rc.eval = MagicMock(side_effect=RuntimeError("no scripting"))
+        assert cache_mod.setex_if_unchanged(rc, "k", b"keep", 30, "v") is False
+        assert rc.store["k"] == b"keep"
+
+
+class TestTheLuaScriptItself:
+    """⚠️ THE LIMIT OF THESE GUARDS, STATED OUT LOUD. The doubles above dispatch on
+    script IDENTITY and re-implement Redis's semantics in Python, so they exercise
+    the CONTRACT, never the Lua body — a Lua edit is invisible to them. These
+    assertions are therefore about the script's STRUCTURE, which is the most that
+    can be checked without a live Redis: they pin that neither precondition can be
+    deleted while leaving a script that still writes. What they cannot prove is
+    that the Lua is semantically correct; that is what the production read-back in
+    the report is for.
+    """
+
+    def test_the_key_is_read_before_it_is_written(self):
+        src = cache_mod._SETEX_IF_UNCHANGED_LUA
+        assert src.index("redis.call('get'") < src.index("redis.call('setex'")
+
+    def test_setex_is_unreachable_without_passing_both_guards(self):
+        src = cache_mod._SETEX_IF_UNCHANGED_LUA
+        setex_at = src.index("redis.call('setex'")
+        declines = [m.start() for m in re.finditer(r"return 0", src)]
+        assert len(declines) == 2, "both preconditions must be able to decline"
+        assert all(at < setex_at for at in declines), (
+            "a decline that follows the write does not prevent it"
+        )
+
+    def test_both_preconditions_are_present(self):
+        src = cache_mod._SETEX_IF_UNCHANGED_LUA
+        assert "ARGV[1] == '1'" in src, "the absent-key arm is gone"
+        assert "current ~= ARGV[2]" in src, "the byte-comparison arm is gone"
+
+    def test_the_script_writes_exactly_once(self):
+        assert cache_mod._SETEX_IF_UNCHANGED_LUA.count("redis.call('setex'") == 1
+
+
+class TestPublishMirrorIfUnchanged:
+    def test_publishes_under_the_unparameterised_stale_ttl(self):
+        rc = _FakeRedis()
+        keys = cache_mod.cache_keys("k")
+        assert cache_mod.publish_mirror_if_unchanged(rc, keys, {"a": 1}, None) is True
+        assert rc.ttls[keys.stale] == cache_mod.STALE_TTL
+
+    def test_writes_the_same_bytes_write_payload_would_have(self):
+        """The conditional path and the unconditional one must not encode
+        differently, or a CAS on a later read compares against a stranger."""
+        a, b = _FakeRedis(), _FakeRedis()
+        keys = cache_mod.cache_keys("k")
+        cache_mod.write_payload(a, keys, {"a": 1}, primary_ttl=60)
+        cache_mod.publish_mirror_if_unchanged(b, keys, {"a": 1}, None)
+        assert a.store[keys.stale] == b.store[keys.stale]
+
+    def test_touches_only_the_mirror(self):
+        rc = _FakeRedis()
+        keys = cache_mod.cache_keys("k")
+        cache_mod.publish_mirror_if_unchanged(rc, keys, {"a": 1}, None)
+        assert rc.store.get(keys.primary) is None
+
+    def test_a_dead_cache_declines(self):
+        keys = cache_mod.cache_keys("k")
+        assert cache_mod.publish_mirror_if_unchanged(None, keys, {"a": 1}, None) is False
+
+
+class TestReadSlotRaw:
+    def test_returns_both_the_bytes_and_the_payload(self):
+        rc = _FakeRedis()
+        stamped = _full_stamped()
+        rc.setex("k", 30, cache_mod.encode_payload(stamped))
+        raw, payload = cache_mod.read_slot_raw(rc, "k")
+        assert raw == rc.store["k"]
+        assert payload["total_families"] == 1
+
+    def test_malformed_bytes_still_come_back_as_bytes(self):
+        """The verdict is "unusable"; the BYTES are still what is sitting in the
+        slot, and a conditional write has to be anchored to them."""
+        rc = _FakeRedis()
+        rc.setex("k", 30, "not json")
+        raw, payload = cache_mod.read_slot_raw(rc, "k")
+        assert raw == b"not json"
+        assert payload is None
+
+    def test_an_absent_key_is_no_bytes_and_no_payload(self):
+        assert cache_mod.read_slot_raw(_FakeRedis(), "k") == (None, None)
+
+    def test_a_failed_read_is_no_bytes_and_no_payload(self):
+        rc = _FakeRedis()
+        rc.get = MagicMock(side_effect=RuntimeError("down"))
+        assert cache_mod.read_slot_raw(rc, "k") == (None, None)
+
+    def test_read_slot_is_unchanged_by_the_split(self):
+        rc = _FakeRedis()
+        stamped = _full_stamped()
+        rc.setex("k", 30, cache_mod.encode_payload(stamped))
+        assert cache_mod.read_slot(rc, "k") == cache_mod.read_slot_raw(rc, "k")[1]
+
+    def test_stored_mirror_agrees_with_the_predicate_it_replaced(self):
+        rc = _FakeRedis()
+        keys = route.prop_families_cache_keys(547, 400)
+        rc.setex(keys.stale, 30, cache_mod.encode_payload(_full_stamped()))
+        raw, is_full = route._stored_mirror(rc, keys)
+        assert is_full is True
+        assert raw == rc.store[keys.stale]
+        assert route._mirror_is_full(rc, keys) is True
 
 
 # ---------------------------------------------------------------------------
