@@ -142,6 +142,14 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # Targets are `.ts`/`.tsx`, which Pass A reads directly and Pass B reaches
     # via the LAT-P119 narrowing — unlike the `.swift` case two entries up.
     "uxp190_category_label_mutations": [("MUTANTS", 2, 3, 1)],
+    # UX-P191. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above. Same per-entry-target shape as
+    # UX-P190 directly above, but the FIRST harness here whose targets straddle
+    # two runtimes — `app/routes/weather.py` and a `.tsx` component — so its
+    # oracle runs pytest and jest together. Pass A reads each declared target
+    # directly and does not care; Pass B reaches the `.tsx` via the LAT-P119
+    # narrowing and the `.py` via its original glob.
+    "uxp191_printed_percent_mutations": [("MUTANTS", 2, 3, 1)],
 }
 
 # Harnesses that write NOTHING, anywhere — every mutant is a source string

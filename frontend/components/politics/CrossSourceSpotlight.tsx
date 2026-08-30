@@ -9,6 +9,8 @@
  */
 import type { CrossSourceMatch } from "@/lib/api";
 import { BORDER_COLOR, SourceBadge } from "@/components/politics/atoms";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { renderedPercent } from "@/lib/renderedPercent";
 import s from "@/app/politics/politics.module.css";
 
 export function CrossSourceSpotlight({ matches }: { matches: CrossSourceMatch[] }) {
@@ -36,10 +38,51 @@ export function CrossSourceSpotlight({ matches }: { matches: CrossSourceMatch[] 
 
 export function CrossSourceCard({ market }: { market: CrossSourceMatch }) {
   const delta = market.delta;
-  const merged = (market.kalshi + market.poly) / 2;
+  const borderColor = BORDER_COLOR[market.category] || "#9CA3AF";
+
+  // ── THE PRINTED PAIR (UX-P191) ─────────────────────────────────────────────
+  //
+  // `kalshi` and `poly` arrive as 0-100 percents at one decimal. Every other
+  // market number on /politics goes through `formatProbabilityPercent` —
+  // UX-P046's single home for "what percentage does this probability print" —
+  // and this card did not. It printed `.toFixed(1)`, which forces a decimal
+  // digit onto a number that does not have one: measured on the deployed
+  // payload 2026-08-30, **6 of the 8 served matches** carry at least one whole
+  // value — including three of the FOUR rows the section renders — so the card
+  // printed `86.0%`, `95.0%`, `88.0%`, `16.0%`.
+  //
+  // Bypassing the single home also bypassed its BOUNDARY RULE, and this is the
+  // one surface that selects for extremes by construction — the list is sorted
+  // by delta descending, so a side pinned near 0 or 100 is precisely what
+  // reaches it. A live price of 0.04% printed `0.0%` here, which is the exact
+  // thing UX-P046 exists to stop a surface saying.
+  //
+  // ** NOT the presidential bar race, which keeps its one decimal. ** That is
+  // not an oversight and not the same call: measured live the same day, its 14
+  // candidates sit between 2.7% and 10.5%, and whole numbers put five
+  // consecutive rows on `4%` in a table whose first column is the rank. A
+  // decimal earns its place there and does not here.
+  const kalshiPct = formatProbabilityPercent(market.kalshi / 100);
+  const polyPct = formatProbabilityPercent(market.poly / 100);
+
+  // Every other number on the card is DERIVED FROM THE PRINTED PAIR rather than
+  // rounded on its own, so the subtraction a reader can do actually holds.
+  // Rounding the served `delta` independently breaks it: `4.5 / 86.0` prints
+  // `5% / 86%`, a gap of 81, while its served delta of 81.5 rounds to 82. Two
+  // of the eight live cards land in that gap.
+  const kalshiWhole = renderedPercent(market.kalshi / 100) ?? 0;
+  const polyWhole = renderedPercent(market.poly / 100) ?? 0;
+  const printedDelta = Math.abs(kalshiWhole - polyWhole);
+  const printedMerged = Math.round((kalshiWhole + polyWhole) / 2);
+
+  // The GATES stay on the served float: which cards earn a badge is a curation
+  // decision, and it should be made at the server's precision rather than by a
+  // display artifact. Safe against a nonsense badge because rounding each side
+  // moves it by at most half a point, so `printedDelta` is never more than one
+  // away from `delta` — `delta > 2` forces `printedDelta >= 2`, and
+  // `delta > 5` forces `printedDelta >= 5`.
   const arbitrage = delta > 5;
   const disagree = delta > 2;
-  const borderColor = BORDER_COLOR[market.category] || "#9CA3AF";
 
   return (
     <div className={s.crossCard} style={{ borderTop: `2px solid ${borderColor}` }}>
@@ -54,7 +97,7 @@ export function CrossSourceCard({ market }: { market: CrossSourceMatch }) {
       >
         <SourceBadge source="both" />
         {arbitrage && (
-          <span className={s.spreadBadge}>⚠ {delta.toFixed(1)}pt spread</span>
+          <span className={s.spreadBadge}>⚠ {printedDelta}pt spread</span>
         )}
       </div>
 
@@ -124,7 +167,7 @@ export function CrossSourceCard({ market }: { market: CrossSourceMatch }) {
               color: market.kalshi >= market.poly ? "#111827" : "#6B7280",
             }}
           >
-            {market.kalshi.toFixed(1)}%
+            {kalshiPct}
           </span>
         </div>
         <div className={s.sourceCellPoly}>
@@ -146,7 +189,7 @@ export function CrossSourceCard({ market }: { market: CrossSourceMatch }) {
               color: market.poly >= market.kalshi ? "#111827" : "#6B7280",
             }}
           >
-            {market.poly.toFixed(1)}%
+            {polyPct}
           </span>
         </div>
       </div>
@@ -163,14 +206,14 @@ export function CrossSourceCard({ market }: { market: CrossSourceMatch }) {
         <span>
           Merged:{" "}
           <b className={s.probNum} style={{ color: "var(--text-primary)" }}>
-            {merged.toFixed(1)}%
+            {printedMerged}%
           </b>
         </span>
         {disagree && (
           <span>
             Disagree by{" "}
             <b className={s.probNum} style={{ color: "#B45309" }}>
-              {delta.toFixed(1)}pp
+              {printedDelta}pp
             </b>
           </span>
         )}

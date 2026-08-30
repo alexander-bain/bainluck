@@ -32,6 +32,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.utils.graded_card import rendered_percent
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -128,7 +130,10 @@ class TestFeaturedNamesItsOutcome:
         body = (await client.get("/api/weather/featured")).json()
 
         assert len(body) == 1
-        assert body[0]["prob"] == 78
+        # 79, not 78: Minneapolis is 0.785 and the printed percent is half-up
+        # (UX-P191). This fixture was banked from production and was itself a
+        # specimen of the rounding defect — the hero really did print 78%.
+        assert body[0]["prob"] == 79
         assert body[0]["leader"] == "Minneapolis"
 
     async def test_the_hero_says_which_temperature_band(self, client, mock_db):
@@ -378,10 +383,11 @@ class TestNothingWorthNaming:
 
         item = (await client.get("/api/weather/featured")).json()[0]
 
-        # 92, not 93: `_highest_prob` is Python `round()`, which is HALF-EVEN,
-        # while the site's rendered-percent convention is HALF-UP. Out of scope
-        # here — this test is about the name — but real, and parked as UX-P186-2.
-        assert item["prob"] == 92, "the number is still the leader's"
+        # 93. The park this comment used to carry — `_highest_prob` was Python
+        # `round()`, HALF-EVEN, against the site's HALF-UP rendered-percent
+        # convention — was shipped by UX-P191. 0.925 now prints the same 93 here
+        # as it does on every other surface.
+        assert item["prob"] == 93, "the number is still the leader's"
         assert item["leader"] is None
 
     async def test_a_placeholder_leader_is_not_named(self, client, mock_db):
@@ -470,7 +476,12 @@ class TestTheNamedLeaderIsThePrintedNumber:
 
         assert item["leader"] is not None, "these are all multi-outcome"
         named = next(o for o in outcomes if o.name == item["leader"])
-        assert round(named.current_probability * 100) == item["prob"]
+        # `rendered_percent`, NOT `round()`. This line USED to re-derive with
+        # Python's built-in, which is the very rule UX-P191 removed from the
+        # route — so the guard agreed with the defect and could never see it.
+        # A test that re-implements its subject's arithmetic only pins the
+        # arithmetic it happens to share.
+        assert rendered_percent(named.current_probability) == item["prob"]
         assert named.current_probability == max(
             o.current_probability for o in outcomes
         )
@@ -494,7 +505,7 @@ class TestTheNamedLeaderIsThePrintedNumber:
         item = (await client.get("/api/weather/featured")).json()[0]
 
         assert item["leader"] == "30°C"
-        assert item["prob"] == 30
+        assert item["prob"] == 31  # 0.305, half-up (UX-P191)
 
     async def test_a_tie_FOR_THE_TOP_resolves_the_same_way_in_both_scans(
         self, client, mock_db
@@ -550,7 +561,7 @@ class TestNothingElseChanged:
         item = (await client.get(f"/api/weather/{endpoint}")).json()[0]
 
         assert item["q"] == "Where will it rain on Aug 29, 2026?"
-        assert item["prob"] == 78
+        assert item["prob"] == 79  # 0.785, half-up (UX-P191)
         assert item["src"] == "kalshi"
         assert item["tag"] == "Daily rain"
         assert item["closes"] == (now + timedelta(days=2)).strftime(
