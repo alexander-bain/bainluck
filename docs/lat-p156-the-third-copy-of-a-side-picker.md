@@ -187,6 +187,48 @@ been found watching the wrong thing (LAT-P154's `getsource` vs its own docstring
 fifteen guards, now this). **A guard that reads source text in a module whose docstrings quote its
 own SQL is a guard on prose.**
 
+## CERT-506 blocked it, and the block was right
+
+`CERT-506` withheld the token at 23:16Z: the widened rail's period exclusion was hand-written as
+`[0-9](H|Q|HALF)SPREAD` and admitted `KXMLBF5SPREAD`, Kalshi's MLB first-five-innings family.
+
+**The defect was not "F5 was missing" — it was "there were two definitions".** This module already
+knows `kxmlbf5*` is period work; `_resolve_kalshi_period_props` sets `period_key = "f5"` on exactly
+that prefix, eleven hundred lines below the rail. I wrote a second, narrower notion of "period
+ticker" in SQL instead of consulting the one that existed. **That is this lane's own standing rule
+failing on its author** — grep for the problem, not the remedy — and it is the fifth consecutive
+cycle in which the answer was already in the repo. The section above congratulates the lane for
+that habit; this section is what it looks like when the habit lapses two hundred lines later.
+
+Measured before repairing: **zero** `KXMLBF5SPREAD` rows are in the `game_score` cohort (0 of
+20,632), so nothing was mis-graded and the replay is byte-identical — 39 flipped, nothing else. But
+they were being *admitted to the query* and kept out only by two accidents: their names read
+`"Arizona -1.5 first 5 innings"` and miss `_SPREAD_RE`, and none carries a `game_score` winner.
+Neither is a filter anyone chose. **Accidental safety is not safety**, least of all in a rail that
+writes a column nothing can overwrite.
+
+One literal now (`_PERIOD_TICKER_PATTERN`), three deliberate filters, and `KXLIGUE1SPREAD` still
+correctly kept. Guards 55 → 78, battery 19 → 22 mutants, all killed.
+
+### Two mutants lied, and only the harness caught them
+
+M20's replacement never applied — bash heredoc escaping — and reported **SURVIVED**. M21 replaced
+an indented block with a bare `pass`, an IndentationError, and reported **killed with zero red**: a
+collection error wearing a kill's clothes. A battery that does not assert *the mutation applied*
+and *the mutant still parses* is reporting its own bugs as findings in both directions. Both now
+run through a harness that checks each before believing the verdict.
+
+## Master's CI is red, and it is not this branch
+
+PR #2354's `frontend-build` fails. The stack contains zero frontend files; **master itself is red
+at `612b7c18`** with the same three suites. CI runs Jest at step 6 and Build at step 8 —
+deliberately, per the workflow's own comment — while `UX-P150` made the shipped-copy gate `throw`
+when `.next/static/chunks` is absent and `CI` is set, so it can never pass in CI. It reached master
+only in the green-prefix merge. Filed as **#2355**; routing note in `alex-inbox/latency-003`.
+
+⚠️ A green `frontend-build` on this bus is now evidence of run **age**, not health — #2349 and
+#2344 read SUCCESS only because their runs predate the merge.
+
 ## What this cycle did NOT do
 
 * **#2351's 507 wrong rows are still not repaired.** Different cohort, no rail, cleanup ungranted.
