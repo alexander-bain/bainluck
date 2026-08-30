@@ -171,3 +171,49 @@ SETTLED_EXCLUSION_REASON_SQL = """
 #: this population and its reasons alongside its verdict, so "zero dark" always
 #: arrives with "and here is what I ruled out, and why".
 SETTLED_ONLY_SQL = f"NOT ({SETTLED_PREDICATE_SQL.strip()})"
+
+
+def preserve_venue_settled(new_metadata, existing_column):
+    """Carry the venue-settled stamp across a poll's wholesale metadata replace.
+
+    🔴 THIS EXISTS BECAUSE THE BOUND WOULD OTHERWISE WORK BY ACCIDENT.
+
+    Both ingest polls SET ``market_metadata`` to a freshly built dict on every
+    upsert — ``"market_metadata": kalshi_metadata if kalshi_metadata else None``
+    — which is a REPLACE, not a merge. Any key the poll does not know about is
+    deleted the next time it touches the row, and the venue-settled stamp is
+    exactly such a key.
+
+    Measured 2026-08-30, the polls do not currently reach #2222's nineteen
+    markets: ``updated_at`` on ``KXHOUSENJ11SPECIAL-26`` was unchanged across
+    three hours, and the writer that HAD moved it is ``backfill_market_shapes``,
+    which merges with ``||`` and is therefore safe. So the stamp survives today.
+
+    It survives *because of the very starvation #2199 exists to fix*. The moment
+    discovery coverage improves — which is the declared goal of the work this
+    task belongs to — the poll reaches these rows, the blob is replaced, the
+    clock resets to nothing, and #2222 comes back silently. A correctness
+    property must not be held up by another bug, so the two update paths merge
+    the key back instead.
+
+    ``NULLIF(..., '{}')`` keeps the existing contract exactly: a poll with no
+    metadata and no stamp to preserve still writes SQL NULL, not ``{}``. Both
+    polls already collapse an empty dict to ``None`` before this point, so
+    nothing that reads ``market_metadata IS NULL`` changes behaviour.
+
+    ``existing_column`` is passed in rather than imported so this module keeps
+    its zero-model-imports property. Inside an ``ON CONFLICT DO UPDATE`` set
+    clause a bare column renders as the EXISTING row's value, which is what the
+    merge needs (the same idiom ``tasks/polymarket.py`` already uses for its
+    sub-market coalesce).
+    """
+    from sqlalchemy import cast, func
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    kept = func.jsonb_strip_nulls(
+        func.jsonb_build_object(
+            VENUE_SETTLED_KEY, existing_column[VENUE_SETTLED_KEY]
+        )
+    )
+    merged = func.coalesce(cast(new_metadata, JSONB), cast("{}", JSONB)).op("||")(kept)
+    return func.nullif(merged, cast("{}", JSONB))

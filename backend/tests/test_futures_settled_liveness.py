@@ -47,6 +47,12 @@ def _norm(sql: str) -> str:
     return re.sub(r"\s+", " ", sql).strip().lower()
 
 
+def _pg_dialect():
+    from sqlalchemy.dialects import postgresql
+
+    return postgresql.dialect()
+
+
 # --- 1. the two settled signals ----------------------------------------------
 
 
@@ -123,6 +129,58 @@ class TestTheVenueSettledBound:
         assert _SRC.count("await _clear_if_stamped(session, market, stats)") == 2, (
             "one per source loop — a Kalshi-only retraction is half a mechanism"
         )
+
+    def test_both_polls_merge_the_stamp_instead_of_replacing_the_blob(self):
+        """🔴 Without this the bound works only because another bug protects it.
+
+        Both ingest polls SET `market_metadata` to a freshly built dict on every
+        upsert — a REPLACE, so any key the poll does not know about is deleted.
+        Measured 2026-08-30 the polls do not currently reach #2222's markets
+        (`updated_at` on KXHOUSENJ11SPECIAL-26 unchanged across three hours; the
+        writer that had moved it is `backfill_market_shapes`, which merges with
+        `||` and is safe). So the stamp survives today — because of the very
+        starvation #2199 exists to fix.
+
+        The moment discovery coverage improves, the poll reaches the row, the
+        blob is replaced, the clock resets to nothing and #2222 returns
+        silently. A correctness property may not be held up by another bug.
+        """
+        import pathlib
+
+        from app.tasks import kalshi, polymarket
+
+        for module in (kalshi, polymarket):
+            src = pathlib.Path(module.__file__).read_text()
+            assert "preserve_venue_settled" in src, (
+                f"{module.__name__} replaces market_metadata without merging the stamp"
+            )
+            # The bare replace must be gone from the UPDATE path. It legitimately
+            # remains on the INSERT path, where there is no existing row.
+            assert '"market_metadata": preserve_venue_settled(' in src
+
+    def test_the_merge_is_a_no_op_when_there_is_nothing_to_keep(self):
+        """The existing contract: a poll with no metadata still writes SQL NULL.
+
+        `NULLIF(..., '{}')` is what keeps that true. Without it the polls would
+        start writing `{}` where they used to write NULL, and every reader that
+        tests `market_metadata IS NULL` would change behaviour — a silent,
+        repo-wide side effect from a fix about nineteen markets.
+
+        Verified against production PostgreSQL 17.10, read-only:
+          NULL metadata + absent key -> NULL
+          {"ticker":"X"} + absent key -> {"ticker": "X"}   (unchanged)
+          {"ticker":"X"} + present key -> both keys present
+        """
+        from app.models.models import FuturesMarket
+
+        sql = str(
+            liveness.preserve_venue_settled(
+                None, FuturesMarket.market_metadata
+            ).compile(dialect=_pg_dialect())
+        )
+        assert "nullif" in sql.lower()
+        assert "jsonb_strip_nulls" in sql.lower()
+        assert "||" in sql
 
     def test_the_comparison_cannot_raise_on_a_value_we_did_not_write(self):
         """Text comparison, not a `::timestamptz` cast.
