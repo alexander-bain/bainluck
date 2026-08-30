@@ -51,6 +51,7 @@ from app.utils.feed_event_candidates import (  # noqa: E402
     TIER_QUOTAS,
     TIER_RECENT,
     TIER_SCHEDULED,
+    deduplicated_event_ids,
     event_candidate_ids,
     status_tier_expr,
 )
@@ -113,6 +114,7 @@ def _event(
     sources=None,
     home_score=None,
     away_score=None,
+    opening_home_probability=None,
 ):
     return Event(
         id=id,
@@ -124,6 +126,7 @@ def _event(
         win_probability_sources=sources,
         home_score=home_score,
         away_score=away_score,
+        opening_home_probability=opening_home_probability,
     )
 
 
@@ -589,3 +592,183 @@ def test_status_tier_expr_orders_live_before_recent_before_scheduled():
     assert f"'live') THEN {TIER_LIVE}" in sql
     assert f"'closed')) THEN {TIER_RECENT}" in sql
     assert f"ELSE {TIER_SCHEDULED}" in sql
+
+
+# ---------------------------------------------------------------------------
+# 6 — My Stuff (#2213): the branch that never had the collapse
+# ---------------------------------------------------------------------------
+#
+# `_score_events` has always had two arms. The `else:` arm — Discover and Sports
+# — routes through `event_candidate_ids` and has been protected since #2065. The
+# `my_teams_only` arm built its own query and got NO duplicate guard at all, so
+# the one surface with no protection was the one Alex opens by name.
+#
+# On 2026-08-25 My Stuff rendered "Live Now (2)" for a single Boston Red Sox @
+# Miami Marlins game: two cards, 57%/43% from the ESPN/odds row and 50%/50% from
+# the StatPal row. Reproduced below with the real production shape of those two
+# rows, then asserted collapsed.
+
+
+# The two production rows, 2026-08-25. Same teams, same start, no shared
+# provider id — which is exactly why the registry created rather than absorbed
+# (ruling 048), and why a DISPLAY collapse is the right layer for this.
+_REDSOX_START = NOW - timedelta(minutes=20)
+_ESPN_ROW_ID = 15291666      # espn_id + odds external_id; espn/betting/stat_model
+_STATPAL_ROW_ID = 15228865   # statpal fixture only; `mlb` source alone
+
+
+def _mystuff_corpus():
+    return [
+        _event(
+            id=_ESPN_ROW_ID,
+            sport_id=S_MLB,
+            home="Miami Marlins",
+            away="Boston Red Sox",
+            commence_time=_REDSOX_START,
+            status="live",
+            sources={
+                "espn": {"value": 0.382},
+                "betting": {"value": 0.3055},
+                "stat_model": {"value": 0.2469},
+            },
+            home_score=0,
+            away_score=1,
+            opening_home_probability=0.4209,
+        ),
+        _event(
+            id=_STATPAL_ROW_ID,
+            sport_id=S_MLB,
+            home="Miami Marlins",
+            away="Boston Red Sox",
+            commence_time=_REDSOX_START,
+            status="live",
+            sources={"mlb": {"value": 0.413}},
+            home_score=0,
+            away_score=1,
+        ),
+    ]
+
+
+@pytest.fixture()
+def mystuff(engine):
+    with Session(engine) as s:
+        _seed(s, _mystuff_corpus())
+        yield s
+
+
+def _mystuff_admitted(session, conditions=None):
+    stmt = deduplicated_event_ids(conditions or _candidate_conditions())
+    return {r[0] for r in session.execute(stmt).all()}
+
+
+def test_the_mystuff_defect_reproduces_without_the_collapse(mystuff):
+    """Both rows are admitted by the raw predicate — the two cards Alex saw.
+
+    Without this the fix's test could pass over a corpus that never had a
+    duplicate in it, and would certify nothing.
+    """
+    both = {
+        r[0]
+        for r in mystuff.execute(
+            select(Event.id)
+            .join(Sport, Event.sport_id == Sport.id)
+            .where(and_(*_candidate_conditions()))
+        ).all()
+    }
+    assert both == {_ESPN_ROW_ID, _STATPAL_ROW_ID}
+
+
+def test_one_game_yields_one_card(mystuff):
+    """THE ship: 'Live Now (2)' for one game becomes one card."""
+    assert len(_mystuff_admitted(mystuff)) == 1
+
+
+def test_the_surviving_card_is_the_one_that_can_render_a_probability(mystuff):
+    """The ESPN/odds row wins — three real sources against StatPal's one.
+
+    Direction matters and is not symmetric. Keeping the StatPal row would swap a
+    card reading 57/43 off a real blend for one reading 50/50 off a single
+    source, which is a worse card than the duplicate pair contained. `survivor_order`
+    already encodes this; the assertion pins that My Stuff inherits it.
+    """
+    assert _mystuff_admitted(mystuff) == {_ESPN_ROW_ID}
+
+
+def test_my_stuff_gets_no_tier_quotas(mystuff):
+    """The collapse is reused; the 200/150/150 split deliberately is not.
+
+    A quota that never binds is dead code, and one that DOES bind on a
+    my-teams pool drops one of Alex's own games. Asserted on the SQL so that
+    wiring My Stuff through `event_candidate_ids` — the obvious future
+    'simplification' — fails here rather than silently capping his slate.
+    """
+    sql = str(
+        deduplicated_event_ids(_candidate_conditions()).compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "dup_rn" in sql
+    for quota in set(TIER_QUOTAS.values()):
+        assert f"THEN {quota}" not in sql, "tier quotas must not reach My Stuff"
+
+
+def test_a_doubleheader_is_still_two_cards_on_my_stuff(engine):
+    """The ruling-048 hazard, on this surface too.
+
+    'Any matcher smart enough to join two same-game claims is provably dumb
+    enough to destroy a doubleheader.' The collapse escapes that only because it
+    partitions on `commence_time`, and MLB in August is when it gets tested.
+    """
+    with Session(engine) as s:
+        _seed(
+            s,
+            [
+                _event(
+                    id=1,
+                    sport_id=S_MLB,
+                    home="Miami Marlins",
+                    away="Boston Red Sox",
+                    commence_time=NOW - timedelta(minutes=30),
+                    status="live",
+                    sources={"betting": {"value": 0.5}},
+                ),
+                _event(
+                    id=2,
+                    sport_id=S_MLB,
+                    home="Miami Marlins",
+                    away="Boston Red Sox",
+                    commence_time=NOW + timedelta(hours=4),
+                    status="scheduled",
+                    sources={"betting": {"value": 0.5}},
+                ),
+            ],
+        )
+        assert _mystuff_admitted(s) == {1, 2}
+
+
+def test_both_rows_remain_addressable_after_the_collapse(mystuff):
+    """This collapses two rows into one CARD, never into one ROW.
+
+    Ruling 048's merge needs an id-anchored correspondence, and measurement says
+    none exists — 0 of 41 duplicate MLB pairs share any provider id (#2213). So
+    the suppressed row must still be a row: nothing is deleted, nothing is
+    merged, and `/api/events/{id}` still serves it. Pinned because a future
+    'cleanup' that turns this into a DELETE would pass every other test here.
+    """
+    still_there = {
+        r[0]
+        for r in mystuff.execute(
+            select(Event.id).where(Event.id.in_([_ESPN_ROW_ID, _STATPAL_ROW_ID]))
+        ).all()
+    }
+    assert still_there == {_ESPN_ROW_ID, _STATPAL_ROW_ID}
+
+
+def test_the_two_arms_cannot_drift_apart(mystuff):
+    """One definition of 'the same fixture', not two.
+
+    Both callers go through `_collapsed_subquery`. If someone gives My Stuff its
+    own partition key, the two surfaces start disagreeing about what a duplicate
+    is — and the surface with the looser key silently grows them back.
+    """
+    assert _mystuff_admitted(mystuff) == _admitted(mystuff)
