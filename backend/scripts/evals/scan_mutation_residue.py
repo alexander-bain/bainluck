@@ -134,6 +134,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # target is carried per-entry at index 1, the `golf_schedule_cache_mutations`
     # shape.
     "prop_families_cache_mutations": [("MUTANTS", 3, 4, 1)],
+    # LAT-P145. Directly after its LAT-P138 sibling, which is also its
+    # alphabetical position — same route, and the two tables must not drift
+    # apart. Two targets in one table (the route and the shared cache policy),
+    # so the target is carried per-entry at index 4 rather than by a module
+    # constant: this table's rows are 5-tuples, not 4.
+    "prop_families_partial_mutations": [("MUTANTS", 2, 3, 4)],
     # LAT-P136. Alphabetical, for the reason spelled out under
     # `futures_movers_warm_mutations` above. Two targets in one table (the route
     # ladder and the policy module) carried per-entry at index 1 — the same

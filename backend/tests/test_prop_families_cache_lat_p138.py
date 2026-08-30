@@ -36,6 +36,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import Select
 from sqlalchemy.dialects import postgresql
 
 from app.routes import prop_families as route
@@ -87,6 +88,16 @@ class _FakeRedis:
         return 0
 
 
+def _is_branch(stmt) -> bool:
+    """Is this one of the build's three branch SELECTs (vs the team lookup)?
+
+    By the table it reads, not by its position: `resolve_team` also issues a
+    `Select`, and a double that cannot tell them apart turns "every branch timed
+    out" into "the team does not exist" — a 404 dressed as a degrade.
+    """
+    return isinstance(stmt, Select) and "futures_outcomes" in str(stmt)
+
+
 def _rows_result(items):
     result = MagicMock()
     result.all.return_value = list(items)
@@ -107,18 +118,33 @@ class _RecordingDB:
     predicate keeps passing against an index the route no longer matches).
     """
 
-    def __init__(self, results=None, raise_on=None):
+    def __init__(self, results=None, raise_on=None, raise_on_every_branch=False):
         self.statements: list = []
         self._results = list(results or [])
         self._raise_on = raise_on
+        self._raise_on_every_branch = raise_on_every_branch
+        self.rollbacks = 0
 
     async def execute(self, stmt, *args, **kwargs):
         self.statements.append(stmt)
         if self._raise_on is not None and len(self.statements) == self._raise_on:
             raise RuntimeError("statement timeout")
+        if self._raise_on_every_branch and _is_branch(stmt):
+            # LAT-P145: "the build lost everything" is now a property of the
+            # BRANCHES, not of a statement ordinal — each branch carries its own
+            # `SET LOCAL`, so counting statements no longer names one. Scoped to
+            # the branch SELECTs so the team lookup — which is not part of the
+            # build and whose failure is a 404, not a degrade — still succeeds.
+            raise RuntimeError("statement timeout")
         if self._results:
             return self._results.pop(0)
         return _rows_result([])
+
+    async def rollback(self):
+        # A cancelled statement aborts the transaction; the route rolls back so
+        # the NEXT branch has a usable session. Counted, because "did it recover
+        # or did it just swallow?" is the difference LAT-P145 turns on.
+        self.rollbacks += 1
 
 
 def _team(*, tid=560, name="Kansas City Chiefs", slug="kansas-city-chiefs", roster=None):
@@ -126,6 +152,19 @@ def _team(*, tid=560, name="Kansas City Chiefs", slug="kansas-city-chiefs", rost
         id=tid, name=name, slug=slug,
         roster_players=[{"name": n} for n in (roster or [])],
     )
+
+
+def _branch_stmts(db) -> list:
+    """The branch SELECTs the route actually ran, in order.
+
+    LAT-P145 gave every branch its OWN `SET LOCAL statement_timeout`, so the
+    statement list is now `SET LOCAL, branch, SET LOCAL, branch, ...` and a
+    positional index no longer names a branch. Selecting by TYPE says what these
+    guards always meant — "the queries a reader causes" — and stops the next
+    change to the preamble from silently re-pointing every assertion at a
+    different statement.
+    """
+    return [s for s in db.statements if isinstance(s, Select)]
 
 
 def _sql(stmt) -> str:
@@ -150,8 +189,7 @@ class TestBranchPredicateShape:
     async def test_name_branches_compile_to_ilike_any_array(self):
         team = _team(roster=["Patrick Mahomes", "Travis Kelce", "Chris Jones"])
         _payload, db = await _build(team)
-        # statements: SET LOCAL, then the three branches.
-        branch_sql = [_sql(s) for s in db.statements[1:]]
+        branch_sql = [_sql(s) for s in _branch_stmts(db)]
         assert len(branch_sql) == 3
         name_sql = branch_sql[1:]
         for sql in name_sql:
@@ -167,7 +205,7 @@ class TestBranchPredicateShape:
         """
         team = _team(roster=[f"Player Number{i:02d}" for i in range(12)])
         _payload, db = await _build(team)
-        for stmt in db.statements[1:]:
+        for stmt in _branch_stmts(db):
             assert _sql(stmt).upper().count("ILIKE") <= 1, _sql(stmt)
 
     async def test_every_pattern_is_carried_into_the_array(self):
@@ -176,14 +214,14 @@ class TestBranchPredicateShape:
         roster = ["Patrick Mahomes", "Travis Kelce"]
         team = _team(roster=roster)
         _payload, db = await _build(team)
-        sql = _sql(db.statements[2])
+        sql = _sql(_branch_stmts(db)[1])
         for name in roster + ["Kansas City Chiefs"]:
             assert name in sql, f"{name} missing from the branch array"
 
     async def test_fk_branch_is_still_first_and_index_shaped(self):
         team = _team(roster=["Patrick Mahomes"])
         _payload, db = await _build(team)
-        fk_sql = _sql(db.statements[1])
+        fk_sql = _sql(_branch_stmts(db)[0])
         assert "futures_outcomes.team_id" in fk_sql
         assert "ILIKE" not in fk_sql.upper()
 
@@ -200,7 +238,7 @@ class TestBranchPredicateShape:
         """
         team = _team(name="100% Team_A", roster=[])
         _payload, db = await _build(team)
-        params = db.statements[2].compile(dialect=postgresql.dialect()).params
+        params = _branch_stmts(db)[1].compile(dialect=postgresql.dialect()).params
         arrays = [
             v for v in params.values()
             if isinstance(v, list) and v and str(v[0]).startswith("%")
@@ -217,7 +255,7 @@ class TestBranchPredicateShape:
         """The 9,258 rosterless teams were never the slow ones, and this fix must
         not change what they get."""
         _payload, db = await _build(_team(roster=[]))
-        assert len(db.statements) == 4
+        assert len(_branch_stmts(db)) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -349,10 +387,14 @@ class TestServeLadder:
 
 class TestDegradeIsNeverCached:
     async def test_timeout_degrade_writes_nothing(self):
+        """EVERY branch lost. LAT-P145 narrowed what counts as a degrade — losing
+        one branch is now a `partial` and IS cached — but losing all three is
+        still the case this guard was written for, and it still writes nothing."""
         rc = _FakeRedis()
         keys = route.prop_families_cache_keys(560, 400)
-        # raise on the 3rd statement: team lookup, SET LOCAL, then a branch.
-        db = _RecordingDB(results=[_rows_result([_team()])], raise_on=3)
+        db = _RecordingDB(
+            results=[_rows_result([_team()])], raise_on_every_branch=True
+        )
         with patch.object(route, "get_client", return_value=rc):
             body = await route.get_team_prop_families("kansas-city-chiefs", 400, db)
         assert body["total_families"] == 0
@@ -378,7 +420,7 @@ class TestDegradeIsNeverCached:
 
     async def test_build_returns_the_degraded_flag(self):
         (payload, degraded), _db = await _build(
-            _team(), db=_RecordingDB(results=[], raise_on=2)
+            _team(), db=_RecordingDB(results=[], raise_on_every_branch=True)
         )
         assert degraded is True
         assert payload["total_families"] == 0

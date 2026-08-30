@@ -75,17 +75,19 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "M1",
         ROUTE,
         "revert the outcome branch to the 41-way OR — the 13,107 ms plan",
-        "        branch_conds.append(FuturesOutcome.name.ilike(any_(_pats)))",
-        "        branch_conds.append(or_(*[FuturesOutcome.name.ilike(p) "
-        "for p in _name_pats]))",
+        "        branches.append((_BRANCH_OUTCOME_NAME, "
+        "FuturesOutcome.name.ilike(any_(_pats))))",
+        "        branches.append((_BRANCH_OUTCOME_NAME, "
+        "or_(*[FuturesOutcome.name.ilike(p) for p in _name_pats])))",
     ),
     (
         "M2",
         ROUTE,
         "revert the market branch to the 41-way OR — the 2,990 ms plan",
-        "        branch_conds.append(FuturesMarket.name.ilike(any_(_pats)))",
-        "        branch_conds.append(or_(*[FuturesMarket.name.ilike(p) "
-        "for p in _name_pats]))",
+        "        branches.append((_BRANCH_MARKET_NAME, "
+        "FuturesMarket.name.ilike(any_(_pats))))",
+        "        branches.append((_BRANCH_MARKET_NAME, "
+        "or_(*[FuturesMarket.name.ilike(p) for p in _name_pats])))",
     ),
     # -- the predicate: go faster by answering less ---------------------------
     (
@@ -205,10 +207,10 @@ async def resolve_team""",
         ROUTE,
         "store the degraded build — a statement timeout's empty page goes behind "
         "the 24h mirror and the section is blank for a day",
-        """    payload, degraded = await build_prop_families(team, db, cap)
-    if degraded:
+        """    quality, reasons = take_build_quality(payload)
+    if unusable:
         return payload, True""",
-        """    payload, degraded = await build_prop_families(team, db, cap)
+        """    quality, reasons = take_build_quality(payload)
     if False:
         return payload, True""",
     ),
