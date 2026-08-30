@@ -1600,6 +1600,69 @@ def _kalshi_untraded_mid(source: str | None, prob: float | None) -> bool:
     return (source or "") == "kalshi" and prob is not None and float(prob) == 0.5
 
 
+# How close a stored price has to be to its own ask to BE that ask. Matches the
+# tolerance `is_fabricated_midpoint` uses for the same kind of "is this number the
+# arithmetic, or a coincidence" question.
+_PRICE_IS_ASK_TOLERANCE = 0.0005
+
+
+def _field_is_offer_sheet(outcomes) -> bool:
+    """True when a whole field is one seller's price list, not a market (Q446).
+
+    THE SPECIMEN, production 2026-08-29. `GET /api/golf` served, under PGA Tour:
+
+        Omega European Masters   4 golfers
+          Andreas Halvorsen 10%  ·  Adrian Meronk 10%
+          Eddie Pepperell   10%  ·  Antoine Rozner 10%
+
+    Four of a ~156-player field, each at an identical 10%, summing to 0.4. Behind
+    every one of them: `yes_bid 0.0000 / yes_ask 0.1000`, and `last_price 0.0000`
+    in every snapshot the market has ever had. Nobody has bid on any golfer in this
+    tournament and nobody has ever traded one. The 10% is Kalshi's ask — the
+    `_kalshi_yes_probability` ask-only arm publishing an unaccepted offer as a
+    probability, which is this queue's "a number never written, something else shown
+    in its place".
+
+    WHY THE FIELD AND NOT THE OUTCOME. A lone longshot at bid 0.00 / ask 0.02 is a
+    normal thing for a real market to contain, and refusing those one at a time would
+    strip the tail off every winner field we serve. What is never normal is a field in
+    which *not one competitor* has attracted a bid and *every* number we print is a
+    seller's offer. That is a price list, and it is not evidence about who wins.
+
+    ALL THREE CONDITIONS ARE REQUIRED, and each one is carrying a control:
+
+      * `>= 2` priced outcomes — a single binary is not a field.
+      * no priced outcome carries a bid — the CPKC Women's Open and FM Championship
+        round-leader fields also have no bid anywhere, but their prices are
+        `last_price`, i.e. real trades. They must survive, and they do, on the
+        third condition.
+      * every priced outcome's number IS its own ask — this is what separates "no
+        bid right now" from "the only number here is an offer".
+
+    Outcomes with no book at all are not priced by an ask, so the odds_api and
+    DataGolf model fields cannot reach this rule: with no ask, the third condition
+    fails on the first outcome. That is by construction, not by exemption.
+
+    Measured over all 66 open golf markets holding two or more priced outcomes on
+    2026-08-29: fires on exactly one, the specimen above.
+    """
+    priced = 0
+    for outcome in outcomes:
+        prob = getattr(outcome, "current_probability", None)
+        if prob is None:
+            continue
+        priced += 1
+        bid = getattr(outcome, "current_yes_bid", None)
+        if bid is not None and float(bid) > 0:
+            return False
+        ask = getattr(outcome, "current_yes_ask", None)
+        if ask is None:
+            return False
+        if abs(float(prob) - float(ask)) >= _PRICE_IS_ASK_TOLERANCE:
+            return False
+    return priced >= 2
+
+
 def _is_placeholder_price(outcome, source: str | None) -> bool:
     """True when this outcome's number is a placeholder rather than a quote.
 
@@ -1669,6 +1732,10 @@ def _dedup_winner_markets(tourn_key: str, tourn_markets: list) -> tuple[dict[str
 def _extract_prop_market(market, source_label: str) -> dict | None:
     """Extract a prop market (Top 5/10/20, Make Cut) into a response dict."""
     source = market.source or "unknown"
+    # A field nobody has bid on, priced entirely off its own asks, is a seller's
+    # price list rather than a forecast (Q446).
+    if _field_is_offer_sheet(market.outcomes):
+        return None
     prop_outcomes = []
     for outcome in market.outcomes:
         if outcome.current_probability is None:
@@ -2171,6 +2238,20 @@ async def get_golf(
                 prop = _extract_prop_market(market, source_label)
                 if prop:
                     prop_markets_list.append(prop)
+                continue
+
+            # A field nobody has bid on, priced entirely off its own asks, is a
+            # seller's price list rather than a forecast (Q446). Dropped whole:
+            # renormalizing an offer sheet to sum 1.0 turns four identical 10%
+            # offers into four identical 25% "forecasts", which is the same
+            # non-information wearing a more confident number.
+            if _field_is_offer_sheet(market.outcomes):
+                logger.debug(
+                    "Golf: skipped offer-sheet field '%s' (market %s) — no bid on any "
+                    "outcome and every price is its own ask",
+                    market.name,
+                    getattr(market, "id", None),
+                )
                 continue
 
             # Aggregate winner outcomes
