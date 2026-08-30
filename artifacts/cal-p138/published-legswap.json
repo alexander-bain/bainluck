@@ -1,0 +1,234 @@
+{
+  "baseball": {
+    "cell": "polymarket/baseball",
+    "partition": {
+      "cell": "polymarket/baseball",
+      "rows_cached": 64894,
+      "rows_priced": 38345,
+      "families": 11513,
+      "families_condemned": 2175,
+      "families_ambiguous_kept": 0,
+      "min_flips_histogram": {
+        "1": 1511,
+        "2": 60,
+        "3": 19,
+        "4+": 14,
+        "no_assignment": 571
+      },
+      "unique_one_flip_families": 1509,
+      "markets_in_two_arms_before_precedence": 0,
+      "markets_per_arm": {
+        "a_flip1_suspect": 1509,
+        "b_flip1_sibling": 1812,
+        "c_flip1_ambiguous": 6,
+        "d_flip2plus": 444,
+        "e_no_assignment": 3445,
+        "f_mono_ambiguous": 0,
+        "g_mono_coherent": 17737
+      }
+    },
+    "min_flips_self_check": {
+      "families_checked": 2175,
+      "cost_disagreements": 0,
+      "examples": [],
+      "ok": true
+    },
+    "cache_age_rows": {
+      "compared": true,
+      "p136_rows": 64889,
+      "p137_rows": 64894,
+      "only_in_p136": 0,
+      "only_in_p137": 5,
+      "price_drifted": 0,
+      "price_drift_pct": 0.0,
+      "structurally_mismatched": 0,
+      "example_structural": [],
+      "ok": false
+    },
+    "population_self_check": {
+      "exact": {
+        "n": 41139,
+        "ece": 4.68,
+        "gap": 3.25
+      },
+      "payload": {
+        "n": 45240,
+        "ece": 4.73,
+        "gap": 2.91,
+        "generated_at": "2026-08-29T23:35:53.447146+00:00",
+        "population_version": "q268"
+      },
+      "delta_n": -4101,
+      "delta_n_pct": -9.065,
+      "seconds": 729.3
+    },
+    "published_markets_in_cell": 5418,
+    "arms": {
+      "a_flip1_suspect": {
+        "markets_in_cell": 1509,
+        "markets_published": 102,
+        "reach_pct": 6.8,
+        "n": 224,
+        "ece": 19.54,
+        "gap": -9.7,
+        "mean_p": 0.3806,
+        "realized": 0.4777,
+        "ece_if_flipped": 47.31
+      },
+      "b_flip1_sibling": {
+        "markets_in_cell": 1812,
+        "markets_published": 247,
+        "reach_pct": 13.6,
+        "n": 501,
+        "ece": 18.56,
+        "gap": -5.84,
+        "mean_p": 0.4147,
+        "realized": 0.4731,
+        "ece_if_flipped": 38.73
+      },
+      "c_flip1_ambiguous": {
+        "markets_in_cell": 6,
+        "markets_published": 0,
+        "reach_pct": 0.0,
+        "n": 0
+      },
+      "d_flip2plus": {
+        "markets_in_cell": 444,
+        "markets_published": 101,
+        "reach_pct": 22.7,
+        "n": 186,
+        "ece": 24.95,
+        "gap": 0.63,
+        "mean_p": 0.4741,
+        "realized": 0.4677,
+        "ece_if_flipped": 27.92
+      },
+      "e_no_assignment": {
+        "markets_in_cell": 3445,
+        "markets_published": 957,
+        "reach_pct": 27.8,
+        "n": 1752,
+        "ece": 15.89,
+        "gap": -4.81,
+        "mean_p": 0.4359,
+        "realized": 0.484,
+        "ece_if_flipped": 34.76
+      },
+      "f_mono_ambiguous": {
+        "markets_in_cell": 0,
+        "markets_published": 0,
+        "reach_pct": null,
+        "n": 0
+      },
+      "g_mono_coherent": {
+        "markets_in_cell": 17737,
+        "markets_published": 1416,
+        "reach_pct": 8.0,
+        "n": 3401,
+        "ece": 12.19,
+        "gap": -5.76,
+        "mean_p": 0.3511,
+        "realized": 0.4087,
+        "ece_if_flipped": 52.87
+      },
+      "z_not_in_a_ladder": {
+        "markets_in_cell": 2595,
+        "markets_published": 2595,
+        "reach_pct": 100.0,
+        "n": 35075,
+        "ece": 5.59,
+        "gap": 4.75,
+        "mean_p": 0.2591,
+        "realized": 0.2116,
+        "ece_if_flipped": 63.6
+      }
+    },
+    "holdout_at": 57023900,
+    "holdout": {
+      "OLD": {
+        "a_flip1_suspect": {
+          "n": 222,
+          "ece": 19.73,
+          "gap": -9.8,
+          "mean_p": 0.384,
+          "realized": 0.482,
+          "ece_if_flipped": 46.85
+        },
+        "b_flip1_sibling": {
+          "n": 501,
+          "ece": 18.56,
+          "gap": -5.84,
+          "mean_p": 0.4147,
+          "realized": 0.4731,
+          "ece_if_flipped": 38.73
+        },
+        "d_flip2plus": {
+          "n": 186,
+          "ece": 24.95,
+          "gap": 0.63,
+          "mean_p": 0.4741,
+          "realized": 0.4677,
+          "ece_if_flipped": 27.92
+        },
+        "e_no_assignment": {
+          "n": 1744,
+          "ece": 15.81,
+          "gap": -4.83,
+          "mean_p": 0.4356,
+          "realized": 0.4839,
+          "ece_if_flipped": 35.1
+        },
+        "g_mono_coherent": {
+          "n": 1900,
+          "ece": 19.35,
+          "gap": -10.13,
+          "mean_p": 0.3503,
+          "realized": 0.4516,
+          "ece_if_flipped": 37.97
+        },
+        "z_not_in_a_ladder": {
+          "n": 15992,
+          "ece": 6.48,
+          "gap": 5.21,
+          "mean_p": 0.364,
+          "realized": 0.3119,
+          "ece_if_flipped": 49.16
+        }
+      },
+      "NEW": {
+        "a_flip1_suspect": {
+          "n": 2,
+          "ece": 1.3,
+          "gap": 1.3,
+          "mean_p": 0.013,
+          "realized": 0.0,
+          "ece_if_flipped": 98.7
+        },
+        "e_no_assignment": {
+          "n": 8,
+          "ece": 61.0,
+          "gap": 0.0,
+          "mean_p": 0.5,
+          "realized": 0.5,
+          "ece_if_flipped": 39.0
+        },
+        "g_mono_coherent": {
+          "n": 1501,
+          "ece": 4.84,
+          "gap": -0.24,
+          "mean_p": 0.352,
+          "realized": 0.3544,
+          "ece_if_flipped": 73.62
+        },
+        "z_not_in_a_ladder": {
+          "n": 19083,
+          "ece": 4.84,
+          "gap": 4.36,
+          "mean_p": 0.1711,
+          "realized": 0.1275,
+          "ece_if_flipped": 75.71
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "cell": "polymarket/baseball",
+  "payload": {
+    "n": 45240,
+    "ece": 4.73,
+    "gap": 2.91,
+    "generated_at": "2026-08-30T00:35:55.197127+00:00",
+    "population_version": "q268"
+  },
+  "full_width": 1000000,
+  "half_width": 500000,
+  "total_at_full": 41139,
+  "total_at_half": 41238,
+  "arms_at_full": {
+    "a_flip1_suspect": {
+      "markets_published": 102,
+      "n": 224,
+      "ece": 19.54,
+      "gap": -9.7
+    },
+    "b_flip1_sibling": {
+      "markets_published": 247,
+      "n": 501,
+      "ece": 18.56,
+      "gap": -5.84
+    },
+    "c_flip1_ambiguous": {
+      "markets_published": 0,
+      "n": 0,
+      "ece": null,
+      "gap": null
+    },
+    "d_flip2plus": {
+      "markets_published": 101,
+      "n": 186,
+      "ece": 24.95,
+      "gap": 0.63
+    },
+    "e_no_assignment": {
+      "markets_published": 957,
+      "n": 1752,
+      "ece": 15.89,
+      "gap": -4.81
+    },
+    "f_mono_ambiguous": {
+      "markets_published": 0,
+      "n": 0,
+      "ece": null,
+      "gap": null
+    },
+    "g_mono_coherent": {
+      "markets_published": 1416,
+      "n": 3401,
+      "ece": 12.19,
+      "gap": -5.76
+    },
+    "z_not_in_a_ladder": {
+      "markets_published": 2595,
+      "n": 35075,
+      "ece": 5.59,
+      "gap": 4.75
+    }
+  },
+  "arms_at_half": {
+    "a_flip1_suspect": {
+      "markets_published": 103,
+      "n": 226,
+      "ece": 19.54,
+      "gap": -9.44
+    },
+    "b_flip1_sibling": {
+      "markets_published": 250,
+      "n": 507,
+      "ece": 18.51,
+      "gap": -5.39
+    },
+    "c_flip1_ambiguous": {
+      "markets_published": 0,
+      "n": 0,
+      "ece": null,
+      "gap": null
+    },
+    "d_flip2plus": {
+      "markets_published": 101,
+      "n": 186,
+      "ece": 24.95,
+      "gap": 0.63
+    },
+    "e_no_assignment": {
+      "markets_published": 957,
+      "n": 1751,
+      "ece": 15.9,
+      "gap": -4.82
+    },
+    "f_mono_ambiguous": {
+      "markets_published": 0,
+      "n": 0,
+      "ece": null,
+      "gap": null
+    },
+    "g_mono_coherent": {
+      "markets_published": 1444,
+      "n": 3413,
+      "ece": 12.62,
+      "gap": -5.52
+    },
+    "z_not_in_a_ladder": {
+      "markets_published": 2603,
+      "n": 35155,
+      "ece": 5.6,
+      "gap": 4.76
+    }
+  },
+  "arms_identical": false
+}
