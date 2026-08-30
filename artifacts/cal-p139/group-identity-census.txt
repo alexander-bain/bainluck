@@ -1,0 +1,13 @@
+chunk  0: [552, 552, 7937, 7937, 40]
+chunk  8: [281, 281, 3772, 3772, 28]
+chunk 16: [288, 288, 3887, 3887, 21]
+chunk 24: [264, 264, 3284, 3284, 23]
+chunk 32: [272, 272, 4166, 4166, 21]
+chunk 40: [293, 293, 4263, 4263, 22]
+chunk 48: [248, 247, 3637, 3631, 16]
+chunk 56: [273, 273, 3680, 3680, 18]
+TIMEOUT chunks: []
+TOTAL groups=18378 mixed=18363 markets=259925 markets_in_mixed=259859 cat_mixed_groups=1424 309.3 s
+mixed group share 99.9%   market share 100.0%
+
+[exited with code 0]
