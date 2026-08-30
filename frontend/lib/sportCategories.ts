@@ -203,7 +203,11 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     tier: 3,
   },
   {
-    key: "motorsport",
+    // PLURAL. This key is compared against `llm_sport_category` and is what
+    // `/categories/<key>` turns into the `sport:<key>` feed tag — both of which
+    // spell it "motorsports". The singular belongs to the sport-key PREFIX
+    // (motorsport_f1), which is why `prefixes` below keeps it.
+    key: "motorsports",
     name: "Motorsport",
     emoji: "🏎️",
     prefixes: ["motorsport_", "racing_"],
@@ -292,6 +296,23 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     name: "Culture",
     emoji: "🎭",
     prefixes: ["culture_"],
+    tier: 3,
+  },
+  {
+    // D19 (Alex, 2026-08-30): markets that resolve on WHAT SOMEONE SAYS at a
+    // keynote, earnings call or broadcast — "Will Dell say 'Agentic' during
+    // earnings call?". Seventeen of these were the whole of Tech & Science's
+    // word-bingo population; they are not technology markets and now have their
+    // own shelf.
+    //
+    // `name` is the ONLY user-visible string here and Alex picks it — the `key`
+    // is the stored `llm_sport_category` value, so changing the label is a
+    // one-line edit and never a data migration. Alternatives put to him:
+    // "Word Watch", "Mentions".
+    key: "soundbite",
+    name: "Soundbite",
+    emoji: "🎙️",
+    prefixes: [],
     tier: 3,
   },
   // Other category is a catch-all (handled in code, not here)
@@ -548,9 +569,9 @@ const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\bboxing\b/i, category: "boxing" },
 
   // Motorsport
-  { pattern: /\b(formula.1|f1|nascar|indycar|motogp|wrc)\b/i, category: "motorsport" },
-  { pattern: /\b(daytona.500|indy.500|le.mans|monaco.grand.prix)\b/i, category: "motorsport" },
-  { pattern: /\b(racing|motorsport)\b/i, category: "motorsport" },
+  { pattern: /\b(formula.1|f1|nascar|indycar|motogp|wrc)\b/i, category: "motorsports" },
+  { pattern: /\b(daytona.500|indy.500|le.mans|monaco.grand.prix)\b/i, category: "motorsports" },
+  { pattern: /\b(racing|motorsport)\b/i, category: "motorsports" },
 
   // Politics
   { pattern: /\b(election|president|congress|senate|governor|presidential|democrat|republican|trump|biden)\b/i, category: "politics" },
@@ -630,10 +651,10 @@ const FUTURES_KEYWORD_MAP: Record<string, string> = {
   // MMA
   ufc: "mma",
   // Motorsport
-  f1: "motorsport",
-  formula_1: "motorsport",
-  nascar: "motorsport",
-  indycar: "motorsport",
+  f1: "motorsports",
+  formula_1: "motorsports",
+  nascar: "motorsports",
+  indycar: "motorsports",
   // Soccer
   epl: "soccer",
   premier_league: "soccer",

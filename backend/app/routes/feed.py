@@ -9539,7 +9539,17 @@ async def get_tag_counts(
                     WHEN s.key LIKE 'aussierules_%' THEN 'aussierules'
                     WHEN s.key LIKE 'esports_%' THEN 'esports'
                     WHEN s.key LIKE 'lacrosse_%' THEN 'lacrosse'
-                    WHEN s.key LIKE 'motorsport_%' OR s.key LIKE 'racing_%' THEN 'motorsport'
+                    -- 'motorsports' (PLURAL) is the llm_sport_category spelling, and
+                    -- the futures half of this same response emits that column
+                    -- verbatim. This arm emitted the SINGULAR sport-key prefix, so one
+                    -- payload carried two sibling keys for one sport —
+                    -- {"motorsport": {events: N, futures: 0}} next to
+                    -- {"motorsports": {events: 0, futures: M}} — and the tile, keyed on
+                    -- the singular, could structurally never show a futures count.
+                    -- Singular stays the SPORT-KEY prefix (motorsport_f1); plural is the
+                    -- CATEGORY. sport_keys.py:225/245 are the two translation dicts that
+                    -- state that convention.
+                    WHEN s.key LIKE 'motorsport_%' OR s.key LIKE 'racing_%' THEN 'motorsports'
                     ELSE 'other'
                 END AS category,
                 COUNT(*) AS cnt

@@ -199,7 +199,13 @@ describe('getCategoryForFutures', () => {
     });
 
     test('F1', () => {
-      expect(getCategoryForFutures(null, 'F1 World Championship')?.key).toBe('motorsport');
+      // PLURAL since D9 (Alex, 2026-08-30). This assertion previously pinned the
+      // singular, which is the SPORT-KEY prefix (`motorsport_f1`), not the
+      // category. `llm_sport_category` is only ever written as "motorsports", so
+      // the singular key produced a tile whose futures count was structurally
+      // always zero and whose page filtered on a `sport:motorsport` tag that is
+      // never emitted. See __tests__/lib/categoryTilesEveryCategory.test.ts.
+      expect(getCategoryForFutures(null, 'F1 World Championship')?.key).toBe('motorsports');
     });
 
     test('Kentucky Derby', () => {
