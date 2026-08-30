@@ -83,8 +83,12 @@ class TestNormalizeOutcomeProbs:
 
 
 def _make_outcome(name: str, prob: float):
+    # `external_id` is non-nullable on the real FuturesOutcome and UX-P188's
+    # duplicate-leg drop reads it. Keyed off the NAME because `id` is 1 for every
+    # outcome here — siblings must not look like each other's binary legs.
     return SimpleNamespace(
         id=1, name=name, current_probability=prob, probability_change_24h=None, rank=None,
+        external_id=f"xid-{name}",
     )
 
 
@@ -136,8 +140,10 @@ class TestMarketRowNormalization:
 
 
 def _make_full_outcome(name: str, prob: float, oid: int = 1):
+    # See _make_outcome: UX-P188's duplicate-leg drop reads `external_id`.
     return SimpleNamespace(
         id=oid, name=name, current_probability=prob, probability_change_24h=None, rank=None,
+        external_id=f"xid-{name}",
     )
 
 

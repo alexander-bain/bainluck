@@ -238,6 +238,60 @@ def drop_dominant_field_outcomes(
     return kept if kept else list(items)
 
 
+def drop_duplicate_binary_legs(
+    items: Sequence[_T],
+    external_id_of: Callable[[_T], str | None],
+) -> list[_T]:
+    """Remove Yes/No legs that DUPLICATE a sibling outcome already in the list.
+
+    UX-P188. Polymarket ingests a multi-outcome field as one row per candidate,
+    keyed by that candidate's ``condition_id``. For 514 open markets (measured
+    2026-08-30) ONE of those conditions was ALSO decomposed into its binary pair,
+    leaving three rows for the same proposition: ``<cid>`` under the candidate's
+    real name, ``<cid>_yes``, and ``<cid>_no``.
+
+    The ``_no`` leg is that condition's COMPLEMENT, so it prices ~90% whenever the
+    candidate is a long shot — and it therefore outranks every real candidate in
+    the field. 303 of the 514 led with a bare ``Yes``/``No``, and four of them were
+    rendered: ``/entertainment`` answered "Who will Taylor Swift's bridesmaids be?"
+    with ``No 64.5%`` and "Who will be evicted from Big Brother? (Week 8)" with
+    ``No 74.5%``, above five named housemates.
+
+    Dropping rather than folding, because the legs are not a second opinion — they
+    are the SAME ``condition_id`` as a row already present under its real name, and
+    on 378 of the 514 they are the STALER of the two (the bridesmaids legs last
+    moved 2026-05-24 against 2026-07-04 for the named field). Which of the two
+    prices is authoritative when they disagree is an INGESTION question and is
+    parked; a display surface's job is not to print the same condition twice.
+
+    The correspondence is ID-ANCHORED, never a name test: a leg is dropped only
+    when stripping its ``_yes``/``_no`` suffix yields the external id of another
+    outcome IN THE SAME LIST. A Kalshi ladder that merely happens to carry a real
+    ``Yes`` outcome (market 112782, "Will Trump end income tax…", whose siblings are
+    ``KXTAXWAIVE-26`` / ``-26-JUNE``) has no such sibling and is untouched — every
+    one of the 514 is Polymarket, and Kalshi tickers delimit with ``-``, not ``_``.
+
+    CANNOT EMPTY a non-empty list, and unlike the other helpers here it needs no
+    explicit guard to promise that: a row is dropped only when its BASE sibling is
+    present, and that base — having no ``_yes``/``_no`` suffix of its own to strip —
+    is never itself dropped. So every drop leaves at least the row it was a
+    duplicate OF. (A genuinely binary market carries the two legs with no base at
+    all, so neither is a duplicate and both survive untouched.)
+
+    A falsy external id is never a base. Otherwise one row with ``external_id=""``
+    would make a sibling literally named ``"_yes"`` look like its duplicate.
+    """
+    ids = {xid for i in items if (xid := external_id_of(i))}
+    return [
+        i
+        for i in items
+        if not (
+            (xid := external_id_of(i) or "").endswith(("_yes", "_no"))
+            and xid.rsplit("_", 1)[0] in ids
+        )
+    ]
+
+
 def display_rank_order(
     items: Sequence[_T],
     name_of: Callable[[_T], str | None],

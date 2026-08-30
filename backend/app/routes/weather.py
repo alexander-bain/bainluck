@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import group_markets_by_group_id
+from app.utils.outcome_display import drop_duplicate_binary_legs
 from app.utils.market_staleness import should_exclude_from_featured, is_title_implied_stale
 
 logger = logging.getLogger(__name__)
@@ -319,8 +320,15 @@ _GARBAGE_OUTCOME_RE = re.compile(
 
 
 def _clean_outcomes(outcomes: list) -> list:
-    """Filter garbage placeholder outcomes."""
-    return [o for o in outcomes if not _GARBAGE_OUTCOME_RE.match(o.name or "")]
+    """Filter garbage placeholder outcomes, and the duplicate Yes/No legs of a
+    condition the list already carries under its real name (UX-P188).
+
+    This is a FOURTH copy of the politics/economics/entertainment filter — the
+    #993 divergence pattern this module's shared primitives exist to stop — so the
+    leg drop routes through the same helper rather than being reimplemented here.
+    """
+    kept = [o for o in outcomes if not _GARBAGE_OUTCOME_RE.match(o.name or "")]
+    return drop_duplicate_binary_legs(kept, lambda o: o.external_id)
 
 
 # A leader name that would tell the reader nothing they don't already have.

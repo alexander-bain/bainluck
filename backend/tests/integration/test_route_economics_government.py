@@ -64,6 +64,9 @@ def _route_market(md):
                 current_probability=o["current_probability"],
                 probability_change_24h=0,
                 rank=o["rank"],
+                # Non-nullable on the real FuturesOutcome; UX-P188's duplicate-leg
+                # drop reads it.
+                external_id=f"{md['external_id']}-{i}",
             )
             for i, o in enumerate(md["outcomes"], start=1)
         ],
