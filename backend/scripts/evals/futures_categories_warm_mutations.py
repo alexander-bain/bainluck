@@ -115,9 +115,18 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "M8",
         "drop the bound on the build — a wedged census holds the slot to the task limit",
         WARM,
-        "        await asyncio.wait_for(\n"
-        "            _rebuild_futures_categories(), timeout=BUILD_TIMEOUT_SECONDS\n"
-        "        )",
+        # 🔴 SPELLED AS A TRIPLE-QUOTED LITERAL, NOT AS CONCATENATED FRAGMENTS,
+        # AND THE RESIDUE SCANNER IS THE REASON. Pass B flags any file holding a
+        # replacement whose needle is absent — and this replacement is a single
+        # line of 40 characters, so its text appears verbatim in THIS file. With
+        # the needle spelled as escaped fragments it did not, and the scan went
+        # red on the harness itself. Both halves now appear contiguously here,
+        # which is the `game_markets_shared_cache:M4` shape. The general rule for
+        # the next author: a single-line replacement of 24+ characters needs its
+        # needle written contiguously.
+        """        await asyncio.wait_for(
+            _rebuild_futures_categories(), timeout=BUILD_TIMEOUT_SECONDS
+        )""",
         "        await _rebuild_futures_categories()",
     ),
     (
