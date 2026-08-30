@@ -242,20 +242,90 @@ for Alex as `alex-inbox/calibration-912`.
 
 ---
 
-## 4. What this queue did NOT do
+---
+
+## 4. THE HOLD LEDGER — one question is worth 3.8× the next, and it is the one nobody is pointing at
+
+The directive's item 3 names *"the instruments successor queue you wrote
+(blocked-refusal instruments)"*. **No queue by that name exists** — the phrase
+appears nowhere in the repo or the handoff tree outside the directive itself. The
+reading I took, and acted on: `alex-inbox/calibration-908`'s **option 1**, which
+proposes re-pointing the conveyor at *"the highest-excess cell whose INSTRUMENT
+cannot yet score it"*. Under that reading the highest-value instrument is the one
+that makes the blocked state legible, so that is what I built.
+
+`hold-ledger.py` joins a cited disposition map to the **live** scorecard ranking
+and groups the excess outcomes by the question each cell waits on.
+
+```
+13-CAL      143,495 total   18,763 cell blocked outright
+                          + 59,902 banked design cannot LAND: polymarket/esports
+                          + 64,830 banked design cannot LAND: kalshi/economics
+                            ⛔ cannot be answered before 12-CAL
+12-CAL      143,495 total   all of it transitive, via 13-CAL
+19-CAL       37,730 · 17-CAL 16,976 · 14-CAL 16,498 · 20-CAL 16,395 · 21-CAL 9,945
+```
+
+### The leverage is not where the disposition view puts it
+
+A disposition-only reading says 13-CAL blocks one cell worth 18,763 — seventh on
+the board, below four other holds. That is wrong by 7.6×, because **two banked
+designs say in their own shipping clauses that the held rule ships with them**:
+
+* `cal-p112/RULE-DESIGN-polymarket-esports.md:170` — *"E, E2 and E3 ship together
+  or the cell is worked twice."*
+* `cal-p114/RULE-DESIGN-kalshi-economics.md:381` — *"E, E2, E3 and the
+  `(source, category)` keying ship together."*
+
+RULE E2 is what 13-CAL HOLDs. So on the day the freeze lifts, those two designs
+cannot land either. **A banked design that cannot land is worth exactly as much
+as a held cell**, and nothing on the board was counting it.
+
+The two are reported separately rather than summed into one figure, because
+"work not yet done" and "work done and stuck" are different states and a single
+number hides which is which.
+
+### Two corrections to calibration-908, in both directions
+
+* 🔴 **908 puts the leverage on 13-CAL; the documents put it on 12-CAL.** The
+  scorecard's own text is explicit — *"E2 must not land before 12-CAL is
+  decided"*. 12-CAL is the root (`clean_vms`' `has_winner >= 1` drops 432
+  authoritative graded losses and keeps 395 winners), and answering 13-CAL first
+  is not available. The ledger encodes the dependency and credits 12-CAL
+  transitively so it cannot rank last merely because nothing names it.
+* **908 says "three of the five banked designs"; it is two.** Grepped every
+  banked design: `E2` appears in `polymarket/esports` and `kalshi/economics` and
+  in no other banked cell. It also appears in `polymarket/basketball`, which is
+  *held*, not banked, and there only as a cross-cell check — so it is
+  deliberately excluded from the count.
+
+### The part that outlives this session: it is a sensor, not a report
+
+The ledger exits **3** when a cell appears in the live top 19 with no disposition
+on file — which is precisely the condition "step 1 has a legal answer again".
+Nothing watched for that before; six sessions in a row discovered the empty set
+by reading the board and remembering. It also reports `STALE` for a disposition
+naming a cell that has left the board, because a cell that left is either fixed
+or the board moved under the ledger and both are worth knowing.
+
+Right now: **19 cells, 0 undisposed, 0 stale, EXIT 0.** Step 1 still selects the
+empty set, and that is now a measurement rather than a recollection.
+
+---
+
+## 5. What this queue did NOT do
 
 * **No freeze exception taken, and none requested for D21.** Ungranted is
-  ungranted.
-* **The instruments successor queue (blocked-refusal) is not advanced.** The
-  re-baseline, the live classification and the odds took the session. The
-  blocked-refusal work is untouched and is still the successor.
+  ungranted. §3's diagnostics re-order is described, not authorized.
+* **No rule design was banked and no cell was worked** — there is still no legal
+  cell to work, which is now §4's measured result rather than an assertion.
 * **CAL-P138-1 (which leg did the curve publish?) is still half-answered**, and
   CAL-P139's reason still stands: it needs the outcome-grain dedup first.
 * **The conveyor's step 1 still has no legal answer — a seventh session.**
   `alex-inbox/calibration-908` remains unanswered. I did not invent a cell.
 * Nothing shipped. Artifacts only.
 
-## 5. Gate
+## 6. Gate
 
 `pytest -k "calibration or bookmaker or ladder"` — **2,964 passed, 24 skipped,
 19,249 deselected, EXIT CODE 0** in 135.99 s. Unchanged from CAL-P136/137/138/139,
@@ -270,5 +340,6 @@ as it must be with zero backend files changed. Recorded in `gate.txt`.
 | `window-log.jsonl` | the durable first-sight classifications; the half of §1 that survives the session |
 | `watch.txt` | the watcher transcript, snapshotted at commit time — the live `watch.log` it is copied from is gitignored by the repo-wide `*.log` |
 | `window-odds.py` / `.json` / `.txt` | §3 — regime-split base rates and the forecast |
-| `scorecard.txt` | §0 — the board at `2026-08-30T04:35:25Z` |
-| `gate.txt` | §5 |
+| `hold-ledger.py` / `.json` / `.txt` | §4 — the cited disposition map, the landing-block dependency, and the step-1 sensor |
+| `scorecard.txt` | §0 — the board at `2026-08-30T04:35:25Z`, and §4's input |
+| `gate.txt` | §6 |

@@ -1,0 +1,303 @@
+{
+  "instrument": "CAL-P140 hold ledger",
+  "queued_cells": 19,
+  "disposition_counts": {
+    "banked": 5,
+    "held_on_alex": 5,
+    "off_by_ruling": 6,
+    "refused_with_measurement": 3
+  },
+  "undisposed_cells": [],
+  "step1_has_a_legal_answer": false,
+  "stale_dispositions": [],
+  "questions_ranked": [
+    {
+      "question": "13-CAL",
+      "cells": [
+        "kalshi/entertainment"
+      ],
+      "excess_outcomes": 18763,
+      "summary": "HOLD RULE E2 \u2014 its stated justification ('100% winners is one-sided capture') is measured false: the capture is two-sided, the filter is not",
+      "blocks": "kalshi/entertainment",
+      "depends_on": "12-CAL",
+      "note": "must not land before 12-CAL is decided",
+      "source": "CALIBRATION-SCORECARD.md \u2014 'Owed to Alex', item 2",
+      "landing_blocked": [
+        {
+          "cell": "polymarket/esports",
+          "excess_outcomes": 59902,
+          "source": "artifacts/cal-p112/RULE-DESIGN-polymarket-esports.md:170 \u2014 'E, E2 and E3 ship together or the cell is worked twice'"
+        },
+        {
+          "cell": "kalshi/economics",
+          "excess_outcomes": 64830,
+          "source": "artifacts/cal-p114/RULE-DESIGN-kalshi-economics.md:381 \u2014 'E, E2, E3 and the (source, category) keying ship together'"
+        }
+      ],
+      "excess_outcomes_landing": 124732
+    },
+    {
+      "question": "12-CAL",
+      "cells": [],
+      "excess_outcomes": 0,
+      "summary": "the curve publishes winners and drops losers for lone claims \u2014 clean_vms' `has_winner >= 1` drops 432 authoritative graded losses and keeps 395 winners",
+      "blocks": "13-CAL, and the true value of every cell whose population it filters",
+      "depends_on": null,
+      "note": "a producer change under freeze, so it is a ruling and not a lane's call; the recommended option makes the headline WORSE",
+      "source": "CALIBRATION-SCORECARD.md \u2014 'Owed to Alex', item 1",
+      "excess_outcomes_transitive": 143495
+    },
+    {
+      "question": "19-CAL",
+      "cells": [
+        "polymarket/soccer"
+      ],
+      "excess_outcomes": 37730,
+      "summary": "polymarket/soccer is not established \u2014 same precedent as the six CAL-P120 removed",
+      "blocks": "polymarket/soccer",
+      "depends_on": null,
+      "note": null,
+      "source": "artifacts/cal-p128/FINDING-sigma-sweep.md"
+    },
+    {
+      "question": "17-CAL",
+      "cells": [
+        "kalshi/golf"
+      ],
+      "excess_outcomes": 16976,
+      "summary": "kalshi/golf is not established (sigma 1.42, confirmed 1.48) \u2014 take it off the board",
+      "blocks": "kalshi/golf",
+      "depends_on": null,
+      "note": null,
+      "source": "artifacts/cal-p127/RULE-DESIGN-kalshi-golf.md"
+    },
+    {
+      "question": "14-CAL",
+      "cells": [
+        "polymarket/cricket"
+      ],
+      "excess_outcomes": 16498,
+      "summary": "polymarket/cricket admits no rule at all \u2014 1,971 candidates searched exhaustively",
+      "blocks": "polymarket/cricket",
+      "depends_on": null,
+      "note": null,
+      "source": "artifacts/cal-p123/RULE-DESIGN-polymarket-cricket.md"
+    },
+    {
+      "question": "20-CAL",
+      "cells": [
+        "polymarket/basketball"
+      ],
+      "excess_outcomes": 16395,
+      "summary": "polymarket/basketball cannot be scored until its phantom is explained",
+      "blocks": "polymarket/basketball",
+      "depends_on": null,
+      "note": null,
+      "source": "artifacts/cal-p128/FINDING-sigma-sweep.md"
+    },
+    {
+      "question": "21-CAL",
+      "cells": [
+        "polymarket/hockey"
+      ],
+      "excess_outcomes": 9945,
+      "summary": "polymarket/hockey has an unexplained 0.780 rail/payload divergence",
+      "blocks": "polymarket/hockey",
+      "depends_on": null,
+      "note": null,
+      "source": "artifacts/cal-p128/FINDING-sigma-sweep.md"
+    }
+  ],
+  "cells": [
+    {
+      "rank": 1,
+      "cell": "polymarket/baseball",
+      "excess_outcomes": 78265,
+      "ece": 4.73,
+      "n": 45240,
+      "disposition": "banked",
+      "question": null,
+      "source": "banked rule design; CAL-P139 \u00a74 flags its outcome double-count"
+    },
+    {
+      "rank": 2,
+      "cell": "kalshi/economics",
+      "excess_outcomes": 64830,
+      "ece": 5.21,
+      "n": 29335,
+      "disposition": "banked",
+      "question": null,
+      "source": "banked rule design (also refused at the outcome site)"
+    },
+    {
+      "rank": 3,
+      "cell": "polymarket/esports",
+      "excess_outcomes": 59902,
+      "ece": 7.03,
+      "n": 14864,
+      "disposition": "banked",
+      "question": null,
+      "source": "banked rule design; E2's origin, the 453/453 claim"
+    },
+    {
+      "rank": 4,
+      "cell": "polymarket/soccer",
+      "excess_outcomes": 37730,
+      "ece": 3.35,
+      "n": 107800,
+      "disposition": "held_on_alex",
+      "question": "19-CAL",
+      "source": "CAL-P128 FINDING-sigma-sweep \u2014 NOT ESTABLISHED, recommend off the board"
+    },
+    {
+      "rank": 5,
+      "cell": "odds_api_bookmaker/basketball_nba",
+      "excess_outcomes": 27298,
+      "ece": 5.18,
+      "n": 10186,
+      "disposition": "off_by_ruling",
+      "question": null,
+      "source": "CAL-P120 \u00a76g"
+    },
+    {
+      "rank": 6,
+      "cell": "kalshi/crypto",
+      "excess_outcomes": 21049,
+      "ece": 7.61,
+      "n": 4566,
+      "disposition": "banked",
+      "question": null,
+      "source": "banked rule design (also refused at the outcome site)"
+    },
+    {
+      "rank": 7,
+      "cell": "kalshi/entertainment",
+      "excess_outcomes": 18763,
+      "ece": 5.23,
+      "n": 8414,
+      "disposition": "refused_with_measurement",
+      "question": "13-CAL",
+      "source": "CAL-P122 \u00a76i \u2014 every passing policy deletes the filtered class; 13-CAL HOLDs RULE E2 behind 12-CAL"
+    },
+    {
+      "rank": 8,
+      "cell": "odds_api_bookmaker/baseball_mlb_preseason",
+      "excess_outcomes": 18672,
+      "ece": 8.24,
+      "n": 3253,
+      "disposition": "off_by_ruling",
+      "question": null,
+      "source": "CAL-P120 \u00a76g"
+    },
+    {
+      "rank": 9,
+      "cell": "kalshi/golf",
+      "excess_outcomes": 16976,
+      "ece": 3.82,
+      "n": 20702,
+      "disposition": "held_on_alex",
+      "question": "17-CAL",
+      "source": "CAL-P127 RULE-DESIGN \u00a717-CAL \u2014 not established, measured sigma 1.42; CAL-P128 confirms independently at 1.48"
+    },
+    {
+      "rank": 10,
+      "cell": "polymarket/cricket",
+      "excess_outcomes": 16498,
+      "ece": 8.07,
+      "n": 3254,
+      "disposition": "held_on_alex",
+      "question": "14-CAL",
+      "source": "CAL-P123 \u2014 all 1,971 candidate rules searched, none reaches bar"
+    },
+    {
+      "rank": 11,
+      "cell": "polymarket/basketball",
+      "excess_outcomes": 16395,
+      "ece": 4.25,
+      "n": 13116,
+      "disposition": "held_on_alex",
+      "question": "20-CAL",
+      "source": "CAL-P128 FINDING-sigma-sweep \u2014 cannot be scored until its phantom is explained"
+    },
+    {
+      "rank": 12,
+      "cell": "polymarket/golf",
+      "excess_outcomes": 15834,
+      "ece": 5.45,
+      "n": 6463,
+      "disposition": "refused_with_measurement",
+      "question": null,
+      "source": "refused with measurement"
+    },
+    {
+      "rank": 13,
+      "cell": "odds_api_bookmaker/icehockey_nhl",
+      "excess_outcomes": 12035,
+      "ece": 3.89,
+      "n": 8658,
+      "disposition": "off_by_ruling",
+      "question": null,
+      "source": "CAL-P120 \u00a76g"
+    },
+    {
+      "rank": 14,
+      "cell": "odds_api_bookmaker/basketball_wncaab",
+      "excess_outcomes": 12006,
+      "ece": 6.05,
+      "n": 3382,
+      "disposition": "off_by_ruling",
+      "question": null,
+      "source": "CAL-P120 \u00a76g"
+    },
+    {
+      "rank": 15,
+      "cell": "polymarket/economics",
+      "excess_outcomes": 11608,
+      "ece": 3.88,
+      "n": 13191,
+      "disposition": "refused_with_measurement",
+      "question": null,
+      "source": "refused with measurement"
+    },
+    {
+      "rank": 16,
+      "cell": "polymarket/hockey",
+      "excess_outcomes": 9945,
+      "ece": 7.36,
+      "n": 2281,
+      "disposition": "held_on_alex",
+      "question": "21-CAL",
+      "source": "CAL-P128 FINDING-sigma-sweep \u2014 unexplained 0.780 rail/payload divergence"
+    },
+    {
+      "rank": 17,
+      "cell": "kalshi/tech",
+      "excess_outcomes": 9578,
+      "ece": 10.87,
+      "n": 1217,
+      "disposition": "banked",
+      "question": null,
+      "source": "CAL-P132 \u2014 banked; a third of the category is podcast word bingo"
+    },
+    {
+      "rank": 18,
+      "cell": "odds_api_bookmaker/basketball_wnba",
+      "excess_outcomes": 8351,
+      "ece": 5.1,
+      "n": 3212,
+      "disposition": "off_by_ruling",
+      "question": null,
+      "source": "CAL-P120 \u00a76g"
+    },
+    {
+      "rank": 19,
+      "cell": "odds_api_bookmaker/basketball_euroleague",
+      "excess_outcomes": 5092,
+      "ece": 5.39,
+      "n": 1762,
+      "disposition": "off_by_ruling",
+      "question": null,
+      "source": "CAL-P120 \u00a76g"
+    }
+  ]
+}
