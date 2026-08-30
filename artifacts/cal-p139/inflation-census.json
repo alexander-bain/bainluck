@@ -64,5 +64,27 @@
   "payload_n": 45240,
   "payload_ece": 4.73,
   "replica_vs_payload_pct": -8.981
+ },
+ "polymarket/hockey": {
+  "cell": "polymarket/hockey",
+  "rows_published": 1779,
+  "distinct_outcomes": 1677,
+  "distinct_markets": 628,
+  "inflation": 1.0608,
+  "seconds": 106.8,
+  "payload_n": 2281,
+  "payload_ece": 7.36,
+  "replica_vs_payload_pct": -22.008
+ },
+ "polymarket/basketball": {
+  "cell": "polymarket/basketball",
+  "rows_published": 8426,
+  "distinct_outcomes": 7426,
+  "distinct_markets": 1527,
+  "inflation": 1.1347,
+  "seconds": 398.2,
+  "payload_n": 13116,
+  "payload_ece": 4.25,
+  "replica_vs_payload_pct": -35.758
  }
 }
