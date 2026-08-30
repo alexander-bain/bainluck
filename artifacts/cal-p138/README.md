@@ -399,8 +399,18 @@ package.
 | `published-marketgrain-baseball.json`, `edge-marketgrain-*.json` | the cached folds — the only production cost in this queue |
 | `published-legswap-*.json`, `noassign-*.json`, `rule-pricing.json`, `edge-check-baseball.json` | the outputs |
 
-**No shipped code was changed.** `git diff origin/master...HEAD --stat -- backend
-frontend` is empty. `min_flip_assignment` stays out of
+**No shipped code was changed by this queue.** The check that says so is
+`git show --stat b1f9635c -- backend frontend`, which is empty.
+
+⚠️ **NOT the three-dot diff, and CAL-P137's README got this wrong.** It claimed
+`git diff origin/master...bdfce8ac --stat -- backend frontend` is EMPTY. It is
+not: a three-dot diff spans the whole BRANCH, and CAL-P135 and CAL-P136 both
+changed `app/utils/ladder_monotonicity.py` and `scripts/calibration_cell_exact.py`
+— today it reads 6 files, 1,696 insertions. The claim a cert can rely on is
+per-COMMIT, and both `bdfce8ac` and `b1f9635c` are clean by that test. **A diff
+range is part of the claim** (lesson 15, pointed at git).
+
+`min_flip_assignment` stays out of
 `app/utils/ladder_monotonicity` for CAL-P137's reason, unchanged — the module is
 the one the frozen curve reads, the leakage line runs through the middle of it,
 and a detector earns its way in behind a named ship. CAL-P137-2 is still parked.
