@@ -415,15 +415,26 @@ def _attach(fixtures: list[dict], events: list[dict]) -> list[FixtureRow]:
       duplicated" with ``ambiguous=False`` — the exactly-inverted reading of a
       rain-delayed first game, filing a repair against the healthy fixture and
       calling the genuinely absent game a duplicate. Stable ordering rather than
-      a coin flip, but the same fabricated verdict. So the empty-fixture verdict
-      now has to be backed by the clock and not merely preferred by it: if any
-      fixture in the group ends up with nothing, every row in that group must
-      sit within :data:`IDENTITY_SKEW_HOURS` of the fixture it landed on, or the
-      group is refused. 20:00 and 20:05 rows on a 20:00 fixture are identified
-      and the case above survives untouched; 19:00 rows on a 20:00 fixture are
-      merely nearer, and nearer is not a name. The rule is deliberately silent
-      whenever every fixture holds a row, because then no healthy fixture is
-      being charged with a defect — a two-hour delay still binds.
+      a coin flip, but the same fabricated verdict. So a verdict that ACCUSES a
+      fixture now has to be backed by the clock and not merely preferred by it:
+      if any fixture in the group ends up with nothing, or holding more than one
+      row, every row in that group must sit within :data:`IDENTITY_SKEW_HOURS`
+      of the fixture it landed on, or the group is refused. 20:00 and 20:05 rows
+      on a 20:00 fixture are identified and the case above survives untouched;
+      19:00 rows on a 20:00 fixture are merely nearer, and nearer is not a name.
+      The rule is deliberately silent whenever every fixture holds exactly one
+      row, because then no fixture is being charged with anything — a two-hour
+      delay still binds.
+    * **…and "duplicated" is an accusation too** (CERT-453). Scoping the rule
+      above to an EMPTY fixture left its other half live, because naming the
+      empty fixture and naming the duplicated one are one claim about one piece
+      of unread evidence: which fixture owns which row. Fixtures at 17:00/20:00
+      with rows at 19:00, 19:05 and 20:00 leave nothing empty, so the guard
+      stayed silent while the binder published "20:00 duplicated by 102 and
+      201" — two rows that are a delayed game 1 and a healthy game 2 just as
+      readily, and that a repair lane would MERGE (gotcha #46). A group with a
+      single fixture is exempt: nothing else could own the leftover, so no
+      attribution can be wrong and an ordinary duplicate still reports.
     * **Duplicates still surface.** Rows left over once every fixture in the
       group holds one land on their nearest fixture anyway, so three rows for a
       two-game doubleheader still read ``dupes=2`` on one of them. The fix must
@@ -563,18 +574,35 @@ def _attach(fixtures: list[dict], events: list[dict]) -> list[FixtureRow]:
         # calling the genuinely absent game a duplicate.
         #
         # Bound tightly so it cannot become a way of hiding real defects: it
-        # fires ONLY when some fixture in this group ends up empty, which is the
-        # only verdict that costs a healthy fixture something. A doubleheader
-        # where every fixture holds a row is unaffected however skewed the rows
-        # are (a two-hour rain delay still binds, CERT-434), and so is the
-        # ordinary case of two rows sitting on their own fixture's minute while
-        # a third fixture is genuinely absent.
+        # fires ONLY when some fixture in this group is ACCUSED — left with
+        # nothing, or left holding a leftover on top of its own row. Those are
+        # the two verdicts that cost a specific fixture something. A
+        # doubleheader where every fixture holds exactly one row is unaffected
+        # however skewed the rows are (a two-hour rain delay still binds,
+        # CERT-434).
+        #
+        # The duplicate half is CERT-453. Naming the EMPTY fixture and naming
+        # the DUPLICATED one are the same claim about the same unread evidence —
+        # which fixture owns which row — so scoping the rule to the empty case
+        # left the other half of it live. Fixtures at 17:00/20:00 with rows at
+        # 19:00, 19:05 and 20:00 fill both fixtures, so nothing was empty and
+        # the guard stayed silent while the binder published "g2 duplicated by
+        # 102 and 201". Those two are a delayed game 1 and a healthy game 2 just
+        # as readily, and a repair lane told to deduplicate them merges two real
+        # games (gotcha #46). 19:05 is only NEARER 20:00, and nearer is not a
+        # name.
+        #
+        # A group with ONE fixture is exempt, and deliberately: there is no
+        # second fixture the leftover could have belonged to, so no attribution
+        # can be wrong. The only question left is whether two rows exist for one
+        # game, which is the commonest true finding this sentinel has.
         if not (truncated or not settled or tied):
-            some_fixture_empty = any(
-                not ges and not claims[fx_idxs[gi]]
-                for gi, ges in enumerate(placement)
+            held = [len(ges) + len(claims[fx_idxs[gi]])
+                    for gi, ges in enumerate(placement)]
+            accused = any(n == 0 for n in held) or (
+                len(fx_idxs) > 1 and any(n > 1 for n in held)
             )
-            if some_fixture_empty and any(
+            if accused and any(
                 (skews.get((gi, ge)) is None)
                 or skews[(gi, ge)] > IDENTITY_SKEW_HOURS
                 for gi, ges in enumerate(placement)

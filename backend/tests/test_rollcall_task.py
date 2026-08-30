@@ -395,6 +395,90 @@ class TestAttach:
         assert [r.event_ids for r in rows] == [[1], [2, 3]]
         assert [r.ambiguous for r in rows] == [False, False]
 
+    def test_a_leftover_duplicate_is_not_attributed_without_identity(self):
+        """CERT-453's BLOCK specimen, verbatim.
+
+        Fixtures at 17:00 and 20:00; rows at 19:00 and 19:05 — both the
+        rain-delayed game 1 — and a row at 20:00 for game 2. Every fixture ends
+        up holding something, so CERT-449's refusal (scoped to an EMPTY fixture)
+        never fires, and the binder publishes ``g1=[101]``, ``g2=[102, 201]``
+        with ``ambiguous=False``.
+
+        That verdict names game 2 as the duplicated one. It is equally well two
+        copies of a delayed game 1 beside a healthy game 2 — in which case the
+        pair the sentinel hands the repair lane, 102 and 201, are two DIFFERENT
+        games, and deduplicating them merges them (gotcha #46). An occupied
+        fixture is not evidence: 19:05 is merely NEARER 20:00, and nearer is not
+        a name. Identity is required to say which fixture owns a leftover, for
+        exactly the reason it is required to say which fixture is empty.
+        """
+        for order in ([101, 102], [102, 101]):
+            rows = _attach(
+                [
+                    _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                        kickoff="2026-08-28T17:00:00+00:00"),
+                    _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                        kickoff="2026-08-28T20:00:00+00:00"),
+                ],
+                [
+                    _ev(order[0], "Detroit Tigers", "Los Angeles Dodgers",
+                        commence_time="2026-08-28T19:00:00+00:00"),
+                    _ev(order[1], "Detroit Tigers", "Los Angeles Dodgers",
+                        commence_time="2026-08-28T19:05:00+00:00"),
+                    _ev(201, "Detroit Tigers", "Los Angeles Dodgers",
+                        commence_time="2026-08-28T20:00:00+00:00"),
+                ],
+            )
+            assert [r.ambiguous for r in rows] == [True, True], order
+
+    def test_an_identified_leftover_duplicate_is_still_attributed(self):
+        """The kill for the fix above, and the reason it is bought with identity
+        rather than with the mere existence of a duplicate. Rows at 20:00 and
+        20:05 sit on the 20:00 fixture's own minute and the 17:00 row on its
+        own: every row is time-IDENTIFIED with the fixture it landed on, so
+        naming g2 the duplicated one is backed by the clock and must still be
+        published. A rule that refused here would trade CERT-453's false
+        attribution for the silence the sentinel exists to break."""
+        rows = _attach(
+            [
+                _fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T17:00:00+00:00"),
+                _fx("g2", "Detroit Tigers", "Los Angeles Dodgers",
+                    kickoff="2026-08-28T20:00:00+00:00"),
+            ],
+            [
+                _ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T17:00:00+00:00"),
+                _ev(2, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T20:00:00+00:00"),
+                _ev(3, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T20:05:00+00:00"),
+            ],
+        )
+        assert [r.event_ids for r in rows] == [[1], [2, 3]]
+        assert [r.ambiguous for r in rows] == [False, False]
+
+    def test_a_lone_fixture_still_reports_a_far_duplicate(self):
+        """The boundary that keeps the rule from swallowing ordinary duplicates.
+        With ONE fixture in the group there is no second fixture the leftover
+        could belong to instead, so there is no attribution to get wrong — the
+        only question is whether two rows exist for one game, and they do. The
+        row three hours out is still a duplicate of the only game on the board,
+        and refusing it would hide the single commonest thing this sentinel is
+        for."""
+        rows = _attach(
+            [_fx("g1", "Detroit Tigers", "Los Angeles Dodgers",
+                 kickoff="2026-08-28T17:00:00+00:00")],
+            [
+                _ev(1, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T17:00:00+00:00"),
+                _ev(2, "Detroit Tigers", "Los Angeles Dodgers",
+                    commence_time="2026-08-28T20:00:00+00:00"),
+            ],
+        )
+        assert [r.event_ids for r in rows] == [[1, 2]]
+        assert [r.ambiguous for r in rows] == [False]
+
     def test_a_delayed_game_beside_an_id_stamped_sibling_still_finds_its_own(self):
         """The occupied-fixture case. g2 is already settled by its provider id,
         so the delayed id-less row must take the EMPTY fixture rather than pile
