@@ -1432,8 +1432,61 @@ def _build_futures_name_filter(ilike_futures_filter, fts_q: str):
     The lever is therefore REJECTED on measurement, and the DDL is not merely the
     convenient fix — it is the only one that preserves the recall the census
     pins. Full working: `docs/audits/latency/lat-p097-*`.
+
+    ⚠️ THE DDL LANDED 2026-08-29 AND IT DID NOT FINISH THE JOB. `ix_futures_name_fts_open`
+    exists in production and the numbers above are now history for SELECTIVE terms
+    (`werder` 4,722 -> 5.7 ms, BitmapOr over both GINs). But the planner ABANDONS
+    both GINs whenever either half is estimated non-selective, because the flat
+    `ix_futures_markets_status` scan has a fixed cost (37,715) that a broad
+    BitmapOr's union exceeds — and that is precisely the class of short, common
+    prefix a person actually types. Measured the day the index landed:
+
+        chi      1,283 rows  1,250.1 ms   no BitmapOr, ix_futures_markets_status
+        chicago    220 rows    917.9 ms   no BitmapOr  (row count is NOT the trigger)
+        winner   4,762 rows    881.5 ms   no BitmapOr
+        yan        311 rows    115.0 ms   BitmapOr over both GINs
+
+    So this OR is still the arm that has to be kept off the hot path — see
+    `_futures_name_arms`, which is how callers do it. Do NOT read the index as
+    having retired this warning.
     """
-    return or_(_fts_filter(FuturesMarket.name, fts_q), ilike_futures_filter)
+    return or_(*_futures_name_arms(ilike_futures_filter, fts_q))
+
+
+def _futures_name_arms(ilike_futures_filter, fts_q: str) -> list:
+    """The futures NAME arm's two halves as a LIST, ready to UNION (LAT-P140).
+
+    ONE definition of what the halves ARE, shared with `_build_futures_name_filter`
+    so the two can never drift — that helper is now this list folded with `or_`.
+    The docstring above is the canonical account of WHY both halves exist; this
+    one is only about the SHAPE a caller wants them in.
+
+    WHY A CALLER WANTS THE LIST. `or_` and `UNION` are set-identical, so this is
+    not a recall or precision change — it is the same rows by a plan the planner
+    can actually index. Exactly the LAT-P007 treatment already applied one level
+    up in `/typeahead` ("UNION, not OR — a top-level OR blocks the hash-semi-join
+    transformation"), applied one level further in. Each half then gets costed and
+    indexed on its OWN selectivity instead of the union's, which is what stops the
+    common-prefix fallback documented above.
+
+    Measured on production 2026-08-29 with both GINs live, `count(*)` + `md5` of
+    the ORDER-BY-id id set, server-side so the 1,000-row cap cannot flatter it —
+    **all ten terms byte-identical, OR vs UNION**:
+
+        chi      1,250.1 ->  22.9 ms  (54.6x)     chiefs      6.7 ->  32.6 ms
+        chicago    917.9 ->  34.4 ms  (26.7x)     werder      8.7 ->  18.1 ms
+        winner     881.5 ->  64.1 ms  (13.7x)     election   45.3 ->  42.0 ms
+        win        796.1 ->  74.2 ms  (10.7x)     fed        23.3 ->  88.7 ms
+        champions  116.2 ->  24.5 ms   (4.7x)     trump      90.4 ->  38.3 ms
+
+    ⚠️ READ THE TAIL, NOT THE MEDIAN. Four terms get SLOWER (`fed` 23.3 -> 88.7 ms)
+    because a UNION pays for two index probes where a lucky OR paid for one. That
+    is the trade and it is the right one on a keystroke path: the worst case falls
+    from **1,250 ms to 88.7 ms (14x)**, and the terms it rescues — `chi`,
+    `chicago`, `win`, `winner` — are the ones a user types on the way to a real
+    query. A p50 would hide this entirely; the bound is the product.
+    """
+    return [_fts_filter(FuturesMarket.name, fts_q), ilike_futures_filter]
 
 
 def _alias_futures_arms(terms: list[str]) -> list:
@@ -5006,7 +5059,12 @@ async def typeahead_search(
         fts_event_f = or_(fts_event_f, Sport.key.in_(sport_alias_keys))
     event_team_filter = or_(fts_event_f, ilike_event_filter)
 
-    futures_name_filter = _build_futures_name_filter(ilike_futures_filter, ta_fts_q)
+    # LAT-P140: the two halves go in as SEPARATE arms of the UNION built below,
+    # not as one OR'd arm. `_futures_name_arms` carries the measurement; the short
+    # version is that after `ix_futures_name_fts_open` landed, the OR still made
+    # the planner abandon both GINs on common prefixes (`chi` 1,250 ms) and the
+    # split costs each half on its own selectivity (`chi` 22.9 ms, same rows).
+    futures_name_arms = _futures_name_arms(ilike_futures_filter, ta_fts_q)
 
     # --- Collect candidates into separate pools (all 3 queries run) ---
     _TIER_LABELS = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
@@ -5152,7 +5210,7 @@ async def typeahead_search(
     # fetches the correct-league market ("nba mvp" → NBA "MVP Winner", ticker
     # kxnba%, no "nba" in the name) that the shared reranker then surfaces over the
     # WNBA substring-cousin. Prefix LIKE (index-friendly) — keystroke-budget-safe.
-    ta_futures_where = [futures_name_filter]
+    ta_futures_where = [*futures_name_arms]
 
     # LAT-P007/#1494: the outcome-name arm is NON-CORRELATED, and it is SKIPPED
     # for a sub-3-character query. Both measured in production 2026-08-08.
