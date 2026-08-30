@@ -11,7 +11,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 52,
+  "input_count": 53,
   "inputs": [
     {
       "covered_by_value": false,
@@ -560,6 +560,18 @@
     },
     {
       "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "_BOOKMAKER_ROW_REQUIRED_KEYS",
+      "origin": "app.tasks.precompute_calibration:_BOOKMAKER_ROW_REQUIRED_KEYS",
+      "sql_interpolated": true,
+      "used_in": [
+        "_bookmaker_row_defect",
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
       "definition_sha16": "6d3548c2ffd1eba9",
       "impact": "sql_shaping",
       "name": "_COVERAGE_RUNG_KEYS",
@@ -609,8 +621,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "7ae89017bcc4e5049ec390cb796643a06eab0e558b4add5cd21b14123f770202",
+  "source_sha256": "91df4b44c77500d8b6ad52eac4702f4e02dd793846401a11358a62a8ed4601d6",
   "uncovered_behavior_or_evidence": 26,
-  "uncovered_count": 48,
-  "uncovered_sql_shaping": 22
+  "uncovered_count": 49,
+  "uncovered_sql_shaping": 23
 }

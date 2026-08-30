@@ -419,12 +419,31 @@ async def test_precompute_wrapper_caches_exact_shared_payload():
             #
             # What this test is actually about is payload identity, so the
             # answer has to leave `rows` empty without being a corrupt value.
-            # One soccer bucket does exactly that: it is a shape the writer
-            # really writes, and the read-side soccer_2way exclusion (#1011)
-            # drops it, so `rows == []` and `soccer_excluded == 0` — byte-for-
-            # byte the pair `"[]"` used to produce.
+            # One soccer bucket does exactly that: the read-side soccer_2way
+            # exclusion (#1011) drops it, so `rows == []`.
+            #
+            # 🔴 CORRECTED AGAIN by CERT-497 (CAL-P152), and the correction is
+            # the finding in miniature. The line above used to read
+            # `{"category": "soccer_epl", "bucket_idx": 5, "n": 0}` and the
+            # comment claimed it was "a shape the writer really writes". It is
+            # not, and that was the whole of CERT-497: the writer emits NINE
+            # keys from one aggregate and `n` is a per-outcome counter that is
+            # never 0, so this fixture was a three-key dict no sweep can
+            # produce. P1-b's container gate waved it through because it is a
+            # dict; the reader now checks the ROW, and it refuses this.
+            #
+            # `soccer_excluded` is consequently 40 rather than 0 — the one place
+            # this differs from what `"[]"` produced. Nothing here asserts on it
+            # (the assertions are payload identity and the field-completeness
+            # block), and a fixture that lies about its writer is worth more
+            # than a zero that matched.
             if key == "bainluck:bookmaker_calibration":
-                return '[{"category": "soccer_epl", "bucket_idx": 5, "n": 0}]'
+                return (
+                    '[{"bucket_idx": 5, "source": "odds_api_bookmaker", '
+                    '"category": "soccer_epl", "price_moved": null, '
+                    '"n": 40, "winners": 18, "avg_prob": 0.45, '
+                    '"sum_prob": 18.0, "sum_sq_err": 0.5}]'
+                )
             return None
 
     fake_db = _FakeDB()

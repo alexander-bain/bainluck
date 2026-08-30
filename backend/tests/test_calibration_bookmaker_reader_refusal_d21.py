@@ -73,6 +73,37 @@ def _read(rc, *, refuse=True):
     return pc.read_bookmaker_curve_rows(rc, refuse=refuse)
 
 
+#: CERT-497. A row shaped like one the WRITER actually emits — every key in
+#: ``_precompute_bookmaker_calibration``'s literal (backfill_winners.py, the
+#: ``buckets.append({...})`` block), not the three keys a test happens to assert
+#: on. Two fixtures in this file used to be 2-3 key dicts, which is how the
+#: row-level hole below survived D21: the guards proved the reader's behaviour
+#: on payloads its only writer cannot produce.
+def _row(category="basketball_nba", *, bucket_idx=5, n=100, winners=40, **over):
+    # `avg_prob`/`sum_prob` are DERIVED so a healthy fixture stays internally
+    # consistent, but the derivation is guarded: several arms below deliberately
+    # pass a non-numeric `n` or `winners` to build a defective row, and the
+    # factory must produce that row rather than raise while constructing it.
+    try:
+        derived_avg = winners / n if n else 0.0
+        derived_sum = float(winners)
+    except (TypeError, ZeroDivisionError):
+        derived_avg, derived_sum = 0.0, 0.0
+    row = {
+        "bucket_idx": bucket_idx,
+        "source": "odds_api_bookmaker",
+        "category": category,
+        "price_moved": None,
+        "n": n,
+        "winners": winners,
+        "avg_prob": derived_avg,
+        "sum_prob": derived_sum,
+        "sum_sq_err": 0.5,
+    }
+    row.update(over)
+    return row
+
+
 # ---------------------------------------------------------------------------
 # 1. The three failures that used to be silent.
 # ---------------------------------------------------------------------------
@@ -238,10 +269,10 @@ def test_the_happy_path_still_parses_and_still_drops_soccer():
     """
     payload = json.dumps(
         [
-            {"category": "basketball_nba", "bucket_idx": 5, "n": 100},
-            {"category": "soccer_epl", "bucket_idx": 5, "n": 40},
-            {"category": "soccer_uefa_champs_league", "bucket_idx": 6, "n": 2},
-            {"category": "icehockey_nhl", "bucket_idx": 7, "n": 7},
+            _row("basketball_nba", bucket_idx=5, n=100, winners=40),
+            _row("soccer_epl", bucket_idx=5, n=40, winners=18),
+            _row("soccer_uefa_champs_league", bucket_idx=6, n=2, winners=1),
+            _row("icehockey_nhl", bucket_idx=7, n=7, winners=3),
         ]
     )
     rows, excluded, degraded = _read(_Redis(payload))
@@ -257,11 +288,179 @@ def test_the_happy_path_still_parses_and_still_drops_soccer():
     assert rows[0].n == 100 and rows[0].bucket_idx == 5
 
 
-def test_a_row_with_a_null_n_does_not_break_the_exclusion_count():
+def test_a_row_with_a_null_n_is_now_refused_and_this_assertion_was_INVERTED():
+    """🔴 CERT-497. THIS TEST'S EXPECTATION WAS DELIBERATELY REVERSED. Read why.
+
+    It used to assert ``rows == [] and excluded == 0 and degraded is None`` on
+    the payload ``[{"category": "soccer_epl", "n": None}]`` — i.e. it PINNED A
+    SILENT ZERO as correct. That is the identical shape CERT-497 constructed
+    against the shipped head (``[{"category": "soccer_epl"}]``), and it is the
+    96K-outcome shortfall D21 was written to end, re-entered one level down.
+    The guard was not wrong about the mechanism; it was wrong about the verdict.
+
+    The exclusion count is still robust to a missing ``n`` — the reader's
+    ``int(row.get("n") or 0)`` coalesce is untouched — but it is never REACHED
+    for this payload any more, because a row whose ``n`` is null did not come
+    from the writer. ``slot["n"]`` is an integer counter incremented once per
+    outcome, so null is not "a bucket with no rows", it is a corrupt aggregate,
+    and gotcha #53 forbids the two sharing an answer. A payload holding one is
+    refused whole rather than read past.
+
+    Inverting a green test is the loudest thing this rework does, so it is named
+    in the function name and disclosed in the cert block rather than quietly
+    edited into agreement with the new code.
+    """
+    with pytest.raises(RuntimeError) as excinfo:
+        _read(_Redis(json.dumps([{"category": "soccer_epl", "n": None}])))
+    assert UNREADABLE in str(excinfo.value)
+
+    # And the serve path still degrades instead of raising — the D21 lesson
+    # (two callers, one of them unconsidered) applies to this arm too.
     rows, excluded, degraded = _read(
-        _Redis(json.dumps([{"category": "soccer_epl", "n": None}]))
+        _Redis(json.dumps([{"category": "soccer_epl", "n": None}])), refuse=False
     )
-    assert rows == [] and excluded == 0 and degraded is None
+    assert rows == [] and excluded == 0 and degraded == UNREADABLE, (
+        "the public endpoint must report the reason, never 500 and never a "
+        "silent zero"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 1c. CERT-497 P1 — A LIST OF DICTS IS NOT A LIST OF BOOKMAKER ROWS.
+#
+#     P1-b proved the CONTAINER and stopped there. The cert then constructed
+#     three payloads that clear the container gate and still reproduce both of
+#     D21's original failure modes — one silent, two fatal — because the rows
+#     go on to be `SimpleNamespace(**row)`d and read as bare attributes.
+#
+#     The first case is the one that matters most and is the least visible: it
+#     does not crash. It returns `([], 0, None)` — a healthy-looking zero with
+#     NO reason in the payload, which is the 96K shortfall wearing D21's own
+#     clothes.
+# ---------------------------------------------------------------------------
+
+#: The three CERT-497 reproductions, verbatim from the finding, plus the value
+#: traps that the obvious `isinstance` spelling would wave through.
+_ROW_LEVEL_DEFECTS = [
+    ([{"category": "soccer_epl"}], "CERT-497 repro: the SILENT zero"),
+    ([{}], "CERT-497 repro: crash on r.n, past the refusal boundary"),
+    ([{"category": "baseball_mlb", "n": 5}], "CERT-497 repro: crash on r.winners"),
+    ([_row(n=True)], "n=true — isinstance(True, int) is True, so this counts 1"),
+    ([_row(winners="40")], "winners as a numeric STRING"),
+    ([_row(bucket_idx=[5])], "an unhashable bucket_idx poisons the merge key"),
+    ([_row(sum_prob=float("nan"))], "NaN propagates to a null avg_prob"),
+    ([_row(sum_sq_err=float("inf"))], "inf does the same"),
+    ([_row(n=0)], "n=0 contributes nothing but drags the denominator"),
+    ([_row(n=10, winners=11)], "winners > n publishes a rate above 100%"),
+    ([_row(category=None)], "a null category is not a by_category line"),
+    ([_row(price_moved="yes")], "price_moved must stay a bool or null"),
+    ([_row(), _row(category="icehockey_nhl", n=7, winners=99)], "the SECOND row"),
+]
+
+
+@pytest.mark.parametrize(
+    "payload,label", _ROW_LEVEL_DEFECTS, ids=[d[1] for d in _ROW_LEVEL_DEFECTS]
+)
+def test_a_dict_that_is_not_a_bookmaker_row_refuses_by_name(payload, label):
+    """The producer refuses — it never crashes and never publishes short."""
+    with pytest.raises(RuntimeError) as excinfo:
+        _read(_Redis(json.dumps(payload)))
+    assert UNREADABLE in str(excinfo.value), label
+
+
+@pytest.mark.parametrize(
+    "payload,label", _ROW_LEVEL_DEFECTS, ids=[d[1] for d in _ROW_LEVEL_DEFECTS]
+)
+def test_the_serve_path_degrades_on_a_bad_row_instead_of_raising(payload, label):
+    """...and the public endpoint reports the reason rather than 500ing.
+
+    This is the half CERT-497 named explicitly: `[{}]` did not merely crash the
+    producer, it crashed the cold-cache fallback that exists BECAUSE the fast
+    path is unavailable. Both callers, every payload — the D21 lesson applied to
+    the row level.
+    """
+    rows, excluded, degraded = _read(_Redis(json.dumps(payload)), refuse=False)
+    assert rows == [], label
+    assert excluded == 0, label
+    assert degraded == UNREADABLE, label
+
+
+def test_the_silent_zero_is_specifically_dead():
+    """The single most important assertion in this section, stated on its own.
+
+    `[{"category": "soccer_epl"}]` used to return `degraded=None`, and a `None`
+    degraded reason is what the payload publishes as "nothing to report". No
+    payload that fails to produce rows may ever again report no reason.
+    """
+    rows, excluded, degraded = _read(
+        _Redis(json.dumps([{"category": "soccer_epl"}])), refuse=False
+    )
+    assert (rows, excluded) == ([], 0)
+    assert degraded is not None, (
+        "a zero-row read with degraded=None is the silent shortfall D21 exists "
+        "to end — it must never be reachable again"
+    )
+
+
+def test_the_row_refusal_tells_an_operator_which_row_and_what_is_wrong():
+    """A refusal naming only "bad shape" costs an operator a Redis round-trip."""
+    with pytest.raises(RuntimeError) as excinfo:
+        _read(_Redis(json.dumps([_row(), _row(category="icehockey_nhl", n=None)])))
+    message = str(excinfo.value)
+    assert KEY in message
+    assert "row 1" in message, "the offending INDEX must be named, not just a count"
+    assert "'n'" in message, "the offending KEY must be named"
+
+
+def test_the_row_refusal_never_echoes_the_rows_themselves():
+    """`_shape_of`'s discipline, extended to the row validator.
+
+    This string reaches the logs AND the served payload, and the key holds ~96K
+    outcomes' worth of rows. A validator that interpolated the row would turn a
+    diagnostic into a log flood on the one path already having a bad day.
+    """
+    poisoned = _row(category="a-category-nobody-would-name-a-sport", n=None)
+    with pytest.raises(RuntimeError) as excinfo:
+        _read(_Redis(json.dumps([poisoned])))
+    message = str(excinfo.value)
+    assert "a-category-nobody-would-name-a-sport" not in message
+    assert "odds_api_bookmaker" not in message.split("source odds_api_bookmaker")[-1], (
+        "the only permitted mention of the source is the fixed prose about "
+        "which curve is missing"
+    )
+
+
+def test_a_payload_of_sound_rows_is_still_read_whole():
+    """THE CONTROL, and the reason this validator is not simply "refuse more".
+
+    A guard that can never go green gets ignored (CAL-P147). Every key the
+    writer emits, on rows that differ in every dimension the validator inspects
+    — including the legitimately-null `price_moved` and a legitimate zero
+    `winners` — must pass untouched.
+    """
+    payload = json.dumps(
+        [
+            _row("basketball_nba", bucket_idx=0, n=1, winners=0),
+            _row("icehockey_nhl", bucket_idx=9, n=5000, winners=5000),
+            _row("baseball_mlb", bucket_idx=4, n=7, winners=3, price_moved=True),
+            _row("tennis_atp", bucket_idx=4, n=7, winners=3, price_moved=False),
+        ]
+    )
+    rows, excluded, degraded = _read(_Redis(payload))
+    assert degraded is None
+    assert len(rows) == 4 and excluded == 0
+    assert sum(r.n for r in rows) == 5015
+
+
+def test_an_UNKNOWN_extra_key_is_tolerated_so_the_writer_can_grow_a_column():
+    """Required is a floor, not an exact match.
+
+    The writer and this reader ship in one repo but not necessarily in one
+    deploy, and a reader that refuses a row for carrying a key it has not been
+    taught about would turn every additive change to the writer into an outage.
+    """
+    rows, _, degraded = _read(_Redis(json.dumps([_row(a_new_column_from_2027=1)])))
+    assert degraded is None and len(rows) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +558,61 @@ def test_the_silent_path_is_gone_from_the_call_site():
         "is what a 23-hour silent publish outage looked like from the inside; "
         "if a swallow is genuinely wanted here it needs a reason in writing "
         "and a name, not a pass."
+    )
+
+
+def test_the_readers_required_keys_are_the_writers_keys():
+    """CERT-497. The companion to the key-agreement guard below, one level in.
+
+    The reader now refuses a row that does not carry every key in
+    ``_BOOKMAKER_ROW_REQUIRED_KEYS``. That set was DERIVED — from the eight the
+    consumer dereferences, all of which the writer emits — but a derivation is
+    only true on the day it is done. If the writer renames ``winners``, nothing
+    at runtime notices until the 6 h sweep lands and the reader refuses every
+    row of a perfectly healthy curve: a self-inflicted outage in the code whose
+    entire job is preventing one.
+
+    So the derivation is pinned against the writer's own literal, read from
+    source. Equality, not containment, in BOTH directions:
+
+    * a required key the writer does not emit is the outage above;
+    * a writer key that is not required and not the one documented exception
+      is a NEW field arriving unclassified, and somebody has to decide whether
+      the reader should insist on it. Failing here is that decision being asked
+      for — it is not a signal to widen the exception list.
+    """
+    writer = (Path(pc.__file__).parent / "backfill_winners.py").read_text()
+
+    marker = 'stats["data_points"] += slot["n"]'
+    head, sep, _ = writer.partition(marker)
+    assert sep, (
+        "PREMISE GONE: the writer's bucket-assembly loop is no longer findable. "
+        "Re-aim this guard; do not delete it."
+    )
+    block = head.rpartition("buckets.append(")[2]
+    assert block, "PREMISE GONE: `buckets.append(` no longer precedes the loop tail."
+
+    writer_keys = set(re.findall(r'"(\w+)":', block))
+    assert "n" in writer_keys and "winners" in writer_keys, (
+        "PREMISE GONE: the extracted block is not the bucket literal — it does "
+        "not even carry `n` and `winners`. Re-aim this guard."
+    )
+
+    required = set(pc._BOOKMAKER_ROW_REQUIRED_KEYS)
+
+    #: The one writer key the reader deliberately does NOT require, because the
+    #: merge path already reads it as `getattr(r, "price_moved", None)`.
+    tolerated = {"price_moved"}
+
+    assert required - writer_keys == set(), (
+        "the reader requires key(s) its only writer does not emit — every row "
+        "of a healthy sweep would be refused: %s" % sorted(required - writer_keys)
+    )
+    assert writer_keys - required == tolerated, (
+        "the writer's bucket literal has changed shape. Decide whether the new "
+        "key(s) belong in `_BOOKMAKER_ROW_REQUIRED_KEYS` (does the consumer "
+        "dereference them?) before touching this assertion: %s"
+        % sorted(writer_keys - required - tolerated)
     )
 
 

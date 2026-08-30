@@ -93,6 +93,118 @@ def _shape_of(value) -> str:
     return f"a bare {type(value).__name__}"
 
 
+# CERT-497 P1. The set of keys the CONSUMER dereferences, derived by reading it
+# rather than by copying the writer's literal. `_precompute_bookmaker_calibration`
+# (backfill_winners.py) emits nine keys; eight of them are read as bare
+# attributes on the merge path — `r.bucket_idx`, `r.source`, `r.category` are the
+# merge KEY, `r.n`/`r.winners` are summed, `r.sum_prob`/`r.sum_sq_err` are
+# `float()`d, `r.avg_prob` is read once — so a row missing any of them raises
+# AttributeError AFTER the refusal boundary, which kills the scheduled build
+# instead of degrading it.
+#
+# `price_moved` is deliberately NOT required: the merge path already reads it as
+# `getattr(r, "price_moved", None)`, so its absence is handled by construction
+# and demanding it would refuse a payload the consumer can in fact read.
+_BOOKMAKER_ROW_REQUIRED_KEYS = (
+    "bucket_idx",
+    "source",
+    "category",
+    "n",
+    "winners",
+    "avg_prob",
+    "sum_prob",
+    "sum_sq_err",
+)
+
+
+def _is_real_number(value) -> bool:
+    """A JSON number this reader can do arithmetic on.
+
+    `bool` is excluded ON PURPOSE. `isinstance(True, int)` is True in Python, so
+    a naive int check admits `{"n": true}` and then `acc["n"] += True` counts a
+    bucket of ONE outcome — a silent miscount, which is the exact class this
+    validator exists to stop. NaN/inf are excluded for the same reason: they
+    propagate through the sums and surface as a `null` avg_prob in the payload
+    rather than as a refusal.
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _bookmaker_row_defect(row: dict) -> str | None:
+    """Name the first schema defect in one bookmaker row, or None if it is sound.
+
+    CERT-497 P1. The container gate below proves `raw` is a non-empty list of
+    dicts. It does NOT prove the dicts are bookmaker rows, and CERT-497
+    constructed three payloads that pass it and still reproduce the two failure
+    modes D21 exists to end:
+
+      [{"category": "soccer_epl"}]   the soccer filter drops it on the way past,
+                                     `rows` comes back empty and the reader
+                                     returns ([], 0, None) — a SILENT zero with
+                                     no reason in the payload, which is the
+                                     96K-outcome shortfall re-entered a second
+                                     time through a second unchecked shape.
+      [{}]                           survives the filter as SimpleNamespace(),
+                                     returns degraded=None, then AttributeError
+                                     on `r.n` — a crash the refusal boundary has
+                                     already been passed, so the producer dies
+                                     instead of preserving the prior snapshot.
+      [{"category": ..., "n": ...}]  same crash one key later, on `r.winners`.
+
+    Returned as a description rather than raised so the caller can put it on the
+    EXISTING degradation contract (producer raises by name, serve path reports
+    the reason in the payload) instead of introducing a second one.
+
+    Only key names and type names are ever named — never a value. `_shape_of`
+    explains why: this string reaches the logs and the served payload, and the
+    key can hold ~96K outcomes' worth of rows.
+    """
+    missing = [k for k in _BOOKMAKER_ROW_REQUIRED_KEYS if k not in row]
+    if missing:
+        return "missing required key(s) %s" % ", ".join(repr(k) for k in missing)
+
+    if not isinstance(row["bucket_idx"], int) or isinstance(row["bucket_idx"], bool):
+        return "'bucket_idx' is %s, not an int" % type(row["bucket_idx"]).__name__
+    for key in ("source", "category"):
+        if not isinstance(row[key], str):
+            return "%r is %s, not a str" % (key, type(row[key]).__name__)
+    for key in ("n", "winners"):
+        if not isinstance(row[key], int) or isinstance(row[key], bool):
+            return "%r is %s, not an int" % (key, type(row[key]).__name__)
+    for key in ("avg_prob", "sum_prob", "sum_sq_err"):
+        if not _is_real_number(row[key]):
+            return "%r is %s, not a finite number" % (key, type(row[key]).__name__)
+
+    # Domain checks, and only the two the writer makes structurally impossible.
+    # `n` counts every outcome in the bucket and `winners` increments a subset of
+    # the same loop, so `1 <= n` and `0 <= winners <= n` hold by construction.
+    # A row outside them is corrupt in a way that stays SILENT if admitted:
+    # `n <= 0` contributes nothing but drags the `avg_prob` denominator, and
+    # `winners > n` hands `_wilson_ci` an impossible rate and publishes a
+    # calibration point above 100%. Nothing looser is asserted — `avg_prob` is
+    # NOT cross-checked against `sum_prob / n`, because the writer rounds and a
+    # float-equality refusal would be a false alarm on a healthy sweep.
+    if row["n"] < 1:
+        return "'n' is not a positive count"
+    if not 0 <= row["winners"] <= row["n"]:
+        return "'winners' is outside 0..n"
+
+    # Optional by consumer contract, but if it IS present it becomes part of the
+    # merge key, so it has to be hashable and of the writer's type.
+    if "price_moved" in row and not (
+        row["price_moved"] is None or isinstance(row["price_moved"], bool)
+    ):
+        return "'price_moved' is %s, not a bool or null" % type(
+            row["price_moved"]
+        ).__name__
+
+    return None
+
+
 def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
     """The per-bookmaker curve, or a NAMED refusal. Never a silent zero.
 
@@ -265,6 +377,47 @@ def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
             "prior snapshot preserved."
             % (BOOKMAKER_CURVE_REDIS_KEY, _shape_of(raw), _expected),
         )
+
+    # 🔴 CERT-497 P1. The gate above proves the CONTAINER; this one proves the
+    # ROWS. Splitting them is the point of the fix: a list of dicts was treated
+    # as a list of bookmaker rows, and "dict-shaped" is not "readable" — the
+    # three payloads named in `_bookmaker_row_defect` all clear the container
+    # check and then either publish a silent zero or crash the build past the
+    # refusal boundary. That is gotcha #53 one level down from where D21 caught
+    # it the first time: same defect, same reader, narrower shape.
+    #
+    # THE WHOLE PAYLOAD IS REFUSED, one bad row or all of them, and the rows are
+    # NOT filtered down to the sound ones. Dropping the bad rows and publishing
+    # the rest is precisely the unattributed shortfall this reader exists to
+    # prevent — it would put a curve short by an unknown count on the board with
+    # nothing in the payload saying so. The refusal is loud and the prior
+    # snapshot survives; a quiet partial is neither.
+    #
+    # The first defect is reported with its row index, not a tally: the writer
+    # emits every row from one loop over one aggregate, so rows do not go wrong
+    # independently, and the first one is enough for an operator to read the key
+    # and see what happened.
+    for _idx, _row in enumerate(raw):
+        _defect = _bookmaker_row_defect(_row)
+        if _defect is not None:
+            return _degrade(
+                BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
+                "%s parsed as a list of %d dict(s), but row %d is not a "
+                "bookmaker row: %s. Every row is required to carry %s (the keys "
+                "this reader dereferences), so the per-bookmaker curve (~%s "
+                "outcomes, source odds_api_bookmaker) cannot be assembled. Its "
+                "only writer emits all of them from a single aggregate, so a "
+                "row missing one did not come from a healthy sweep. Nothing "
+                "published, prior snapshot preserved."
+                % (
+                    BOOKMAKER_CURVE_REDIS_KEY,
+                    len(raw),
+                    _idx,
+                    _defect,
+                    ", ".join(_BOOKMAKER_ROW_REQUIRED_KEYS),
+                    _expected,
+                ),
+            )
 
     # Queue #158 (#1011): the per-bookmaker calibration devigs soccer moneyline
     # as home_prob/(home_prob+away_prob) — the SAME 2-way draw-omission bug as
