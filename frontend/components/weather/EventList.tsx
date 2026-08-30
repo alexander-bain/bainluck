@@ -1,4 +1,4 @@
-import { type EventMarket, probColor } from "./data";
+import { type EventMarket, probColor, weatherPercent } from "./data";
 import { SourceBadge } from "./SourceBadge";
 
 interface EventListProps {
@@ -122,7 +122,7 @@ export default function EventList({ title, sub, icon, items, accent }: EventList
                     textAlign: "right",
                   }}
                 >
-                  {item.prob}%
+                  {weatherPercent(item)}
                 </span>
               </div>
             </div>

@@ -364,7 +364,7 @@ class TestTheRainCardRoundsHalfUp:
         assert body["daily"][0]["prob"] == 64, "0.635 half-up; banker's printed 63"
 
     async def test_both_branches_of_the_yes_lookup_agree(self, client, mock_db):
-        """`_get_yes_probability` has a named-"Yes" branch and a highest-outcome
+        """`_yes_probability` has a named-"Yes" branch and a highest-outcome
         fallback. They must round by the same rule, or the rain card prints a
         different number for the same price depending on whether the market
         happened to label its leg "Yes"."""
@@ -438,4 +438,14 @@ class TestTheOpenCodedRoundingIsGone:
         """Vacuity companion. Without this, deleting every percentage from the
         file would satisfy the scan above."""
         assert "from app.utils.graded_card import rendered_percent" in self.SOURCE
-        assert self.SOURCE.count("rendered_percent(") >= 3, "all three call sites"
+        # UX-P192 collapsed the three separate `rendered_percent(...)` calls into
+        # ONE — `_printed`, which emits the integer and the value it came from as
+        # a pair so the two cannot describe different outcomes. So the count that
+        # means "every printed number goes through the contract" moved with it:
+        # it is now the number of payload shapes calling `_printed`, not the
+        # number of places calling `rendered_percent`.
+        assert self.CODE.count("rendered_percent(") >= 1, "the one home still calls it"
+        assert self.CODE.count("_printed(") >= 7, (
+            "every weather payload shape must build its number through `_printed`: "
+            f"found {self.CODE.count('_printed(')}"
+        )

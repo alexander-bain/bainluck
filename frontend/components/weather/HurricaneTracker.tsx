@@ -1,6 +1,6 @@
 "use client";
 
-import { probColor, type EventMarket } from "./data";
+import { probColor, type EventMarket, weatherPercent } from "./data";
 import { SourceBadge } from "./SourceBadge";
 import ProbabilityNumber from "./ProbabilityNumber";
 
@@ -66,7 +66,9 @@ export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
         </div>
 
         <div className="flex flex-col items-end" style={{ gap: 2 }}>
-          <ProbabilityNumber value={80} size={32} forceColor="#22C55E" />
+          {/* A hard-coded literal, not a served price — no `probability` to
+              pass, so this prints `80%` exactly as it always has. */}
+          <ProbabilityNumber item={{ prob: 80 }} size={32} forceColor="#22C55E" />
           <span
             style={{
               fontSize: 11,
@@ -207,7 +209,7 @@ export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
                 textAlign: "right",
               }}
             >
-              {item.prob}%
+              {weatherPercent(item)}
             </span>
           </div>
         ))}

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type CityData, tempColorC, toC, SOURCES, tomorrowDateStr } from "./data";
+import { type CityData, type DistBucket, tempColorC, toC, SOURCES, tomorrowDateStr, weatherPercent, hasPrice } from "./data";
 import { SourceBadge, CrossSourceBadge } from "./SourceBadge";
 
 interface DistributionPanelProps {
@@ -65,7 +65,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
 
       <div className="flex items-baseline" style={{ marginTop: 8, gap: 8 }}>
         <span className="font-mono" style={{ fontSize: 20, fontWeight: 600, color: "var(--text-secondary)" }}>
-          {peak.prob}%
+          {weatherPercent(peak)}
         </span>
         <span style={{ fontSize: 12, color: "var(--text-muted)" }}>most likely bucket</span>
       </div>
@@ -131,7 +131,7 @@ function SingleSourceHistogram({
   peakIdx,
   color,
 }: {
-  dist: Array<{ label: string; prob: number }>;
+  dist: DistBucket[];
   maxProb: number;
   peakIdx: number;
   color: string;
@@ -146,21 +146,21 @@ function SingleSourceHistogram({
             <div
               key={i}
               className="flex-1 flex flex-col items-center justify-end group relative"
-              style={{ height: "100%", cursor: bucket.prob > 0 ? "pointer" : "default" }}
+              style={{ height: "100%", cursor: hasPrice(bucket) ? "pointer" : "default" }}
             >
               {/* Tooltip on hover */}
-              {bucket.prob > 0 && (
+              {hasPrice(bucket) && (
                 <div
                   className="absolute -top-6 left-1/2 -translate-x-1/2 hidden group-hover:block font-mono px-1.5 py-0.5 rounded bg-gray-800 text-white whitespace-nowrap z-10"
                   style={{ fontSize: 10, fontWeight: 600 }}
                 >
-                  {bucket.prob}%
+                  {weatherPercent(bucket)}
                 </div>
               )}
               {/* Always-visible label on peak */}
               {isPeak && (
                 <div className="font-mono" style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 4 }}>
-                  {bucket.prob}%
+                  {weatherPercent(bucket)}
                 </div>
               )}
               <div
@@ -196,8 +196,8 @@ function GroupedBarHistogram({
   kalshiDist,
   maxProb,
 }: {
-  polyDist: Array<{ label: string; prob: number }>;
-  kalshiDist: Array<{ label: string; prob: number }>;
+  polyDist: DistBucket[];
+  kalshiDist: DistBucket[];
   maxProb: number;
 }) {
   const polyColor = SOURCES.polymarket.color;
@@ -212,7 +212,15 @@ function GroupedBarHistogram({
   const kalshiPerSlot = polyDist.length / kalshiDist.length;
   const kalshiByPolyIdx = polyDist.map((_, pi) => {
     const ki = Math.min(Math.floor(pi / kalshiPerSlot), kalshiDist.length - 1);
-    return { prob: kalshiDist[ki].prob, isPeak: ki === kalshiPeakIdx, ki };
+    // The whole served pair, not just `prob` — dropping `probability` here
+    // would silently give the Kalshi half of every tooltip the old behaviour.
+    const bucket = kalshiDist[ki];
+    return {
+      prob: bucket.prob,
+      probability: bucket.probability,
+      isPeak: ki === kalshiPeakIdx,
+      ki,
+    };
   });
 
   return (
@@ -232,17 +240,17 @@ function GroupedBarHistogram({
                 className="absolute -top-7 left-1/2 -translate-x-1/2 hidden group-hover:flex items-center gap-1.5 font-mono px-2 py-1 rounded bg-gray-800 text-white whitespace-nowrap z-10"
                 style={{ fontSize: 10, fontWeight: 600 }}
               >
-                <span style={{ color: "#93C5FD" }}>{bucket.prob}%</span>
+                <span style={{ color: "#93C5FD" }}>{weatherPercent(bucket)}</span>
                 <span style={{ color: "var(--text-secondary)" }}>/</span>
-                <span style={{ color: "#86EFAC" }}>{kalshi.prob}%</span>
+                <span style={{ color: "#86EFAC" }}>{weatherPercent(kalshi)}</span>
               </div>
 
               {/* Peak labels */}
               {(polyIsPeak || kalshi.isPeak) && (
                 <div className="flex gap-0.5 mb-1" style={{ fontSize: 9, fontWeight: 600 }}>
-                  {polyIsPeak && <span style={{ color: SOURCES.polymarket.fg }}>{bucket.prob}%</span>}
+                  {polyIsPeak && <span style={{ color: SOURCES.polymarket.fg }}>{weatherPercent(bucket)}</span>}
                   {kalshi.isPeak && i === polyDist.findIndex((_, j) => kalshiByPolyIdx[j].ki === kalshiPeakIdx) && (
-                    <span style={{ color: SOURCES.kalshi.fg }}>{kalshi.prob}%</span>
+                    <span style={{ color: SOURCES.kalshi.fg }}>{weatherPercent(kalshi)}</span>
                   )}
                 </div>
               )}

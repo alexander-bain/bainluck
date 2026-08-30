@@ -78,31 +78,52 @@ def _format_closes(dt: datetime | None) -> str | None:
     return dt.strftime("%a, %b %d").replace(" 0", " ")
 
 
-def _highest_prob(market: FuturesMarket) -> float:
-    """Return the highest current_probability among a market's outcomes, as 0-100 int.
+def _leader_probability(market: FuturesMarket) -> float:
+    """Return the highest current_probability among a market's outcomes, as a fraction.
 
-    ** The rounding is ``rendered_percent``, NOT ``round()``. ** This printed
-    ``round(best * 100)``, and Python's built-in is banker's rounding, so every
-    probability landing exactly on a ``.5`` with an even floor rendered one point
-    LOW against the number the rest of the product prints for the same value —
-    ``0.085`` is **8%** here and **9%** on web (``Math.round``), on native
-    (``.rounded()``) and in the server's own fingerprint (#1933,
-    ``contracts/rendered_percent.json``).
-
-    Measured on production 2026-08-30 over the 442 open weather markets this
-    route serves: 203 have a leader on a ``.5`` boundary and **81 of them
-    disagreed** — 18.3% of the page. At the outcome level (this function plus
-    the two below) it was **373 of 2,650 priced outcomes, 14.1%**. Not a
-    rounding preference: a wrong number, on the one surface whose whole job is
-    to print it.
+    The RAW value, not a percentage. Every weather number ships as a pair —
+    see :func:`_printed` for why the fraction has to travel too.
     """
     best = 0.0
     for o in market.outcomes:
         p = float(o.current_probability or 0)
         if p > best:
             best = p
-    printed = rendered_percent(best)
-    return 0 if printed is None else printed
+    return best
+
+
+def _printed(probability: float) -> dict:
+    """The two keys every weather number ships: the integer, and the value it came from.
+
+    ** THE ROUNDING IS ``rendered_percent``, NOT ``round()`` (UX-P191). **
+    Python's built-in is banker's rounding, so every probability landing exactly
+    on a ``.5`` with an even floor rendered one point LOW against the number the
+    rest of the product prints for the same value — ``0.085`` is **8%** under
+    ``round`` and **9%** on web (``Math.round``), on native (``.rounded()``) and
+    in the server's own fingerprint (#1933, ``contracts/rendered_percent.json``).
+    Measured on production 2026-08-30: 81 of 442 open weather markets and 373 of
+    2,650 priced outcomes printed a point low.
+
+    ** AND THE FRACTION HAS TO TRAVEL WITH IT (UX-P192). ** ``rendered_percent``
+    is lossy at exactly the place it matters. A market priced 0.0015 renders to
+    ``0``, and ``0%`` does not read as "unlikely" — it reads as **impossible**,
+    printed over a live quote. The site already has one home for that decision in
+    each client (``formatProbabilityPercent`` on web, ``formatProbability`` on
+    native), and both need the PROBABILITY to make it, because the band is a
+    claim about the value and not about the integer (UX-P046; see the ``rendered``
+    option's own docstring). An int cannot be un-rounded, so the wire carries both.
+
+    Measured in one query on 2026-08-30 over the outcomes these endpoints serve:
+    **288 of 2,663 are strictly inside (0, 1) and render to 0**, **21 render to
+    100 over a probability that is not 1**, and there are **no exact zeros and no
+    nulls at all**. So every ``0%`` this page has ever printed was over a price a
+    market was actively making — 130 of the 571 numbers served on the day.
+
+    The pair is built HERE rather than at the seven call sites so ``prob`` and
+    ``probability`` cannot come to describe different outcomes.
+    """
+    printed = rendered_percent(probability)
+    return {"prob": 0 if printed is None else printed, "probability": probability}
 
 
 def _market_source(market: FuturesMarket) -> str:
@@ -377,7 +398,7 @@ def _adds_to_the_question(name: str, question: str | None) -> bool:
 
 
 def _leader_outcome_name(market: FuturesMarket) -> str | None:
-    """Name of the outcome whose probability ``_highest_prob`` prints, or None.
+    """Name of the outcome whose probability the card prints, or None.
 
     A bare percentage is a complete answer only when the question already says
     what the number is about. Production, 2026-08-30: every one of the five
@@ -399,7 +420,7 @@ def _leader_outcome_name(market: FuturesMarket) -> str | None:
     Returns None when there is nothing worth naming, so the caller emits a null
     the reader never sees rather than noise under the number.
 
-    The scan deliberately mirrors ``_highest_prob``'s: same ``0.0`` floor, same
+    The scan deliberately mirrors ``_leader_probability``'s: same ``0.0`` floor, same
     strict ``>`` so the FIRST of a tie wins. The two must not be able to
     disagree about which outcome is the leader, or the card prints a number
     attached to the wrong name — strictly worse than printing no name at all.
@@ -588,7 +609,7 @@ async def get_featured(db: AsyncSession):
     for _score, m in top:
         items.append({
             "q": m.name,
-            "prob": _highest_prob(m),
+            **_printed(_leader_probability(m)),
             # Which outcome `prob` belongs to. Always present, explicitly null
             # when there is nothing worth naming — an absent key would be
             # indistinguishable from a payload served out of the pre-UX-P186
@@ -661,10 +682,16 @@ async def get_cities(db: AsyncSession):
         sources.add(_market_source(chosen))
 
         for o in chosen.outcomes:
-            # Half-up, like every other surface — see ``_highest_prob``.
-            p = rendered_percent(float(o.current_probability or 0)) or 0
+            # Through ``_printed`` like every other weather number: half-up,
+            # and the fraction rides along so the bucket can print `<1%`.
+            # This is the densest instance on the page: 118 of the 495 bucket
+            # numbers this endpoint served on 2026-08-30 printed a bare `0%`.
             sort_key = _extract_sort_temp(o.name)
-            dist.append({"label": o.name, "prob": p, "_sort": sort_key})
+            dist.append({
+                "label": o.name,
+                **_printed(float(o.current_probability or 0)),
+                "_sort": sort_key,
+            })
             if float(o.current_probability or 0) > mode_prob:
                 mode_prob = float(o.current_probability or 0)
                 mode_label = o.name
@@ -788,13 +815,13 @@ async def get_rain(db: AsyncSession):
         if not m.resolution_date:
             continue
         # Get the "Yes" outcome probability
-        prob = _get_yes_probability(m)
+        printed = _printed(_yes_probability(m))
         dt = m.resolution_date
         daily_rain.append({
             "day": dt.strftime("%a"),
             "date": dt.strftime("%b %d").replace(" 0", " "),
-            "prob": prob,
-            "icon": _rain_icon(prob),
+            **printed,
+            "icon": _rain_icon(printed["prob"]),
         })
 
     # --- Monthly city rain ---
@@ -820,7 +847,6 @@ async def get_rain(db: AsyncSession):
 
     monthly_rain = []
     for city_name, (_, m, period) in city_best.items():
-        prob = _get_yes_probability(m)
         delta = 0
         best_prob = 0.0
         for o in m.outcomes:
@@ -835,7 +861,7 @@ async def get_rain(db: AsyncSession):
         monthly_rain.append({
             "city": city_name,
             "period": period,
-            "prob": prob,
+            **_printed(_yes_probability(m)),
             "src": _market_source(m),
             "delta24h": delta,
         })
@@ -848,21 +874,20 @@ async def get_rain(db: AsyncSession):
     }
 
 
-def _get_yes_probability(market: FuturesMarket) -> int:
-    """Extract the 'Yes' outcome probability from a binary market.
+def _yes_probability(market: FuturesMarket) -> float:
+    """Extract the 'Yes' outcome probability from a binary market, as a fraction.
 
     For binary markets (will it rain?), return the Yes probability.
     Falls back to highest probability outcome if no 'Yes' found.
 
-    Half-up, like every other surface — see ``_highest_prob``. The two branches
-    must round by the same rule or the rain card would print a different number
-    depending on whether the market happened to name its leg "Yes".
+    Both branches return the RAW value, so the rain card cannot print a different
+    number depending on whether the market happened to name its leg "Yes".
     """
     for o in market.outcomes:
         if o.name and o.name.lower() in ("yes", "y"):
-            return rendered_percent(float(o.current_probability or 0)) or 0
+            return float(o.current_probability or 0)
     # Fallback: use highest probability
-    return _highest_prob(market)
+    return _leader_probability(market)
 
 
 # ============================================================================
@@ -903,7 +928,7 @@ async def get_events(db: AsyncSession):
     for m in markets:
         item = {
             "q": m.name,
-            "prob": _highest_prob(m),
+            **_printed(_leader_probability(m)),
             # The sharpest instance of the defect on the whole page: "Hurricane
             # Marie category? — 95%" is 95% of "Category 4 or above", and
             # Category 4 and Category 5 are not the same forecast.
@@ -993,7 +1018,7 @@ async def get_climate(db: AsyncSession):
         scale = _classify_scale(m)
         items.append({
             "q": m.name,
-            "prob": _highest_prob(m),
+            **_printed(_leader_probability(m)),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
             "scale": scale,
@@ -1058,7 +1083,7 @@ async def get_wildcards(db: AsyncSession):
             continue
         items.append({
             "q": m.name,
-            "prob": _highest_prob(m),
+            **_printed(_leader_probability(m)),
             # Same defect as the hero's, on the same page: "Min Arctic sea ice
             # extent this summer?" led with a bare 16% off a seven-way ladder
             # whose top four sit within 1.2 points of each other.

@@ -87,7 +87,113 @@ private let duelCases: [(away: Double?, home: Double?, percents: [Int?], pair: B
 ]
 /// DUEL ROWS END
 
+/// UX-P192 — the PRINTED rows: the STRING a reader sees, not the integer.
+///
+/// `formatProbability` is not `renderedPercent`. The integer cannot say the one
+/// thing a small price most needs to say: a market quoted at 0.0004 renders to
+/// `0`, and `0%` reads as IMPOSSIBLE over a live quote. Web and native each grew
+/// a band for that, and — with no rows here to hold them together — they were
+/// not the same function. Native used two hand-picked thresholds and so printed
+/// `<1%` for an exact ZERO and `>99%` for an exact ONE, which is the formatter
+/// inventing the very falsehood it exists to prevent, in both directions.
+///
+/// `diverged` marks the rows where the old threshold form gave a different
+/// answer, and the suite below asserts that enough of them survive — a band
+/// table with every disagreeing row deleted is green against its own bug.
+///
+/// PRINTED ROWS BEGIN
+private let printedCases: [(probability: Double, printed: String, diverged: Bool)] = [
+    (0.0, "0%", true),
+    (1.0, "100%", true),
+    (0.0001, "<1%", false),
+    (0.004, "<1%", false),
+    (0.005, "1%", true),
+    (0.0099, "1%", true),
+    (0.01, "1%", false),
+    (0.5, "50%", false),
+    (0.92, "92%", false),
+    (0.99, "99%", false),
+    (0.994, "99%", true),
+    (0.995, ">99%", false),
+    (0.996, ">99%", false),
+    (0.9999, ">99%", false),
+    (0.565, "56%", false),
+]
+/// PRINTED ROWS END
+
+/// The `rendered` override rows — where the two halves of the contract meet.
+///
+/// The override replaces the INTEGER and is then subject to the same two tests.
+/// The first row is the load-bearing one: a served 100 over a probability of
+/// 0.996 still prints `>99%`. Native's old shape returned the override before
+/// ever consulting the band, so it passed every row above and failed this one.
+///
+/// PRINTED OVERRIDE ROWS BEGIN
+private let printedOverrideCases: [(probability: Double, rendered: Int, printed: String)] = [
+    (0.996, 100, ">99%"),
+    (0.004, 0, "<1%"),
+    (0.675, 68, "68%"),
+    (0.925, 93, "93%"),
+    (0.075, 7, "7%"),
+    (1.0, 100, "100%"),
+    (0.0, 0, "0%"),
+]
+/// PRINTED OVERRIDE ROWS END
+
 final class RenderedPercentContractTests: XCTestCase {
+
+    func testEveryPrintedContractRow() {
+        for row in printedCases {
+            XCTAssertEqual(
+                formatProbability(row.probability),
+                row.printed,
+                "contract row \(row.probability) must print \(row.printed)"
+            )
+        }
+    }
+
+    func testEveryPrintedOverrideRow() {
+        for row in printedOverrideCases {
+            XCTAssertEqual(
+                formatProbability(row.probability, renderedPercent: row.rendered),
+                row.printed,
+                "override row \(row.probability)/\(row.rendered) must print \(row.printed)"
+            )
+        }
+    }
+
+    func testTheBandNeverClaimsAnActualBoundaryIsNotOne() {
+        // The two rows the old threshold form got backwards, stated as the
+        // property rather than as table lookups: a value ON a boundary prints
+        // that boundary plainly, and only the INTERIOR is ever banded.
+        XCTAssertEqual(formatProbability(0.0), "0%")
+        XCTAssertEqual(formatProbability(1.0), "100%")
+        XCTAssertNotEqual(formatProbability(0.0), "<1%")
+        XCTAssertNotEqual(formatProbability(1.0), ">99%")
+    }
+
+    func testThePrintedTableStillDiscriminates() {
+        // Same guard as the scalar table's: the rows that disagree with the old
+        // threshold form are the only ones that can catch its return, and a
+        // table can be defanged by deleting exactly those.
+        let diverged = printedCases.filter(\.diverged)
+        XCTAssertGreaterThanOrEqual(diverged.count, 5, "the band table has been defanged")
+
+        // And they really do disagree — the flag is checked against arithmetic,
+        // not trusted. This is the OLD implementation, kept only here.
+        for row in diverged {
+            let pct = row.probability * 100
+            let old: String
+            if pct < 1 { old = "<1%" } else if pct > 99 { old = ">99%" } else { old = "\(Int(pct.rounded()))%" }
+            XCTAssertNotEqual(old, row.printed, "row \(row.probability) is flagged diverged but agrees")
+        }
+    }
+
+    func testANonFinitePrintsADashRatherThanTrapping() {
+        // `Int(Double.nan)` traps in Swift. The threshold form reached it.
+        XCTAssertEqual(formatProbability(Double.nan), "—")
+        XCTAssertEqual(formatProbability(Double.infinity), "—")
+    }
 
     func testEveryContractRow() {
         for row in contractCases {

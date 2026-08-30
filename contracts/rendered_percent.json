@@ -37,7 +37,7 @@
     "then change the implementations."
   ],
 
-  "version": 4,
+  "version": 5,
 
   "rule": "floor(probability * 100 + 0.5), IEEE 754 double, multiply before rounding; null in, null out",
 
@@ -137,6 +137,99 @@
     { "probability": 0.575,  "percent": 57,   "discriminates": false, "$why": "57.49999999999999, same reason — pinned because it LOOKS like a .5 boundary and is not" },
     { "probability": 0.9999, "percent": 100,  "discriminates": false, "$why": "rounds up to a full 100 without ever exceeding it" },
     { "probability": 0.0001, "percent": 0,    "discriminates": false, "$why": "a real but invisible price prints 0, and 0 is not null" }
+  ],
+
+  "$printed_cases_comment": [
+    "VERSION 5 ADDS THE PRINTED STRING (UX-P192). `rendered_percent` above is the",
+    "INTEGER. It is not what a reader sees, because an integer cannot say the one",
+    "thing a small price most needs to say. A market quoted at 0.0004 renders to",
+    "`0`, and `0%` does not read as 'unlikely' — it reads as IMPOSSIBLE, printed",
+    "over a quote a market is actively making. UX-P046 fixed that on web with the",
+    "band, and native grew its own copy of the band the same week.",
+    "",
+    "THE TWO COPIES WERE NOT THE SAME FUNCTION, and nothing could have noticed,",
+    "because the band had no rows here. Web derived it from the ROUNDING RESULT",
+    "(`rounded <= 0 && p > 0`); native used two hand-picked THRESHOLDS",
+    "(`pct < 1`, `pct > 99`). They agree across most of the interval and disagree",
+    "at four places, every one of them a place where being wrong is expensive:",
+    "",
+    "  p = 0.005  web `1%`     native `<1%`   — four live weather buckets sat here",
+    "  p = 0.994  web `99%`    native `>99%`",
+    "  p = 0      web `0%`     native `<1%`   — impossible reported as merely unlikely",
+    "  p = 1      web `100%`   native `>99%`  — certainty taken off a settled market",
+    "",
+    "The last two are the ones that matter beyond parity: a formatter that exists",
+    "to stop a boundary being claimed falsely must not claim the INTERIOR falsely",
+    "either, and 'settled means settled' (Alex) is a product ruling, not a taste.",
+    "",
+    "THE RULE, and note that it is stated over the INTEGER the rows above produce,",
+    "so the two halves of this contract cannot drift apart: print `<1%` when the",
+    "integer is <= 0 while the probability is strictly positive, `>99%` when it is",
+    ">= 100 while the probability is strictly below one, and `\"{n}%\"` otherwise.",
+    "A `rendered` override replaces the INTEGER and is then subject to the same",
+    "two tests, because the band is a claim about the VALUE and not about which",
+    "arithmetic produced the integer.",
+    "",
+    "Python has no arm here on purpose: the server publishes numbers and the",
+    "clients print them (ruling 003). If a Python arm is ever added, it belongs in",
+    "`printed_implementations` and must be driven through every row below."
+  ],
+
+  "printed_rule": "given r = the rendered integer (an explicit override, else floor(p*100+0.5)): '<1%' if r <= 0 and p > 0; '>99%' if r >= 100 and p < 1; otherwise '{r}%'. Non-finite p prints an em dash.",
+
+  "printed_implementations": [
+    {
+      "runtime": "typescript",
+      "path": "frontend/lib/probabilityDisplay.ts",
+      "symbol": "formatProbabilityPercent",
+      "driven_by": "frontend/__tests__/lib/renderedPercentContract.test.ts"
+    },
+    {
+      "runtime": "swift",
+      "path": "ios/Bain Luck/Bain Luck/Utilities/FormattingUtilities.swift",
+      "symbol": "formatProbability",
+      "driven_by": "ios/Bain Luck/BainLuckTests/RenderedPercentContractTests.swift"
+    }
+  ],
+
+  "printed_cases": [
+    { "probability": 0.0,    "printed": "0%",    "diverged": true,  "$why": "THE ONE THAT MUST NOT BE A BAND. Exactly impossible. Native's threshold form printed `<1%` here, inventing a possibility" },
+    { "probability": 1.0,    "printed": "100%",  "diverged": true,  "$why": "exactly certain. Native printed `>99%`, taking certainty off a settled market" },
+    { "probability": 0.0001, "printed": "<1%",   "diverged": false, "$why": "THE EXEMPLAR — a real price rendering to 0. Both arms already agreed here; this is the row the band exists for" },
+    { "probability": 0.004,  "printed": "<1%",   "diverged": false, "$why": "still rounds to 0" },
+    { "probability": 0.005,  "printed": "1%",    "diverged": true,  "$why": "THE SPECIMEN — rounds half-up to 1, so it is NOT below one percent. Native's `pct < 1` said `<1%`. Four live /weather temperature buckets were priced here on 2026-08-30" },
+    { "probability": 0.0099, "printed": "1%",    "diverged": true,  "$why": "0.99 rounds to 1; the threshold form banded everything under a full point" },
+    { "probability": 0.01,   "printed": "1%",    "diverged": false, "$why": "the first value both forms agreed to print plainly" },
+    { "probability": 0.5,    "printed": "50%",   "diverged": false },
+    { "probability": 0.92,   "printed": "92%",   "diverged": false },
+    { "probability": 0.99,   "printed": "99%",   "diverged": false, "$why": "the threshold was strict (`> 99`), so 99.0 exactly was the one point in that neighbourhood the two forms agreed on" },
+    { "probability": 0.994,  "printed": "99%",   "diverged": true,  "$why": "rounds to 99, which is not above ninety-nine. Native printed `>99%`" },
+    { "probability": 0.995,  "printed": ">99%",  "diverged": false, "$why": "rounds to 100 while strictly below 1 — the upper band's first row" },
+    { "probability": 0.996,  "printed": ">99%",  "diverged": false },
+    { "probability": 0.9999, "printed": ">99%",  "diverged": false, "$why": "the mirror of 0.0001, and the reason the band is derived from the rounding rather than from a second constant" },
+    { "probability": 0.565,  "printed": "56%",   "diverged": false, "$why": "the multiply-first row again, carried through to the string so a decimal-typed reimplementation fails here too" }
+  ],
+
+  "$printed_override_cases_comment": [
+    "The `rendered` override, which is where the two halves of this contract meet.",
+    "`rendered` is the CARD-level integer the server already decided (#2060 — two",
+    "sides of one question must total 100, so neither side may round itself). It",
+    "replaces the integer and is then subject to the same two tests.",
+    "",
+    "The first row is the load-bearing one: a served 100 over a probability of",
+    "0.996 still prints `>99%`, because a card-sum decision is not a licence to",
+    "claim certainty. An implementation that returned the override early — which",
+    "is exactly what native's did — passes every row above and fails this one."
+  ],
+
+  "printed_override_cases": [
+    { "probability": 0.996, "rendered": 100, "printed": ">99%", "$why": "THE EXEMPLAR. The override cannot buy a boundary the value is not on" },
+    { "probability": 0.004, "rendered": 0,   "printed": "<1%",  "$why": "the mirror" },
+    { "probability": 0.675, "rendered": 68,  "printed": "68%",  "$why": "an ordinary override, passed straight through" },
+    { "probability": 0.925, "rendered": 93,  "printed": "93%",  "$why": "#2060's own card, leader side" },
+    { "probability": 0.075, "rendered": 7,   "printed": "7%",   "$why": "#2060's own card, trailing side — 7 and not the 8 independent rounding gives" },
+    { "probability": 1.0,   "rendered": 100, "printed": "100%", "$why": "an exact one with a matching override is still plain" },
+    { "probability": 0.0,   "rendered": 0,   "printed": "0%",   "$why": "and an exact zero is still plain" }
   ],
 
   "$card_cases_comment": [

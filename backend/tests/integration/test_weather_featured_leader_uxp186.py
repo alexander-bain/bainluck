@@ -581,5 +581,6 @@ class TestNothingElseChanged:
         item = (await client.get("/api/weather/featured")).json()[0]
 
         assert set(item) == {
-            "q", "prob", "src", "tag", "closes", "market_id", "leader",
+            "q", "prob", "probability", "src", "tag", "closes", "market_id",
+            "leader",
         }

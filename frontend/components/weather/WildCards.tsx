@@ -133,7 +133,7 @@ export default function WildCards() {
               style={{ marginBottom: 12 }}
             >
               <div style={{ minWidth: 0 }}>
-                <ProbabilityNumber value={card.prob} size={42} />
+                <ProbabilityNumber item={card} size={42} />
                 {/* "Min Arctic sea ice extent this summer? — 16%" is not an
                     answer; "16% · 4.0-4.2m sq km" is. See FeaturedMarket.leader. */}
                 {card.leader ? (
