@@ -414,12 +414,102 @@ def ladder_is_incoherent(rungs: Mapping[float, float], direction: str) -> bool:
 # The NAME site: one market per rung.
 # ---------------------------------------------------------------------------
 
+#: CAL-P136. The PRICE site, and it is a separate blindness from the grammar.
+#:
+#: Every caller of this module so far has priced a rung with a leg literally
+#: named ``yes`` — that is what ``MONO_ROWS_SQL`` selects, and a market with no
+#: such leg gets a NULL price and is dropped before any grammar runs. Polymarket's
+#: two-sided totals book has no ``yes`` leg at all: it prices ``Over`` and
+#: ``Under``. Measured by CAL-P135, ``polymarket/baseball`` has ZERO O/U-named
+#: markets with a yes leg and ``polymarket/soccer`` has two, so on those cells
+#: the grammar fix landed by CAL-P135 buys nothing on its own.
+#:
+#: 🔴 THE LEG IS NOT INTERCHANGEABLE WITH THE PROPOSITION. ``Over`` and ``Under``
+#: price OPPOSITE claims, so substituting the wrong one inverts the law's sign
+#: exactly as reading the ``Under`` half of the compound did (see
+#: :data:`OVER_UNDER_RE`). The substitution below is therefore deliberately
+#: narrow and REFUSES rather than guesses:
+#:
+#:   * a ``yes`` leg always wins — it is what every existing measurement used,
+#:     and changing that would silently re-base the shipped cells;
+#:   * ``over`` substitutes ONLY on a market that carries BOTH an ``over`` and an
+#:     ``under`` leg (proof of the two-sided pair shape, rather than a market
+#:     that merely happens to own an outcome called "over") AND whose name parses
+#:     as the :func:`parse_over_under` compound, whose direction is fixed at
+#:     :data:`DEC` by containment rather than read off a word;
+#:   * every other shape yields no price and a REASON, which callers count.
+#:
+#: The reason codes exist because of lesson 22: a refusal that is not counted is
+#: indistinguishable from a clean cell.
+YES_LEG, OVER_LEG, UNDER_LEG = "yes_price", "over_price", "under_price"
+
+#: Where :func:`ladder_report` parks the price it resolved, when it was asked to
+#: resolve one. Private, and named so it cannot collide with a caller's column.
+_RESOLVED_PRICE = "_resolved_price"
+
+
+def proposition_price(
+    row: Mapping[str, object],
+    *,
+    name_key: str = "name",
+    yes_key: str = YES_LEG,
+    over_key: str = OVER_LEG,
+    under_key: str = UNDER_LEG,
+) -> tuple[float | None, str]:
+    """``(price, reason)`` for the proposition this market's NAME asserts.
+
+    ``reason`` is ``"yes"`` or ``"over"`` when a price was found, and otherwise
+    names the refusal: ``"no_name"``, ``"no_leg"`` (neither a yes nor a complete
+    over/under pair), ``"half_pair"`` (an over or under leg without its twin,
+    which is not the two-sided shape and may be a one-sided ask placeholder), or
+    ``"not_ou_named"`` (a genuine two-sided pair whose name this module's
+    grammars do not read as an O/U compound, so which side is being asserted is
+    unknown).
+
+    Never raises on a missing key: a caller pulling only a yes leg gets exactly
+    the behaviour it had before this function existed.
+    """
+    name = row.get(name_key)
+    if not isinstance(name, str) or not name:
+        return None, "no_name"
+    yes = row.get(yes_key)
+    if yes is not None:
+        return float(yes), "yes"
+    over, under = row.get(over_key), row.get(under_key)
+    if over is None and under is None:
+        return None, "no_leg"
+    if over is None or under is None:
+        return None, "half_pair"
+    if parse_over_under(name) is None:
+        return None, "not_ou_named"
+    return float(over), "over"
+
+
+#: Separates the identity context from the blanked name inside a family key.
+#: A unit separator rather than a printable character so it can never occur in
+#: a market name and accidentally merge or split a family.
+CONTEXT_SEP = "\x1f"
+
+
+def scoped_key(context: object, blanked: str) -> str:
+    """The family-key string, optionally scoped to an identity.
+
+    ``None`` context returns the bare blanked name, so a caller that does not
+    supply an identity gets byte-identical keys to every measurement taken
+    before CAL-P136.
+    """
+    if context is None:
+        return blanked
+    return f"{context}{CONTEXT_SEP}{blanked}"
+
+
 def read_name_ladders(
     rows: Iterable[Mapping[str, object]],
     *,
     name_key: str = "name",
     price_key: str = "yes_price",
     id_key: str = "market_id",
+    context_key: str | None = None,
 ) -> dict[tuple[str, str], dict]:
     """Group rung markets into families, and record where the grouping is UNSAFE.
 
@@ -433,6 +523,25 @@ def read_name_ladders(
     and every one is a genuine re-listing of the same question under a second
     market id ("AWS service disrupted by March 31?" exists three times), which
     is exactly the case where condemning would be wrong.
+
+    ``context_key`` names a row column holding an IDENTITY, and when given, the
+    family key is scoped to it (:func:`scoped_key`). This is the fix for the
+    hazard the module docstring has always named and CAL-P135 finally measured:
+    a Polymarket sub-market's name is frequently context-free ("Games Total: O/U
+    2.5"), so ``blanked_key`` alone collapses unrelated matches into one family
+    — largest measured, 5,811 markets across 409 events. Scoping the key is NOT
+    merely a refinement of the census; it changes which families are
+    condemnable, because ``duplicate_values`` was the only thing standing
+    between that collapse and a rule that deletes rows.
+
+    🔴 SCOPING THE KEY REQUIRES THE :data:`OVER_UNDER_RE` SIGN FIX. Under the
+    pre-CAL-P135 grammar the compound's ``Under`` half bound and the family was
+    filed ``inc``, the exact inverse of the truth; the collapse was the only
+    reason that inversion stayed latent. CAL-P135 measured what scoping the key
+    without the sign fix would do: 2 condemned families become 1,296, and they
+    are the ladders behaving CORRECTLY. The two land together or not at all.
+
+    Left ``None``, every key is byte-identical to the pre-CAL-P136 behaviour.
     """
     ladders: dict[tuple[str, str], dict] = {}
     for row in rows:
@@ -440,7 +549,9 @@ def read_name_ladders(
         price = row.get(price_key)
         if not isinstance(name, str) or price is None:
             continue
-        for key, value in name_rungs(name):
+        context = row.get(context_key) if context_key is not None else None
+        for (blanked, direction), value in name_rungs(name):
+            key = (scoped_key(context, blanked), direction)
             slot = ladders.setdefault(
                 key, {"rungs": {}, "duplicate_values": {}, "member_ids": [], "rows": 0})
             slot["rows"] += 1
@@ -531,8 +642,9 @@ def ladder_report(
     rows: Iterable[Mapping[str, object]],
     *,
     name_key: str = "name",
-    price_key: str = "yes_price",
+    price_key: str | None = "yes_price",
     id_key: str = "market_id",
+    context_key: str | None = None,
 ) -> dict:
     """The NAME site end to end: id partition plus the census that produced it.
 
@@ -545,10 +657,31 @@ def ladder_report(
     ``census`` is printed rather than summarised by callers, because a run where
     the ambiguity guard swallowed the population would otherwise look
     identical to a run where the rule found nothing (gotcha #53).
+
+    ``context_key`` is forwarded to :func:`read_name_ladders` and is applied
+    again when this function re-derives each row's keys, so the partition and
+    the family census are always built from the SAME key. Deriving them from
+    two different keys is the shape of bug that makes a census reconcile
+    against nothing.
+
+    ``price_key=None`` selects the price with :func:`proposition_price` instead
+    of reading one fixed column, which is how a caller reaches a book that is
+    not priced with a ``yes`` leg. The refusal tally lands in the census as
+    ``price_legs`` — where a reader sees it next to the verdict, because a cell
+    whose whole population was refused at the price site reads exactly like a
+    clean cell otherwise (lesson 22).
     """
-    rows = list(rows)
+    rows = [dict(r) for r in rows]
+    price_legs: dict[str, int] = {}
+    if price_key is None:
+        price_key = _RESOLVED_PRICE
+        for row in rows:
+            price, reason = proposition_price(row, name_key=name_key)
+            price_legs[reason] = price_legs.get(reason, 0) + 1
+            row[_RESOLVED_PRICE] = price
     ladders = read_name_ladders(
-        rows, name_key=name_key, price_key=price_key, id_key=id_key)
+        rows, name_key=name_key, price_key=price_key, id_key=id_key,
+        context_key=context_key)
     ambiguous = ambiguous_families(ladders)
     condemned = condemned_families(ladders)
 
@@ -559,7 +692,9 @@ def ladder_report(
         name = row.get(name_key)
         if not isinstance(name, str) or row.get(price_key) is None:
             continue
-        keys = [k for k, _ in name_rungs(name)]
+        context = row.get(context_key) if context_key is not None else None
+        keys = [(scoped_key(context, blanked), direction)
+                for (blanked, direction), _ in name_rungs(name)]
         keys = [k for k in keys if len(ladders.get(k, {}).get("rungs", {})) >= 2]
         if not keys:
             continue
@@ -605,6 +740,8 @@ def ladder_report(
             "markets_ambiguous": len(amb_ids),
             "markets_coherent": len(coherent),
             "assumed_year": DEFAULT_YEAR,
+            "price_legs": price_legs,
+            "context_scoped": context_key is not None,
         },
     }
 

@@ -920,3 +920,217 @@ def _rungs_without_over_under(name):
         span, value, direction = parsed
         out.append(((blanked_key(name, span), direction), value))
     return out
+
+
+# ---------------------------------------------------------------------------
+# CAL-P136 — the PRICE site and the IDENTITY-SCOPED family key.
+#
+# CAL-P135 fixed the grammar and the sign and then measured that the four
+# Polymarket sports cells STILL could not be folded, for two reasons it could
+# not fix in the same commit. Both are guarded here, and every market name below
+# is copied verbatim from ``artifacts/cal-p135/rows-polymarket-*.json.gz``.
+#
+# The two fixes are one package. Scoping the key without the sign fix condemns
+# the ladders that are behaving correctly (1,296 families, measured by CAL-P135),
+# so ``test_scoped_key_reads_the_over_ladder_in_the_right_direction`` exists to
+# make that combination fail loudly rather than quietly invert.
+# ---------------------------------------------------------------------------
+
+from app.utils.ladder_monotonicity import (  # noqa: E402
+    CONTEXT_SEP,
+    proposition_price,
+    scoped_key,
+)
+
+
+def _ou(name, market_id, gid, over=None, under=None, yes=None):
+    return {"name": name, "market_id": market_id, "group_id": gid,
+            "over_price": over, "under_price": under, "yes_price": yes}
+
+
+@pytest.mark.parametrize("row,expected", [
+    # A yes leg always wins: this is what every pre-CAL-P136 measurement used
+    # and re-basing it silently would move the shipped cells.
+    ({"name": "Will Broadcom Q2 AI revenue be above $10.5B?", "yes_price": 0.4,
+      "over_price": 0.9, "under_price": 0.1}, (0.4, "yes")),
+    # The two-sided pair, named as the compound: the Over leg prices it.
+    ({"name": "Knicks vs. Spurs: O/U 224.5",
+      "over_price": 0.52, "under_price": 0.48}, (0.52, "over")),
+    ({"name": "Total Kills Over/Under 27.5 in Game 1?",
+      "over_price": 0.61, "under_price": 0.39}, (0.61, "over")),
+])
+def test_proposition_price_reads_the_leg_that_prices_the_proposition(row, expected):
+    assert proposition_price(row) == expected
+
+
+@pytest.mark.parametrize("row,reason", [
+    # No leg at all — the pre-CAL-P136 behaviour, now named rather than silent.
+    ({"name": "Knicks vs. Spurs: O/U 224.5"}, "no_leg"),
+    # HALF a pair is not the two-sided shape. ``polymarket/golf``'s field
+    # markets are one-sided-ask placeholders, and reading one as if it were half
+    # of a real pair is how a placeholder becomes a violation.
+    ({"name": "Knicks vs. Spurs: O/U 224.5", "over_price": 0.52}, "half_pair"),
+    ({"name": "Knicks vs. Spurs: O/U 224.5", "under_price": 0.48}, "half_pair"),
+    # A real two-sided pair whose name this module cannot read as a compound:
+    # which side is being asserted is UNKNOWN, so it is refused, not guessed.
+    ({"name": "Match Winner", "over_price": 0.4, "under_price": 0.6},
+     "not_ou_named"),
+    ({"name": "", "over_price": 0.4, "under_price": 0.6}, "no_name"),
+])
+def test_proposition_price_refuses_rather_than_guesses(row, reason):
+    price, got = proposition_price(row)
+    assert price is None
+    assert got == reason
+
+
+def test_proposition_price_is_a_no_op_for_a_yes_only_caller():
+    """A caller that pulls only a yes leg gets exactly its old behaviour."""
+    assert proposition_price({"name": "above $5B?", "yes_price": 0.3}) == (0.3, "yes")
+    assert proposition_price({"name": "above $5B?", "yes_price": None})[0] is None
+
+
+def test_scoped_key_is_the_identity_when_given_and_the_bare_name_otherwise():
+    assert scoped_key(None, "games total: <rung>") == "games total: <rung>"
+    assert scoped_key("g:polymarket:573738", "games total: <rung>") == (
+        f"g:polymarket:573738{CONTEXT_SEP}games total: <rung>")
+
+
+def test_unscoped_key_merges_two_unrelated_events_into_one_condemnable_family():
+    """The manufactured finding, reproduced. This is the defect, not the fix.
+
+    Two different esports matches each price a single line. Neither is a ladder.
+    Under the bare name key they become one two-rung family whose "reversal" is
+    a comparison of match A's price against match B's — and because the rungs
+    are DISJOINT, ``duplicate_values`` never fires and nothing marks it
+    ambiguous.
+    """
+    rows = [_ou("Games Total: O/U 2.5", 1, "polymarket:573738", over=0.60, under=0.40),
+            _ou("Games Total: O/U 3.5", 2, "polymarket:573740", over=0.70, under=0.30)]
+    unscoped = read_name_ladders(rows, price_key="over_price")
+    assert len(unscoped) == 1
+    (family,) = unscoped.values()
+    assert family["rungs"] == {2.5: 0.60, 3.5: 0.70}
+    assert not family["duplicate_values"]        # the guard cannot see this
+    assert condemned_families(unscoped)          # ...so the rule condemns both
+
+
+def test_scoping_the_key_leaves_two_single_rung_families_that_cannot_be_condemned():
+    """The same two rows, keyed by event: two singletons, and a singleton is
+    never condemned (ruling 105). The finding was an artifact of the key."""
+    rows = [_ou("Games Total: O/U 2.5", 1, "polymarket:573738", over=0.60, under=0.40),
+            _ou("Games Total: O/U 3.5", 2, "polymarket:573740", over=0.70, under=0.30)]
+    scoped = read_name_ladders(rows, price_key="over_price", context_key="group_id")
+    assert len(scoped) == 2
+    assert all(len(v["rungs"]) == 1 for v in scoped.values())
+    assert not condemned_families(scoped)
+
+
+def test_scoped_key_reads_the_over_ladder_in_the_right_direction():
+    """🔴 THE PACKAGE GUARD. One event, a real two-rung ladder, priced correctly:
+    the Over price FALLS as the line rises. It must be coherent.
+
+    Under the pre-CAL-P135 sign this family was filed ``inc`` — off the ``Under``
+    half of the compound — and a correctly priced ladder read as a violation.
+    That inversion was latent only because the unscoped key made everything
+    ambiguous, so this test is what stops the two fixes being landed apart.
+    """
+    rows = [_ou("Total Kills Over/Under 26.5 in Game 1?", 1, "polymarket:9",
+                over=0.62, under=0.38),
+            _ou("Total Kills Over/Under 28.5 in Game 1?", 2, "polymarket:9",
+                over=0.41, under=0.59)]
+    scoped = read_name_ladders(rows, price_key="over_price", context_key="group_id")
+    (key,), = [tuple(scoped)]
+    assert key[1] == DEC
+    assert scoped[key]["rungs"] == {26.5: 0.62, 28.5: 0.41}
+    assert not condemned_families(scoped)
+
+    # ...and the genuinely broken ordering in the same event still condemns.
+    rows[1]["over_price"] = 0.80
+    broken = read_name_ladders(rows, price_key="over_price", context_key="group_id")
+    assert condemned_families(broken)
+
+
+def test_baseball_player_prop_collapses_across_130_games_without_the_identity():
+    """``Miguel Vargas: Home Runs O/U <rung>`` occurs 130 times in the cell — one
+    per game, not one ladder. The name carries a player, which LOOKS like an
+    identity and is not one."""
+    rows = [_ou(f"Miguel Vargas: Home Runs O/U {0.5 + i}", i, f"polymarket:{i}",
+                over=0.5, under=0.5) for i in range(4)]
+    assert len(read_name_ladders(rows, price_key="over_price")) == 1
+    assert len(read_name_ladders(
+        rows, price_key="over_price", context_key="group_id")) == 4
+
+
+def test_ladder_report_publishes_the_price_site_refusals_next_to_the_verdict():
+    """Lesson 22: a cell whose population was refused at the PRICE site reads
+    exactly like a clean cell unless the refusals are counted where the verdict
+    is read."""
+    rows = [_ou("Knicks vs. Spurs: O/U 224.5", 1, "g", over=0.52, under=0.48),
+            _ou("Knicks vs. Spurs: O/U 226.5", 2, "g", over=0.44, under=0.56),
+            _ou("Knicks vs. Spurs: O/U 228.5", 3, "g", over=0.40),   # half a pair
+            _ou("Match Winner", 4, "g", over=0.40, under=0.60)]      # not O/U named
+    report = ladder_report(rows, price_key=None, context_key="group_id")
+    assert report["census"]["price_legs"] == {
+        "over": 2, "half_pair": 1, "not_ou_named": 1}
+    assert report["census"]["context_scoped"] is True
+    assert report["census"]["markets_coherent"] == 2
+
+
+def test_ladder_report_is_byte_identical_when_no_context_is_supplied():
+    """Every measurement taken before CAL-P136 must still reproduce exactly."""
+    rows = [{"name": "Will X's valuation hit (HIGH) $200B by June 30?",
+             "market_id": 1, "yes_price": 0.5},
+            {"name": "Will X's valuation hit (HIGH) $300B by June 30?",
+             "market_id": 2, "yes_price": 0.6}]
+    before = ladder_report(rows)
+    assert before["census"]["context_scoped"] is False
+    assert before["census"]["price_legs"] == {}
+    assert before["drop"] == {1, 2}
+    assert ladder_report(rows, context_key=None) == before
+
+
+# --- CAL-P136, the rail wiring ---------------------------------------------
+
+def test_mono_columns_match_the_select_list_positionally():
+    """db-query returns rows as ARRAYS. The pre-pass zips them against
+    MONO_COLUMNS, so a column added to the middle of the SELECT without the
+    same edit here shifts every field silently."""
+    import re
+    cce = _rail()
+    selected = re.findall(r"AS (\w+)", cce.MONO_ROWS_SQL)
+    assert tuple(selected) == cce.MONO_COLUMNS
+
+
+def test_kalshi_has_no_ladder_identity_because_its_group_id_is_the_market():
+    """🔴 The guard that stops --by mono zeroing the Kalshi book.
+
+    Measured: ``kalshi/economics`` has 342 markets and 342 distinct group_ids,
+    ``kalshi/crypto`` 3,983 and 3,983 — Kalshi's ``group_id`` is the market's
+    own ticker. Scoping a family key by a column with one value per row makes
+    every family a singleton, no singleton is condemnable, and the cell reports
+    CLEAN. That is exactly lesson 22, and it must not be reachable by editing
+    one dict entry without measuring first.
+    """
+    cce = _rail()
+    assert cce.MONO_CONTEXT_COLUMN["kalshi"] is None
+    assert cce.MONO_CONTEXT_COLUMN["polymarket"] == "group_id"
+
+
+def test_a_one_value_per_row_identity_annihilates_the_book():
+    """The failure the table above prevents, demonstrated on Kalshi's shape."""
+    rows = [{"name": f"Will CPI be above {v}%?", "market_id": i,
+             "group_id": f"kalshi:KXCPI-26MAY{i:02d}", "yes_price": p}
+            for i, (v, p) in enumerate([(2.0, 0.80), (2.5, 0.90), (3.0, 0.95)])]
+    real = ladder_report(rows)
+    assert real["census"]["families_condemned"] == 1        # a genuine reversal
+    assert real["drop"] == {0, 1, 2}
+
+    annihilated = ladder_report(rows, context_key="group_id")
+    assert annihilated["census"]["families_multi_rung"] == 0
+    assert annihilated["census"]["families_condemned"] == 0
+    assert annihilated["drop"] == set()                     # reads as a clean cell
+
+
+def test_mono_context_refuses_a_source_with_no_measured_identity():
+    cce = _rail()
+    assert "theoddsapi" not in cce.MONO_CONTEXT_COLUMN

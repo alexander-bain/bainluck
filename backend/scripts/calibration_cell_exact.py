@@ -947,9 +947,17 @@ CASE WHEN d.market_id = ANY({_id_array(_LADDER['drop'], lo, hi)})
 MONO_ROWS_SQL = """
 SELECT fm.id AS market_id,
        MAX(fm.name) AS name,
+       MAX(fm.group_id) AS group_id,
+       MAX(fm.event_id) AS event_id,
        MAX(CASE WHEN lower(btrim(fo.name)) = 'yes'
                 THEN COALESCE(fo.calibration_probability, fo.opening_probability)
-           END) AS yes_price
+           END) AS yes_price,
+       MAX(CASE WHEN lower(btrim(fo.name)) = 'over'
+                THEN COALESCE(fo.calibration_probability, fo.opening_probability)
+           END) AS over_price,
+       MAX(CASE WHEN lower(btrim(fo.name)) = 'under'
+                THEN COALESCE(fo.calibration_probability, fo.opening_probability)
+           END) AS under_price
 FROM futures_markets fm
 JOIN futures_outcomes fo ON fo.market_id = fm.id
 WHERE fm.source = '{source}'
@@ -957,6 +965,33 @@ WHERE fm.source = '{source}'
   AND fm.id >= {lo} AND fm.id < {hi}
 GROUP BY fm.id
 """
+
+#: Positional names for :data:`MONO_ROWS_SQL`. db-query returns rows as ARRAYS,
+#: so the pre-pass zips rather than indexes — adding a column in the middle of
+#: the SELECT used to shift every downstream index by one, silently.
+MONO_COLUMNS = ("market_id", "name", "group_id", "event_id",
+                "yes_price", "over_price", "under_price")
+
+#: CAL-P136. Which column, if any, identifies the LADDER a market belongs to —
+#: and it is a per-SOURCE fact, not a per-cell preference.
+#:
+#: 🔴 MEASURED, AND THE TWO SOURCES ARE OPPOSITE. On Polymarket ``group_id`` is
+#: ``polymarket:{event.id}`` and genuinely groups: 3.08 markets per group on
+#: ``polymarket/tech``, 3.25 on ``polymarket/economics``, and 100% coverage on
+#: all four sports cells. On Kalshi ``group_id`` is the market's own ticker —
+#: ``kalshi:KXAAAGASD-26MAY25`` — and is ONE PER MARKET: 342 markets, 342
+#: distinct group_ids on a ``kalshi/economics`` slice; 3,983/3,983 on
+#: ``kalshi/crypto``.
+#:
+#: So scoping the family key by ``group_id`` on Kalshi does not refine the
+#: partition, it DESTROYS it: every family becomes a singleton, no singleton is
+#: ever condemned (ruling 105), and the cell reports as clean. That is lesson 22
+#: with the safety guard replaced by a join key, and it is why this is a table
+#: keyed by source rather than a flag the operator remembers to set.
+#:
+#: ``None`` means "this source has no ladder identity" and reproduces every
+#: measurement taken before CAL-P136 byte for byte.
+MONO_CONTEXT_COLUMN = {"polymarket": "group_id", "kalshi": None}
 
 #: Filled by :func:`mono_context` before the sweep starts.
 _MONO: dict | None = None
@@ -985,6 +1020,13 @@ def mono_context(source: str, category: str, width: int) -> dict:
     The verdict is computed by ``app.utils.ladder_monotonicity.ladder_report`` —
     the module a shipping caller would use — and this function never re-derives
     a family key, a direction or a violation.
+
+    CAL-P136 changed WHICH ROWS reach it, in two ways, and neither changes the
+    law. ``price_key=None`` lets the module pick the leg that prices the
+    proposition, so the Polymarket totals book — which has no ``yes`` leg at all
+    on baseball and two on soccer — stops being dropped before the grammar runs.
+    ``context_key`` comes from :data:`MONO_CONTEXT_COLUMN` and is ``None`` on
+    Kalshi for the measured reason recorded there.
     """
     rng = db_query(
         f"SELECT MIN(id) AS lo, MAX(id) AS hi FROM futures_markets "
@@ -1002,8 +1044,16 @@ def mono_context(source: str, category: str, width: int) -> dict:
         rows.extend(_pull_mono_rows(source, category, e, nxt))
         e = nxt
 
+    if source not in MONO_CONTEXT_COLUMN:
+        raise RuntimeError(
+            f"--by mono has no measured ladder identity for source {source!r}; "
+            f"add it to MONO_CONTEXT_COLUMN with the cardinality that justifies "
+            f"it. Guessing here is how a cell reports clean because every "
+            f"family became a singleton.")
     return ladder_report(
-        [{"market_id": r[0], "name": r[1], "yes_price": r[2]} for r in rows])
+        [dict(zip(MONO_COLUMNS, r)) for r in rows],
+        price_key=None,
+        context_key=MONO_CONTEXT_COLUMN[source])
 
 
 def mono_dim(lo: int, hi: int) -> tuple[str, str, str]:
