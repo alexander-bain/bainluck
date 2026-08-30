@@ -1606,8 +1606,8 @@ def _kalshi_untraded_mid(source: str | None, prob: float | None) -> bool:
 _PRICE_IS_ASK_TOLERANCE = 0.0005
 
 
-def _field_is_offer_sheet(outcomes) -> bool:
-    """True when a whole field is one seller's price list, not a market (Q446).
+def _price_is_unaccepted_offer(outcome) -> bool:
+    """True when THIS outcome's printed number is a seller's offer nobody took (Q446).
 
     THE SPECIMEN, production 2026-08-29. `GET /api/golf` served, under PGA Tour:
 
@@ -1623,44 +1623,55 @@ def _field_is_offer_sheet(outcomes) -> bool:
     probability, which is this queue's "a number never written, something else shown
     in its place".
 
-    WHY THE FIELD AND NOT THE OUTCOME. A lone longshot at bid 0.00 / ask 0.02 is a
-    normal thing for a real market to contain, and refusing those one at a time would
-    strip the tail off every winner field we serve. What is never normal is a field in
-    which *not one competitor* has attracted a bid and *every* number we print is a
-    seller's offer. That is a price list, and it is not evidence about who wins.
+    PER OUTCOME, AND THAT SCOPE IS THE CERT-450 REPAIR. This rule used to be
+    `_field_is_offer_sheet`, asked of the whole field and answered all-or-nothing: a
+    field was refused only when NOT ONE competitor carried a bid. On the Nexo
+    round-leader shape that is 137 ask-only rows laundered by the one golfer somebody
+    happened to bid on — the branch even pinned the behaviour in a test called
+    `test_one_real_bid_anywhere_saves_the_field`. But a bid on Rory McIlroy is not
+    evidence about Adrian Meronk. Provenance belongs to the number, not to its
+    neighbours, and the ship is that readers stop seeing placeholder prices — which
+    137 of them plainly still were.
 
-    ALL THREE CONDITIONS ARE REQUIRED, and each one is carrying a control:
+    The old scope was defended on the grounds that "a lone longshot at bid 0.00 /
+    ask 0.02 is a normal thing for a real market to contain". It is — and its 2% is
+    still a number nobody will pay a cent for. Darkening it removes a fabricated row
+    from the tail; it does not remove a reading, because there was never a reading
+    there. What the deep tail costs is COMPLETENESS, and the callers already present
+    these fields as partial lists (`_MAX_GOLFERS`, prop top-5), so an absent tail
+    reads as absent rather than as zero.
 
-      * `>= 2` priced outcomes — a single binary is not a field.
-      * no priced outcome carries a bid — the CPKC Women's Open and FM Championship
-        round-leader fields also have no bid anywhere, but their prices are
-        `last_price`, i.e. real trades. They must survive, and they do, on the
-        third condition.
-      * every priced outcome's number IS its own ask — this is what separates "no
-        bid right now" from "the only number here is an offer".
+    TWO CONDITIONS, each carrying a control:
 
-    Outcomes with no book at all are not priced by an ask, so the odds_api and
-    DataGolf model fields cannot reach this rule: with no ask, the third condition
-    fails on the first outcome. That is by construction, not by exemption.
+      * the printed number IS this outcome's own ask — this is what separates "no
+        bid right now" from "the only number here is an offer". The CPKC Women's
+        Open and FM Championship round-leader fields carry no bid on any outcome
+        either, but their prices are `last_price`: real trades on a book that has
+        since gone one-sided. They differ from the ask and they survive, outcome by
+        outcome, exactly as they did under the field rule.
+      * no bid stands behind it. NULL and 0.0000 are the same fact here and this is
+        NOT the gotcha #53 hazard that makes `_is_placeholder_price` fail open on an
+        absent side: the ASK is present, so this book was read. A book we read, that
+        quotes an offer and reports nothing on the bid side, has no bid.
 
-    Measured over all 66 open golf markets holding two or more priced outcomes on
-    2026-08-29: fires on exactly one, the specimen above.
+    An outcome with no ask at all cannot reach this rule, so the odds_api and
+    DataGolf model fields are untouched by construction rather than by exemption.
+
+    Renormalization is unaffected and stays conservative: `outcome_prob_sum` is taken
+    over every priced outcome BEFORE any darkening, so the survivors of a thinned
+    field are scaled by the full field's sum. They can only come out understated,
+    never inflated — which is the direction a false number must never travel.
     """
-    priced = 0
-    for outcome in outcomes:
-        prob = getattr(outcome, "current_probability", None)
-        if prob is None:
-            continue
-        priced += 1
-        bid = getattr(outcome, "current_yes_bid", None)
-        if bid is not None and float(bid) > 0:
-            return False
-        ask = getattr(outcome, "current_yes_ask", None)
-        if ask is None:
-            return False
-        if abs(float(prob) - float(ask)) >= _PRICE_IS_ASK_TOLERANCE:
-            return False
-    return priced >= 2
+    prob = getattr(outcome, "current_probability", None)
+    if prob is None:
+        return False
+    ask = getattr(outcome, "current_yes_ask", None)
+    if ask is None:
+        return False
+    if abs(float(prob) - float(ask)) >= _PRICE_IS_ASK_TOLERANCE:
+        return False
+    bid = getattr(outcome, "current_yes_bid", None)
+    return bid is None or float(bid) <= 0
 
 
 def _is_placeholder_price(outcome, source: str | None) -> bool:
@@ -1680,11 +1691,20 @@ def _is_placeholder_price(outcome, source: str | None) -> bool:
     the 25 open golf markets holding a 0.5 outcome hold an empty book behind it. The
     untraded skip was gated to ``source == "kalshi"``, so admitting Polymarket without
     this would have traded one wrong number for another.
+
+    The unaccepted-offer arm (CERT-450) is the third, and it preserves the
+    monotonicity above because it can only ever ADD a skip. It is where the old
+    `_field_is_offer_sheet` went, and asking the question HERE rather than of the
+    whole field is the entire repair: the field form could only refuse a field in
+    which nobody had bid on anybody, so a single genuine quote certified every other
+    competitor's ask.
     """
     prob = getattr(outcome, "current_probability", None)
     if prob is None:
         return False
     if _kalshi_untraded_mid(source, prob):
+        return True
+    if _price_is_unaccepted_offer(outcome):
         return True
     bid = getattr(outcome, "current_yes_bid", None)
     ask = getattr(outcome, "current_yes_ask", None)
@@ -1732,10 +1752,10 @@ def _dedup_winner_markets(tourn_key: str, tourn_markets: list) -> tuple[dict[str
 def _extract_prop_market(market, source_label: str) -> dict | None:
     """Extract a prop market (Top 5/10/20, Make Cut) into a response dict."""
     source = market.source or "unknown"
-    # A field nobody has bid on, priced entirely off its own asks, is a seller's
-    # price list rather than a forecast (Q446).
-    if _field_is_offer_sheet(market.outcomes):
-        return None
+    # Unaccepted offers are darkened one at a time inside the loop below
+    # (`_is_placeholder_price`), not refused as a field (CERT-450). A field that is
+    # ALL offers loses every outcome and returns None here, exactly as the field
+    # rule did; a field that is mostly offers loses only the fabricated rows.
     prop_outcomes = []
     for outcome in market.outcomes:
         if outcome.current_probability is None:
@@ -2240,31 +2260,32 @@ async def get_golf(
                     prop_markets_list.append(prop)
                 continue
 
-            # A field nobody has bid on, priced entirely off its own asks, is a
-            # seller's price list rather than a forecast (Q446). Dropped whole:
-            # renormalizing an offer sheet to sum 1.0 turns four identical 10%
-            # offers into four identical 25% "forecasts", which is the same
-            # non-information wearing a more confident number.
-            if _field_is_offer_sheet(market.outcomes):
-                logger.debug(
-                    "Golf: skipped offer-sheet field '%s' (market %s) — no bid on any "
-                    "outcome and every price is its own ask",
-                    market.name,
-                    getattr(market, "id", None),
-                )
-                continue
-
             # Aggregate winner outcomes
+            withheld = 0
             for outcome in market.outcomes:
                 if outcome.current_probability is None:
                     continue
                 # Skip placeholder prices before any renormalization — an untraded
-                # Kalshi mid, or any source's empty book (UX-P070).
+                # Kalshi mid, any source's empty book (UX-P070), or a price that is
+                # merely this outcome's own unaccepted ask (CERT-450). Note that
+                # `renorm_factor` was computed over the FULL priced field above, so a
+                # thinned field's survivors are scaled by the whole field's sum and
+                # can only come out understated. That is deliberate: renormalizing to
+                # the survivors instead would turn four identical 10% offers into
+                # four identical 25% "forecasts" — the same non-information wearing a
+                # more confident number.
                 if _is_placeholder_price(outcome, source):
+                    withheld += 1
                     continue
                 _aggregate_golfer_outcome(
                     outcome, source_label, golfer_data, prob_24h_ago,
                     prob_scale=renorm_factor,
+                )
+            if withheld:
+                logger.debug(
+                    "Golf: withheld %d placeholder-priced outcome(s) from field '%s' "
+                    "(market %s)",
+                    withheld, market.name, getattr(market, "id", None),
                 )
 
         entry = _build_tournament_entry(
