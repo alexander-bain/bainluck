@@ -70,17 +70,23 @@ from app.services import get_db
 from app.utils.event_concept_cache import (
     AVAILABILITY_LIVE,
     AVAILABILITY_STALE_OK,
+    ENVELOPE_FIELD,
+    LOSS_PARTIAL,
+    QUALITY_FULL,
     ConceptCacheKeys,
     acquire_refresh_lock,
     cache_keys,
     get_client,
+    note_build_loss,
     read_slot,
     release_refresh_lock,
     stamp_envelope,
+    take_build_quality,
     with_availability,
     write_payload,
 )
 from app.utils.prop_families import group_prop_families
+from app.utils.statement_timeout import is_statement_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +97,20 @@ router = APIRouter()
 _INCLUDED_STATUSES = ["open", "resolved", "closed", "settled", "suspended"]
 
 _MAX_ROSTER_PATTERNS = 40
+
+#: How long ONE branch may run. Unchanged in value and in meaning from the
+#: `SET LOCAL statement_timeout = '12000'` this route has carried since #1197 —
+#: LAT-P145 changed who survives the expiry, deliberately not how long the
+#: expiry takes, so no team that completes today starts failing tomorrow.
+_BRANCH_TIMEOUT_MS = 12000
+
+#: The three criteria, named. LAT-P145 made the names load-bearing: a branch that
+#: times out is now REPORTED, by name, in the envelope's `quality_reasons`, so a
+#: reader of the payload can tell "this team has no player props" from "we could
+#: not read the player props in time".
+_BRANCH_TEAM_ID = "team_id"
+_BRANCH_OUTCOME_NAME = "outcome_name"
+_BRANCH_MARKET_NAME = "market_name"
 
 
 def _escape_like(s: str) -> str:
@@ -206,15 +226,52 @@ async def resolve_team(db: AsyncSession, identifier: str) -> Team | None:
 
 
 async def build_prop_families(team: Team, db: AsyncSession, cap: int) -> tuple[dict, bool]:
-    """Build one team's prop-family payload. Returns ``(payload, degraded)``.
+    """Build one team's prop-family payload. Returns ``(payload, unusable)``.
 
-    `degraded` is True when the branch queries failed or tripped the statement
-    timeout, i.e. when the empty `families` list is an ARTEFACT rather than an
-    answer. The caller must never cache a degraded payload — a 24h mirror
-    holding a timeout's empty page would freeze an empty section for a day
-    (gotcha #53: an empty 200 is a response shape, not an absence).
+    `unusable` is True only when EVERY branch failed, i.e. when the empty
+    `families` list is entirely an ARTEFACT rather than an answer. The caller must
+    never cache that — a 24h mirror holding a timeout's empty page would freeze an
+    empty section for a day (gotcha #53: an empty 200 is a response shape, not an
+    absence).
 
-    Never raises: every failure lands on the degrade path.
+    🔴 LAT-P145 — ONE BRANCH'S TIMEOUT NO LONGER ERASES THE OTHER TWO.
+    The three criteria used to run inside ONE transaction under ONE
+    ``SET LOCAL statement_timeout``, and the handler that caught the expiry
+    returned an empty payload. Postgres aborts a transaction whose statement is
+    cancelled, so the expiry of branch 2 did three things at once: it lost branch
+    2's rows, it made branch 3 unrunnable, and it threw away branch 1's rows,
+    which had already been fetched and were sitting in memory. Measured on
+    production ``944c466e``, 2026-08-30, three NFL team pages:
+
+        new-york-giants      12,638 ms   q=3  unfinished=1  families 0  no envelope
+        green-bay-packers    12,658 ms   q=3  unfinished=1  families 0  no envelope
+        pittsburgh-steelers  12,908 ms   q=3  unfinished=1  families 0  no envelope
+
+    ``q=3`` is the tell: `after_cursor_execute` does not fire for a cancelled
+    cursor, so the three COMPLETED statements are `resolve_team`, the `SET LOCAL`
+    and **the team_id branch** — which had returned its rows (27, 29 and 31
+    respectively, counted in the same minute) before the discard. And because a
+    build that returns nothing is deliberately never cached, the next reader
+    repeated the whole thing: 13 requests in one four-minute window at 12.06-12.19 s
+    each, all on the same permanently-uncacheable page.
+
+    This is `backfill_winners::_run_bounded`'s lesson in another costume, and that
+    file says it in as many words: *"A budget guard that takes down the parts AFTER
+    it is not a budget guard, it is a new failure mode (gotcha #42 in another
+    costume)."* Here it took down the part BEFORE it as well.
+
+    So each branch now runs bounded, materialised and contained:
+
+    * its own ``SET LOCAL``, in its own transaction, at the SAME 12 s — the
+      completeness of a build that succeeds today is untouched;
+    * its rows copied to plain dicts BEFORE the next branch can roll back, because
+      a rollback expires every ORM object in the session and `expire_on_commit`
+      does not prevent it (gotcha #6);
+    * an expiry recorded as ``LOSS_PARTIAL`` against the envelope contract and the
+      loop CONTINUED, so branch 3 gets its turn.
+
+    Only a real error is loud. `is_statement_timeout` keeps the containment narrow
+    on purpose: a genuine query defect must not be filed as "ran out of time".
     """
     # Match a team's props by three criteria: team_id FK, full team-name ILIKE
     # (on outcome AND market names), and roster player-name ILIKE. These MUST be
@@ -262,93 +319,143 @@ async def build_prop_families(team: Team, db: AsyncSession, cap: int) -> tuple[d
     for player in _roster_player_names(team):
         _name_pats.append(f"%{_escape_like(player)}%")
 
-    branch_conds = [FuturesOutcome.team_id == team.id]  # FK branch (indexed)
+    branches: list[tuple[str, object]] = [
+        (_BRANCH_TEAM_ID, FuturesOutcome.team_id == team.id)  # FK branch (indexed)
+    ]
     if _name_pats:
         # One ScalarArrayOp per column → a single GIN trigram index scan for that
         # column, NOT one bitmap index scan per pattern and NOT a join-wide seq
         # scan. `literal(..., ARRAY(Text))` binds the patterns as one text[]
         # parameter, exactly as the `or_()` form bound them one at a time.
         _pats = literal(_name_pats, ARRAY(Text))
-        branch_conds.append(FuturesOutcome.name.ilike(any_(_pats)))
-        branch_conds.append(FuturesMarket.name.ilike(any_(_pats)))
+        branches.append((_BRANCH_OUTCOME_NAME, FuturesOutcome.name.ilike(any_(_pats))))
+        branches.append((_BRANCH_MARKET_NAME, FuturesMarket.name.ilike(any_(_pats))))
 
-    # #1197 / #1239: statement_timeout stays as a backstop so any pathological
-    # branch fails fast and the endpoint degrades to an empty families list (200)
-    # rather than hanging the dyno to a 503.
-    rows: list = []
-    _seen_oids: set[int] = set()
-    try:
-        await db.execute(text("SET LOCAL statement_timeout = '12000'"))
-        for _cond in branch_conds:
-            for r in (await db.execute(_branch(_cond))).all():
-                oid = r[0].id
-                if oid not in _seen_oids:
-                    _seen_oids.add(oid)
-                    rows.append(r)
-    except Exception:
-        logger.exception(
-            "prop-families: query failed/timed out for team %s — empty degrade",
-            team.id,
-        )
-        return (
-            {
-                "team": {
-                    "id": team.id,
-                    "name": team.name,
-                    "slug": getattr(team, "slug", None),
-                },
-                "families": [],
-                "total_families": 0,
-            },
-            True,
-        )
+    # 🔴 SCALARS BEFORE THE FIRST BRANCH RUNS. A branch that times out rolls its
+    # transaction back, and a rollback EXPIRES every ORM object in the session —
+    # `expire_on_commit=False` does not prevent it (gotcha #6). `team` is read
+    # again when the payload is assembled, several branches later, and re-reading
+    # an expired attribute inside a route is the lazy-load crash class. Copy now,
+    # while the instance is still live.
+    _team_id = int(team.id)
+    _team_name = team.name
+    _team_slug = getattr(team, "slug", None)
 
-    # Reassemble outcomes onto their market dicts.
-    by_market: dict[int, dict] = {}
-    for outcome, market in rows:
-        entry = by_market.get(market.id)
-        if entry is None:
-            entry = {
-                "market_id": market.id,
-                "name": market.name,
-                "source": market.source,
-                "group_id": market.group_id,
-                "status": market.status,
-                "resolution_date": (
-                    market.resolution_date.isoformat()
-                    if market.resolution_date else None
-                ),
-                "market_metadata": market.market_metadata,
-                "outcomes": [],
-            }
-            by_market[market.id] = entry
-        prob = (
-            float(outcome.current_probability)
-            if outcome.current_probability is not None else None
-        )
-        entry["outcomes"].append(
-            {
-                "outcome_id": outcome.id,
-                "name": outcome.name,
-                "probability": prob,
-                "is_winner": bool(outcome.is_winner),
-            }
-        )
-
-    families = group_prop_families(list(by_market.values()))
-
-    return (
-        {
-            "team": {
-                "id": team.id,
-                "name": team.name,
-                "slug": getattr(team, "slug", None),
-            },
+    def _payload(families: list) -> dict:
+        return {
+            "team": {"id": _team_id, "name": _team_name, "slug": _team_slug},
             "families": families,
             "total_families": len(families),
-        },
-        False,
-    )
+        }
+
+    # #1197 / #1239: statement_timeout stays as a backstop so any pathological
+    # branch fails fast and the endpoint degrades rather than hanging the dyno to
+    # a 503. LAT-P145: it is now set per branch, so the expiry ends ITS OWN branch
+    # and nothing else.
+    by_market: dict[int, dict] = {}
+    _seen_oids: set[int] = set()
+    lost: list[str] = []
+
+    for _name, _cond in branches:
+        try:
+            await db.execute(text(f"SET LOCAL statement_timeout = '{_BRANCH_TIMEOUT_MS}'"))
+            _result = (await db.execute(_branch(_cond))).all()
+        except Exception as exc:  # noqa: BLE001 — classified below, then contained
+            # The transaction is aborted by the cancellation; roll it back so the
+            # NEXT branch gets a usable session instead of "current transaction is
+            # aborted". This is `_run_bounded`'s recovery, read-only.
+            try:
+                await db.rollback()
+            except Exception:
+                logger.warning(
+                    "prop-families: rollback after %s branch failed for team %s",
+                    _name, _team_id, exc_info=True,
+                )
+            if is_statement_timeout(exc):
+                logger.warning(
+                    "prop-families: %s branch timed out for team %s after %d ms — "
+                    "serving the branches that landed",
+                    _name, _team_id, _BRANCH_TIMEOUT_MS,
+                )
+            else:
+                # Narrow containment (gotcha #45): a real query defect is not a
+                # budget expiry and must not be filed as one.
+                logger.exception(
+                    "prop-families: %s branch FAILED for team %s", _name, _team_id
+                )
+            lost.append(_name)
+            continue
+
+        # Materialise inside the loop: a later branch's rollback would expire these
+        # instances, and by then they are plain dicts and cannot be expired.
+        for outcome, market in _result:
+            oid = outcome.id
+            if oid in _seen_oids:
+                continue
+            _seen_oids.add(oid)
+            entry = by_market.get(market.id)
+            if entry is None:
+                entry = {
+                    "market_id": market.id,
+                    "name": market.name,
+                    "source": market.source,
+                    "group_id": market.group_id,
+                    "status": market.status,
+                    "resolution_date": (
+                        market.resolution_date.isoformat()
+                        if market.resolution_date else None
+                    ),
+                    "market_metadata": market.market_metadata,
+                    "outcomes": [],
+                }
+                by_market[market.id] = entry
+            prob = (
+                float(outcome.current_probability)
+                if outcome.current_probability is not None else None
+            )
+            entry["outcomes"].append(
+                {
+                    "outcome_id": oid,
+                    "name": outcome.name,
+                    "probability": prob,
+                    "is_winner": bool(outcome.is_winner),
+                }
+            )
+
+    # Every branch gone is the old whole-request degrade, and it keeps the old
+    # answer: an empty payload the caller must not store.
+    if len(lost) == len(branches):
+        return _payload([]), True
+
+    payload = _payload(group_prop_families(list(by_market.values())))
+    for _name in lost:
+        # LOSS_PARTIAL, not LOSS_DEGRADED: the headline answer — this team's own
+        # futures, via the FK branch — survived; what is missing is real content
+        # beside it. The severity is declared HERE, at the swallow point, because
+        # this is the only place that knows which branch was lost.
+        note_build_loss(payload, f"branch_timeout:{_name}", LOSS_PARTIAL)
+    return payload, False
+
+
+def _mirror_is_full(rc, keys: ConceptCacheKeys) -> bool:
+    """Is the 24h mirror already holding a COMPLETE answer for this key?
+
+    Read through `read_slot`, never `rc.get` — a payload from a retired
+    generation, or one that fails envelope validation, reads as a miss there and
+    must read as "no mirror worth protecting" here too. Anything unreadable is
+    False, which routes to "write the mirror": the safe direction, because the
+    alternative is declining to store the only answer we have.
+    """
+    try:
+        stored = read_slot(rc, keys.stale)
+    except Exception:
+        return False
+    if not isinstance(stored, dict):
+        return False
+    envelope = stored.get(ENVELOPE_FIELD)
+    if not isinstance(envelope, dict):
+        return False
+    return envelope.get("quality") == QUALITY_FULL
 
 
 async def build_and_cache_prop_families(
@@ -359,16 +466,43 @@ async def build_and_cache_prop_families(
     One implementation for the route's cold path and the background refresh, so
     the two cannot drift in WHAT they store or WHERE.
 
-    **A degraded build never writes.** The route's degrade path returns an empty
+    **An EMPTY build never writes.** The route's degrade path returns an empty
     `families` list on a statement timeout, and that empty list is indistinguishable
     from "this team genuinely has no families" once it is bytes in Redis. Writing
     it would put a timeout artefact behind a 24h mirror — the exact inversion of
     the tier's purpose. It is returned to the caller (a served empty section beats
     a 500) and dropped on the floor.
+
+    🔴 LAT-P145 — THE THREE OUTCOMES, AND WHY A PARTIAL IS ONE OF THEM.
+    A build that lost a branch but kept content is not the same event as a build
+    that lost everything, and the difference is exactly what made the Giants' page
+    slow forever: 27 real markets were fetched, then discarded, then not cached,
+    so the next reader paid the same 12 s to be shown the same nothing.
+
+    ==================  ===========================  ===================================
+    build               stored                       served
+    ==================  ===========================  ===================================
+    full                primary + 24h mirror         `quality: full`
+    partial, has rows   primary; mirror ONLY if the  `quality: partial`, with
+                        stored mirror is not `full`  `quality_reasons` naming the branch
+    nothing at all      NOTHING                      empty, no envelope (unchanged)
+    ==================  ===========================  ===================================
+
+    The mirror rule is the module's own "an empty build never overwrites a good
+    mirror", one notch further out. A partial is worth serving for a TTL and worth
+    caching when there is nothing better — it is not worth freezing for 24 hours
+    on top of a complete answer that is already there. The primary write is what
+    ends the loop; the mirror guard is what stops the fix from costing a warmed
+    team its content.
     """
-    payload, degraded = await build_prop_families(team, db, cap)
-    if degraded:
+    payload, unusable = await build_prop_families(team, db, cap)
+    # Pop the private loss list FIRST and unconditionally — it must not reach
+    # Redis or the wire on any path, including the ones that return early.
+    quality, reasons = take_build_quality(payload)
+    if unusable:
         return payload, True
+
+    keys = prop_families_cache_keys(team.id, _resolve_cap(cap))
     stamped = stamp_envelope(
         payload,
         created_at=datetime.now(timezone.utc),
@@ -377,12 +511,32 @@ async def build_and_cache_prop_families(
         # and claiming a watermark we cannot compute is a fabrication (#1678
         # finding 3).
         lifecycle_watermark=None,
+        quality=quality,
+        quality_reasons=reasons,
     )
+
+    if quality == QUALITY_FULL:
+        write_payload(rc, keys, stamped, primary_ttl=PROP_FAMILIES_PRIMARY_TTL)
+        return stamped, False
+
+    if not payload.get("families"):
+        # A partial that produced no content is, to a reader, the same blank
+        # section a timeout produces — and gotcha #53 says a blank is a response
+        # shape, not an absence. Serve it with its envelope so the blankness is
+        # attributable, but do not store it.
+        logger.warning(
+            "prop-families: partial build for team %s produced no families (%s) — "
+            "served, not stored",
+            team.id, ",".join(reasons),
+        )
+        return stamped, True
+
     write_payload(
         rc,
-        prop_families_cache_keys(team.id, _resolve_cap(cap)),
+        keys,
         stamped,
         primary_ttl=PROP_FAMILIES_PRIMARY_TTL,
+        mirror=not _mirror_is_full(rc, keys),
     )
     return stamped, False
 
@@ -407,10 +561,16 @@ async def get_team_prop_families(
                             # read, so a mirror serve declares itself.
         }
 
-    The one shape that does NOT carry `cache` is the degraded build: a statement
-    timeout is served (an empty section beats a 500) and is deliberately neither
+    The one shape that does NOT carry `cache` is the build that lost EVERY branch:
+    it is served (an empty section beats a 500) and is deliberately neither
     stamped nor stored, so a consumer can tell a real empty answer from a
     timeout's by the envelope's absence.
+
+    LAT-P145: a build that lost SOME branches does carry the envelope, with
+    `quality: "partial"` and `quality_reasons` naming the branch that expired
+    (e.g. `["branch_timeout:outcome_name"]`). That is the shape an NFL team page
+    returns today while the season is more than a fortnight out — and it is
+    cached, so it is paid for once rather than by every reader.
     """
     team = await resolve_team(db, identifier)
     if not team:

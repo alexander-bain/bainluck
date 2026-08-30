@@ -518,6 +518,7 @@ def write_payload(
     keys: ConceptCacheKeys,
     payload: dict[str, Any],
     primary_ttl: int = ENVELOPE_TTL,
+    mirror: bool = True,
 ) -> None:
     """Write both slots and clear any negative. Never raises.
 
@@ -527,13 +528,23 @@ def write_payload(
     move far more slowly and have used 180s in production since it shipped.
     `STALE_TTL` is deliberately NOT parameterized — the mirror's job is to outlive
     an outage, and that is the same job for every tier.
+
+    `mirror=False` writes the 15-minute-ish primary and LEAVES THE 24h MIRROR
+    ALONE. It exists for one caller-side rule (LAT-P145): a `partial` build is a
+    fine thing to serve for a TTL and a bad thing to freeze for a day next to a
+    `full` answer that is already stored. This is the same ordering the module
+    already applies to an empty build — "an empty build never overwrites a good
+    mirror" — extended one notch, from "has no content" to "has less content".
+    The caller decides, because the caller is the only party that knows what the
+    stored mirror's quality is.
     """
     if rc is None:
         return
     try:
         encoded = encode_payload(payload)
         rc.setex(keys.primary, primary_ttl, encoded)
-        rc.setex(keys.stale, STALE_TTL, encoded)
+        if mirror:
+            rc.setex(keys.stale, STALE_TTL, encoded)
         # A key that now resolves must not keep a negative entry behind it.
         rc.delete(keys.negative)
     except Exception:
