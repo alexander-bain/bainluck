@@ -67,6 +67,23 @@ export default function EventList({ title, sub, icon, items, accent }: EventList
                 </div>
                 <div className="flex items-center" style={{ gap: 6 }}>
                   <SourceBadge src={item.src} />
+                  {/* Which outcome the row's percentage prices. "Hurricane
+                      Marie category? — 95%" is 95% of "Category 4 or above",
+                      and Category 4 is not Category 5. Omitted when the
+                      question already answers itself. See EventMarket.leader. */}
+                  {item.leader ? (
+                    <span
+                      className="truncate"
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: "var(--text-secondary)",
+                      }}
+                      title={item.leader}
+                    >
+                      {item.leader}
+                    </span>
+                  ) : null}
                   <span
                     className="font-mono"
                     style={{ fontSize: 11, color: "var(--text-muted)" }}

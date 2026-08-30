@@ -688,6 +688,13 @@ class TestCategoryMockedDataContracts:
             {
                 "q": "Will a hurricane make landfall in Florida?",
                 "prob": 62,
+                # UX-P186: which outcome `prob` prices. Null here, and that is
+                # the answer rather than an omission — the leader of this market
+                # is "Yes", which only restates the question. The key is always
+                # present so an absent one still means "payload predates the
+                # field", which the hourly weather cache really does serve for
+                # up to an hour after a deploy.
+                "leader": None,
                 "src": "polymarket",
                 "tag": "Hurricane",
                 "closes": body[0]["closes"],
