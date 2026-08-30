@@ -87,6 +87,9 @@ It is not a *settlement* authority and it writes nothing. It never sets
 ``status``, never grades an outcome, never deletes. It answers exactly one
 question — *is it worth asking a venue for this market's price right now* — and
 every caller that asks that question must ask it here.
+
+Every measurement quoted above, the venue probes with their control, the
+blast-radius table, and what was deliberately parked: ``docs/futures-price-dark-2222.md``.
 """
 
 from __future__ import annotations
