@@ -37,6 +37,7 @@ from app.utils.prediction_market_matching import (
     _fuzzy_team_match,
     _expand_team_search_terms,
     _SPORT_CATEGORY_TO_KEY_PREFIX,
+    auto_create_sport_key_from_category,
     MAX_TIME_DELTA,
     MAX_PAST_GAME_DELTA,
 )
@@ -2640,10 +2641,11 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
 
     if not team_a or not team_b:
         return None
-    if not sport_key and market.llm_sport_category:
-        cat_prefix = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
-        if cat_prefix:
-            sport_key = f"{cat_prefix}_other"
+    # Q453: the ticker is consulted first and wins; this is the fallback for a
+    # market whose only evidence of sport is the LLM's per-market guess. It
+    # refuses `football` — see `auto_create_sport_key_from_category`.
+    if not sport_key:
+        sport_key = auto_create_sport_key_from_category(market.llm_sport_category)
 
     if not sport_key:
         logger.debug(

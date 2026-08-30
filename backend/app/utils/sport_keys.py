@@ -561,6 +561,19 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxwcgame": "soccer_fifa_world_cup",      # WC 2026 match moneyline
     "kxfifagame": "soccer",                   # FIFA match ("Bolivia vs Suriname")
     "kxfifawgame": "soccer",                  # FIFA women's match ("Albania vs Montenegro")
+    # Q453: the same defense-in-depth as #207 above, for the three live soccer
+    # series MEASURED scattering across sports on 2026-08-30 because no ticker
+    # mapped them and the per-market `llm_sport_category` decided each row:
+    #   kxncaamsoccergame  17 rows -> americanfootball_other, 3 -> basketball_other
+    #   kxsvkcupadvance     4 -> americanfootball_other, 2 -> icehockey_other, 1 -> mma_other
+    #   kxknvbcupadvance    4 -> americanfootball_other  (14 correctly soccer_other)
+    # One competition cannot be four sports. The `…advance` and `…game` legs of a
+    # cup tie are the same fixture, so both are mapped or the tie splits again.
+    "kxncaamsoccergame": "soccer_other",      # NCAA men's soccer
+    "kxsvkcupgame": "soccer_other",           # Slovak Cup
+    "kxsvkcupadvance": "soccer_other",        # Slovak Cup — who advances
+    "kxknvbcupgame": "soccer_other",          # KNVB Beker (Dutch cup)
+    "kxknvbcupadvance": "soccer_other",       # KNVB Beker — who advances
     # Asian basketball
     "kxcbagame": "basketball_other",          # Chinese CBA
     "kxjbleaguegame": "basketball_other",     # Japanese B.League

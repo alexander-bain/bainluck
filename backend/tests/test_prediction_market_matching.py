@@ -20,6 +20,7 @@ from app.utils.prediction_market_matching import (
     is_game_level_market,
     is_kalshi_game_ticker,
     get_sport_prefix_from_ticker,
+    auto_create_sport_key_from_category,
     extract_matchup,
     extract_matchup_with_ticker_fallback,
     extract_teams_from_ticker,
@@ -3005,3 +3006,122 @@ class TestCheckAndFixInversionPeerConsensus:
         )
         out = await _check_and_fix_inversion(session, 1, 0.0005, "polymarket")
         assert out == pytest.approx(0.0005)
+
+
+# =============================================================================
+# Q453 — a soccer match may not be filed as an American football game
+# =============================================================================
+
+class TestAutoCreateSportKeyFromCategory:
+    """`football` is the one LLM category that may not invent an event.
+
+    Measured on production 2026-08-30: all 25 newest `americanfootball_other`
+    events were soccer matches, and no Kalshi ticker maps to that key — the
+    bucket is fed exclusively by this fallback. Red-first: before the guard,
+    `football` returned `americanfootball_other` for every one of them.
+    """
+
+    def test_football_may_not_create_an_event(self):
+        # The specimen: Polymarket "Will Ole Miss beat LSU?", llm=football,
+        # which minted event 15297604 as a twin of real NCAAF event 14792803.
+        assert auto_create_sport_key_from_category("football") is None
+
+    def test_football_refusal_is_case_and_space_insensitive(self):
+        assert auto_create_sport_key_from_category("  Football ") is None
+
+    def test_soccer_still_creates(self):
+        # The KNVB/Slovak Cup rows that were already correct must stay correct.
+        assert auto_create_sport_key_from_category("soccer") == "soccer_other"
+
+    def test_other_categories_are_untouched(self):
+        for category, expected in [
+            ("basketball", "basketball_other"),
+            ("hockey", "icehockey_other"),
+            ("baseball", "baseball_other"),
+            ("tennis", "tennis_other"),
+            ("mma", "mma_other"),
+            ("esports", "esports_other"),
+        ]:
+            assert auto_create_sport_key_from_category(category) == expected
+
+    def test_absent_or_unknown_category_creates_nothing(self):
+        assert auto_create_sport_key_from_category(None) is None
+        assert auto_create_sport_key_from_category("") is None
+        assert auto_create_sport_key_from_category("underwater basket weaving") is None
+
+    def test_ticker_mapped_football_is_untouched_by_the_refusal(self):
+        # The refusal is narrow because the ticker is consulted FIRST. 55 of the
+        # 80 live `football` series are mapped; they never reach the fallback.
+        assert get_sport_prefix_from_ticker("KXNFLGAME-26SEP14SFDEN") == "americanfootball_nfl"
+        assert get_sport_prefix_from_ticker("KXNCAAFGAME-26AUG30OLEMISSLSU") == "americanfootball_ncaaf"
+
+
+class TestSoccerSeriesAreTickerMapped:
+    """One competition cannot be four sports."""
+
+    def test_ncaa_mens_soccer_is_soccer(self):
+        assert (
+            get_sport_prefix_from_ticker("KXNCAAMSOCCERGAME-26SEP01PENBUC")
+            == "soccer_other"
+        )
+
+    def test_ncaa_mens_soccer_does_not_collide_with_mens_basketball(self):
+        # Both start `kxncaam`; a shorter-prefix win here would file soccer as
+        # college basketball, which is one of the two wrong sports it landed in.
+        assert (
+            get_sport_prefix_from_ticker("KXNCAAMBGAME-26MAR20DUKEUNC")
+            == "basketball_ncaab"
+        )
+
+    def test_cup_ties_map_both_legs_to_one_sport(self):
+        for ticker in [
+            "KXSVKCUPGAME-26SEP02FOMSKA",
+            "KXSVKCUPADVANCE-26SEP02FOMSKA",
+            "KXKNVBCUPGAME-26SEP02ASSWES",
+            "KXKNVBCUPADVANCE-26SEP02ASSWES",
+        ]:
+            assert get_sport_prefix_from_ticker(ticker) == "soccer_other", ticker
+
+
+class TestNoTickerMapsToAmericanFootballOther:
+    """The guard for the class, not just the specimen.
+
+    `americanfootball_other` has no legitimate producer: CFL and UFL have their
+    own sport keys, and NFL/NCAAF are ticker-mapped. If a future mapping routes
+    a ticker there it is almost certainly a soccer league being mis-filed, so
+    make that a test failure rather than a league page full of soccer.
+    """
+
+    def test_no_kalshi_prefix_maps_to_americanfootball_other(self):
+        from app.utils.sport_keys import (
+            KALSHI_TICKER_TO_SPORT_KEY,
+            KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+        )
+
+        offenders = [
+            prefix
+            for mapping in (
+                KALSHI_TICKER_TO_SPORT_KEY,
+                KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+            )
+            for prefix, key in mapping.items()
+            if key == "americanfootball_other"
+        ]
+        assert offenders == []
+
+    def test_a_soccer_named_ticker_never_maps_to_a_non_soccer_sport(self):
+        from app.utils.sport_keys import (
+            KALSHI_TICKER_TO_SPORT_KEY,
+            KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+        )
+
+        offenders = [
+            (prefix, key)
+            for mapping in (
+                KALSHI_TICKER_TO_SPORT_KEY,
+                KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+            )
+            for prefix, key in mapping.items()
+            if "soccer" in prefix and not key.startswith("soccer")
+        ]
+        assert offenders == []
