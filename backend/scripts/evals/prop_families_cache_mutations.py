@@ -119,17 +119,30 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         ROUTE,
         "drop `cap` from the cache key — a `?limit=50` reader is served the "
         "400-row answer, or worse, poisons the key every browser reads",
-        '    return cache_keys(f"{int(team_id)}:{int(cap)}", '
-        "prefix=PROP_FAMILIES_CACHE_PREFIX)",
+        # 🔴 SPELLED CONTIGUOUSLY, NOT AS TWO IMPLICITLY-CONCATENATED FRAGMENTS.
+        # `scan_mutation_residue`'s Pass B reads the harness FILE TEXT: a needle
+        # split across two source lines is "absent" from this file while its
+        # one-line replacement is present, which is precisely its
+        # `repl present, needle absent` residue rule. LAT-P135 wrote that down,
+        # LAT-P136 and LAT-P137 each re-learned it; it is fixed by spelling the
+        # needle, never by narrowing the scan.
+        '    return cache_keys(f"{int(team_id)}:{int(cap)}", prefix=PROP_FAMILIES_CACHE_PREFIX)',
         '    return cache_keys(f"{int(team_id)}", prefix=PROP_FAMILIES_CACHE_PREFIX)',
     ),
     (
         "M7",
         ROUTE,
-        "share the concept tier's namespace — an operator clearing one surface "
-        "with a glob clears the other",
+        "collide with the typeahead namespace — `search_cache` made itself a "
+        "SIBLING of that prefix on purpose so an operator clearing one surface "
+        "with a glob cannot silently clear the other",
+        # The collision namespace is `typeahead`, not `event_concept`, and that
+        # is not a preference: `game_markets_shared_cache_mutations:M13` already
+        # replaces a prefix with `"bainluck:event_concept:"`, so an identical
+        # replacement here would sit in this file as a byte-for-byte copy of a
+        # SIBLING harness's mutant and Pass B would report it as residue. That is
+        # LAT-P136's finding, applied before the scan had to find it again.
         'PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:"',
-        'PROP_FAMILIES_CACHE_PREFIX = "bainluck:event_concept:"',
+        'PROP_FAMILIES_CACHE_PREFIX = "bainluck:typeahead:"',
     ),
     # -- the ladder -----------------------------------------------------------
     (
