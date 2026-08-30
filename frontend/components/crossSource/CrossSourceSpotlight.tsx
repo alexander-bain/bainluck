@@ -1,17 +1,70 @@
-/** The cross-source spotlight: the one surface on /politics that deliberately
- *  shows two sources side by side instead of the blend.
+/** The cross-source spotlight: the one surface that deliberately shows two
+ *  sources side by side instead of the blend.
  *
  *  Lifted verbatim out of `app/politics/page.tsx` by UX-P187 (a Next.js route
  *  file may only export the reserved names, so nothing inside one can be
  *  rendered by a test) and given the outcome caption in the same move. The
  *  legacy copy, wrong in exactly the way this one is not, is banked at
  *  `frontend/__tests__/fixtures/uxp187CrossSourceCardLegacy.tsx`.
+ *
+ *  Moved out of `components/politics/` by UX-P194 and into a page-neutral home,
+ *  because it is no longer a politics component. `/economics` and
+ *  `/entertainment` build the identical payload off the identical shared
+ *  `find_cross_source_markets` — measured live 2026-08-30, eight rows each —
+ *  and neither had ever declared the field, let alone rendered it. There is one
+ *  card, in one place, on all three pages: a second copy is how the two numbers
+ *  a reader is invited to subtract start disagreeing about what they mean.
+ *
+ *  The STYLESHEET deliberately stays at `app/politics/politics.module.css`
+ *  rather than being forked per page — the same class names on the same
+ *  stylesheet, not a copy, which is the precedent UX-P187 set and wrote down in
+ *  `components/politics/atoms.tsx`. Splitting it is how the three copies drift.
  */
 import type { CrossSourceMatch } from "@/lib/api";
-import { BORDER_COLOR, SourceBadge } from "@/components/politics/atoms";
+import { SourceBadge } from "@/components/politics/atoms";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { renderedPercent } from "@/lib/renderedPercent";
 import s from "@/app/politics/politics.module.css";
+
+/** Category → accent, across every vocabulary that reaches this card.
+ *
+ *  One map rather than a per-page prop: the card is shared, so the colour a
+ *  given category draws should not depend on which page happens to host it.
+ *  Politics' keys are `components/politics/atoms.tsx`'s BORDER_COLOR verbatim;
+ *  the economics and entertainment keys are their routes' `_classify_theme`
+ *  vocabularies. Anything unlisted — including a category a route adds later —
+ *  falls to the same grey the card has always used, so a new theme degrades to
+ *  a plain card instead of an absent one.
+ */
+export const CROSS_SOURCE_BORDER_COLOR: Record<string, string> = {
+  // /politics
+  presidential: "#3B82F6",
+  congressional: "#8B5CF6",
+  gubernatorial: "#10B981",
+  policy: "#F59E0B",
+  scotus: "#EF4444",
+  international: "#0EA5E9",
+  // /economics
+  fed: "#6366F1",
+  inflation: "#F59E0B",
+  jobs: "#10B981",
+  recession: "#EF4444",
+  markets: "#3B82F6",
+  energy: "#F97316",
+  housing: "#8B5CF6",
+  trade: "#0EA5E9",
+  government: "#64748B",
+  // /entertainment
+  music: "#EC4899",
+  movies: "#8B5CF6",
+  tv_streaming: "#EF4444",
+  awards: "#F59E0B",
+  celebrity: "#F472B6",
+  social_media: "#0EA5E9",
+  viral: "#14B8A6",
+  // shared fallback key
+  other: "#9CA3AF",
+};
 
 export function CrossSourceSpotlight({ matches }: { matches: CrossSourceMatch[] }) {
   if (!matches || matches.length === 0) return null;
@@ -38,7 +91,7 @@ export function CrossSourceSpotlight({ matches }: { matches: CrossSourceMatch[] 
 
 export function CrossSourceCard({ market }: { market: CrossSourceMatch }) {
   const delta = market.delta;
-  const borderColor = BORDER_COLOR[market.category] || "#9CA3AF";
+  const borderColor = CROSS_SOURCE_BORDER_COLOR[market.category] || "#9CA3AF";
 
   // ── THE PRINTED PAIR (UX-P191) ─────────────────────────────────────────────
   //

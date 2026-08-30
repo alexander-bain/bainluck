@@ -58,7 +58,7 @@ import type { CrossSourceMatch } from "@/lib/api";
 
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { CrossSourceCard, CrossSourceSpotlight } =
-  require("@/components/politics/CrossSourceSpotlight");
+  require("@/components/crossSource/CrossSourceSpotlight");
 const LegacyCrossSourceCard =
   require("../fixtures/uxp187CrossSourceCardLegacy").default;
 /* eslint-enable @typescript-eslint/no-var-requires */
@@ -351,7 +351,7 @@ describe("UX-P187 · /politics still renders the section", () => {
 
   test("the page imports the extracted component", () => {
     expect(page).toContain(
-      'from "@/components/politics/CrossSourceSpotlight"',
+      'from "@/components/crossSource/CrossSourceSpotlight"',
     );
   });
 

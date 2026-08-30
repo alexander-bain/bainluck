@@ -1,0 +1,310 @@
+{
+ "_what": "UX-P194. Live /api/{politics,economics,entertainment} cross_source bodies read 2026-08-30, with UX-P187's real align_on_shared_outcome re-run over each served pair.",
+ "_caveat": "top_outcomes here is top-3-by-probability off the raw outcome rows. The routes' own builders additionally run _clean_outcomes (garbage-placeholder filter + UX-P188's duplicate-binary-leg drop), so an individual row could shift either way. These counts are a measured BOUND on the served top-8, not the post-fix section itself: pairs that sat below the old cut can surface once the artifacts are dropped.",
+ "read_at": "2026-08-30T17:02:24.638470+00:00",
+ "pages": {
+  "politics": {
+   "served": 8,
+   "aligned": 1,
+   "rows": [
+    {
+     "q": "Will Trump talk to Mojtaba Khamenei?",
+     "kalshi": 4.5,
+     "poly": 86.0,
+     "delta": 81.5,
+     "category": "presidential",
+     "kalshi_market_id": 52755865,
+     "poly_market_id": 3961814,
+     "_aligned": null
+    },
+    {
+     "q": "Next President of Estonia?",
+     "kalshi": 97.5,
+     "poly": 34.6,
+     "delta": 62.9,
+     "category": "presidential",
+     "kalshi_market_id": 59165073,
+     "poly_market_id": 57305363,
+     "_aligned": {
+      "outcome": "Ülle Madise",
+      "kalshi": 97.5,
+      "poly": 40.0,
+      "delta": 57.5
+     }
+    },
+    {
+     "q": "How many House seats will Democrats win in Louisiana?",
+     "kalshi": 92.5,
+     "poly": 36.0,
+     "delta": 56.5,
+     "category": "congressional",
+     "kalshi_market_id": 16755287,
+     "poly_market_id": 58840985,
+     "_aligned": null
+    },
+    {
+     "q": "How many House seats will Democrats win in Georgia?",
+     "kalshi": 88.0,
+     "poly": 37.5,
+     "delta": 50.5,
+     "category": "congressional",
+     "kalshi_market_id": 59693678,
+     "poly_market_id": 58840989,
+     "_aligned": null
+    },
+    {
+     "q": "Will the federal gas tax be suspended?",
+     "kalshi": 16.0,
+     "poly": 66.4,
+     "delta": 50.4,
+     "category": "other",
+     "kalshi_market_id": 19528696,
+     "poly_market_id": 20569038,
+     "_aligned": null
+    },
+    {
+     "q": "How many House seats will Democrats win in Illinois?",
+     "kalshi": 92.5,
+     "poly": 43.0,
+     "delta": 49.5,
+     "category": "congressional",
+     "kalshi_market_id": 59693677,
+     "poly_market_id": 58835465,
+     "_aligned": null
+    },
+    {
+     "q": "Massachusetts Democratic Senate primary margin of victory?",
+     "kalshi": 66.5,
+     "poly": 18.5,
+     "delta": 48.0,
+     "category": "presidential",
+     "kalshi_market_id": 52755634,
+     "poly_market_id": 59329605,
+     "_aligned": null
+    },
+    {
+     "q": "How many House seats will Democrats win in Utah?",
+     "kalshi": 95.0,
+     "poly": 49.0,
+     "delta": 46.0,
+     "category": "congressional",
+     "kalshi_market_id": 16755285,
+     "poly_market_id": 58835467,
+     "_aligned": null
+    }
+   ],
+   "declared_in_frontend_type": true,
+   "rendered_by_page": true
+  },
+  "economics": {
+   "served": 8,
+   "aligned": 2,
+   "rows": [
+    {
+     "q": "Core inflation in August 2026 (Core CPI YoY)",
+     "kalshi": 98.0,
+     "poly": 31.5,
+     "delta": 66.5,
+     "category": "inflation",
+     "kalshi_market_id": 55686539,
+     "poly_market_id": 58900291,
+     "_aligned": null
+    },
+    {
+     "q": "Mexico unemployment rate in August",
+     "kalshi": 98.5,
+     "poly": 36.5,
+     "delta": 62.0,
+     "category": "jobs",
+     "kalshi_market_id": 59699924,
+     "poly_market_id": 58602255,
+     "_aligned": null
+    },
+    {
+     "q": "US real GDP growth in Q3 2026?",
+     "kalshi": 95.5,
+     "poly": 47.0,
+     "delta": 48.5,
+     "category": "recession",
+     "kalshi_market_id": 12573791,
+     "poly_market_id": 57783029,
+     "_aligned": null
+    },
+    {
+     "q": "US trade deficit for 2026?",
+     "kalshi": 91.0,
+     "poly": 48.0,
+     "delta": 43.0,
+     "category": "trade",
+     "kalshi_market_id": 1153176,
+     "poly_market_id": 1432802,
+     "_aligned": null
+    },
+    {
+     "q": "South African Reserve Bank rate decision in September",
+     "kalshi": 71.5,
+     "poly": 54.5,
+     "delta": 17.0,
+     "category": "fed",
+     "kalshi_market_id": 56943624,
+     "poly_market_id": 56995499,
+     "_aligned": null
+    },
+    {
+     "q": "Which bank will lead Anthropic's IPO?",
+     "kalshi": 65.5,
+     "poly": 50.0,
+     "delta": 15.5,
+     "category": "other",
+     "kalshi_market_id": 31833106,
+     "poly_market_id": 30635308,
+     "_aligned": {
+      "outcome": "Goldman Sachs",
+      "kalshi": 65.5,
+      "poly": 16.0,
+      "delta": 49.5
+     }
+    },
+    {
+     "q": "Bank of England rate decision in November",
+     "kalshi": 73.5,
+     "poly": 61.5,
+     "delta": 12.0,
+     "category": "fed",
+     "kalshi_market_id": 59699739,
+     "poly_market_id": 57783008,
+     "_aligned": null
+    },
+    {
+     "q": "Fed rate cut before 2027?",
+     "kalshi": 14.8,
+     "poly": 6.5,
+     "delta": 8.3,
+     "category": "fed",
+     "kalshi_market_id": 1630482,
+     "poly_market_id": 113339,
+     "_aligned": {
+      "outcome": "Yes",
+      "kalshi": 14.8,
+      "poly": 6.5,
+      "delta": 8.3
+     }
+    }
+   ],
+   "declared_in_frontend_type": false,
+   "rendered_by_page": false
+  },
+  "entertainment": {
+   "served": 8,
+   "aligned": 2,
+   "rows": [
+    {
+     "q": "Top US Netflix Show this week?",
+     "kalshi": 96.5,
+     "poly": 22.5,
+     "delta": 74.0,
+     "category": "tv_streaming",
+     "kalshi_market_id": 59701232,
+     "poly_market_id": 59620149,
+     "_aligned": {
+      "outcome": "Beauty in Black: Season 3",
+      "kalshi": 2.5,
+      "poly": 22.5,
+      "delta": 20.0
+     }
+    },
+    {
+     "q": "How many Emmys will 'DTF St. Louis ' win?",
+     "kalshi": 20.5,
+     "poly": 69.5,
+     "delta": 49.0,
+     "category": "other",
+     "kalshi_market_id": 55674281,
+     "poly_market_id": 57792512,
+     "_aligned": null
+    },
+    {
+     "q": "Don’t Look Down: First Week Pure Album Sales",
+     "kalshi": 95.5,
+     "poly": 47.0,
+     "delta": 48.5,
+     "category": "music",
+     "kalshi_market_id": 55686543,
+     "poly_market_id": 58315150,
+     "_aligned": null
+    },
+    {
+     "q": "#2 Global Netflix Movie this week?",
+     "kalshi": 4.0,
+     "poly": 48.0,
+     "delta": 44.0,
+     "category": "tv_streaming",
+     "kalshi_market_id": 59701235,
+     "poly_market_id": 59620156,
+     "_aligned": null
+    },
+    {
+     "q": "Top Album on Spotify in 2026?",
+     "kalshi": 73.0,
+     "poly": 31.0,
+     "delta": 42.0,
+     "category": "music",
+     "kalshi_market_id": 109522,
+     "poly_market_id": 27988658,
+     "_aligned": null
+    },
+    {
+     "q": "Top Global Netflix Movie this week?",
+     "kalshi": 7.0,
+     "poly": 49.0,
+     "delta": 42.0,
+     "category": "tv_streaming",
+     "kalshi_market_id": 59701234,
+     "poly_market_id": 59620161,
+     "_aligned": {
+      "outcome": "The Last House",
+      "kalshi": 1.0,
+      "poly": 49.0,
+      "delta": 48.0
+     }
+    },
+    {
+     "q": "How many Emmys will 'Pluribus' win?",
+     "kalshi": 25.5,
+     "poly": 65.5,
+     "delta": 40.0,
+     "category": "other",
+     "kalshi_market_id": 55674278,
+     "poly_market_id": 57792523,
+     "_aligned": null
+    },
+    {
+     "q": "How many Emmys will 'Widow's Bay' win?",
+     "kalshi": 12.0,
+     "poly": 50.0,
+     "delta": 38.0,
+     "category": "other",
+     "kalshi_market_id": 55674277,
+     "poly_market_id": 57792456,
+     "_aligned": null
+    }
+   ],
+   "declared_in_frontend_type": false,
+   "rendered_by_page": false
+  }
+ },
+ "featured_exclusion_census": {
+  "_what": "All three routes drop resolved / probability-extreme / title-stale markets from their themed sections, and all three hand the UNFILTERED list to find_cross_source_markets. Measured over the 48 markets behind the 24 served rows.",
+  "markets_behind_served_rows": 48,
+  "would_be_excluded": 1,
+  "detail": [
+   {
+    "market_id": 59699924,
+    "page": "economics",
+    "reason": "probability_extreme",
+    "leader": 0.985,
+    "name": "Mexico unemployment rate in August"
+   }
+  ]
+ }
+}

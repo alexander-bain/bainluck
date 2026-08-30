@@ -55,7 +55,7 @@ import type { CrossSourceMatch } from "@/lib/api";
 
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { CrossSourceCard, CrossSourceSpotlight } =
-  require("@/components/politics/CrossSourceSpotlight");
+  require("@/components/crossSource/CrossSourceSpotlight");
 const LegacyCrossSourceCard =
   require("../fixtures/uxp187CrossSourceCardLegacy").default;
 /* eslint-enable @typescript-eslint/no-var-requires */
@@ -331,7 +331,7 @@ describe("UX-P191 · the rest of the card is untouched", () => {
 
   test("the card no longer open-codes the rounding decision", () => {
     const source = fs.readFileSync(
-      path.join(FRONTEND, "components", "politics", "CrossSourceSpotlight.tsx"),
+      path.join(FRONTEND, "components", "crossSource", "CrossSourceSpotlight.tsx"),
       "utf8",
     );
     const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

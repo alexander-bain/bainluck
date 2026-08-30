@@ -16,6 +16,7 @@ import type {
   EntThemeMoviesTV,
   EntThemeTechCulture,
 } from "@/lib/api";
+import { CrossSourceSpotlight } from "@/components/crossSource/CrossSourceSpotlight";
 import ErrorState from "@/components/ErrorState";
 import EntertainmentSkeleton from "@/components/skeletons/EntertainmentSkeleton";
 import s from "./entertainment.module.css";
@@ -1447,6 +1448,16 @@ export default function EntertainmentPage() {
             <TechCultureSidebar data={data.themes.tech_culture} />
           )}
         </div>
+
+        {/* Cross-source spotlight — the one section here that shows two sources
+            side by side instead of the blend. The route has always computed it
+            and the page has always discarded it; see
+            `EntertainmentData.cross_source`. Deliberately OUTSIDE the theme
+            filter: a row is selected by two sources disagreeing about it, not
+            by which theme it lands in, and `show()` would hide rows whose
+            category is one the filter bar has no chip for. Self-gating on an
+            empty list, so no header appears over no cards. */}
+        <CrossSourceSpotlight matches={data.cross_source ?? []} />
 
         {/* Footer */}
         <div className={s.footer}>

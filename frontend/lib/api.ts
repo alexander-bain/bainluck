@@ -1775,6 +1775,13 @@ export interface EconData {
     trade: EconThemeSimple;
     government: EconThemeGovernment;
   };
+  /** Kalshi-vs-Polymarket pairs, ranked by disagreement. `/api/economics` has
+   *  always served this — eight rows, measured live 2026-08-30 — off the same
+   *  shared `find_cross_source_markets` that feeds `/politics`. It was never
+   *  declared here, so the field could not reach a page even in principle:
+   *  the payload arrived and TypeScript dropped it on the floor. Optional
+   *  because the route is served from an hourly precompute (UX-P194). */
+  cross_source?: CrossSourceMatch[];
   by_source: { kalshi: number; polymarket: number };
 }
 
@@ -1923,6 +1930,9 @@ export interface EntertainmentData {
     tech_culture: EntThemeTechCulture;
   };
   cultural_moments: EntMarketRow[];
+  /** As `EconData.cross_source` — served all along, never declared, so never
+   *  rendered. Eight rows measured live 2026-08-30 (UX-P194). */
+  cross_source?: CrossSourceMatch[];
   by_source: { kalshi: number; polymarket: number };
 }
 

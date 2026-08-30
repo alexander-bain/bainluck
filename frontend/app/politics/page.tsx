@@ -21,7 +21,7 @@ import Sparkline from "@/components/Sparkline";
 import { eventPath } from "@/lib/eventKey";
 import s from "./politics.module.css";
 import { BORDER_COLOR, SourceBadge } from "@/components/politics/atoms";
-import { CrossSourceSpotlight } from "@/components/politics/CrossSourceSpotlight";
+import { CrossSourceSpotlight } from "@/components/crossSource/CrossSourceSpotlight";
 
 // ─────────────────────────────────────────────────────────
 // Constants

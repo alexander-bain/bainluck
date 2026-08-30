@@ -7,6 +7,7 @@ import {
   SectionHeader, Card, SourceChip, MarketRow, FooterNote,
   ProbNum, ProbBar, Histogram, Delta, probColor,
 } from "@/components/economics/atoms";
+import { CrossSourceSpotlight } from "@/components/crossSource/CrossSourceSpotlight";
 import ErrorState from "@/components/ErrorState";
 import EconomicsSkeleton from "@/components/skeletons/EconomicsSkeleton";
 import { fetchEconomics } from "@/lib/api";
@@ -515,6 +516,12 @@ export default function EconomicsPage() {
             )}
           </section>
         )}
+
+        {/* Cross-source spotlight — the one section here that shows two sources
+            side by side instead of the blend. The route has always computed it
+            and the page has always discarded it; see `EconData.cross_source`.
+            Self-gating on an empty list, so no header appears over no cards. */}
+        <CrossSourceSpotlight matches={data.cross_source ?? []} />
       </div>
 
       {/* Footer */}

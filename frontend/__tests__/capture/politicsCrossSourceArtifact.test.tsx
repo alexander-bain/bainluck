@@ -9,7 +9,7 @@
  *           `git show e6719c91:frontend/app/politics/page.tsx`, fed the four
  *           rows `/api/politics` actually served on 2026-08-30. A render of the
  *           code that shipped, NOT a drawing of it.
- *   AFTER   the shipped `components/politics/CrossSourceSpotlight.tsx`, fed the
+ *   AFTER   the shipped `components/crossSource/CrossSourceSpotlight.tsx`, fed the
  *           four rows the fixed matcher produces from the same production
  *           market data.
  *
@@ -30,7 +30,7 @@ import path from "node:path";
 import type { CrossSourceMatch } from "@/lib/api";
 
 /* eslint-disable @typescript-eslint/no-var-requires */
-const { CrossSourceCard } = require("@/components/politics/CrossSourceSpotlight");
+const { CrossSourceCard } = require("@/components/crossSource/CrossSourceSpotlight");
 const LegacyCard = require("../fixtures/uxp187CrossSourceCardLegacy").default;
 /* eslint-enable @typescript-eslint/no-var-requires */
 
