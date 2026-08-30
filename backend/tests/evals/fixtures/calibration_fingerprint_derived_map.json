@@ -10,8 +10,52 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 47,
+  "input_count": 51,
   "inputs": [
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "BOOKMAKER_CURVE_ABSENT_REFUSAL",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_ABSENT_REFUSAL",
+      "sql_interpolated": false,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "BOOKMAKER_CURVE_EXPECTED_OUTCOMES",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_EXPECTED_OUTCOMES",
+      "sql_interpolated": false,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "BOOKMAKER_CURVE_REDIS_KEY",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_REDIS_KEY",
+      "sql_interpolated": true,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "BOOKMAKER_CURVE_UNREADABLE_REFUSAL",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_UNREADABLE_REFUSAL",
+      "sql_interpolated": false,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
     {
       "covered_by_value": false,
       "definition_sha16": null,
@@ -551,8 +595,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "1f9acd476c2317d22b14c92af77981102a4fe454a91025322be246291f20f81a",
-  "uncovered_behavior_or_evidence": 23,
-  "uncovered_count": 44,
-  "uncovered_sql_shaping": 21
+  "source_sha256": "ffe408ccbe76e0a2466203d7fe36534c12005ed4225ba39bd3457a99620a2ed4",
+  "uncovered_behavior_or_evidence": 26,
+  "uncovered_count": 48,
+  "uncovered_sql_shaping": 22
 }

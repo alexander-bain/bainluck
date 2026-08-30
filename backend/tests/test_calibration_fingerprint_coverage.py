@@ -107,10 +107,17 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         loosened when it fires is not one. What matters is WHICH number moved:
         ``uncovered_sql_shaping`` is asserted separately below precisely because
         a behaviour-only input must not touch it, and this one does not.
+
+        CAL-P150 (D21, 2026-08-30) moved the totals 47/44 -> 51/48 by adding the
+        four ``BOOKMAKER_CURVE_*`` constants: the Redis key the per-bookmaker
+        curve arrives under, the two refusal reason codes, and the expected
+        magnitude quoted in the refusal text. Three of the four are
+        behaviour-only and do not touch the count below. The fourth does, and
+        that is argued in its own place rather than here.
         """
-        assert artifact["input_count"] == 47
+        assert artifact["input_count"] == 51
         assert len(artifact["covered_by_value"]) == 3
-        assert artifact["uncovered_count"] == 44
+        assert artifact["uncovered_count"] == 48
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -128,8 +135,36 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         class that can silently change the published population — so separating
         them is what stops a routine +1 from being read as "the unguarded
         surface grew".
+
+        🔴 21 -> 22 AT CAL-P150 (D21, 2026-08-30), AND THIS IS A TRIPWIRE BEING
+        RAISED, WHICH IS AS SERIOUS AS ONE BEING LOWERED. Read the argument
+        before accepting the number.
+
+        The new entry is ``BOOKMAKER_CURVE_REDIS_KEY``. It is NOT SQL — it is
+        the Redis key the per-bookmaker curve arrives under — and it is counted
+        because the detector marks any module constant interpolated by f-string,
+        ``+`` or ``%`` (CAL-P032 widened it past f-strings on purpose), and the
+        key is named in the refusal message that exists to tell an operator
+        WHICH key is missing. There is no way to put it in that message the
+        detector will not see; a ``.join`` or a local alias would hide it, and
+        hiding a name from a tripwire is not satisfying one.
+
+        Counting it is defensible on this test's own terms besides. Change the
+        key and the build reads a different curve and publishes ~96,026 fewer
+        outcomes, which is exactly "an input that changes the published
+        population". What it is no longer is SILENT: D21 makes an unresolvable
+        key a named refusal on the producer path rather than a shortfall the
+        gate can only describe as "the population moved". So it is the first
+        member of this count whose failure mode is loud by construction — and it
+        should be the last one accepted on that argument without a fresh one.
+
+        The three sibling constants added by the same change
+        (``BOOKMAKER_CURVE_ABSENT_REFUSAL``, ``..._UNREADABLE_REFUSAL``,
+        ``..._EXPECTED_OUTCOMES``) are behaviour-only, are classified as such,
+        and moved the total in the test above and not this one — which is the
+        separation that test's docstring promises.
         """
-        assert artifact["uncovered_sql_shaping"] == 21
+        assert artifact["uncovered_sql_shaping"] == 22
 
     def test_the_four_hashed_roots_are_derived_not_declared_here(self, artifact):
         assert sorted(artifact["hashed_roots"]) == [
@@ -159,9 +194,16 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         that is designed to lift (ruling 024's named failure).
 
         The cross-module FIVE is the assertion that carries the meaning and it
-        is unchanged; only the in-module remainder moved (38 -> 39 at CAL-P038),
-        which is the direction that costs nothing — an in-module input is behind
-        the freeze."""
+        is unchanged; only the in-module remainder moved (38 -> 39 at CAL-P038,
+        and 39 -> 43 at CAL-P150 with the four ``BOOKMAKER_CURVE_*``
+        constants), which is the direction that costs nothing — an in-module
+        input is behind the freeze.
+
+        ⚠️ "Behind the freeze" is doing less work than it did. Ruling 009 has
+        now been opened five times in one day (D5, D21, D22, D13, D12), which is
+        exactly ruling 024's named failure arriving on schedule: a freeze
+        designed to lift is not a protection you can keep spending. The cross-
+        module FIVE is still the assertion that carries the meaning."""
         cross = sorted(
             r["name"]
             for r in artifact["inputs"]
@@ -175,7 +217,7 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
         ]
-        assert len(cross) + 39 == artifact["uncovered_count"]
+        assert len(cross) + 43 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

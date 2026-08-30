@@ -87,13 +87,25 @@ class TestPrecomputeQueryEmbedsExclusion:
     def test_bookmaker_source_also_excludes_soccer(self):
         # The per-bookmaker source (odds_api_bookmaker) has the SAME 2-way
         # draw-omission bug and dominates the soccer_* lines — it must be
-        # filtered on the consumption side too, else the D5 win is lost.
+        # filtered on the consumption side too, else the win is lost.
+        #
+        # 🔴 RE-AIMED 2026-08-30 (D21, CAL-P150), NOT WEAKENED. The predicate
+        # moved out of `compute_calibration_payload` and into
+        # `read_bookmaker_curve_rows`, which was lifted to module level so the
+        # absent-key refusal could be exercised without standing up a build. So
+        # the assertion follows it: the payload function must still ACCOUNT for
+        # the exclusion (it publishes the count), and the reader must still
+        # APPLY it through the canonical predicate. Asserting only the first
+        # would let the filter be deleted while the count stayed at zero.
         src = inspect.getsource(
             precompute_calibration.compute_calibration_payload
         )
         assert "bookmaker_soccer_excluded" in src
-        # The consumption filter uses the canonical predicate.
-        assert "category_is_soccer_2way_excluded(row.get(\"category\"))" in src
+
+        reader = inspect.getsource(
+            precompute_calibration.read_bookmaker_curve_rows
+        )
+        assert "category_is_soccer_2way_excluded(row.get(\"category\"))" in reader
 
     def test_exclusion_is_read_side_only(self):
         # Guardrail (gotcha #21): the exclusion must never mutate scores/probs.

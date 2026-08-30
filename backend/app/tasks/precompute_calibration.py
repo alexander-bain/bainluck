@@ -13,6 +13,7 @@ import random
 import re
 import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import text
@@ -46,6 +47,179 @@ _MAIN_CACHE_TTL = 7200
 # failed/partial publish can never destroy a usable prior payload (Item 1).
 _MAIN_LAST_GOOD_KEY = "bainluck:calibration:main:last_good"
 _MAIN_KEY = "bainluck:calibration:main"
+
+# D21 (#1978, CAL-P150). The per-bookmaker curve arrives through Redis rather
+# than through this module's SQL — written by `precompute_bookmaker_calibration`
+# (backfill_winners.py, every 6 h, 24 h TTL, fails closed) and read in Phase 3
+# below. It is ~96,026 outcomes and it is concatenated into `all_rows`, so it is
+# part of the PUBLISHED population and not, as its phase heading implies, a
+# transparency read.
+#
+# The reason all three of these are named constants rather than literals is the
+# outage they are named after: the reader swallowed an absent key with
+# `except: pass`, so the one string that identifies the failure appeared nowhere
+# in the evidence. A refusal whose reason is a bare literal buried in a string
+# is a refusal nobody can grep for.
+BOOKMAKER_CURVE_REDIS_KEY = "bainluck:bookmaker_calibration"
+BOOKMAKER_CURVE_ABSENT_REFUSAL = "bookmaker_curve_key_absent"
+BOOKMAKER_CURVE_UNREADABLE_REFUSAL = "bookmaker_curve_key_unreadable"
+
+#: What the reader expects to find, for the refusal message only. Approximate by
+#: construction — it is the magnitude the outage was measured at
+#: (alex-inbox/calibration-907 §"what you will need to do after it deploys"), and
+#: it is quoted so an operator reading the refusal knows what "short" means
+#: without having to go and find the number. Nothing branches on it.
+BOOKMAKER_CURVE_EXPECTED_OUTCOMES = 96_026
+
+
+def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
+    """The per-bookmaker curve, or a NAMED refusal. Never a silent zero.
+
+    D21 (#1978, CAL-P150) — freeze exception GRANTED by Alex 2026-08-30, and
+    lifted out of Phase 3 so the refusal can be exercised without standing up
+    the whole build.
+
+    THE DEFECT THIS REPLACES, and it is worth the paragraph because the shape
+    recurs. The call site read this key inside a ``try: ... except Exception:
+    pass``. ``_precompute_bookmaker_calibration`` stopped finishing inside its
+    soft time limit, so it stopped writing the key; the key aged out of its 24 h
+    TTL; this reader turned the absence into ZERO rows; and the rows are
+    concatenated into ``all_rows``, so the candidate went out ~96,026 outcomes
+    short. The publish gate then rightly refused it, every beat, naming the
+    SYMPTOM (a population move) and unable to name the CAUSE. Silent
+    non-publish from 2026-08-29T00:36:47Z until it was run by hand.
+
+    Returns ``(rows, soccer_excluded_n, degraded_reason)``. ``degraded_reason``
+    is ``None`` on a good read and one of the two reason codes otherwise; it is
+    only ever non-None when ``refuse`` is False.
+
+    Raises :class:`RuntimeError` naming :data:`BOOKMAKER_CURVE_ABSENT_REFUSAL`
+    or :data:`BOOKMAKER_CURVE_UNREADABLE_REFUSAL` when ``refuse`` is True.
+
+    🔴 ``refuse`` IS NOT A CONVENIENCE FLAG, AND ITS ABSENCE WAS A REAL DEFECT
+    IN THE FIRST CUT OF THIS FIX. ``compute_calibration_payload`` has TWO
+    callers: the scheduled producer, and ``/api/calibration``'s in-request
+    cold-cache fallback. Refusing unconditionally turned "Redis is unreachable"
+    into a 500 on the PUBLIC endpoint — a user-visible regression, on exactly
+    the path that exists because Redis is unavailable. Caught by 95 failures in
+    the calibration suite, 55 of them in ``test_route_calibration.py``, on the
+    first full run after the fix.
+
+    So the refusal is scoped to the producer, which is the only caller that can
+    PUBLISH a short candidate and therefore the only one for which "short" is a
+    correctness question. The serve path keeps the behaviour its docstring
+    promises (``behaves EXACTLY as it did before``) and reports the degradation
+    in the payload instead of swallowing it. That is still the whole point of
+    D21: the absence is named either way, and the difference is only whether
+    naming it stops the beat or annotates the response.
+
+    🔴 THIS DOES NOT MAKE THE PRODUCER'S OUTCOME WORSE, and that is the argument
+    for taking it inside a freeze. The gate already refused the short candidate,
+    so nothing that used to publish stops publishing; an unattributable refusal
+    is replaced by one that says which key, which writer, and how much is
+    missing. What it must NOT become is a reason to publish anyway — a partial
+    curve is not a smaller right answer, it is the exact shape that caused the
+    outage.
+
+    All three failure modes are one class on purpose (gotcha #53 — an empty
+    answer is a response shape, not an absence): absent, unreachable and
+    unparseable were indistinguishable under ``pass``, and the fix that
+    distinguishes them from SUCCESS is the whole point. They are still told
+    apart from each other, by two distinct reason codes, because "Redis is down"
+    and "the writer has not landed a sweep" want different operators.
+    """
+    _json = json_module or json
+
+    # 🔴 THIS QUEUE RAISED A PINNED TRIPWIRE — `uncovered_sql_shaping` 21 -> 22 —
+    # AND THE REASON BELONGS BESIDE THE LINE THAT DID IT.
+    #
+    # `scripts/evals/calibration_fingerprint_derived_map.py` marks a
+    # module-level name `sql_shaping` when it is interpolated into a string by
+    # an f-string, a `+` or a `%` (CAL-P032 widened it past f-strings precisely
+    # because this module builds SQL all three ways). Naming
+    # `BOOKMAKER_CURVE_REDIS_KEY` inside a refusal message therefore counts it,
+    # and there is no way to put the key in the message that the detector will
+    # not see — a `.join` or a local alias would hide it, which is gaming a
+    # tripwire rather than satisfying it.
+    #
+    # So the pin is RAISED, with the argument written into the guard: this key
+    # is not SQL, but under the guard's own stated purpose — "the only class
+    # that can silently change the published population" — it qualifies in
+    # substance. Change it and the build reads a different curve and publishes
+    # ~96K fewer outcomes. What it is NOT is silent, and D21 is the reason: on
+    # the producer path a key that resolves to nothing is now a named refusal,
+    # not a shortfall. It is the first entry in this count whose failure mode is
+    # loud by construction.
+    #
+    # The other three BOOKMAKER_CURVE_* constants stay OUT of the count and are
+    # not being hidden from it: the reason codes are passed to `_degrade` as
+    # arguments and never interpolated, and the expected-outcomes figure is
+    # rendered by `format()` — a call, which the detector does not treat as
+    # string building because a call is not how this module writes SQL.
+    _expected = format(BOOKMAKER_CURVE_EXPECTED_OUTCOMES, ",")
+
+    def _degrade(reason: str, message: str, cause: Exception | None = None):
+        if refuse:
+            raise RuntimeError(f"{reason}: {message}") from cause
+        # Not swallowed: logged with the traceback where there is one, and
+        # returned so the caller can put the reason IN the payload. A serve that
+        # is short 96K outcomes and does not say so is the original defect with
+        # a different caller.
+        logger.warning(
+            "calibration serve degraded — %s: %s", reason, message,
+            exc_info=cause is not None,
+        )
+        return [], 0, reason
+
+    try:
+        cached = rc.get(BOOKMAKER_CURVE_REDIS_KEY)
+    except Exception as exc:
+        return _degrade(
+            BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
+            "could not read %s from Redis, so the per-bookmaker curve (~%s "
+            "outcomes, source odds_api_bookmaker) cannot be assembled. Nothing "
+            "published, prior snapshot preserved."
+            % (BOOKMAKER_CURVE_REDIS_KEY, _expected),
+            exc,
+        )
+
+    if not cached:
+        return _degrade(
+            BOOKMAKER_CURVE_ABSENT_REFUSAL,
+            "%s is absent, so the candidate would publish ~%s outcomes short. "
+            "Its only writer is precompute_bookmaker_calibration "
+            "(backfill_winners.py, every 6 h, 24 h TTL, fails closed), so an "
+            "absent key means that task has not landed a COMPLETE sweep inside "
+            "one TTL. Fire it detached and confirm by_source carries "
+            "odds_api_bookmaker before expecting this build to publish. "
+            "Nothing published, prior snapshot preserved."
+            % (BOOKMAKER_CURVE_REDIS_KEY, _expected),
+        )
+
+    try:
+        raw = _json.loads(cached)
+    except Exception as exc:
+        return _degrade(
+            BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
+            "%s is present but is not JSON this reader can parse. Nothing "
+            "published, prior snapshot preserved." % (BOOKMAKER_CURVE_REDIS_KEY,),
+            exc,
+        )
+
+    # Queue #158 (#1011): the per-bookmaker calibration devigs soccer moneyline
+    # as home_prob/(home_prob+away_prob) — the SAME 2-way draw-omission bug as
+    # the events curve (`_precompute_bookmaker_calibration` has no draw term).
+    # Left in, it dominates the soccer_* by_category lines (~40K draw-inflated
+    # outcomes). Dropped here, read-side, so the exclusion holds even though the
+    # 6 h source keeps writing them.
+    rows = []
+    soccer_excluded = 0
+    for row in raw:
+        if category_is_soccer_2way_excluded(row.get("category")):
+            soccer_excluded += int(row.get("n") or 0)
+            continue
+        rows.append(SimpleNamespace(**row))
+    return rows, soccer_excluded, None
 
 # Queue 298 (#1512): both keys above live in the SAME 50MB allkeys-lru Redis, so
 # "durable last_good" was only ever durable against TTL, never against eviction
@@ -3550,6 +3724,15 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         PHASE_SPORTS,
     )
 
+    # D21 (#1978, CAL-P150). Captured BEFORE the NULL_RUNNER substitution below,
+    # because after it `runner` can no longer answer the question. This is the
+    # only place in the body that can tell the two callers apart, and one of the
+    # reads downstream must: the scheduled build may REFUSE to publish a
+    # candidate missing its per-bookmaker curve, and the route's in-request
+    # cold-cache fallback must not — refusing there is a 500 on the public
+    # endpoint, on the path that exists precisely because Redis is unreachable.
+    is_producer_build = runner is not None
+
     runner = runner or NULL_RUNNER
 
     # nullcontext preserves the historical block structure (the queries below
@@ -3904,27 +4087,35 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         # -----------------------------------------------------------
         # Query 5: Per-bookmaker calibration from Redis
         # -----------------------------------------------------------
-        bookmaker_rows = []
-        # Queue #158 (#1011): the per-bookmaker calibration (odds_api_bookmaker)
-        # devigs soccer moneyline as home_prob/(home_prob+away_prob) — the SAME
-        # 2-way draw-omission bug as the events curve (_precompute_bookmaker_
-        # calibration in backfill_winners.py has no draw term). Left in, it
-        # dominates the soccer_* by_category lines (~40K draw-inflated outcomes).
-        # Drop the soccer_* bookmaker buckets here (read-side, consumption-side)
-        # so the exclusion is robust even though the 6h source keeps writing them.
-        bookmaker_soccer_excluded = 0
-        try:
-            from types import SimpleNamespace as _NS
-            rc = get_redis_client()
-            _cached = rc.get("bainluck:bookmaker_calibration")
-            if _cached:
-                for row in json.loads(_cached):
-                    if category_is_soccer_2way_excluded(row.get("category")):
-                        bookmaker_soccer_excluded += int(row.get("n") or 0)
-                        continue
-                    bookmaker_rows.append(_NS(**row))
-        except Exception:
-            pass
+        # D21 (#1978, CAL-P150) — freeze exception GRANTED by Alex 2026-08-30.
+        # These two lines used to be a `try: ... except Exception: pass` around
+        # the read, and that is what a 23-hour silent publish outage looked like
+        # from the inside. An absent, unreachable or unparseable key is now a
+        # NAMED refusal; the reasoning, the measured chain and the argument for
+        # why refusing loudly is not a worse outcome are all on
+        # `read_bookmaker_curve_rows`.
+        #
+        # 🔴 These rows are NOT diagnostics, despite the phase heading above.
+        # They are concatenated into `all_rows`, so they are part of the
+        # PUBLISHED population — which is why their silent absence took ~96,026
+        # outcomes out of the candidate rather than out of a transparency read.
+        #
+        # 🔴 `refuse` IS SCOPED TO THE PRODUCER, and the first cut of this fix
+        # got that wrong. `runner` is the discriminator this function already
+        # documents: present for the scheduled build, absent for
+        # `routes/calibration.public_calibration`'s in-request cold-cache
+        # fallback. Refusing on BOTH turned "Redis is unreachable" into a 500 on
+        # the public endpoint — on the very path that exists because Redis is
+        # unavailable. The producer is the only caller that can PUBLISH a short
+        # candidate, so it is the only one for which short is a correctness
+        # question; the serve path reports the degradation in the payload.
+        (
+            bookmaker_rows,
+            bookmaker_soccer_excluded,
+            bookmaker_curve_degraded,
+        ) = read_bookmaker_curve_rows(
+            get_redis_client(), refuse=is_producer_build
+        )
 
         # -----------------------------------------------------------
         # Query 6: Total resolved markets count
@@ -4663,6 +4854,15 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "excluded": soccer_2way_excluded + bookmaker_soccer_excluded,
             "events_excluded": soccer_2way_excluded,
             "bookmaker_excluded": bookmaker_soccer_excluded,
+            # D21 (#1978, CAL-P150). None on a normal read; one of the two
+            # reason codes when the per-bookmaker curve could not be assembled
+            # and this response was served anyway. Only the serve path can ever
+            # set it — the producer refuses instead — and it is here rather than
+            # nowhere because a payload that is short ~96K outcomes and does not
+            # say so is the original defect with a different caller. A zero that
+            # cannot be told from an absence is a response shape, not an answer
+            # (gotcha #53).
+            "bookmaker_curve_degraded": bookmaker_curve_degraded,
         },
         "heuristic_filter": {
             "applies_to": "polymarket",

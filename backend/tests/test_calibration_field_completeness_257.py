@@ -303,6 +303,25 @@ class _FakeDB:
         # advance behind committed work. Read-only here; nothing to do.
         return None
 
+    async def begin_nested(self):
+        # D22 (#1978, CAL-P150). The two diagnostics reads the beat is allowed
+        # to publish WITHOUT now run inside a savepoint, because a statement
+        # timeout aborts the whole transaction and a bare `except` cannot
+        # survive it. This fake has to offer one, and offering a real-shaped
+        # no-op is the honest stand-in: the reads here do not fail, so the
+        # savepoint is entered and committed and nothing is exercised beyond
+        # the call itself. The rollback path has its own suite against a
+        # purpose-built fake session
+        # (`test_calibration_soft_stage_d22.test_a_raising_soft_stage_does_not_end_the_beat`).
+        class _Savepoint:
+            async def commit(self):
+                return None
+
+            async def rollback(self):
+                return None
+
+        return _Savepoint()
+
 
 @pytest.fixture(autouse=True)
 def _disable_sample_gate(monkeypatch):
@@ -384,6 +403,17 @@ async def test_precompute_wrapper_caches_exact_shared_payload():
             captured[key] = val
 
         def get(self, key):
+            # D21 (#1978, CAL-P150): the PRODUCER path now refuses to publish a
+            # candidate whose per-bookmaker curve is missing — an absent key was
+            # taking ~96,026 outcomes out of the published population silently,
+            # and the gate could only report that the population had moved. So
+            # this fake has to answer for that key, and answering `[]` is the
+            # right answer for this test: it is a written, complete curve that
+            # happens to hold no rows, which keeps the payload identity this
+            # test is actually about unchanged. Returning None here would make
+            # the fixture assert the refusal instead.
+            if key == "bainluck:bookmaker_calibration":
+                return "[]"
             return None
 
     fake_db = _FakeDB()
