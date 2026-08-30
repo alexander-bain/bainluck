@@ -43,6 +43,16 @@ cat <<'GATES'
   python3 -m pytest -k "calibration or bookmaker or ladder" \
     > /tmp/g3.txt 2>&1; echo "EXIT CODE: $?"; tail -20 /tmp/g3.txt
 
+  # 🔴 THE ONES CAL-P143 COULD NOT RUN — no local Postgres in the sandbox, so
+  # these were reasoned about and NOT executed. They seed single-outcome markets
+  # with is_winner=false, which is exactly the class this patch newly admits, so
+  # a row count in them may legitimately move. Read the diff before "fixing" it.
+  python3 -m pytest tests/integration/test_calibration_mode_price_source_scope_pg.py \
+                    tests/integration/test_calibration_mode_price_source_scope_peers_pg.py \
+                    tests/integration/test_route_calibration.py \
+                    tests/test_calibration_canonical_pg.py -v \
+    > /tmp/g4.txt 2>&1; echo "EXIT CODE: $?"; tail -30 /tmp/g4.txt
+
   # and the full suite before the push — 21K tests, ~13 minutes
 GATES
 echo

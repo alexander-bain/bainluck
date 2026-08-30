@@ -2,15 +2,16 @@ calibration soft stage read:truth_census degraded: RuntimeError: canceling state
 Traceback (most recent call last):
   File "/tmp/cal-p143-d22-verify/backend/app/tasks/calibration_main_build.py", line 636, in soft_stage
     yield outcome
-  File "/Users/bain/bainluck-dev/calibration/backend/../artifacts/cal-p143/verify-d22.py", line 172, in exercise
+  File "/Users/bain/bainluck-dev/calibration/backend/../artifacts/cal-p143/verify-d22.py", line 196, in exercise
     raise RuntimeError("canceling statement due to statement timeout")
 RuntimeError: canceling statement due to statement timeout
-  compiles: 2/2 patched files
+  compiles: 3/3 patched files
   observed + clean  -> contract_ok True,  status 'ok'
   observed + violation -> contract_ok False, status 'violated'
   unobserved       -> contract_ok None,  status 'unobserved'
   unobserved + real violation -> contract_ok False, status 'violated' (a violation outranks a missing census)
   the rejected alternative ({} instead of None) would have read contract_ok=True on no evidence — which is why None is used
+  stage-name guard: all 17 stretches still named (2 now soft)
   soft_stage: raising body -> swallowed, rolled back, named
   soft_stage: clean body   -> committed, not degraded
 VERDICT: D22 PRE-BUILD VERIFIED

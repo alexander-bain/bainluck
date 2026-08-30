@@ -5,10 +5,11 @@ work*: `git apply --check` exit 0 on both patches, and a verifier that rebuilds 
 patched producer under `/tmp` and runs the shipped guards against it — RED on the live
 chain, GREEN on the patched one. Three findings the directive did not know:
 
-1. 🔴 **"The fix makes our number worse" — the sentence that has held 12-CAL since
-   CAL-P122 — is cell-dependent.** `kalshi/entertainment` 5.21 → 6.30 (worse). Measured
-   this session, `polymarket/economics` 3.90 → **3.68 (better)**. Two cells, two sources,
-   opposite signs. The direction is not declarable and the guard now says so.
+1. 🔴 **RULE E2's premise is false on the cell E2 was written on**, and "the fix makes our
+   number worse" is cell-dependent. Three cells measured, two sources: esports 100% → 60.8%
+   winners restored (ECE 7.03 → 7.37), entertainment 100% → 47.8% (5.21 → 6.30),
+   economics 99.6% → 86.5% (3.90 → **3.68, better**). The direction is not declarable and
+   the guard now says `unknown_direction` rather than a guess.
 2. 🔴 **Landing D13 discards the staged futures bank** (`_calibration_population_ctes` is
    hashed into `_main_input_fingerprint`), manufacturing ~10 heavy rebuild beats — exactly
    the condition the class-B diagnostics timeout fires under. **D22 before D13, or both on
@@ -67,9 +68,31 @@ document, not a control. The last line is the one that matters most: the class t
 instrument calls `B_lone_claim` and the class the producer would publish are held to **one**
 definition, so the measured number stays the number that lands.
 
-## 2. 🔴 The generality run changed the ask
+🔴 **What the verification does not cover, said plainly:** there is no local Postgres here,
+so the four PG-backed calibration suites were reasoned about and **not executed**. Two of
+them seed single-outcome markets carrying an explicit `is_winner` — the exact class this
+patch newly admits — so a seeded row count in them may legitimately move. They are in
+`land-12cal.sh`'s gate list with that warning attached.
 
-`GENERALITY-12CAL.md`. CAL-P131 found 508 published outcomes on `polymarket/economics`
+## 2. 🔴 The generality runs changed the ask
+
+`GENERALITY-12CAL.md`. Three cells now, two sources, every one of them two-sided once the
+filter is removed:
+
+```
+  cell                    class today       class restored     cell ECE
+  polymarket/esports      219, 100.0% W     360, 60.8% W       7.03 -> 7.37
+  kalshi/entertainment    395, 100.0% W     827, 47.8% W       5.21 -> 6.30
+  polymarket/economics    514,  99.6% W     592, 86.5% W       3.90 -> 3.68
+```
+
+**`polymarket/esports` is the one that settles 13-CAL.** RULE E2 was written on that cell —
+CAL-P112's *"453 markets, 453 outcomes, 453 winners … not a set of Yes/No claims being
+scored, it is one-sided capture."* **141 eligible losers are being dropped there.** A rule
+may survive being wrong about a cell it was generalised to; not about the cell it was
+generalised from.
+
+CAL-P131 found 508 published outcomes on `polymarket/economics`
 that could not have lost, named `clean_vms` as the *candidate* clause and wrote *"a lead
 for the lane that owns the fix, not a verdict."* Run on the producer's own chain one
 predicate earlier: **78 eligible losers, uniquely dropped.** Inference → verdict.
@@ -109,6 +132,12 @@ Two things found while building it:
   `contract_ok` returns **True on no evidence at all**. So the degraded value is `None`,
   the payload carries `census_observed` and `contract_status`, and a violation the
   aggregate DID find still outranks "unobserved" — verified in both directions.
+* **The patch would have turned an unrelated guard red, and the verifier caught it.**
+  `test_every_read_and_publish_stretch_is_a_named_stage` greps the producer's source for
+  the literal `runner.stage("<name>")`; two of those call sites become soft stages. The
+  guard is widened *in the same patch* (a soft stage is still a named stage — it opens
+  `self.stage(name)` internally) and the verifier now re-checks all seventeen stretches.
+  "Ready to land" is false if landing turns a guard red.
 
 ## 4. The freeze window — `WINDOW-REPORT.md`
 
@@ -162,13 +191,13 @@ CAL-P143 rests on any of it.
 * **Landed nothing.** Both patches are artifacts. No freeze exception requested or taken.
 * **Did not answer D13 or D22** — they are Alex's, and the pre-build exists so the answer
   is cheap, not so the answer is assumed.
-* **Did not extrapolate the repair board-wide.** Two cells measured, 45 unmeasured and
-  PARKED (CAL-P122-1). Two cells with opposite signs are not a direction.
+* **Did not extrapolate the repair board-wide.** Three cells measured, 45 unmeasured and
+  PARKED (CAL-P122-1). Three cells whose signs disagree are not a direction.
 * **Did not re-baseline the freeze window**, and §4 is why that would have been the wrong
   move today.
-* **Did not finish `polymarket/esports`** — the census was still sweeping at hand-off
-  (chunk 34 of 60 after 25 min; `kalshi/economics` queued behind it). Logs are in this
-  directory and either resumes with one command.
+* **Did not finish `kalshi/economics`** — the fourth census was still sweeping at hand-off
+  (`census-economics.log`; `polymarket/esports` ahead of it took 2,069 s). It is the other
+  banked design that cannot land, so it is the obvious next command.
 
 ## 8. Gate
 
@@ -186,7 +215,7 @@ all five new scripts.
 | `RULE-DESIGN-12CAL-lost-losses.md` | §1 — the D13 design, the landing cost, the fabricated-loss blind spot |
 | `12cal-lost-losses.patch` / `land-12cal.sh` | the change and the landing procedure |
 | `test_calibration_lost_losses_12cal.py` / `verify-12cal-suite.py` / `suite-verification.txt` | the regression controls and the proof they are red-then-green |
-| `GENERALITY-12CAL.md` / `missing-losers-polymarket-economics.json` / `census-poly-economics.log` | §2 — the second cell |
+| `GENERALITY-12CAL.md` / `missing-losers-*.json` / `census-*.log` | §2 — the three cells, and E2's origin |
 | `d22-diagnostics-nonblocking.patch` / `test_calibration_soft_stage_d22.py` / `verify-d22.py` / `d22-verification.txt` | §3 |
 | `WINDOW-REPORT.md` / `window-log-snapshot.jsonl` | §4 |
 | `refusal-register.py` / `.txt`, `hold-ledger.txt` | §5 |

@@ -31,23 +31,40 @@
  
          # -----------------------------------------------------------
          # Query 12: L2-78 Item 0 (flagged since L2-73) — the true resolved-data
-@@ -4070,8 +4085,12 @@
+@@ -4070,23 +4085,26 @@
          # Nothing about the query changed; only where it is accounted for.
          date_range = runner.reuse(PHASE_DIAGNOSTICS, "date_range")
          if date_range is None:
 -            try:
 -                with runner.stage("read:date_range"):
-+            # D22: was a bare ``try`` — which cannot survive the failure it was
-+            # written for. A statement timeout aborts the transaction, so the
-+            # except caught the error and the phase's own commit then raised
-+            # anyway. Same intent, now with the savepoint that makes it true.
+-                    dr = (
+-                        await db.execute(
+-                            text(
+-                                "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
+-                                "FROM futures_markets "
+-                                "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
+-                                "AND resolution_date <= NOW() "
+-                                "AND resolution_date >= NOW() - INTERVAL '5 years'"
+-                            )
++            # D22: this was a bare ``try``, and it cannot survive the failure
++            # it was written for. A statement timeout aborts the whole
++            # transaction, so the ``except`` caught the error and the phase's own
++            # commit raised anyway — the beat died with the handler right there.
++            # Same intent, now with the savepoint that makes it true. The
++            # ``if`` stays INSIDE: on a degraded read ``dr`` is never bound.
 +            async with runner.soft_stage(db, "read:date_range"):
-+                with runner.stage("read:date_range:inner"):
-                     dr = (
-                         await db.execute(
-                             text(
-@@ -4085,8 +4104,6 @@
-                     ).one()
++                dr = (
++                    await db.execute(
++                        text(
++                            "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
++                            "FROM futures_markets "
++                            "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
++                            "AND resolution_date <= NOW() "
++                            "AND resolution_date >= NOW() - INTERVAL '5 years'"
+                         )
+-                    ).one()
++                    )
++                ).one()
                  if dr.lo and dr.hi:
                      date_range = {"start": dr.lo.isoformat(), "end": dr.hi.isoformat()}
 -            except Exception:
@@ -55,7 +72,7 @@
              runner.record(PHASE_DIAGNOSTICS, "date_range", date_range)
  
          if not _diagnostics_carried:
-@@ -4658,7 +4675,7 @@
+@@ -4658,7 +4676,7 @@
  
  
  def _build_truth_evidence(
@@ -64,7 +81,7 @@
      *,
      mex_normalized_markets: int,
      mex_published_markets: int,
-@@ -4674,6 +4691,13 @@
+@@ -4674,6 +4692,13 @@
      an unknown resolution_source in the resolved population, or the Queue #259
      candidate==published partition breaking — never on a source-mix ratio.
      """
@@ -78,7 +95,7 @@
      unknown = truth_by_class.get("unknown", {"outcomes": 0, "markets": 0})
      price_derived = truth_by_class.get("price_derived", {"outcomes": 0, "markets": 0})
      partition_ok = mex_normalized_markets == mex_published_markets
-@@ -4707,7 +4731,28 @@
+@@ -4707,7 +4732,28 @@
              "published_markets": mex_published_markets,
              "ok": partition_ok,
          },
@@ -217,3 +234,21 @@
  
  
  NULL_RUNNER = NullPhaseRunner()
+--- a/backend/tests/test_calibration_phase_ledger.py
++++ b/backend/tests/test_calibration_phase_ledger.py
+@@ -1147,7 +1147,14 @@
+         "serialize", "redis_client", "baseline_read", "publish_gate",
+         "durable_publish", "redis_accelerate",
+     ):
+-        assert f'runner.stage("{stage}")' in src, stage
++        # D22: a SOFT stage is still a named stage. ``soft_stage`` opens
++        # ``self.stage(name)`` internally, so the stretch is measured and named
++        # exactly as before; only the call site spells it differently, because
++        # these two reads are now allowed to fail without ending the beat.
++        assert (
++            f'runner.stage("{stage}")' in src
++            or f'runner.soft_stage(db, "{stage}")' in src
++        ), stage
+ 
+ 
+ def test_stages_accumulate_and_are_recorded_even_when_the_body_raises():

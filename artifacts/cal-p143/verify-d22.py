@@ -39,6 +39,7 @@ sys.path.insert(0, str(BACKEND))
 FILES = (
     "backend/app/tasks/precompute_calibration.py",
     "backend/app/tasks/calibration_main_build.py",
+    "backend/tests/test_calibration_phase_ledger.py",
 )
 
 
@@ -152,6 +153,29 @@ def main() -> int:
     else:
         print("  the rejected alternative ({} instead of None) would have read "
               "contract_ok=True on no evidence — which is why None is used")
+
+    # --- the stage-name guard, which this patch would otherwise turn red ----
+    # test_every_read_and_publish_stretch_is_a_named_stage reads the producer's
+    # SOURCE for the literal runner.stage("<name>"). Two of those call sites are
+    # now soft stages, so the guard is widened in the same patch — and checked
+    # here, because "ready to land" is false if a landing turns a guard red.
+    import inspect
+
+    src = (inspect.getsource(prod.compute_calibration_payload)
+           + inspect.getsource(prod._run_calibration_main_build))
+    missing = [s for s in (
+        "read:futures_population", "read:events", "read:spreads", "read:totals",
+        "read:total_markets", "read:closing", "read:void",
+        "read:heuristic_excluded", "read:soccer_2way", "read:truth_census",
+        "read:date_range", "serialize", "redis_client", "baseline_read",
+        "publish_gate", "durable_publish", "redis_accelerate",
+    ) if f'runner.stage("{s}")' not in src
+        and f'runner.soft_stage(db, "{s}")' not in src]
+    if missing:
+        ok = False
+        print(f"  🔴 stage-name guard would go red on: {missing}")
+    else:
+        print("  stage-name guard: all 17 stretches still named (2 now soft)")
 
     # --- soft_stage ---------------------------------------------------------
     async def exercise() -> None:

@@ -77,3 +77,15 @@ it is the only one that will exist when D22 is answered.
 * watcher `pid 3019` (orphaned to init, poll 420 s) — alive and logging throughout this
   session, restarts: 0.
 * beats logged at hand-off: see `window-log-snapshot.jsonl` in this directory.
+
+## Re-read at hand-off — beat 16 published, and the arithmetic did not move
+
+```
+  13/16 clean so far (window 24)   (3 misses; -1 of 2 budget left)
+  ###?##C#######B#   <- oldest ... newest
+  VERDICT  WINDOW_NOT_FULL
+```
+
+`13 clean + 8 remaining = 21 < 22`. A clean beat cannot un-lose a window that is short on
+budget, and this is what that looks like: the strip gets better, the verdict string stays
+the same, and the reachable maximum is still 21. Full output in `window-at-handoff.txt`.

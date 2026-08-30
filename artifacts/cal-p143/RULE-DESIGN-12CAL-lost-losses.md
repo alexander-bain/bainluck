@@ -167,6 +167,15 @@ the class the instrument calls `B_lone_claim` and the class the producer now pub
 held to **one** definition, over all nine (market_count, total_outcomes) combinations. If
 they ever drift, the measured 432 stops being the number that lands.
 
+🔴 **What the verification does NOT cover, named rather than glossed.** There is no local
+Postgres in this sandbox, so the four PG-backed calibration suites were *reasoned about and
+not executed*. Two of them
+(`test_calibration_mode_price_source_scope_peers_pg.py`, `test_calibration_canonical_pg.py`)
+seed single-outcome markets carrying an explicit `is_winner` — which is precisely the class
+this patch newly admits — so a seeded row count in them may legitimately move. They are in
+`land-12cal.sh`'s gate list with that warning attached, because a landing that silently
+"fixes" a moved count is how a repair becomes a regression.
+
 Two guards exist purely so the landing cannot be quiet: `test_landing_invalidates_the_banked_futures_units`
 (§5 must have been read) and `test_the_declared_movement_is_an_addition_of_losses` (ruling
 054 — rows UP, restored-class win rate 0.0, headline ECE worse-or-equal).
