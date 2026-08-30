@@ -28,14 +28,26 @@ local Postgres in the agent sandbox (`initdb` dies on `shmget`), so **CI is the
 environment that grades this**, on the same `search-recall` service container as
 `test_search_recall_contract.py`.
 
-## the four reads, and why one seed covers them
+## the reads, and why one seed covers them
 
 `/search` builds every event-shaped read from ONE list — the two UNION recall
 arms, the outer entity query, the identity-only count, and the substring-existence
 guard — except the fuzzy fallback, which replaces `query` and `total_count`
 wholesale and therefore has its own. `/typeahead` has two: the dropdown pool and
-its own fuzzy pool. So: a primary query, its total, a misspelled query that
-reaches the fallback, and the dropdown. Four assertions, four reads.
+its own fuzzy pool. `/search-suggestions` — the search box's zero state — has
+three.
+
+So: a primary query, its total, a misspelled query that reaches the fallback, the
+dropdown, and one zero-state chip.
+
+**The chip fails differently, and it is the nastier of the two shapes.**
+`search_suggestions._add` dedups on the suggestion TEXT, and both rows yield the
+same shorter team name, so a duplicated game never appeared as two chips. But
+`soon_q` orders `commence_time ASC` and the twin is a minute EARLIER, so the twin
+arrives first, claims the name, and the chip carries ITS `event_id`. One
+suggestion, pointing at the copy with no odds and no sources — a search
+suggestion that opens a blank event page. A test that only counted chips would
+have reported this surface healthy.
 
 ## the kill control
 
@@ -80,6 +92,12 @@ AWAY = "Los Angeles Dodgers"
 #: `NOT LIKE` drops every untagged row because `NULL NOT LIKE x` is NULL.
 CONTROL_AWAY = "Chicago White Sox"
 
+#: A THIRD pair, inside the 3-hour "starting soon" window that feeds the search
+#: box's zero state. Deliberately not a Tigers game, so it cannot perturb the
+#: `?q=tigers` cases above.
+SOON_HOME = "Seattle Mariners"
+SOON_AWAY = "Toronto Blue Jays"
+
 
 async def _seed(session):
     """Three events and one team; ids are assigned by the server and read back."""
@@ -123,6 +141,33 @@ async def _seed(session):
     )
     session.add(twin)
 
+    # The "starting soon" pair. MLB is LEAGUE_TIERS tier 1, so it clears the
+    # `tier_12_keys` filter; 90 minutes out puts it inside the 3-hour window and
+    # outside typeahead's concern for the cases above.
+    soon_start = datetime.now(timezone.utc) + timedelta(minutes=90)
+    soon_canonical = Event(
+        sport_id=mlb.id,
+        home_team_name=SOON_HOME,
+        away_team_name=SOON_AWAY,
+        commence_time=soon_start,
+        status="scheduled",
+        espn_id="401816999",
+        event_tags=["provenance:source:espn"],
+    )
+    session.add(soon_canonical)
+    await session.flush()
+    soon_twin = Event(
+        sport_id=mlb.id,
+        home_team_name=SOON_HOME,
+        away_team_name=SOON_AWAY,
+        # A MINUTE EARLIER, exactly as in production — and the reason the twin
+        # wins this surface: `soon_q` orders `commence_time ASC`.
+        commence_time=soon_start - timedelta(minutes=1),
+        status="scheduled",
+        event_tags=[duplicate_tag(soon_canonical.id)],
+    )
+    session.add(soon_twin)
+
     # The "did you mean" correction resolves against `teams`. Named `Tigers`
     # rather than `Detroit Tigers` on purpose: `similarity('Tigers','tigerz')` is
     # 0.556 against the 0.25 the route pins, so the fallback fires with real
@@ -130,7 +175,13 @@ async def _seed(session):
     session.add(Team(sport_id=mlb.id, name="Tigers", abbreviation="DET"))
 
     await session.commit()
-    return {"canonical": canonical.id, "control": control.id, "twin": twin.id}
+    return {
+        "canonical": canonical.id,
+        "control": control.id,
+        "twin": twin.id,
+        "soon_canonical": soon_canonical.id,
+        "soon_twin": soon_twin.id,
+    }
 
 
 @pytest.fixture
@@ -209,7 +260,12 @@ async def client(seeded):
                 assert resp.status_code == 200, f"typeahead {q!r} -> {resp.status_code}"
                 return resp.json()
 
-            yield _search, _typeahead, maker, ids
+            async def _suggestions() -> dict:
+                resp = await http.get("/api/events/search-suggestions")
+                assert resp.status_code == 200, f"suggestions -> {resp.status_code}"
+                return resp.json()
+
+            yield _search, _typeahead, _suggestions, maker, ids
 
     app.dependency_overrides.clear()
 
@@ -250,7 +306,7 @@ def _typeahead_event_ids(payload) -> list[int]:
 @needs_postgres
 async def test_search_does_not_return_a_row_proved_to_be_the_same_game(client):
     """THE SHIP. `?q=tigers` returns tonight's game once, not twice."""
-    search, _typeahead, _maker, ids = client
+    search, _typeahead, _suggestions, _maker, ids = client
 
     payload = await search("tigers")
     returned = _result_ids(payload)
@@ -277,7 +333,7 @@ async def test_the_total_count_agrees_with_the_page(client):
     the twin advertises a result the page will never contain — the pagination
     reads "2 results" while showing one, or offers a second page that is empty.
     """
-    search, _typeahead, _maker, ids = client
+    search, _typeahead, _suggestions, _maker, ids = client
 
     payload = await search("tigers")
 
@@ -292,7 +348,7 @@ async def test_the_kill_control_untagged_the_second_row_comes_back(client):
     """Required to FAIL to suppress. Without this the two tests above are
     consistent with the twin being dropped by something that has nothing to do
     with the proof — the exact-tuple collapse, a DISTINCT, the page limit."""
-    search, _typeahead, maker, ids = client
+    search, _typeahead, _suggestions, maker, ids = client
 
     await _untag_the_twin(maker, ids["twin"])
     payload = await search("tigers")
@@ -316,7 +372,7 @@ async def test_the_did_you_mean_fallback_also_drops_the_proven_duplicate(client)
     This path replaces `query` and `total_count` wholesale, so it would keep
     serving the twin even with the primary path repaired.
     """
-    search, _typeahead, _maker, ids = client
+    search, _typeahead, _suggestions, _maker, ids = client
 
     payload = await search("tigerz")
 
@@ -332,7 +388,7 @@ async def test_the_did_you_mean_fallback_also_drops_the_proven_duplicate(client)
 
 @needs_postgres
 async def test_the_fallback_kill_control(client):
-    search, _typeahead, maker, ids = client
+    search, _typeahead, _suggestions, maker, ids = client
 
     await _untag_the_twin(maker, ids["twin"])
     payload = await search("tigerz")
@@ -350,7 +406,7 @@ async def test_the_fallback_kill_control(client):
 async def test_typeahead_offers_the_game_once(client):
     """`/typeahead` takes at most four event slots. Two spent on one game is the
     original complaint arriving a keystroke earlier than `/search`."""
-    search, typeahead, _maker, ids = client
+    search, typeahead, _suggestions, _maker, ids = client
 
     returned = _typeahead_event_ids(await typeahead("tigers"))
 
@@ -361,7 +417,7 @@ async def test_typeahead_offers_the_game_once(client):
 
 @needs_postgres
 async def test_typeahead_kill_control(client):
-    search, typeahead, maker, ids = client
+    search, typeahead, _suggestions, maker, ids = client
 
     await _untag_the_twin(maker, ids["twin"])
 
@@ -369,7 +425,56 @@ async def test_typeahead_kill_control(client):
 
 
 # ---------------------------------------------------------------------------
-# 4. The gate is armed
+# 4. The zero state — where the twin wins by being a minute early
+# ---------------------------------------------------------------------------
+
+
+def _soon_chip(payload: dict, ids: dict) -> dict:
+    chips = [
+        s
+        for s in payload.get("suggestions", [])
+        if s.get("type") == "event"
+        and s.get("event_id") in (ids["soon_canonical"], ids["soon_twin"])
+    ]
+    assert len(chips) == 1, (
+        "expected exactly one 'starting soon' chip for the seeded game, got "
+        f"{chips!r} out of {payload.get('suggestions')!r} — if this is zero the "
+        "test is not exercising the surface it names"
+    )
+    return chips[0]
+
+
+@needs_postgres
+async def test_the_starting_soon_chip_points_at_the_real_game(client):
+    """THE SHIP on this surface, and it is a link and not a count.
+
+    Two chips never happened here — `_add` dedups on the text. What happened is
+    that the earlier row won the name, so the one chip opened the blank copy.
+    """
+    _search, _typeahead, suggestions, _maker, ids = client
+
+    chip = _soon_chip(await suggestions(), ids)
+
+    assert chip["event_id"] == ids["soon_canonical"], (
+        "the zero-state suggestion linked to the proven duplicate — the row "
+        "with no espn_id, no odds and no probability sources"
+    )
+
+
+@needs_postgres
+async def test_the_starting_soon_kill_control(client):
+    """Untagged, the minute-earlier twin takes the chip back. If it did not,
+    the assertion above would be passing on the ordering rather than the tag."""
+    _search, _typeahead, suggestions, maker, ids = client
+
+    await _untag_the_twin(maker, ids["soon_twin"])
+    chip = _soon_chip(await suggestions(), ids)
+
+    assert chip["event_id"] == ids["soon_twin"]
+
+
+# ---------------------------------------------------------------------------
+# 5. The gate is armed
 # ---------------------------------------------------------------------------
 
 
