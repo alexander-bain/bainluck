@@ -56,6 +56,7 @@ from app.utils.search_match_class import (
 )
 from app.utils.prediction_market_matching import is_kalshi_game_ticker
 from app.utils.feed_market_quality import has_no_real_price
+from app.utils.proven_duplicates import not_a_proven_duplicate
 
 # #921 slice 2: placeholder/TBD-team markets have no information to show on an
 # event page (e.g. "TBD vs TBD" props for an unscheduled matchup). Name-based,
@@ -3133,7 +3134,26 @@ async def search_events(
     # are pushed into each UNION arm as well as kept here (AND distributes over UNION),
     # exactly as `_futures_open_now` is. Unfiltered arms would hand the outer query
     # every out-of-window event they match.
-    event_scope_conditions = [Event.commence_time >= cutoff]
+    #
+    # #2263 / CERT-439: the proven-duplicate predicate is a SCOPE condition, and it
+    # lives in this list rather than at the four sites built from it BECAUSE that is
+    # what the cert blocked on. This branch taught the league rail, the team rail and
+    # the feed candidate pass to stop printing a row the registry has proved is a
+    # second copy of another game — and left search reading it. The product then
+    # answered "one game" or "two games" depending on how you navigated to it, off
+    # the same global identity finding. One list, four consumers: the two UNION
+    # recall arms below, the outer entity query, the identity-only count, and the
+    # substring-existence guard that decides whether "did you mean" may fire. The
+    # fuzzy fallback builds its own condition list and carries the clause there.
+    #
+    # It is scope and not recall: it can only ever REMOVE a row that the recall arms
+    # already reached, and it is null-safe by construction (see
+    # `app/utils/proven_duplicates.py` — a bare NOT LIKE would drop every untagged
+    # row, which is nearly all of them).
+    event_scope_conditions = [
+        Event.commence_time >= cutoff,
+        not_a_proven_duplicate(),
+    ]
 
     # Filter by status based on include_upcoming
     if include_upcoming:
@@ -3390,7 +3410,17 @@ async def search_events(
                 )
                 # LAT-P002/#1494 (1a): same predicate-list shape as the primary path,
                 # so the fallback count is identity-only too.
-                fuzzy_conditions = [fuzzy_filter, Event.commence_time >= cutoff]
+                #
+                # #2263 / CERT-439: and the same proven-duplicate scope, for the same
+                # reason. This path replaces `query` and `total_count` wholesale, so a
+                # clause carried only by `event_scope_conditions` above would be
+                # silently dropped for exactly the queries that reach here — the
+                # misspelled ones, which are the ones a person types.
+                fuzzy_conditions = [
+                    fuzzy_filter,
+                    Event.commence_time >= cutoff,
+                    not_a_proven_duplicate(),
+                ]
                 if include_upcoming:
                     fuzzy_conditions.append(
                         Event.status.in_(["scheduled", "live", "completed", "closed"])
@@ -5031,6 +5061,10 @@ async def typeahead_search(
             Event.status.in_(["live", "scheduled"]),
             Event.commence_time >= now - timedelta(hours=1),
             Event.commence_time <= now + timedelta(days=7),
+            # #2263 / CERT-439: the dropdown is the FIRST search surface a person
+            # touches, and it takes four slots. Two of them spent on one game is
+            # the whole complaint, arriving a keystroke earlier than `/search`.
+            not_a_proven_duplicate(),
         )
         .order_by(
             case((Event.status == "live", 0), else_=1),
@@ -5440,6 +5474,7 @@ async def typeahead_search(
                         Event.status.in_(["live", "scheduled"]),
                         Event.commence_time >= now - timedelta(hours=1),
                         Event.commence_time <= now + timedelta(days=7),
+                        not_a_proven_duplicate(),  # #2263 / CERT-439, as above
                     )
                     .order_by(
                         case((Event.status == "live", 0), else_=1),
@@ -5655,9 +5690,16 @@ async def search_suggestions(
 
     # --- 1. Live close games (home prob 35-65%) ---
     try:
+        # #2263 / CERT-439: the zero-state of the search box. Eight chips total
+        # across four sources, so a game arriving twice costs one of the eight.
+        # The predicate goes on all three event sources here rather than only on
+        # the one whose shape can currently return a twin, because "this query
+        # cannot reach a tagged row anyway" is a local argument about today's
+        # twins — bare, score-less, source-less — and the tag is not a statement
+        # about a row's shape. It says this row is not a game to print.
         live_events_q = (
             select(Event)
-            .where(Event.status == "live")
+            .where(Event.status == "live", not_a_proven_duplicate())
             .options(selectinload(Event.sport))
             .limit(50)
         )
@@ -5743,6 +5785,18 @@ async def search_suggestions(
                 Event.status == "scheduled",
                 Event.commence_time.between(now, now + timedelta(hours=3)),
                 Sport.key.in_(tier_12_keys),
+                # #2263 / CERT-439. THE ONE OF THESE THREE A TWIN REACHES TODAY:
+                # a pure schedule predicate, and a bare twin is a schedule row.
+                #
+                # It does not show up as two chips — `_add` dedups on the query
+                # text and both rows yield the same shorter team name — which is
+                # what makes this the nastier shape of the two. The rows are
+                # ordered `commence_time ASC` and the twin is a MINUTE EARLIER,
+                # so the twin arrives first, claims the name, and the chip
+                # carries ITS `event_id`. One suggestion, pointing at the copy
+                # with no odds and no sources: a search suggestion that opens a
+                # blank event page.
+                not_a_proven_duplicate(),
             )
             .order_by(Event.commence_time.asc())
             .limit(10)
@@ -5807,6 +5861,7 @@ async def search_suggestions(
                 Event.opening_home_probability.isnot(None),
                 Event.home_score.isnot(None),
                 Event.away_score.isnot(None),
+                not_a_proven_duplicate(),  # #2263 / CERT-439, as above
             )
             .options(selectinload(Event.sport))
             .order_by(Event.commence_time.desc())
