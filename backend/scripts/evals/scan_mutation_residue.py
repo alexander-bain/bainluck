@@ -150,6 +150,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # fake for a change whose whole measurement is a QUERY COUNT taken through
     # the real route. That trade is argued in the harness docstring.
     "search_suggestions_cold_mutations": [("MUTANTS", 2, 3, "TARGET")],
+    # LAT-P151. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above. Two targets in ONE table — the
+    # route and the shared `movement_pool` bound — so the target is carried per
+    # entry at index 1, the `golf_schedule_cache_mutations` shape, and both
+    # files are swept whichever mutant left residue.
+    "search_suggestions_movers_pool_mutations": [("MUTANTS", 3, 4, 1)],
     "search_word_test_mutations": [("MUTANTS", 2, 3, 1)],
     "typeahead_concept_provenance_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "typeahead_warmer_mutations": [("MUTATIONS", 3, 4, 1)],
