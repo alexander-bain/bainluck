@@ -1590,6 +1590,64 @@ def _total_outcome_is_winner(outcome_name, home_score, away_score):
     return total > line if direction == "over" else total < line
 
 
+def _exclusive_team_side(team_tokens, home_tokens, away_tokens):
+    """Which side does ``team_tokens`` name — ``"home"``, ``"away"``, or None?
+
+    CERT-498: a bare token intersection with home-first precedence silently
+    hands every AWAY leg the HOME score whenever the two clubs share a city.
+    ``New York M over 4.5`` in Yankees(H) 2 – Mets(A) 6 intersects
+    ``{new, york}`` with the home tokens first, so it graded the Mets' ladder
+    off the Yankees' score. The repository catalogues this class explicitly —
+    ``SHARED_CITY_DIFFERENT_CLUB`` in ``tests/test_names_match_authority_2046.py``
+    lists Mets/Yankees, Angels/Dodgers, Chargers/Rams, Clippers/Lakers,
+    Islanders/Rangers — so it is a named identity class, not an edge case.
+
+    The rule is EXCLUSIVITY. Tokens the two clubs share carry no information, so
+    they are removed from both sides and from the claim; what is left is the
+    discriminator. A side wins only if the discriminator matches it and NOT the
+    other one. Anything else returns None and the caller skips the leg — an
+    ungraded Tier-1 ``is_winner`` row is always safer than a confidently wrong
+    one (gotcha #21).
+
+    The prefix pass exists because Kalshi abbreviates the club, not the city:
+    the production-derived fixture
+    ``tests/fixtures/related_futures_15200831_identity_20260819.json`` carries
+    ``Los Angeles D`` and ``Los Angeles A`` as literal outcome text. After the
+    shared ``{los, angeles}`` is removed the discriminator is a single letter,
+    which no exact token match can resolve, but ``"dodgers".startswith("d")``
+    can — and only one side can win it. The pass is reached ONLY when the exact
+    pass matched neither side, i.e. only where the old code already returned
+    None, so it can add recall and cannot change an existing verdict.
+
+    ``Chicago WS`` against White Sox / Cubs deliberately returns None: no
+    remaining token starts with ``ws``. Refusing is the designed outcome.
+    """
+    shared = home_tokens & away_tokens
+    home_only = home_tokens - shared
+    away_only = away_tokens - shared
+    disc = team_tokens - shared
+    if not disc:
+        # The claim names nothing but the shared city ("New York over 4.5").
+        return None
+
+    def _pick(hit_home, hit_away):
+        if hit_home == hit_away:
+            return None
+        return "home" if hit_home else "away"
+
+    side = _pick(bool(disc & home_only), bool(disc & away_only))
+    if side is not None:
+        return side
+    if disc & home_only or disc & away_only:
+        # Named a token from BOTH clubs — genuinely ambiguous, do not guess.
+        return None
+
+    def _prefixes(side_tokens):
+        return any(t and s.startswith(t) for t in disc for s in side_tokens)
+
+    return _pick(_prefixes(home_only), _prefixes(away_only))
+
+
 def _team_total_outcome_is_winner(
     outcome_name, home_team_name, away_team_name, home_score, away_score
 ):
@@ -1648,12 +1706,14 @@ def _team_total_outcome_is_winner(
     # -name miss #939 already paid for once.
     from app.utils.name_normalization import normalize_team_name
 
-    team_tokens = set(normalize_team_name(tm.group(1).strip()).split())
-    home_tokens = set(normalize_team_name(home_team_name or "").split())
-    away_tokens = set(normalize_team_name(away_team_name or "").split())
-    if team_tokens & home_tokens:
+    side = _exclusive_team_side(
+        set(normalize_team_name(tm.group(1).strip()).split()),
+        set(normalize_team_name(home_team_name or "").split()),
+        set(normalize_team_name(away_team_name or "").split()),
+    )
+    if side == "home":
         team_score = home_score
-    elif team_tokens & away_tokens:
+    elif side == "away":
         team_score = away_score
     else:
         return None

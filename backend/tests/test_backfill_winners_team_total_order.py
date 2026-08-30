@@ -292,3 +292,151 @@ class TestTeamTotalWritesAreOrderIndependent:
         writes, _ = await _writes_for(legs, monkeypatch)
         assert 999 not in writes
         assert writes == _EXPECTED
+
+
+class TestSharedCityIdentity:
+    """CERT-498 [P1]: two clubs in one city must not share a score.
+
+    A bare token intersection with home-first precedence gave every AWAY leg the
+    HOME score whenever the city tokens matched. ``SHARED_CITY_DIFFERENT_CLUB``
+    in ``test_names_match_authority_2046.py`` catalogues the class; the
+    production-derived fixture
+    ``fixtures/related_futures_15200831_identity_20260819.json`` shows Kalshi
+    writes the club as a single letter (``Los Angeles D``, ``Los Angeles A``).
+
+    Both reproductions below are the cert's own, verbatim, and both red on
+    ``aaf7a523``.
+    """
+
+    def test_mets_ladder_is_not_graded_off_the_yankees_score(self):
+        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+
+        # Yankees (home) 2 – Mets (away) 6. The Mets scored 6, so "over 4.5" wins.
+        assert (
+            _team_total_outcome_is_winner(
+                "New York M over 4.5 runs scored",
+                "New York Yankees",
+                "New York Mets",
+                2,
+                6,
+            )
+            is True
+        )
+        # …and the Yankees' own leg at the same line must still lose.
+        assert (
+            _team_total_outcome_is_winner(
+                "New York Y over 4.5 runs scored",
+                "New York Yankees",
+                "New York Mets",
+                2,
+                6,
+            )
+            is False
+        )
+
+    def test_angels_ladder_is_not_graded_off_the_dodgers_score(self):
+        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+
+        # Dodgers (home) 2 – Angels (away) 6, spelled out…
+        assert (
+            _team_total_outcome_is_winner(
+                "Los Angeles Angels over 4.5 runs scored",
+                "Los Angeles Dodgers",
+                "Los Angeles Angels",
+                2,
+                6,
+            )
+            is True
+        )
+        # …and abbreviated the way the captured fixture actually spells it.
+        assert (
+            _team_total_outcome_is_winner(
+                "Los Angeles A over 4.5 runs scored",
+                "Los Angeles Dodgers",
+                "Los Angeles Angels",
+                2,
+                6,
+            )
+            is True
+        )
+        assert (
+            _team_total_outcome_is_winner(
+                "Los Angeles D over 4.5 runs scored",
+                "Los Angeles Dodgers",
+                "Los Angeles Angels",
+                2,
+                6,
+            )
+            is False
+        )
+
+    def test_the_bare_shared_city_is_refused_rather_than_guessed(self):
+        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+
+        assert (
+            _team_total_outcome_is_winner(
+                "New York over 4.5 runs scored",
+                "New York Yankees",
+                "New York Mets",
+                2,
+                6,
+            )
+            is None
+        )
+
+    def test_an_unresolvable_abbreviation_is_refused_not_assigned(self):
+        """'Chicago WS' has no remaining token starting with 'ws'. Refusing is
+        the designed outcome — an ungraded row beats a wrong one."""
+        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+
+        assert (
+            _team_total_outcome_is_winner(
+                "Chicago WS over 4.5 runs scored",
+                "Chicago Cubs",
+                "Chicago White Sox",
+                2,
+                6,
+            )
+            is None
+        )
+
+    def test_every_catalogued_shared_city_pair_resolves_or_refuses_but_never_flips(
+        self,
+    ):
+        """Across the whole catalogued class, the AWAY club's leg must never be
+        graded off the HOME club's score. Home 0, away 9: an away leg at 4.5 is
+        True or None, and can never be False."""
+        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+
+        pairs = [
+            ("New York Mets", "New York Yankees"),
+            ("New York Giants", "New York Jets"),
+            ("Los Angeles Angels", "Los Angeles Dodgers"),
+            ("Los Angeles Chargers", "Los Angeles Rams"),
+            ("Los Angeles Clippers", "Los Angeles Lakers"),
+            ("New York Islanders", "New York Rangers"),
+            ("Boston College", "Boston University"),
+        ]
+        for home, away in pairs:
+            got = _team_total_outcome_is_winner(
+                f"{away} over 4.5 points", home, away, 0, 9
+            )
+            assert got is not False, f"{away} away leg graded off {home}'s score"
+            assert got is True, f"{away} should resolve exclusively"
+
+    def test_distinct_cities_are_unaffected(self):
+        """The exclusivity rule must not cost recall on the ordinary case."""
+        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+
+        assert (
+            _team_total_outcome_is_winner(
+                "Cincinnati over 2.5 runs scored", _HOME, _AWAY, 3, 5
+            )
+            is True
+        )
+        assert (
+            _team_total_outcome_is_winner(
+                "St. Louis over 5.5 runs scored", _HOME, _AWAY, 3, 5
+            )
+            is False
+        )
