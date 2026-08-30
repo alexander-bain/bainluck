@@ -214,8 +214,19 @@ class TestWriterSideCaptureGuard:
         # Queue #167 writer-side guard: the cal-price writer (Part A) must refuse
         # to stamp a degenerate no-bid snapshot as the closing line for Kalshi
         # threshold props, and must not fall back to the (degenerate) opening.
-        src = inspect.getsource(
-            backfill_winners._compute_calibration_prices
+        #
+        # Q436 moved Part A's statement out of the task body and into a builder so
+        # the shipped SQL is readable by a test. This guard follows it, using the
+        # same builder-source + rendered-output pattern as
+        # TestPrecomputeQueryEmbedsExclusion above — which makes it STRONGER than
+        # the body-only read it replaces: the threshold arm now has to survive
+        # into the resolved SQL, not merely appear somewhere in the function.
+        src = (
+            inspect.getsource(backfill_winners._compute_calibration_prices)
+            + inspect.getsource(backfill_winners._part_a_calibration_sql)
+            + backfill_winners._part_a_calibration_sql(
+                "", "COALESCE(closing.probability, nc.opening_probability)"
+            )
         )
         # The threshold flag is threaded into needs_cal.
         assert "is_threshold" in src

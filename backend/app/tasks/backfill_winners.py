@@ -21,6 +21,10 @@ from sqlalchemy import select, update, text, func
 from app.models import FuturesMarket, FuturesOutcome
 from app.tasks.base import get_task_session
 from app.utils import kalshi_market_status as kms
+from app.utils.calibration_closing_line import (
+    closing_line_boundary_sql,
+    closing_line_lateral_sql,
+)
 from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES_SQL,
     GUESS_FAMILY_SOURCES_SQL,
@@ -7081,13 +7085,192 @@ def _is_statement_timeout(exc: BaseException) -> bool:
     return "statement timeout" in text_form or "querycancelederror" in text_form
 
 
+# =========================================================================
+# Closing-line statements (Q436 / CAL-P117)
+# =========================================================================
+#
+# These three statements are built by module-level functions rather than
+# f-strings inside the task so a test can read the SQL that ACTUALLY RUNS and
+# assert the shared rule is in it. `app/utils/calibration_closing_line.py`
+# carries the rule and the measurement behind it; this file is where it is
+# spent. A pure-Python guard over a re-implementation of the rule would stay
+# green while the statement below quietly dropped it.
+#
+# The Kalshi `N+` threshold arm (#167/#941/#1054) stays exactly where it was —
+# it is a different guard against a different degeneracy (a settled no-bid
+# quote landing BEFORE commence_time, which a boundary clamp cannot see) and
+# both are needed.
+
+# The repair below is SCOPED, and the scope is a ruling, not a convenience.
+# Alex ruled `polymarket/baseball` on 2026-08-28 ("EXCLUDE NOW + FIX WRITER"):
+# the miswritten Player-Props rows leave the published curve temporarily, and
+# *"when the writer is repaired the rows return and the exclusion empties
+# itself"*. Repairing that cell is therefore already ruled. Repairing the other
+# cells is not: the same window overrun exists on ~57,000 resolved markets
+# across both sources, so a source-agnostic backfill would silently move a
+# large fraction of the published curve — a population change of the kind
+# ruling 103 exists to put in front of Alex first. The forward fix is global
+# (Parts A and C below); only the backfill is held to the ruled cell, and the
+# measurement that would size the rest is parked, not dropped.
+_REPAIR_SCOPE_SQL = "fm.source = 'polymarket' AND fm.llm_sport_category = 'baseball'"
+
+_REPAIR_CURSOR_KEY = "bainluck:cal_closing_line_repair_cursor_q436"
+_REPAIR_DONE = "done"
+
+
+def _part_a_calibration_sql(would_churn: str, part_a_value: str) -> str:
+    """Part A: fill an event-linked outcome's first calibration price."""
+    return f"""
+                        WITH needs_cal AS (
+                            SELECT fo.id AS outcome_id, e.commence_time,
+                                   fm.resolution_date,
+                                   fo.opening_probability,
+                                   (fm.source = 'kalshi'
+                                    AND fo.name ~ '^.+:[[:space:]]*[0-9]+[+][[:space:]]*$')
+                                       AS is_threshold
+                            FROM futures_outcomes fo
+                            JOIN futures_markets fm ON fm.id = fo.market_id
+                            JOIN events e ON e.id = fm.event_id
+                            WHERE fm.status = 'resolved'
+                              AND fo.calibration_probability IS NULL
+                              AND e.commence_time IS NOT NULL
+                              AND fo.id > :cursor
+                            ORDER BY fo.id
+                            LIMIT :batch
+                        ), upd AS (
+                            UPDATE futures_outcomes fo
+                            SET calibration_probability = {part_a_value}
+                            FROM needs_cal nc
+                            LEFT JOIN LATERAL {closing_line_lateral_sql(
+                                outcome_id="nc.outcome_id",
+                                boundary=closing_line_boundary_sql(
+                                    "nc.commence_time", "nc.resolution_date"
+                                ),
+                                extra_and="AND (NOT nc.is_threshold OR fos.yes_bid > 0)",
+                            )} closing ON true
+                            WHERE fo.id = nc.outcome_id
+                              AND {part_a_value} IS NOT NULL
+                              {would_churn.format(value=part_a_value)}
+                            RETURNING fo.id
+                        )
+                        SELECT (SELECT COUNT(*) FROM upd) AS updated,
+                               (SELECT COUNT(*) FROM needs_cal) AS scanned,
+                               (SELECT MAX(outcome_id) FROM needs_cal) AS max_id
+                    """
+
+
+def _part_c_calibration_sql() -> str:
+    """Part C: re-price an event-linked outcome still parked on its opening.
+
+    Part C is the arm that made this defect a LIVE one rather than a historical
+    one. Part A fills a row once and never looks at it again, but Part C runs
+    every beat over every ``cal = opening`` row and OVERWRITES it, so it kept
+    promoting post-settlement quotes into the published curve while the row's
+    own opening sat there, correct and ignored. That is the mechanism behind the
+    forward signature CAL-P117 measured and could not explain — 1,525 of M1's
+    1,739 props rows in the NEW half. How long it ran is not measured here and
+    is deliberately not asserted.
+    """
+    return f"""
+                        WITH stuck AS (
+                            SELECT fo.id AS outcome_id, fo.opening_probability,
+                                   e.commence_time, fm.resolution_date
+                            FROM futures_outcomes fo
+                            JOIN futures_markets fm ON fm.id = fo.market_id
+                            JOIN events e ON e.id = fm.event_id
+                            WHERE fm.status = 'resolved'
+                              AND fm.event_id IS NOT NULL
+                              AND e.commence_time IS NOT NULL
+                              AND fo.calibration_probability IS NOT NULL
+                              AND fo.opening_probability IS NOT NULL
+                              AND fo.calibration_probability = fo.opening_probability
+                            LIMIT 2000
+                        )
+                        UPDATE futures_outcomes fo
+                        SET calibration_probability = ls.probability
+                        FROM stuck s
+                        LEFT JOIN LATERAL {closing_line_lateral_sql(
+                            outcome_id="s.outcome_id",
+                            boundary=closing_line_boundary_sql(
+                                "s.commence_time", "s.resolution_date"
+                            ),
+                        )} ls ON true
+                        WHERE fo.id = s.outcome_id
+                          AND ls.probability IS NOT NULL
+                          AND ls.probability != s.opening_probability
+                    """
+
+
+def _part_a_repair_sql(would_churn: str) -> str:
+    """Part A-repair: re-select the closing line on rows the old rule already wrote.
+
+    Parts A and C only ever look at a row once (A fills NULLs, C rescues
+    ``cal = opening``), so fixing them forward repairs nothing already stored —
+    and every affected market here is long resolved, so no future fill is coming.
+    Without this the queue's ship does not exist.
+
+    Single UPDATE, not null-then-refill: a NULL window would take these rows out
+    of the published curve for however many beats it took to refill them, and the
+    Part-B/Part-D fixed point (Queue 300) is a standing demonstration of what
+    null-then-refill loops cost. Monotonic by construction — after the write the
+    stored value IS what this statement selects, so the row cannot be a target
+    again — and the cursor is persisted, so the scan drains once rather than
+    re-walking the cell on every beat forever.
+    """
+    new_value = "COALESCE(closing.probability, nc.opening_probability)"
+    return f"""
+                        WITH nc AS (
+                            SELECT fo.id AS outcome_id, e.commence_time,
+                                   fm.resolution_date,
+                                   fo.opening_probability,
+                                   fo.calibration_probability AS current_cal
+                            FROM futures_outcomes fo
+                            JOIN futures_markets fm ON fm.id = fo.market_id
+                            JOIN events e ON e.id = fm.event_id
+                            WHERE fm.status = 'resolved'
+                              AND {_REPAIR_SCOPE_SQL}
+                              AND fo.calibration_probability IS NOT NULL
+                              AND e.commence_time IS NOT NULL
+                              AND fo.id > :cursor
+                            ORDER BY fo.id
+                            LIMIT :batch
+                        ), upd AS (
+                            UPDATE futures_outcomes fo
+                            SET calibration_probability = {new_value}
+                            FROM nc
+                            LEFT JOIN LATERAL {closing_line_lateral_sql(
+                                outcome_id="nc.outcome_id",
+                                boundary=closing_line_boundary_sql(
+                                    "nc.commence_time", "nc.resolution_date"
+                                ),
+                            )} closing ON true
+                            WHERE fo.id = nc.outcome_id
+                              AND {new_value} IS NOT NULL
+                              AND {new_value} IS DISTINCT FROM nc.current_cal
+                              {would_churn.format(value=new_value)}
+                            RETURNING fo.id
+                        )
+                        SELECT (SELECT COUNT(*) FROM upd) AS updated,
+                               (SELECT COUNT(*) FROM nc) AS scanned,
+                               (SELECT MAX(outcome_id) FROM nc) AS max_id
+                    """
+
+
 async def _compute_calibration_prices():
     """Pre-compute calibration_probability on resolved outcomes.
 
     Uses the RIGHT price for calibration based on market type:
-    - Part A: Event-linked markets → last snapshot before the EVENT's commence_time
-      (real pre-game/tournament closing line from the events table, not the
-      market's commence_time which is often the listing or resolution date)
+    - Part A: Event-linked markets → last eligible snapshot before the CLOSING-LINE
+      BOUNDARY, which is the earlier of the event's commence_time and the market's
+      own resolution_date (Q436). It is not the market's commence_time, which is
+      often the listing date; and it is not the event's commence_time alone,
+      because a market linked to the wrong game in a series carries a boundary a
+      day after it settled and "the last snapshot before it" is then a
+      post-settlement quote. `app/utils/calibration_closing_line.py` holds the
+      rule, the specimen and the measurement.
+    - Part A-repair: the same re-selection over rows the pre-Q436 rule already
+      wrote, scoped to the cell Alex ruled on 2026-08-28. Cursor in Redis; drains
+      once.
     - Part A2: Non-event markets with commence_time (golf) → last snapshot before
       the MARKET's commence_time (pre-tournament closing line). Without this,
       golf markets fall through to Part B which uses opening_captured_at and
@@ -7299,45 +7482,12 @@ async def _compute_calibration_prices():
                               CASE WHEN nc.is_threshold THEN NULL
                                    ELSE nc.opening_probability END
                           )"""
-                result_a = await _run_bounded(session, text(f"""
-                        WITH needs_cal AS (
-                            SELECT fo.id AS outcome_id, e.commence_time,
-                                   fo.opening_probability,
-                                   (fm.source = 'kalshi'
-                                    AND fo.name ~ '^.+:[[:space:]]*[0-9]+[+][[:space:]]*$')
-                                       AS is_threshold
-                            FROM futures_outcomes fo
-                            JOIN futures_markets fm ON fm.id = fo.market_id
-                            JOIN events e ON e.id = fm.event_id
-                            WHERE fm.status = 'resolved'
-                              AND fo.calibration_probability IS NULL
-                              AND e.commence_time IS NOT NULL
-                              AND fo.id > :cursor
-                            ORDER BY fo.id
-                            LIMIT :batch
-                        ), upd AS (
-                            UPDATE futures_outcomes fo
-                            SET calibration_probability = {_part_a_value}
-                            FROM needs_cal nc
-                            LEFT JOIN LATERAL (
-                                SELECT fos.probability
-                                FROM futures_odds_snapshots fos
-                                WHERE fos.outcome_id = nc.outcome_id
-                                  AND fos.captured_at < nc.commence_time
-                                  AND fos.probability > 0 AND fos.probability < 1
-                                  AND (NOT nc.is_threshold OR fos.yes_bid > 0)
-                                ORDER BY fos.captured_at DESC
-                                LIMIT 1
-                            ) closing ON true
-                            WHERE fo.id = nc.outcome_id
-                              AND {_part_a_value} IS NOT NULL
-                              {_WOULD_CHURN.format(value=_part_a_value)}
-                            RETURNING fo.id
-                        )
-                        SELECT (SELECT COUNT(*) FROM upd) AS updated,
-                               (SELECT COUNT(*) FROM needs_cal) AS scanned,
-                               (SELECT MAX(outcome_id) FROM needs_cal) AS max_id
-                    """), {"cursor": part_a_cursor, "batch": _CAL_BATCH}, "part_a")
+                result_a = await _run_bounded(
+                    session,
+                    text(_part_a_calibration_sql(_WOULD_CHURN, _part_a_value)),
+                    {"cursor": part_a_cursor, "batch": _CAL_BATCH},
+                    "part_a",
+                )
                 if result_a is None:
                     break
                 row_a = result_a.mappings().first()
@@ -7356,6 +7506,87 @@ async def _compute_calibration_prices():
                 )
             stats["with_commence"] = part_a_total
             stats["part_a_cursor"] = part_a_cursor
+
+            # Part A-repair (Q436 / CAL-P117): re-select the closing line on rows
+            # Parts A and C already wrote under the old, unclamped, unfiltered rule.
+            #
+            # This is the queue's ship. Every market in scope is long resolved, so
+            # no future fill will ever revisit these rows — fixing the two writers
+            # forward leaves ~24,000 published prices exactly as wrong as they are
+            # today. Alex's 2026-08-28 ruling on `polymarket/baseball` is explicit
+            # that they come back ("the rows return as good data ... the exclusion
+            # empties itself"), and _REPAIR_SCOPE_SQL is that ruling's cell.
+            #
+            # The cursor lives in Redis, not in this function, for one reason: the
+            # scan is a LATERAL seek per row over the whole cell, and a phase that
+            # re-walks it every beat forever to find nothing would be a permanent
+            # tax on a budget three other Parts are already competing for. It runs
+            # until it drains, records DONE, and costs one GET a beat after that.
+            # Restarting from 0 on a lost key is safe — the statement is a no-op on
+            # rows it has already repaired (`IS DISTINCT FROM`), just not free.
+            stats["repair_scanned"] = 0
+            stats["repair_updated"] = 0
+            stats["repair_state"] = "skipped"
+            try:
+                from app.tasks.redis_state import get_redis_client as _get_rc
+
+                _repair_rc = _get_rc()
+                _raw_cur = _repair_rc.get(_REPAIR_CURSOR_KEY)
+                _cur_val = (
+                    _raw_cur.decode() if isinstance(_raw_cur, bytes) else (_raw_cur or "")
+                )
+            except Exception as _rc_exc:  # noqa: BLE001 — Redis down must not stop the beat
+                logger.warning("Part A-repair: cursor unavailable (%s), skipping", _rc_exc)
+                _repair_rc = None
+                _cur_val = _REPAIR_DONE
+
+            if _repair_rc is not None and _cur_val != _REPAIR_DONE:
+                stats["repair_state"] = "running"
+                repair_cursor = int(_cur_val) if _cur_val.isdigit() else 0
+                for _ in range(400):
+                    # Same share discipline as Part A: leave the later Parts a
+                    # slice. A repair that starves Part B is a new outage.
+                    if _cal_remaining() <= _RESET_MIN_BUDGET_S:
+                        stats["repair_state"] = "budget"
+                        stats["stopped_at"] = stats.get("stopped_at") or "part_a_repair"
+                        break
+                    result_r = await _run_bounded(
+                        session,
+                        text(_part_a_repair_sql(_WOULD_CHURN)),
+                        {"cursor": repair_cursor, "batch": _CAL_BATCH},
+                        "part_a_repair",
+                    )
+                    if result_r is None:
+                        stats["repair_state"] = "timeout"
+                        break
+                    row_r = result_r.mappings().first()
+                    await session.commit()
+                    scanned_r = int(row_r["scanned"] or 0)
+                    stats["repair_scanned"] += scanned_r
+                    stats["repair_updated"] += int(row_r["updated"] or 0)
+                    if scanned_r == 0:
+                        stats["repair_state"] = "done"
+                        break
+                    repair_cursor = int(row_r["max_id"] or repair_cursor)
+                    logger.info(
+                        "Calibration Part A-repair: scanned %d, repriced %d "
+                        "(run total %d, cursor %d)",
+                        scanned_r,
+                        int(row_r["updated"] or 0),
+                        stats["repair_updated"],
+                        repair_cursor,
+                    )
+                try:
+                    _repair_rc.set(
+                        _REPAIR_CURSOR_KEY,
+                        _REPAIR_DONE
+                        if stats["repair_state"] == "done"
+                        else str(repair_cursor),
+                    )
+                except Exception as _rc_exc:  # noqa: BLE001
+                    # The work landed; only the bookmark did not. Next run rescans
+                    # from the last durable cursor and no-ops over the repaired rows.
+                    logger.warning("Part A-repair: cursor not persisted (%s)", _rc_exc)
 
             # Part A1-dg: DataGolf outcomes — opening_probability IS the calibration
             # price (model prediction, not a market price). No snapshot lookup needed.
@@ -7603,37 +7834,7 @@ async def _compute_calibration_prices():
                 if _cal_remaining() <= 0:
                     stats["stopped_at"] = stats["stopped_at"] or "part_c"
                     break
-                result_c = await session.execute(text("""
-                        WITH stuck AS (
-                            SELECT fo.id AS outcome_id, fo.opening_probability,
-                                   e.commence_time
-                            FROM futures_outcomes fo
-                            JOIN futures_markets fm ON fm.id = fo.market_id
-                            JOIN events e ON e.id = fm.event_id
-                            WHERE fm.status = 'resolved'
-                              AND fm.event_id IS NOT NULL
-                              AND e.commence_time IS NOT NULL
-                              AND fo.calibration_probability IS NOT NULL
-                              AND fo.opening_probability IS NOT NULL
-                              AND fo.calibration_probability = fo.opening_probability
-                            LIMIT 2000
-                        )
-                        UPDATE futures_outcomes fo
-                        SET calibration_probability = ls.probability
-                        FROM stuck s
-                        LEFT JOIN LATERAL (
-                            SELECT fos.probability
-                            FROM futures_odds_snapshots fos
-                            WHERE fos.outcome_id = s.outcome_id
-                              AND fos.captured_at < s.commence_time
-                              AND fos.probability > 0 AND fos.probability < 1
-                            ORDER BY fos.captured_at DESC
-                            LIMIT 1
-                        ) ls ON true
-                        WHERE fo.id = s.outcome_id
-                          AND ls.probability IS NOT NULL
-                          AND ls.probability != s.opening_probability
-                    """))
+                result_c = await session.execute(text(_part_c_calibration_sql()))
                 await session.commit()
                 if result_c.rowcount == 0:
                     break
@@ -7697,7 +7898,8 @@ async def _compute_calibration_prices():
     logger.info(
         "Calibration prices: reset=%d, reset_golf_hockey=%d, reset_a2=%d, "
         "event_linked=%d, non_event=%d, rescued=%d, sanity_reverted=%d, "
-        "illiquid=%d, errors=%d, stopped_at=%s, elapsed=%.1fs",
+        "illiquid=%d, repair=%s(scanned=%d repriced=%d), "
+        "errors=%d, stopped_at=%s, elapsed=%.1fs",
         stats["reset"],
         stats.get("reset_golf_hockey", 0),
         stats.get("reset_a2", 0),
@@ -7706,6 +7908,9 @@ async def _compute_calibration_prices():
         stats["rescued"],
         stats.get("sanity_reverted", 0),
         stats.get("illiquid_tails_nulled", 0),
+        stats.get("repair_state", "skipped"),
+        stats.get("repair_scanned", 0),
+        stats.get("repair_updated", 0),
         len(stats["errors"]),
         stats.get("stopped_at"),
         stats["elapsed_s"],
