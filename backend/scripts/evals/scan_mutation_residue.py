@@ -102,6 +102,8 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # append lands when nobody looks. Sorted insertion is not tidiness here, it
     # is the thing that stops the next cycle resolving this same hunk.
     "futures_movers_warm_mutations": [("MUTATIONS", "needle", "replacement", "WARM")],
+    # LAT-P148. Alphabetical, for the reason spelled out above.
+    "futures_source_breakdown_loose_scan_mutations": [("MUTANTS", 2, 3, "ROUTE")],
     # LAT-P121. Alphabetical, for the reason spelled out above. Two targets in
     # one table, so the target is carried per-entry at index 2 rather than by a
     # module constant.

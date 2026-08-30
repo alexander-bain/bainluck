@@ -3563,33 +3563,118 @@ async def _get_source_breakdown(
     Sources with ``captured_at`` older than SOURCE_STALENESS_DAYS are flagged
     ``stale: true`` so the frontend can exclude them from spread math and
     render them muted.
+
+    🔴 THE INDEX LAT-P127 ASKED FOR COULD NOT BE USED BY THE SHAPE THAT ASKED
+    FOR IT. P127-3 shipped `ix_futures_odds_snapshots_outcome_bookmaker_captured
+    (outcome_id, bookmaker, captured_at DESC)` and the cold read did not move.
+    The reason is not the index and not stale stats: the query it was built for
+    was a `row_number() OVER (PARTITION BY outcome_id, bookmaker ORDER BY
+    captured_at DESC)` carrying **no `bookmaker` predicate**, and PostgreSQL has
+    no index skip scan — so a leading-column-only lookup can never descend into
+    the second column. The planner correctly ignored the new index and took
+    `ix_..._outcome_id`. Measured on production 2026-08-30, market 86832:
+
+        Subquery Scan                         actual 9,163 ms   rows out 256
+          WindowAgg
+            Sort  external merge, 7,640 kB DISK       rows in 190,656
+              Nested Loop
+                Index Scan ix_futures_outcomes_market_id        rows 32
+                Index Scan ix_..._outcome_id     rows 5,958  x 32 loops
+        Shared I/O Read Time 7,973 ms      Temp Written 956 blocks
+
+    **190,656 rows read and sorted to disk to return 256** — 745:1. (The planner
+    also estimated 1,661 of those 190,656, a 115x miss: `last_analyze` is NULL
+    and `last_autoanalyze` is 2026-08-22 on a 196,407,475-row table. Fixing the
+    estimate would not have helped; every plan for this shape reads every row.)
+
+    ✅ WHAT REPLACES IT: a loose index scan — the skip PostgreSQL will not do
+    for us, written out. The recursive term walks `(outcome_id, bookmaker)`
+    pairs one `LIMIT 1` at a time off `ix_fos_outcome_bookmaker`, then a LATERAL
+    takes the newest row for each pair off the P127 index. Same rows, by seek
+    instead of by scan. Same market, same minute:
+
+        | executed row query | 3,533 ms -> 344 ms cold, 51-73 ms warm |
+        | rows examined      | 190,656  -> 576 index seeks + 256 heap |
+        | disk sort          | 7,640 kB -> none                       |
+
+    and the plan finally names the index P127 bought:
+    `Index Scan ix_futures_odds_snapshots_outcome_bookmaker_captured, 1 row,
+    256 loops`. Verified row-for-row identical against the old statement across
+    ten markets spanning 2-32 outcomes (2-256 result rows); see
+    `TestLooseScanMatchesTheWindowQuery`.
+
+    ⚠️ THIS IS THE BOUNDED-LIST SHAPE, exactly as
+    `app.utils.latest_observation` argues for the one-dimensional case: N
+    correlated probes beat one full pass because a market pins its outcomes.
+    That module cannot be reused here — it answers "newest per OUTCOME", and
+    this page needs "newest per outcome x BOOKMAKER", which is what forces the
+    pair walk. But its two warnings both bind here, and one of them inverts:
+
+    🔴 NO `captured_at IS NOT NULL`, AND THAT IS THE OPPOSITE OF P147's CALL.
+    The column IS nullable on production (`information_schema` says so, checked
+    2026-08-30, though the model declares it non-optional). P147 adds the
+    predicate because it replaces a `max()`, and `max()` SKIPS nulls while
+    `ORDER BY ... DESC` is NULLS FIRST — without it the two forms disagree.
+    Here the thing being replaced is a WINDOW function, which is NULLS FIRST
+    too. A null-`captured_at` row wins its partition under the old statement, so
+    it must win its pair under this one. Adding the "safer" predicate would be
+    the behaviour change. Equivalence is the bar, not tidiness.
+
+    🔴 AND NO `NULLS LAST`, AND NO `id` TIEBREAK. Either one stops the ORDER BY
+    matching the index's own ordering, so each probe stops being a one-row
+    backward read and becomes a Sort over the whole pair — the full-scan cost
+    back, wearing a more deterministic-looking clause. P147 measured `NULLS
+    LAST` at 19x. The tiebreak buys nothing real: production carries **zero**
+    `(outcome_id, bookmaker, captured_at)` groups with more than one row on this
+    market, and the window function it replaces broke ties arbitrarily anyway.
+
+    The pair walk is only correct because `bookmaker` is NOT NULL in production
+    — the same premise `_load_market_sources` already leans on to derive the
+    bookmaker list. A null would sort into the walk and `> p.bookmaker` would
+    terminate it early, silently dropping every book after it.
     """
-    from sqlalchemy import desc
+    from sqlalchemy import text as sql_text
 
-    row_number = func.row_number().over(
-        partition_by=[FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.bookmaker],
-        order_by=desc(FuturesOddsSnapshot.captured_at),
-    ).label("rn")
-
-    subq = (
-        select(
-            FuturesOddsSnapshot.outcome_id,
-            FuturesOddsSnapshot.bookmaker,
-            FuturesOddsSnapshot.probability,
-            FuturesOddsSnapshot.captured_at,
-            row_number,
-        )
-        .where(FuturesOddsSnapshot.outcome_id.in_(outcome_ids))
-        .subquery()
-    )
-
+    # Bound as an array rather than an expanding IN: the seed reads the ids as a
+    # relation (`unnest`), and an expanding IN cannot be a FROM item. CAST(...)
+    # rather than `::integer[]` — asyncpg parses the `::` spelling as a bind.
     rows = await db.execute(
-        select(
-            subq.c.outcome_id,
-            subq.c.bookmaker,
-            subq.c.probability,
-            subq.c.captured_at,
-        ).where(subq.c.rn == 1)
+        sql_text(
+            """
+            WITH RECURSIVE pairs AS (
+                SELECT o.outcome_id,
+                       (SELECT s.bookmaker
+                          FROM futures_odds_snapshots s
+                         WHERE s.outcome_id = o.outcome_id
+                         ORDER BY s.bookmaker
+                         LIMIT 1) AS bookmaker
+                  FROM unnest(CAST(:outcome_ids AS integer[])) AS o(outcome_id)
+                UNION ALL
+                SELECT p.outcome_id,
+                       (SELECT s.bookmaker
+                          FROM futures_odds_snapshots s
+                         WHERE s.outcome_id = p.outcome_id
+                           AND s.bookmaker > p.bookmaker
+                         ORDER BY s.bookmaker
+                         LIMIT 1)
+                  FROM pairs p
+                 WHERE p.bookmaker IS NOT NULL
+            )
+            SELECT p.outcome_id, p.bookmaker, latest.probability,
+                   latest.captured_at
+              FROM pairs p
+              CROSS JOIN LATERAL (
+                    SELECT s.probability, s.captured_at
+                      FROM futures_odds_snapshots s
+                     WHERE s.outcome_id = p.outcome_id
+                       AND s.bookmaker = p.bookmaker
+                     ORDER BY s.captured_at DESC
+                     LIMIT 1
+                   ) AS latest
+             WHERE p.bookmaker IS NOT NULL
+            """
+        ),
+        {"outcome_ids": list(outcome_ids)},
     )
 
     staleness_cutoff = datetime.now(timezone.utc) - timedelta(days=SOURCE_STALENESS_DAYS)
