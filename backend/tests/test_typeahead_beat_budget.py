@@ -740,6 +740,17 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     `sync-tournament-results`, `settlement-capture-sweep-nightly`) name their
     queue explicitly.
 
+    🔴 **RE-DERIVED at LAT-P137 (2026-08-30): 107 -> 108, explicit 62 -> 63.**
+    This lane added `warm-futures-categories` (`crontab(minute="*/5")`, the
+    producer for the Search page's category census) with an explicit
+    `options={"queue": "background"}`. RE-DERIVED by running the census below
+    over the assembled schedule and printing all three numbers, never by adding
+    one to the old number (#1910). The fall-through half is UNMOVED at **45** —
+    the new beat named its queue rather than defaulting into it, which is the
+    benign direction this docstring reserves. The cost declaration (one 1.37-
+    1.59 s build per 5 min = ~0.46 % of a slot-day, and why `background` rather
+    than `realtime`) is on `BACKGROUND_BEAT_COUNT`.
+
     🔴 **RE-DERIVED at queue 419 (2026-08-26, #2077): 102 -> 103, explicit
     57 -> 58.** This lane added `settlement-capture-sweep-nightly`
     (`crontab(minute=31, hour=10)`, the nightly settlement-capture sweep) with an
@@ -806,9 +817,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 62, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 63, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 107
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 108
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

@@ -88,6 +88,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
         ("CENSUS_MUTATIONS", "needle", "replacement", "CENSUS"),
         ("SERVE_STALE_MUTATIONS", "needle", "replacement", "CONCEPT_CACHE"),
     ],
+    # LAT-P137. Alphabetical, for the reason spelled out two entries below.
+    # Three targets in one table (the warmer, the beat that schedules it and the
+    # verdict registry that makes its failures authoritative), so the target is
+    # carried per-entry at index 2 — the `game_markets_shared_cache_mutations`
+    # shape rather than a module constant.
+    "futures_categories_warm_mutations": [("MUTANTS", 3, 4, 2)],
     # LAT-P127. Alphabetical, for the reason spelled out in the next entry.
     "futures_detail_sources_cache_mutations": [("MUTANTS", 2, 3, "ROUTE")],
     # LAT-P115. Placed at its alphabetical position rather than at the head of

@@ -376,6 +376,15 @@ class TestEnforcementScope:
             # sweep is BY DESIGN and returns cleanly every night, so without
             # enforcement a growing backlog would read as a healthy task.
             "settlement_sweep",
+            # LAT-P137: the Search page's category-census producer, enrolled at
+            # birth in the same change that gives it a beat. Its verdict CAN
+            # turn a surface red, which this class says should never be a side
+            # effect — so it is here, in the pin, deliberately: a warmer that
+            # publishes nothing leaves the route answering 200 at 1,365 ms
+            # instead of 28 ms, and nothing else on the fleet would notice.
+            # `terminal` is `complete` only when the census reads BACK with a
+            # `created_at` that run wrote.
+            "warm_futures_categories",
         }
 
     def test_enforced_task_partial_blocks_success(self):

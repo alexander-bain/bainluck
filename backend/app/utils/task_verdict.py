@@ -342,6 +342,21 @@ ENFORCED_TASKS = frozenset({
     # NOT-GREEN here, deliberately: the sweep's job is to finish, and a run that
     # left rows behind has not.
     "settlement_sweep",                # terminal + captured + skipped_by_bucket
+    # LAT-P137: the Search page's category-census producer. Enrolled AT BIRTH
+    # per #1884, in the same change that gives it a beat, and for the reason
+    # this module exists rather than for tidiness: a warmer's failure is
+    # INVISIBLE from the surface it protects. The route still answers 200 with a
+    # served payload whether or not this task ever ran — it just answers in
+    # 1,365 ms instead of 28 ms, to whoever happens to arrive after the mirror
+    # passes its serve ceiling. Nothing else on the fleet would notice, which is
+    # precisely the arrangement LAT-P122 shipped and this queue is repairing.
+    #
+    # Its terminal distinguishes the two zeros a warmer can produce: `complete`
+    # only when the census reads BACK with a `created_at` this run wrote, and
+    # `failed` when the build raised, timed out, or was written into a Redis
+    # that did not keep it. "The build returned" is not "the next reader is
+    # covered" (gotcha #53).
+    "warm_futures_categories",         # terminal + published + created_at
 })
 
 
