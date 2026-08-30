@@ -476,24 +476,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Unit tests (Jest)
-        # L2-233. 116 suites / 1,393 tests that, until this step existed, ran
-        # only on an engineer's laptop: no workflow invoked jest, and neither
-        # `jest` nor `ts-jest` was even declared in package.json — so `npx jest`
-        # after `npm ci` would have resolved nothing. Both halves are fixed in
-        # the commit that added this line.
-        #
-        # Ahead of the build deliberately: ~20s here versus ~2min there, so a
-        # broken test costs one short run instead of a full build first. Both
-        # are required — this job fails on either.
-        #
-        # No `--passWithNoTests`, no `continue-on-error`. Those, and the rest of
-        # what keeps this from silently becoming decoration, are asserted by
-        # frontend/__tests__/lib/ciJestGate.test.ts, plus a workflow-shape
-        # fixture in the e2e-contract job below that survives this step being
-        # deleted.
-        run: npm run test:ci
-
       # Item 2 — the ONLY uncached artifact in this workflow. pip is cached by
       # setup-python in both python jobs and npm by setup-node above, so `.next`
       # is what was left. Sequenced after the sharding deliberately: while
@@ -517,6 +499,42 @@ jobs:
 
       - name: Build (ESLint gate — NOT a TypeScript gate, see the step below)
         run: npm run build
+
+      - name: Unit tests (Jest)
+        # L2-233. 116 suites / 1,393 tests that, until this step existed, ran
+        # only on an engineer's laptop: no workflow invoked jest, and neither
+        # `jest` nor `ts-jest` was even declared in package.json — so `npx jest`
+        # after `npm ci` would have resolved nothing. Both halves are fixed in
+        # the commit that added this line.
+        #
+        # AFTER the build since UX-P150, and this reordering is load-bearing.
+        # It used to run ahead of it — ~20s here versus ~2min there, so a broken
+        # test cost one short run instead of a full build first. That trade
+        # stopped being available the moment part of the suite started reading
+        # the build OUTPUT rather than the sources:
+        #
+        #   __tests__/components/shippedCopyBans.test.ts   scans .next/static/chunks
+        #   __tests__/capture/usOpenDesktopCapture.test.tsx  needs the compiled CSS
+        #   __tests__/capture/golfFieldFloorCapture.test.tsx        "
+        #
+        # Those three pass on a laptop, where `npm run build` has always been run
+        # at some point, and failed here on every push once they existed, because
+        # `.next` does not exist yet at this point in a clean runner. The copy
+        # scan is explicit that a missing bundle is a FAILURE and not a skip —
+        # "the build output exists, or CI has skipped its own gate" — because the
+        # defect it was written for was copy that had been "fixed" twice, with
+        # render guards, and had never actually shipped. Making it tolerate an
+        # absent bundle would restore exactly the blindness it exists to remove,
+        # so the step moved instead.
+        #
+        # Both are still required — this job fails on either.
+        #
+        # No `--passWithNoTests`, no `continue-on-error`. Those, and the rest of
+        # what keeps this from silently becoming decoration, are asserted by
+        # frontend/__tests__/lib/ciJestGate.test.ts, plus a workflow-shape
+        # fixture in the e2e-contract job below that survives this step being
+        # deleted.
+        run: npm run test:ci
 
       - name: Type check (fail-on-new)
         # L2-234. `npm run build` above has never enforced TypeScript:

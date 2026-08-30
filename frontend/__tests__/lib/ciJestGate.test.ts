@@ -132,6 +132,19 @@ describe("L2-233: the jest deploy gate is wired", () => {
     expect(test).toBeGreaterThan(install);
   });
 
+  it("runs the suite AFTER the build, because part of it reads the build output", () => {
+    // Three suites scan `.next` rather than the sources — the shipped-copy ban
+    // scan and the two capture rigs. On a laptop a build has always happened at
+    // some point, so they pass; in a clean runner `.next` does not exist until
+    // the build step, and they failed on every push while jest ran first.
+    // The copy scan treats a missing bundle as a failure ON PURPOSE, so the
+    // ordering is the fix and this is the line that keeps it.
+    const build = frontendBuild.indexOf("npm run build");
+    const test = frontendBuild.indexOf("npm run test:ci");
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(test).toBeGreaterThan(build);
+  });
+
   it("deploy authority still depends on the job that runs it", () => {
     const deploy = jobBlock(ci, "deploy");
     const needs = /needs:\s*\[([^\]]*)\]/.exec(deploy);

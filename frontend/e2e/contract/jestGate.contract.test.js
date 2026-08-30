@@ -107,6 +107,19 @@ describe("L2-233: jest is on the deploy path", () => {
     );
   });
 
+  it("it runs after the build, because three suites read the build output", () => {
+    const block = jobBlock(ci, "frontend-build");
+    const build = block.indexOf("npm run build");
+    const test = block.indexOf("npm run test:ci");
+    assert.ok(build >= 0, "frontend-build no longer runs `npm run build`");
+    assert.ok(
+      test > build,
+      "`npm run test:ci` runs before `npm run build`, so `.next` does not exist " +
+        "yet and the shipped-copy scan plus the two capture rigs fail on every " +
+        "push. The copy scan treats a missing bundle as a failure on purpose.",
+    );
+  });
+
   it("deploy authority depends on that job", () => {
     const deploy = jobBlock(ci, "deploy");
     const needs = /needs:\s*\[([^\]]*)\]/.exec(deploy);
