@@ -693,6 +693,11 @@ class TestCategoryMockedDataContracts:
             {
                 "q": "Will a hurricane make landfall in Florida?",
                 "prob": 62,
+                # UX-P192: the value `prob` was rounded from. `prob` alone
+                # cannot be printed honestly — a live price rendering to 0
+                # prints `0%`, which reads as impossible — and an int cannot be
+                # un-rounded, so the client's `<1%` band needs the fraction.
+                "probability": 0.62,
                 # UX-P186: which outcome `prob` prices. Null here, and that is
                 # the answer rather than an omission — the leader of this market
                 # is "Yes", which only restates the question. The key is always

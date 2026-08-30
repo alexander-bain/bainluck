@@ -63,6 +63,15 @@ CARD = FRONTEND / "components/politics/CrossSourceSpotlight.tsx"
 PYTEST_TARGETS = (
     "tests/integration/test_weather_printed_percent_uxp191.py",
     "tests/integration/test_weather_featured_leader_uxp186.py",
+    # ⚠️ UX-P192's file was added to the oracle because M3 SURVIVED without it,
+    # and the survival is instructive rather than embarrassing. Rounding the
+    # yes-leg EARLY (`round(p * 100) / 100`) leaves the printed INTEGER correct
+    # — 0.635 still prints 64 — so every UX-P191-era assertion, all of which are
+    # about the integer, agrees with the mutant. What it destroys is the
+    # FRACTION the client bands on, and only the file that asserts the fraction
+    # can see that. A battery whose oracle predates the property being mutated
+    # cannot grade it.
+    "tests/integration/test_weather_printed_band_uxp192.py",
 )
 JEST_PATTERNS = (
     "politicsCrossSourcePrecisionCapture",
@@ -88,52 +97,63 @@ def _backup_paths() -> dict[Path, Path]:
 #: `scan_mutation_residue.py` harvests as `("MUTANTS", 2, 3, 1)`.
 MUTANTS: list[tuple[str, Path, str, str, str]] = [
     # ── the weather rounding rule ──────────────────────────────────────────
+    # ⚠️ UX-P192 COLLAPSED THE THREE CALL SITES INTO ONE (`_printed`), so M1-M6
+    # were re-pointed at the surviving code. They were NOT deleted and NOT
+    # weakened: each still restores the same wrong arithmetic, and the two that
+    # used to hit `_highest_prob` and the city loop separately now hit the one
+    # home — which is a STRONGER mutation, because it breaks all seven surfaces
+    # at once and so must be caught by all seven guards.
+    #
+    # Re-pointing rather than deleting matters: a battery whose needles have
+    # rotted reports NOT APPLIED, which is honest but proves nothing, and the
+    # next reader has no way to tell a stale battery from a covered one.
     (
-        "M1-weather-hero-back-to-bankers",
+        "M1-printed-back-to-bankers",
         WEATHER,
-        "    printed = rendered_percent(best)\n    return 0 if printed is None else printed",
-        "    return round(best * 100)",
-        "THE DEFECT ITSELF. `_highest_prob` feeds the featured hero, the "
-        "wildcards rail, the natural-events list and the climate board.",
+        "    printed = rendered_percent(probability)",
+        "    printed = round(probability * 100)",
+        "THE DEFECT ITSELF. `_printed` feeds the featured hero, the temperature "
+        "panel, both rain lists, the natural-events list, the climate board and "
+        "the wildcards rail.",
     ),
     (
-        "M2-city-distribution-back-to-bankers",
+        "M2-leader-scan-drops-the-fraction",
         WEATHER,
-        "            p = rendered_percent(float(o.current_probability or 0)) or 0",
-        "            p = round(float(o.current_probability or 0) * 100)",
-        "The second call site, in its own loop. Fixing the hero and leaving "
-        "the temperature panel is the half-landing this ship exists to avoid.",
+        "        if p > best:\n            best = p\n    return best",
+        "        if p > best:\n            best = p\n    return float(round(best * 100)) / 100",
+        "Rounds at the SCAN instead of at the print, so the fraction the client "
+        "bands on is already a whole percent. Every `<1%` collapses back to 0.",
     ),
     (
-        "M3-rain-yes-leg-back-to-bankers",
+        "M3-rain-yes-leg-rounds-early",
         WEATHER,
-        '            return rendered_percent(float(o.current_probability or 0)) or 0\n    # Fallback: use highest probability',
-        "            return round(float(o.current_probability or 0) * 100)\n    # Fallback: use highest probability",
-        "The third call site — and the sharpest, because its own FALLBACK "
-        "branch stays correct, so the rain card would round differently "
-        'depending on whether the market labelled its leg "Yes".',
+        "            return float(o.current_probability or 0)\n    # Fallback: use highest probability",
+        "            return float(round(float(o.current_probability or 0) * 100)) / 100\n    # Fallback: use highest probability",
+        "The sharpest of the three, because its own FALLBACK branch stays "
+        "correct: the rain card would band differently depending on whether the "
+        'market happened to label its leg "Yes".',
     ),
     (
-        "M4-weather-hero-always-rounds-up",
+        "M4-printed-always-rounds-up",
         WEATHER,
-        "    printed = rendered_percent(best)\n    return 0 if printed is None else printed",
-        "    import math as _m\n    return _m.ceil(best * 100)",
+        "    printed = rendered_percent(probability)",
+        "    import math as _m\n    printed = _m.ceil(probability * 100)",
         "Wrong in the OTHER direction. A guard asserting only 'the number went "
         "up' passes; half-up is a rule, not a nudge.",
     ),
     (
-        "M5-weather-hero-double-scales",
+        "M5-printed-double-scales",
         WEATHER,
-        "    printed = rendered_percent(best)\n    return 0 if printed is None else printed",
-        "    printed = rendered_percent(best * 100)\n    return 0 if printed is None else printed",
+        "    printed = rendered_percent(probability)",
+        "    printed = rendered_percent(probability * 100)",
         "`rendered_percent` already multiplies by 100. Catches a guard that "
         "checks the helper is CALLED without checking what it returns.",
     ),
     (
-        "M6-city-distribution-truncates",
+        "M6-printed-truncates",
         WEATHER,
-        "            p = rendered_percent(float(o.current_probability or 0)) or 0",
-        "            p = int(float(o.current_probability or 0) * 100)",
+        "    printed = rendered_percent(probability)",
+        "    printed = int(probability * 100)",
         "Whole numbers, still wrong. Truncation agrees with banker's on half "
         "the boundary and with nothing on the rest.",
     ),

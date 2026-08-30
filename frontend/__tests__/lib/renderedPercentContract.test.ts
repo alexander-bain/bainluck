@@ -24,6 +24,7 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
+import { formatProbabilityPercent } from "../../lib/probabilityDisplay";
 import {
   SUM_INDEPENDENT_PRICES,
   SUM_UNPRICED_OUTCOME,
@@ -66,9 +67,23 @@ interface CardSumCase {
   sum: number | null;
   reason: string | null;
 }
+interface PrintedCase {
+  probability: number;
+  printed: string;
+  diverged: boolean;
+}
+interface PrintedOverrideCase {
+  probability: number;
+  rendered: number;
+  printed: string;
+}
 interface Contract {
   version: number;
   rule: string;
+  printed_rule: string;
+  printed_cases: PrintedCase[];
+  printed_override_cases: PrintedOverrideCase[];
+  printed_implementations: { runtime: string; path: string; symbol: string; driven_by: string }[];
   card_rule: string;
   card_sum_rule: string;
   card_sum_cases: CardSumCase[];
@@ -731,6 +746,185 @@ d("the labeling card renders through the shared function, not a second copy", ()
   });
 });
 
+// ── THE PRINTED STRING (UX-P192). The integer is not what a reader sees. ────
+
+describe("web prints the string the contract says", () => {
+  it.each(CONTRACT.printed_cases.map((c) => [String(c.probability), c] as const))(
+    "%s",
+    (_label, c) => {
+      expect(formatProbabilityPercent(c.probability)).toBe(c.printed);
+    }
+  );
+
+  it.each(
+    CONTRACT.printed_override_cases.map(
+      (c) => [`${c.probability} rendered ${c.rendered}`, c] as const
+    )
+  )("%s", (_label, c) => {
+    expect(formatProbabilityPercent(c.probability, { rendered: c.rendered })).toBe(
+      c.printed
+    );
+  });
+
+  it("never bands an actual boundary", () => {
+    // The property behind the two rows native got backwards, asserted here too
+    // so neither arm can drift onto it alone.
+    expect(formatProbabilityPercent(0)).toBe("0%");
+    expect(formatProbabilityPercent(1)).toBe("100%");
+  });
+});
+
+describe("the printed table still discriminates", () => {
+  it("keeps at least five rows where the threshold form would differ", () => {
+    expect(CONTRACT.printed_cases.filter((c) => c.diverged).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("every flagged row really does disagree with the threshold form", () => {
+    // The OLD native implementation, kept only here so `diverged` is checked
+    // against arithmetic rather than trusted.
+    const threshold = (p: number) => {
+      const pct = p * 100;
+      if (pct < 1) return "<1%";
+      if (pct > 99) return ">99%";
+      return `${Math.round(pct)}%`;
+    };
+    for (const c of CONTRACT.printed_cases) {
+      expect([c.probability, threshold(c.probability) !== c.printed]).toEqual([
+        c.probability,
+        c.diverged,
+      ]);
+    }
+  });
+
+  it("the two arms agree on every row of the OTHER table too", () => {
+    // The scalar rows carry no `printed`, but the printed rule is stated over
+    // the integer they produce — so the band must not contradict them. Without
+    // this, `printed_cases` could drift into being a second, unrelated rule.
+    for (const c of CONTRACT.cases) {
+      if (c.probability === null) continue;
+      const s = formatProbabilityPercent(c.probability);
+      if (s === "<1%" || s === ">99%") {
+        expect(c.probability).toBeGreaterThan(0);
+        expect(c.probability).toBeLessThan(1);
+      } else {
+        expect(s).toBe(`${c.percent}%`);
+      }
+    }
+  });
+});
+
+d("the Swift PRINTED table has not drifted from the contract", () => {
+  const src = readFileSync(SWIFT_TEST, "utf8");
+  const rows = () => {
+    const start = src.indexOf("PRINTED ROWS BEGIN");
+    const end = src.indexOf("PRINTED ROWS END");
+    return [
+      ...src
+        .slice(start, end)
+        .matchAll(/\(\s*(-?[0-9.]+)\s*,\s*"([^"]+)"\s*,\s*(true|false)\s*\)/g),
+    ].map((m) => ({
+      probability: Number(m[1]),
+      printed: m[2],
+      diverged: m[3] === "true",
+    }));
+  };
+
+  it("has the delimited block the drift check reads", () => {
+    expect(src.indexOf("PRINTED ROWS BEGIN")).toBeGreaterThan(-1);
+    expect(src.indexOf("PRINTED ROWS END")).toBeGreaterThan(
+      src.indexOf("PRINTED ROWS BEGIN")
+    );
+  });
+
+  it("contains exactly the contract's printed rows, in order", () => {
+    expect(rows()).toEqual(
+      CONTRACT.printed_cases.map((c) => ({
+        probability: c.probability,
+        printed: c.printed,
+        diverged: c.diverged,
+      }))
+    );
+  });
+
+  it("is non-vacuous — the parse finds rows at all", () => {
+    expect(rows().length).toBe(CONTRACT.printed_cases.length);
+    expect(rows().length).toBeGreaterThanOrEqual(10);
+  });
+});
+
+d("the Swift PRINTED OVERRIDE table has not drifted from the contract", () => {
+  const src = readFileSync(SWIFT_TEST, "utf8");
+  const rows = () => {
+    const start = src.indexOf("PRINTED OVERRIDE ROWS BEGIN");
+    const end = src.indexOf("PRINTED OVERRIDE ROWS END");
+    return [
+      ...src
+        .slice(start, end)
+        .matchAll(/\(\s*(-?[0-9.]+)\s*,\s*(-?\d+)\s*,\s*"([^"]+)"\s*\)/g),
+    ].map((m) => ({
+      probability: Number(m[1]),
+      rendered: Number(m[2]),
+      printed: m[3],
+    }));
+  };
+
+  it("contains exactly the contract's override rows, in order", () => {
+    expect(rows()).toEqual(
+      CONTRACT.printed_override_cases.map((c) => ({
+        probability: c.probability,
+        rendered: c.rendered,
+        printed: c.printed,
+      }))
+    );
+  });
+
+  it("is non-vacuous — the parse finds rows at all", () => {
+    expect(rows().length).toBe(CONTRACT.printed_override_cases.length);
+    expect(rows().length).toBeGreaterThanOrEqual(5);
+  });
+});
+
+d("native derives the band from the rounding, not from a threshold", () => {
+  const impl = readFileSync(
+    join(REPO_ROOT, "ios/Bain Luck/Bain Luck/Utilities/FormattingUtilities.swift"),
+    "utf8"
+  );
+  // Comments stripped: this whole file now EXPLAINS the threshold form in prose,
+  // and a source scan that reads its own docstring is a scan of the wrong thing
+  // (UX-P190/UX-P191 both shipped one).
+  const code = impl
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("///") && !l.trim().startsWith("//"))
+    .join("\n");
+
+  it("does not compare a percentage against a hand-picked 1 or 99", () => {
+    expect(code).not.toMatch(/pct\s*[<>]=?\s*(1|99)\b/);
+  });
+
+  it("tests the ROUNDED integer against the boundary, guarded by the probability", () => {
+    expect(code).toContain("rounded <= 0 && value > 0");
+    expect(code).toContain("rounded >= 100 && value < 1");
+  });
+
+  it("guards a non-finite input, because Int(nan) traps", () => {
+    expect(code).toContain("value.isFinite");
+  });
+
+  it("does not return the override BEFORE the band runs", () => {
+    // ⚠️ A CONTAINMENT CHECK CANNOT SEE AN EARLY EXIT. The three assertions
+    // above all still pass on a function that returns `"\(renderedPercent)%"`
+    // on its first line — the band lines are present, just unreachable — and
+    // that is precisely the shape native shipped before UX-P192. The Swift row
+    // that catches it at runtime is in a suite CI never executes, so the
+    // CI-visible obligation has to be about ORDER.
+    expect(code).not.toMatch(/if\s+let\s+renderedPercent\s*\{\s*return/);
+    const bandAt = code.indexOf("rounded <= 0");
+    const plainAt = code.lastIndexOf("return \"\\(rounded)%\"");
+    expect(bandAt).toBeGreaterThan(-1);
+    expect(plainAt).toBeGreaterThan(bandAt);
+  });
+});
+
 describe("the contract's own registry is honest", () => {
   it("every declared implementation and driver exists and names its symbol", () => {
     for (const impl of CONTRACT.implementations) {
@@ -761,6 +955,31 @@ describe("the contract's own registry is honest", () => {
         true,
       ]);
     }
+  });
+
+  it("every declared PRINTED implementation exists and names its symbol", () => {
+    // Two entries, not three: the server publishes numbers and the clients print
+    // them (ruling 003), so Python deliberately has no arm. Stated rather than
+    // inferred, same as the duel registry's asymmetry.
+    for (const impl of CONTRACT.printed_implementations) {
+      const p = join(REPO_ROOT, impl.path);
+      expect([impl.path, existsSync(p)]).toEqual([impl.path, true]);
+      expect([impl.path, readFileSync(p, "utf8").includes(impl.symbol)]).toEqual([
+        impl.path,
+        true,
+      ]);
+      expect([impl.driven_by, existsSync(join(REPO_ROOT, impl.driven_by))]).toEqual([
+        impl.driven_by,
+        true,
+      ]);
+    }
+  });
+
+  it("the printed registry covers the two client runtimes", () => {
+    expect(CONTRACT.printed_implementations.map((i) => i.runtime).sort()).toEqual([
+      "swift",
+      "typescript",
+    ]);
   });
 
   it("the duel registry covers all three runtimes too", () => {

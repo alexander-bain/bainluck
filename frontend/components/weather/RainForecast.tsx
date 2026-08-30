@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { probColor } from "./data";
+import { probColor, weatherPercent } from "./data";
 import type { RainDay, MonthlyRain as MonthlyRainType } from "./data";
 import { SourceBadge } from "./SourceBadge";
 import { fetchRain } from "@/lib/weatherApi";
@@ -182,7 +182,7 @@ export default function RainForecast() {
                           className="font-mono font-bold"
                           style={{ fontSize: 20, color: txtCol }}
                         >
-                          {d.prob}%
+                          {weatherPercent(d)}
                         </span>
                         <div className="w-full mt-2 px-1">
                           <div
@@ -279,7 +279,7 @@ export default function RainForecast() {
                         className="text-right font-mono font-bold text-sm"
                         style={{ color: col }}
                       >
-                        {m.prob}%
+                        {weatherPercent(m)}
                       </span>
                       <span
                         className="text-right font-mono text-[10px]"

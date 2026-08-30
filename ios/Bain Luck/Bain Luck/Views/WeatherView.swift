@@ -154,7 +154,7 @@ struct WeatherView: View {
             Spacer()
 
             // Probability pill
-            Text("\(item.prob)%")
+            Text(weatherPercent(prob: item.prob, probability: item.probability))
                 .font(.title3)
                 .fontWeight(.black)
                 .monospacedDigit()
@@ -280,6 +280,24 @@ struct WeatherView: View {
 }
 
 // MARK: - City Forecast Card (Stateful for expand/collapse)
+
+/// The percentage string a weather number prints, from the pair the server sends.
+///
+/// `/weather` printed `"\(item.prob)%"` — the served int, raw — while every
+/// other native surface went through `formatProbability`. So a temperature
+/// bucket priced 0.0005 printed a flat `0%` over a live quote, and `0%` does not
+/// read as "unlikely", it reads as IMPOSSIBLE. Measured in one query on
+/// 2026-08-30: 288 of the 2,663 outcomes these endpoints serve are strictly
+/// inside (0, 1) and render to 0, and the open weather population contains no
+/// exact zeros and no nulls at all — so every one of them was a false claim.
+///
+/// The fallback exists because the hourly Redis cache can serve a payload built
+/// before `probability` was on the wire; for that hour `prob / 100` reproduces
+/// exactly the old number rather than inventing a new one. Web's `weatherPercent`
+/// is the same adapter for the same reason.
+private func weatherPercent(prob: Int, probability: Double?) -> String {
+    formatProbability(probability ?? Double(prob) / 100, renderedPercent: prob)
+}
 
 private struct CityForecastCard: View {
     let city: WeatherCity
@@ -459,7 +477,7 @@ private struct CityForecastCard: View {
             .frame(height: isPeak ? 14 : 10)
 
             // Probability label
-            Text("\(bracket.prob)%")
+            Text(weatherPercent(prob: bracket.prob, probability: bracket.probability))
                 .font(isPeak ? .caption : .caption2)
                 .fontWeight(isPeak ? .black : .semibold)
                 .monospacedDigit()

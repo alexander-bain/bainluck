@@ -1,0 +1,137 @@
+{
+  "$comment": [
+    "UX-P192 — production evidence for `/weather`'s missing `<1%` / `>99%` band.",
+    "",
+    "Measured 2026-08-30 against api.bainluck.com. Two separate measurements, and",
+    "they are kept apart on purpose because they answer different questions:",
+    "",
+    "  `population`  one atomic db-query over every outcome the weather route is",
+    "                eligible to serve. Atomic because a first pass, taken as two",
+    "                queries thirty minutes apart, returned 281 and 288 for the",
+    "                same count — polling moves these prices every two minutes, so",
+    "                a census assembled from separate queries is not a census.",
+    "",
+    "  `served`      a scan of the six payloads a reader's page is actually built",
+    "                from. This is the number that describes the page.",
+    "",
+    "THE FINDING THAT MAKES THE SHIP UNAMBIGUOUS: `exact_zero` and `unpriced` are",
+    "BOTH ZERO across the whole open weather population. There is no such thing as",
+    "an honest `0%` on this page. Every one of the 130 served zeros is printed over",
+    "a price a market is actively making, and `0%` does not read as 'unlikely' — it",
+    "reads as impossible.",
+    "",
+    "`specimens` are two real markets, pulled whole, so the band can be asserted",
+    "against measured prices rather than against invented ones."
+  ],
+
+  "measured_at": "2026-08-30",
+  "source": "api.bainluck.com — GET /api/weather/*, POST /api/admin/db-query",
+
+  "$population_comment": [
+    "One query, one snapshot. Population = the outcomes of open weather markets",
+    "with a future (or absent) resolution date, updated inside seven days — i.e.",
+    "`_open_weather_query`'s own filter, so the count is over exactly the rows the",
+    "route can reach.",
+    "",
+    "`interior_prints_zero` is `0 < p < 0.005`: strictly possible, and",
+    "`rendered_percent` renders it to 0. `interior_prints_hundred` is",
+    "`0.995 <= p < 1`: strictly uncertain, and it renders to 100."
+  ],
+  "population": {
+    "markets": 444,
+    "priced_outcomes": 2663,
+    "interior_prints_zero": 288,
+    "interior_prints_hundred": 21,
+    "exact_zero": 0,
+    "unpriced": 0,
+    "exact_one": 3
+  },
+
+  "$served_comment": [
+    "Every value on a key named `prob` in the six payloads, counted per endpoint.",
+    "`hundreds` is 0 on the day of measurement and the upper band is therefore",
+    "unexercised on the served page — but 21 rows in the population sit in it and",
+    "the featured rail rotates, so both arms ship. Saying which arm was measured",
+    "and which was reasoned about is the point of splitting this out."
+  ],
+  "served": {
+    "featured": { "numbers": 5, "zeros": 0, "hundreds": 0 },
+    "cities": { "numbers": 495, "zeros": 117, "hundreds": 0 },
+    "rain": { "numbers": 1, "zeros": 1, "hundreds": 0 },
+    "events": { "numbers": 51, "zeros": 12, "hundreds": 0 },
+    "climate": { "numbers": 16, "zeros": 0, "hundreds": 0 },
+    "wildcards": { "numbers": 3, "zeros": 0, "hundreds": 0 },
+    "total": { "numbers": 571, "zeros": 130, "hundreds": 0 }
+  },
+
+  "$specimens_comment": [
+    "Two temperature markets pulled whole from the database, both of them on the",
+    "served `/api/weather/cities` payload on the day of measurement. Every bucket",
+    "is listed, not just the offending ones, so a test can assert that the",
+    "UNCHANGED buckets really are unchanged — a band that moved a 43.5% bucket",
+    "would be a different bug wearing this one's fix."
+  ],
+  "specimens": [
+    {
+      "market_id": 59803955,
+      "city": "Los Angeles",
+      "name": "Highest temperature in Los Angeles on September 1?",
+      "source": "polymarket",
+      "outcomes": [
+        { "label": "26°C or below", "probability": 0.0015, "before": "0%", "after": "<1%" },
+        { "label": "27°C", "probability": 0.003, "before": "0%", "after": "<1%" },
+        { "label": "28°C", "probability": 0.0075, "before": "1%", "after": "1%" },
+        { "label": "29°C", "probability": 0.035, "before": "4%", "after": "4%" },
+        { "label": "30°C", "probability": 0.13, "before": "13%", "after": "13%" },
+        { "label": "31°C", "probability": 0.235, "before": "24%", "after": "24%" },
+        { "label": "32°C", "probability": 0.435, "before": "44%", "after": "44%" },
+        { "label": "33°C", "probability": 0.19, "before": "19%", "after": "19%" },
+        { "label": "34°C", "probability": 0.015, "before": "2%", "after": "2%" },
+        { "label": "35°C", "probability": 0.003, "before": "0%", "after": "<1%" },
+        { "label": "36°C or higher", "probability": 0.0015, "before": "0%", "after": "<1%" }
+      ]
+    },
+    {
+      "market_id": 59803967,
+      "city": "Beijing",
+      "name": "Highest temperature in Beijing on September 1?",
+      "source": "polymarket",
+      "outcomes": [
+        { "label": "24°C or below", "probability": 0.003, "before": "0%", "after": "<1%" },
+        { "label": "25°C", "probability": 0.003, "before": "0%", "after": "<1%" },
+        { "label": "26°C", "probability": 0.01, "before": "1%", "after": "1%" },
+        { "label": "27°C", "probability": 0.06, "before": "6%", "after": "6%" },
+        { "label": "28°C", "probability": 0.115, "before": "12%", "after": "12%" },
+        { "label": "29°C", "probability": 0.295, "before": "30%", "after": "30%" },
+        { "label": "30°C", "probability": 0.395, "before": "40%", "after": "40%" },
+        { "label": "31°C", "probability": 0.125, "before": "13%", "after": "13%" },
+        { "label": "32°C", "probability": 0.045, "before": "5%", "after": "5%" },
+        { "label": "33°C", "probability": 0.015, "before": "2%", "after": "2%" },
+        { "label": "34°C or higher", "probability": 0.007, "before": "1%", "after": "1%" }
+      ]
+    }
+  ],
+
+  "$price_grid_comment": [
+    "The whole distribution of the offending prices, so the band's lower arm is",
+    "sized against real quotes rather than against a hypothetical 0.0004. Note",
+    "there is nothing between 0.0045 and 0.995: the two arms are genuinely",
+    "separate populations and neither is a rounding artefact of the other.",
+    "",
+    "Counted in the same window as `population` but by a SECOND query, so it may",
+    "sum to a slightly different total — prices move every two minutes. It is here",
+    "for shape, not for arithmetic, and no test adds it up."
+  ],
+  "price_grid": {
+    "0.0005": 38,
+    "0.0010": 3,
+    "0.0015": 35,
+    "0.0020": 27,
+    "0.0025": 69,
+    "0.0030": 105,
+    "0.0035": 9,
+    "0.0040": 1,
+    "0.0045": 1,
+    "0.9950": 21
+  }
+}

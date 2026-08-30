@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { probColor, type ClimateMarket } from "./data";
+import { probColor, type ClimateMarket, weatherPercent } from "./data";
 import { fetchClimate } from "@/lib/weatherApi";
 import { SourceBadge } from "./SourceBadge";
 
@@ -114,7 +114,7 @@ function ClimateColumn({
                     textAlign: "right",
                   }}
                 >
-                  {item.prob}%
+                  {weatherPercent(item)}
                 </span>
               </div>
 

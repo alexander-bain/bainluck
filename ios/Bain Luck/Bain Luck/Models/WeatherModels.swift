@@ -7,6 +7,8 @@ nonisolated struct WeatherFeaturedItem: Decodable, Identifiable, Sendable {
     var id: String { "\(marketId ?? 0)-\(q)" }
     let q: String
     let prob: Int
+    /// The value `prob` was rounded from. See ``WeatherBracket/probability``.
+    let probability: Double?
     let src: String
     let tag: String
     let closes: String
@@ -44,6 +46,18 @@ nonisolated struct WeatherBracket: Decodable, Identifiable, Sendable {
     var id: String { label }
     let label: String
     let prob: Int
+
+    /// The value `prob` was rounded from.
+    ///
+    /// `prob` alone cannot be printed honestly: a bucket priced 0.0005 renders
+    /// to `0`, and `0%` reads as IMPOSSIBLE over a live quote. `formatProbability`
+    /// needs the probability to decide `<1%`, and an int cannot be un-rounded.
+    ///
+    /// OPTIONAL because the hourly Redis cache can serve a payload built before
+    /// the field existed — for that hour the view falls back to the served int
+    /// and prints exactly what it printed before, which is the only safe way for
+    /// a missing field to degrade.
+    let probability: Double?
 }
 
 // MARK: - Economics

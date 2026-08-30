@@ -150,6 +150,13 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # directly and does not care; Pass B reaches the `.tsx` via the LAT-P119
     # narrowing and the `.py` via its original glob.
     "uxp191_printed_percent_mutations": [("MUTANTS", 2, 3, 1)],
+    # UX-P192. Alphabetical, same reason. Same per-entry-target shape again, and
+    # the FIRST harness here whose targets span THREE runtimes — `.py`, `.ts`,
+    # `.tsx`, `.swift` AND a `.json` contract. Two consequences for this scanner:
+    # Pass A reads every declared target directly and is unaffected; Pass B
+    # reaches the `.swift` targets only through the LAT-P119 narrowing, exactly
+    # as `event_hero_duel_percent_mutations` two dozen lines up already does.
+    "uxp192_printed_band_mutations": [("MUTANTS", 2, 3, 1)],
 }
 
 # Harnesses that write NOTHING, anywhere — every mutant is a source string

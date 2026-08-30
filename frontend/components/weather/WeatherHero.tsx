@@ -157,7 +157,7 @@ export default function WeatherHero() {
             {/* Probability + sparkline row */}
             <div className="flex items-end justify-between gap-4">
               <div style={{ minWidth: 0 }}>
-                <ProbabilityNumber value={current.prob} size={64} />
+                <ProbabilityNumber item={current} size={64} />
                 {/* What the number is ABOUT. Under "Where will it rain on Aug
                     29, 2026?" a bare 78% answers nothing; "78% Minneapolis"
                     answers the question that was asked. Omitted entirely when

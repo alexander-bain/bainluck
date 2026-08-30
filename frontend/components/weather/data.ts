@@ -1,6 +1,62 @@
 import { getSourceColor } from "@/lib/sourceColors";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 export type Source = "kalshi" | "polymarket";
+
+// Every weather number arrives as a PAIR: `prob`, the whole percent the server
+// already decided to print, and `probability`, the value it was decided from.
+//
+// `prob` alone is not enough, and the reason is the whole of UX-P192. A market
+// priced 0.0005 renders to `0`, and `0%` does not read as "unlikely" — it reads
+// as IMPOSSIBLE, printed over a quote a market is actively making. Measured in
+// ONE query on 2026-08-30 across the outcomes these endpoints serve: 288 of
+// 2,663 are strictly inside (0, 1) and render to 0, 21 render to 100 over a
+// probability that is not 1, and there is not a single exact zero or null in the
+// whole open weather population. So every `0%` this page has printed was a lie.
+//
+// The site has had the answer since UX-P046 — `formatProbabilityPercent` — and
+// every other surface adopted it. `/weather` was the one that never did, because
+// the wire only carried the rounded int and an int cannot be un-rounded.
+//
+// OPTIONAL, deliberately, and for the same reason `FeaturedMarket.leader` is:
+// the hourly Redis cache can serve a payload built before the field existed, and
+// for that hour `prob / 100` reconstructs exactly today's behaviour — a served
+// 0 prints `0%`, not an invented `<1%`. A missing field must degrade to the old
+// number, never to a new claim.
+export type PrintedProbability = {
+  prob: number;
+  probability?: number | null;
+};
+
+/**
+ * The percentage string a weather surface prints for one served number.
+ *
+ * The site's single home for the decision is `formatProbabilityPercent`; this
+ * is the two-argument adapter for a wire that ships the integer and the value
+ * separately. `rendered` overrides the INTEGER — the `<1%` / `>99%` rule still
+ * runs on the PROBABILITY, because it is a claim about the value and not about
+ * which arithmetic produced the integer (see that function's own docstring).
+ */
+export function weatherPercent(item: PrintedProbability): string {
+  return formatProbabilityPercent(item.probability ?? item.prob / 100, {
+    rendered: item.prob,
+  });
+}
+
+/**
+ * Whether a served number stands for a live price at all.
+ *
+ * `prob > 0` was the old test, and it is wrong in exactly the same way the
+ * printed `0%` was: it asks the ROUNDED integer whether a market has an
+ * opinion. A temperature bucket priced 0.0005 answers no, so the histogram
+ * withheld its tooltip — the one place its number could have been read — from
+ * the bucket that most needed explaining. There is not one genuine zero in the
+ * open weather population, so this predicate is the difference between "no
+ * price" and "a small price", which is the whole distinction the page owes.
+ */
+export function hasPrice(item: PrintedProbability): boolean {
+  return (item.probability ?? item.prob / 100) > 0;
+}
 
 // `leader` is the name of the outcome `prob` belongs to — "Minneapolis" under
 // "Where will it rain on Aug 29, 2026?". Null when the market is binary and the
@@ -8,14 +64,16 @@ export type Source = "kalshi" | "polymarket";
 // cache can serve a payload built before the field existed, and a hero that
 // printed "undefined" for an hour after deploy would be a worse bug than the
 // one this fixes.
-export type FeaturedMarket = {
+export type FeaturedMarket = PrintedProbability & {
   q: string;
-  prob: number;
   src: Source;
   tag: string;
   closes: string;
   leader?: string | null;
 };
+
+/** One labelled bucket of a temperature distribution. */
+export type DistBucket = PrintedProbability & { label: string };
 
 export type CityData = {
   id: string;
@@ -30,57 +88,52 @@ export type CityData = {
   high: {
     unit: "C" | "F";
     mode: number;
-    dist: Array<{ label: string; prob: number }>;
+    dist: DistBucket[];
   };
   kalshiHigh?: {
     unit: "C" | "F";
     mode: number;
-    dist: Array<{ label: string; prob: number }>;
+    dist: DistBucket[];
   };
   low?: {
     unit: "C" | "F";
     mode: number;
-    dist: Array<{ label: string; prob: number }>;
+    dist: DistBucket[];
   };
   rainToday?: number;
 };
 
-export type RainDay = {
+export type RainDay = PrintedProbability & {
   day: string;
   date: string;
-  prob: number;
   icon: string;
 };
 
-export type MonthlyRain = {
+export type MonthlyRain = PrintedProbability & {
   city: string;
   /** The month the market resolves for ("Nov 2026"). Not the current month —
    *  a city's surviving row can be any future month, so the card is told. */
   period?: string | null;
-  prob: number;
   src: Source;
   delta24h?: number;
 };
 
-export type EventMarket = {
+export type EventMarket = PrintedProbability & {
   q: string;
-  prob: number;
   src: Source;
   closes: string;
   /** See {@link FeaturedMarket.leader} — same field, same contract. */
   leader?: string | null;
 };
 
-export type ClimateMarket = {
+export type ClimateMarket = PrintedProbability & {
   q: string;
-  prob: number;
   src: Source;
   scale: "2026" | "2030" | "2050";
 };
 
-export type WildCard = {
+export type WildCard = PrintedProbability & {
   q: string;
-  prob: number;
   src: Source;
   tag: string;
   /** See {@link FeaturedMarket.leader} — same field, same contract. */
