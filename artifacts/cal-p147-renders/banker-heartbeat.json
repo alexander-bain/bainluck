@@ -1,8 +1,8 @@
 {
-  "last_cycle_at": "2026-08-30T18:14:18.031233+00:00",
-  "last_event": "already_banked",
-  "last_census_seen": "2026-08-30T17:37:40.844750+00:00",
-  "censuses_banked": 11,
+  "last_cycle_at": "2026-08-30T20:51:58.882492+00:00",
+  "last_event": "banked",
+  "last_census_seen": "2026-08-30T20:43:06.399219+00:00",
+  "censuses_banked": 13,
   "pid": 75911,
   "lane_token": "CAL-P147-RENDER-BANKER"
 }
