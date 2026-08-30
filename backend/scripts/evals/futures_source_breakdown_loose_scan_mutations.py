@@ -191,7 +191,15 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     (
         "M-UNSORTED",
         "stop sorting sources by name",
-        "    return sorted(by_bookmaker.values(), key=lambda s: s[\"source\"])",
+        # 🔴 SINGLE-QUOTED ON PURPOSE. The needle contains `s["source"]`, and
+        # spelling it in a double-quoted Python string makes it `s[\"source\"]`
+        # in this FILE's text — so Pass B of `scan_mutation_residue.py` sees the
+        # replacement present and the needle absent, and reports this harness as
+        # residue. The module docstring warns about escaped literals; this line
+        # is the one that got caught doing it, in the full suite rather than in
+        # the standalone scan, because Pass B only reads CHANGED files and there
+        # were none until the commit landed.
+        '    return sorted(by_bookmaker.values(), key=lambda s: s["source"])',
         "    return list(by_bookmaker.values())",
     ),
     (
