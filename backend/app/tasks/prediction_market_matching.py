@@ -2441,6 +2441,117 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
         return stats
 
 
+# --- Phase 1.5 scan rotation (#2325) ---------------------------------------
+# The revalidation scan is capped, and the eligible population is many times
+# the cap. Spending the whole cap on ``updated_at`` newest-first starves the
+# oldest tail permanently — and starves precisely the rows this phase exists
+# to catch. A Kalshi market that settles keeps ``status='open'`` in our DB
+# (gotcha #33) so it stays eligible, but polling no longer touches it, so its
+# ``updated_at`` freezes and it sinks below the cut forever. That is how
+# `KXNCAAFGAME-26AUG29MORGNCAT` sat bound to the wrong event since 2026-08-19:
+# it ranked 4,796th in a scan that reads 1,000.
+#
+# So the cap is split. A fresh slice keeps the old newest-first behaviour, so
+# a link written moments ago is still revalidated on the very next beat. The
+# rest rotates: each beat takes one ``id``-modulus shard, sized so a shard
+# fits its slice, least-recently-updated first. Every eligible row is reached
+# within ``shards`` beats instead of never.
+_PHASE15_SCAN_LIMIT = 1000
+_PHASE15_FRESH_SLICE = 250
+_PHASE15_ROTATION_SLICE = _PHASE15_SCAN_LIMIT - _PHASE15_FRESH_SLICE
+_PHASE15_BEAT_SECONDS = 900  # match_prediction_markets runs every 15 minutes
+
+
+def _phase15_shard_plan(
+    total: int, now: datetime, limit: int = _PHASE15_ROTATION_SLICE,
+) -> tuple[int, int]:
+    """Return ``(shards, shard_index)`` for this beat's slice of the rotation.
+
+    Pure, and clock-free: the index comes from the ``now`` the task was handed,
+    never from a live clock read, so a test pins it by passing a fixed datetime
+    rather than by branching on the wall clock (gotcha #44).
+    """
+    if limit <= 0:
+        raise ValueError("phase 1.5 rotation slice must be positive")
+    shards = max(1, -(-max(total, 0) // limit))  # ceil division
+    shard_index = int(now.timestamp() // _PHASE15_BEAT_SECONDS) % shards
+    return shards, shard_index
+
+
+def _phase15_eligible_where():
+    """The one definition of "linked market Phase 1.5 may revalidate".
+
+    Shared by the count and both scans on purpose: if the count ran over a
+    different population than the scans, the shard sizing would silently be
+    wrong and the tail would starve again under a new name.
+    """
+    from app.models.models import FuturesMarket
+
+    return (
+        FuturesMarket.source.in_(["kalshi", "polymarket"]),
+        FuturesMarket.event_id.isnot(None),
+        FuturesMarket.status == "open",
+    )
+
+
+def _phase15_priority_order():
+    """Finished events first, then events we auto-created, then the rest."""
+    from app.models.models import Event
+
+    return case(
+        (Event.status.in_(["completed", "closed"]), 0),
+        (Event.external_id.is_(None), 1),
+        else_=2,
+    )
+
+
+def _phase15_eligible_count_query():
+    from app.models.models import FuturesMarket, Event
+
+    return (
+        select(func.count())
+        .select_from(FuturesMarket)
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(*_phase15_eligible_where())
+    )
+
+
+def _phase15_fresh_query(limit: int = _PHASE15_FRESH_SLICE):
+    """The most recently touched links — the fast guard on new mislinks."""
+    from app.models.models import FuturesMarket, Event
+
+    return (
+        select(FuturesMarket, Event)
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(*_phase15_eligible_where())
+        .order_by(_phase15_priority_order(), FuturesMarket.updated_at.desc())
+        .limit(limit)
+    )
+
+
+def _phase15_rotation_query(
+    shards: int, shard_index: int, limit: int = _PHASE15_ROTATION_SLICE,
+):
+    """One shard of the rotating sweep, least-recently-updated first.
+
+    Oldest-first is the point: if the loop's time budget truncates this slice,
+    it must truncate the rows that were checked most recently, never the tail
+    that has not been checked at all.
+    """
+    from app.models.models import FuturesMarket, Event
+
+    query = (
+        select(FuturesMarket, Event)
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(*_phase15_eligible_where())
+    )
+    if shards > 1:
+        query = query.where(FuturesMarket.id % shards == shard_index)
+    return query.order_by(
+        _phase15_priority_order(), FuturesMarket.updated_at.asc()
+    ).limit(limit)
+
+
 async def _phase15_revalidate(
     session, stats: dict, now: datetime, _time_remaining,
     link_changes: Optional[list[MatchReceipt]] = None,
@@ -2459,7 +2570,10 @@ async def _phase15_revalidate(
     ``None`` (the default) means the caller does not want them; the pass then
     behaves exactly as it did before. Tests rely on that.
     """
-    from app.models.models import FuturesMarket, Event, WinProbSnapshot
+    # FuturesMarket and Event are no longer imported here: #2325 moved every
+    # Phase 1.5 query into the module-level `_phase15_*` helpers, which import
+    # the models themselves. Only WinProbSnapshot is still read in this body.
+    from app.models.models import WinProbSnapshot
 
     stats["funnel"].setdefault("stale_relinked", 0)
     stats["funnel"].setdefault("mislink_fixed", 0)
@@ -2471,25 +2585,33 @@ async def _phase15_revalidate(
         stats["funnel"]["phase15_skipped_budget"] = True
         return
 
-    all_linked_result = await session.execute(
-        select(FuturesMarket, Event)
-        .join(Event, FuturesMarket.event_id == Event.id)
-        .where(
-            FuturesMarket.source.in_(["kalshi", "polymarket"]),
-            FuturesMarket.event_id.isnot(None),
-            FuturesMarket.status == "open",
-        )
-        .order_by(
-            case(
-                (Event.status.in_(["completed", "closed"]), 0),
-                (Event.external_id.is_(None), 1),
-                else_=2,
-            ),
-            FuturesMarket.updated_at.desc(),
-        )
-        .limit(1000)
+    total_eligible = (
+        await session.execute(_phase15_eligible_count_query())
+    ).scalar_one()
+    shards, shard_index = _phase15_shard_plan(total_eligible, now)
+    stats["funnel"]["phase15_eligible_total"] = total_eligible
+    stats["funnel"]["phase15_shards"] = shards
+    stats["funnel"]["phase15_shard_index"] = shard_index
+    # Never let the cap be silent: say what was left for later, and when it
+    # comes round again.
+    logger.info(
+        "Phase 1.5 scanning fresh %d + rotation shard %d/%d of %d eligible "
+        "linked markets (full rotation every %d beats)",
+        _PHASE15_FRESH_SLICE, shard_index, shards, total_eligible, shards,
     )
-    all_linked_rows = all_linked_result.all()
+
+    fresh_rows = (await session.execute(_phase15_fresh_query())).all()
+    rotation_rows = (
+        await session.execute(_phase15_rotation_query(shards, shard_index))
+    ).all()
+
+    # Fresh first, then the shard, deduped — a row in both is checked once.
+    all_linked_rows = list(fresh_rows)
+    _seen_market_ids = {market.id for market, _ in fresh_rows}
+    for market, linked_event in rotation_rows:
+        if market.id not in _seen_market_ids:
+            _seen_market_ids.add(market.id)
+            all_linked_rows.append((market, linked_event))
 
     for market, linked_event in all_linked_rows:
         if _time_remaining() < 60:
