@@ -275,6 +275,7 @@ class TestBeatScheduleCompleteness:
         # LAT-P122 cached and left with nothing to rebuild it. Gotcha #12: this
         # allowlist is the reason a new beat entry cannot land silently.
         "warm-futures-categories",
+        "warm-prop-families",
         "warm-typeahead",
         # Option D (#1866, LAT-P067) — the typeahead index builder + its D4
         # sentinel. Gotcha #12: this allowlist is the reason a new beat entry

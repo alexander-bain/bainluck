@@ -1099,7 +1099,33 @@ def free_background_slots(
 #: and this one is a census of open futures markets whose own ingest is hourly.
 #: ⚠️ The standing note above applies: this branch is unmerged. Re-measure at
 #: merge; do not add to it.
-BACKGROUND_BEAT_COUNT = 108
+#: **LAT-P138 re-derivation: 107 → 108, explicit 62 → 63, fall-through still 45.**
+#: One beat added, naming `background` explicitly: `warm-prop-families`
+#: (`crontab(minute=43, hour="*/6")`), the producer for the team prop-families
+#: tier. RE-DERIVED BY RUNNING THE CENSUS over the assembled `beat_schedule` and
+#: printing all three numbers — never by adding one to 107 (#1910). The
+#: fall-through half is UNMOVED at 45, which is the half this guard watches.
+#:
+#: Cost declaration: four fires a day. Each pass DISPATCHES rather than builds —
+#: it selects the reachable set (82 teams on 2026-08-30, hard-capped at 200) and
+#: sends one `refresh_prop_families` per team, each 2.6-16.8 s of database time.
+#: Worst case at today's population is ~82 × 8.8 s p50 ≈ 12 min of background
+#: work per pass, ~0.8 % of a slot-day, and `background` rather than `heavy`
+#: because these are short bounded rebuilds, not a multi-minute compute.
+#:
+#: ⚠️ CONTENTION, and it is live: `program/latency-123` (LAT-P137) is unmerged
+#: and moves this SAME constant 107 → 108 for `warm-futures-categories`. Both
+#: readings are correct against their own base and the merged answer is 109,
+#: which neither branch may write. At the merge, RE-RUN the census; do not take
+#: either branch's number and do not add.
+#:
+#: 🔴 INTEGRATOR RE-DERIVATION AT THE MERGE (INT-158, 2026-08-30): LAT-P137 and
+#: LAT-P138 each moved this constant 107 → 108 for a DIFFERENT beat, each
+#: correct against its own base. Neither number survives the merge. The census
+#: below was RUN over the assembled `beat_schedule` on the MERGED tree and its
+#: printed value — `explicit 64 implicit 45 total 109` — is what stands here — it was not obtained by adding 1 + 1
+#: (#1910). Both lanes' cost declarations above remain accurate as written.
+BACKGROUND_BEAT_COUNT = 109
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls

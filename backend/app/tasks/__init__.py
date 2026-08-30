@@ -3237,6 +3237,58 @@ def refresh_hub(self, slug: str, token: str | None = None):
     return _tracked_run("refresh_hub", _refresh_hub(slug, token))
 
 
+@celery_app.task(
+    bind=True, soft_time_limit=120, time_limit=180,
+    name="app.tasks.refresh_prop_families",
+)
+def refresh_prop_families(self, team_id: int, cap: int = 400, token: str | None = None):
+    """Rebuild ONE team's prop families (LAT-P138, #1249 follow-up).
+
+    Dispatched two ways, both under the same single-flight lock: by
+    `routes/prop_families.py` after it served the 24h mirror, and by
+    `warm_prop_families` below. `token` is the owner token the dispatcher
+    acquired — the acquire and the release are in different processes, so
+    ownership travels with the message (#1678 finding 1).
+
+    `soft_time_limit` is 120s against a slowest measured cold build of 16.8s: the
+    build's own `asyncio.wait_for` is the 60s bound that reports a wedge, and this
+    is the backstop above it. Both stay under the 300s hard `task_time_limit`
+    (project_celery_sigkill_untracked).
+    """
+    from app.tasks.prop_families_warm import _refresh_prop_families
+    return _tracked_run(
+        "refresh_prop_families", _refresh_prop_families(team_id, cap, token)
+    )
+
+
+@celery_app.task(
+    bind=True, soft_time_limit=260, time_limit=290,
+    name="app.tasks.warm_prop_families",
+)
+def warm_prop_families(self):
+    """Keep the reachable teams' prop-family mirrors alive (LAT-P138).
+
+    Unlike `refresh_hub` above, this tier HAS a scheduled producer, and the
+    reason is size, not preference: a hub rebuild was 2.7s at its worst, a
+    prop-families rebuild is 2.6-16.8s. The race a second producer would create
+    is closed by taking the SAME refresh lock the route takes, so a pass arriving
+    while a reader's rebuild is in flight skips that team.
+
+    It rebuilds INLINE rather than fanning out one message per team, because
+    `test_no_task_dispatches_another_task` forbids intra-task dispatch — the
+    result-consumer set is derived by scanning routes, services and utils, so a
+    task that dispatches a task can grow a consumer that scan never sees.
+
+    The limits are derived from the work, not chosen: `PASS_BUDGET_SECONDS` (180)
+    plus one whole `PER_TEAM_TIMEOUT_SECONDS` (60) for a team that starts on the
+    last tick of the budget is 240 s, so the soft limit is 260 and the hard one
+    290 — both inside the 300 s global `task_time_limit` that arrives as an
+    untracked SIGKILL (project_celery_sigkill_untracked).
+    """
+    from app.tasks.prop_families_warm import _warm_prop_families
+    return _tracked_run("warm_prop_families", _warm_prop_families())
+
+
 @celery_app.task(bind=True, soft_time_limit=90, time_limit=120, name="app.tasks.refresh_league")
 def refresh_league(self, sport_key: str, token: str | None = None):
     """Revalidate one league after the route served its 24h mirror (#1767).
@@ -3775,6 +3827,40 @@ celery_app.conf.beat_schedule = {
     "precompute-category-pages": {
         "task": "app.tasks.precompute_category_pages",
         "schedule": crontab(minute=25),  # Every hour at :25 — warm caches for politics/entertainment/economics/weather
+        "options": {"queue": "background"},
+    },
+    "warm-prop-families": {
+        "task": "app.tasks.warm_prop_families",
+        # Hourly at :43 (LAT-P138). THE PERIOD IS DERIVED FROM COVERAGE, not
+        # chosen. Each pass is budgeted in SECONDS (the build is 2.6-16.8s and
+        # varies with roster size), so what the cadence has to satisfy is:
+        #
+        #   passes to cover a full list x period  <=  the mirror's lifetime
+        #   ceil(200 / (180 // 17)) x 3600 = 20 x 3600 = 72,000s  <=  86,400s
+        #
+        # i.e. even at the pessimistic rate of one slowest-measured build per
+        # team, every team in a maxed-out reachable set is rebuilt inside the 24h
+        # mirror with four hours to spare. `test_the_cadence_covers_the_reachable
+        # _set_inside_the_mirror` asserts that arithmetic from the constants, so
+        # widening the cap or shrinking the budget moves the cadence instead of
+        # quietly leaving teams uncovered.
+        #
+        # It is NOT sub-TTL of the 900s primary, on purpose. Past the primary a
+        # reader gets the mirror in milliseconds and schedules one rebuild, so
+        # that expiry is a freshness event, not a latency one; chasing it would
+        # be 82 multi-second rebuilds every fifteen minutes to save nobody
+        # anything.
+        #
+        # 🔴 THE FIRE MINUTE IS :53 AND IT WAS MOVED THERE BY A CENSUS, NOT
+        # CHOSEN. The first draft fired at :43, which lands inside the nightly
+        # settlement sweep's own 10:31+13m window — `test_the_run_window_does_
+        # not_sit_under_a_growing_pile` went red at 15 co-fires against a
+        # declared ceiling of 14. Ceilings like that exist to be respected, not
+        # re-derived upward for the convenience of the beat that broke them
+        # (#1910), so this moved instead. A minute census over the assembled
+        # schedule says :53 carries one other beat, against 33 at :00, 24 at :30
+        # and 15 at :45.
+        "schedule": crontab(minute=53),
         "options": {"queue": "background"},
     },
     "warm-event-concepts": {

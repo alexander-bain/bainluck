@@ -133,6 +133,9 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.refresh_event_concept",
         "app.tasks.refresh_hub",
         "app.tasks.refresh_league",
+        # LAT-P138: dispatched by `routes/prop_families.py` after it serves the
+        # 24h mirror, the same shape as the three above.
+        "app.tasks.refresh_prop_families",
         "app.tasks.regenerate_tags",
         "app.tasks.regrade_polymarket_under_signflip",
         "app.tasks.seed_entity_registry",
