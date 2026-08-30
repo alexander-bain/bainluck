@@ -3215,6 +3215,49 @@ def refresh_hub(self, slug: str, token: str | None = None):
     return _tracked_run("refresh_hub", _refresh_hub(slug, token))
 
 
+@celery_app.task(
+    bind=True, soft_time_limit=120, time_limit=180,
+    name="app.tasks.refresh_prop_families",
+)
+def refresh_prop_families(self, team_id: int, cap: int = 400, token: str | None = None):
+    """Rebuild ONE team's prop families (LAT-P138, #1249 follow-up).
+
+    Dispatched two ways, both under the same single-flight lock: by
+    `routes/prop_families.py` after it served the 24h mirror, and by
+    `warm_prop_families` below. `token` is the owner token the dispatcher
+    acquired — the acquire and the release are in different processes, so
+    ownership travels with the message (#1678 finding 1).
+
+    `soft_time_limit` is 120s against a slowest measured cold build of 16.8s: the
+    build's own `asyncio.wait_for` is the 60s bound that reports a wedge, and this
+    is the backstop above it. Both stay under the 300s hard `task_time_limit`
+    (project_celery_sigkill_untracked).
+    """
+    from app.tasks.prop_families_warm import _refresh_prop_families
+    return _tracked_run(
+        "refresh_prop_families", _refresh_prop_families(team_id, cap, token)
+    )
+
+
+@celery_app.task(
+    bind=True, soft_time_limit=120, time_limit=180,
+    name="app.tasks.warm_prop_families",
+)
+def warm_prop_families(self):
+    """Keep the reachable teams' prop-family mirrors alive (LAT-P138).
+
+    Unlike `refresh_hub` above, this tier HAS a scheduled producer, and the
+    reason is size, not preference: a hub rebuild was 2.7s at its worst, a
+    prop-families rebuild is 2.6-16.8s. The race a second producer would create
+    is closed by taking the SAME refresh lock the route takes, so a beat pass
+    arriving while a reader's rebuild is in flight dispatches nothing for that
+    team. The dispatcher itself does no building — it selects and sends — so it
+    stays far inside its own limits however many teams it selects.
+    """
+    from app.tasks.prop_families_warm import _warm_prop_families
+    return _tracked_run("warm_prop_families", _warm_prop_families())
+
+
 @celery_app.task(bind=True, soft_time_limit=90, time_limit=120, name="app.tasks.refresh_league")
 def refresh_league(self, sport_key: str, token: str | None = None):
     """Revalidate one league after the route served its 24h mirror (#1767).
@@ -3737,6 +3780,28 @@ celery_app.conf.beat_schedule = {
     "precompute-category-pages": {
         "task": "app.tasks.precompute_category_pages",
         "schedule": crontab(minute=25),  # Every hour at :25 — warm caches for politics/entertainment/economics/weather
+        "options": {"queue": "background"},
+    },
+    "warm-prop-families": {
+        "task": "app.tasks.warm_prop_families",
+        # Every 6h at :43 (LAT-P138). THE PERIOD IS DERIVED FROM WHAT THE MIRROR
+        # HAS TO SURVIVE, not chosen: the tier's job here is that a reachable
+        # team's 24h stale mirror never lapses, because the reader's cost when it
+        # does is a 2.6-16.8s rebuild. `STALE_TTL // 4` gives three missed
+        # deliveries of headroom on the `background` rail LAT-P112 measured at
+        # p50 138-152s against a declared 120s — a period of 12h would leave a
+        # single missed pass one lapse away from the thing this exists to prevent.
+        #
+        # It is NOT sub-TTL of the 900s primary, on purpose. Past the primary a
+        # reader gets the mirror in milliseconds and schedules one rebuild, so
+        # that expiry is a freshness event, not a latency one; chasing it would
+        # be 82 multi-second rebuilds every fifteen minutes to save nobody
+        # anything.
+        #
+        # The odd minute is deliberate: :43 puts this pass outside the :00/:25/:30
+        # cluster the hourly precomputes already occupy, so a heavy-ish fan-out
+        # does not land on top of them.
+        "schedule": crontab(minute=43, hour="*/6"),
         "options": {"queue": "background"},
     },
     "warm-event-concepts": {

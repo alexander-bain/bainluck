@@ -751,6 +751,15 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     night, 780 s worst case = ~0.9 % of a slot-day, and why `background` rather
     than `heavy`) is on `BACKGROUND_BEAT_COUNT`.
 
+    🔴 **RE-DERIVED at LAT-P138: 107 → 108, explicit 62 → 63.**
+    `warm-prop-families` (`crontab(minute=43, hour="*/6")`, the producer for the
+    team prop-families tier) with an explicit `options={"queue": "background"}`.
+    RE-DERIVED by running the census below and printing all three numbers, never
+    by adding one (#1910). Fall-through UNMOVED at 45 — the new beat named its
+    queue. ⚠️ `program/latency-123` is unmerged and moves the same constant to
+    108 for a DIFFERENT beat; the merged answer is 109 and must be re-derived
+    at the merge rather than taken from either branch.
+
     🔴 **RE-DERIVED AT THE MERGE (ux-121 x LAT-P090).** Two lanes re-derived
     this from the same base of 101 without knowing about each other: LAT-P090
     added `warm-search-head` and got 102; UX-P139 added
@@ -806,9 +815,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 62, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 63, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 107
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 108
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

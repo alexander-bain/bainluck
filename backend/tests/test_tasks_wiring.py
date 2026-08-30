@@ -271,6 +271,7 @@ class TestBeatScheduleCompleteness:
         "precompute-source-intelligence",
         "precompute-category-pages",
         "warm-event-concepts",
+        "warm-prop-families",
         "warm-typeahead",
         # Option D (#1866, LAT-P067) — the typeahead index builder + its D4
         # sentinel. Gotcha #12: this allowlist is the reason a new beat entry

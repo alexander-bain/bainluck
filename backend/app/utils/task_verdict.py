@@ -342,6 +342,22 @@ ENFORCED_TASKS = frozenset({
     # NOT-GREEN here, deliberately: the sweep's job is to finish, and a run that
     # left rows behind has not.
     "settlement_sweep",                # terminal + captured + skipped_by_bucket
+    # LAT-P138 (#1249 follow-up): the team prop-families producer and the
+    # per-team rebuild it dispatches. Enrolled AT BIRTH per #1884, in the same
+    # change that gives them a beat and a terminal, because a warmer's failure is
+    # INVISIBLE FROM THE SURFACE IT PROTECTS — the route answers 200 either way,
+    # just 2.6-16.8 s instead of milliseconds, and the only symptom is a slow page
+    # nobody is timing.
+    #
+    # The two zeros this separates: `warm_prop_families` returning
+    # `dispatched: 0` because every team was already locked by a reader-triggered
+    # rebuild (fine) versus because the reachable-set query failed (`failed`,
+    # `selected: 0`). And `refresh_prop_families` returning without writing,
+    # which is the one that would otherwise rot: a DEGRADED build (statement
+    # timeout) deliberately does not write, so the mirror is exactly as old as
+    # before and the pass reads `failed`, never `complete`.
+    "warm_prop_families",              # terminal + selected + dispatched
+    "refresh_prop_families",           # terminal + rebuilt + degraded
 })
 
 

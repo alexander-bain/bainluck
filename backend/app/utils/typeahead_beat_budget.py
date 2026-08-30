@@ -1077,7 +1077,26 @@ def free_background_slots(
 #: branches touch this file (`lane1/q419-settlement-beat`, `program/ux-120`,
 #: `rescue/ux-121-prerebase-d4e510df`, `lane1/q342`), and `program/latency-92`
 #: and `-93` are unmerged but add no beat. Re-measure at merge; do not add to it.
-BACKGROUND_BEAT_COUNT = 107
+#: **LAT-P138 re-derivation: 107 → 108, explicit 62 → 63, fall-through still 45.**
+#: One beat added, naming `background` explicitly: `warm-prop-families`
+#: (`crontab(minute=43, hour="*/6")`), the producer for the team prop-families
+#: tier. RE-DERIVED BY RUNNING THE CENSUS over the assembled `beat_schedule` and
+#: printing all three numbers — never by adding one to 107 (#1910). The
+#: fall-through half is UNMOVED at 45, which is the half this guard watches.
+#:
+#: Cost declaration: four fires a day. Each pass DISPATCHES rather than builds —
+#: it selects the reachable set (82 teams on 2026-08-30, hard-capped at 200) and
+#: sends one `refresh_prop_families` per team, each 2.6-16.8 s of database time.
+#: Worst case at today's population is ~82 × 8.8 s p50 ≈ 12 min of background
+#: work per pass, ~0.8 % of a slot-day, and `background` rather than `heavy`
+#: because these are short bounded rebuilds, not a multi-minute compute.
+#:
+#: ⚠️ CONTENTION, and it is live: `program/latency-123` (LAT-P137) is unmerged
+#: and moves this SAME constant 107 → 108 for `warm-futures-categories`. Both
+#: readings are correct against their own base and the merged answer is 109,
+#: which neither branch may write. At the merge, RE-RUN the census; do not take
+#: either branch's number and do not add.
+BACKGROUND_BEAT_COUNT = 108
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls

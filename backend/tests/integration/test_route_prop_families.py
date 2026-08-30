@@ -76,7 +76,11 @@ class TestPropFamiliesSeeded:
         resp = await client.get("/api/teams/lakers/prop-families")
         assert resp.status_code == 200
         body = resp.json()
-        assert set(body.keys()) == {"team", "families", "total_families"}
+        # LAT-P138: `cache` is the envelope contract, stamped on every payload
+        # this route STORES. It is additive and asserted here rather than
+        # loosened to a subset check, because the point of pinning the key set
+        # is that a field arrives by an edit somebody can see.
+        assert set(body.keys()) == {"team", "families", "total_families", "cache"}
         assert body["team"]["id"] == 42
         assert body["total_families"] == 1
         fam = body["families"][0]
