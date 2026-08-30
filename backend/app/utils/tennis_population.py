@@ -92,11 +92,10 @@ CUTOFF_SLACK_SECONDS = RESOLVED_MIRROR_TTL_SECONDS + 3600
 #: older generation reads as a miss rather than as a row with shifted columns.
 CACHE_GENERATION = "v1"
 
-#: The four keys this slot owns, laid out by the policy home rather than
-#: re-derived here (ruling 005 — `event_concept_cache.cache_keys` exists because
-#: a second tier adopting the policy must not have to re-invent the layout).
-#: Only `primary`, `stale` and `refresh_lock` are used; there is no negative
-#: slot, because "no tennis markets" is a population, not a 404.
+#: The keys this slot owns, laid out by the policy home rather than re-derived
+#: here (ruling 005 — `event_concept_cache.cache_keys` exists because a second
+#: tier adopting the policy must not have to re-invent the layout). There is no
+#: negative slot: "no tennis markets" is a population, not a 404.
 def _slot_keys():
     from app.utils.event_concept_cache import cache_keys
 
@@ -104,8 +103,27 @@ def _slot_keys():
 
 
 SLOT_KEYS = _slot_keys()
-PRIMARY_KEY = SLOT_KEYS.primary
-MIRROR_KEY = SLOT_KEYS.stale
+
+#: 🔴 ONE COPY OF THE PAYLOAD, NOT TWO, AND THE REASON IS MEASURED.
+#:
+#: The envelope tier stores its value twice — a short-TTL primary and a 24 h
+#: mirror — and copying that layout here was the first draft. Then the store was
+#: measured: Heroku Redis **premium-1, 100 MB maxmemory, policy `allkeys-lru`**,
+#: and it is the SAME instance the Celery broker runs on. The encoded population
+#: is 3.06 MB, so two copies is **6.1% of the whole store**, evicted against
+#: everything else in it — including queue keys.
+#:
+#: So the two slots are split by ROLE instead of by copy: the payload lives once
+#: under a 24 h TTL, and freshness is a separate marker holding no data at all.
+#: Marker present -> serve; marker gone, payload present -> serve the payload and
+#: refresh behind it. Exactly the same three states as primary/mirror, at half
+#: the memory and with one state fewer to go wrong — the two copies can no longer
+#: disagree, because there are not two copies.
+PAYLOAD_KEY = SLOT_KEYS.stale
+FRESH_KEY = SLOT_KEYS.primary
+
+#: The value under `FRESH_KEY`. Never read; only its existence means anything.
+FRESH_MARKER = b"1"
 
 #: The statuses the resolved arm admits — the adapter's own list, kept here so the
 #: cached query and the caller's re-filter cannot drift apart.
@@ -247,6 +265,34 @@ def _loads(raw: bytes | str) -> Any:
         return json.loads(raw)
 
 
+#: zlib level 1, measured rather than picked: on a 21,378-row payload of the real
+#: shape it takes 3.06 MB to 1.13 MB in 14 ms and back in 2.2 ms. Level 6 buys
+#: another 3 percentage points for 3x the compress time, which is the wrong trade
+#: for a value written by a background refresh and read on a page build. Real
+#: market names repeat far more than that fixture's did (the same players appear
+#: across hundreds of match markets), so 36.8% is the pessimistic figure.
+COMPRESSION_LEVEL = 1
+
+#: Two bytes that say "this value is deflated". A payload without them is read as
+#: plain JSON, so a slot written by an older build is still readable rather than
+#: being a hard miss on the deploy that changes the encoding.
+_ZLIB_MAGIC = b"\x78"
+
+
+def _pack(payload: Any) -> bytes:
+    import zlib
+
+    return zlib.compress(_dumps(payload), COMPRESSION_LEVEL)
+
+
+def _unpack(raw: bytes | str) -> Any:
+    import zlib
+
+    if isinstance(raw, bytes) and raw[:1] == _ZLIB_MAGIC:
+        return _loads(zlib.decompress(raw))
+    return _loads(raw)
+
+
 # ---------------------------------------------------------------------------
 # The two arms
 # ---------------------------------------------------------------------------
@@ -383,7 +429,7 @@ def _read_cached(rc, key: str) -> list[MarketRow] | None:
         )
         return None
     try:
-        decoded = _loads(raw)
+        decoded = _unpack(raw)
     except Exception:
         logger.warning("tennis population: undecodable payload at %s", key)
         return None
@@ -397,20 +443,39 @@ def _read_cached(rc, key: str) -> list[MarketRow] | None:
     return rows
 
 
+def _is_fresh(rc) -> bool:
+    """Whether the stored payload is inside its short TTL. Never raises.
+
+    A Redis that cannot answer reads as NOT fresh, which routes the caller into
+    serve-stale — the conservative side, since serve-stale still refuses to serve
+    without a rebuild behind it.
+    """
+    if rc is None:
+        return False
+    try:
+        return bool(rc.get(FRESH_KEY))
+    except Exception:
+        logger.warning("tennis population: freshness read failed")
+        return False
+
+
 def _write_cached(rc, rows: list[MarketRow]) -> None:
-    """Store the resolved arm in both slots. Best-effort; never raises.
+    """Store the resolved arm and stamp it fresh. Best-effort; never raises.
 
     An EMPTY fetch is not stored. "It returned" is not "it worked" (gotcha #53) —
     a zero-row population is either a genuinely empty month of tennis or a broken
-    read, and freezing the second one into a 24 h mirror is how a page goes blank
-    for a day.
+    read, and freezing the second one into a 24 h payload is how a page goes
+    blank for a day.
+
+    The payload is written BEFORE the marker. Stamping first would open a window
+    in which the marker says fresh and the payload is the old one, and a crash
+    inside that window leaves it saying so for the whole TTL.
     """
     if rc is None or not rows:
         return
     try:
-        encoded = _dumps([_encode_row(r) for r in rows])
-        rc.setex(PRIMARY_KEY, RESOLVED_TTL_SECONDS, encoded)
-        rc.setex(MIRROR_KEY, RESOLVED_MIRROR_TTL_SECONDS, encoded)
+        rc.setex(PAYLOAD_KEY, RESOLVED_MIRROR_TTL_SECONDS, _pack([_encode_row(r) for r in rows]))
+        rc.setex(FRESH_KEY, RESOLVED_TTL_SECONDS, FRESH_MARKER)
     except Exception:
         logger.warning("tennis population: cache write failed", exc_info=True)
 
@@ -450,41 +515,41 @@ async def resolved_arm(db, cutoff: datetime, *, rc: Any = None) -> list[MarketRo
 
     Order of attempts, and each one is a deliberate answer to a measured failure:
 
-    1. the primary slot, inside its TTL;
-    2. the 24 h mirror with exactly ONE rebuild behind it — LAT-P021's lesson
-       applied one layer down. That fix exists because a plain TTL expiry, the
-       overwhelmingly common cache event, was walking a reader into an 18.5 s
-       rebuild; here it would be an 8.4-15.5 s sequential scan, and the reader
-       who arrives one second past the TTL must not pay what the refresh is
-       about to pay anyway. Single-flight across the FLEET, not per worker:
-       `serve_stale_and_refresh` takes the shared Redis lock;
-    3. a live fetch, when there is no mirror to serve or nothing could run behind
+    1. the stored payload, while the freshness marker is still alive;
+    2. the same payload past that marker, with exactly ONE rebuild behind it —
+       LAT-P021's lesson applied one layer down. That fix exists because a plain
+       TTL expiry, the overwhelmingly common cache event, was walking a reader
+       into an 18.5 s rebuild; here it would be an 8.4-15.5 s sequential scan,
+       and the reader who arrives one second past the TTL must not pay what the
+       refresh is about to pay anyway. Single-flight across the FLEET, not per
+       worker: `serve_stale_and_refresh` takes the shared Redis lock;
+    3. a live fetch, when there is no payload at all or nothing could run behind
        one — a cold miss must still SERVE, so this stays synchronous;
-    4. the mirror again, if that live fetch raised. A scan that failed must not
-       take the page down when a day-old identity list would have rendered it.
+    4. the stored payload again, if that live fetch raised. A scan that failed
+       must not take the page down when a day-old identity list would have
+       rendered it.
     """
     from app.utils.event_concept_cache import serve_stale_and_refresh
 
     rc = _get_client() if rc is None else rc
 
-    cached = _read_cached(rc, PRIMARY_KEY)
-    if cached is not None:
-        return _within(cached, cutoff)
+    stored = _read_cached(rc, PAYLOAD_KEY)
+    if stored is not None and _is_fresh(rc):
+        return _within(stored, cutoff)
 
     widened = cutoff - timedelta(seconds=CUTOFF_SLACK_SECONDS)
 
-    mirrored = _read_cached(rc, MIRROR_KEY)
-    if mirrored is not None and serve_stale_and_refresh(
+    if stored is not None and serve_stale_and_refresh(
         SLOT_KEYS, lambda: _refresh_shared_arm(widened), rc=rc
     ):
-        return _within(mirrored, cutoff)
+        return _within(stored, cutoff)
 
     try:
         fresh = await fetch_resolved_arm(db, widened)
     except Exception:
-        if mirrored is not None:
-            logger.warning("tennis population: scan failed — serving the mirror")
-            return _within(mirrored, cutoff)
+        if stored is not None:
+            logger.warning("tennis population: scan failed — serving what is stored")
+            return _within(stored, cutoff)
         raise
 
     _write_cached(rc, fresh)

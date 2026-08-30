@@ -164,10 +164,10 @@ class TestRowCodec:
     def test_a_malformed_row_decodes_to_none_rather_than_raising(self, raw):
         assert tp._decode_row(raw) is None
 
-    def test_the_cache_generation_is_in_both_keys(self):
-        assert tp.CACHE_GENERATION in tp.PRIMARY_KEY
-        assert tp.CACHE_GENERATION in tp.MIRROR_KEY
-        assert tp.PRIMARY_KEY != tp.MIRROR_KEY
+    def test_the_cache_generation_is_in_every_key(self):
+        for key in (tp.PAYLOAD_KEY, tp.FRESH_KEY, tp.SLOT_KEYS.refresh_lock):
+            assert tp.CACHE_GENERATION in key
+        assert len({tp.PAYLOAD_KEY, tp.FRESH_KEY, tp.SLOT_KEYS.refresh_lock}) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +180,7 @@ class TestCacheSlots:
         rc = FakeRedis()
         rows = [tp.MarketRow(i, f"m{i}", "resolved", NOW, None, "kalshi", 1.0) for i in range(3)]
         tp._write_cached(rc, rows)
-        got = tp._read_cached(rc, tp.PRIMARY_KEY)
+        got = tp._read_cached(rc, tp.PAYLOAD_KEY)
         assert [r.id for r in got] == [0, 1, 2]
 
     def test_an_empty_population_is_never_stored(self):
@@ -191,11 +191,63 @@ class TestCacheSlots:
         tp._write_cached(rc, [])
         assert rc.store == {}
 
-    def test_both_slots_are_written_with_their_own_ttls(self):
+    def test_the_payload_gets_the_long_ttl_and_the_marker_the_short_one(self):
         rc = FakeRedis()
         tp._write_cached(rc, [tp.MarketRow(1, "m", "resolved", NOW, None, "k", 1.0)])
-        assert rc.ttls[tp.PRIMARY_KEY] == tp.RESOLVED_TTL_SECONDS
-        assert rc.ttls[tp.MIRROR_KEY] == tp.RESOLVED_MIRROR_TTL_SECONDS
+        assert rc.ttls[tp.PAYLOAD_KEY] == tp.RESOLVED_MIRROR_TTL_SECONDS
+        assert rc.ttls[tp.FRESH_KEY] == tp.RESOLVED_TTL_SECONDS
+
+    def test_only_ONE_copy_of_the_population_is_stored(self):
+        """Heroku Redis is premium-1: 100 MB, `allkeys-lru`, shared with the
+        Celery broker. The encoded population is ~3 MB, so a second copy is 3% of
+        the whole store evicted against everything else in it."""
+        rc = FakeRedis()
+        rows = [tp.MarketRow(i, f"market number {i}", "resolved", NOW, None, "k", 1.0)
+                for i in range(500)]
+        tp._write_cached(rc, rows)
+        big = [k for k, v in rc.store.items() if len(v) > 64]
+        assert big == [tp.PAYLOAD_KEY], f"the population is stored under {big}"
+        assert rc.store[tp.FRESH_KEY] == tp.FRESH_MARKER
+
+    def test_the_payload_is_compressed(self):
+        rc = FakeRedis()
+        rows = [tp.MarketRow(i, f"Player {i} vs Player {i + 1}: Set 1 Winner",
+                             "resolved", NOW, f"kalshi:{i}", "kalshi", 1.0)
+                for i in range(2000)]
+        tp._write_cached(rc, rows)
+        stored = len(rc.store[tp.PAYLOAD_KEY])
+        plain = len(tp._dumps([tp._encode_row(r) for r in rows]))
+        assert stored < plain / 2, f"{stored} vs {plain} plain — not compressed"
+        assert [r.id for r in tp._read_cached(rc, tp.PAYLOAD_KEY)] == list(range(2000))
+
+    def test_an_uncompressed_payload_from_an_older_build_still_reads(self):
+        """A deploy that changes the encoding must not turn every live slot into
+        a hard miss — that would hand the scan back to the next reader on every
+        tennis key at once."""
+        rc = FakeRedis()
+        rc.store[tp.PAYLOAD_KEY] = tp._dumps(
+            [tp._encode_row(tp.MarketRow(3, "m", "resolved", NOW, None, "k", 1.0))]
+        )
+        assert [r.id for r in tp._read_cached(rc, tp.PAYLOAD_KEY)] == [3]
+
+    def test_the_marker_is_written_after_the_payload(self):
+        """Stamping first opens a window where the marker says fresh and the
+        payload is the old one — and a crash inside it says so for a full TTL."""
+        rc = FakeRedis()
+        order: list[str] = []
+        real = rc.setex
+
+        def _record(key, ttl, value):
+            order.append(key)
+            return real(key, ttl, value)
+
+        rc.setex = _record
+        tp._write_cached(rc, [tp.MarketRow(1, "m", "resolved", NOW, None, "k", 1.0)])
+        assert order == [tp.PAYLOAD_KEY, tp.FRESH_KEY]
+
+    def test_a_failed_freshness_read_is_not_fresh(self):
+        assert tp._is_fresh(FakeRedis(fail_get=True)) is False
+        assert tp._is_fresh(None) is False
 
     def test_a_write_failure_is_swallowed(self):
         tp._write_cached(
@@ -204,42 +256,42 @@ class TestCacheSlots:
         )  # must not raise
 
     def test_no_client_is_a_miss_not_a_crash(self):
-        assert tp._read_cached(None, tp.PRIMARY_KEY) is None
+        assert tp._read_cached(None, tp.PAYLOAD_KEY) is None
         tp._write_cached(None, [tp.MarketRow(1, "m", "resolved", NOW, None, "k", 1.0)])
 
     def test_a_read_failure_is_a_miss(self):
-        assert tp._read_cached(FakeRedis(fail_get=True), tp.PRIMARY_KEY) is None
+        assert tp._read_cached(FakeRedis(fail_get=True), tp.PAYLOAD_KEY) is None
 
     def test_an_empty_list_payload_reads_as_empty_not_as_absent(self):
         """`[]` and `None` are different answers and stay different (gotcha #53)."""
         rc = FakeRedis()
-        rc.store[tp.PRIMARY_KEY] = tp._dumps([])
-        assert tp._read_cached(rc, tp.PRIMARY_KEY) == []
+        rc.store[tp.PAYLOAD_KEY] = tp._dumps([])
+        assert tp._read_cached(rc, tp.PAYLOAD_KEY) == []
 
     def test_an_oversized_payload_is_refused_without_decoding(self, caplog):
         rc = FakeRedis()
-        rc.store[tp.PRIMARY_KEY] = b"x" * (tp.MAX_PAYLOAD_BYTES + 1)
+        rc.store[tp.PAYLOAD_KEY] = b"x" * (tp.MAX_PAYLOAD_BYTES + 1)
         with caplog.at_level(logging.WARNING):
-            assert tp._read_cached(rc, tp.PRIMARY_KEY) is None
+            assert tp._read_cached(rc, tp.PAYLOAD_KEY) is None
         assert "refusing" in caplog.text
 
     def test_an_undecodable_payload_is_a_miss(self):
         rc = FakeRedis()
-        rc.store[tp.PRIMARY_KEY] = b"{not json"
-        assert tp._read_cached(rc, tp.PRIMARY_KEY) is None
+        rc.store[tp.PAYLOAD_KEY] = b"{not json"
+        assert tp._read_cached(rc, tp.PAYLOAD_KEY) is None
 
     def test_a_payload_that_is_not_a_list_is_a_miss(self):
         rc = FakeRedis()
-        rc.store[tp.PRIMARY_KEY] = tp._dumps({"rows": []})
-        assert tp._read_cached(rc, tp.PRIMARY_KEY) is None
+        rc.store[tp.PAYLOAD_KEY] = tp._dumps({"rows": []})
+        assert tp._read_cached(rc, tp.PAYLOAD_KEY) is None
 
     def test_one_malformed_row_does_not_empty_the_population(self, caplog):
         """gotcha #42 — the healthy siblings survive, and the drop is logged."""
         rc = FakeRedis()
         good = tp._encode_row(tp.MarketRow(9, "m", "resolved", NOW, None, "k", 1.0))
-        rc.store[tp.PRIMARY_KEY] = tp._dumps([good, [1, 2], good])
+        rc.store[tp.PAYLOAD_KEY] = tp._dumps([good, [1, 2], good])
         with caplog.at_level(logging.WARNING):
-            rows = tp._read_cached(rc, tp.PRIMARY_KEY)
+            rows = tp._read_cached(rc, tp.PAYLOAD_KEY)
         assert [r.id for r in rows] == [9, 9]
         assert "malformed" in caplog.text
 
@@ -318,18 +370,18 @@ class TestSupersetWindow:
         rows = await tp.resolved_arm(db, cutoff, rc=rc)
         assert [r.id for r in rows] == [1]
         # BOTH were cached — the cache is the wider set, the filter is the narrow one.
-        assert [r.id for r in tp._read_cached(rc, tp.PRIMARY_KEY)] == [1, 2]
+        assert [r.id for r in tp._read_cached(rc, tp.PAYLOAD_KEY)] == [1, 2]
 
-    async def test_a_failed_scan_serves_the_mirror(self, caplog, monkeypatch):
-        """Path 4: the live scan raised and nothing could run behind the mirror.
-        Serve-stale is refused here (no rebuild started), so this is the rescue
-        arm and not the ordinary expiry arm above it."""
+    async def test_a_failed_scan_serves_what_is_stored(self, caplog, monkeypatch):
+        """Path 4: the live scan raised and nothing could run behind the stored
+        payload. Serve-stale is refused here (no rebuild started), so this is the
+        rescue arm and not the ordinary expiry arm above it."""
         cutoff = NOW - timedelta(days=30)
         rc = FakeRedis()
         tp._write_cached(
             rc, [tp.MarketRow(5, "m", "resolved", NOW - timedelta(days=1), None, "k", 0)]
         )
-        rc.store.pop(tp.PRIMARY_KEY)  # primary expired, mirror survives
+        rc.store.pop(tp.FRESH_KEY)  # the marker expired; the payload survives
         monkeypatch.setattr(
             "app.utils.event_concept_cache.serve_stale_and_refresh",
             lambda *a, **k: False,
@@ -342,7 +394,7 @@ class TestSupersetWindow:
         with caplog.at_level(logging.WARNING):
             rows = await tp.resolved_arm(Boom([]), cutoff, rc=rc)
         assert [r.id for r in rows] == [5]
-        assert "serving the mirror" in caplog.text
+        assert "serving what is stored" in caplog.text
 
     async def test_a_failed_scan_with_no_mirror_raises(self):
         class Boom(FakeDb):
@@ -357,12 +409,13 @@ class TestServeStaleOnExpiry:
     """LAT-P021's lesson one layer down: a plain TTL expiry is the common cache
     event, and it must not walk a reader into the sequential scan."""
 
-    def _mirror_only(self):
+    def _past_the_marker(self):
+        """A store holding the payload with its freshness marker expired."""
         rc = FakeRedis()
         tp._write_cached(
             rc, [tp.MarketRow(5, "m", "resolved", NOW - timedelta(days=1), None, "k", 0)]
         )
-        rc.store.pop(tp.PRIMARY_KEY)
+        rc.store.pop(tp.FRESH_KEY)
         return rc
 
     async def test_an_expiry_serves_the_mirror_and_never_scans_inline(self, monkeypatch):
@@ -372,7 +425,7 @@ class TestServeStaleOnExpiry:
             refreshed.append(widened)
 
         monkeypatch.setattr(tp, "_refresh_shared_arm", _fake_refresh)
-        rc = self._mirror_only()
+        rc = self._past_the_marker()
         db = FakeDb([[market_row(99, "should-never-be-read")]])
 
         rows = await tp.resolved_arm(db, NOW - timedelta(days=30), rc=rc)
@@ -389,7 +442,7 @@ class TestServeStaleOnExpiry:
             started.append(widened)
 
         monkeypatch.setattr(tp, "_refresh_shared_arm", _fake_refresh)
-        rc = self._mirror_only()
+        rc = self._past_the_marker()
 
         for _ in range(3):
             await tp.resolved_arm(FakeDb([]), NOW - timedelta(days=30), rc=rc)
@@ -407,7 +460,7 @@ class TestServeStaleOnExpiry:
 
         monkeypatch.setattr(tp, "_refresh_shared_arm", _fake_refresh)
         cutoff = NOW - timedelta(days=30)
-        await tp.resolved_arm(FakeDb([]), cutoff, rc=self._mirror_only())
+        await tp.resolved_arm(FakeDb([]), cutoff, rc=self._past_the_marker())
         await asyncio.sleep(0)
 
         assert seen and cutoff - seen[0] == timedelta(seconds=tp.CUTOFF_SLACK_SECONDS)
@@ -429,8 +482,8 @@ class TestServeStaleOnExpiry:
 
         await tp._refresh_shared_arm(NOW - timedelta(days=31))
 
-        assert [r.id for r in tp._read_cached(rc, tp.PRIMARY_KEY)] == [7]
-        assert [r.id for r in tp._read_cached(rc, tp.MIRROR_KEY)] == [7]
+        assert [r.id for r in tp._read_cached(rc, tp.PAYLOAD_KEY)] == [7]
+        assert rc.store[tp.FRESH_KEY] == tp.FRESH_MARKER  # re-stamped fresh
 
     async def test_serve_stale_is_refused_when_nothing_can_run_behind_it(
         self, monkeypatch
@@ -441,7 +494,7 @@ class TestServeStaleOnExpiry:
             "app.utils.event_concept_cache.serve_stale_and_refresh",
             lambda *a, **k: False,
         )
-        rc = self._mirror_only()
+        rc = self._past_the_marker()
         db = FakeDb([[market_row(42, "scanned", status="resolved", resolution=NOW)]])
         rows = await tp.resolved_arm(db, NOW - timedelta(days=30), rc=rc)
         assert [r.id for r in rows] == [42]

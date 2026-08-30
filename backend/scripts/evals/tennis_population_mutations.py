@@ -99,12 +99,12 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M3",
         "a cache HIT skips the window re-application",
-        """    cached = _read_cached(rc, PRIMARY_KEY)
-    if cached is not None:
-        return _within(cached, cutoff)""",
-        """    cached = _read_cached(rc, PRIMARY_KEY)
-    if cached is not None:
-        return cached""",
+        """    stored = _read_cached(rc, PAYLOAD_KEY)
+    if stored is not None and _is_fresh(rc):
+        return _within(stored, cutoff)""",
+        """    stored = _read_cached(rc, PAYLOAD_KEY)
+    if stored is not None and _is_fresh(rc):
+        return stored""",
         POP,
     ),
     (
@@ -132,21 +132,23 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M6b",
         "a TTL expiry walks the reader into the scan instead of the mirror",
-        """    mirrored = _read_cached(rc, MIRROR_KEY)
-    if mirrored is not None and serve_stale_and_refresh(
+        """    if stored is not None and serve_stale_and_refresh(
         SLOT_KEYS, lambda: _refresh_shared_arm(widened), rc=rc
-    ):""",
-        """    mirrored = _read_cached(rc, MIRROR_KEY)
-    if False:""",
+    ):
+        return _within(stored, cutoff)""",
+        """    if False:
+        return _within(stored, cutoff)""",
         POP,
     ),
     (
         "M6c",
         "serve the mirror with NOTHING behind it — serve-stale-forever",
-        """    if mirrored is not None and serve_stale_and_refresh(
+        """    if stored is not None and serve_stale_and_refresh(
         SLOT_KEYS, lambda: _refresh_shared_arm(widened), rc=rc
-    ):""",
-        """    if mirrored is not None:""",
+    ):
+        return _within(stored, cutoff)""",
+        """    if stored is not None:
+        return _within(stored, cutoff)""",
         POP,
     ),
     (
@@ -173,16 +175,16 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     ),
     (
         "M8",
-        "write only the primary slot — serve-stale has nothing to serve",
-        "        rc.setex(MIRROR_KEY, RESOLVED_MIRROR_TTL_SECONDS, encoded)",
+        "never stamp the payload fresh — every read becomes a serve-stale",
+        "        rc.setex(FRESH_KEY, RESOLVED_TTL_SECONDS, FRESH_MARKER)",
         "        pass",
         POP,
     ),
     (
         "M9",
-        "the mirror expires with the primary",
-        "        rc.setex(MIRROR_KEY, RESOLVED_MIRROR_TTL_SECONDS, encoded)",
-        "        rc.setex(MIRROR_KEY, RESOLVED_TTL_SECONDS, encoded)",
+        "the payload expires with the freshness marker — no serve-stale left",
+        "        rc.setex(PAYLOAD_KEY, RESOLVED_MIRROR_TTL_SECONDS, _pack([_encode_row(r) for r in rows]))",
+        "        rc.setex(PAYLOAD_KEY, RESOLVED_TTL_SECONDS, _pack([_encode_row(r) for r in rows]))",
         POP,
     ),
     (
@@ -211,6 +213,43 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
         "decode an oversized payload instead of refusing it",
         "    if len(raw) > MAX_PAYLOAD_BYTES:",
         "    if False:",
+        POP,
+    ),
+    (
+        "M13b",
+        "store a SECOND copy of the population — 6% of a 100 MB LRU Redis",
+        "        rc.setex(FRESH_KEY, RESOLVED_TTL_SECONDS, FRESH_MARKER)",
+        "        rc.setex(FRESH_KEY, RESOLVED_TTL_SECONDS, _pack([_encode_row(r) for r in rows]))",
+        POP,
+    ),
+    (
+        "M13c",
+        "stop compressing the payload — 3.06 MB where 1.13 MB would do",
+        "    return zlib.compress(_dumps(payload), COMPRESSION_LEVEL)",
+        "    return _dumps(payload)",
+        POP,
+    ),
+    (
+        "M13d",
+        "a compressed payload is no longer readable as plain JSON on the way back",
+        "    if isinstance(raw, bytes) and raw[:1] == _ZLIB_MAGIC:\n        return _loads(zlib.decompress(raw))\n    return _loads(raw)",
+        "    return _loads(zlib.decompress(raw))",
+        POP,
+    ),
+    (
+        "M13e",
+        "stamp fresh BEFORE the payload — a crash leaves the marker lying for a TTL",
+        """        rc.setex(PAYLOAD_KEY, RESOLVED_MIRROR_TTL_SECONDS, _pack([_encode_row(r) for r in rows]))
+        rc.setex(FRESH_KEY, RESOLVED_TTL_SECONDS, FRESH_MARKER)""",
+        """        rc.setex(FRESH_KEY, RESOLVED_TTL_SECONDS, FRESH_MARKER)
+        rc.setex(PAYLOAD_KEY, RESOLVED_MIRROR_TTL_SECONDS, _pack([_encode_row(r) for r in rows]))""",
+        POP,
+    ),
+    (
+        "M13f",
+        "a Redis that cannot answer reads as FRESH — serve-stale never engages",
+        "        logger.warning(\"tennis population: freshness read failed\")\n        return False",
+        "        logger.warning(\"tennis population: freshness read failed\")\n        return True",
         POP,
     ),
     # --- identity only -----------------------------------------------------
