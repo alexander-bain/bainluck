@@ -1004,8 +1004,11 @@ export interface FeedTournamentData {
   key: string;
   name: string;
   slug?: string;
-  tour?: string;
-  tour_label?: string;
+  // Nullable since UX-P185: a tournament whose tour we cannot evidence carries no
+  // tour rather than a guessed "pga". Consumers must use `||`, never a .get-style
+  // default — the key is present, the value is null.
+  tour?: string | null;
+  tour_label?: string | null;
   is_major: boolean;
   venue?: string | null;
   location?: string | null;
@@ -1281,8 +1284,9 @@ export interface GolfTournament {
   is_major: boolean;
   is_tour_event?: boolean;
   is_womens?: boolean;
-  tour?: string;
-  tour_label?: string;
+  // Nullable since UX-P185 — see FeedTournamentData.tour.
+  tour?: string | null;
+  tour_label?: string | null;
   commence_time: string | null;
   resolution_date: string | null;
   start_date?: string | null;

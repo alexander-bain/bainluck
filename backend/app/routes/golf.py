@@ -760,6 +760,55 @@ _TOUR_CLASSIFICATION_PATTERNS = [
     (re.compile(r"\btgl\b|tomorrow'?s?\s+golf", re.I), "tgl"),
 ]
 
+# UX-P185. A last-resort NAME recognizer for the PGA Tour, applied only where every
+# authoritative signal has already declined. It exists so that inverting the default
+# below (unknown tour -> None, not "pga") cannot strip a badge from a market that
+# says PGA Tour in its own title, e.g. the `KXGOLFMAJOR` series
+# ("Golfers to win a PGA Tour Major in 2027"), which carries no tour-bearing ticker.
+# It is deliberately NOT in the list above: the list runs ahead of the DataGolf and
+# ticker evidence, and a bare `pga` must never outrank either.
+_PGA_NAME_FALLBACK_RE = re.compile(r"\bpga\b", re.I)
+
+# UX-P185. Kalshi names the tour in the SERIES segment of its ticker — the text before
+# the first "-" — and it is the only tour signal a Kalshi-only tournament carries.
+# Matched as an ANCHORED prefix on that segment alone.
+#
+# ⚠️ A substring test over the whole external_id is lethal here, measured against
+# production 2026-08-30: `KXECULPGAME` (Ecuadorian league football, 210 markets)
+# contains "LPGA", and every `...CUPGAME` series — `KXEFLCUPGAME`, `KXFACUPGAME`,
+# `KXCONCACAFCCUPGAME`, 15 more — contains "PGA", as does `KXEFLCHAMPIONSHIPGAME`.
+#
+# ⚠️ `KXLIV` is DELIBERATELY ABSENT. It would be the obvious fourth entry and it is a
+# false friend: `KXLIVENATIONUS` ("Courts consider Live Nation a monopoly?") shares the
+# prefix. LIV Golf needs no ticker rule — every LIV event names itself in the market
+# title and `\bliv\s+golf\b` above already claims it.
+#
+# Every prefix below was swept over the full production table before being added; each
+# resolves only to golf: KXDPWORLDTOUR 63 markets / 5 series, KXLPGA 52 / 4,
+# KXKFTOUR 15 / 1.
+_KALSHI_SERIES_TOUR_PREFIXES = [
+    ("KXDPWORLDTOUR", "dp_world"),
+    ("KXLPGA", "lpga"),
+    ("KXKFTOUR", "korn_ferry"),
+    ("KXPGA", "pga"),
+]
+
+
+def _kalshi_series_tour(kalshi_external_ids: list[str] | None) -> str | None:
+    """Read the tour out of a Kalshi series ticker, or None if none of them says.
+
+    Callers pass ids they have already scoped to `source == "kalshi"`; the `KX`
+    guard here is a second belt, not the scoping.
+    """
+    for external_id in kalshi_external_ids or []:
+        if not external_id or not external_id.startswith("KX"):
+            continue
+        series = external_id.split("-", 1)[0]
+        for prefix, tour in _KALSHI_SERIES_TOUR_PREFIXES:
+            if series.startswith(prefix):
+                return tour
+    return None
+
 TOUR_DISPLAY_NAMES = {
     "pga": "PGA Tour",
     "dp_world": "DP World Tour",
@@ -804,8 +853,22 @@ def _classify_tour(
     is_womens: bool,
     market_external_ids: list[str] | None = None,
     market_metadata_tours: list[str] | None = None,
-) -> str:
-    """Classify a tournament into a tour. Returns tour key."""
+    kalshi_external_ids: list[str] | None = None,
+) -> str | None:
+    """Classify a tournament into a tour. Returns a tour key, or None if unknown.
+
+    UX-P185 — this used to default to `"pga"`, which is why a DP World Tour event
+    with no DataGolf coverage (the Omega European Masters, ticker
+    `KXDPWORLDTOUR-OMEM26`) was badged **PGA Tour** and filed under the PGA Tour
+    heading, one section away from the Husqvarna British Masters — the other DP
+    World Tour event of the same week, which DataGolf did cover.
+
+    The two additions below sit strictly INSIDE what used to be `return "pga"`, so
+    no tournament that resolves to a non-PGA tour today can change: only a
+    tournament that reaches the old blind default can, and it changes to its true
+    tour, to `pga` on its own say-so, or to None. None degrades honestly — the card
+    reads `⛳ Golf` rather than naming a tour we cannot evidence.
+    """
     if is_major:
         return "major"
     if is_womens:
@@ -831,8 +894,16 @@ def _classify_tour(
                     mapped = _datagolf_tour_to_key(parts[1])
                     if mapped:
                         return mapped
-    # Default to PGA Tour for non-major, non-women's, non-pattern-matched
-    return "pga"
+    # Kalshi's own series ticker is authoritative for a Kalshi-only tournament,
+    # and for most weeks of the DP World Tour it is the ONLY tour signal there is.
+    ticker_tour = _kalshi_series_tour(kalshi_external_ids)
+    if ticker_tour:
+        return ticker_tour
+    # Last resort before giving up: the title says PGA itself.
+    if _PGA_NAME_FALLBACK_RE.search(market_name):
+        return "pga"
+    # Unknown. Say so — do not guess PGA Tour on a tournament's behalf.
+    return None
 
 # ============================================================================
 # Tour event extraction — sub-group "other" into named tour events
@@ -1732,6 +1803,13 @@ def _build_tournament_entry(
     if tourn_markets:
         tour_name_for_classify = tourn_markets[0].name
     market_ext_ids = [m.external_id for m in tourn_markets if m.external_id]
+    # Scoped to Kalshi HERE, where `source` is known — `_classify_tour` never has to
+    # infer a provider from the shape of an id it was handed.
+    kalshi_ext_ids = [
+        m.external_id
+        for m in tourn_markets
+        if m.external_id and getattr(m, "source", None) == "kalshi"
+    ]
     market_metadata_tours = [
         m.market_metadata.get("tour")
         for m in tourn_markets
@@ -1742,6 +1820,7 @@ def _build_tournament_entry(
         tourn_key in MAJOR_TOURNAMENTS, is_womens,
         market_external_ids=market_ext_ids,
         market_metadata_tours=market_metadata_tours,
+        kalshi_external_ids=kalshi_ext_ids,
     )
 
     return {
@@ -1751,7 +1830,8 @@ def _build_tournament_entry(
         "is_tour_event": is_tour_event,
         "is_womens": is_womens,
         "tour": tour,
-        "tour_label": TOUR_DISPLAY_NAMES.get(tour, tour),
+        # Same shape the upcoming-schedule serializer already uses: no tour, no label.
+        "tour_label": TOUR_DISPLAY_NAMES.get(tour) if tour else None,
         "order": order_idx,
         "sort_date": latest_resolution.isoformat() if is_tour_event and latest_resolution else None,
         "commence_time": earliest_commence.isoformat() if earliest_commence else None,

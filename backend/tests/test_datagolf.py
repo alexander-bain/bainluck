@@ -498,9 +498,25 @@ class TestClassifyTour:
     def test_asian_tour_from_name(self):
         assert _classify_tour("Asian Tour: Hainan Open", "hainan_open", False, False) == "asian"
 
-    def test_default_is_pga(self):
-        """Unmatched non-major/non-women's events default to PGA Tour."""
-        assert _classify_tour("Some Tournament Winner?", "some_tournament", False, False) == "pga"
+    def test_an_unevidenced_tour_is_none_not_a_guessed_pga(self):
+        """UX-P185 moved this pin. It used to assert `== "pga"`.
+
+        The old blind default is what badged the Omega European Masters — a DP
+        World Tour event — PGA Tour. A tournament that names no tour, carries no
+        DataGolf coverage and has no tour-bearing Kalshi ticker is UNKNOWN, and the
+        card degrades to `⛳ Golf`. What it must not do is invent a tour.
+        """
+        assert _classify_tour("Some Tournament Winner?", "some_tournament", False, False) is None
+
+    def test_a_title_that_says_pga_still_earns_pga(self):
+        """Vacuity companion to the pin above: the inversion is not a blanket None.
+
+        `KXGOLFMAJOR-...` carries no tour in its ticker, so this name fallback is
+        the only thing standing between it and an unlabelled card.
+        """
+        assert _classify_tour(
+            "Golfers to win a PGA Tour Major in 2027 ", "golf_majors", False, False
+        ) == "pga"
 
     def test_datagolf_opp_maps_to_pga(self):
         """DataGolf 'opp' (opposite-field) events are PGA Tour, NOT Asian Tour."""
