@@ -141,20 +141,90 @@ def test_an_unparseable_value_refuses_as_unreadable():
 # 2. THE CONTROL. The quiet states that must stay quiet.
 # ---------------------------------------------------------------------------
 
-def test_a_present_but_empty_curve_is_not_a_refusal():
-    """The guard that stops this fix from becoming the next outage.
+def test_a_present_but_empty_curve_REFUSES_because_the_writer_cannot_write_one():
+    """INVERTED by CERT-485 P1-b. This guard used to assert the opposite.
 
-    A present key holding ``[]`` is not the shape that caused the incident. The
-    writer fails closed — it reports ``no_work`` and writes NOTHING on zero rows
-    — so an empty list is a written answer, and answering "no bookmaker rows
-    this cycle" is exactly what gotcha #53 asks an absence to be distinguished
-    FROM. Turning it into a refusal would trade a silent 96K shortfall for a
-    hard stop on a legitimate state, and this file would still be green.
+    Its old docstring argued that ``[]`` "is a written answer" and refusing it
+    would be "a hard stop on a legitimate state" — and in the same sentence it
+    said the writer "reports ``no_work`` and writes NOTHING on zero rows". Both
+    cannot be true. The writer is the tiebreaker and it is unambiguous
+    (``backfill_winners.py``, the ``elif not buckets:`` arm): on zero buckets it
+    sets ``terminal = "no_work"``, logs, and never reaches the ``setex``. The
+    ONLY way to reach ``setex`` is a non-empty ``buckets``.
+
+    So ``[]`` is not a state the writer can produce. It is a corrupt value, and
+    under gotcha #53 a corrupt value must be named, not quietly returned as
+    "no rows this cycle" — which is precisely the silent 96K shortfall D21
+    exists to end, re-entered through a shape nobody checked.
+
+    Inverted rather than deleted, the same way 12-CAL's census guard was: the
+    argument that was wrong is worth more standing next to the one that
+    replaced it.
     """
-    rows, excluded, degraded = _read(_Redis("[]"))
+    rows, excluded, degraded = _read(_Redis("[]"), refuse=False)
     assert rows == []
     assert excluded == 0
-    assert degraded is None
+    assert degraded == UNREADABLE
+
+
+# ---------------------------------------------------------------------------
+# 1b. CERT-485 P1-b — VALID JSON OF THE WRONG SHAPE.
+#
+#     `json.loads` succeeding proves the bytes were JSON. It proves nothing
+#     about them being a list of bookmaker rows. Before this fix the reader
+#     iterated `raw` and called `row.get` with no check between, so:
+#
+#       {}     -> iterated zero keys and returned ([], 0, None). SILENT. The
+#                 exact 96K shortfall D21 was written to end, re-entered.
+#       null   -> TypeError: 'NoneType' object is not iterable
+#       [1]    -> AttributeError: 'int' object has no attribute 'get'
+#
+#     and the two exceptions escaped `refuse=False` as well, so they 500'd the
+#     public fallback — the same defect D21's first cut had, one layer in.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "payload,label",
+    [
+        ("{}", "an object where a list belongs"),
+        ("null", "a JSON null"),
+        ("[1]", "a list of scalars"),
+        ('["a"]', "a list of strings"),
+        ('[{"category":"x"},2]', "a list that is only partly rows"),
+        ('"a string"', "a bare JSON string"),
+        ("3", "a bare number"),
+    ],
+)
+def test_valid_json_of_the_wrong_shape_refuses_by_name(payload, label):
+    """Every non-row shape is UNREADABLE, on the producer path."""
+    with pytest.raises(RuntimeError) as excinfo:
+        _read(_Redis(payload))
+    assert UNREADABLE in str(excinfo.value), label
+
+
+@pytest.mark.parametrize(
+    "payload",
+    ["{}", "null", "[1]", '["a"]', '[{"category":"x"},2]', '"a string"', "3", "[]"],
+)
+def test_the_serve_path_never_raises_on_a_wrong_shape(payload):
+    """...and the SERVE path degrades instead of raising, for every one of them.
+
+    This is the half that makes P1-b a public-endpoint bug and not just a
+    producer one: `null` and `[1]` raised straight through `refuse=False`.
+    """
+    rows, excluded, degraded = _read(_Redis(payload), refuse=False)
+    assert rows == []
+    assert excluded == 0
+    assert degraded == UNREADABLE
+
+
+def test_the_wrong_shape_refusal_names_the_key_an_operator_must_look_at():
+    """A refusal that does not say WHERE is a refusal an operator cannot act on."""
+    _, _, degraded = _read(_Redis("{}"), refuse=False)
+    assert degraded == UNREADABLE
+    with pytest.raises(RuntimeError) as excinfo:
+        _read(_Redis("{}"))
+    assert KEY in str(excinfo.value)
 
 
 def test_the_happy_path_still_parses_and_still_drops_soccer():

@@ -403,17 +403,28 @@ async def test_precompute_wrapper_caches_exact_shared_payload():
             captured[key] = val
 
         def get(self, key):
-            # D21 (#1978, CAL-P150): the PRODUCER path now refuses to publish a
+            # D21 (#1978, CAL-P150): the PRODUCER path refuses to publish a
             # candidate whose per-bookmaker curve is missing — an absent key was
             # taking ~96,026 outcomes out of the published population silently,
             # and the gate could only report that the population had moved. So
-            # this fake has to answer for that key, and answering `[]` is the
-            # right answer for this test: it is a written, complete curve that
-            # happens to hold no rows, which keeps the payload identity this
-            # test is actually about unchanged. Returning None here would make
-            # the fixture assert the refusal instead.
+            # this fake has to answer for that key.
+            #
+            # 🔴 CORRECTED by CERT-485 P1-b (CAL-P151). This used to return
+            # `"[]"` and call it "a written, complete curve that happens to hold
+            # no rows". The writer cannot produce that: `backfill_winners.py`'s
+            # `elif not buckets:` arm sets terminal `no_work` and returns
+            # WITHOUT reaching the `setex`, so the only value that ever reaches
+            # this key is a NON-EMPTY list. `[]` is corrupt, and the reader now
+            # refuses it by name rather than returning a silent zero.
+            #
+            # What this test is actually about is payload identity, so the
+            # answer has to leave `rows` empty without being a corrupt value.
+            # One soccer bucket does exactly that: it is a shape the writer
+            # really writes, and the read-side soccer_2way exclusion (#1011)
+            # drops it, so `rows == []` and `soccer_excluded == 0` — byte-for-
+            # byte the pair `"[]"` used to produce.
             if key == "bainluck:bookmaker_calibration":
-                return "[]"
+                return '[{"category": "soccer_epl", "bucket_idx": 5, "n": 0}]'
             return None
 
     fake_db = _FakeDB()

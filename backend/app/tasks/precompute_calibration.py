@@ -72,6 +72,27 @@ BOOKMAKER_CURVE_UNREADABLE_REFUSAL = "bookmaker_curve_key_unreadable"
 BOOKMAKER_CURVE_EXPECTED_OUTCOMES = 96_026
 
 
+def _shape_of(value) -> str:
+    """Describe a parsed JSON value's SHAPE for a refusal message.
+
+    CERT-485 P1-b. An operator told only "wrong shape" has to go and fetch the
+    key themselves; an operator told "a list of 3 items, first is int" can act.
+    So the shape is named — and ONLY the shape.
+
+    The VALUE is deliberately never interpolated. This string goes to the logs
+    and into the served payload's degraded reason, and the key can hold ~96K
+    outcomes' worth of rows: echoing it would turn a diagnostic into a log flood
+    on the one path that is already having a bad day. Type and cardinality are
+    what distinguish the four failure modes; the contents distinguish nothing.
+    """
+    if isinstance(value, list):
+        if not value:
+            return "an empty list"
+        kinds = sorted({type(v).__name__ for v in value})
+        return f"a list of {len(value)} item(s) of type {'/'.join(kinds)}"
+    return f"a bare {type(value).__name__}"
+
+
 def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
     """The per-bookmaker curve, or a NAMED refusal. Never a silent zero.
 
@@ -204,6 +225,45 @@ def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
             "%s is present but is not JSON this reader can parse. Nothing "
             "published, prior snapshot preserved." % (BOOKMAKER_CURVE_REDIS_KEY,),
             exc,
+        )
+
+    # 🔴 CERT-485 P1-b. `json.loads` returning is proof the bytes were JSON. It
+    # is NOT proof they are a list of bookmaker rows, and until this check
+    # existed the reader went straight from the parse into `for row in raw` /
+    # `row.get(...)`. Three shapes got through, and the first is the worst:
+    #
+    #   {}     iterated zero keys and returned ([], 0, None) — SILENT, no
+    #          reason in the payload. That is the 96K-outcome shortfall D21 was
+    #          written to end, re-entered through a shape nobody checked.
+    #   null   TypeError: 'NoneType' object is not iterable
+    #   [1]    AttributeError: 'int' object has no attribute 'get'
+    #
+    # and the two exceptions escaped the `refuse=False` arm as well, so they
+    # 500'd `/api/calibration`'s cold-cache fallback — the same defect D21's
+    # first cut had (two callers, one of them unconsidered), one layer in.
+    #
+    # `[]` is refused too, and that is a deliberate reversal. The writer CANNOT
+    # produce it: `backfill_winners.py`'s `elif not buckets:` arm sets
+    # `terminal = "no_work"` and returns without ever reaching the `setex`, so
+    # the only value that can be written is a non-empty list. An empty list is
+    # therefore corrupt, not "no rows this cycle", and gotcha #53 says the two
+    # must not share an answer.
+    #
+    # Everything lands on the EXISTING degradation contract rather than a new
+    # one: producer raises by name, serve path logs and returns the reason so it
+    # reaches the payload.
+    if not isinstance(raw, list) or not raw or not all(
+        isinstance(row, dict) for row in raw
+    ):
+        return _degrade(
+            BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
+            "%s parsed as JSON but is not a non-empty list of bookmaker rows "
+            "(got %s), so the per-bookmaker curve (~%s outcomes, source "
+            "odds_api_bookmaker) cannot be assembled. Its only writer never "
+            "writes an empty list — it reports no_work and writes nothing — so "
+            "this value did not come from a healthy sweep. Nothing published, "
+            "prior snapshot preserved."
+            % (BOOKMAKER_CURVE_REDIS_KEY, _shape_of(raw), _expected),
         )
 
     # Queue #158 (#1011): the per-bookmaker calibration devigs soccer moneyline
