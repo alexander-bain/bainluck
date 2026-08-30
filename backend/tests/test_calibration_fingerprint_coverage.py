@@ -114,9 +114,18 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         magnitude quoted in the refusal text. Three of the four are
         behaviour-only and do not touch the count below. The fourth does, and
         that is argued in its own place rather than here.
+
+        D12 in the same queue added a fifth, ``NONEXCLUSIVE_BUNDLE_EXCLUDED_
+        CELLS`` (51 -> 52) — and it is the first addition in this file's history
+        that arrives COVERED. It is interpolated into the emitted SQL, so
+        hashing the CTE builder's source would not have caught a change to it
+        (``inspect.getsource`` hashes the f-string template, not the substituted
+        value); it is hashed by value in ``_main_input_fingerprint`` instead.
+        That is why ``covered_by_value`` moves 3 -> 4 here while
+        ``uncovered_count`` stands still at 48.
         """
-        assert artifact["input_count"] == 51
-        assert len(artifact["covered_by_value"]) == 3
+        assert artifact["input_count"] == 52
+        assert len(artifact["covered_by_value"]) == 4
         assert artifact["uncovered_count"] == 48
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]

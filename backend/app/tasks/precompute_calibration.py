@@ -262,6 +262,25 @@ def _sql_str_tuple(values) -> str:
     return "(" + ", ".join(f"'{v.replace(chr(39), chr(39) * 2)}'" for v in sorted(values)) + ")"
 
 
+def _sql_pair_tuple(pairs) -> str:
+    """Render (source, category) pairs as a deterministic SQL row-value IN-list.
+
+    D12 (#1978, CAL-P150). The sibling of :func:`_sql_str_tuple` for a predicate
+    that must be scoped by BOTH dimensions. Sorted for a stable plan cache key,
+    same defensive quote-doubling, same module-constants-only contract.
+
+    Row-value syntax — ``(a, b) IN ((x, y))`` — rather than an OR-chain, because
+    an OR-chain of two-column tests is where a scoping bug hides in plain sight:
+    a missing pair of brackets turns "kalshi AND crypto" into "kalshi OR crypto"
+    and the predicate silently swallows every Kalshi cell on the board.
+    """
+    rendered = ", ".join(
+        "(" + ", ".join(f"'{v.replace(chr(39), chr(39) * 2)}'" for v in pair) + ")"
+        for pair in sorted(pairs)
+    )
+    return "(" + rendered + ")"
+
+
 def _main_payload_is_publishable(response: Any) -> bool:
     """True if a computed calibration payload is complete enough to publish (Queue 272).
 
@@ -1019,6 +1038,51 @@ def category_is_soccer_2way_excluded(category: str | None) -> bool:
 # a blanket exclusion would drop good data; the general sweep is #160's sentinel.
 ESPORTS_MULTI_BUNDLE_CATEGORY = "esports"
 
+# D12 (#1978, CAL-P150) — the ruled non-exclusive-bundle exclusion gains ONE
+# (source, category) tuple. Freeze exception GRANTED by Alex 2026-08-30
+# (RULINGS-BATCH, D12: "delete via the approved exclusion list; the two OUR-bugs
+# it was hiding stay filed"), on the design banked in
+# artifacts/cal-p121/RULE-DESIGN-kalshi-crypto.md §4 (RULE C).
+#
+# WHY THIS CELL. `kalshi/crypto` is 4,566 published rows at ECE 7.61 pp against
+# a 3.0 bar — rank 6, 20,999 excess-outcomes — and 99.9% of it is the
+# non-exclusive bundle shape this predicate already names. 625 markets produce
+# 4,566 rows, so one gold print is counted 7.31 times, and the rungs of one
+# ladder are near-deterministically related: if gold is above $3,360 it is above
+# $3,350. Both arms of the ruled gate — the realization test (>=2 winners) and
+# the structural test (published prices summing past 1.15) — condemn the same
+# 4,563 rows, so there is no version of this that leaves a material cell behind.
+#
+# 🔴 SO THIS DOES NOT FIX RANK 6, IT DELETES IT — 4,563 rows out, 3 left, the
+# cell becomes an absence. Said here rather than discovered after deploy. It is
+# seventeen times larger than the same outcome already accepted for kalshi/tech
+# and it is why the exception was asked for by name.
+#
+# 🔴 THE LABEL IS WRONG AND DELETING THE CELL DOES NOT FIX THAT. The cell is
+# 99.5% METALS — gold, silver, palladium, copper, lithium, nickel — and exactly
+# ONE row of it is cryptocurrency. The page today tells a reader we made 4,565
+# forecasts about crypto; we made ~625 about the price of metal and one about
+# Hyperliquid. This tuple fixes the first half of that sentence only. The relabel
+# is RULE-DESIGN §5, it is a WRITER fix, and it stays filed.
+#
+# 🔴 AND DO NOT REACH FOR THE ADMIN BUTTON. `_cleanup_crypto_impl`
+# (app/tasks/retention.py, exposed at app/routes/admin_data_quality.py) deletes
+# futures_markets / futures_outcomes / futures_odds_snapshots
+# `WHERE llm_sport_category = 'crypto'`. Its predicate is exactly the label that
+# is wrong. Pressing it to "clean up rank 6" would permanently destroy 3,922
+# legitimate commodities markets and all their price history because an LLM
+# called them crypto. It is not on the beat schedule, which is the only reason
+# those rows are still alive.
+#
+# SCOPED BY SOURCE AS WELL AS CATEGORY, deliberately. A bare category allowlist
+# entry would also act on `polymarket/crypto`, and CAL-P112 item 3 is the
+# standing warning about exactly that: RULE T's category-only widening moved
+# `polymarket/tech` 8.04 -> 12.62, WORSE, and that cell is still UNMEASURED. A
+# (source, category) tuple cannot reach a cell nobody has folded.
+NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS = (
+    ("kalshi", "crypto"),
+)
+
 ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "Excludes esports 'match bundle' markets — Polymarket packs a whole match "
     "(cumulative Total-Kills Over/Under ladders per game, per-game winners, "
@@ -1030,12 +1094,26 @@ ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "per-market cp-sum 17.9). The >=3-outcome sibling of the malformed-binary "
     "filter and the exclusion complement of #157's counter-class guard. The "
     "many-YES ladder grading is correct, so these are excluded from the curve, "
-    "never re-graded. Read-side only; never mutates resolutions."
+    "never re-graded. Read-side only; never mutates resolutions. "
+    # D12 (#1978, CAL-P150). The published text has to say the filter is no
+    # longer esports-only, or the page describes a rule that has not been in
+    # force since this shipped. Kept generic and pointed at `excluded_cells`
+    # rather than naming the cell twice: the list is derived from the constant,
+    # this sentence is not, and two hand-maintained copies of one fact is how
+    # the comment that hid D5 for months came to exist.
+    "Since 2026-08-30 the same structural test also removes individually ruled "
+    "(source, category) cells that are dominated by this shape — see "
+    "`excluded_cells` for the current list, each of which is a separate ruling "
+    "with its own measured evidence, not a widening of the esports rule."
 )
 
 
 def market_is_esports_multi_bundle(
-    category: str | None, n_outcomes: int, n_winners: int
+    category: str | None,
+    n_outcomes: int,
+    n_winners: int,
+    *,
+    source: str | None = None,
 ) -> bool:
     """True if a resolved market is an esports match-bundle excluded from the curve (Queue #159).
 
@@ -1051,9 +1129,23 @@ def market_is_esports_multi_bundle(
     the many-YES cumulative-ladder grading is correct, so the rows are dropped
     from the curve rather than re-graded.
     """
-    return category == ESPORTS_MULTI_BUNDLE_CATEGORY and market_is_nonexclusive_bundle(
-        n_outcomes, n_winners
-    )
+    if not market_is_nonexclusive_bundle(n_outcomes, n_winners):
+        return False
+    if category == ESPORTS_MULTI_BUNDLE_CATEGORY:
+        return True
+    # D12 (#1978, CAL-P150). The mirror has to move with the CTE or it stops
+    # being a mirror — and a mirror that has silently stopped mirroring is the
+    # defect this whole queue keeps finding (D5's comment said the join carried
+    # two columns; it said so for months).
+    #
+    # ``source`` is keyword-only WITH a default so the four existing call sites
+    # keep working, and the default is None rather than a source string: None
+    # means "the caller did not say", and a caller that did not say must not be
+    # able to trip a (source, category) rule by accident. The cost is that a
+    # caller which SHOULD pass a source and does not gets the old answer, which
+    # is why `test_the_mirror_and_the_cte_agree_on_the_ruled_cells` reads the
+    # ruled tuples out of the constant rather than restating them.
+    return source is not None and (source, category) in NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS
 
 
 # ---------------------------------------------------------------------------
@@ -2093,12 +2185,26 @@ def _calibration_population_ctes(
             -- (identical membership) so the esports EXCLUSION and the
             -- category-independent bundle CENSUS derive from one structural
             -- test rather than two copies of it.
+            -- ⚠️ THE NAME IS NARROWER THAN THE CTE SINCE D12 (#1978, CAL-P150).
+            -- This is the non-exclusive-bundle CURVE EXCLUSION, and it now
+            -- covers the esports category on any source PLUS the cells named in
+            -- NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS. The identifiers and the
+            -- payload key keep their esports names deliberately: the key is a
+            -- public contract on /api/calibration, and the freeze exception
+            -- granted was for one tuple, not for a rename. What a reader needs
+            -- is WHICH cells were excluded, and that is published as
+            -- `excluded_by_cell` rather than inferred from a CTE name.
             esports_multi_bundles AS (
                 SELECT mrs.market_id
                 FROM market_result_shape mrs
-                WHERE mrs.category = '{ESPORTS_MULTI_BUNDLE_CATEGORY}'
-                  AND mrs.n_outcomes >= 3
+                JOIN market_info mi ON mi.market_id = mrs.market_id
+                WHERE mrs.n_outcomes >= 3
                   AND mrs.win_count >= 2
+                  AND (
+                        mrs.category = '{ESPORTS_MULTI_BUNDLE_CATEGORY}'
+                        OR (mi.source, mrs.category)
+                            IN {_sql_pair_tuple(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)}
+                  )
             ),
             -- L2-79 Item 2: golf FIELD/winner one-sided-ask placeholder markets —
             -- mutually-exclusive golf markets with >=2 outcomes in the >=0.80 band
@@ -4824,7 +4930,20 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             },
         },
         "esports_multi_bundle_filter": {  # Queue #159 (#1010)
-            "applies_to": "esports",
+            # D12 (#1978, CAL-P150): `applies_to` was the literal "esports" and
+            # is now derived, because the filter stopped being esports-only the
+            # moment the first (source, category) tuple was ruled onto it. The
+            # KEY keeps its name — it is a public contract on /api/calibration —
+            # so this list is the only place a reader can see that a second cell
+            # is being deleted here. Hard-coding it would have restated the
+            # constant and could not have drifted from the constant it restated.
+            "applies_to": ", ".join(
+                [ESPORTS_MULTI_BUNDLE_CATEGORY]
+                + [f"{src}/{cat}" for src, cat in NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS]
+            ),
+            "excluded_cells": [
+                list(pair) for pair in NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS
+            ],
             "rule": ESPORTS_MULTI_BUNDLE_RULE_TEXT,
             "excluded": esports_bundle_excluded,
         },
@@ -5232,6 +5351,21 @@ def _main_input_fingerprint() -> str:
         CALIBRATION_POPULATION_VERSION,
         REPRESENTATIVE_TIE_AUTHORITY,
         f"coverage_census={COVERAGE_CENSUS_ENABLED}",
+        # D12 (#1978, CAL-P150) — the fourth instance of the hole this docstring
+        # keeps describing, and it was found the way CAL-P024 found the census
+        # switch: by asking what would happen if the value changed.
+        # `NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS` is INTERPOLATED into the emitted
+        # SQL, but `inspect.getsource(_calibration_population_ctes)` hashes the
+        # f-string TEMPLATE, not the value substituted into it. So adding or
+        # removing a ruled cell would have changed which rows the curve
+        # publishes while leaving this digest identical — and a cursor banked
+        # under one exclusion list would have stayed resumable by code with a
+        # different one, merging units built from two populations into one
+        # payload. That is precisely what this digest exists to make impossible.
+        #
+        # Hashed by NAME as well as value, like its two neighbours above, so it
+        # is greppable rather than an incidental substring.
+        f"nonexclusive_bundle_cells={sorted(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)}",
         source,
     )
 

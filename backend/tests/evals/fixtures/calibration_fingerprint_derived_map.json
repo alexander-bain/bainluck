@@ -2,6 +2,7 @@
   "covered_by_value": [
     "CALIBRATION_POPULATION_VERSION",
     "COVERAGE_CENSUS_ENABLED",
+    "NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS",
     "REPRESENTATIVE_TIE_AUTHORITY"
   ],
   "hashed_roots": [
@@ -10,7 +11,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 51,
+  "input_count": 52,
   "inputs": [
     {
       "covered_by_value": false,
@@ -172,7 +173,8 @@
       "sql_interpolated": true,
       "used_in": [
         "_build_nonexclusive_bundle_census",
-        "_calibration_population_ctes"
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
       ]
     },
     {
@@ -351,6 +353,18 @@
       "sql_interpolated": false,
       "used_in": [
         "_build_nonexclusive_bundle_census"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS",
+      "origin": "app.tasks.precompute_calibration:NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
       ]
     },
     {
@@ -595,7 +609,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "79a6811d62491d6bd9e0b7e6ee2b54b4293045ac17001443eb780f06503885e6",
+  "source_sha256": "3a10423e0b6c72c1722b9f904a7b052a4c793d6f9204faaa55e657b6fba6a280",
   "uncovered_behavior_or_evidence": 26,
   "uncovered_count": 48,
   "uncovered_sql_shaping": 22
