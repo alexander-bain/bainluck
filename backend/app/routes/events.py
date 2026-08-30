@@ -2574,6 +2574,92 @@ _SEARCH_STATEMENT_TIMEOUT_MS = int(os.getenv("SEARCH_STATEMENT_TIMEOUT_MS", "0")
 # keystroke surface is a worse failure than being slow.
 _TYPEAHEAD_DEADLINE_MS = int(os.getenv("TYPEAHEAD_DEADLINE_MS", "10000"))
 
+# LAT-P143/#1866: the 10s deadline above is the anti-H12 guard and it works. What
+# it does NOT do is decide WHICH stage pays, and the answer had been "all of it".
+#
+# MEASURED, production, 2026-08-30. `typeahead futures TIMED OUT` fired **43
+# times in 24 hours** — on `yan`, `sta`, `chi`, `stan`, `win`, `winner`,
+# `lakers`, `mas`, `cel`, i.e. the prefixes of `yankees`, `chicago`, `stanford`
+# and `masters winner`. Every one of those requests took **10.03-10.26 s** and
+# answered with NO futures at all.
+#
+# The cost is ONE arm, and it is the outcome-name arm. `EXPLAIN (ANALYZE,
+# BUFFERS)` on `futures_outcomes` (3.9 M rows / 3,478 MB):
+#
+#     q=yan   Bitmap Index Scan  31,081 candidates    241 blocks     63 ms
+#             Bitmap Heap Scan   24,806 rows       18,424 blocks  6,115 ms  (cold)
+#             ...of which, after joining to OPEN markets:  413 markets
+#     q=win   Bitmap Heap Scan                     61,862 blocks 13,989 ms
+#
+# The GIN does its job in 63 ms. The 6-14 s is the HEAP fetch of every matching
+# outcome row — and **97 % of those rows belong to CLOSED markets** and are
+# discarded by the very next join. The cold/warm spread on the identical plan is
+# 22x (6,115 ms vs 282 ms), which is why the same term is 0.8 s one minute and
+# over the deadline the next: `futures_outcomes`' trigram surface does not fit in
+# `shared_buffers` and is evicted continuously (LAT-P063's residency argument).
+#
+# 🔴 TWO CODE-ONLY CURES WERE TRIED ON PRODUCTION AND BOTH ARE DISPROVED, so the
+# next reader does not spend the cycle re-deriving them:
+#
+#   * **Push the open-market filter below the heap fetch.** Rewritten three ways
+#     (IN-subquery, correlated EXISTS, inner join, and an explicit
+#     `market_id IN (open ids)`), the planner keeps the full 24,806-row Bitmap
+#     Heap Scan in EVERY form and hash-joins afterwards. It has no cheap bitmap
+#     for "belongs to one of 55,138 open markets".
+#   * **Narrow by id range.** Open market ids would have to cluster high for
+#     `market_id >= :min_open` to be a sound, indexable narrowing. `min(id)` over
+#     open markets is **1**, against `max(id)` 59,814,124. Dead.
+#
+# 🔴 WHAT ACTUALLY CURED IT WAS NEITHER — IT WAS GIVING THE ARM THE PAGE'S OWN
+# `ORDER BY` AND `LIMIT`, and that was a surprise, so it is written down as the
+# finding it is rather than buried as an implementation detail.
+#
+# Pulled out of the UNION and run as its own statement, the arm can carry the
+# ordering the final page applies anyway. That makes early termination profitable
+# and the planner stops materialising the match set at all: instead of scanning
+# every `%q%` outcome and hash-joining, it walks `futures_markets` in
+# `(market_tier, volume)` order and probes `futures_outcomes` per candidate until
+# it has 20. Production, `EXPLAIN (ANALYZE, BUFFERS)`, same statement, ORDER BY +
+# LIMIT the only difference:
+#
+#     term         blocks OLD -> NEW        time OLD -> NEW
+#     win           273,637 -> 35,199      13,801 ms ->   477 ms    (29x)
+#     yan            47,819 -> 30,476       5,771 ms ->   520 ms    (11x)
+#     cremonese       1,196 ->    834         241 ms ->  16.6 ms  (14.5x)
+#     zzqx (no hit)      15 ->     18         6.6 ms -> 0.25 ms
+#
+# It is cost-based, so it does NOT trade the tail for the head: on the rare terms
+# the planner KEEPS the bitmap plan and simply pays less for it. No term measured
+# got slower, in blocks or in time.
+#
+# The durable fixes are still an index (parked as **P116-1**, five cycles behind a
+# migration slot) or LAT-P063's Option D table (graded in this queue's report; its
+# read path needs schema it does not yet have). This is neither — it is the plan
+# the planner could always have chosen, once the query stopped hiding the LIMIT
+# from it inside a UNION.
+#
+# THE TIMEOUT BELOW IS THE SAFETY NET, NOT THE FIX, and the distinction matters:
+# after the plan flip it should essentially never fire. It exists because a
+# planner choice is not a guarantee — statistics drift, and a term that picks the
+# bitmap plan on a cold `futures_outcomes` can still cost seconds. When it does,
+# only THIS arm sheds, so the dropdown keeps its market-name, ticker and alias
+# futures instead of losing the whole futures stage.
+#
+# Why 2,000 ms and not tighter: the arm's worst measured HEALTHY cost after the
+# flip is 520 ms, so 2 s is ~4x headroom. LAT-P002 was reverted for picking a
+# bound that fired on healthy queries; this one is set where it can only fire on
+# the pathological case. This buys no speed for a healthy query — LAT-P005's
+# lesson, unchanged — it bounds the sick one.
+_TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS = int(
+    os.getenv("TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS", "2000")
+)
+
+# The futures pool the dropdown ranks from. ONE constant, used by both the final
+# `LIMIT` and the outcome arm's own `LIMIT`, because the two being equal is what
+# makes the split set-identical rather than approximately so — see
+# `_resolve_typeahead_outcome_arm`. A drift between them is a recall change.
+_TYPEAHEAD_FUTURES_POOL = 20
+
 # LAT-P010/#1494 GAP 1: below this many characters an infix ILIKE cannot be served
 # by a pg_trgm GIN (no complete trigram is extractable from the pattern), so it
 # seq-scans. Shared by /search and /typeahead so the two surfaces agree on where
@@ -2738,6 +2824,85 @@ async def _recover_search_session(
         await _apply_search_statement_timeout(db, deadline)
     except Exception as exc:  # noqa: BLE001
         logger.warning("search session recovery failed: %s", exc)
+
+
+async def _resolve_typeahead_outcome_arm(
+    db: AsyncSession,
+    arm,
+    open_now: tuple,
+    deadline: float | None,
+) -> list[int] | None:
+    """The outcome-name arm's market ids, ordered and bounded. ``None`` = shed it.
+
+    LAT-P143/#1866. Full measurement, the plan flip this buys, and the two
+    disproved alternatives are at :data:`_TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS`.
+
+    THE ``ORDER BY`` AND ``LIMIT`` HERE ARE THE FIX, not tidiness. Inside the UNION
+    the planner could not see that only 20 rows are ever wanted, so it built the
+    whole match set; carrying the page's own ordering lets it terminate early and
+    took `win` from 13,801 ms to 477 ms. Deleting either one restores the defect
+    while leaving every result identical, which is exactly the kind of change a
+    later reader makes in good faith — `test_lat_p143_typeahead_outcome_arm.py`
+    fails loudly if they do.
+
+    🔴 WHY THIS IS SET-IDENTICAL AND NOT MERELY CLOSE, because a "latency" change
+    that quietly narrows recall is the failure this file keeps writing comments
+    about. The caller UNIONs every arm and then takes the top
+    :data:`_TYPEAHEAD_FUTURES_POOL` of the union by
+    ``(market_tier ASC NULLS LAST, volume DESC NULLS LAST)``. This query applies
+    **that same ordering and that same limit** to this arm alone. Any market this
+    arm drops therefore has ``_TYPEAHEAD_FUTURES_POOL`` markets from this same arm
+    ordered ahead of it — all of which are in the union — so it could not have
+    reached the union's top ``_TYPEAHEAD_FUTURES_POOL`` either. The final page is
+    the same page. That proof is why the two limits must be ONE constant.
+
+    (The pre-existing tie underdetermination is unchanged and not made worse:
+    ``(market_tier, volume)`` is not a total order, so which of a set of tied rows
+    survives any cut is already arbitrary — parked as **P140-2**, and this queue
+    deliberately does not add the stable tiebreak that would change what users
+    see.)
+
+    The bound is the SMALLER of the arm's own budget and whatever is left of the
+    request deadline: an arm bound that could outlive the request deadline would
+    be no bound at all. If less than the stage floor remains there is no query
+    worth starting, so the arm sheds without touching the database — an honest
+    "we ran out of time" rather than a statement started in order to be cancelled.
+
+    On a timeout the transaction is aborted, so recovery is mandatory and not
+    optional: the caller runs more queries after this point and every one of them
+    would fail on the poisoned session.
+    """
+    remaining_ms = (
+        _SEARCH_DEADLINE_MS
+        if deadline is None
+        else int((deadline - time.monotonic()) * 1000)
+    )
+    bound_ms = min(_TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS, remaining_ms)
+    if bound_ms < _SEARCH_MIN_STAGE_TIMEOUT_MS:
+        return None
+
+    try:
+        await db.execute(text(f"SET LOCAL statement_timeout = {int(bound_ms)}"))
+    except Exception as exc:  # noqa: BLE001 — never fail the search on the guard
+        logger.warning("typeahead outcome-arm timeout not applied: %s", exc)
+
+    try:
+        result = await db.execute(
+            select(FuturesMarket.id)
+            .where(arm, *open_now)
+            .order_by(
+                FuturesMarket.market_tier.asc().nulls_last(),
+                FuturesMarket.volume.desc().nulls_last(),
+            )
+            .limit(_TYPEAHEAD_FUTURES_POOL)
+        )
+    except Exception as exc:  # noqa: BLE001
+        if not _is_query_timeout(exc):
+            raise
+        await _recover_search_session(db, deadline)
+        return None
+
+    return [row[0] for row in result.all()]
 
 
 # LAT-P002/#1494 (1d): strong references to in-flight search-log tasks. asyncio only
@@ -5249,14 +5414,15 @@ async def typeahead_search(
     # surfaces sharing a CONSTANT was not enough to keep them in agreement — they
     # have to share the RULE. `d'or` is 4 characters, so the old length test
     # admitted it on both paths while pg_trgm could serve neither.
+    #
+    # LAT-P143: HELD BACK rather than appended. This is the one arm measured to
+    # cost 6-14 s, so it does not join the union until it has proved it can be
+    # served inside its own budget — see `_resolve_typeahead_outcome_arm` below.
     _ta_q_compact = q.strip()
+    _ta_outcome_arm = None
     if _has_extractable_trigram(_ta_q_compact):
-        ta_futures_where.append(
-            FuturesMarket.id.in_(
-                select(FuturesOutcome.market_id).where(
-                    FuturesOutcome.name.ilike(pattern)
-                )
-            )
+        _ta_outcome_arm = FuturesMarket.id.in_(
+            select(FuturesOutcome.market_id).where(FuturesOutcome.name.ilike(pattern))
         )
 
     ta_league_ticker_match = _build_league_ticker_match(ta_expanded)
@@ -5284,6 +5450,36 @@ async def typeahead_search(
             FuturesMarket.resolution_date >= now,
         ),
     )
+    # LAT-P143: resolve the held-back outcome arm FIRST, under its own bound, and
+    # fold it in as a plain id list. `[]` is a real answer (the arm matched no open
+    # market) and contributes nothing; `None` means it could not be served in time
+    # and the request answers without it — with every other arm intact, which is
+    # what it used to lose.
+    _ta_degraded = False
+    _ta_mark("events_assemble")
+    if _ta_outcome_arm is not None:
+        _ta_outcome_ids = await _resolve_typeahead_outcome_arm(
+            db, _ta_outcome_arm, _ta_open_now, _ta_deadline
+        )
+        # ONE mark, labelled by outcome — the same grammar as
+        # `futures_query` / `futures_query_TIMED_OUT` below, and for the same
+        # reason: a second mark straight after the first would record ~0 ms and
+        # attribute the arm's whole cost to the label that says it SUCCEEDED.
+        if _ta_outcome_ids is None:
+            _ta_mark("futures_outcome_arm_SHED")
+            logger.error(
+                "typeahead outcome arm SHED for %r after %dms — the dropdown is "
+                "answering without its outcome-name matches, but WITH its market "
+                "name, ticker and alias matches",
+                q,
+                _TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS,
+            )
+            _ta_degraded = True
+        else:
+            _ta_mark("futures_outcome_arm")
+            if _ta_outcome_ids:
+                ta_futures_where.append(FuturesMarket.id.in_(_ta_outcome_ids))
+
     _ta_arm_selects = [
         select(FuturesMarket.id).where(arm, *_ta_open_now)
         for arm in ta_futures_where
@@ -5305,7 +5501,9 @@ async def typeahead_search(
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.volume.desc().nulls_last(),
         )
-        .limit(20)
+        # LAT-P143: ONE constant with the outcome arm's own limit. The two being
+        # equal is the whole proof that splitting the arm out is set-identical.
+        .limit(_TYPEAHEAD_FUTURES_POOL)
     )
     # LAT-P007: bound the one expensive stage, and NEVER cache a degraded answer.
     #
@@ -5315,8 +5513,12 @@ async def typeahead_search(
     # queries still run after this point and would fail on the poisoned session.
     # The three suggestion pools are already plain dicts by now, so the rollback
     # cannot expire anything (gotcha #6).
-    _ta_degraded = False
-    _ta_mark("events_assemble")
+    #
+    # LAT-P143: `_ta_degraded` is initialised and `events_assemble` is marked
+    # further up, BEFORE the outcome arm resolves — the arm issues a query, and
+    # leaving the mark here would bury its whole duration inside `events_assemble`.
+    # That is the same mis-attribution the `futures_query_TIMED_OUT` label below
+    # exists to prevent, one stage earlier.
     await _apply_search_statement_timeout(db, _ta_deadline)
     try:
         futures_result = await db.execute(futures_query)
