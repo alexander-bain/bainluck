@@ -147,11 +147,30 @@ def test_the_pre_fix_summary_shape_would_have_been_false_green():
 
 
 def _summary_for(rows, *, redis_raises=False, query_raises=False,
-                 grid=None, chunk_raises=None, monkeypatch=None):
-    """Run the real writer against a stubbed session + Redis."""
+                 grid=None, chunk_raises=None, monkeypatch=None,
+                 deadline=None, seconds_per_chunk=None):
+    """Run the real writer against a stubbed session + Redis.
+
+    ``seconds_per_chunk`` installs a FAKE clock that advances only when the
+    writer issues a chunk query, so a budget test measures the writer's own
+    traversal instead of how fast the machine ran the stubs. The stubs answer
+    instantly; against the real clock no budget could ever expire and a
+    budget guard written on it would pass vacuously forever (gotcha #44 — an
+    anchor that reads the wall is not an anchor).
+    """
     from datetime import datetime, timezone
 
     import app.tasks.backfill_winners as bw
+
+    clock = {"t": 1_000_000.0}
+    if seconds_per_chunk is not None:
+        import time as _real_time
+
+        # The module attribute, because the writer does `import time as _time`
+        # at CALL time — it re-resolves `sys.modules['time']` on every run, so
+        # rebinding a name on `bw` would patch nothing and the guard would
+        # silently test the real clock.
+        monkeypatch.setattr(_real_time, "monotonic", lambda: clock["t"])
 
     class _Cell:
         def __init__(self, category, bucket_start):
@@ -191,6 +210,8 @@ def _summary_for(rows, *, redis_raises=False, query_raises=False,
             if "date_trunc('month'" in sql:
                 return _Result(list(grid))
             self.chunk_calls += 1
+            if seconds_per_chunk is not None:
+                clock["t"] += seconds_per_chunk
             if chunk_raises is not None:
                 exc = chunk_raises(self.chunk_calls)
                 if exc is not None:
@@ -230,7 +251,10 @@ def _summary_for(rows, *, redis_raises=False, query_raises=False,
 
     import asyncio
 
-    return asyncio.run(bw._precompute_bookmaker_calibration()), redis
+    return (
+        asyncio.run(bw._precompute_bookmaker_calibration(deadline=deadline)),
+        redis,
+    )
 
 
 def _grid(*categories):
@@ -352,6 +376,119 @@ def test_an_irreducible_chunk_writes_NOTHING_and_reports_failed(monkeypatch):
     )
     assert summary["chunks_failed"], "the failure was not named"
     assert verdict_for("bookmaker_calibration", summary).verdict in NOT_GREEN
+
+
+def test_the_traversal_stops_on_the_wall_instead_of_fanning_out(monkeypatch):
+    """THE CERT-457 REGRESSION. ``_CHUNK_TIMEOUT_S`` bounds a STATEMENT, not the WALK.
+
+    An irreducible month halves to a 3,600 s floor, which bottoms out at depth
+    10: 1,024 leaves under 2,047 timed nodes. At 45 s each that is ~92 ks of
+    querying inside an 1,800 s task, so before the traversal budget the task
+    was soft-killed mid-walk on every cycle — the key never written, the TTL
+    lapsing, the publish outage preserved, and the database loaded for nothing.
+
+    The clock here advances only when the writer issues a chunk query, so this
+    asserts the writer's own arithmetic and not the speed of the stubs.
+    """
+    seen = {"n": 0}
+
+    def raiser(call_index):
+        seen["n"] = call_index
+        return _Timeout()  # every slice is irreducible: the worst case
+
+    summary, redis = _summary_for(
+        [_Row(5, "basketball_nba")],
+        chunk_raises=raiser,
+        seconds_per_chunk=45,  # == _CHUNK_TIMEOUT_S: each node burns its ceiling
+        monkeypatch=monkeypatch,
+    )
+
+    # Not vacuous: it really did walk before it stopped. A budget guard that
+    # passes because nothing ran proves nothing about the bound.
+    assert seen["n"] >= 2, "the writer never traversed; the guard is vacuous"
+    assert seen["n"] < 2047 / 4, (
+        f"the walk issued {seen['n']} timed queries — the traversal is still "
+        f"bounded only by the 2,047-node fan-out, which is the defect"
+    )
+    assert summary["budget_exhausted"] is True
+    assert summary["terminal"] == "failed"
+    assert redis.written is None, "a short curve was published on a busted budget"
+
+
+def test_budget_exhaustion_is_reported_and_is_not_called_irreducible(monkeypatch):
+    """Failing closed is half the contract; saying WHICH failure is the other half.
+
+    ``irreducible`` means a window will not answer however narrow it gets — a
+    query bug or a lock. ``unrun`` means the walk ran out of wall. Pooling them
+    would report a database problem every time the task was merely slow, and
+    send the next session hunting the wrong defect.
+    """
+    summary, redis = _summary_for(
+        [_Row(5, "basketball_nba")],
+        deadline=float("-inf"),  # the wall is already behind us on entry
+        monkeypatch=monkeypatch,
+    )
+
+    assert summary["terminal"] == "failed"
+    assert summary["published"] is False
+    assert redis.written is None
+    assert summary["chunks_unrun"], "the unrun cells were not named"
+    assert not summary["chunks_failed"], (
+        "a cell that was never QUERIED was reported as irreducible"
+    )
+    blob = " ".join(summary["errors"]).lower()
+    assert "budget" in blob and "unrun" in blob, (
+        f"the terminal does not say the budget ran out: {summary['errors']}"
+    )
+    assert verdict_for("bookmaker_calibration", summary).verdict in NOT_GREEN
+
+
+def test_the_phase_caller_hands_down_the_pipelines_wall(monkeypatch):
+    """The callee has two zeros, so the shorter-walled caller must say so.
+
+    Standalone it owns an 1,800 s beat; as the ``bookmaker_closing`` phase it
+    has whatever is left of an 840 s task that resolution already spent down.
+    A budget measured from the wrong zero is not a budget, it is a duration.
+    """
+    import inspect
+
+    import app.tasks.backfill_winners as bw
+
+    assert "deadline" in inspect.signature(
+        bw._precompute_bookmaker_calibration
+    ).parameters, "the callee can no longer be told a caller's wall"
+
+    src = inspect.getsource(bw._backfill_all_winners)
+    assert "deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S" in src, (
+        "the bookmaker_closing phase stopped passing the pipeline's wall; the "
+        "callee would fall back to its standalone 1800s budget inside an 840s "
+        "task and take the whole pipeline down with it"
+    )
+
+
+def test_the_traversal_budget_leaves_room_under_the_soft_limit():
+    """The margin has to cover the longest thing that can happen after a check."""
+    from app.tasks.backfill_winners import (
+        _CHUNK_TIMEOUT_S,
+        _TRAVERSAL_BUDGET_S,
+    )
+
+    # Read off the TASK, not copied as a literal: the budget is only correct
+    # relative to the wall it is sized against, so if someone re-tunes the
+    # soft limit this guard has to move with it rather than keep asserting
+    # against a number that used to be true.
+    from app.tasks import precompute_bookmaker_calibration as _task
+
+    soft_limit = _task.soft_time_limit
+    assert soft_limit, "the beat lost its soft limit; the budget has no wall"
+    margin = soft_limit - _TRAVERSAL_BUDGET_S
+    assert 0 < margin < soft_limit / 2, (
+        f"a {margin}s margin under a {soft_limit}s limit is not a margin"
+    )
+    assert margin > _CHUNK_TIMEOUT_S, (
+        f"a {margin}s margin cannot absorb the {_CHUNK_TIMEOUT_S}s statement "
+        f"that may still be in flight past the final budget check"
+    )
 
 
 def test_one_failing_category_fails_the_whole_run_not_just_its_own_rows(monkeypatch):

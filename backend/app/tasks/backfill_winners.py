@@ -6239,7 +6239,14 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     if _budget_left() < _BUDGET_MARGIN_S:
         return _partial_result("bookmaker_closing")
     _mark("bookmaker_closing")
-    bookmaker_stats = await _precompute_bookmaker_calibration()
+    # Pass the PIPELINE's wall, not this function's own. Its standalone budget
+    # is sized against its own 1800s beat; entering here it has at most
+    # `_budget_left()` of an 840s task, already spent down by resolution and the
+    # earlier maintenance. Without the deadline the callee would obey a budget
+    # measured from the wrong zero and take the whole task down with it.
+    bookmaker_stats = await _precompute_bookmaker_calibration(
+        deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S
+    )
     closing_stats = await _backfill_closing_lines()
 
     if _budget_left() < _BUDGET_MARGIN_S:
@@ -6899,6 +6906,29 @@ _CHUNK_TIMEOUT_S = 45
 _CHUNK_MAX_DEPTH = 12
 _CHUNK_MIN_SPAN_S = 3600.0
 
+#: The TRAVERSAL budget. ``_CHUNK_TIMEOUT_S`` bounds one STATEMENT; until this
+#: constant nothing bounded the WALK, and the two are not the same bound.
+#:
+#: A calendar month is ~2.68 Ms, so halving to a ``_CHUNK_MIN_SPAN_S`` floor
+#: bottoms out at depth 10 (2.68 Ms / 2^10 = 2,615 s <= 3,600 s), which is
+#: 1,024 leaves under 2,047 timed nodes. One irreducible month therefore costs
+#: 2,047 x 45 s ~= 92 ks of querying inside an 1,800 s task: the task is
+#: soft-killed mid-traversal on every cycle, the Redis key is never written,
+#: the 24 h TTL lapses, and the publish outage this function exists to end
+#: persists while the database is loaded for nothing.
+#:
+#: The kill was always SAFE — the single ``setex`` happens after every slice
+#: lands, so nothing partial is ever published — but safe is not the same as
+#: diagnosed. A soft kill raises ``SoftTimeLimitExceeded`` out of this function
+#: before the terminal contract can be written, so the one run that knows what
+#: went wrong is the one run that never gets to say. This budget converts that
+#: silent kill into a reported ``failed`` terminal naming the unrun cells.
+#:
+#: Sized against the 1,800 s soft limit with a 180 s margin: the longest
+#: uninterrupted operation past the final check is one 45 s statement, and the
+#: aggregate-and-publish tail after the walk is a single ``setex``.
+_TRAVERSAL_BUDGET_S = 1620.0  # soft_time_limit=1800, keep a 180s margin
+
 def _add_month(dt: datetime) -> datetime:
     """The exclusive upper edge of ``dt``'s calendar month.
 
@@ -6911,8 +6941,18 @@ def _add_month(dt: datetime) -> datetime:
             else datetime(dt.year, dt.month + 1, 1, tzinfo=dt.tzinfo))
 
 
-async def _precompute_bookmaker_calibration():
+async def _precompute_bookmaker_calibration(deadline: float | None = None):
     """Precompute per-bookmaker moneyline calibration and cache in Redis.
+
+    ``deadline`` is an absolute ``time.monotonic()`` stamp from a caller that
+    owns a shorter wall than this function's own. It has two callers with two
+    different zeros — the standalone ``precompute_bookmaker_calibration`` beat
+    (soft limit 1,800 s, measured from entry) and the ``backfill_winners``
+    ``bookmaker_closing`` phase (soft limit 840 s, measured from a pipeline
+    start that is already several minutes old by the time this runs) — so the
+    zero cannot be inferred here. Passing it is how the phase caller says so;
+    ``_effective_stop_at`` then takes the earlier of the two. A budget measured
+    from the wrong zero is not a budget, it is a duration.
 
     Each bookmaker's closing moneyline (last pre-game snapshot) paired with
     the game outcome. Resolution is free (home_score > away_score). Devigged
@@ -6972,7 +7012,12 @@ async def _precompute_bookmaker_calibration():
       can see.
     """
     import json as _json
+    import time as _time
+
     from app.tasks.redis_state import get_redis_client
+
+    _t0 = _time.monotonic()
+    _stop_at = _effective_stop_at(_t0, _TRAVERSAL_BUDGET_S, deadline)
 
     stats = {
         "bookmakers": 0,
@@ -6989,6 +7034,14 @@ async def _precompute_bookmaker_calibration():
     try:
         chunks_done = 0
         chunks_failed: list[str] = []
+        # Kept apart from `chunks_failed` deliberately. Both fail closed, but
+        # they are different diagnoses and the repair differs: `irreducible`
+        # means one window will not answer however narrow it gets (a query bug
+        # or a lock), `unrun` means the walk simply ran out of wall. Pooling
+        # them would report a database problem every time the task was merely
+        # too slow, which is the reading that sends the next session hunting
+        # the wrong defect.
+        chunks_unrun: list[str] = []
         agg: dict = {}
 
         async with get_task_session() as session:
@@ -7023,6 +7076,17 @@ async def _precompute_bookmaker_calibration():
                 split-on-timeout discipline is the rail's, applied to a writer.
                 """
                 nonlocal chunks_done
+                # Checked at the TOP, which is the one place that covers both
+                # ways this function spends the wall: issuing a statement, and
+                # recursing after one timed out. A check sited only at the call
+                # in the grid loop would bound the number of CELLS and leave the
+                # 2,047-node fan-out inside a single cell unbounded, which is
+                # the shape that actually consumes the task.
+                if _time.monotonic() >= _stop_at:
+                    chunks_unrun.append(
+                        f"{category} {lo.date()}..{hi.date()} unrun at depth "
+                        f"{depth}")
+                    return False
                 try:
                     await session.execute(
                         text(f"SET LOCAL statement_timeout = '{_CHUNK_TIMEOUT_S}s'"))
@@ -7085,8 +7149,38 @@ async def _precompute_bookmaker_calibration():
 
             stats["chunks"] = chunks_done
             stats["chunks_failed"] = chunks_failed
+            stats["chunks_unrun"] = chunks_unrun
+            stats["budget_exhausted"] = bool(chunks_unrun)
+            stats["duration_seconds"] = round(_time.monotonic() - _t0, 1)
 
-            if chunks_failed:
+            if chunks_unrun:
+                # FAIL CLOSED for the same reason as the branch below — a curve
+                # missing whatever the unrun cells held is short, and short is
+                # the defect — but say the OTHER thing, because this is not a
+                # database that would not answer. It is a walk that did not
+                # finish, and before this branch existed it was not a report at
+                # all: the task was soft-killed here and the terminal contract,
+                # which is the only thing that can distinguish these states, was
+                # never reached. An absence nobody can attribute is the whole
+                # failure this function was rewritten to stop producing.
+                stats["terminal"] = "failed"
+                stats["errors"].append(
+                    f"traversal budget exhausted after "
+                    f"{stats['duration_seconds']}s with {len(chunks_unrun)} "
+                    f"cell(s) unrun ({len(chunks_failed)} irreducible, "
+                    f"{chunks_done} landed); Redis key NOT written rather than "
+                    f"published short: {'; '.join(chunks_unrun[:5])}"
+                )
+                logger.error(
+                    "Bookmaker calibration: BUDGET EXHAUSTED after %.1fs — "
+                    "%d cell(s) unrun, %d irreducible, %d landed. Key NOT "
+                    "written, odds_api_bookmaker will be ABSENT rather than "
+                    "shrunken (#1835): %s",
+                    stats["duration_seconds"], len(chunks_unrun),
+                    len(chunks_failed), chunks_done,
+                    "; ".join(chunks_unrun[:5]),
+                )
+            elif chunks_failed:
                 # FAIL CLOSED, and this is the whole point of the rewrite.
                 #
                 # A partial curve is not a smaller version of the right answer —
