@@ -79,12 +79,22 @@ calls per beat), so no upstream can grow it.
 STARVATION GUARDS (gotcha #41 — an ordering needs both bounds)
 --------------------------------------------------------------
 * **Value floor and liveness floor**, not a bare "oldest first": tier 1, volume
-  at or above :data:`HIGH_VALUE_VOLUME_FLOOR`, ``status='open'``, and a
-  resolution date in the future. Gotcha #33 (settled Kalshi markets keep
-  ``status='open'``) means ``status`` alone is not a liveness test; the
-  resolution-date bound is what keeps the dead out of the queue. The registered
-  arm drops the value floor and keeps **both** liveness bounds verbatim, so a
-  curated row is not a licence to re-animate the stale-open population.
+  at or above :data:`HIGH_VALUE_VOLUME_FLOOR`, plus every clause of
+  ``app.utils.futures_liveness.LIVE_MARKET_SQL``. The registered arm drops the
+  value floor and keeps the liveness bounds verbatim, so a curated row is not a
+  licence to re-animate the stale-open population.
+
+  **#2222 corrected what "liveness" means here, and the correction is load
+  bearing.** This module used to say the resolution-date bound "is what keeps
+  the dead out of the queue". It is not: ``status='open'`` survives settlement
+  (gotcha #33) and ``resolution_date`` was measurably wrong by one to two years
+  on every market in #2222's population, so nineteen settled markets — the
+  Champions League and Premier League winner fields, Eurovision, eight
+  elections — sat at the head of this queue permanently, were attempted every
+  run, wrote zero, and held ``futures-price-freshness`` red for a month. The two
+  bounds that actually see settlement (our own ``is_winner`` flag, and a venue
+  positively saying the market is over) live in ``futures_liveness`` with the
+  full reasoning, and the guard imports the same string.
 * **Ordered by value, not by staleness.** Oldest-capture-first looks right and
   is a trap here: a market that can never be priced (a stale-settled book
   returning no bid, ask or trade) has a NULL last-capture forever, so it would
@@ -108,12 +118,38 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from app.utils.futures_liveness import (
+    LIVE_MARKET_SQL,
+    VENUE_SETTLED_KEY,
+    VENUE_SETTLED_NOW_SQL,
+)
+
 logger = logging.getLogger(__name__)
+
+
+class _VenueSettled:
+    """Sentinel: the venue answered, and its answer is "this market is over".
+
+    Distinct from ``None`` (the venue could not be asked, or does not know this
+    id) and from ``[]`` (the venue has a book and every quote in it was refused
+    by a price guard). All three used to arrive as an empty priced list and be
+    counted as ``unpriceable`` — one word for three different facts, and the
+    word implied the market was still live and merely awkward. #2222 lived in
+    that conflation for a month.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "VENUE_SETTLED"
+
+
+#: See :class:`_VenueSettled`. Compared by identity (``is``), never truthiness.
+VENUE_SETTLED = _VenueSettled()
 
 #: Only markets at or above this traded volume are refreshed. The floor is what
 #: makes the sweep bounded; the guard in ``routes/admin_futures_freshness.py``
@@ -204,13 +240,12 @@ _POLY_EVENT_ID_SQL = """
 _CANDIDATE_SQL = text(
     f"""
     SELECT fm.id, fm.source, fm.external_id, fm.volume,
-           {_POLY_EVENT_ID_SQL}
+           {_POLY_EVENT_ID_SQL},
+           fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since
       FROM futures_markets fm
-     WHERE fm.status = 'open'
-       AND fm.source IN ('kalshi', 'polymarket')
+     WHERE {LIVE_MARKET_SQL}
        AND fm.market_tier = 1
        AND fm.volume >= :volume_floor
-       AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
        AND NOT EXISTS (
              SELECT 1
                FROM futures_outcomes fo
@@ -237,12 +272,11 @@ _CANDIDATE_SQL = text(
 _REGISTERED_CANDIDATE_SQL = text(
     f"""
     SELECT fm.id, fm.source, fm.external_id, fm.volume,
-           {_POLY_EVENT_ID_SQL}
+           {_POLY_EVENT_ID_SQL},
+           fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since
       FROM futures_markets fm
      WHERE fm.id = ANY(:market_ids)
-       AND fm.status = 'open'
-       AND fm.source IN ('kalshi', 'polymarket')
-       AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
+       AND {LIVE_MARKET_SQL}
        AND NOT EXISTS (
              SELECT 1
                FROM futures_outcomes fo
@@ -263,10 +297,77 @@ def _rows_to_markets(rows, *, registered: bool) -> list[dict]:
             "external_id": external_id,
             "volume": volume,
             "poly_event_id": poly_event_id,
+            # Carried so a successful write knows whether there is a stamp to
+            # clear, and can skip the UPDATE for the ~900 markets that never had
+            # one. Selected, not re-queried.
+            "venue_settled_since": venue_settled_since,
             "registered": registered,
         }
-        for mid, source, external_id, volume, poly_event_id in rows
+        for (
+            mid,
+            source,
+            external_id,
+            volume,
+            poly_event_id,
+            venue_settled_since,
+        ) in rows
     ]
+
+
+# --- the venue-settled stamp --------------------------------------------------
+
+#: FIRST observation only. Without ``IS NULL`` every run would push the stamp
+#: forward and the confirmation window could never elapse — the market would be
+#: retried forever, which is precisely the state #2222 describes.
+_STAMP_VENUE_SETTLED_SQL = text(
+    f"""
+    UPDATE futures_markets
+       SET market_metadata = COALESCE(market_metadata, '{{}}'::jsonb)
+             || jsonb_build_object('{VENUE_SETTLED_KEY}', {VENUE_SETTLED_NOW_SQL})
+     WHERE id = :mid
+       AND market_metadata->>'{VENUE_SETTLED_KEY}' IS NULL
+    """
+)
+
+#: A price arrived, so whatever the venue said before is no longer true. Clearing
+#: is what makes the bound reversible without anyone intervening, and it is why a
+#: transient upstream outage costs a market nothing.
+_CLEAR_VENUE_SETTLED_SQL = text(
+    f"""
+    UPDATE futures_markets
+       SET market_metadata = market_metadata - '{VENUE_SETTLED_KEY}'
+     WHERE id = :mid
+       AND market_metadata->>'{VENUE_SETTLED_KEY}' IS NOT NULL
+    """
+)
+
+
+async def _stamp_venue_settled(session, market_id: int) -> None:
+    """Record that a source said this market is over. Core UPDATE, gotcha #4."""
+    await session.execute(_STAMP_VENUE_SETTLED_SQL, {"mid": market_id})
+
+
+async def _clear_venue_settled(session, market_id: int) -> None:
+    await session.execute(_CLEAR_VENUE_SETTLED_SQL, {"mid": market_id})
+
+
+async def _clear_if_stamped(session, market: dict, stats: dict) -> None:
+    """A price landed, so retract any standing venue-settled claim.
+
+    Guarded on the value the selector already read, so the ~900 markets that
+    never carried a stamp cost no extra statement. Failure to clear must never
+    lose the price that was just committed: the write is already durable at this
+    point, and a stamp that survives one run is retracted by the next.
+    """
+    if not market.get("venue_settled_since"):
+        return
+    try:
+        await _clear_venue_settled(session, market["id"])
+        await session.commit()
+        stats["venue_settled_cleared"] += 1
+    except Exception as exc:
+        await session.rollback()
+        stats["errors"].append(f"clear venue-settled {market['external_id']}: {exc}")
 
 
 async def _scan_candidates(
@@ -495,8 +596,27 @@ async def _write_prices(
 # --- source adapters ---------------------------------------------------------
 
 
-async def _fetch_kalshi_prices(service, external_id: str) -> Optional[list[dict]]:
-    """Prices for one Kalshi event ticker, or None when the event is gone.
+async def _fetch_kalshi_prices(service, external_id: str):
+    """Prices for one Kalshi event ticker.
+
+    Three returns, because there are three different facts (see
+    :class:`_VenueSettled`):
+
+    * ``None`` — the event could not be read at all (404, or a parse failure).
+    * :data:`VENUE_SETTLED` — the event reads fine and **carries no markets**.
+      Kalshi keeps event rows forever and purges market rows (gotcha #35), so an
+      event with an empty book is a settled contest whose book has aged out, and
+      no number will ever come back from it. Measured 2026-08-30 on all eighteen
+      Kalshi rows in #2222's population: HTTP 200, zero markets, unanimous.
+      The control that makes that reading mean something is ``KXSB-27`` (live,
+      73M volume, same unauthenticated call): **32** markets.
+    * a list — the venue has a book; the list holds whatever survived the price
+      guards, and may be empty if every quote was refused.
+
+    The emptiness is read off the RAW payload, not off ``event.markets``.
+    ``_parse_market`` drops a market it cannot parse, so a parsed-empty list is
+    ambiguous between "no book" and "we failed to read the book" — and calling a
+    parse failure a settlement is how a live market gets retired quietly.
 
     Two deliberate reuses rather than reimplementations:
 
@@ -514,6 +634,8 @@ async def _fetch_kalshi_prices(service, external_id: str) -> Optional[list[dict]
     raw = await service.get_event(external_id, with_nested_markets=True)
     if not raw:
         return None
+    if not (raw.get("markets") or []):
+        return VENUE_SETTLED
     event = service._parse_event(raw)
     if not event:
         return None
@@ -539,8 +661,20 @@ async def _fetch_kalshi_prices(service, external_id: str) -> Optional[list[dict]
     return priced
 
 
-async def _fetch_polymarket_prices(service, event_ids: list[str]) -> dict[str, list[dict]]:
+async def _fetch_polymarket_prices(service, event_ids: list[str]) -> dict:
     """Prices for a batch of Polymarket event ids, keyed by event id.
+
+    A value is either a list of priced items or :data:`VENUE_SETTLED`.
+
+    THE SETTLED CHECK RUNS BEFORE THE COHERENCE GUARD, and the order is the
+    point. #2222's Polymarket row (``86515``, the Alpha Arena field) is closed
+    and resolved: Gamma still serves it, and every losing leg quotes
+    ``lastTradePrice = 1`` on its own No token, so eight of nine legs resolve to
+    ``1.0``. ``field_is_incoherent`` refuses the field — correctly, it is not a
+    price — and the event lands in ``not_found``, forever, because a settled
+    field can never become coherent again. Checked in this order the market is
+    reported as what it is (over) instead of as what it looks like from inside
+    the price rail (unreadable).
 
     Applies the same two field-level refusals as the ingest path:
     ``_resolve_market_probability`` (placeholder/evidence gate, gotcha #19) and
@@ -552,10 +686,16 @@ async def _fetch_polymarket_prices(service, event_ids: list[str]) -> dict[str, l
     from app.utils.winner_field_coherence import field_is_incoherent
 
     raw_events = await service.get_events_by_ids(event_ids)
-    out: dict[str, list[dict]] = {}
+    out: dict = {}
     for raw in raw_events:
         event = service._parse_event(raw)
         if not event or not event.markets:
+            continue
+        # The venue's own statement, taken before any price is looked at.
+        # `event.markets` is known non-empty here, so `all()` cannot be
+        # vacuously true — an empty parse must never read as a settlement.
+        if event.closed or all(m.closed for m in event.markets):
+            out[str(event.id)] = VENUE_SETTLED
             continue
         priced: list[dict] = []
         for market in event.markets:
@@ -642,6 +782,13 @@ async def _refresh_stale_futures_prices(
         "unknown_outcomes": 0,
         "not_found": 0,
         "unpriceable": 0,
+        # #2222. `venue_settled` is a source SAYING the market is over;
+        # `venue_settled_cleared` is a market that came back and had its stamp
+        # removed. Both are counted because the second is the evidence that the
+        # first is reversible, and an irreversible retirement is the failure
+        # mode this whole mechanism is engineered against.
+        "venue_settled": 0,
+        "venue_settled_cleared": 0,
         "errors": [],
         "by_source": {},
         "remaining_stale": None,
@@ -760,6 +907,17 @@ async def _refresh_stale_futures_prices(
                         priced = priced_by_event.get(event_id)
                         for market in by_event[event_id]:
                             _note_attempt(market)
+                            if priced is VENUE_SETTLED:
+                                stats["venue_settled"] += 1
+                                try:
+                                    await _stamp_venue_settled(session, market["id"])
+                                    await session.commit()
+                                except Exception as exc:
+                                    await session.rollback()
+                                    stats["errors"].append(
+                                        f"polymarket stamp {market['external_id']}: {exc}"
+                                    )
+                                continue
                             if priced is None:
                                 stats["not_found"] += 1
                                 continue
@@ -782,6 +940,7 @@ async def _refresh_stale_futures_prices(
                                 )
                                 if market["registered"]:
                                     stats["registered_priced"] += 1
+                                await _clear_if_stamped(session, market, stats)
                             else:
                                 stats["unpriceable"] += 1
                     await asyncio.sleep(0.3)
@@ -810,6 +969,17 @@ async def _refresh_stale_futures_prices(
                     except Exception as exc:
                         stats["errors"].append(f"kalshi {market['external_id']}: {exc}")
                         continue
+                    if priced is VENUE_SETTLED:
+                        stats["venue_settled"] += 1
+                        try:
+                            await _stamp_venue_settled(session, market["id"])
+                            await session.commit()
+                        except Exception as exc:
+                            await session.rollback()
+                            stats["errors"].append(
+                                f"kalshi stamp {market['external_id']}: {exc}"
+                            )
+                        continue
                     if priced is None:
                         stats["not_found"] += 1
                         continue
@@ -830,6 +1000,7 @@ async def _refresh_stale_futures_prices(
                         )
                         if market["registered"]:
                             stats["registered_priced"] += 1
+                        await _clear_if_stamped(session, market, stats)
                     else:
                         stats["unpriceable"] += 1
                     await asyncio.sleep(0.15)
@@ -850,14 +1021,11 @@ async def _refresh_stale_futures_prices(
             remaining = (
                 await session.execute(
                     text(
-                        """
+                        f"""
                         SELECT COUNT(*) FROM futures_markets fm
-                         WHERE fm.status = 'open'
-                           AND fm.source IN ('kalshi', 'polymarket')
+                         WHERE {LIVE_MARKET_SQL}
                            AND fm.market_tier = 1
                            AND fm.volume >= :volume_floor
-                           AND (fm.resolution_date IS NULL
-                                OR fm.resolution_date > NOW())
                            AND NOT EXISTS (
                                  SELECT 1 FROM futures_outcomes fo
                                    JOIN futures_odds_snapshots s

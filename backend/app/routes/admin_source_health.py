@@ -8,6 +8,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import get_db
+from app.utils.futures_liveness import (
+    BASE_LIVENESS_SQL,
+    LIVE_MARKET_SQL,
+    SETTLED_EXCLUSION_REASON_SQL,
+    SETTLED_ONLY_SQL,
+    VENUE_SETTLED_CONFIRM_HOURS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -148,16 +155,14 @@ async def source_health(
 # times out against the 179M-row snapshot table; this rides
 # `idx_fos_outcome_captured` and stops at the first row inside the window.
 
-_PRICE_DARK_SQL = """
+_PRICE_DARK_SQL = f"""
     SELECT fm.source,
            COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
            COUNT(*) AS dark
       FROM futures_markets fm
-     WHERE fm.status = 'open'
-       AND fm.source IN ('kalshi', 'polymarket')
+     WHERE {LIVE_MARKET_SQL}
        AND fm.market_tier = 1
        AND fm.volume >= :volume_floor
-       AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
        AND NOT EXISTS (
              SELECT 1 FROM futures_outcomes fo
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
@@ -168,15 +173,13 @@ _PRICE_DARK_SQL = """
      ORDER BY 3 DESC
 """
 
-_PRICE_DARK_WORST_SQL = """
+_PRICE_DARK_WORST_SQL = f"""
     SELECT fm.source, fm.external_id, fm.name, fm.volume,
            COALESCE(fm.llm_sport_category, 'uncategorized') AS category
       FROM futures_markets fm
-     WHERE fm.status = 'open'
-       AND fm.source IN ('kalshi', 'polymarket')
+     WHERE {LIVE_MARKET_SQL}
        AND fm.market_tier = 1
        AND fm.volume >= :volume_floor
-       AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
        AND NOT EXISTS (
              SELECT 1 FROM futures_outcomes fo
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
@@ -198,14 +201,12 @@ _PRICE_DARK_WORST_SQL = """
 #:
 #: No tier or volume bound, same liveness bounds, same snapshot-derived freshness
 #: — the register decides membership and the market decides nothing.
-_REGISTERED_DARK_SQL = """
+_REGISTERED_DARK_SQL = f"""
     SELECT fm.id, fm.source, fm.external_id, fm.name, fm.market_tier,
            COALESCE(fm.llm_sport_category, 'uncategorized') AS category
       FROM futures_markets fm
      WHERE fm.id = ANY(:market_ids)
-       AND fm.status = 'open'
-       AND fm.source IN ('kalshi', 'polymarket')
-       AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
+       AND {LIVE_MARKET_SQL}
        AND NOT EXISTS (
              SELECT 1 FROM futures_outcomes fo
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
@@ -215,12 +216,31 @@ _REGISTERED_DARK_SQL = """
      ORDER BY fm.id
 """
 
-_REGISTERED_ELIGIBLE_SQL = """
+_REGISTERED_ELIGIBLE_SQL = f"""
     SELECT COUNT(*) FROM futures_markets fm
      WHERE fm.id = ANY(:market_ids)
-       AND fm.status = 'open'
-       AND fm.source IN ('kalshi', 'polymarket')
-       AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
+       AND {LIVE_MARKET_SQL}
+"""
+
+#: #2222 — the exclusion report, and the reason the guard is not allowed to
+#: simply shrink its own denominator.
+#:
+#: Every market this endpoint rules out as settled would previously have been
+#: counted dark. Dropping them silently would let the very task being measured
+#: talk the alarm into green: the task writes the venue-settled stamp, and the
+#: stamp is one of the two bounds. So the endpoint reports the excluded
+#: population and WHY, next to its verdict. Green now reads "no live market is
+#: dark, and here are the N I ruled not-live" — which is checkable — rather than
+#: "no market is dark", which would not be.
+_SETTLED_EXCLUDED_SQL = f"""
+    SELECT {SETTLED_EXCLUSION_REASON_SQL} AS reason,
+           fm.source, fm.external_id, fm.name, fm.volume
+      FROM futures_markets fm
+     WHERE {BASE_LIVENESS_SQL}
+       AND fm.market_tier = 1
+       AND fm.volume >= :volume_floor
+       AND {SETTLED_ONLY_SQL}
+     ORDER BY fm.volume DESC
 """
 
 
@@ -247,6 +267,11 @@ async def futures_price_freshness(
     }
     rows = (await db.execute(text(_PRICE_DARK_SQL), params)).fetchall()
     worst = (await db.execute(text(_PRICE_DARK_WORST_SQL), params)).fetchall()
+    settled = (
+        await db.execute(
+            text(_SETTLED_EXCLUDED_SQL), {"volume_floor": HIGH_VALUE_VOLUME_FLOOR}
+        )
+    ).fetchall()
 
     total_eligible = (
         await db.execute(
@@ -331,6 +356,35 @@ async def futures_price_freshness(
         "volume_floor": HIGH_VALUE_VOLUME_FLOOR,
         "eligible_markets": int(total_eligible),
         "price_dark": dark_total,
+        # #2222. NEVER drop a population silently: these markets used to be
+        # counted dark and are now ruled not-live, so the verdict only means
+        # something if the reader can see what left and why.
+        "settled_excluded": {
+            "why": (
+                "a market with a graded winner, or one a source has positively "
+                f"reported as over for more than {VENUE_SETTLED_CONFIRM_HOURS}h, "
+                "cannot be re-priced and is not counted dark"
+            ),
+            "count": len(settled),
+            "by_reason": {
+                reason: sum(1 for r in settled if r[0] == reason)
+                for reason in sorted({r[0] for r in settled})
+            },
+            # A SAMPLE, and named one: `count` is the whole population, this
+            # list is the 25 most valuable. Calling a truncated list `markets`
+            # is how a cap reads as coverage.
+            "sample_limit": 25,
+            "sample_markets": [
+                {
+                    "reason": r[0],
+                    "source": r[1],
+                    "external_id": r[2],
+                    "name": r[3],
+                    "volume": int(r[4]) if r[4] is not None else None,
+                }
+                for r in settled[:25]
+            ],
+        },
         "by_category": by_category,
         "worst_offenders": [
             {
