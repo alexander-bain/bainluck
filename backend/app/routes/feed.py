@@ -140,12 +140,17 @@ from app.utils.feed_cache import (
     FEED_PREWARM_KEY_SCOPE_KEY,
     FEED_PREWARM_SCOPE_KEY,
     FEED_RESPONSE_STALE_TTL_SECONDS,
+    FEED_PAGE_BASE_BUILT_AT_FIELD,
     build_feed_cache_metadata,
+    feed_page_base_built_at,
+    feed_page_base_cache_key,
+    feed_page_base_enabled,
     feed_response_cache_key,
     feed_response_cache_ttl,
     feed_response_cache_ttls,
     inert_principal_share_enabled,
     payload_contains_live_event,
+    render_feed_page_from_base,
 )
 from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
@@ -2457,6 +2462,127 @@ async def get_feed(
                     )
                     return _shared_payload
 
+        # --- LAT-P141: page 2 is the same build as page 1 --------------------
+        #
+        # Everything above this line is keyed on ``offset``. The BUILD below it
+        # is not: ``offset`` reaches it at exactly one expression, the
+        # ``feed_items[offset : offset + limit]`` slice near the end. So a
+        # request for page 2 re-runs the pools, the scoring and the whole
+        # display chain to produce a list it already produced for page 1, and
+        # then throws the first ``offset`` items away.
+        #
+        # Nothing warms an offset > 0 key and nothing can: the warmer would have
+        # to run the identical build once per page. Measured on production
+        # 2026-08-30, fresh session per sample, native Discover shape —
+        # offset=0 46 ms shared_hit, offset=50 1,329 ms MISS, offset=100
+        # 1,232 ms MISS; web offset=20 1,033 ms, offset=40 1,164 ms.
+        #
+        # The base is that list, stored whole under a key with no offset in it,
+        # so ONE build serves every page — including the warmer's, which now
+        # warms the whole scroll at no extra cost to itself.
+        #
+        # 🔴 THE ELIGIBILITY PREDICATE IS LAT-P089'S, NOT A NEW ONE. The base is
+        # the anonymous list. It may be read or written only when this build is
+        # PROVABLY the anonymous build — ``ctx == PersonalizationContext()``,
+        # structural equality, which is the same test that already licenses the
+        # inert-principal share above and is pinned by
+        # ``test_feed_inert_principal_share_p089.py``. A personalized reader
+        # fails closed to the build. ``my_teams_only`` is refused outright even
+        # though a default ctx would already exclude it: a followed-teams page
+        # must never be reachable from a shared list, and stating that costs one
+        # clause.
+        #
+        # 🔴 `not _prewarm_rebuild` IS LOAD-BEARING, AND IT IS LAT-P001'S RULE
+        # AGAIN. The warmer must genuinely BUILD; a warmer that reads any cache
+        # tier republishes the same ageing payload forever and looks, from
+        # outside, exactly like a warmer that works. The per-offset read above
+        # already skips for the warmer and this tier has to skip for the same
+        # reason — the base is the tier the warmer is FOR, so a warmer served
+        # from it would refresh nothing at all.
+        # `tests/integration/test_route_feed_prewarm.py::
+        # test_a_stale_entry_serves_requests_but_does_not_satisfy_the_warmer`
+        # caught the first draft of this block doing exactly that.
+        _page_base_key = None
+        if (
+            _cache_key
+            and _cache_shape is not None
+            and _shared_redis is not None
+            and feed_page_base_enabled()
+            and not my_teams_only
+            and ctx == PersonalizationContext()
+        ):
+            # Derived from `_cache_shape` BY EXCLUSION, never re-typed. A build
+            # input added to the response key is then automatically in the base
+            # key too; re-typing the list would mean the next new field keys the
+            # pages but not the base, and page 2 would come off the wrong list —
+            # a wrong answer that no latency measurement would notice.
+            _page_base_shape = {
+                k: v for k, v in _cache_shape.items() if k != "offset"
+            }
+            _page_base_key = feed_page_base_cache_key(**_page_base_shape)
+            _base_raw, _base_status = (
+                (None, None)
+                if _prewarm_rebuild
+                else await _read_shared_feed_cache(_shared_redis, _page_base_key)
+            )
+            _base_body = (
+                _safe_cache_payload(_base_raw) if _base_raw is not None else None
+            )
+            _base_page = (
+                render_feed_page_from_base(_base_body, limit=limit, offset=offset)
+                if _base_body is not None
+                else None
+            )
+            if _base_page is not None:
+                _pb_status = (
+                    "page_base_hit"
+                    if _base_status == "shared_hit"
+                    else "page_base_stale_hit"
+                )
+                # Off the BASE, not the page: CERT-409 provenance travels with
+                # the stored list, and `render_feed_page_from_base` strips it so
+                # it cannot leak into the response shape.
+                _pb_built_at = feed_page_base_built_at(_base_body)
+                _rc.remember_last_good(
+                    _cache_key, _base_page, built_at=_pb_built_at
+                )
+                # Liveness is re-derived from the PAGE, not the base: the ttl
+                # reported to this caller describes what this caller was handed.
+                _pb_live = payload_contains_live_event(_base_page)
+                _pb_fresh_ttl, _pb_stale_ttl = _live_ttls(_base_page)
+                _base_page["cache"] = build_feed_cache_metadata(
+                    _pb_status,
+                    ttl_seconds=_pb_fresh_ttl,
+                    stale_ttl_seconds=_pb_stale_ttl,
+                    reason="page_base",
+                    live=_pb_live,
+                    built_at=_pb_built_at,
+                )
+                if _is_build_leader and _sf_future is not None:
+                    _rc.finish_build(_cache_key, _sf_future, result=_base_page)
+                # Deliberately republishes NOTHING. LAT-P089 backfills the
+                # private key because its share saves a whole DB context load on
+                # the next open; here the next open is already ~10 ms and a
+                # per-page-view write would put the base's own lifetime in the
+                # hands of its readers, which is the unbounded-staleness shape
+                # that block warns about.
+                _previous_at = _record_feed_timing(
+                    _timings, _started_at, _previous_at, "cache_page_base_hit"
+                )
+                _finalize_feed_response(
+                    response,
+                    cache_status=_pb_status,
+                    singleflight="leader" if _is_build_leader else "none",
+                    timings=_timings,
+                    started_at=_started_at,
+                    counts=_feed_obs_counts(
+                        _base_page.get("items"),
+                        total=_base_page.get("total", 0),
+                        returned=len(_base_page.get("items") or []),
+                    ),
+                )
+                return _base_page
+
         # Build team name set once (used by both scoring functions + response).
         # Only uses Team.name (full ESPN display name like "Brown Bears"), NOT
         # alternate_names (short forms like "Bears", "Brown") which cause false
@@ -2970,8 +3096,15 @@ async def get_feed(
                 debug_payload["external_curator_ground_truth_misses"] = []
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
 
-        # Remove internal sort/debug keys
-        for item in paginated:
+        # Remove internal sort/debug keys.
+        #
+        # LAT-P141: over ``feed_items``, not ``paginated``. ``paginated`` is a
+        # window onto the SAME dict objects, so this is a strict superset of
+        # what it scrubbed before — the returned page is byte-identical — and it
+        # is what makes the whole list publishable as a page base. Scrubbing
+        # only the window and then storing the list would have shipped
+        # ``_rank_score`` and friends to every reader of page 2.
+        for item in feed_items:
             # #1885: PROMOTE the story key into the card before dropping the
             # internal one. The server's own caps thin a family down, but the
             # client re-orders what it is given (`FeedInterleave`), and it was
@@ -3116,6 +3249,72 @@ async def get_feed(
                 _rc.schedule_background(_publish_feed_cache())
             except Exception:
                 pass
+
+            # --- LAT-P141: publish the offset-independent page base ----------
+            #
+            # ``_page_base_key`` is non-None only when the read block above
+            # established that this build is the anonymous one (LAT-P089's
+            # equality predicate). So this writes the list it is allowed to
+            # write, and the eligibility test cannot drift between the read and
+            # the write because there is only one of it.
+            #
+            # 🔴 THE TTL IS THE ANONYMOUS ONE, NOT THIS CALLER'S. ``_live_ttls``
+            # asks ``identified=bool(feed_user or feed_session_id)``, which is a
+            # statement about the READER. The base is not this reader's entry —
+            # it is the anonymous list, and a fresh session that happens to
+            # build it must not stamp a 5 s lifetime on a 60 s entry, or the
+            # thing would expire before the next scroll and this fix would
+            # measure as noise. The live ceiling still applies, derived from the
+            # FULL list: a live card at position 60 shortens the base even
+            # though page 1 cannot see it, which is the conservative direction.
+            #
+            # This is a publication of a FRESH BUILD, so LAT-P089's "the shared
+            # entry is the warmer's to publish" warning does not reach it. That
+            # warning is about republishing content READ from a shared entry,
+            # which extends an old payload's life without refreshing it; this
+            # stores something computed in this request.
+            if _page_base_key:
+                try:
+                    _page_base_body = dict(payload)
+                    _page_base_body["items"] = feed_items
+                    _page_base_body["total"] = total
+                    # Per-serve fields. ``render_feed_page_from_base`` sets all
+                    # four; leaving them in the stored body would let a future
+                    # reader take one page's window for the base's own.
+                    for _per_serve in ("cache", "limit", "offset", "has_more"):
+                        _page_base_body.pop(_per_serve, None)
+                    # CERT-409: carry the build time the payload already
+                    # computed. Minting a new one at read time is the exact
+                    # clock-restart that ruling forbids.
+                    _page_base_body[FEED_PAGE_BASE_BUILT_AT_FIELD] = _built_at
+                    _base_fresh_ttl, _base_stale_ttl = feed_response_cache_ttls(
+                        my_teams_only=False,
+                        identified=False,
+                        live=payload_contains_live_event(_page_base_body),
+                    )
+                    _page_base_json = _json_module.dumps(
+                        _page_base_body, default=str
+                    )
+
+                    async def _publish_feed_page_base(
+                        _client=_shared_redis,
+                        _json=_page_base_json,
+                        _key=_page_base_key,
+                        _fresh_ttl=_base_fresh_ttl,
+                        _stale_ttl=_base_stale_ttl,
+                    ):
+                        await _rc.bounded_redis_call(
+                            lambda: _client.setex(_key, _fresh_ttl, _json)
+                        )
+                        await _rc.bounded_redis_call(
+                            lambda: _client.setex(
+                                f"{_key}:stale", _stale_ttl, _json
+                            )
+                        )
+
+                    _rc.schedule_background(_publish_feed_page_base())
+                except Exception:
+                    pass
 
         # Item 1 (Queue 273 → centralized Queue 275): identity-free per-stage +
         # card-type-coverage export on the built (cold/degraded) response so an

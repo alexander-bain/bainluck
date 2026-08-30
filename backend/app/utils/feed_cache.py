@@ -131,6 +131,175 @@ def inert_principal_share_enabled() -> bool:
     return str(raw).strip().lower() not in _INERT_SHARE_OFF_VALUES
 
 
+# --- LAT-P141: the page base ---------------------------------------------------
+# ``GET /api/feed`` builds the WHOLE ranked list on every request and then does
+# ``feed_items[offset : offset + limit]``. ``offset`` reaches the build at
+# exactly one place — that slice. Every other stage (pools, scoring, the display
+# chain) depends on ``limit`` and the shape, never on the offset.
+#
+# The response cache, however, keys on ``offset``. So page 2 is a different key
+# holding the same build, nobody warms it, and it is a guaranteed cold build.
+# Measured on production 2026-08-30, one fresh ``x-session-id`` per sample,
+# native Discover shape (``limit=50&event_pct=0.15``):
+#
+#     offset=0    46 ms   shared_hit
+#     offset=50   1,329 ms   miss
+#     offset=100  1,232 ms   miss
+#     web offset=20  1,033 ms   miss     offset=40  1,164 ms   miss
+#
+# ``total`` was 105, i.e. the entire feed is three native pages, and the second
+# and third cost 28x the first for a list the server had already built and
+# thrown away.
+#
+# The page base is that list, stored once. One entry per shape-minus-offset
+# serves every page of it.
+#
+# 🔴 IT IS ALWAYS THE ANONYMOUS BUILD, AND THAT IS STRUCTURAL, NOT A CONVENTION.
+# This key takes no ``user_id`` and no ``session_id`` — not "defaulted to None",
+# ABSENT — so no caller can key a personalized list into it by passing the wrong
+# argument. The route publishes and reads it only under LAT-P089's own equality
+# predicate (``ctx == PersonalizationContext()``), which is the already-ratified
+# proof that such a build is byte-identical to the anonymous one. This inherits
+# that argument rather than inventing a second one.
+FEED_PAGE_BASE_CACHE_PREFIX = f"{FEED_RESPONSE_CACHE_PREFIX}:pagebase"
+
+# The prefix is deliberately UNDER ``feed_cache:`` so
+# ``invalidate_feed_response_cache``'s ``feed_cache:*`` scan already deletes
+# bases and their stale mirrors. An invalidation that cleared the pages but left
+# the base behind would re-serve the pre-invalidation list on the next scroll.
+FEED_PAGE_BASE_ENV = "FEED_PAGE_BASE"
+_PAGE_BASE_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+
+#: Where a stored base keeps its CERT-409 build time. Not ``cache.built_at``,
+#: because ``cache`` describes a serve and the base is never served as-is.
+FEED_PAGE_BASE_BUILT_AT_FIELD = "_page_base_built_at"
+
+
+def feed_page_base_enabled() -> bool:
+    """Whether the offset-independent page base may be read or published.
+
+    Its own lever, not ``FEED_INERT_PRINCIPAL_SHARE``'s. The two share a
+    soundness argument but not a failure mode: turning the inert share off is
+    "stop letting sessions read the anonymous entry", turning this off is "stop
+    serving pages from a stored list". An operator narrowing one should not have
+    to accept the other.
+
+    Unset means ENABLED, and an unrecognised value also means enabled — same
+    reasoning as ``inert_principal_share_enabled``.
+    """
+    raw = os.environ.get(FEED_PAGE_BASE_ENV)
+    if raw is None:
+        return True
+    return str(raw).strip().lower() not in _PAGE_BASE_OFF_VALUES
+
+
+def feed_page_base_cache_key(
+    *,
+    sport: Optional[str] = None,
+    limit: int,
+    include_events: bool = True,
+    include_futures: bool = True,
+    tags: Optional[str] = None,
+    event_pct: Optional[float] = None,
+    my_teams_only: bool = False,
+    mode: Optional[str] = None,
+) -> str:
+    """Key for one stored, offset-independent Discover build.
+
+    Every parameter here is a build input. ``offset`` is absent because it is
+    not one, and no principal appears because the base is only ever the
+    anonymous build (see the block comment above).
+
+    ``limit`` IS a build input and stays in the key —
+    ``apply_discover_display_chain``'s own docstring says so ("Several stages
+    size their windows from it, so it is part of the build, not just the
+    slice"). Native (50) and web (20) therefore get one base each, which is
+    honest: they are two different lists, not two windows onto one.
+
+    ``tests/test_feed_page_base_p141.py`` pins this signature against
+    ``get_feed``'s ``_cache_shape`` so a build input added to the response key
+    cannot be silently omitted here — omitting one would serve page 2 of the
+    wrong list, which no latency test would catch.
+    """
+    parts = (
+        f"pagebase:{sport or 'all'}:{limit}:"
+        f"{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}:"
+        f"{my_teams_only}:{mode or 'discover'}"
+    )
+    return f"{FEED_PAGE_BASE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
+
+
+def render_feed_page_from_base(
+    base: Any, *, limit: int, offset: int
+) -> Optional[dict]:
+    """Slice a stored page base into the payload ``get_feed`` would have built.
+
+    Pure: no clock, no I/O, no Redis. That is the point — the serve-time half of
+    this fix is testable without a cache, and gotcha #44's "a test anchor must
+    not branch on the clock" cannot bite a function that has no clock to branch
+    on.
+
+    Returns ``None`` — meaning "fail closed, build it" — for anything it cannot
+    vouch for:
+
+    * a non-dict base, or one whose ``items`` is not a list;
+    * ``len(items) != total``. The base is the WHOLE list by construction, so a
+      disagreement means a truncated, legacy or half-written blob. Serving one
+      would silently under-report ``has_more`` and end a user's scroll early —
+      a wrong answer, not a slow one, and the reliability bar puts that first.
+
+    ``has_more`` is recomputed as ``(offset + limit) < total`` because that is
+    the exact expression the build uses and the native client mirrors
+    (``DiscoverViewModel.swift`` advances by the server page boundary, not by
+    the decoded count).
+
+    The base's own ``built_at`` (CERT-409) is stripped from the rendered page
+    rather than passed through: it is the BASE's provenance, it belongs in the
+    served page's ``cache`` metadata and nowhere else, and a stray top-level
+    key would change the public response shape. The caller reads it off the
+    base — ``feed_page_base_built_at`` — and stamps it there.
+    """
+    if not isinstance(base, dict):
+        return None
+    items = base.get("items")
+    if not isinstance(items, list):
+        return None
+    total = base.get("total")
+    if not isinstance(total, int) or total != len(items):
+        return None
+    out = dict(base)
+    out["items"] = items[offset : offset + limit]
+    out["total"] = total
+    out["limit"] = limit
+    out["offset"] = offset
+    out["has_more"] = (offset + limit) < total
+    # Both describe THIS serve or the BASE, never the page. Cache metadata is
+    # stamped by the caller; provenance travels via `feed_page_base_built_at`.
+    out.pop("cache", None)
+    out.pop(FEED_PAGE_BASE_BUILT_AT_FIELD, None)
+    return out
+
+
+def feed_page_base_built_at(base: Any) -> Optional[float]:
+    """The epoch at which a stored page base's CONTENT was computed.
+
+    CERT-409's rule is that every tier CARRIES the build time rather than
+    minting its own — otherwise each hop silently restarts the clock the live
+    ceiling is measured against. The base cannot keep it in ``cache`` (that
+    field is per-serve and is dropped on store), so it keeps it here, and this
+    is the only reader.
+
+    ``None`` for a base written before this field existed, which is the same
+    legitimate-unknown ``_payload_built_at`` returns and degrades the same way:
+    ``remember_last_good`` falls back to read-time, no weaker than the
+    pre-LAT-P141 behaviour, exact again on the next rebuild.
+    """
+    if not isinstance(base, dict):
+        return None
+    built_at = base.get(FEED_PAGE_BASE_BUILT_AT_FIELD)
+    return float(built_at) if isinstance(built_at, (int, float)) else None
+
+
 def feed_response_cache_key(
     *,
     user_id: Any = None,
