@@ -85,6 +85,7 @@ _NON_GOLF_RE = re.compile(
 # Positive golf signals — market names that indicate actual golf content.
 # For Kalshi/Polymarket, passing the blocklist is necessary but not sufficient.
 # The market name must also contain at least one golf-related term.
+#
 _GOLF_SIGNAL_RE = re.compile(
     r"\b(?:"
     r"golf|golfer|pga|lpga|"
@@ -100,6 +101,101 @@ _GOLF_SIGNAL_RE = re.compile(
     r"top\s+\d+\s+finish|make\s+the?\s+cut|"
     r"birdie|bogey|eagle|par\s+\d|under\s+par"
     r")\b",
+    re.I,
+)
+
+# ============================================================================
+# The GENERIC-WORD gate (Q446) — a tournament word is not a sport claim
+# ============================================================================
+#
+# `_GOLF_SIGNAL_RE` above accepts a market on `masters` alone, and `masters` is
+# not a golf word: it is a generic English tournament word that darts, snooker,
+# chess, esports and Philippine basketball all use. Measured on production
+# 2026-08-29, that is not hypothetical. `GET /api/golf` was serving, inside its
+# PGA Tour section:
+#
+#     New Zealand Darts Masters   15 "golfers"  (Simon Whitlock, James Wade)
+#     Asia Masters 2026            4 "golfers"  (Dplus Challengers, T1 Esports
+#                                                 Academy, NS Challengers, KT
+#                                                 Challengers — a League of
+#                                                 Legends bracket)
+#
+# The blocklist could not save either one: neither name contains a darts or an
+# esports token, so both reached the allowlist and `masters` waved them through.
+# Extending the blocklist is whack-a-mole — the next one is snooker, or pool, or
+# a Masters of anything. The structural rule is that a GENERIC word is not
+# evidence of a SPORT, so it may not stand alone.
+#
+# MONOTONE BY CONSTRUCTION, and that is the whole design (the rule `_is_placeholder_price`
+# already follows below): this gate runs AFTER `_GOLF_SIGNAL_RE`, never instead of
+# it, so it can only ever REJECT. No market that the golf page serves today starts
+# being served because of this code. Verified over the full 7,622-row golf-identity
+# population: 18 rejected, 0 admitted.
+#
+# WEAK: the words that may not stand alone.
+_GOLF_WEAK_ONLY_RE = re.compile(
+    r"\b(?:masters|open|classic|invitational|major)\b",
+    re.I,
+)
+
+# ...and the rest of `_GOLF_SIGNAL_RE`, which may. Kept as its own pattern rather
+# than as "signal minus weak" so that neither can be edited without the other
+# being looked at.
+_GOLF_STRONG_SIGNAL_RE = re.compile(
+    r"\b(?:"
+    r"golf|golfer|pga|lpga|"
+    r"ryder|presidents?\s+cup|"
+    r"hole[-\s]in[-\s]one|"
+    r"wgc|"
+    r"liv\s+golf|korn\s+ferry|"
+    r"dp\s+world|sunshine\s+tour|"
+    r"asian\s+tour|european\s+tour|"
+    r"top\s+\d+\s+finish|make\s+the?\s+cut|"
+    r"birdie|bogey|eagle|par\s+\d|under\s+par"
+    r")\b",
+    re.I,
+)
+
+# CORROBORATION 1 — Kalshi writes the tour into the ticker, ahead of the event
+# name, and it does so systematically. That is a claim by the VENUE rather than by
+# our own classifier, which is what makes it worth reading: `KXLPGAR2LEAD-CPKWO26`
+# ("CPKC Women's Open End of Round 2 Leader") is real LPGA golf whose name says
+# only "Open", and the first cut of this rule dropped it along with the darts.
+#
+# `KXPGAAWARDS` (the Producers Guild film awards) shares the `KXPGA` prefix and is
+# NOT excluded here: `_NON_GOLF_RE` already refuses it on "pga award"/"motion
+# picture" several lines earlier, so it never reaches corroboration.
+_KALSHI_GOLF_TICKER_RE = re.compile(
+    r"^kx(?:pga|lpga|dpworldtour|kornferry|kftour|liv|champtour|golf|prescup|rydercup)",
+    re.I,
+)
+
+# CORROBORATION 2 — a named golf event, not a generic word. `masters` and
+# `the open` are absent because they are the two ambiguous ones and have measured
+# disambiguators of their own (`_is_the_masters`, `_is_the_open`), which the caller
+# consults separately.
+_GOLF_MAJOR_NAME_RE = re.compile(
+    r"\b(?:"
+    r"u\.?s\.?\s+open|pga\s+championship|players\s+championship|"
+    r"ryder\s+cup|presidents?\s+cup|tour\s+championship|fedex\s+cup|"
+    # The full name is unambiguous where the bare word is not: chess writes
+    # "Grand Masters", darts "Darts Masters", the PBA "Fuel Masters". Only Augusta
+    # writes "Masters Tournament" — and `_is_the_masters` will not vouch for
+    # "the 2022 US Masters Tournament", because "us" is not one of the two words
+    # it allows in front.
+    r"masters\s+tournament"
+    r")\b",
+    re.I,
+)
+
+# CORROBORATION 3 — a golf MARKET SHAPE. "Will <player> finish in the Top 10 at
+# the 2026 <event>?" is how Polymarket writes a golf placement market, and those
+# names carry no golf word at all beyond the event's own generic one. Not promoted
+# into `_GOLF_STRONG_SIGNAL_RE`, because that pattern is also the outer gate and
+# adding a term to it would ADMIT 2,197 markets the page does not serve today —
+# measured, and out of scope for a queue whose ship is removing wrong content.
+_GOLF_SHAPE_RE = re.compile(
+    r"\bfinish\s+in\s+the\s+top\s+\d+\b|\balbatross\b",
     re.I,
 )
 
@@ -142,7 +238,40 @@ def _is_golf_market(market) -> bool:
         logger.debug("Golf filter: rejected '%s' (source=%s) — no golf signal", name, source)
         return False
 
-    return True
+    # THE GENERIC-WORD GATE (Q446). Everything above is unchanged; this runs after
+    # it and can only reject. A market whose ONLY golf signal is a word every sport
+    # owns must corroborate golf somewhere our classifier did not write it: the tour
+    # the market itself declares (Kalshi encodes it in the ticker — `KXDPWORLDTOUR-OMEM26`
+    # is how the real Omega European Masters survives this), a named golf event, one
+    # of the two ambiguous majors via its own disambiguator, or a golf market shape.
+    #
+    # `llm_sport_category` is deliberately NOT corroboration: it is the field that put
+    # every one of these rows here, so reading it back would be the classifier
+    # vouching for itself.
+    if _GOLF_STRONG_SIGNAL_RE.search(name):
+        return True
+    if not _GOLF_WEAK_ONLY_RE.search(name):
+        # Signalled by something in `_GOLF_SIGNAL_RE` that is in neither list —
+        # unreachable while the two patterns partition it, and an accept rather than
+        # a reject so a future edit to one pattern cannot silently empty the page.
+        return True
+    if (
+        _KALSHI_GOLF_TICKER_RE.search(external_id)
+        or _declared_tour(name, external_id) is not None
+        or _GOLF_MAJOR_NAME_RE.search(name)
+        or _GOLF_SHAPE_RE.search(name)
+        or _is_the_masters(name)
+        or _is_the_open(name)
+    ):
+        return True
+
+    logger.debug(
+        "Golf filter: rejected '%s' (source=%s) — generic tournament word with no "
+        "golf corroboration",
+        name,
+        source,
+    )
+    return False
 
 
 # ============================================================================
