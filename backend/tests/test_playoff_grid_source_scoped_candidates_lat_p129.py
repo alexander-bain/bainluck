@@ -42,8 +42,8 @@ from app.config.league_configs import get_all_league_slugs, get_league_config
 from app.routes.playoffs import (
     GRID_ID_SPACE_SOURCE,
     _build_grid_market_filters,
-    _league_pattern_to_ilike,
 )
+from app.utils.regex_to_ilike import regex_to_ilike
 
 
 # ---------------------------------------------------------------------------
@@ -350,9 +350,13 @@ def test_status_split_is_preserved(slug):
 def _representative_name(config) -> str:
     """A market name that satisfies this league's first live name pattern."""
     for pattern in config.league_name_patterns or []:
-        body = _league_pattern_to_ilike(pattern)
+        body = regex_to_ilike(pattern)
         if body:
-            return f"The {body} market"
+            # `regex_to_ilike` emits `%` where the regex allowed run-of-whitespace
+            # or an unrepresentable construct. A NAME has to be concrete, so the
+            # wildcards become single spaces — which is exactly what the ILIKE
+            # they came from will match.
+            return f"The {body.replace('%', ' ').strip()} market"
     return "anything"
 
 
@@ -377,17 +381,27 @@ def test_bare_filter_carries_no_status_term(slug):
         (r"\bEPL\b", "EPL"),
         (r"\bBundesliga\b", "Bundesliga"),
         (r"\bMLB\b", "MLB"),
-        # `\b` and `\s` are stripped before the `\s+`->`%` rule can fire, so
-        # multi-word patterns collapse to a literal `+`. That is PRE-EXISTING
-        # behaviour and is pinned, not fixed, here: these patterns match nothing
-        # today, and changing that would widen every grid's candidate set — a
-        # product change, not this queue's latency one. Parked as P129-2.
-        (r"\bPremier\s+League\b", "Premier+League"),
-        (r"\bWorld\s+Series\b", "World+Series"),
+        # ═══ P129-2 IS DISCHARGED — this is the union's assertion, inverted ═══
+        #
+        # LAT-P129 pinned these two as `Premier+League` / `World+Series`: the old
+        # converter stripped `\b` and `\s` in one pass, so `\s+` lost its `\s`
+        # before the `\s+`->`%` rule could fire and was left as a bare `+`. That
+        # queue recorded the behaviour as pre-existing and parked widening it as
+        # a product change (P129-2). UX-P173 IS that product change — it measured
+        # the cost (la-liga and champions-league rendered "no championship odds
+        # available yet" over open, tier-1, freshly-priced markets) and retired
+        # the converter for `regex_to_ilike`.
+        #
+        # So the expectation flips rather than being deleted: a multi-word
+        # pattern must now WIDEN to `%`, never collapse to a literal that ILIKE
+        # can never match. Deleting this case would have let the defect return
+        # unobserved.
+        (r"\bPremier\s+League\b", "Premier%League"),
+        (r"\bWorld\s+Series\b", "World%Series"),
     ],
 )
-def test_league_pattern_to_ilike_is_unchanged(pattern, expected):
-    assert _league_pattern_to_ilike(pattern) == expected
+def test_multi_word_patterns_widen_instead_of_collapsing(pattern, expected):
+    assert regex_to_ilike(pattern) == expected
 
 
 @pytest.mark.parametrize("slug", ALL_SLUGS)

@@ -21,6 +21,10 @@ const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashb
 import PropDivergenceRail from "@/components/PropDivergenceRail";
 const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarkets"), { ssr: false });
 const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false, loading: ChartSkeleton });
+// UX-P152: the tournament's sections OF this page. Dynamic and below the fold —
+// 94 events on the whole site render it and none of them should pay for it in
+// the initial bundle.
+const TournamentExtensions = dynamic(() => import("@/components/event/TournamentExtensions"), { ssr: false });
 // L2-118 Phase 1: the archetype-agnostic props body (SCRIPT / DIVERGENCE / WHAT HIT).
 const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { ssr: false });
 import type { PropMark } from "@/components/event/PropsSection";
@@ -1245,6 +1249,23 @@ export default function EventPage({ params }: EventPageProps) {
           </SectionErrorBoundary>
         );
       })()}
+
+      {/* TOURNAMENT EXTENSIONS (UX-P152) — the sections a tournament adds to an
+          ORDINARY event page, below the graph, for an event that belongs to a
+          container: each player's chance of reaching each later round, and the
+          match's other questions.
+
+          Alex, 2026-08-28: "I thought that tournaments were containers for
+          related events." They are, and this is a section of the event page
+          rather than a page of its own — UX-P149's separate
+          /tournaments/{slug}/matches/{key} surface is deleted, and a US Open
+          match card now routes here like any other game card.
+
+          Renders nothing for every event that is not in a registered
+          tournament, and makes no request for one whose sport key rules it out. */}
+      <SectionErrorBoundary label="Tournament" resetKey={eventId}>
+        <TournamentExtensions eventId={eventId} sportKey={event.sport} />
+      </SectionErrorBoundary>
 
       {/* Related Futures — bigger picture context (below charts) */}
       <SectionErrorBoundary label="Related futures" resetKey={eventId}>

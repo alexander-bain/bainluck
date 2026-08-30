@@ -1,0 +1,158 @@
+{
+  "_source": [
+    "UX-P166 — real production payloads, pulled 2026-08-29 from GET /api/events/{id}",
+    "on the deployed build. Not hand-authored: the `opening_odds` and `current_odds`",
+    "blocks below are verbatim what the endpoint served, and the `naive_*` fields",
+    "record what the shipped surfaces printed from them BEFORE this queue.",
+    "",
+    "WHY BARCELONA IS THE EXEMPLAR. Its `opening_odds` and `current_odds` hold the",
+    "SAME two floats — 0.845 home, 0.155 away. The card printed `85/15` from",
+    "current_odds (which carries the server's rendered percents) and `Opened 85/16`",
+    "from opening_odds (which carries none), so one card disagreed with itself about",
+    "one pair of numbers. The fix already existed one field over.",
+    "",
+    "POPULATION (db-query over `events`, same day): every one of the 24,117 events",
+    "carrying an opening line is a complement pair, and 207 print 101 — 115",
+    "completed, 91 closed, 1 live. Zero print 99."
+  ],
+  "_census": {
+    "measured_at": "2026-08-29",
+    "printing_statuses": ["live", "completed", "closed"],
+    "total_with_opening_line": 24117,
+    "complement_pairs": 24117,
+    "printed_sum_101": 207,
+    "printed_sum_99": 0,
+    "by_status": {
+      "completed": { "n": 12852, "naive_wrong": 115 },
+      "closed": { "n": 11227, "naive_wrong": 91 },
+      "live": { "n": 38, "naive_wrong": 1 }
+    }
+  },
+  "events": [
+    {
+      "id": 14970075,
+      "status": "closed",
+      "sport": "soccer_spain_la_liga",
+      "home_team": "Barcelona",
+      "away_team": "Athletic Bilbao",
+      "commence_time": "2026-08-27T19:00:00+00:00",
+      "home_score": 2,
+      "away_score": 0,
+      "opening_odds": {
+        "home_probability": 0.845,
+        "away_probability": 0.155,
+        "favorite": "home"
+      },
+      "current_odds": {
+        "home_probability": 0.845,
+        "away_probability": 0.155,
+        "home_rendered_percent": 85,
+        "away_rendered_percent": 15
+      },
+      "naive_opened_home_away": [85, 16],
+      "naive_opened_sum": 101,
+      "expected_opened_home_away": [85, 15],
+      "$why": "THE EXEMPLAR — the identical float pair printed 85/15 from one field and 85/16 from the other, on the same card. 0.155 * 100 is 15.500000000000002 in IEEE 754, so half-up takes it to 16 while the favourite's own 84.5 goes to 85."
+    },
+    {
+      "id": 15291020,
+      "status": "live",
+      "sport": "soccer_japan_j_league",
+      "home_team": "Mito HollyHock",
+      "away_team": "FC Machida Zelvia",
+      "commence_time": "2026-08-29T09:00:00+00:00",
+      "home_score": 1,
+      "away_score": 1,
+      "opening_odds": {
+        "home_probability": 0.315,
+        "away_probability": 0.685,
+        "favorite": "away"
+      },
+      "current_odds": {
+        "home_probability": 0.3431,
+        "away_probability": 0.6569,
+        "home_rendered_percent": 34,
+        "away_rendered_percent": 66
+      },
+      "naive_opened_home_away": [32, 69],
+      "naive_opened_sum": 101,
+      "expected_opened_home_away": [31, 69],
+      "$why": "THE ONE THAT WAS LIVE WHEN THIS WAS MEASURED — the single live 101 in the census. The AWAY side is the favourite here, so the derived point lands on HOME and the home number moves 32 -> 31. That is the favourite-survives rule doing the thing always-away-first would get wrong in the other direction."
+    },
+    {
+      "id": 15199704,
+      "status": "completed",
+      "sport": "soccer_denmark_superliga",
+      "home_team": "AC Horsens",
+      "away_team": "Lyngby",
+      "commence_time": "2026-08-23T14:00:00+00:00",
+      "home_score": 2,
+      "away_score": 1,
+      "opening_odds": {
+        "home_probability": 0.375,
+        "away_probability": 0.625,
+        "favorite": "away"
+      },
+      "current_odds": {
+        "home_probability": 0.9895,
+        "away_probability": 0.0105,
+        "home_rendered_percent": 99,
+        "away_rendered_percent": 1
+      },
+      "naive_opened_home_away": [38, 63],
+      "naive_opened_sum": 101,
+      "expected_opened_home_away": [37, 63],
+      "$why": "The 0.625 / 0.375 pair the handover directive predicted as the latent shape. It is not latent: this event is in the census, and both 62.5 and 37.5 are exactly representable so BOTH sides round up with no floating-point excuse."
+    },
+    {
+      "id": 14877917,
+      "status": "completed",
+      "sport": "baseball_mlb",
+      "home_team": "New York Yankees",
+      "away_team": "Boston Red Sox",
+      "commence_time": "2026-08-29T17:05:00+00:00",
+      "home_score": 6,
+      "away_score": 1,
+      "opening_odds": {
+        "home_probability": 0.6063,
+        "away_probability": 0.3937,
+        "favorite": "home"
+      },
+      "current_odds": {
+        "home_probability": 0.7753,
+        "away_probability": 0.2247,
+        "home_rendered_percent": 78,
+        "away_rendered_percent": 22
+      },
+      "naive_opened_home_away": [61, 39],
+      "naive_opened_sum": 100,
+      "expected_opened_home_away": [61, 39],
+      "$why": "THE LEAVE-ALONE DIRECTION (gotcha #43), and a real row rather than a constructed one. An ordinary complement pair not on a .5 boundary — 23,910 of the 24,117 — must print exactly what it printed before. A guard whose tests only prove it fires is how a diversity cap emptied the Sports tab."
+    },
+    {
+      "id": 900000001,
+      "status": "live",
+      "sport": "tennis_atp",
+      "home_team": "Synthetic Thin Home",
+      "away_team": "Synthetic Thin Away",
+      "commence_time": "2026-08-29T09:00:00+00:00",
+      "home_score": null,
+      "away_score": null,
+      "opening_odds": {
+        "home_probability": 0.57,
+        "away_probability": 0.4,
+        "favorite": "home"
+      },
+      "current_odds": {
+        "home_probability": 0.57,
+        "away_probability": 0.4,
+        "home_rendered_percent": 57,
+        "away_rendered_percent": 40
+      },
+      "naive_opened_home_away": [57, 40],
+      "naive_opened_sum": 97,
+      "expected_opened_home_away": [57, 40],
+      "$why": "SYNTHETIC, and labelled as such — no event in the measured population is out of band, so the only way to pin the out-of-band branch is to construct one. A pair summing to 0.97 must NOT be forced to 100: normalizing it would invent three points of probability rather than round one. Same value as the card_sum_reason exemplar in contracts/rendered_percent.json."
+    }
+  ]
+}

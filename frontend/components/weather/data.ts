@@ -2,12 +2,19 @@ import { getSourceColor } from "@/lib/sourceColors";
 
 export type Source = "kalshi" | "polymarket";
 
+// `leader` is the name of the outcome `prob` belongs to — "Minneapolis" under
+// "Where will it rain on Aug 29, 2026?". Null when the market is binary and the
+// question already carries its own answer; OPTIONAL because the hourly Redis
+// cache can serve a payload built before the field existed, and a hero that
+// printed "undefined" for an hour after deploy would be a worse bug than the
+// one this fixes.
 export type FeaturedMarket = {
   q: string;
   prob: number;
   src: Source;
   tag: string;
   closes: string;
+  leader?: string | null;
 };
 
 export type CityData = {
@@ -47,6 +54,9 @@ export type RainDay = {
 
 export type MonthlyRain = {
   city: string;
+  /** The month the market resolves for ("Nov 2026"). Not the current month —
+   *  a city's surviving row can be any future month, so the card is told. */
+  period?: string | null;
   prob: number;
   src: Source;
   delta24h?: number;
@@ -57,6 +67,8 @@ export type EventMarket = {
   prob: number;
   src: Source;
   closes: string;
+  /** See {@link FeaturedMarket.leader} — same field, same contract. */
+  leader?: string | null;
 };
 
 export type ClimateMarket = {
@@ -71,6 +83,8 @@ export type WildCard = {
   prob: number;
   src: Source;
   tag: string;
+  /** See {@link FeaturedMarket.leader} — same field, same contract. */
+  leader?: string | null;
 };
 
 // Colors sourced from the one registry (@/lib/sourceColors). color=solid hex,

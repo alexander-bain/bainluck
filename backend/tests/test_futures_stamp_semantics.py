@@ -91,7 +91,40 @@ _STAMP = re.compile(
 #: OR removed — "is there at least one" would sit green through half a fix.
 POLL_STAMP_COUNTS = {
     "app/tasks/kalshi.py": 5,
-    "app/tasks/polymarket.py": 7,
+    # 7 -> 9 (UX-P157, #2256). The per-condition sub-market upsert began writing
+    # `volume_24h`, and its `volume_updated_at` stamp comes with it on both the
+    # insert and the conflict-update path — the same pair the PARENT event
+    # upsert twenty lines up has always written.
+    #
+    # THE AUDIT'S CONCLUSION, RE-CHECKED RATHER THAN THE COUNT BUMPED, which is
+    # what this census asks for by name:
+    #
+    #   • The severe consumer is untouched. `routes/playoffs.py` drops an
+    #     outcome from the playoff grid on a stale stamp, and it gates on
+    #     `FuturesOutcome.last_updated` — a different table and a different
+    #     column from `FuturesMarket.volume_updated_at`. Neither of the two new
+    #     sites writes `last_updated`.
+    #   • `volume_updated_at` had exactly ONE reader in the tree
+    #     (`routes/calibration.py`'s zero-volume admin diagnostic) and it
+    #     DISPLAYS the value; it never gates on it. Grepped, not assumed.
+    #
+    #     ⚠️ SUPERSEDED THE NEXT DAY, and the census is why it is written down
+    #     rather than discovered later: UX-P158 gave the column a SECOND reader
+    #     that DOES gate on it. `routes/tournaments._load_prices` refuses to
+    #     read a NULL `volume_24h` as "nobody traded it" unless this stamp says
+    #     the venue was asked within the last 24 hours. So the "when the poller
+    #     last looked" semantics above are now load-bearing on a user-visible
+    #     surface, and a writer that stamped this column WITHOUT having looked
+    #     would put a mark on a number nobody measured. Both existing writers
+    #     stamp it in the same statement that writes the figure; a future one
+    #     must too.
+    #   • The new sites carry #2024's own ambiguity — a conflict-update stamps
+    #     on every poll whether or not the figure moved — and that is
+    #     deliberate consistency with the parent row, whose semantics for this
+    #     column are already "when the poller last looked". A sub-market row
+    #     that meant something different from its own parent would be a second
+    #     reading of one column, which is the disease #2024 is about.
+    "app/tasks/polymarket.py": 9,
     "app/tasks/futures.py": 2,
     # #2199: the price refresher. A FOURTH writer, and the census is why it had
     # to declare itself — it exists precisely because the three above cannot

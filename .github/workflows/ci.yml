@@ -451,6 +451,28 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # CERT-433. The CERT-430 comparison specimen renders a payload the BACKEND
+      # builds — `backend/scripts/emit_comparison_specimen.py`, spawned by
+      # `__tests__/components/tournamentReskin.test.tsx` — because a fixture that
+      # hardcodes the repaired payload cannot fail when its producer is deleted.
+      #
+      # Pinned rather than left to the runner's ambient `python3`: the image
+      # happens to ship one today, and a gate that depends on that is a gate
+      # nobody chose.
+      #
+      # NO `cache: pip` AND NO INSTALL STEP, deliberately. The producer imports
+      # zero third-party packages, so this job stays a Node job that can also
+      # run one pure script — it does not become a job that installs the backend
+      # stack to render one card. That property is fragile enough to be worth a
+      # test, and it has one:
+      # `backend/tests/test_comparison_specimen.py::
+      #  test_the_producer_runs_without_our_third_party_requirements`
+      # re-checks it under `-S` in the BACKEND suite, so a new import breaks
+      # there, where the fix is, rather than here, where it isn't.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
       - name: Install dependencies
         run: npm ci
 

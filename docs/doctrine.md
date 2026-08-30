@@ -620,6 +620,351 @@ the INT-108 amendment's first instinct was "keep `owner_pid` accurate" — which
 the same discipline fix that had already failed twice in that very file.
 **Proposing the failed remedy is easy precisely because it is always locally
 reasonable.**
+
+### 24. A translation layer may not speak the source vocabulary in its own voice.
+
+When a product exists to turn one domain's language into another's, the
+translated surface is not allowed to carry the source language — least of all in
+the sentence that **explains** the translated number. Doing the conversion and
+then naming the result in the old vocabulary hands the reader back the thing you
+removed, at the last step, after they had already been spared it.
+
+The tell is that the argument for keeping the word is always **consistency**:
+several surfaces already use it, and changing one would make them disagree. That
+argument is backwards. Consistency is a property worth having *about the right
+word*; several surfaces agreeing on the wrong one is not one reason to keep it,
+it is several places to fix.
+
+Where our names legitimately survive: enum values, data attributes, column
+names, code, comments, reports. The boundary is **rendered text a reader sees** —
+which is also what makes the guard cheap, because a sweep over rendered text
+with attributes stripped is indifferent to the data contracts by construction
+rather than by an exception list.
+
+*Charter case (ruling **138**).* Alex, 2026-08-27: *"'price' as a noun is banned
+in user-facing copy — the word is PROBABILITY."* The morning's earlier line had
+banned *priced* as a verb and kept *price* as the noun, on exactly the
+consistency argument above. The named failure: a platform whose whole premise is
+"60% vs 40%, not -150/+130" was printing **"Prices paused"** over the number it
+had just finished translating.
+
+*The limit, so this is not read as a ban on a word:* it forbids naming OUR
+output in the source vocabulary. It does not forbid the word where the subject
+genuinely is the source thing — `/economics` still says "the price at the pump",
+because that market is about a price.
+
+### 25. A suppression rule must key on everything that makes two items different questions.
+
+Every surface that shows a list eventually grows a rule for "we already have one
+of these" — a template family, a story key, a diversity cap, a near-match
+threshold. Each one derives a KEY and drops whatever collides. The clause is
+about the key: **it must carry every field that makes two items answer different
+questions.** Dropping a field so the rule fires more often does not make it
+stricter. It makes it blind to the distinction it was written to protect.
+
+The reason this needs stating is that the failure is **silent by construction**.
+A suppression rule reports a count, and a count reads as evidence of curation.
+The list looks deliberate; the item that was deleted left no trace on the page;
+and the only person who could notice is the one holding both items in their
+head, which is nobody after the day it shipped.
+
+The usable test is not similarity. It is: **if a reader saw both, would they
+learn something from the second one?** Two items about different subjects almost
+always pass it, and the contrast between them is routinely worth more than
+either alone — which is the case a shape-based key gets exactly backwards,
+because two items are most similar in shape precisely when they are most
+comparable in substance.
+
+*Charter case (ruling **139**).* Alex, 2026-08-27: *"alcaraz-second-major and
+sinner-second-major are DIFFERENT PLAYERS and must both render. Key the
+near-duplicate rule so it never collapses across players."* The family key
+dropped the subject token, so two rivals' odds of the same feat were one
+"template" and one of them was deleted — at the renderer AND, later, at the
+source. Measured the same night: 27c on 42,723 open interest against 1c. Side by
+side, the state of the men's draw; separately, trivia.
+
+*The limit:* the rule still exists and still fires. Same subject, same topic
+still collapses, and the drop is still counted. What changed is what the key
+carries.
+
+*Sequel (ruling **143**, 2026-08-28).* Alex went one step further on the same
+two cards: not "keep both", but **combine them**. That does not weaken this
+clause — it is the answer to the question the clause leaves open. See clause
+**28**.
+
+### 26. A guard proves a property of the artifact it reads.
+
+A test over source proves something about source. A test over a fixture proves
+something about the fixture. Only a test over the thing that shipped proves
+something about what shipped — and the moment a claim is phrased as **"a user no
+longer sees X"**, source and fixture have both stopped being evidence for it.
+
+This is not a criticism of unit tests. The failure needs no bug at all: three
+sweeps can be correct, guarded, reviewed and reported honestly, and every one of
+them can be a true statement about a working tree that never reached a browser.
+Nothing goes red, because nothing is wrong — the guard is answering a different
+question from the one being asked of it, and the two questions have the same
+words.
+
+So the rule is about WHERE the guard points, and it has a second half that
+matters as much: **where a guard cannot read the shipped artifact, it must say so
+out loud rather than pass.** A scan of a directory that does not exist returns no
+findings, and no findings is indistinguishable from a clean bill of health
+(gotcha #53). Every conditional layer needs a branch that reports "this did not
+run" in the same breath as the green.
+
+*Charter case (ruling **142**).* Alex, 2026-08-28, reading the live tournament
+page, quoted four sentences of banned copy back at us. Every one had already been
+fixed — two by UX-P145, two by UX-P146 — with render guards, and neither branch
+had landed. Measured against the JavaScript bainluck.com was actually serving
+that day: **41 violations across 30 distinct sentences**, including the complete
+output of both "done" sweeps.
+
+*The limit:* it does not demand a production round-trip for every test. It
+demands that the artifact a guard reads be **named in the claim the guard is used
+to support** — and that "shipped" claims be closed against a shipped artifact,
+after the deploy, not before the merge.
+
+### 27. A translated surface may not SELL the sources it translated.
+
+Doctrine **24** bans the source domain's *vocabulary*; this bans its *proper
+nouns as the subject*. Where the whole product is the abstraction — one number,
+one answer, arrived at from several places a reader was deliberately spared — a
+page whose CONTENT is the supplier list converts a finished answer back into a
+research task. It hands the reader a decision the product exists to make on
+their behalf.
+
+**The clause was first written as "may not NAME" and that was too wide.** The
+distinction it was reaching for is what the name is DOING in the sentence:
+
+- **Subject** — a subtitle, an empty state, a landing blurb, a promise about
+  coverage. *"A + B, unified"*, *"we asked A and B and neither runs that
+  market"*. Banned. The page is filling space with who we buy from instead of
+  showing the reader the thing.
+- **Attribution** — the label on a faint source line in a trend chart, the dot
+  row under a probability cell, a source chip beside a figure. Allowed, and
+  often good. The reader is looking at a specific number; saying where that
+  number came from is an answer, not an advertisement, and withholding it makes
+  the chart less legible rather than more abstract.
+
+This is the same line doctrine **24**'s own scope note draws — the ban is on the
+source domain SOLD as a feature, not NAMED in passing — and a sweep that misses
+it strips captions the reader needs while leaving the taglines alone.
+
+The under-appreciated half is what naming does to an **absence**. Naming the
+suppliers makes a gap read as *our* gap: "we asked A and B and neither runs that
+market" tells a reader we have two vendors and both let us down. The true
+statement is almost always broader and more useful — *nobody is answering that
+question* — and it is shorter. That is the subject class, and it stays banned.
+
+*Charter case (ruling **141**).* Alex, 2026-08-28: *"venue names are BANNED in
+user-facing copy, everywhere. Users get our probability, not our sourcing."*
+Amended by Alex the same day, and the amendment is the operative text: *"the
+venue-name ban was overinterpreted … BANNED in narrative/empty-state/promotional
+copy, but ALLOWED — and often good — as SOURCE ATTRIBUTION of a number or line
+the user is looking at."*
+
+*The limit, and it is a real one:* three carve-outs survive on their own merits
+and none of them is a loophole. **Legal disclosure** must name who receives or
+supplies data. **Operator surfaces** exist so somebody can go and fix the exact
+named thing. And a **deliberate comparison surface** — one whose subject IS how
+the sources differ — is not improved by anonymising them; that is a judgement
+call about what the page is for, and it belongs to whoever owns the page rather
+than to a sweep.
+
+Two carve-outs that are NOT exemptions and should be written down as such: the
+identifiers (`source: "kalshi"`, enum values, columns, data attributes) were
+never in scope, and the honest admission the venue name was carrying has to
+survive the removal — usually by counting rather than naming ("one reading 20
+days ago"), never by deleting the sentence.
+
+*And one for the enforcement, because this clause is enforced by a regex.* A
+name match is not a violation; a name match plus a judgment is. Where the guard
+cannot see the judgment — a bare string prised out of a minified bundle — it
+reads the SHAPE of the clause: names, figures and separators is a label, and a
+clause that needs lowercase words to hold itself together is a sentence about
+sourcing. Where even that cannot decide, the exception is written down one line
+at a time with the figure it attributes, never widened until the rule stops
+meaning anything.
+
+### 28. When two items are a comparison, the fix is composition, not suppression.
+
+Clause **25** says a near-duplicate rule may not collapse across subjects. It
+leaves the harder question open: what if the reader really is being shown the
+same question twice, and the answer *"keep both"* is also unsatisfying? The
+answer is that the unit was wrong. **Two items that ask one question about
+different subjects are one item whose rows are the subjects.**
+
+The reason this is not obvious is that suppression and composition look like the
+same decision from inside the rule. Both notice the similarity; both act on it.
+But suppression is a subtraction taken at RENDER time, by a rule that cannot see
+what it is destroying, and composition is an addition made ONCE, offline, against
+the evidence, with both sources named. One of them can delete a subject silently
+and the other cannot, and that is the whole difference.
+
+Three obligations follow, and they are what stop composition becoming a new way
+to lose things:
+
+- **A composed item has no single headline.** If two rows answer the question,
+  promoting one of them into the big type is a guess dressed as an answer.
+- **A missing part refuses the whole.** A comparison with one side is not a
+  smaller comparison. It reads as an answer and is not one, so the pass that
+  builds it fails loudly rather than shipping a half.
+- **Independent parts are never normalised to sum.** Composing two questions
+  into one card does not make their answers exclusive. If both can be true, the
+  numbers must be allowed not to add up.
+
+*Charter case (ruling **143**).* Alex, MC 2026-08-28: *"ONE COMBINED CARD — 'Who
+wins a second major this year?' — showing BOTH players' probabilities."* Three
+queues had oscillated between deleting one player and printing the same question
+twice, because both readings assumed the unit was one card per market.
+
+*The limit, AS ORIGINALLY WRITTEN:* composition is written by hand, subject by
+subject, where a person decided these two questions are the same question. It is
+not a similarity threshold, and nothing in it licenses a rule that merges items
+it noticed look alike — that is suppression again, with an extra step.
+
+*⚠️ AMENDED BY RULING **145** (Alex, 2026-08-28), and the amendment is the
+operative text.* Alex, reading the hand-written version: *"Was this a bespoke
+solution? I thought we'd built tools to identify groups and surface them as
+groups. Why didn't any of them trigger?"*
+
+The limit above was drawn in the wrong place. It is true that a similarity
+threshold must not be allowed to DELETE — that is clause 25 and it is unchanged —
+but that says nothing about whether a machine may propose the composition. **The
+composition may be detected; what may not be detected is the QUESTION.** So:
+
+- **detection is systemic** — a family is found from the items themselves, and a
+  family nobody has written a question for STOPS THE PASS rather than shipping as
+  repetition or being guessed at;
+- **the sentence stays curated** — nothing infers what a combined question is
+  called;
+- **and the failure mode is inverted from suppression's.** A detector that is
+  wrong produces a visible card nobody asked for, which a person can see. A
+  suppressor that is wrong produces an absence, which nobody can.
+
+What the hand-written version could not do is notice a THIRD subject, and that is
+the concrete cost the amendment buys back: a leg list written on Tuesday keeps
+printing two names beside a question about all of them.
+
+### 29. An attribution is a claim about evidence.
+
+"X ruled this" is subject to the same bar as every other claim: **state the
+evidence, or state that you are inferring.** The evidence for an attribution is
+the sentence the person actually wrote, with a date and a source. Anything less
+is the writer's reading of it, published under the other person's authority.
+
+The failure is specific and it is not carelessness. A paraphrase entered in good
+faith becomes indistinguishable from the ruling within one hop — it is in a
+comment, a test name, a report — and from then on nobody can check it, because
+the words it replaced are gone. A quote can be *wrong about its own meaning* and
+still be re-read by the next person. A paraphrase cannot be re-read at all.
+That asymmetry, not accuracy, is why the quote is required.
+
+Where someone must act on their own reading of an ambiguous note, the fix is not
+to be more careful — it is to say *this lane read X as Y*, which makes the
+reading falsifiable instead of authoritative.
+
+*Charter case (ruling **144**).* Alex, 2026-08-28: *"no lane may attribute a
+ruling to Alex without quoting his actual words with date and source. 'Exactly
+as ruled' without a quote is a violation — this queue exists because a paraphrase
+inverted a ruling."* The inverted paraphrase is ruling **143**'s own history: a
+note that two cards repeated a template was recorded as a decision to remove the
+repetition, and what was removed was a player.
+
+*Sibling:* clause **1** — an inference and a measurement must not render as the
+same thing. This is that clause applied to authority rather than to data.
+
+### 30. A systemic shape gets a systemic solution; a bespoke one is a defect even when it is right.
+
+The tempting defence of a hand-written solution is that its output is correct.
+It usually is, on the day it is written. **The test is not whether the output is
+right today — it is whether the output is still right after the input changes in
+the ordinary way inputs change.**
+
+Two markets get a third sibling. A source renames an outcome. A second family
+lists. Each of those is ordinary, and against each of them a hand-written
+solution fails in the same characteristic way: **it does not fail. It keeps
+producing its old answer, confidently, about data that has moved.** That is
+strictly worse than an error, because an error is reported and a stale answer is
+rendered.
+
+So where a shape recurs, the shape is what gets solved, and the parts a machine
+cannot know — the wording, the editorial judgement, the name of a thing — are
+what a person supplies. The split is not "hard parts by hand"; it is
+**structure detected, meaning curated.**
+
+*Charter case (ruling **145**).* The combined second-major card was composed by a
+human writing down two tickers, the outcome to pull from each, and the label each
+row should print. Nothing was detected. Alex: *"Was this a bespoke solution? I
+thought we'd built tools to identify groups and surface them as groups. Why
+didn't any of them trigger?"*
+
+*The diagnostic that generalises past the case.* When something that should have
+triggered did not, there are only three places to look, and it is worth looking at
+all three because the first answer is usually incomplete: the DETECTOR did not
+recognise the shape; the detector ran and the RENDERER had no output for what it
+found; or the tool exists, works, and is **wired to a different surface**. All
+three were true at once here, which is why one fix would not have been enough.
+
+*Sibling:* clause **28**, which is this clause for one particular shape.
+
+### 31. A surface may say how old something is. It may not decide the reader would rather see nothing.
+
+Both are called "quality" and only one of them costs the reader something they
+cannot get back. **Presenting an old number as current is a defect; showing an
+old number that says it is old is a service** — and where the alternative places a
+reader could go do not carry the question at all, it is the whole of the value.
+
+The rule that follows: **freshness is a treatment, never a filter.** A surface may
+mute, may caption, may reorder, may say "we have not seen a new number in a
+month". Removing the item is a different act, and it is one the reader cannot
+detect, cannot undo and cannot even know happened.
+
+Two traps come with it:
+
+- **An inferred state may never justify a removal.** Inferring that something has
+  settled and then hiding it on that inference is a guess with no witness. Label
+  the inference at the strength of its evidence — *"looks decided"* — and let the
+  reader see the thing being described.
+- **An age is ambiguous until it names its own event.** "32 hours ago" invites
+  three readings — created, updated, last traded — so the label carries the noun,
+  and where the underlying fact cannot distinguish two causes, the copy states
+  what we know rather than the more useful thing we do not. *"We have not seen a
+  new number"* is a fact about us; *"nobody has traded this"* would be an
+  invention about them.
+
+*Charter case (ruling **146**).* A curated section on the live site was empty every
+day it existed, because all three of its questions were older than a
+forty-eight-hour boundary. Four queues improved the wording of the apology that
+appeared in their place before anyone questioned the removal.
+
+### 32. Interaction is part of the component, not part of the page.
+
+A surface that reuses a component's styling and reimplements how it is pressed
+has not reused the component — it has cloned it, and the clone will drift, because
+clones always do. The reader pays for that in the one currency they cannot get
+back: **knowing what will happen when they touch something.**
+
+Two obligations, and the second is what makes the first checkable:
+
+- **The whole card is the target.** A link *inside* a card, in a product where
+  cards are links, teaches the reader that this list is special. Where there is
+  nothing to navigate to, the card is inert — not pressable-looking and dead,
+  which is worse than plainly inert.
+- **The shared component marks itself.** *"This surface renders the shared
+  component"* is a claim about the DOM, and it is unanswerable from the DOM unless
+  the component emits its own marker. A guard asserts exactly one emitter exists.
+
+*Charter case (ruling **147**).* Alex, on a tournament match list that drew its own
+card and opened an accordion: *"it kinda feels like we're reinventing the event
+card inside the tournament product."*
+
+*And the corollary that catches the usual regression:* when an interaction is
+deleted, whatever lived behind it MOVED, and both ends need a guard — the
+positive where it landed, and the negative where it left. A moved feature
+otherwise loses exactly one of those halves and nobody notices which.
+
 # MECHANICAL SPECS — enforced by the Integrator, not judged by it
 
 Everything above this line is a **clause**: a sentence a reader applies with judgement.

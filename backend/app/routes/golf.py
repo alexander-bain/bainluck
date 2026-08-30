@@ -18,7 +18,7 @@ from sqlalchemy import or_, select, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Event, Sport
+from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db
 from app.utils.golf_evolution_market import (
     NON_CONTENDER_WINNER_RE,
@@ -29,7 +29,11 @@ from app.utils.golf_evolution_market import (
     select_by_snapshot_richness,
 )
 from app.utils.odds_math import probability_to_american
-from app.utils.golf_membership import is_foreign_domain, is_prop_outcome
+from app.utils.golf_membership import (
+    drop_foreign_field_markets,
+    is_foreign_domain,
+    is_prop_outcome,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +232,14 @@ def _is_golf_market(market) -> bool:
 
     # For Kalshi/Polymarket: reject markets with clear non-golf signals
     if _NON_GOLF_RE.search(name):
+        return False
+
+    # UX-P168: the same question, asked of the #1625 membership authority rather
+    # than of this module's private copy. `_NON_GOLF_RE` and `FOREIGN_TERMS` had
+    # drifted apart — the authority knows domains (darts, snooker, chess, rodeo)
+    # this regex never listed, and every one of them runs an event called a
+    # "Masters" or an "Open", which `_GOLF_SIGNAL_RE` accepts on its own.
+    if is_foreign_domain(name):
         return False
 
     # Require at least one positive golf signal in the market name.
@@ -877,6 +889,55 @@ _TOUR_CLASSIFICATION_PATTERNS = [
     (re.compile(r"\btgl\b|tomorrow'?s?\s+golf", re.I), "tgl"),
 ]
 
+# UX-P185. A last-resort NAME recognizer for the PGA Tour, applied only where every
+# authoritative signal has already declined. It exists so that inverting the default
+# below (unknown tour -> None, not "pga") cannot strip a badge from a market that
+# says PGA Tour in its own title, e.g. the `KXGOLFMAJOR` series
+# ("Golfers to win a PGA Tour Major in 2027"), which carries no tour-bearing ticker.
+# It is deliberately NOT in the list above: the list runs ahead of the DataGolf and
+# ticker evidence, and a bare `pga` must never outrank either.
+_PGA_NAME_FALLBACK_RE = re.compile(r"\bpga\b", re.I)
+
+# UX-P185. Kalshi names the tour in the SERIES segment of its ticker — the text before
+# the first "-" — and it is the only tour signal a Kalshi-only tournament carries.
+# Matched as an ANCHORED prefix on that segment alone.
+#
+# ⚠️ A substring test over the whole external_id is lethal here, measured against
+# production 2026-08-30: `KXECULPGAME` (Ecuadorian league football, 210 markets)
+# contains "LPGA", and every `...CUPGAME` series — `KXEFLCUPGAME`, `KXFACUPGAME`,
+# `KXCONCACAFCCUPGAME`, 15 more — contains "PGA", as does `KXEFLCHAMPIONSHIPGAME`.
+#
+# ⚠️ `KXLIV` is DELIBERATELY ABSENT. It would be the obvious fourth entry and it is a
+# false friend: `KXLIVENATIONUS` ("Courts consider Live Nation a monopoly?") shares the
+# prefix. LIV Golf needs no ticker rule — every LIV event names itself in the market
+# title and `\bliv\s+golf\b` above already claims it.
+#
+# Every prefix below was swept over the full production table before being added; each
+# resolves only to golf: KXDPWORLDTOUR 63 markets / 5 series, KXLPGA 52 / 4,
+# KXKFTOUR 15 / 1.
+_KALSHI_SERIES_TOUR_PREFIXES = [
+    ("KXDPWORLDTOUR", "dp_world"),
+    ("KXLPGA", "lpga"),
+    ("KXKFTOUR", "korn_ferry"),
+    ("KXPGA", "pga"),
+]
+
+
+def _kalshi_series_tour(kalshi_external_ids: list[str] | None) -> str | None:
+    """Read the tour out of a Kalshi series ticker, or None if none of them says.
+
+    Callers pass ids they have already scoped to `source == "kalshi"`; the `KX`
+    guard here is a second belt, not the scoping.
+    """
+    for external_id in kalshi_external_ids or []:
+        if not external_id or not external_id.startswith("KX"):
+            continue
+        series = external_id.split("-", 1)[0]
+        for prefix, tour in _KALSHI_SERIES_TOUR_PREFIXES:
+            if series.startswith(prefix):
+                return tour
+    return None
+
 TOUR_DISPLAY_NAMES = {
     "pga": "PGA Tour",
     "dp_world": "DP World Tour",
@@ -921,8 +982,22 @@ def _classify_tour(
     is_womens: bool,
     market_external_ids: list[str] | None = None,
     market_metadata_tours: list[str] | None = None,
-) -> str:
-    """Classify a tournament into a tour. Returns tour key."""
+    kalshi_external_ids: list[str] | None = None,
+) -> str | None:
+    """Classify a tournament into a tour. Returns a tour key, or None if unknown.
+
+    UX-P185 — this used to default to `"pga"`, which is why a DP World Tour event
+    with no DataGolf coverage (the Omega European Masters, ticker
+    `KXDPWORLDTOUR-OMEM26`) was badged **PGA Tour** and filed under the PGA Tour
+    heading, one section away from the Husqvarna British Masters — the other DP
+    World Tour event of the same week, which DataGolf did cover.
+
+    The two additions below sit strictly INSIDE what used to be `return "pga"`, so
+    no tournament that resolves to a non-PGA tour today can change: only a
+    tournament that reaches the old blind default can, and it changes to its true
+    tour, to `pga` on its own say-so, or to None. None degrades honestly — the card
+    reads `⛳ Golf` rather than naming a tour we cannot evidence.
+    """
     if is_major:
         return "major"
     if is_womens:
@@ -948,8 +1023,16 @@ def _classify_tour(
                     mapped = _datagolf_tour_to_key(parts[1])
                     if mapped:
                         return mapped
-    # Default to PGA Tour for non-major, non-women's, non-pattern-matched
-    return "pga"
+    # Kalshi's own series ticker is authoritative for a Kalshi-only tournament,
+    # and for most weeks of the DP World Tour it is the ONLY tour signal there is.
+    ticker_tour = _kalshi_series_tour(kalshi_external_ids)
+    if ticker_tour:
+        return ticker_tour
+    # Last resort before giving up: the title says PGA itself.
+    if _PGA_NAME_FALLBACK_RE.search(market_name):
+        return "pga"
+    # Unknown. Say so — do not guess PGA Tour on a tournament's behalf.
+    return None
 
 # ============================================================================
 # Tour event extraction — sub-group "other" into named tour events
@@ -1936,6 +2019,13 @@ def _build_tournament_entry(
     if tourn_markets:
         tour_name_for_classify = tourn_markets[0].name
     market_ext_ids = [m.external_id for m in tourn_markets if m.external_id]
+    # Scoped to Kalshi HERE, where `source` is known — `_classify_tour` never has to
+    # infer a provider from the shape of an id it was handed.
+    kalshi_ext_ids = [
+        m.external_id
+        for m in tourn_markets
+        if m.external_id and getattr(m, "source", None) == "kalshi"
+    ]
     market_metadata_tours = [
         m.market_metadata.get("tour")
         for m in tourn_markets
@@ -1946,6 +2036,7 @@ def _build_tournament_entry(
         tourn_key in MAJOR_TOURNAMENTS, is_womens,
         market_external_ids=market_ext_ids,
         market_metadata_tours=market_metadata_tours,
+        kalshi_external_ids=kalshi_ext_ids,
     )
 
     return {
@@ -1955,7 +2046,8 @@ def _build_tournament_entry(
         "is_tour_event": is_tour_event,
         "is_womens": is_womens,
         "tour": tour,
-        "tour_label": TOUR_DISPLAY_NAMES.get(tour, tour),
+        # Same shape the upcoming-schedule serializer already uses: no tour, no label.
+        "tour_label": TOUR_DISPLAY_NAMES.get(tour) if tour else None,
         "order": order_idx,
         "sort_date": latest_resolution.isoformat() if is_tour_event and latest_resolution else None,
         "commence_time": earliest_commence.isoformat() if earliest_commence else None,
@@ -2113,6 +2205,68 @@ def _filter_stale_tournaments(tournaments: list[dict], now: datetime) -> list[di
     return filtered
 
 
+# How many upcoming tournaments the golf page names. The DataGolf schedule runs to
+# the end of the season, so this bounds the DISPLAY, not the data.
+_MAX_UPCOMING = 10
+
+
+def _upcoming_from_schedule(
+    schedule: list[dict] | None,
+    now: datetime,
+    limit: int = _MAX_UPCOMING,
+) -> list[dict]:
+    """Name the tournaments that have not started yet, soonest first.
+
+    UX-P169. This section used to be built from the `events` table filtered to
+    `Sport.key ILIKE 'golf_%'`. Golf has SIX rows there in all of history, every
+    one of them `closed`, and they are props and mis-ingests, not tournaments:
+    "Hole-in-One vs Arnold Palmer Invitational", "U.S. Team Captain vs 2027 Ryder
+    Cup", and a Philippine BASKETBALL game (Phoenix Fuel Masters vs Timplados
+    Hotshots). So the section could only ever render nothing — which is what a
+    reader saw — or, if one of those rows had ever been in the future, nonsense.
+
+    The DataGolf schedule is the authority for what is coming, and it was already
+    loaded here and already serialized into the same payload as `pga_schedule`.
+
+    ⚠️ The schedule arrives GROUPED BY TOUR, not in date order. Fed through
+    unsorted a reader reads Sep, Oct, Nov, Dec, then Sep again. The sort is the
+    load-bearing line in this function, not a tidy-up.
+    """
+    if not schedule:
+        return []
+
+    dated: list[tuple[datetime, dict]] = []
+    for entry in schedule:
+        raw_start = entry.get("start_date")
+        if not raw_start:
+            continue
+        try:
+            start = datetime.fromisoformat(raw_start)
+        except (TypeError, ValueError):
+            continue
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if start <= now:
+            continue
+        tour_key = _datagolf_tour_to_key(entry.get("tour"))
+        dated.append((
+            start,
+            {
+                "key": entry.get("key"),
+                "name": entry.get("name"),
+                "start_date": entry.get("start_date"),
+                "end_date": entry.get("end_date"),
+                "venue": entry.get("venue") or None,
+                "location": entry.get("location") or None,
+                "tour": tour_key,
+                "tour_label": TOUR_DISPLAY_NAMES.get(tour_key) if tour_key else None,
+            },
+        ))
+
+    dated.sort(key=lambda pair: pair[0])
+    return [item for _, item in dated[:limit]]
+
+
 @router.get("")
 async def get_golf_cached(
     db: AsyncSession = Depends(get_db),
@@ -2154,6 +2308,12 @@ async def get_golf(
     result = await db.execute(query)
     markets_all = result.scalars().unique().all()
     markets_all = [m for m in markets_all if _is_golf_market(m)]
+    # UX-P168. The name-side gate above cannot see a market whose title is
+    # domain-neutral and whose FIELD is another sport — "Asia Masters 2026 Winner"
+    # was served as a PGA Tour golf tournament over four League of Legends teams.
+    # This is the only golf path that eager-loads `outcomes` (the `selectinload`
+    # above), so it is the only one that can ask.
+    markets_all = drop_foreign_field_markets(markets_all)
 
     # Split H2H matchups from winner markets
     h2h_markets_raw: list = []
@@ -2368,31 +2528,9 @@ async def get_golf(
     all_movers.sort(key=lambda m: abs(m["movement_24h"]), reverse=True)
     biggest_movers = all_movers[:5]
 
-    # Upcoming events
-    events_query = (
-        select(Event)
-        .join(Sport, Event.sport_id == Sport.id)
-        .where(
-            Sport.key.ilike("golf_%"),
-            or_(
-                Event.status == "live",
-                Event.commence_time.between(now, now + timedelta(days=30)),
-                Event.commence_time.between(now - timedelta(hours=6), now),
-            ),
-        )
-        .order_by(Event.commence_time)
-        .limit(10)
-    )
-    events_result = await db.execute(events_query)
-    upcoming_events = [
-        {
-            "id": e.id,
-            "name": f"{e.home_team_name} vs {e.away_team_name}" if e.away_team_name else e.home_team_name,
-            "commence_time": e.commence_time.isoformat() if e.commence_time else None,
-            "status": e.status,
-        }
-        for e in events_result.scalars().all()
-    ]
+    # Upcoming tournaments — the DataGolf schedule, not the `events` table.
+    # See `_upcoming_from_schedule` for why the old source could never work.
+    upcoming_events = _upcoming_from_schedule(schedule, now)
 
     current_event = _find_current_event(tournaments, schedule_by_key, now)
 

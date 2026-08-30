@@ -20,6 +20,7 @@ Anchored to what the 2026-08-25 measurement actually found, not to hypotheticals
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -550,6 +551,108 @@ def test_an_unpriced_outcome_does_not_darken_a_fresh_card():
     assert by_key["no"]["probability_is_live"] is False
 
 
+# ---------------------------------------------------------------------------
+# THE COMPARISON CARD — CERT-430, finding 1
+#
+# The card above is one market with several outcomes; this one is several
+# MARKETS printed side by side as one question, which the register declares in
+# `markets`. The difference matters exactly once, and it is the finding: an
+# unpriced outcome of a field is a field row nobody has quoted, while an
+# unpriced LEG of a comparison is half the comparison missing.
+#
+# The executed specimen: Alcaraz unpriced, Sinner fresh at .555, and the card
+# came back `live` because only priced outcomes voted. One man's number, in the
+# confident type, under a two-man question.
+# ---------------------------------------------------------------------------
+
+def _comparison_prop():
+    return _prop(
+        key="second-major",
+        title="Who wins a second major this year?",
+        markets=[
+            {"market_id": 53796, "market_external_id": "KXGRANDSLAM-CALC26"},
+            {"market_id": 53795, "market_external_id": "KXGRANDSLAM-JSIN26"},
+        ],
+        outcomes=[
+            {
+                "entity_key": "second-major:carlos-alcaraz",
+                "display_name": "Carlos Alcaraz",
+                "outcome_id": 848773,
+                "market_external_id": "KXGRANDSLAM-CALC26",
+            },
+            {
+                "entity_key": "second-major:jannik-sinner",
+                "display_name": "Jannik Sinner",
+                "outcome_id": 848769,
+                "market_external_id": "KXGRANDSLAM-JSIN26",
+            },
+        ],
+    )
+
+
+def test_a_comparison_card_reports_its_declared_legs():
+    prices = {
+        848773: {"probability": 0.25, "observed_at": NOW - timedelta(minutes=5)},
+        848769: {"probability": 0.555, "observed_at": NOW - timedelta(minutes=5)},
+    }
+    card = build_props(_register(props=[_comparison_prop()]), prices=prices, now=NOW)[0]
+    # The renderer needs both facts, so both are published rather than inferred
+    # from the outcome list — a leg that produced NO outcome row is invisible in
+    # the outcomes and is exactly the case worth reporting.
+    assert card["legs"] == 2
+    assert card["unpriced_legs"] == []
+    assert card["price_state"] == "live"
+
+
+def test_SPECIMEN_one_fresh_leg_cannot_make_a_comparison_live():
+    """Alcaraz unpriced, Sinner fresh at .555 — the card the cert executed."""
+    prices = {848769: {"probability": 0.555, "observed_at": NOW - timedelta(minutes=5)}}
+    card = build_props(_register(props=[_comparison_prop()]), prices=prices, now=NOW)[0]
+
+    assert card["price_state"] == "dark"
+    assert card["age_hours"] is None
+    assert card["unpriced_legs"] == ["KXGRANDSLAM-CALC26"]
+    # NOT HIDDEN, and not thinned: both subjects are still on the card, and the
+    # one we have nothing for carries a null rather than being dropped.
+    by_key = {o["entity_key"]: o for o in card["outcomes"]}
+    assert by_key["second-major:carlos-alcaraz"]["probability"] is None
+    assert by_key["second-major:jannik-sinner"]["probability"] == pytest.approx(0.555)
+    # The fresh leg keeps its own true flag — it is the CARD that may not claim
+    # to be current. Reporting the live leg as stale would be a second lie.
+    assert by_key["second-major:jannik-sinner"]["probability_is_live"] is True
+    assert card["freshest_age_hours"] == pytest.approx(0.083, abs=1e-2)
+
+
+def test_a_comparison_leg_that_produced_no_outcome_at_all_is_reported():
+    """A declared leg with no row is the same hole, one layer earlier."""
+    prop = _comparison_prop()
+    prop["markets"].append(
+        {"market_id": 53794, "market_external_id": "KXGRANDSLAM-NDJO26"}
+    )
+    prices = {
+        848773: {"probability": 0.25, "observed_at": NOW - timedelta(minutes=5)},
+        848769: {"probability": 0.555, "observed_at": NOW - timedelta(minutes=5)},
+    }
+    card = build_props(_register(props=[prop]), prices=prices, now=NOW)[0]
+    assert card["legs"] == 3
+    assert card["unpriced_legs"] == ["KXGRANDSLAM-NDJO26"]
+    assert card["price_state"] == "dark"
+
+
+def test_the_committed_register_publishes_its_comparison_as_two_legs():
+    """The real card, from the real file — a rule nothing exercises is a wish."""
+    register = load_register("us-open", "2026")
+    props = {p["key"]: p for p in build_props(register, prices={}, now=NOW)}
+    assert props["second-major"]["legs"] == 2
+    assert props["second-major"]["unpriced_legs"] == [
+        "KXGRANDSLAM-CALC26",
+        "KXGRANDSLAM-JSIN26",
+    ]
+    # And an ordinary one-market card still says one, so `legs > 1` means what
+    # the renderer thinks it means.
+    assert props["sinner-competes"]["legs"] == 1
+
+
 def test_a_register_with_no_props_yields_an_empty_section():
     assert build_props(_register(), prices={}, now=NOW) == []
 
@@ -614,17 +717,37 @@ def test_the_committed_register_answers_where_to_watch():
 # The curation bar (scripts/populate_tournament_props.py)
 # ---------------------------------------------------------------------------
 
-def _run_props_script(tmp_path, dump_rows):
+#: The two members of the `second-major` template family (UX-P151 / UX-P154).
+#:
+#: Prepended to every dump by default, because the pass REFUSES to write at all
+#: when a curated family is not detected — a comparison card with one side is
+#: not a smaller card, it is a wrong one. Without these rows every test in this
+#: section would fail on that refusal instead of on its own subject, which is a
+#: fixture problem masquerading as five findings.
+#:
+#: These are the REAL titles and outcome ids, read from production 2026-08-28.
+#: The detector works off the titles, so a fixture with made-up titles would
+#: prove nothing about whether the shipped card is found.
+COMBINED_LEG_ROWS = [
+    [53796, "KXGRANDSLAM-CALC26", "kalshi", "Carlos Alcaraz: Grand Slam wins in 2026",
+     "open", 848773, "2+ Grand Slam wins", "0.25"],
+    [53795, "KXGRANDSLAM-JSIN26", "kalshi", "Jannik Sinner: Grand Slam wins in 2026",
+     "open", 848769, "2+ Grand Slam wins", "0.555"],
+]
+
+
+def _run_props_script(tmp_path, dump_rows, *, with_combined_legs=True):
     import json as _json
     import subprocess
     import sys as _sys
     from pathlib import Path as _Path
 
     root = _Path(__file__).resolve().parents[1]
+    rows = ([*COMBINED_LEG_ROWS, *dump_rows] if with_combined_legs else list(dump_rows))
     dump = {
         "columns": ["market_id", "market_ext", "source", "market_name", "status",
                     "outcome_id", "outcome_name", "current_probability"],
-        "rows": dump_rows,
+        "rows": rows,
         "truncated": False,
     }
     (tmp_path / "dump.json").write_text(_json.dumps(dump))
@@ -654,19 +777,16 @@ def test_the_curation_bar_excludes_an_uncurated_market(tmp_path):
     returned, so a new high-volume dull market cannot arrive on the page.
     """
     result, out = _run_props_script(tmp_path, [
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "2+ Grand Slam wins", "0.18"],
         [999, "KXSOMETHING-DULL", "kalshi", "Dull", "open", 5099, "Yes", "0.50"],
     ])
     assert result.returncode == 0, result.stderr
-    assert [p["key"] for p in out["props"]] == ["sinner-second-major"]
+    assert [p["key"] for p in out["props"]] == ["second-major"]
     assert "below the bar" in result.stdout
 
 
 def test_a_curated_prop_absent_from_the_dump_is_reported_not_invented(tmp_path):
     """A market we curated and did not find must be loud, not silently missing."""
-    result, _ = _run_props_script(tmp_path, [
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "2+ Grand Slam wins", "0.18"],
-    ])
+    result, _ = _run_props_script(tmp_path, [])
     assert result.returncode == 0
     assert "curated but ABSENT from the dump" in result.stdout
     assert "KXATPCOMPETE-26USOSIN" in result.stdout
@@ -676,14 +796,312 @@ def test_the_props_pass_writes_a_register_that_still_validates(tmp_path):
     from app.utils.tournament_register import us_open_2026_contract, validate_register
 
     result, out = _run_props_script(tmp_path, [
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "2+ Grand Slam wins", "0.18"],
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5002, "3+ Grand Slam wins", "0.02"],
+        [53795, "KXGRANDSLAM-JSIN26", "kalshi", "Jannik Sinner: Grand Slam wins in 2026",
+         "open", 848768, "3+ Grand Slam wins", "0.02"],
     ])
     assert result.returncode == 0
     assert validate_register(out, us_open_2026_contract()) == []
     # And the second population pass's work is still intact underneath it.
     assert len(out["matchups"]) > 0
     assert out["version"] == 3 and out["supersedes_version"] == 2
+
+
+# ── The combined card, BUILT BY THE SYSTEM (UX-P151 shape, UX-P154 mechanism) ─
+#
+# Alex, 2026-08-28 ~10:45am PT, verbatim: *"ONE COMBINED CARD — 'Who wins a
+# second major this year?' — showing BOTH players' probabilities (Alcaraz 2+
+# majors, Sinner 2+ majors, each from its own real Kalshi market)."*
+#
+# Alex, reviewing what shipped for it: *"Was this a bespoke solution? I thought
+# we'd built tools to identify groups and surface them as groups. Why didn't any
+# of them trigger?"*
+#
+# It was, and UX-P154 replaced the hand-written legs with
+# `detect_template_families`. Two properties are now under test that were not
+# before, and they are the ones that make it systemic rather than typed out:
+#
+#   - the family is DETECTED from the market titles and outcome sets, so an
+#     arriving third subject joins the card with no edit anywhere;
+#   - a family nobody has written a question for STOPS THE PASS, so the next
+#     one cannot ship as repeated cards the way this one did twice.
+#
+# The older property survives unchanged: the pass cannot produce a HALF of the
+# card. Every prior shape of this question failed by quietly losing a player —
+# UX-P138's template cap deleted Alcaraz at render time and the hand edit that
+# followed deleted him from the file.
+
+
+def test_the_combined_card_carries_one_row_per_member_and_no_single_answer(tmp_path):
+    result, out = _run_props_script(tmp_path, [])
+    assert result.returncode == 0, result.stderr
+
+    card = next(p for p in out["props"] if p["key"] == "second-major")
+    assert card["title"] == "Who wins a second major this year?"
+    # THE SOURCE'S OWN WORDS (Alex's item 4), derived from each market's title
+    # rather than curated. UX-P151 hand-wrote "Alcaraz" / "Sinner"; nothing
+    # downstream could check those against anything.
+    assert [o["display_name"] for o in card["outcomes"]] == [
+        "Carlos Alcaraz", "Jannik Sinner",
+    ]
+    # Two markets, one card. This is the whole shape.
+    assert [m["market_external_id"] for m in card["markets"]] == [
+        "KXGRANDSLAM-CALC26", "KXGRANDSLAM-JSIN26",
+    ]
+    assert {o["market_external_id"] for o in card["outcomes"]} == {
+        "KXGRANDSLAM-CALC26", "KXGRANDSLAM-JSIN26",
+    }
+    # NO single answer, by construction: a family has one candidate answer per
+    # member, so the renderer ranks rather than guessing a headline.
+    assert all(o["is_answer"] is False for o in card["outcomes"])
+    # The DETECTION is the evidence, and a reader of the register can check it
+    # against the market titles without running anything.
+    assert card["evidence"]["kind"] == "prop-census-family"
+    assert card["evidence"]["skeleton"] == "{} grand slam wins in 2026"
+    assert [leg["source_outcome_name"] for leg in card["evidence"]["legs"]] == [
+        "2+ Grand Slam wins", "2+ Grand Slam wins",
+    ]
+    assert [leg["subject"] for leg in card["evidence"]["legs"]] == [
+        "Carlos Alcaraz", "Jannik Sinner",
+    ]
+
+
+def test_a_third_subject_joins_the_card_with_no_code_change(tmp_path):
+    """THE test of "by the system", and the one UX-P151 could not have passed.
+
+    A hand-written leg list notices nothing when the market opens a third
+    player's ladder — the card keeps printing two men beside a question about
+    all of them. Here the third row arrives in the dump and appears on the card,
+    with his own name, from nothing but the shared title shape.
+    """
+    result, out = _run_props_script(tmp_path, [
+        [53797, "KXGRANDSLAM-NDJO26", "kalshi", "Novak Djokovic: Grand Slam wins in 2026",
+         "open", 848780, "2+ Grand Slam wins", "0.08"],
+    ])
+    assert result.returncode == 0, result.stderr
+
+    card = next(p for p in out["props"] if p["key"] == "second-major")
+    assert [o["display_name"] for o in card["outcomes"]] == [
+        "Carlos Alcaraz", "Jannik Sinner", "Novak Djokovic",
+    ]
+    # And he is NOT also a card of his own — one question, printed once.
+    assert [p["key"] for p in out["props"]] == ["second-major"]
+
+
+def test_a_detected_family_nobody_curated_stops_the_pass(tmp_path):
+    """The refusal that makes the detector worth having.
+
+    Two markets asking one question about two people, with no curated question
+    for the pair, would otherwise ship as the repetition Alex ruled out — or be
+    silently deleted, which is how this went wrong the first time. The pass
+    names the skeleton and the members so the fix is one line.
+    """
+    result, out = _run_props_script(tmp_path, [
+        [901, "KXSETS-A", "kalshi", "Aryna Sabalenka: sets dropped in 2026", "open",
+         9011, "3+ sets dropped", "0.40"],
+        [902, "KXSETS-B", "kalshi", "Iga Swiatek: sets dropped in 2026", "open",
+         9021, "3+ sets dropped", "0.55"],
+    ])
+    assert result.returncode == 1
+    assert "template family" in result.stderr
+    assert "'{} sets dropped in 2026'" in result.stderr
+    assert "KXSETS-A" in result.stderr and "KXSETS-B" in result.stderr
+    assert out is None, "a refused population pass must write nothing"
+
+
+def test_a_curated_family_the_detector_cannot_find_refuses_the_write(tmp_path):
+    """THE defect this shape exists to prevent, asserted as a refusal.
+
+    One member present is not a smaller card. It is "Who wins a second major?"
+    with one man under it, which reads as an answer and is not one. With only
+    Sinner's market in the dump there is no family to find, and the curated
+    question has nothing to attach to.
+    """
+    result, out = _run_props_script(
+        tmp_path,
+        [[53795, "KXGRANDSLAM-JSIN26", "kalshi", "Jannik Sinner: Grand Slam wins in 2026",
+          "open", 848769, "2+ Grand Slam wins", "0.555"]],
+        with_combined_legs=False,
+    )
+    assert result.returncode == 1
+    assert "are not present in this dump" in result.stderr
+    assert "{} grand slam wins in 2026" in result.stderr
+    assert out is None, "a refused population pass must write nothing"
+
+
+def test_a_member_whose_outcome_was_renamed_refuses_the_write(tmp_path):
+    """A source renaming `2+ Grand Slam wins` must stop the pass, not silently
+    drop that man from the comparison.
+
+    The rename breaks the shared-outcome half of the detection — the two
+    markets no longer offer anything in common — so the family dissolves and
+    the curated question has nothing to attach to. Different refusal from
+    UX-P151's, same guarantee: no half a card.
+    """
+    rows = [list(row) for row in COMBINED_LEG_ROWS]
+    rows[0][6] = "Two or more Grand Slam wins"
+    result, out = _run_props_script(tmp_path, rows, with_combined_legs=False)
+    assert result.returncode == 1
+    assert "are not present in this dump" in result.stderr
+    assert out is None
+
+
+# ── CERT-430, finding 3: a CLOSED leg is not a quiet one ─────────────────────
+#
+# The documented dump query filters `fm.status = 'open'` and nothing verified
+# that it had. The cert executed the gap: flipping the Alcaraz leg's status to
+# `closed` returned exit 0 and wrote the combined card, while the neighbouring
+# missing-leg and renamed-outcome controls both refused and wrote nothing.
+#
+# A settled leg is the worst member a comparison can have. A stale number is old
+# and says so; a settled one is FINISHED, and no freshness treatment downstream
+# can tell those apart — the page would print a resolved market beside a live
+# one as though the two were comparable.
+
+
+def test_SPECIMEN_a_closed_leg_refuses_the_whole_write(tmp_path):
+    rows = [list(row) for row in COMBINED_LEG_ROWS]
+    rows[0][4] = "closed"
+    result, out = _run_props_script(tmp_path, rows, with_combined_legs=False)
+    assert result.returncode == 1
+    assert "KXGRANDSLAM-CALC26" in result.stderr
+    assert "closed" in result.stderr
+    assert out is None, "a refused population pass must write nothing"
+
+
+def test_a_settled_market_that_is_not_even_curated_still_stops_the_pass(tmp_path):
+    """The dump is a contract, not a suggestion.
+
+    A non-open row means the dump did not come from the documented query, and
+    the pass cannot then claim any of its OTHER rows are open either. Refusing
+    only the rows we happened to curate would leave that hole open for the next
+    market that gets curated.
+    """
+    result, out = _run_props_script(tmp_path, [
+        [999, "KXSOMETHING-DULL", "kalshi", "Dull", "settled", 5099, "Yes", "1.00"],
+    ])
+    assert result.returncode == 1
+    assert "KXSOMETHING-DULL" in result.stderr
+    assert out is None
+
+
+def test_a_dump_with_no_status_column_refuses_rather_than_assuming(tmp_path):
+    """Fail-safe in the direction the guard can be defeated from.
+
+    A dump written by a different query has no `status` to check, and a check
+    that passes when its evidence is absent is gotcha #53's shape — it would
+    read exactly like a clean run.
+    """
+    import json as _json
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    dump = {
+        "columns": ["market_id", "market_ext", "source", "market_name",
+                    "outcome_id", "outcome_name", "current_probability"],
+        "rows": [[row[0], row[1], row[2], row[3], row[5], row[6], row[7]]
+                 for row in COMBINED_LEG_ROWS],
+        "truncated": False,
+    }
+    (tmp_path / "dump.json").write_text(_json.dumps(dump))
+    register = _json.loads(
+        (root / "data/tournament_registers/us-open-2026.json").read_text()
+    )
+    (tmp_path / "reg.json").write_text(_json.dumps(register))
+    result = subprocess.run(
+        [_sys.executable, str(root / "scripts/populate_tournament_props.py"),
+         "--register", str(tmp_path / "reg.json"), "--dump", str(tmp_path / "dump.json"),
+         "--observed-at", "2026-08-26T00:00:00+00:00",
+         "--version", "3", "--supersedes-version", "2",
+         "--out", str(tmp_path / "out.json")],
+        capture_output=True, text=True, cwd=str(root),
+    )
+    assert result.returncode == 1
+    assert "no `status` column" in result.stderr
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_an_all_open_dump_still_writes(tmp_path):
+    """The control. A refusal that fires on the healthy case is not a guard."""
+    result, out = _run_props_script(tmp_path, [])
+    assert result.returncode == 0, result.stderr
+    assert [p["key"] for p in out["props"]] == ["second-major"]
+
+
+def test_a_market_cannot_be_both_a_card_and_a_family_member(tmp_path):
+    """The repetition Alex ruled out, arriving by a different door.
+
+    If `KXGRANDSLAM-JSIN26` were curated as its own card AND detected into the
+    combined one, the section would show the comparison and one of its halves
+    again underneath. That is a curation mistake, and the pass names it rather
+    than shipping both.
+
+    Asserted through the RUNNING PASS rather than against a static map, because
+    since UX-P154 the membership is detected — there is no list of legs left to
+    read, and a guard over the curation tables would be checking the wrong side
+    of the change.
+    """
+    import json as _json
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    script = (root / "scripts/populate_tournament_props.py").read_text()
+    # Curate one of the family's own markets as a standalone card.
+    patched = script.replace(
+        'CURATION: dict[str, dict] = {',
+        'CURATION: dict[str, dict] = {\n'
+        '    "KXGRANDSLAM-JSIN26": {"key": "sinner-majors", "title": "t", '
+        '"hook": "h", "draw": "mens-singles", "answer": "2+ Grand Slam wins"},',
+        1,
+    )
+    assert patched != script, "the CURATION anchor moved; re-point this guard"
+    (tmp_path / "patched.py").write_text(patched)
+
+    dump = {
+        "columns": ["market_id", "market_ext", "source", "market_name", "status",
+                    "outcome_id", "outcome_name", "current_probability"],
+        "rows": [list(row) for row in COMBINED_LEG_ROWS],
+        "truncated": False,
+    }
+    (tmp_path / "dump.json").write_text(_json.dumps(dump))
+    register = _json.loads(
+        (root / "data/tournament_registers/us-open-2026.json").read_text()
+    )
+    (tmp_path / "reg.json").write_text(_json.dumps(register))
+
+    import os as _os
+
+    # The script inserts ITS OWN parent's parent on `sys.path` to find `app`,
+    # and this copy lives in a tmp dir. `PYTHONPATH` puts the real backend root
+    # back rather than the tmp one.
+    env = {**_os.environ, "PYTHONPATH": str(root)}
+    result = subprocess.run(
+        [_sys.executable, str(tmp_path / "patched.py"),
+         "--register", str(tmp_path / "reg.json"), "--dump", str(tmp_path / "dump.json"),
+         "--observed-at", "2026-08-26T00:00:00+00:00",
+         "--version", "3", "--supersedes-version", "2",
+         "--out", str(tmp_path / "out.json")],
+        capture_output=True, text=True, cwd=str(root), env=env,
+    )
+    assert result.returncode == 1, result.stdout
+    assert "is curated as its own card AND is a member" in result.stderr
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_every_retired_card_is_recorded_where_it_went(tmp_path):
+    """`sinner-second-major` and `alcaraz-second-major` did not vanish — they
+    became rows of `second-major`, and the file has to say so."""
+    result, out = _run_props_script(tmp_path, [])
+    assert result.returncode == 0, result.stderr
+    declined = out["props_declined"]
+    for key in ("alcaraz-second-major", "sinner-second-major"):
+        assert "second-major" in declined[key]
+        assert "retired INTO" in declined[key]
+    # Merged, not replaced: the UX-P139 grid-cell reasons are still there.
+    assert "alcaraz-semifinals" in declined
 
 
 # ── The answer rule (UX-P134) ────────────────────────────────────────────────
@@ -771,13 +1189,44 @@ def test_two_outcomes_claiming_the_answer_is_structurally_invalid():
 
 
 def test_the_committed_props_each_answer_their_own_question():
-    """On the shipped file: every curated prop names exactly one answer."""
+    """On the shipped file: a card's shape and its answer count agree.
+
+    UX-P151 AMENDED THIS, and the amendment is the rule rather than an
+    exception to it. The old assertion was a flat ``len(answers) == 1``, which
+    encoded an assumption that was true of every card at the time — one card,
+    one market, one headline number — and stopped being true the moment Alex
+    ruled a COMBINED card: *"showing BOTH players' probabilities"*.
+
+    What actually matters has not moved: the card must never be ambiguous about
+    which number is its answer. So the count is derived from the shape instead
+    of asserted flat. A single-market card names exactly one answer. A card
+    whose outcomes come from more than one market names NONE, because no single
+    outcome can answer a comparison — and a field card is the shape
+    ``validate_prop`` has supported since UX-P134 for exactly this.
+
+    Two answers is still invalid in both shapes, and the flat rule's real job —
+    catching the zero-answer card that a source rename produces silently — is
+    kept for the single-market case where it is the actual failure mode.
+    """
     register = load_register("us-open", "2026")
     props = register.get("props") or []
     assert props, "the props population pass has not run"
+    combined = 0
     for prop in props:
         answers = [o for o in prop["outcomes"] if o.get("is_answer")]
-        assert len(answers) == 1, f"{prop['key']} has {len(answers)} answers"
+        markets = {o.get("market_external_id") for o in prop["outcomes"]}
+        assert None not in markets, f"{prop['key']} has an outcome with no provenance"
+        if len(markets) > 1:
+            combined += 1
+            assert len(answers) == 0, (
+                f"{prop['key']} spans {len(markets)} markets and still names an answer; "
+                "no single outcome can answer a comparison"
+            )
+        else:
+            assert len(answers) == 1, f"{prop['key']} has {len(answers)} answers"
+    # And the combined card is actually on the shipped file, so this test cannot
+    # go green by the branch above never running.
+    assert combined == 1, f"expected the one combined card, found {combined}"
 
 
 def test_every_prop_removed_from_the_register_says_why_it_went():
@@ -1090,8 +1539,14 @@ def test_a_curated_answer_missing_from_the_market_refuses_the_write(tmp_path):
     """A source renaming an outcome must stop the pass, not silently produce a
     card with a question and no answer — which the renderer would then show as
     a ranked field, quietly turning a curated question into a list."""
+    # `KXATPCOMPETE-26USOSIN` and not a `*-second-major` ticker: since UX-P151
+    # those two are LEGS of the combined card, and a leg's rename has its own
+    # refusal with its own message (`test_a_combined_leg_whose_outcome_was_
+    # renamed_refuses_the_write`). This one is the single-market answer rule,
+    # which needs a single-market card to be about.
     result, out = _run_props_script(tmp_path, [
-        [111, "KXGRANDSLAM-JSIN26", "kalshi", "Sinner majors", "open", 5001, "Affirmative", "0.18"],
+        [59172808, "KXATPCOMPETE-26USOSIN", "kalshi", "Sinner to play", "open",
+         219796782, "Affirmative", "0.63"],
     ])
     assert result.returncode == 1
     assert "REFUSED" in result.stderr
@@ -1212,4 +1667,160 @@ def test_no_results_at_all_is_an_empty_section_not_a_crash():
     payload = build_results(_results_register(), results={})
     assert payload["count"] == 0
     assert payload["source_competitions"] == 0
+
+
+# ---------------------------------------------------------------------------
+# UX-P146 — a finished match carries what the market said BEFORE it
+#
+# Alex, on the UX-P145 desktop artifact: "finished outcomes on the right must
+# show their PRE-MATCH probabilities alongside the result — a result without the
+# prior probability is half the story on a probability product."
+# ---------------------------------------------------------------------------
+
+def _results_register_with_matchup():
+    """The same two players, plus the matchup market the register still pins.
+
+    The 12-of-76 case on production: `build_slate` retires this matchup for
+    SCHEDULING reasons the moment it starts, but the register file still carries
+    it, and that is where the pre-match number comes from.
+    """
+    register = _results_register()
+    register["matchups"] = [{
+        "matchup_key": "mens-singles:jacob-fearnley-vs-roberto-carballes-baena:2026-08-24",
+        "draw": "mens-singles",
+        "round": "qualifying",
+        "scheduled_date": "2026-08-24T13:00:00+00:00",
+        "players": ["jacob-fearnley", "roberto-carballes-baena"],
+        "sources": [{
+            "source": "polymarket",
+            "kind": "match",
+            "market_id": 59481999,
+            "outcome_id": 910001,
+            "status": "live",
+            "terminal_result": None,
+            "evidence": {"kind": "match-market-census", "observed_at": NOW.isoformat()},
+            "sides": {
+                "jacob-fearnley": {"outcome_id": 910001, "source_label": "Jacob Fearnley"},
+                "roberto-carballes-baena": {
+                    "outcome_id": 910002, "source_label": "Roberto Carballes Baena"
+                },
+            },
+        }],
+    }]
+    return register
+
+
+def _matchup_prices(a_open=0.62, b_open=0.38, a_now=1.0, b_now=0.0):
+    return {
+        910001: {"probability": a_now, "opening_probability": a_open, "observed_at": NOW},
+        910002: {"probability": b_now, "opening_probability": b_open, "observed_at": NOW},
+    }
+
+
+def test_a_finished_match_carries_the_prior_when_we_held_the_market():
+    payload = build_results(
+        _results_register_with_matchup(), results=_espn(), prices=_matchup_prices()
+    )
+    [row] = payload["matches"]
+    by_key = {p["entity_key"]: p["prematch_probability"] for p in row["players"]}
+    assert by_key["jacob-fearnley"] == 0.62
+    assert by_key["roberto-carballes-baena"] == 0.38
+    assert payload["with_prematch"] == 1
+
+
+def test_the_prior_is_the_OPENING_number_and_never_the_last_one_we_saw():
+    """The whole reason this reads `opening_probability`.
+
+    A decided match's market drifts to the result: the fixture's current pair is
+    1.0 / 0.0. Print that as "what the market thought" and every winner is 100%
+    and every loser 0% — a perfectly confident number that is really just the
+    scoreline read back, which is worse than showing nothing.
+    """
+    prices = _matchup_prices(a_now=1.0, b_now=0.0)
+    payload = build_results(
+        _results_register_with_matchup(), results=_espn(), prices=prices
+    )
+    priors = {p["entity_key"]: p["prematch_probability"] for p in payload["matches"][0]["players"]}
+    assert 1.0 not in priors.values()
+    assert 0.0 not in priors.values()
+
+
+def test_the_prior_is_normalized_as_a_PAIR_like_every_other_number_here():
+    # 0.55 + 0.50 is one question with a 5-point overround, exactly as the slate
+    # treats a live pair — so the printed prior sums to 1 and is quoted on the
+    # same basis a live row is.
+    payload = build_results(
+        _results_register_with_matchup(),
+        results=_espn(),
+        prices=_matchup_prices(a_open=0.55, b_open=0.50),
+    )
+    priors = [p["prematch_probability"] for p in payload["matches"][0]["players"]]
+    assert sum(priors) == pytest.approx(1.0)
+    assert priors[0] != 0.55  # normalized, not passed through
+
+
+def test_an_INCOHERENT_opening_pair_yields_no_prior_at_all():
+    """Refusal 2 of this module, applied to history.
+
+    0.90 + 0.60 is two readings of different vintage, not a distribution.
+    Dividing by 1.5 gives 60/40 — a number with no referent that looks exactly
+    like a real one, printed under two real players' names, forever.
+    """
+    payload = build_results(
+        _results_register_with_matchup(),
+        results=_espn(),
+        prices=_matchup_prices(a_open=0.90, b_open=0.60),
+    )
+    assert all(p["prematch_probability"] is None for p in payload["matches"][0]["players"])
+    assert payload["with_prematch"] == 0
+
+
+def test_no_registered_matchup_means_no_prior_and_the_count_says_so():
+    """64 of 76 production results are this case, and it must stay silent.
+
+    We hold player-level markets for both of them and no MATCH market, so there
+    is no prior. Substituting the title board's number — a player's chance of
+    winning the tournament — would be a fabricated answer to a different
+    question wearing a real player's name.
+    """
+    payload = build_results(_results_register(), results=_espn(), prices=_matchup_prices())
+    [row] = payload["matches"]
+    assert all(p["prematch_probability"] is None for p in row["players"])
+    assert payload["with_prematch"] == 0
+    # …and the row is still built. A missing prior never costs a result.
+    assert row["score"] == "7-6, 6-3"
+
+
+def test_prices_is_optional_so_an_older_caller_cannot_crash_the_section():
+    payload = build_results(_results_register_with_matchup(), results=_espn())
+    assert payload["count"] == 1
+    assert payload["with_prematch"] == 0
+
+
+def test_the_route_hands_build_results_the_prices_it_already_loaded():
+    """The wiring, which is the half a unit test cannot see.
+
+    `_load_prices` is called once over the union of every pinned outcome id,
+    matchup ids included, so this feature costs no extra query. If the call site
+    ever drops the argument the section silently loses every prior and every
+    test above still passes.
+    """
+    source = (Path(__file__).resolve().parents[1] / "app" / "routes" / "tournaments.py").read_text()
+    start = source.index("build_results(", source.index('payload["results"]'))
+    # Balanced-paren scan rather than "up to the first `)`" — the call is
+    # multi-line and contains `_espn_results(slug)`, so the naive version reads
+    # a window that stops before the argument it is checking for and fails on a
+    # correct call site.
+    depth, end = 0, start
+    for index in range(start, len(source)):
+        if source[index] == "(":
+            depth += 1
+        elif source[index] == ")":
+            depth -= 1
+            if depth == 0:
+                end = index + 1
+                break
+    call = source[start:end]
+    assert call.endswith(")")
+    assert "prices=prices" in call
 

@@ -1,0 +1,586 @@
+{
+  "tournament": "us-open",
+  "season": "2026",
+  "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+  "match": {
+    "priced": true,
+    "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+    "event_id": null,
+    "draw": "mens-singles",
+    "draw_label": "Men's Singles",
+    "round": "qualifying",
+    "scheduled_date": "2026-08-27T15:00:00+00:00",
+    "sides": [
+      {
+        "entity_key": "jacob-fearnley",
+        "display_name": "Jacob Fearnley",
+        "seed": null,
+        "country": "Great Britain",
+        "image": {
+          "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/69/Jacob_Fearnley.jpg/330px-Jacob_Fearnley.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+          "flag_url": "https://a.espncdn.com/i/teamlogos/countries/500/gbr.png"
+        },
+        "role": "participant",
+        "probability": 0.0005,
+        "opening_probability": 0.73,
+        "move": -0.7295,
+        "raw_probability": 0.0005,
+        "raw_opening_probability": 0.73,
+        "observed_at": "2026-08-28 16:00:01.942399+00:00",
+        "age_hours": 1.09,
+        "price_state": "live"
+      },
+      {
+        "entity_key": "jurij-rodionov",
+        "display_name": "Jurij Rodionov",
+        "seed": null,
+        "country": "Austria",
+        "image": {
+          "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/Rodionov_WMQ23_%2853061116527%29.jpg/330px-Rodionov_WMQ23_%2853061116527%29.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+          "flag_url": "https://a.espncdn.com/i/teamlogos/countries/500/aut.png"
+        },
+        "role": "participant",
+        "probability": 0.9995,
+        "opening_probability": 0.27,
+        "move": 0.7295,
+        "raw_probability": 0.9995,
+        "raw_opening_probability": 0.27,
+        "observed_at": "2026-08-28 16:00:01.942399+00:00",
+        "age_hours": 1.09,
+        "price_state": "live"
+      }
+    ],
+    "coherent": true,
+    "raw_sum": 1.0,
+    "opening_raw_sum": 1.0,
+    "probability_is_live": true,
+    "price_state": "live",
+    "observed_at": "2026-08-28T16:00:01.942399+00:00",
+    "age_hours": 1.09,
+    "freshest_observed_at": "2026-08-28T16:00:01.942399+00:00",
+    "freshest_age_hours": 1.09,
+    "stale_sides": [],
+    "mixed_freshness": false,
+    "favourite": "jurij-rodionov",
+    "has_moved": true,
+    "source_count": 1
+  },
+  "result": {
+    "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
+    "draw": "mens-singles",
+    "draw_label": "Men's Singles",
+    "round": "Qualifying Final",
+    "players": [
+      {
+        "entity_key": "jurij-rodionov",
+        "display_name": "Jurij Rodionov",
+        "seed": null,
+        "is_winner": true,
+        "prematch_probability": 0.27
+      },
+      {
+        "entity_key": "jacob-fearnley",
+        "display_name": "Jacob Fearnley",
+        "seed": null,
+        "is_winner": false,
+        "prematch_probability": 0.73
+      }
+    ],
+    "winner_entity_key": "jurij-rodionov",
+    "score": "4-6, 6-4, 6-4",
+    "completion": "final",
+    "completed_at": "2026-08-28T15:05Z",
+    "source_round": "Qualifying Final",
+    "source": "espn"
+  },
+  "decided": true,
+  "props": [
+    {
+      "key": "m59628332",
+      "market_id": 59628332,
+      "market_ids": [
+        59628332
+      ],
+      "family": "set_winner",
+      "kind": "duel",
+      "question": "Who wins set 1",
+      "line": null,
+      "unit": null,
+      "sort": [
+        0,
+        1
+      ],
+      "source_title": "Set 1 Winner: Fearnley vs Rodionov",
+      "note": null,
+      "answers": [
+        {
+          "label": "Jacob Fearnley",
+          "entity_key": "jacob-fearnley",
+          "probability": 0.625,
+          "opening_probability": 0.65,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        },
+        {
+          "label": "Jurij Rodionov",
+          "entity_key": "jurij-rodionov",
+          "probability": 0.375,
+          "opening_probability": 0.35,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": 1.0,
+      "opening_coherent": true,
+      "opening_raw_sum": 1.0,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.73,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.73,
+      "stale_answers": [
+        "Jacob Fearnley",
+        "Jurij Rodionov"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "m59628333",
+      "market_id": 59628333,
+      "market_ids": [
+        59628333
+      ],
+      "family": "set_winner",
+      "kind": "duel",
+      "question": "Who wins set 2",
+      "line": null,
+      "unit": null,
+      "sort": [
+        0,
+        2
+      ],
+      "source_title": "Set 2 Winner: Fearnley vs Rodionov",
+      "note": null,
+      "answers": [
+        {
+          "label": "Jacob Fearnley",
+          "entity_key": "jacob-fearnley",
+          "probability": 0.62,
+          "opening_probability": 0.66,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        },
+        {
+          "label": "Jurij Rodionov",
+          "entity_key": "jurij-rodionov",
+          "probability": 0.38,
+          "opening_probability": 0.34,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": 1.0,
+      "opening_coherent": true,
+      "opening_raw_sum": 1.0,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.73,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.73,
+      "stale_answers": [
+        "Jacob Fearnley",
+        "Jurij Rodionov"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "m59638614",
+      "market_id": 59638614,
+      "market_ids": [
+        59638614
+      ],
+      "family": "handicap",
+      "kind": "handicap",
+      "question": "Winning margin, in sets",
+      "line": -1.5,
+      "unit": "set",
+      "sort": [
+        1,
+        0
+      ],
+      "source_title": "Set Handicap: Fearnley (-1.5) vs Rodionov (+1.5)",
+      "note": null,
+      "answers": [
+        {
+          "label": "Jacob Fearnley by 2 sets or more",
+          "entity_key": "jacob-fearnley",
+          "probability": 0.45,
+          "opening_probability": 0.45,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        },
+        {
+          "label": "Anything else",
+          "entity_key": null,
+          "probability": 0.55,
+          "opening_probability": 0.55,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": 1.0,
+      "opening_coherent": true,
+      "opening_raw_sum": 1.0,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.73,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.73,
+      "stale_answers": [
+        "Jacob Fearnley by 2 sets or more",
+        "Anything else"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "m59638613",
+      "market_id": 59638613,
+      "market_ids": [
+        59638613
+      ],
+      "family": "handicap",
+      "kind": "handicap",
+      "question": "Winning margin, in games",
+      "line": -3.5,
+      "unit": "game",
+      "sort": [
+        1,
+        1
+      ],
+      "source_title": "Game Spread: Fearnley (-3.5) vs Rodionov (+3.5)",
+      "note": null,
+      "answers": [
+        {
+          "label": "Jacob Fearnley by 4 games or more",
+          "entity_key": "jacob-fearnley",
+          "probability": 0.51,
+          "opening_probability": 0.51,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        },
+        {
+          "label": "Anything else",
+          "entity_key": null,
+          "probability": 0.49,
+          "opening_probability": 0.49,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": 1.0,
+      "opening_coherent": true,
+      "opening_raw_sum": 1.0,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.73,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.73,
+      "stale_answers": [
+        "Jacob Fearnley by 4 games or more",
+        "Anything else"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "ladder:Total games in the match",
+      "market_id": null,
+      "market_ids": [
+        59620199,
+        59628338
+      ],
+      "family": "total",
+      "kind": "ladder",
+      "question": "Total games in the match",
+      "line": null,
+      "unit": "game",
+      "sort": [
+        2,
+        0
+      ],
+      "source_title": null,
+      "note": null,
+      "answers": [
+        {
+          "label": "More than 21 games",
+          "entity_key": null,
+          "probability": 0.535,
+          "opening_probability": 0.49,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        },
+        {
+          "label": "More than 22 games",
+          "entity_key": null,
+          "probability": 0.47,
+          "opening_probability": 0.44,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": null,
+      "opening_coherent": true,
+      "opening_raw_sum": null,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.73,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.73,
+      "stale_answers": [
+        "More than 21 games",
+        "More than 22 games"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "m59622253",
+      "market_id": 59622253,
+      "market_ids": [
+        59622253
+      ],
+      "family": "total",
+      "kind": "threshold",
+      "question": "Total sets in the match",
+      "line": 2.5,
+      "unit": "set",
+      "sort": [
+        2,
+        1
+      ],
+      "source_title": "Jacob Fearnley vs. Jurij Rodionov: Total Sets O/U 2.5",
+      "note": null,
+      "answers": [
+        {
+          "label": "More than 2 sets",
+          "entity_key": null,
+          "probability": 0.405,
+          "opening_probability": 0.38,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        },
+        {
+          "label": "2 sets or fewer",
+          "entity_key": null,
+          "probability": 0.595,
+          "opening_probability": 0.62,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": 1.0,
+      "opening_coherent": true,
+      "opening_raw_sum": 1.0,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.73,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.73,
+      "stale_answers": [
+        "More than 2 sets",
+        "2 sets or fewer"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "ladder:Games in set 1",
+      "market_id": null,
+      "market_ids": [
+        59638611,
+        59624245,
+        59638617
+      ],
+      "family": "total",
+      "kind": "ladder",
+      "question": "Games in set 1",
+      "line": null,
+      "unit": "game",
+      "sort": [
+        2,
+        3
+      ],
+      "source_title": null,
+      "note": null,
+      "answers": [
+        {
+          "label": "More than 8 games",
+          "entity_key": null,
+          "probability": 0.755,
+          "opening_probability": 0.755,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        },
+        {
+          "label": "More than 9 games",
+          "entity_key": null,
+          "probability": 0.515,
+          "opening_probability": 0.485,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        },
+        {
+          "label": "More than 10 games",
+          "entity_key": null,
+          "probability": 0.265,
+          "opening_probability": 0.265,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T08:21:45.459970+00:00",
+          "age_hours": 32.73,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": null,
+      "opening_coherent": true,
+      "opening_raw_sum": null,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "age_hours": 32.73,
+      "freshest_observed_at": "2026-08-27T08:21:45.459970+00:00",
+      "freshest_age_hours": 32.73,
+      "stale_answers": [
+        "More than 8 games",
+        "More than 9 games",
+        "More than 10 games"
+      ],
+      "mixed_freshness": false
+    },
+    {
+      "key": "ladder:Games in set 2",
+      "market_id": null,
+      "market_ids": [
+        59628337,
+        59631301
+      ],
+      "family": "total",
+      "kind": "ladder",
+      "question": "Games in set 2",
+      "line": null,
+      "unit": "game",
+      "sort": [
+        2,
+        4
+      ],
+      "source_title": null,
+      "note": null,
+      "answers": [
+        {
+          "label": "More than 9 games",
+          "entity_key": null,
+          "probability": 0.497512,
+          "opening_probability": 0.497512,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T04:17:20.659655+00:00",
+          "age_hours": 36.8,
+          "price_state": "stale"
+        },
+        {
+          "label": "More than 10 games",
+          "entity_key": null,
+          "probability": 0.495,
+          "opening_probability": 0.495,
+          "probability_is_live": false,
+          "observed_at": "2026-08-27T05:16:58.514374+00:00",
+          "age_hours": 35.81,
+          "price_state": "stale"
+        }
+      ],
+      "coherent": true,
+      "raw_sum": null,
+      "opening_coherent": true,
+      "opening_raw_sum": null,
+      "probability_is_live": false,
+      "price_state": "stale",
+      "observed_at": "2026-08-27T04:17:20.659655+00:00",
+      "age_hours": 36.8,
+      "freshest_observed_at": "2026-08-27T04:17:20.659655+00:00",
+      "freshest_age_hours": 36.8,
+      "stale_answers": [
+        "More than 9 games",
+        "More than 10 games"
+      ],
+      "mixed_freshness": false
+    }
+  ],
+  "props_count": 8,
+  "props_markets": 12,
+  "props_dropped": {},
+  "generated_at": "2026-08-28T17:05:32.255340+00:00",
+  "slug": "us-open",
+  "title": "US Open 2026",
+  "subtitle": "Flushing Meadows",
+  "broadcasts": [
+    {
+      "region": "US",
+      "channels": [
+        "ESPN",
+        "ESPN2",
+        "ESPN+"
+      ],
+      "note": "ESPN holds exclusive US rights through 2026."
+    },
+    {
+      "region": "UK",
+      "channels": [
+        "Sky Sports Tennis"
+      ],
+      "note": null
+    },
+    {
+      "region": "AU",
+      "channels": [
+        "Stan Sport"
+      ],
+      "note": null
+    }
+  ]
+}

@@ -245,10 +245,16 @@ struct EventCardView: View {
                 reasonBadge(reason)
             }
             Spacer()
+            // UX-P166 — both sides of one question in fixed positions is a DUEL,
+            // and rounding the two independently printed 101. Measured on
+            // production 2026-08-29: all 24,117 events carrying an opening line
+            // are complement pairs and 207 of them print 101, none 99. Same rule
+            // and same helper as the `currentOdds` strip.
             if isLive, let opening = event.openingOdds,
                let awayOpen = opening.awayProbability,
                let homeOpen = opening.homeProbability {
-                Text("Opened \(formatProbability(awayOpen))/\(formatProbability(homeOpen))")
+                let openPcts = renderedDuelPercents(away: awayOpen, home: homeOpen)
+                Text("Opened \(formatProbability(awayOpen, renderedPercent: openPcts[0]))/\(formatProbability(homeOpen, renderedPercent: openPcts[1]))")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

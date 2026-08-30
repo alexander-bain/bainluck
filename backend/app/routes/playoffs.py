@@ -31,6 +31,7 @@ from app.utils.tournament_stages import classify_market_stage, get_stages_for_sp
 from app.utils.static_divisions import lookup_division as _static_lookup_division
 from app.utils.grid_register import GridRegister, load_register
 from app.utils.odds_math import devig_consensus
+from app.utils.regex_to_ilike import regex_to_ilike
 
 logger = logging.getLogger(__name__)
 
@@ -2749,6 +2750,47 @@ def _grid_payload_usable(payload) -> bool:
     return isinstance(teams, list) and len(teams) > 0
 
 
+GRID_FAILURE_TIMEOUT = "timeout"
+GRID_FAILURE_DB_CANCELED = "db_query_canceled"
+
+_GRID_FAILURE_PHRASE = {
+    GRID_FAILURE_TIMEOUT: "timed out",
+    GRID_FAILURE_DB_CANCELED: "was cancelled by the database",
+}
+
+
+def degraded_grid_detail(
+    league_slug: str, reason: str = GRID_FAILURE_TIMEOUT
+) -> str:
+    """The sentence a reader sees when the grid 503s (#1484, UX-P175).
+
+    Public and named rather than inlined at the ``raise`` site because it is a
+    CROSS-LAYER string: the route emits it, ``apiFetch`` preserves it, and
+    ``/playoffs/[sport]`` renders it verbatim in place of "Failed to load".
+    Re-typing it on the frontend side would make two layers agree today from two
+    sources and drift apart later with nothing going red — so the frontend
+    fixture is generated FROM this function and
+    ``test_playoff_degraded_contract.py`` fails if the two ever diverge.
+
+    The wording is load-bearing. "not an empty league" exists because the
+    failure mode being corrected is a reader concluding the competition has no
+    markets, which is the same false claim UX-P173 removed from the empty state.
+
+    ``reason`` names WHICH failure produced the 503. #2303 added a second one —
+    a Postgres ``statement_timeout`` firing below the route's own 25 s wall — and
+    the two are not the same sentence: telling a reader the grid "timed out" when
+    the database cancelled it sends them to the wrong place. The phrase varies;
+    the "not an empty league" clause never does. Defaults to the timeout wording
+    so the generated fixture and every existing single-argument caller are
+    unaffected.
+    """
+    phrase = _GRID_FAILURE_PHRASE.get(reason, "could not be built")
+    return (
+        f"Playoff grid for '{league_slug}' {phrase} and no last-good "
+        f"payload is available. This is a degraded state, not an empty league."
+    )
+
+
 def _mark_last_good(payload: dict, reason: str, *, degraded: bool) -> dict:
     """Label a last-good serve. Additive fields only; existing keys untouched.
 
@@ -2781,15 +2823,6 @@ def _mark_last_good(payload: dict, reason: str, *, degraded: bool) -> dict:
 # Sentinel and the precompute log both surface ``degraded_reason`` verbatim, and
 # "the route's wall fired" and "Postgres cancelled the statement" send an
 # operator to different places.
-GRID_FAILURE_TIMEOUT = "timeout"
-GRID_FAILURE_DB_CANCELED = "db_query_canceled"
-
-_GRID_FAILURE_PHRASE = {
-    GRID_FAILURE_TIMEOUT: "timed out",
-    GRID_FAILURE_DB_CANCELED: "was cancelled by the database",
-}
-
-
 async def _serve_grid_degraded(
     league_slug: str,
     cache_key: str,
@@ -2828,14 +2861,9 @@ async def _serve_grid_degraded(
     if last_good is not None:
         return _mark_last_good(last_good, reason, degraded=True)
 
-    phrase = _GRID_FAILURE_PHRASE.get(reason, "could not be built")
     raise HTTPException(
         status_code=503,
-        detail=(
-            f"Playoff grid for '{league_slug}' {phrase} and no last-good "
-            f"payload is available. This is a degraded state, not an empty "
-            f"league."
-        ),
+        detail=degraded_grid_detail(league_slug, reason),
     )
 
 
@@ -2981,6 +3009,52 @@ _GRID_MENS_RE = re.compile(r"\bMen.?s\b", re.IGNORECASE)
 _GRID_MENS_LEAGUES = ("ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "mlb")
 _GRID_WOMENS_LEAGUES = ("wnba", "ncaa-women-basketball")
 
+# Columns that stop trading once the regular season ends — prices sit at
+# 99.5%/0.5% for weeks with no updates, so they get a 60-day staleness cutoff
+# instead of the usual 7-day one. Module-level so the choice is assertable:
+# admitting a knockout column here would let a settled prior tournament merge
+# onto the grid at 0%/100%.
+_SETTLED_COLUMNS = {"make_playoffs", "division"}
+
+
+def _build_league_name_conditions(config) -> list:
+    """SQL prefilter for Path B.2 — league name patterns pushed down as ILIKE.
+
+    Exists so the grid does not have to load every market in a sport category
+    before deciding league membership. The authoritative decision is still
+    ``_market_passes_league_filter``, which re-applies the real regexes, so
+    this filter has exactly one obligation: **be a SUPERSET of the patterns,
+    never narrower.**
+
+    The converter this replaced was narrower — fatally so. It stripped ``\\b``
+    and ``\\s`` in a single pass, so ``\\s+`` had already lost its ``\\s`` by the
+    time the ``\\s+ → %`` rule ran and was left as a bare ``+``. Every
+    multi-word pattern therefore compiled to an impossible literal
+    (``\\bLa\\s+Liga\\b`` → ``%La+Liga%``). ``ILIKE`` is total on text, so the
+    condition was simply false for every row: no error, no warning, no log
+    line. Leagues reachable only by name (la-liga, champions-league, and EPL's
+    Champion column) rendered a tidy "no championship odds available yet" over
+    markets that were open, tier-1 and freshly priced.
+    """
+    conditions: list = []
+    for pattern_str in (config.league_name_patterns or []):
+        sql_pattern = regex_to_ilike(pattern_str)
+        if not sql_pattern:
+            # Nothing literal survived, so this pattern cannot be pushed down.
+            # Dropping it would NARROW the prefilter and hide rows the real
+            # regex would have accepted, so widen to the whole category and let
+            # Python decide.
+            return [FuturesMarket.llm_sport_category == config.sport_category]
+        conditions.append(
+            and_(
+                FuturesMarket.llm_sport_category == config.sport_category,
+                FuturesMarket.name.ilike(f"%{sql_pattern}%"),
+            )
+        )
+    if not conditions:
+        return [FuturesMarket.llm_sport_category == config.sport_category]
+    return conditions
+
 
 def _market_passes_league_filter(name: str, external_id: str, config) -> bool:
     """Decide whether a market belongs in ``config``'s playoff grid.
@@ -3051,16 +3125,22 @@ GRID_ID_SPACE_SOURCE: dict[str, str] = {
 }
 
 
-def _league_pattern_to_ilike(pattern_str: str) -> str:
-    """Convert a league name regex to a SQL ILIKE body (``\\bNBA\\b`` -> ``NBA``).
-
-    Unchanged behaviour, lifted out of ``get_playoff_grid`` so the candidate
-    filter can be built — and tested — without a request.
-    """
-    sql_pattern = re.sub(r"\\[bs]", "", pattern_str)
-    sql_pattern = re.sub(r"\\s\+|\\s\*", "%", sql_pattern)
-    sql_pattern = re.sub(r"[()?\[\]^$]", "", sql_pattern)
-    return sql_pattern.replace("\\", "").strip()
+#: ``_league_pattern_to_ilike`` USED TO LIVE HERE AND IS DELIBERATELY GONE.
+#:
+#: It converted a league name regex to an ILIKE body by stripping ``\b`` and
+#: ``\s`` in one pass, which left every multi-word pattern as an impossible
+#: literal (``\bLa\s+Liga\b`` -> ``La+Liga``) that matched no row. LAT-P129
+#: lifted it out of ``get_playoff_grid`` and pinned the behaviour as
+#: pre-existing (parked P129-2); UX-P173 measured what it cost — whole
+#: championship grids rendering "no odds available yet" over open, tier-1,
+#: freshly-priced markets — and replaced it with
+#: :func:`app.utils.regex_to_ilike.regex_to_ilike`, which widens rather than
+#: narrows for anything it cannot represent.
+#:
+#: The single caller, ``_build_grid_market_filters``, now delegates to
+#: :func:`_build_league_name_conditions`. Nothing else may reintroduce a
+#: narrowing converter: the prefilter's one obligation is to be a SUPERSET of
+#: the real regexes, which ``_market_passes_league_filter`` re-applies.
 
 
 #: Characters an ``external_id`` prefix may contain for the range bound below to
@@ -3261,20 +3341,30 @@ def _build_grid_market_filters(config: LeagueConfig):
 
     # Path B.2 — category + league name patterns (Polymarket). The name filter is
     # pushed to SQL so the category's whole inventory is never loaded.
-    category_conditions = []
-    for pattern_str in config.league_name_patterns or []:
-        sql_pattern = _league_pattern_to_ilike(pattern_str)
-        if sql_pattern:
-            category_conditions.append(
-                and_(
-                    FuturesMarket.llm_sport_category == config.sport_category,
-                    FuturesMarket.name.ilike(f"%{sql_pattern}%"),
-                )
-            )
-    if not category_conditions:
-        category_conditions.append(
-            FuturesMarket.llm_sport_category == config.sport_category
-        )
+    #
+    # ═══ WHY THIS DELEGATES (the LAT-P129 / UX-P173 union) ═══
+    #
+    # This function used to inline the conversion via `_league_pattern_to_ilike`,
+    # which stripped `\b` and `\s` in ONE pass — so `\s+` had already lost its
+    # `\s` by the time the `\s+ -> %` rule ran and was left as a bare `+`. Every
+    # multi-word pattern compiled to an impossible literal (`\bLa\s+Liga\b` ->
+    # `%La+Liga%`), and because ILIKE is total on text the condition was simply
+    # false for every row: no error, no warning, no log line. LAT-P129 measured
+    # that behaviour and deliberately PINNED it as pre-existing (parked P129-2),
+    # because widening the candidate set is a product change and that queue's was
+    # a latency one. UX-P173 is that product change: it proved the class (la-liga
+    # and champions-league rendered "no championship odds available yet" over
+    # open, tier-1, freshly-priced markets) and replaced the converter with
+    # `regex_to_ilike`, which is a SUPERSET by construction.
+    #
+    # The two fixes are orthogonal and BOTH are required. LAT-P129's contribution
+    # is the source-scoped id-space predicates above, which is what keeps this off
+    # the 911,217-row scan; UX-P173's is the converter, which is what lets the
+    # name-matched leagues see their rows at all. Delegating here is what composes
+    # them — inlining the old converter would keep the grids empty at speed, and
+    # the guard in `test_playoffs_league_prefilter.py` exists precisely so that
+    # "the builder stopped calling the real converter" fails a test.
+    category_conditions = _build_league_name_conditions(config)
 
     # Ticker-prefixed markets (Kalshi/OddsAPI) can be resolved (e.g. division
     # winners after the regular season). Category-matched (Polymarket) stay
@@ -3467,7 +3557,6 @@ async def get_playoff_grid(
         # season ends — prices stay at 99.5%/0.5% with no updates for weeks.
         # Use a much longer cutoff for these columns.
         _settled_cutoff = datetime.now(timezone.utc) - timedelta(days=60)
-        _SETTLED_COLUMNS = {"make_playoffs", "division"}
         _stale_skipped = 0
 
         # Resolve every market to its column FIRST (market fields only), then load

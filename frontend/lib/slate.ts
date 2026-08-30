@@ -65,6 +65,11 @@ export interface SlateSide {
   /** THIS side's own freshness (UX-P135). The row's verdict is the AND. */
   age_hours: number | null;
   price_state: PriceState;
+  /** When a probability for THIS side last reached us. */
+  observed_at?: string | null;
+  /** UX-P157. This side's own book grade — see `lib/liquidity`. */
+  liquidity?: string | null;
+  liquidity_reasons?: string[] | null;
 }
 
 export interface SlateMatch {
@@ -113,6 +118,9 @@ export interface SlateMatch {
   favourite: string | null;
   has_moved: boolean;
   source_count: number;
+  /** UX-P157. The AND over both sides — see `lib/liquidity`. */
+  liquidity?: string | null;
+  liquidity_reasons?: string[] | null;
   /**
    * This match's OWN broadcast, when the register names one (UX-P137, ruling
    * 8). Absent today for every match — see `matchBroadcast` for why the field
@@ -236,7 +244,10 @@ export function slateRowFreshnessLabel(match: SlateMatch): string | null {
     // Not an age. "Never priced" would be technically true and read as a
     // complaint about staleness; the fixture is four days away and nobody has
     // opened a book on it, which is ordinary and worth one plain sentence.
-    return "No market yet";
+    // Ruling 138: "No market yet" answered a probability question with an
+    // inventory fact. Worded identically to `propFreshnessLabel` so the two
+    // halves of the page do not teach two vocabularies for one idea.
+    return "No probability yet";
   }
   if (!match.coherent && match.price_state === "live") {
     // Muted for disagreement, not for age. The incoherent block already says
@@ -256,7 +267,9 @@ export function slateRowFreshnessLabel(match: SlateMatch): string | null {
 
 /** Human age, rounded DOWN — "8 days ago" must never flatter to "7". */
 export function slateStalenessLabel(ageHours: number | null): string {
-  if (ageHours === null || !Number.isFinite(ageHours)) return "never priced";
+  // UX-P145: was "never priced". *Priced* is a trading verb; "no reading yet"
+  // is the same fact in the page's own honesty vocabulary.
+  if (ageHours === null || !Number.isFinite(ageHours)) return "no reading yet";
   if (ageHours < 1) {
     const minutes = Math.max(1, Math.floor(ageHours * 60));
     return `${minutes} min ago`;
@@ -402,8 +415,8 @@ export function slateNotice(slate: SlateData): SlateNotice | null {
   if (slate.newest_observed_at === null) {
     return {
       tone: "dark",
-      headline: "No prices yet",
-      detail: "We have not recorded a price for today's matches.",
+      headline: "No numbers yet",
+      detail: "No market has put a probability on today's matches.",
     };
   }
   const hours = slate.age_hours;
@@ -418,9 +431,14 @@ export function slateNotice(slate: SlateData): SlateNotice | null {
     // list, so it is only ever live / stale / dark. `unpriced` is a per-ROW
     // state (UX-P142) and cannot reach here; narrowed explicitly rather than
     // cast, so the day a slate-wide unpriced state does exist this stops
-    // compiling instead of quietly labelling it "Prices paused".
+    // compiling instead of quietly labelling it "Updates paused".
     tone: slate.price_state === "unpriced" ? "dark" : slate.price_state,
-    headline: "Prices paused",
-    detail: `Last confirmed reading ${when}. These are the last prices we saw, not live prices.`,
+    // UX-P146: was "Prices paused" / "the last prices we saw, not live prices".
+    // Alex's product-wide ruling — the word is PROBABILITY. Kept identical to
+    // the board's wording, because the boards and the slate are two halves of
+    // one page and wording one admission two ways teaches a reader that one of
+    // them is decorative.
+    headline: "Updates paused",
+    detail: `Last confirmed reading ${when}. These are the last probabilities we saw, not live ones.`,
   };
 }

@@ -37,7 +37,7 @@
     "then change the implementations."
   ],
 
-  "version": 3,
+  "version": 4,
 
   "rule": "floor(probability * 100 + 0.5), IEEE 754 double, multiply before rounding; null in, null out",
 
@@ -226,5 +226,67 @@
     { "away": 0.6,   "home": 0.4,   "percents": [60, 40], "naive": [60, 40], "positional": [60, 40], "complement_pair": true,  "discriminates": false, "$why": "away favourite, no boundary — the favourite-first mapping must be a no-op when nothing needs deriving" },
     { "away": null,  "home": 0.6,   "percents": [null, 60], "naive": [null, 60], "positional": [null, 60], "complement_pair": false, "discriminates": false, "$why": "one side unpriced is not a priced pair; null stays null rather than becoming a derived 40" },
     { "away": 0.4,   "home": 0.5,   "percents": [40, 50], "naive": [40, 50], "positional": [40, 50], "complement_pair": false, "discriminates": false, "$why": "sum 0.9, outside the band. A game card should never produce this, but the rule must not force a total onto a pair that is not one" }
+  ],
+  "$card_sum_rule_comment": [
+    "VERSION 4 ADDS THE REASON A CARD'S TWO NUMBERS DO NOT ADD UP (#2088).",
+    "",
+    "The card rule above fixed the pair that SHOULD total 100 and deliberately left",
+    "alone the pair that should not. That was right — normalizing a pair summing to",
+    "0.97 would invent three points of probability rather than round one — but it",
+    "shipped the reader a card reading `57 / 40` with nothing on it saying why, which",
+    "is indistinguishable from the `93 / 8` bug it had just fixed. INT-104 measured",
+    "UX-P113's own deploy check at 17 of 18 and filed #2088: an UNEXPLAINED non-100",
+    "is the defect; a labelled one is a fact.",
+    "",
+    "Re-measured on production 2026-08-29 over the endpoint the issue itself used:",
+    "100 cards, 18 two-outcome, 17 summing to 100, one at 99 — 'Diane Parry vs Ann",
+    "Li: Set 2 Winner', served [51, 48]. A different market from the filed exemplar",
+    "and the same shape, so the class is a population rather than an anecdote.",
+    "",
+    "THE REASON IS NOT AN ILLIQUIDITY MARK, AND THAT WAS CHECKED RATHER THAN ASSUMED.",
+    "#2088 calls this 'the source-disagreement / illiquidity class', and UX-P157/158",
+    "had just built a graded mark for exactly that. On the filed exemplar",
+    "`grade_liquidity` returns 'traded': the books are 0.55/0.59 and 0.38/0.42, four",
+    "cents against a 0.57 midpoint, nowhere near `ask - bid >= midpoint`; and",
+    "`volume_updated_at` is not written on this population, so the volume fact is not",
+    "checkable either. Drawing a thinness mark here would invent a verdict that module",
+    "refuses to reach, on the surface where Alex grades. The honest reason needs no",
+    "book at all — these are two independently quoted sides, not two halves of one",
+    "question.",
+    "",
+    "SCOPE: two outcomes only. A three-outcome field totalling 97 is the",
+    "independent-binary class (gotcha #23) and already has `field_coherence` and",
+    "`_feed_display_scale`. null means 'this card makes no claim about a total', never",
+    "'checked and fine' — the surfaces must not render it as a clean bill of health.",
+    "",
+    "SWIFT IS DELIBERATELY NOT AN ARM. The reason is SERVED on both labeling",
+    "serializers; native consumes it rather than re-deriving it. Web implements it",
+    "only as the fallback for a payload minted before this shipped — the same role",
+    "`renderedPercent` plays for a pre-#2060 payload."
+  ],
+  "card_sum_rule": "a card of exactly two outcomes whose printed percents do not total 100 carries a reason: 'unpriced_outcome' when a side has no price, otherwise 'independent_prices'; a complement pair totals 100 by construction and carries null; any arity other than two carries null",
+  "card_sum_implementations": [
+    {"runtime": "python", "path": "backend/app/utils/graded_card.py", "symbol": "card_sum_reason", "sum_symbol": "card_sum", "driven_by": "backend/tests/test_graded_card_contract.py", "served_by": ["backend/app/routes/admin_label_pass.py:_live_features", "backend/app/routes/admin_judgments.py:_serialize_labeling_candidate"]},
+    {"runtime": "typescript", "path": "frontend/lib/renderedPercent.ts", "symbol": "cardSumReason", "sum_symbol": "cardSum", "driven_by": "frontend/__tests__/lib/renderedPercentContract.test.ts", "$role": "fallback for a payload minted before card_sum_reason was served"}
+  ],
+  "$card_sum_cases_comment": [
+    "Generated from the Python implementation and read back, never hand-authored: a",
+    "table of expected values typed by hand is a table that agrees with whatever its",
+    "author believed. Both directions are present on purpose — the complement rows",
+    "prove the reason CANNOT fire on the pair #2060 fixed (gotcha #43)."
+  ],
+  "card_sum_cases": [
+    {"probabilities": [0.57, 0.4], "percents": [57, 40], "complement_pair": false, "sum": 97, "reason": "independent_prices", "$why": "THE FILED EXEMPLAR - #2088, market 59194098 Bilardo vs Gschwendtner. Two sides of one match quoted independently; books 0.55/0.59 and 0.38/0.42, both of which grade 'traded' under market_liquidity, so the honest reason is arithmetic and not thinness"},
+    {"probabilities": [0.507, 0.478], "percents": [51, 48], "complement_pair": false, "sum": 99, "reason": "independent_prices", "$why": "LIVE 2026-08-29 - 'Diane Parry vs Ann Li: Set 2 Winner', served [51, 48]. A different market from the filed row and the same shape: the class is a population, not an anecdote"},
+    {"probabilities": [0.925, 0.075], "percents": [93, 7], "complement_pair": true, "sum": 100, "reason": null, "$why": "#2060's exemplar. A complement pair is normalized, rounded once and derived, so it totals 100 BY CONSTRUCTION and can never earn a reason - the not-firing direction (gotcha #43)"},
+    {"probabilities": [0.51, 0.48], "percents": [52, 48], "complement_pair": true, "sum": 100, "reason": null, "$why": "the band lower edge, exactly 0.99 - inside, so normalized to 100 and unreasoned. This is the value that used to print 99 with nothing in the system considering it wrong"},
+    {"probabilities": [0.505, 0.505], "percents": [50, 50], "complement_pair": true, "sum": 100, "reason": null, "$why": "the band upper edge, exactly 1.01 - inside, normalized, unreasoned"},
+    {"probabilities": [0.57, null], "percents": [57, null], "complement_pair": false, "sum": 57, "reason": "unpriced_outcome", "$why": "one side unpriced: there is no total to check, and that is a different fact from a total that misses"},
+    {"probabilities": [null, null], "percents": [null, null], "complement_pair": false, "sum": null, "reason": "unpriced_outcome", "$why": "neither side priced - nothing is drawn, so nothing is totalled"},
+    {"probabilities": [0.5, 0.3, 0.17], "percents": [50, 30, 17], "complement_pair": false, "sum": 97, "reason": null, "$why": "THE SCOPE BOUNDARY - three outcomes totalling 97 is the independent-binary class (gotcha #23), governed by field_coherence and _feed_display_scale. null here means 'no claim about a total is made', never 'checked and fine'"},
+    {"probabilities": [0.6], "percents": [60], "complement_pair": false, "sum": 60, "reason": null, "$why": "a lone number makes no claim about a total"},
+    {"probabilities": [], "percents": [], "complement_pair": false, "sum": null, "reason": null, "$why": "no card"},
+    {"probabilities": [0.001, 0.001], "percents": [0, 0], "complement_pair": false, "sum": 0, "reason": "independent_prices", "$why": "far below the band - normalizing this would invent a probability rather than round one, which is why the band exists at all"},
+    {"probabilities": [0.95, 0.95], "percents": [95, 95], "complement_pair": false, "sum": 190, "reason": "independent_prices", "$why": "far above the band: two independent questions that happen to have two outcomes"}
   ]
 }

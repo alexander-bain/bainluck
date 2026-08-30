@@ -2,6 +2,8 @@
 
 import React from "react";
 
+import EventCardShell from "@/components/EventCardShell";
+import LiquidityMark from "@/components/LiquidityMark";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
@@ -60,10 +62,19 @@ import {
  *   - **The row gets one line of metadata, not three.** Time, draw, age.
  *
  * 7. **Where to watch moves to the DETAIL view** — Alex's clarification,
- *    overruling UX-P137's per-row placement. So the row is a button and the
- *    channel lives behind the tap, together with the opening price and the one
- *    sentence that survived ruling 6. That is what a detail view is FOR: the
- *    facts worth having and not worth spending a row on.
+ *    overruling UX-P137's per-row placement. UX-P154 kept the ruling and moved
+ *    the view: the detail view is the EVENT PAGE now, so the channel renders in
+ *    `TournamentExtensions` and this list carries no broadcast at all. It did
+ *    not come back onto the row; the row got shorter, not busier.
+ *
+ * ═══ AND THE STRUCTURE ITSELF (UX-P154, Alex's item 2) ═══
+ *
+ * *"it kinda feels like we're reinventing the event card inside the tournament
+ * product"*. The accordion, the link row and the bespoke bordered container are
+ * gone; each row is `EventCardShell` — the same component `EventCard` renders —
+ * and the whole card routes to `/events/{id}`. See `MatchRow` for what moved
+ * where, and `EventCardShell` for why this is the shell rather than `EventCard`
+ * itself.
  *
  * 2. **A decided match shows the SCORE with the outcome.** The seam is here
  *    and rendered. It is empty on real data and will be until a result feed
@@ -193,6 +204,24 @@ function SideLine({
             {move}
           </span>
         )}
+        {/* UX-P157. Before the number and inside the same baseline run, so it
+            qualifies THIS side rather than the row: on a match the two sides
+            are two venue rows and the underdog's is routinely the thin one.
+            Decorative — the whole match card is a link (Alex's UX-P154 item 2)
+            and a focusable control inside it would put a second tab stop in
+            front of every fixture. The `title` still answers a mouse, and the
+            row's own detail note carries the sentence for everyone else. */}
+        {entry.priced && (
+          <LiquidityMark
+            facts={{
+              liquidity: side.liquidity,
+              liquidity_reasons: side.liquidity_reasons,
+            }}
+            observedAt={side.observedAt}
+            size="sm"
+            decorative
+          />
+        )}
         {entry.priced && (
           <span
             className={`text-[17px] font-bold tabular-nums tracking-tight ${
@@ -208,40 +237,80 @@ function SideLine({
   );
 }
 
+/**
+ * ═══ THE WHOLE CARD IS THE TARGET (UX-P154, Alex's item 2) ═══
+ *
+ * Alex, reviewing the UX-P152 artifact's panel 4 (2026-08-28, relayed through
+ * the UX-P154 runner directive):
+ *
+ *   *"it kinda feels like we're reinventing the event card inside the
+ *   tournament product"* — and the instruction: **no "See more on this match"
+ *   link row; the whole match card is clickable, exactly like every other card
+ *   in the product; the tournament list uses THE standard event-card
+ *   component.**
+ *
+ * So three things went, and they went together because they were one mistake:
+ *
+ *   - **the link row.** `See more on this match` was a link INSIDE a card, in a
+ *     product where a card IS a link. A reader who taps the card and gets an
+ *     accordion has learned that this list works differently from every other
+ *     list on the site, which is a cost paid on every row for a fact worth one.
+ *   - **the accordion.** The expand/collapse existed to hold the link and two
+ *     lines. With the whole card routing to `/events/{id}`, the tap is the
+ *     navigation and there is nothing left to expand.
+ *   - **the bespoke shell.** The row drew its own bordered container. It now
+ *     renders `EventCardShell` — the same component `EventCard` renders — so
+ *     `data-testid="event-card"` is true of this list, which is the DOM-level
+ *     claim ruling 047 is written against.
+ *
+ * WHERE THE DRAWER'S CONTENTS WENT, since a deleted surface has to say:
+ *
+ *   - **where to watch** → the event page's tournament extensions. Alex's
+ *     ruling 7 put it "in the DETAIL view" rather than on every row, and the
+ *     detail view is now the event page. It did not come back onto the row.
+ *   - **the one sentence** (`detailNote`, ruling 6) → onto the card. It only
+ *     fires when it adds something the numbers cannot say — an upset, a
+ *     disagreement, an unquoted fixture — and it was behind the tap only
+ *     because the drawer happened to exist.
+ *
+ * A FIXTURE WITH NO EVENT GETS NO LINK, and the card says so by not being one.
+ * `entry.eventId` is resolved server-side by id (the register's pinned
+ * match-winner `market_id` dereferenced through `futures_markets.event_id`) and
+ * is `null` rather than guessed. 28 of the register's fixtures are qualifying
+ * matches whose draw was never ingested as events; a link to the wrong match is
+ * worse than no link.
+ */
 function MatchRow({
   entry,
-  open,
-  onToggle,
+  matchHref,
 }: {
   entry: MatchListEntry;
-  open: boolean;
-  onToggle: () => void;
+  /** `/events/{id}` — the STANDARD event page — or `null` when the fixture
+   *  has no `events` row to route to. Never a tournament-private URL. */
+  matchHref: string | null;
 }) {
   const time = entry.scheduledDate ? formatMatchTime(entry.scheduledDate) : null;
-  const hasDetail =
-    entry.broadcast !== null ||
-    entry.detailNote !== null ||
-    entry.score !== null ||
-    entry.eventId !== null;
+  const names = entry.sides.map((side) => side.displayName).join(" v ");
 
   return (
     <li
-      className="border-t border-surface-border first:border-t-0"
       data-testid="match-row"
       data-match={entry.id}
       data-round={entry.round}
       data-live={entry.isLive ? "true" : "false"}
       data-decided={entry.decided ? "true" : "false"}
       data-coherent={entry.coherent ? "true" : "false"}
-      data-open={open ? "true" : "false"}
     >
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        disabled={!hasDetail}
-        className="w-full px-3.5 py-3 text-left"
-        data-testid="match-row-toggle"
+      <EventCardShell
+        href={matchHref}
+        live={entry.isLive && !entry.decided}
+        finished={entry.decided}
+        ariaLabel={`${names}${entry.decided ? " - Final" : ""}`}
+        /* `cn` is tailwind-merge, so this REPLACES the shell's `p-3 sm:p-4`
+           rather than fighting it — no `!important` needed, and the shell's
+           default stays the default for every other caller. */
+        className="p-3.5 sm:p-3.5"
+        dataAttrs={{ "data-match-card": entry.id }}
       >
         <div className="mb-1 flex items-center gap-2 text-[10.5px] uppercase tracking-[0.06em] text-text-muted">
           {time && <span className="tabular-nums">{time}</span>}
@@ -255,20 +324,15 @@ function MatchRow({
               {entry.freshnessLabel}
             </span>
           )}
-          {hasDetail && (
-            <span className="ml-auto normal-case tracking-normal" aria-hidden="true">
-              {open ? "Hide" : "Details"}
-            </span>
-          )}
         </div>
 
         {/* UNPRICED IS NOT INCOHERENT (UX-P142).
-            
+
             `!entry.coherent` used to be one branch, and it collapsed the row
             to a single "A vs B" line. That is the right treatment for two
             quotes that disagree: there is a split and we are refusing to show
             it, so the two names and a sentence are all the row may say.
-            
+
             It is the WRONG treatment for the released main draw. Alex's
             finding was "the page shows none of the draw", and this line is how
             it would have stayed shown: 96 fixtures rendered as bare text — no
@@ -276,7 +340,7 @@ function MatchRow({
             wrote the layout. Nothing is being withheld on these rows; there is
             simply no match market yet, and everything else about the fixture
             is known and worth printing.
-            
+
             So an unpriced row renders as a full row with no match number. The
             `SideLine` prints `—` for a null probability, which is what it has
             always done. */}
@@ -319,50 +383,18 @@ function MatchRow({
             {entry.score}
           </div>
         )}
-      </button>
 
-      {open && hasDetail && (
-        <div
-          className="border-t border-surface-border bg-surface-elevated/40 px-3.5 py-2.5 text-[11.5px] leading-snug text-text-secondary"
-          data-testid="match-detail"
-        >
-          {/* RULING 7: where to watch lives HERE, not on every row. */}
-          {entry.broadcast && (
-            <div data-testid="match-detail-broadcast" data-scope={entry.broadcast.scope}>
-              <span className="font-semibold text-text-primary">Where to watch</span>{" "}
-              <span>
-                {entry.broadcast.channels.join(", ")}
-                <span className="text-text-muted"> ({entry.broadcast.region})</span>
-              </span>
-            </div>
-          )}
-          {/* RULING 6: the ONE sentence, and only when it adds something. */}
-          {entry.detailNote && (
-            <div className="mt-1" data-testid="match-detail-note">
-              {entry.detailNote}
-            </div>
-          )}
-          {/* ITEM 7 — the click-through to the standard event page.
-              REGISTER-OWNED: `entry.eventId` comes from `matchup.event_id`, so
-              a link is an identity decision made once against the evidence and
-              never a name match at render time. A link to the wrong match is
-              worse than no link.
-              It renders on NO US Open match today — checked 2026-08-26, none
-              of the 66 registered matchups has an `events` row, because the
-              qualifying draw was never ingested as events. The report says so
-              rather than this shipping as a silently-dead affordance. */}
-          {entry.eventId !== null && (
-            <a
-              href={`/events/${entry.eventId}`}
-              className="mt-1.5 inline-block font-semibold text-text-primary underline decoration-dotted underline-offset-2"
-              data-testid="match-event-link"
-              data-event={entry.eventId}
-            >
-              Open the match page
-            </a>
-          )}
-        </div>
-      )}
+        {/* RULING 6: the ONE sentence, and only when it adds something. On the
+            card since UX-P154 deleted the drawer it used to sit in. */}
+        {entry.detailNote && (
+          <div
+            className="mt-1.5 text-[11.5px] leading-snug text-text-secondary"
+            data-testid="match-detail-note"
+          >
+            {entry.detailNote}
+          </div>
+        )}
+      </EventCardShell>
     </li>
   );
 }
@@ -389,17 +421,20 @@ export default function TournamentMatches({
   entries,
   initialRound,
   initialExpanded = false,
-  initialOpenMatchId,
   emptyHint,
   notice,
 }: {
   entries: MatchListEntry[];
+  /* UX-P152: the `slug` prop is gone. It existed to build a tournament-private
+     match URL; a row now routes to `/events/{id}`, which needs no tournament
+     context at all. Callers that still pass it are harmless — TS just ignores
+     an extra prop on a spread — but none do. */
   /** Capture seam and deep-link seam: which round pill is active. */
   initialRound?: MatchRoundKey;
   /** Capture seam: render the round already expanded. */
   initialExpanded?: boolean;
-  /** Capture seam: render one row's detail view open (ruling 7 is a tap). */
-  initialOpenMatchId?: string;
+  /* UX-P154: `initialOpenMatchId` is gone with the drawer it opened. There is
+     no per-row expanded state left to seed — the tap navigates. */
   /** What to say when this draw has no matches at all. */
   emptyHint?: string;
   /**
@@ -414,7 +449,6 @@ export default function TournamentMatches({
   const fallback = initialRound ?? defaultMatchRound(entries) ?? undefined;
   const [round, setRound] = React.useState<MatchRoundKey | undefined>(fallback);
   const [expanded, setExpanded] = React.useState(initialExpanded);
-  const [openId, setOpenId] = React.useState<string | null>(initialOpenMatchId ?? null);
 
   if (entries.length === 0) {
     return (
@@ -424,8 +458,9 @@ export default function TournamentMatches({
       >
         <div className="text-[15px] font-semibold text-text-primary">No matches scheduled</div>
         <p className="mt-1 text-[13px] text-text-secondary">
-          {emptyHint ??
-            "Nothing is on right now. Matches appear here as they are scheduled."}
+          {/* Ruling 142: "Matches appear here as they are scheduled" described
+              what the section would hold. The schedule is the fact. */}
+          {emptyHint ?? "Nothing is on right now. This is where the day's matches sit."}
         </p>
       </section>
     );
@@ -477,7 +512,6 @@ export default function TournamentMatches({
                   onClick={() => {
                     setRound(pill.round);
                     setExpanded(false);
-                    setOpenId(null);
                   }}
                   data-testid="match-round-pill"
                   data-round={pill.round}
@@ -520,29 +554,34 @@ export default function TournamentMatches({
         <span data-testid="match-column-label">{MATCH_COLUMN_LABEL}</span>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
-        <ol>
-          {visible.map((entry) => (
-            <MatchRow
-              key={entry.id}
-              entry={entry}
-              open={openId === entry.id}
-              onToggle={() => setOpenId((value) => (value === entry.id ? null : entry.id))}
-            />
-          ))}
-        </ol>
-        {inRound.length > COLLAPSED_LIST_COUNT && (
+      {/* A STACK OF CARDS, NOT A TABLE WITH DIVIDERS (UX-P154). The single
+          bordered container with hairline rows was the bespoke shell Alex
+          named; the product's other event lists are a gapped stack of cards
+          and this one now is too. */}
+      <ol className="space-y-2">
+        {visible.map((entry) => (
+          <MatchRow
+            key={entry.id}
+            entry={entry}
+            matchHref={entry.eventId !== null ? `/events/${entry.eventId}` : null}
+          />
+        ))}
+      </ol>
+      {inRound.length > COLLAPSED_LIST_COUNT && (
+        <div className="mt-2 overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
           <ShowMore
             expanded={expanded}
             total={inRound.length}
             onToggle={() => setExpanded((value) => !value)}
           />
-        )}
-      </div>
+        </div>
+      )}
 
       {incoherent > 0 && (
         <p className="mt-2 text-[11px] text-text-muted" data-testid="match-incoherent-count">
-          {incoherent} {incoherent === 1 ? "match has" : "matches have"} prices that do not agree
+          {/* UX-P146: was "prices that do not agree". Alex's product-wide
+              ruling on the noun; "numbers" is what they are to a reader. */}
+          {incoherent} {incoherent === 1 ? "match has" : "matches have"} numbers that do not agree
           yet.
         </p>
       )}

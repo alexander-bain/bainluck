@@ -10,6 +10,7 @@ import pytest
 
 from app.utils.cross_source_matching import (
     GARBAGE_OUTCOME_RE,
+    align_on_shared_outcome,
     clean_outcomes,
     find_cross_source_markets,
     group_markets_by_group_id,
@@ -43,15 +44,34 @@ def _market(
 
 
 def _simple_row_fn(market):
-    """Minimal market_row_fn for testing."""
+    """Minimal market_row_fn for testing.
+
+    Mirrors the three real producers (`politics`, `economics` and
+    `entertainment` `_market_row`): a ranked ``top_outcomes`` of the three
+    best-priced outcomes, with ``prob`` being the leader's. ``top_outcomes``
+    is part of the contract — ``find_cross_source_markets`` aligns the two
+    sources on a shared outcome name and reports nothing for a row that
+    cannot say what its number is about.
+    """
     if not market.outcomes:
         return None
-    top = max(market.outcomes, key=lambda o: float(o.current_probability or 0))
+    ranked = sorted(
+        market.outcomes,
+        key=lambda o: float(o.current_probability or 0),
+        reverse=True,
+    )
     return {
         "q": market.name,
-        "prob": round(float(top.current_probability or 0) * 100, 1),
+        "prob": round(float(ranked[0].current_probability or 0) * 100, 1),
         "src": source(market),
         "market_id": market.id,
+        "top_outcomes": [
+            {
+                "name": o.name,
+                "prob": round(float(o.current_probability or 0) * 100, 1),
+            }
+            for o in ranked[:3]
+        ],
     }
 
 
@@ -651,3 +671,381 @@ class TestGroupMarketsByGroupId:
         ]
         result = group_markets_by_group_id(markets)
         assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# UX-P187 — a spread is only a spread when both numbers price the same outcome
+# ---------------------------------------------------------------------------
+
+
+def _row(
+    *,
+    market_id: int,
+    q: str,
+    src: str,
+    outcomes: list[tuple[str, float]],
+    theme: str = "",
+) -> dict:
+    """A market_row_fn output, shaped like the three real producers."""
+    ranked = sorted(outcomes, key=lambda o: -o[1])
+    return {
+        "q": q,
+        "prob": ranked[0][1],
+        "src": src,
+        "market_id": market_id,
+        "top_outcomes": [{"name": n, "prob": p} for n, p in ranked[:3]],
+        "outcome_count": len(ranked),
+        "theme": theme,
+    }
+
+
+def _pair_row_fn(rows: dict[int, dict]):
+    """Serve pre-built rows by market id, so a test states its rows directly."""
+    return lambda m: rows.get(m.id)
+
+
+def _stub(market_id: int, name: str, src: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=market_id,
+        name=name,
+        source=src,
+        outcomes=[_outcome("placeholder", 0.5)],
+    )
+
+
+class TestAlignOnSharedOutcome:
+    """The unit that decides whether two numbers may be subtracted."""
+
+    def test_leaders_agree_so_that_outcome_is_the_comparison(self):
+        k = _row(
+            market_id=1,
+            q="Next President of Estonia?",
+            src="kalshi",
+            outcomes=[("Ülle Madise", 97.5), ("Alar Karis", 1.5)],
+        )
+        p = _row(
+            market_id=2,
+            q="Next President of Estonia?",
+            src="polymarket",
+            outcomes=[("Ülle Madise", 34.6), ("Alar Karis", 30.0)],
+        )
+        assert align_on_shared_outcome(k, p) == ("Ülle Madise", 97.5, 34.6)
+
+    def test_no_shared_outcome_is_not_comparable(self):
+        """The Louisiana shape: Kalshi prices 'exactly 1 seat', Polymarket '9'.
+
+        Both markets answer "how many House seats", neither prices anything the
+        other prices, and there is no honest single number to show.
+        """
+        k = _row(
+            market_id=1,
+            q="How many House seats will Democrats win in Louisiana?",
+            src="kalshi",
+            outcomes=[
+                ("Will Democrats win exactly 1 seats ...?", 92.5),
+                ("Will Democrats win exactly 2 seats ...?", 6.0),
+            ],
+        )
+        p = _row(
+            market_id=2,
+            q="How many House seats will Democrats win in Louisiana?",
+            src="polymarket",
+            outcomes=[("9", 36.0), ("8", 30.0)],
+        )
+        assert align_on_shared_outcome(k, p) is None
+
+    def test_a_cumulative_ladder_against_discrete_brackets_is_dropped(self):
+        """gotcha #17: 'Above 2.2%' and '2.4%' are not the same quantity, and
+        no amount of arithmetic makes them one."""
+        k = _row(
+            market_id=1,
+            q="Core inflation in August 2026?",
+            src="kalshi",
+            outcomes=[("Above 2.2%", 98.0), ("Above 2.4%", 71.0)],
+        )
+        p = _row(
+            market_id=2,
+            q="Core inflation in August 2026?",
+            src="polymarket",
+            outcomes=[("2.4%", 31.5), ("2.5%", 24.0)],
+        )
+        assert align_on_shared_outcome(k, p) is None
+
+    def test_leaders_differ_but_a_shared_outcome_rescues_the_pair(self):
+        """The Anthropic-IPO shape. Kalshi leads Goldman, Polymarket leads
+        Morgan Stanley; both price both, so there is a real comparison and it
+        is a more interesting one than either leader alone."""
+        k = _row(
+            market_id=1,
+            q="Which bank will lead Anthropic's IPO?",
+            src="kalshi",
+            outcomes=[("Goldman Sachs", 65.5), ("Morgan Stanley", 20.0)],
+        )
+        p = _row(
+            market_id=2,
+            q="Which bank will lead Anthropic's IPO?",
+            src="polymarket",
+            outcomes=[("Morgan Stanley", 50.0), ("Goldman Sachs", 12.0)],
+        )
+        # Goldman is the highest-priced shared outcome on either side, so it is
+        # the one compared — 65.5 vs 12.0, not 65.5 vs 50.0.
+        assert align_on_shared_outcome(k, p) == ("Goldman Sachs", 65.5, 12.0)
+
+    def test_case_and_spacing_do_not_hide_a_shared_outcome(self):
+        k = _row(
+            market_id=1, q="Q?", src="kalshi", outcomes=[("Ed  MARKEY", 66.5)]
+        )
+        p = _row(
+            market_id=2, q="Q?", src="polymarket", outcomes=[("ed markey", 18.5)]
+        )
+        aligned = align_on_shared_outcome(k, p)
+        assert aligned is not None
+        # Kalshi's spelling is the one shown, deterministically.
+        assert aligned[0] == "Ed  MARKEY"
+        assert aligned[1:] == (66.5, 18.5)
+
+    def test_distinct_bracket_labels_are_not_folded_together(self):
+        """The key is deliberately conservative. A normalizer that stripped
+        punctuation would make '2.4%' and '24%' — or '$800-900B' and
+        '800 900B' — the same outcome and invent a comparison."""
+        k = _row(market_id=1, q="Q?", src="kalshi", outcomes=[("2.4%", 40.0)])
+        p = _row(market_id=2, q="Q?", src="polymarket", outcomes=[("24%", 9.0)])
+        assert align_on_shared_outcome(k, p) is None
+
+    def test_a_row_without_top_outcomes_can_never_be_aligned(self):
+        k = {"q": "Q?", "prob": 60.0, "src": "kalshi", "market_id": 1}
+        p = _row(market_id=2, q="Q?", src="polymarket", outcomes=[("Yes", 40.0)])
+        assert align_on_shared_outcome(k, p) is None
+        assert align_on_shared_outcome(p, k) is None
+
+    def test_blank_outcome_names_are_not_a_shared_outcome(self):
+        """Two nameless outcomes normalize to the same empty key, so without
+        the filter they read as "both sources price the same thing" and the
+        card gets a spread with nothing above it. Asserted on BOTH sides
+        independently: one filter alone masks the other's removal, so a
+        one-sided check cannot see half the defect."""
+        blank_k = _row(market_id=1, q="Q?", src="kalshi", outcomes=[("", 60.0)])
+        blank_p = _row(market_id=2, q="Q?", src="polymarket", outcomes=[(" ", 40.0)])
+        named_k = _row(market_id=3, q="Q?", src="kalshi", outcomes=[("Yes", 60.0)])
+        named_p = _row(market_id=4, q="Q?", src="polymarket", outcomes=[("Yes", 40.0)])
+        assert align_on_shared_outcome(blank_k, blank_p) is None
+        assert align_on_shared_outcome(blank_k, named_p) is None
+        assert align_on_shared_outcome(named_k, blank_p) is None
+        # ...and the control: the same shapes, named, do align.
+        assert align_on_shared_outcome(named_k, named_p) == ("Yes", 60.0, 40.0)
+
+
+class TestSpotlightOnlyComparesLikeWithLike:
+    """The same rule, driven through the real `find_cross_source_markets`."""
+
+    def test_an_incomparable_pair_produces_no_row(self):
+        markets = [
+            _stub(1, "How many House seats will Democrats win in Louisiana?", "kalshi"),
+            _stub(2, "How many House seats will Democrats win in Louisiana?", "polymarket"),
+        ]
+        rows = {
+            1: _row(
+                market_id=1,
+                q="How many House seats will Democrats win in Louisiana?",
+                src="kalshi",
+                outcomes=[("exactly 1 seats", 92.5)],
+            ),
+            2: _row(
+                market_id=2,
+                q="How many House seats will Democrats win in Louisiana?",
+                src="polymarket",
+                outcomes=[("9", 36.0)],
+            ),
+        }
+        assert find_cross_source_markets(markets, market_row_fn=_pair_row_fn(rows)) == []
+
+    def test_a_comparable_pair_names_the_outcome_it_prices(self):
+        markets = [
+            _stub(1, "Next President of Estonia?", "kalshi"),
+            _stub(2, "Next President of Estonia?", "polymarket"),
+        ]
+        rows = {
+            1: _row(
+                market_id=1,
+                q="Next President of Estonia?",
+                src="kalshi",
+                outcomes=[("Ülle Madise", 97.5), ("Alar Karis", 1.5)],
+            ),
+            2: _row(
+                market_id=2,
+                q="Next President of Estonia?",
+                src="polymarket",
+                outcomes=[("Ülle Madise", 34.6), ("Alar Karis", 30.0)],
+            ),
+        }
+        (match,) = find_cross_source_markets(markets, market_row_fn=_pair_row_fn(rows))
+        assert match["outcome"] == "Ülle Madise"
+        assert match["kalshi"] == 97.5
+        assert match["poly"] == 34.6
+        assert match["delta"] == 62.9
+
+    def test_the_reported_numbers_are_the_named_outcomes_own(self):
+        """Two scans that can disagree will eventually bolt a number to the
+        wrong name, which is strictly worse than printing no name. There is
+        only one scan, and this holds it to that."""
+        markets = [
+            _stub(1, "Which bank will lead the IPO?", "kalshi"),
+            _stub(2, "Which bank will lead the IPO?", "polymarket"),
+        ]
+        rows = {
+            1: _row(
+                market_id=1,
+                q="Which bank will lead the IPO?",
+                src="kalshi",
+                outcomes=[("Goldman Sachs", 65.5), ("Morgan Stanley", 20.0)],
+            ),
+            2: _row(
+                market_id=2,
+                q="Which bank will lead the IPO?",
+                src="polymarket",
+                outcomes=[("Morgan Stanley", 50.0), ("Goldman Sachs", 12.0)],
+            ),
+        }
+        (match,) = find_cross_source_markets(markets, market_row_fn=_pair_row_fn(rows))
+        assert match["outcome"] == "Goldman Sachs"
+        for side, row_id in (("kalshi", 1), ("poly", 2)):
+            named = [
+                o["prob"]
+                for o in rows[row_id]["top_outcomes"]
+                if o["name"] == match["outcome"]
+            ]
+            assert named == [match[side]]
+        # ...and NOT the two leaders, which is what the old code subtracted.
+        assert match["delta"] != round(abs(65.5 - 50.0), 1)
+        assert match["delta"] == 53.5
+
+    def test_the_numbers_come_from_top_outcomes_not_the_raw_market(self):
+        """`top_outcomes` is already through the row builder's normalization
+        (`_normalize_outcome_probs` fires on 102 of the 244 markets in the
+        production pair set). Reading `market.outcomes` here instead would put
+        a second basis on the page: the spotlight card and the market's own
+        section would print different numbers for the same market."""
+        markets = [
+            SimpleNamespace(
+                id=1,
+                name="Q?",
+                source="kalshi",
+                outcomes=[_outcome("Yes", 0.90)],  # raw, un-normalized
+            ),
+            SimpleNamespace(
+                id=2,
+                name="Q?",
+                source="polymarket",
+                outcomes=[_outcome("Yes", 0.80)],
+            ),
+        ]
+        rows = {
+            1: _row(market_id=1, q="Q?", src="kalshi", outcomes=[("Yes", 60.0)]),
+            2: _row(market_id=2, q="Q?", src="polymarket", outcomes=[("Yes", 40.0)]),
+        }
+        (match,) = find_cross_source_markets(markets, market_row_fn=_pair_row_fn(rows))
+        assert (match["kalshi"], match["poly"]) == (60.0, 40.0)
+
+    def test_every_returned_row_names_an_outcome(self):
+        markets, rows = [], {}
+        for i in range(6):
+            k, p = i * 2 + 1, i * 2 + 2
+            markets += [_stub(k, f"Question {i}?", "kalshi"), _stub(p, f"Question {i}?", "polymarket")]
+            rows[k] = _row(market_id=k, q=f"Question {i}?", src="kalshi", outcomes=[("Yes", 50.0 + i)])
+            rows[p] = _row(market_id=p, q=f"Question {i}?", src="polymarket", outcomes=[("Yes", 10.0)])
+        result = find_cross_source_markets(markets, market_row_fn=_pair_row_fn(rows))
+        assert result
+        for match in result:
+            assert match["outcome"].strip()
+
+    def test_incomparable_pairs_are_dropped_BEFORE_the_cut(self):
+        """The ordering half, and the reason three of four rendered cards were
+        wrong: a mis-aligned pair yields a LARGER delta than a real
+        disagreement, so ranking before dropping promoted the artifacts and
+        pushed the honest rows below `max_results`."""
+        markets, rows = [], {}
+        # Eight incomparable pairs, each with a huge fake spread.
+        for i in range(8):
+            k, p = 100 + i * 2, 101 + i * 2
+            markets += [_stub(k, f"Bracket question {i}?", "kalshi"), _stub(p, f"Bracket question {i}?", "polymarket")]
+            rows[k] = _row(market_id=k, q=f"Bracket question {i}?", src="kalshi", outcomes=[(f"Above {i}", 95.0)])
+            rows[p] = _row(market_id=p, q=f"Bracket question {i}?", src="polymarket", outcomes=[(f"{i}.5", 4.0)])
+        # One comparable pair with a modest real spread.
+        markets += [_stub(1, "Real question?", "kalshi"), _stub(2, "Real question?", "polymarket")]
+        rows[1] = _row(market_id=1, q="Real question?", src="kalshi", outcomes=[("Yes", 40.0)])
+        rows[2] = _row(market_id=2, q="Real question?", src="polymarket", outcomes=[("Yes", 33.0)])
+
+        result = find_cross_source_markets(markets, market_row_fn=_pair_row_fn(rows))
+        assert [m["q"] for m in result] == ["Real question?"]
+        assert result[0]["delta"] == 7.0
+
+    def test_a_dropped_exact_pair_does_not_fall_through_to_near_match(self):
+        """An exact normalized-question match is the strongest evidence two
+        markets are the same question. That it cannot be reduced to one number
+        is a reason to show nothing — never a reason to release the Kalshi
+        market to go find a WEAKER partner it happens to share an outcome with.
+
+        The decoy is a PARAPHRASE, not a different year: the conservative
+        near-match pass rejects a year mismatch on its own (see
+        `test_slightly_different_names_not_matched`), so a decoy it would have
+        refused anyway cannot tell us whether the exact pair was released.
+        `test_paraphrased_names_matched` proves this decoy does get matched.
+        """
+        exact = "Will Donald Trump win the 2028 US presidential election?"
+        decoy = "Donald Trump to win the 2028 US presidency?"
+        markets = [
+            _stub(1, exact, "kalshi"),
+            _stub(2, exact, "polymarket"),
+            _stub(3, decoy, "polymarket"),
+        ]
+        rows = {
+            1: _row(
+                market_id=1,
+                q=exact,
+                src="kalshi",
+                outcomes=[("Before Jan 1, 2029", 16.0)],
+            ),
+            2: _row(market_id=2, q=exact, src="polymarket", outcomes=[("No", 86.0)]),
+            3: _row(
+                market_id=3,
+                q=decoy,
+                src="polymarket",
+                outcomes=[("Before Jan 1, 2029", 5.0)],
+            ),
+        }
+        assert find_cross_source_markets(markets, market_row_fn=_pair_row_fn(rows)) == []
+
+        # The instrument: with the exact partner gone, the decoy IS reachable,
+        # so the assertion above is about release, not about an unmatchable row.
+        del rows[2]
+        (match,) = find_cross_source_markets(
+            [markets[0], markets[2]], market_row_fn=_pair_row_fn(rows)
+        )
+        assert match["poly_market_id"] == 3
+        assert match["outcome"] == "Before Jan 1, 2029"
+
+    def test_the_near_match_pass_is_held_to_the_same_rule(self):
+        """The conservative near-match second pass builds its rows through the
+        same alignment. It is the pass most likely to put two only-similar
+        questions together, so it is the one that can least afford to subtract
+        one market's leader from another's."""
+        paraphrase_k = "Will Donald Trump win the 2028 US presidential election?"
+        paraphrase_p = "Donald Trump to win the 2028 US presidency?"
+
+        shared = [
+            _stub(1, paraphrase_k, "kalshi"),
+            _stub(2, paraphrase_p, "polymarket"),
+        ]
+        rows = {
+            1: _row(market_id=1, q=paraphrase_k, src="kalshi", outcomes=[("Yes", 70.0)]),
+            2: _row(market_id=2, q=paraphrase_p, src="polymarket", outcomes=[("Yes", 60.0)]),
+        }
+        (match,) = find_cross_source_markets(shared, market_row_fn=_pair_row_fn(rows))
+        assert match["outcome"] == "Yes"
+        assert match["delta"] == 10.0
+
+        # Same pairing, nothing in common to price: no row.
+        rows[2] = _row(
+            market_id=2, q=paraphrase_p, src="polymarket", outcomes=[("No", 40.0)]
+        )
+        assert find_cross_source_markets(shared, market_row_fn=_pair_row_fn(rows)) == []

@@ -1785,6 +1785,19 @@ export default function CalibrationPage() {
               appears above automatically &mdash; no fake curve until we can stand behind it.
             </p>
             <p className="text-xs text-text-muted mb-2 uppercase tracking-wide">Closest to the bar</p>
+            {/* UX-P189: the chip's `capitalize` class is gone. It was
+                compensating for `nicheCatLabel` returning bare single-word keys
+                verbatim (`chess`, `commodities`) — which is why that defect was
+                invisible HERE and visible in the By Category tabs and the
+                breakdown table, neither of which carries the class. The
+                labeller now cases its own output, and CSS capitalize would
+                corrupt it: it uppercases EVERY word, turning "Track and Field"
+                into "Track And Field" and "Spain Copa del Rey" into
+                "Spain Copa Del Rey".
+
+                The count span's `normal-case` goes with it: it existed only to
+                opt the number back out of the parent's `capitalize`, and with
+                no parent transform it asserts nothing. */}
             <div className="flex flex-wrap gap-2 mb-3">
               {examples.map(c => (
                 <span
@@ -1793,10 +1806,10 @@ export default function CalibrationPage() {
                   data-category={c.category}
                   data-disposition={c.disposition ?? ""}
                   data-outcomes={c.outcomes}
-                  className="text-xs px-2.5 py-1 rounded-full bg-surface-deep text-text-secondary border border-surface-border capitalize"
+                  className="text-xs px-2.5 py-1 rounded-full bg-surface-deep text-text-secondary border border-surface-border"
                 >
                   {catLabel(c.category)}{" "}
-                  <span className="tabular-nums text-text-muted normal-case">{c.outcomes.toLocaleString()}</span>
+                  <span className="tabular-nums text-text-muted">{c.outcomes.toLocaleString()}</span>
                 </span>
               ))}
               {thin.length > examples.length && (

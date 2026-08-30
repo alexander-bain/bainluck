@@ -16,9 +16,28 @@ import logging
 from datetime import datetime
 from typing import Optional, Sequence
 
-from app.services import llm
-
 logger = logging.getLogger(__name__)
+
+# `app.services.llm` is imported INSIDE `categorize_market`, not here, and that
+# is load bearing rather than a style choice.
+#
+# `app/utils/__init__.py` imports this module eagerly, so a module-scope
+# `from app.services import llm` put the ENTIRE service layer — and through
+# `app/services/database.py`, SQLAlchemy, asyncpg, pydantic and httpx — behind
+# every single `import app.utils.<anything>`. Measured 2026-08-29: with this one
+# import deferred, the whole `app.utils` package imports with ZERO third-party
+# packages loaded; with it at module scope, fourteen.
+#
+# That cost was invisible while every consumer was a Heroku dyno with the
+# requirements installed. It stopped being invisible when the CERT-430 specimen
+# producer (`scripts/emit_comparison_specimen.py`) had to run under the bare
+# interpreter on the frontend CI runner, which installs none of them. The
+# alternative was making the frontend deploy gate `pip install` the backend
+# stack to render one card.
+#
+# `llm` is used in exactly one function, at call time, so deferring it changes
+# nothing but import timing — and the three tests that patch it now patch
+# `app.services.llm`, which is where the function looks it up.
 
 
 # Sport categories with their regex patterns
@@ -1073,7 +1092,10 @@ def categorize_market(
         logger.debug(f"Categorized '{market_name}' as '{category}' via rules")
         return category
 
-    # Fall back to LLM if enabled
+    # Fall back to LLM if enabled. Imported here, not at module scope — see the
+    # note beside `logger` at the top of this file.
+    from app.services import llm
+
     if use_llm and llm.is_available():
         category = llm.classify_futures_market(market_name)
         if category and category != "other":

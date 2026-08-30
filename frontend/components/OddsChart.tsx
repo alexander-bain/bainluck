@@ -146,6 +146,36 @@ interface ResolvedSource {
 }
 
 /**
+ * ═══ THE FAINT LINES STAY ANONYMOUS ON THE CHART — ALEX RULED 3B (UX-P154) ═══
+ *
+ * ⚠️ DO NOT REBUILD END-OF-LINE SOURCE LABELS HERE. This paragraph exists
+ * because the argument for them is genuinely good and the next lane to read
+ * this chart will make it again.
+ *
+ * UX-P152 read Alex's *"a faint gray line per source behind it, LABELED
+ * (Kalshi / Polymarket / ESPN / sportsbook), barely-there but readable"*
+ * (2026-08-28) as a request for an annotation ON the plot, built one
+ * (`SourceEndLabel`: each series' name written in its own colour at its own
+ * last real point), and put it beside the shipped treatment as panels 3A and
+ * 3B for Alex to choose between.
+ *
+ * **Alex ratified 3B — the shipped `+ N sources` press — over 3A** (review of
+ * P149/P150/P151/P152, relayed through the UX-P154 runner directive:
+ * *"Panel 3B ('+ N sources' press) is RATIFIED over 3A."*). So 3A is reverted
+ * in full: the label component, the last-real-point index, and the per-series
+ * `label` prop are gone, and the chart is exactly what it was before UX-P152
+ * touched it — the blend at width 3 on top, the source lines at width 1 /
+ * opacity 0.28 behind it (L2-131, UX-P022), named only inside the legend.
+ *
+ * WHAT 3A WAS RIGHT ABOUT, so the finding is not lost with the code: an
+ * end-of-line label is the only annotation that can carry WHEN a source stopped
+ * being quoted — a sportsbook dropping out of a blowout has its line stop, and
+ * a legend cannot show that. That remains true and unsurfaced. It is a real
+ * gap, and the next attempt at it should start from that gap rather than from
+ * "the faint lines are anonymous", which Alex has now considered and accepted.
+ */
+
+/**
  * Win probability chart with two display modes:
  *
  * **Mode A (Multi-source):** When multiple probability sources exist

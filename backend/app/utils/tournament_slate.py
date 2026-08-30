@@ -57,6 +57,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
+from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
 from app.utils.tournament_board import (
     DARK_PRICE_HOURS,
     draw_label,
@@ -159,7 +160,215 @@ def _side_view(
         # muting the pair with no reason given.
         "age_hours": round(age, 2) if age is not None else None,
         "price_state": price_state(age),
+        # This side's OWN book grade (UX-P157). Both sides of a match are two
+        # tokens on one venue book, but they are two DIFFERENT venue rows here
+        # and either may be the thin one, so neither speaks for the other.
+        "liquidity": (loaded.get("liquidity") or {}).get("level") or LIQUIDITY_UNKNOWN,
+        "liquidity_reasons": sorted((loaded.get("liquidity") or {}).get("reasons") or []),
     }
+
+
+def build_match_row(
+    reg: TournamentRegister,
+    matchup: dict[str, Any],
+    *,
+    prices: dict[int, dict[str, Any]],
+    now: datetime,
+    cutoff: Optional[datetime],
+    event_ids: Optional[dict[str, int]] = None,
+) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """ONE matchup -> one slate row, or a named reason it is not one.
+
+    Extracted from ``build_slate``'s loop by UX-P149 so the match detail page
+    (``app.utils.tournament_match``) renders a fixture through **the same
+    definition of a match row** the list does, rather than through a second
+    copy that agrees today.  Two surfaces each computing "the favourite" or
+    "is this coherent" is the divergence bug in miniature; the standing ruling
+    is that the blend is the product and one question gets one number.
+
+    ``cutoff`` is the only difference between the two callers, and it is the
+    reason this is a parameter rather than a constant:
+
+    * The **slate** passes ``now - MATCH_STALE_AFTER_HOURS`` and drops anything
+      older, because a list of "what is on" must not still be showing this
+      morning's matches at midnight (refusal 3 in the module docstring).
+    * The **match page** passes ``None``.  A page about one fixture is not a
+      claim that the fixture is upcoming, and 404-ing a match because it has
+      started is the worst possible moment to stop answering questions about
+      it.
+
+    Returns ``(row, None)`` or ``(None, reason)``.  Never both, never neither.
+    """
+    players = matchup.get("players")
+    if not isinstance(players, list) or len(players) != 2:
+        return None, "NOT_A_PAIR"
+
+    scheduled = matchup.get("scheduled_date")
+    started: Optional[datetime] = None
+    if isinstance(scheduled, str) and scheduled:
+        try:
+            started = datetime.fromisoformat(scheduled.replace("Z", "+00:00"))
+        except ValueError:
+            started = None
+    if started is None:
+        return None, "NO_SCHEDULED_START"
+    if cutoff is not None and started < cutoff:
+        # Registered when it was upcoming; it is not upcoming now. The
+        # register is a file and the clock is not.
+        return None, "ALREADY_PLAYED"
+
+    block = next(
+        (
+            b for b in (matchup.get("sources") or [])
+            if isinstance(b, dict) and b.get("status") == "live"
+        ),
+        None,
+    )
+    # A REGISTERED FIXTURE NOBODY PRICES IS STILL A FIXTURE (UX-P142).
+    #
+    # This used to `drop("NO_LIVE_SOURCE")`, and on ceremony day that one
+    # line was the reason the page showed none of the released draw. The
+    # main draw is 96 registered fixtures four days out and NOT ONE of them
+    # has a match market at either source yet — nobody quotes a first round
+    # before qualifying finishes — so every one of them was dropped by a
+    # price rule and the reader was shown an empty list.
+    #
+    # A price is a fact ABOUT a fixture. Its absence is not evidence the
+    # fixture does not exist, and the page's own standing rule is that no
+    # state renders blank. So the row is built with no numbers on it and
+    # `priced: False` saying why, exactly as the grid's `no_market` cell
+    # does one tab over. `probability` stays None on both sides, which is
+    # the same None every downstream honesty gate already handles.
+    #
+    # `SIDES_UNMAPPED` keeps its drop: that is a live quote we cannot
+    # attribute to a player, which is a linkage DEFECT and not an absence,
+    # and rendering it unpriced would hide it.
+    sides_map: dict[str, Any] = {}
+    if block is not None:
+        candidate = block.get("sides")
+        if not isinstance(candidate, dict) or set(candidate) != set(players):
+            return None, "SIDES_UNMAPPED"
+        sides_map = candidate
+
+    views: list[dict[str, Any]] = []
+    # Both sides' own times, kept as a list. The verdict needs the oldest
+    # and the display needs the newest; a running max destroys one of them.
+    side_times: list[Optional[datetime]] = []
+    for entity_key in players:
+        player = reg.by_entity.get(entity_key)
+        if player is None:
+            break
+        side = sides_map.get(entity_key) or {}
+        outcome_id = side.get("outcome_id")
+        loaded = prices.get(outcome_id) if isinstance(outcome_id, int) else None
+        view = _side_view(entity_key, player, loaded or {}, now)
+        observed = (loaded or {}).get("observed_at")
+        side_times.append(observed if isinstance(observed, datetime) else None)
+        views.append(view)
+    if len(views) != 2:
+        return None, "PLAYER_NOT_REGISTERED"
+
+    a_norm, b_norm, raw_sum, coherent = normalize_pair(
+        views[0]["raw_probability"], views[1]["raw_probability"]
+    )
+    # The script is normalized on its OWN sum, not the current one — an
+    # opening pair has its own overround, and mixing bases would make the
+    # move an artifact of the two sums differing rather than of the market
+    # moving.
+    a_open, b_open, open_sum, open_coherent = normalize_pair(
+        views[0]["raw_opening_probability"], views[1]["raw_opening_probability"]
+    )
+
+    if coherent:
+        views[0]["probability"] = a_norm
+        views[1]["probability"] = b_norm
+    if open_coherent:
+        views[0]["opening_probability"] = a_open
+        views[1]["opening_probability"] = b_open
+    if coherent and open_coherent:
+        for view in views:
+            view["move"] = round(
+                view["probability"] - view["opening_probability"], 6
+            )
+
+    # THE AND (UX-P135): the pair is as old as its older side.
+    age = governing_age_hours(side_times, now)
+    state = price_state(age)
+    newest = freshest_observation(side_times)
+    freshest_age = (now - newest).total_seconds() / 3600.0 if newest else None
+    stale_sides = [
+        v["entity_key"] for v in views if v["price_state"] != "live"
+    ]
+
+    favourite = None
+    if coherent:
+        favourite = (
+            views[0]["entity_key"]
+            if (views[0]["probability"] or 0) >= (views[1]["probability"] or 0)
+            else views[1]["entity_key"]
+        )
+
+    moves = [v["move"] for v in views if v["move"] is not None]
+    return {
+        "priced": block is not None,
+        "matchup_key": matchup.get("matchup_key"),
+        # OUR `events.id` for this fixture — the row this match card ROUTES TO
+        # (UX-P139 item 7, made real by UX-P152).
+        #
+        # Two ways it can be filled, both id-anchored and neither a name match:
+        # the register may pin it directly, or `tournament_event_link` may
+        # dereference the pinned match-winner `market_id` through
+        # `futures_markets.event_id`. `event_ids` carries the second and the
+        # register's own value wins when both exist.
+        #
+        # Measured 2026-08-28: the Odds API ingested US Open main-draw singles
+        # the previous evening, so 94 of the 96 R128 fixtures now have a
+        # standard `events` row. It is no longer true that "the draw has no
+        # events rows" — that was measured before the ingest and expired.
+        "event_id": matchup.get("event_id")
+        or (event_ids or {}).get(matchup.get("matchup_key")),
+        "draw": matchup.get("draw"),
+        "draw_label": draw_label(str(matchup.get("draw") or "")),
+        "round": matchup.get("round"),
+        "scheduled_date": started.isoformat(),
+        "sides": views,
+        # The honesty fields. A client that ignores every one of them still
+        # cannot render a confident number, because `probability` is None
+        # whenever the pair is incoherent.
+        "coherent": coherent,
+        "raw_sum": raw_sum,
+        "opening_raw_sum": open_sum,
+        "probability_is_live": state == "live" and coherent,
+        # `unpriced` is its own word, distinct from `dark`. Dark means a
+        # price we HAVE gone stale; unpriced means no market was ever
+        # pinned. Collapsing them would make "the market stopped quoting
+        # this" and "no market exists" the same sentence to a reader, and
+        # only one of those is our problem to fix.
+        "price_state": "unpriced" if block is None else state,
+        # GOVERNING, not newest — see doctrine 4 in the module docstring.
+        "observed_at": (
+            min(t for t in side_times if t is not None).isoformat()
+            if age is not None
+            else None
+        ),
+        "age_hours": round(age, 2) if age is not None else None,
+        "freshest_observed_at": newest.isoformat() if newest else None,
+        "freshest_age_hours": (
+            round(freshest_age, 2) if freshest_age is not None else None
+        ),
+        "stale_sides": stale_sides,
+        "mixed_freshness": 0 < len(stale_sides) < len(views),
+        "favourite": favourite,
+        "has_moved": any(abs(m) > MOVE_DEAD_BAND for m in moves),
+        "source_count": 1,
+        # THE AND, again: a match row prints one pair, so it is as solid as its
+        # thinner side. A 90/10 built from a traded favourite and an untraded
+        # underdog is not a traded 90/10 — the underdog's book is half of it.
+        "liquidity": thinnest_liquidity([v.get("liquidity") for v in views]),
+        "liquidity_reasons": sorted(
+            {r for v in views for r in (v.get("liquidity_reasons") or [])}
+        ),
+    }, None
 
 
 def build_slate(
@@ -168,6 +377,7 @@ def build_slate(
     prices: dict[int, dict[str, Any]],
     now: datetime,
     max_stale_hours: float = MATCH_STALE_AFTER_HOURS,
+    event_ids: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
     """Assemble the daily slate payload.
 
@@ -182,170 +392,15 @@ def build_slate(
     rows: list[dict[str, Any]] = []
     dropped: dict[str, int] = {}
 
-    def drop(reason: str) -> None:
-        dropped[reason] = dropped.get(reason, 0) + 1
-
     for matchup in reg.matchups:
-        players = matchup.get("players")
-        if not isinstance(players, list) or len(players) != 2:
-            drop("NOT_A_PAIR")
-            continue
-
-        scheduled = matchup.get("scheduled_date")
-        started: Optional[datetime] = None
-        if isinstance(scheduled, str) and scheduled:
-            try:
-                started = datetime.fromisoformat(scheduled.replace("Z", "+00:00"))
-            except ValueError:
-                started = None
-        if started is None:
-            drop("NO_SCHEDULED_START")
-            continue
-        if started < cutoff:
-            # Registered when it was upcoming; it is not upcoming now. The
-            # register is a file and the clock is not.
-            drop("ALREADY_PLAYED")
-            continue
-
-        block = next(
-            (
-                b for b in (matchup.get("sources") or [])
-                if isinstance(b, dict) and b.get("status") == "live"
-            ),
-            None,
+        row, reason = build_match_row(
+            reg, matchup, prices=prices, now=now, cutoff=cutoff, event_ids=event_ids
         )
-        # A REGISTERED FIXTURE NOBODY PRICES IS STILL A FIXTURE (UX-P142).
-        #
-        # This used to `drop("NO_LIVE_SOURCE")`, and on ceremony day that one
-        # line was the reason the page showed none of the released draw. The
-        # main draw is 96 registered fixtures four days out and NOT ONE of them
-        # has a match market at either source yet — nobody quotes a first round
-        # before qualifying finishes — so every one of them was dropped by a
-        # price rule and the reader was shown an empty list.
-        #
-        # A price is a fact ABOUT a fixture. Its absence is not evidence the
-        # fixture does not exist, and the page's own standing rule is that no
-        # state renders blank. So the row is built with no numbers on it and
-        # `priced: False` saying why, exactly as the grid's `no_market` cell
-        # does one tab over. `probability` stays None on both sides, which is
-        # the same None every downstream honesty gate already handles.
-        #
-        # `SIDES_UNMAPPED` keeps its drop: that is a live quote we cannot
-        # attribute to a player, which is a linkage DEFECT and not an absence,
-        # and rendering it unpriced would hide it.
-        sides_map: dict[str, Any] = {}
-        if block is not None:
-            candidate = block.get("sides")
-            if not isinstance(candidate, dict) or set(candidate) != set(players):
-                drop("SIDES_UNMAPPED")
-                continue
-            sides_map = candidate
-
-        views: list[dict[str, Any]] = []
-        # Both sides' own times, kept as a list. The verdict needs the oldest
-        # and the display needs the newest; a running max destroys one of them.
-        side_times: list[Optional[datetime]] = []
-        for entity_key in players:
-            player = reg.by_entity.get(entity_key)
-            if player is None:
-                break
-            side = sides_map.get(entity_key) or {}
-            outcome_id = side.get("outcome_id")
-            loaded = prices.get(outcome_id) if isinstance(outcome_id, int) else None
-            view = _side_view(entity_key, player, loaded or {}, now)
-            observed = (loaded or {}).get("observed_at")
-            side_times.append(observed if isinstance(observed, datetime) else None)
-            views.append(view)
-        if len(views) != 2:
-            drop("PLAYER_NOT_REGISTERED")
+        if row is None:
+            reason = reason or "UNKNOWN"
+            dropped[reason] = dropped.get(reason, 0) + 1
             continue
-
-        a_norm, b_norm, raw_sum, coherent = normalize_pair(
-            views[0]["raw_probability"], views[1]["raw_probability"]
-        )
-        # The script is normalized on its OWN sum, not the current one — an
-        # opening pair has its own overround, and mixing bases would make the
-        # move an artifact of the two sums differing rather than of the market
-        # moving.
-        a_open, b_open, open_sum, open_coherent = normalize_pair(
-            views[0]["raw_opening_probability"], views[1]["raw_opening_probability"]
-        )
-
-        if coherent:
-            views[0]["probability"] = a_norm
-            views[1]["probability"] = b_norm
-        if open_coherent:
-            views[0]["opening_probability"] = a_open
-            views[1]["opening_probability"] = b_open
-        if coherent and open_coherent:
-            for view in views:
-                view["move"] = round(
-                    view["probability"] - view["opening_probability"], 6
-                )
-
-        # THE AND (UX-P135): the pair is as old as its older side.
-        age = governing_age_hours(side_times, now)
-        state = price_state(age)
-        newest = freshest_observation(side_times)
-        freshest_age = (now - newest).total_seconds() / 3600.0 if newest else None
-        stale_sides = [
-            v["entity_key"] for v in views if v["price_state"] != "live"
-        ]
-
-        favourite = None
-        if coherent:
-            favourite = (
-                views[0]["entity_key"]
-                if (views[0]["probability"] or 0) >= (views[1]["probability"] or 0)
-                else views[1]["entity_key"]
-            )
-
-        moves = [v["move"] for v in views if v["move"] is not None]
-        rows.append({
-            "priced": block is not None,
-            "matchup_key": matchup.get("matchup_key"),
-            # OUR `events.id` for this fixture, when the register carries one
-            # (UX-P139, Alex's item 7). Register-owned so a click-through is an
-            # identity decision made once against the evidence, never a
-            # request-time name match across two systems that disagree about
-            # `Auger-Aliassime`. `None` on every US Open matchup today: the
-            # qualifying draw has no `events` rows at all.
-            "event_id": matchup.get("event_id"),
-            "draw": matchup.get("draw"),
-            "draw_label": draw_label(str(matchup.get("draw") or "")),
-            "round": matchup.get("round"),
-            "scheduled_date": started.isoformat(),
-            "sides": views,
-            # The honesty fields. A client that ignores every one of them still
-            # cannot render a confident number, because `probability` is None
-            # whenever the pair is incoherent.
-            "coherent": coherent,
-            "raw_sum": raw_sum,
-            "opening_raw_sum": open_sum,
-            "probability_is_live": state == "live" and coherent,
-            # `unpriced` is its own word, distinct from `dark`. Dark means a
-            # price we HAVE gone stale; unpriced means no market was ever
-            # pinned. Collapsing them would make "the market stopped quoting
-            # this" and "no market exists" the same sentence to a reader, and
-            # only one of those is our problem to fix.
-            "price_state": "unpriced" if block is None else state,
-            # GOVERNING, not newest — see doctrine 4 in the module docstring.
-            "observed_at": (
-                min(t for t in side_times if t is not None).isoformat()
-                if age is not None
-                else None
-            ),
-            "age_hours": round(age, 2) if age is not None else None,
-            "freshest_observed_at": newest.isoformat() if newest else None,
-            "freshest_age_hours": (
-                round(freshest_age, 2) if freshest_age is not None else None
-            ),
-            "stale_sides": stale_sides,
-            "mixed_freshness": 0 < len(stale_sides) < len(views),
-            "favourite": favourite,
-            "has_moved": any(abs(m) > MOVE_DEAD_BAND for m in moves),
-            "source_count": 1,
-        })
+        rows.append(row)
 
     rows.sort(key=lambda r: (r["scheduled_date"], r["matchup_key"] or ""))
 
@@ -380,10 +435,84 @@ def build_slate(
     }
 
 
+def _prematch_by_pair(
+    reg: TournamentRegister, prices: dict[int, dict[str, Any]]
+) -> dict[tuple, dict[str, float]]:
+    """``(draw, sorted entity keys) -> {entity_key: pre-match probability}``.
+
+    ═══ UX-P146: A RESULT WITHOUT ITS PRIOR IS HALF THE STORY ═══
+
+    Alex, on the UX-P145 desktop artifact: "finished outcomes on the right must
+    show their PRE-MATCH probabilities alongside the result — a result without
+    the prior probability is half the story on a probability product."  He is
+    describing the whole reason this site exists: *Kubka beat Penickova* is a
+    scoreline anyone can get; *Kubka beat Penickova, and the market had her at
+    38%* is the product.
+
+    THE NUMBER IS THE OPENING QUOTE, and that is a deliberate choice rather than
+    a convenience.  ``futures_outcomes`` carries exactly two prices per outcome:
+    ``current_probability`` and ``opening_probability``.  The current one is
+    poisoned for this purpose — a decided match's market settles, so "what the
+    market thought" would render as 100% for every winner and 0% for every
+    loser, a perfectly confident number that is really just the result read
+    back.  The opening quote is the only stored price that is guaranteed to
+    pre-date the match.  It is what the slate already calls THE SCRIPT.
+
+    NORMALIZED AS A PAIR, through the same ``normalize_pair`` the slate uses, so
+    a finished match and a live one on the same page are quoted on the same
+    basis — and so an incoherent pair yields nothing at all rather than a tidy
+    fabricated split (see refusal 2 in the module docstring).
+
+    WHY THIS IS NOT AVAILABLE FOR EVERY RESULT, stated here because the caller
+    has to report it honestly: a pre-match probability exists only where the
+    register pinned a MATCHUP market for that pair.  Measured against the
+    2026-08-27 production payload, 12 of 76 joined results have one.  The other
+    64 are qualifying matches we hold player-level markets for but for which no
+    match market was ever registered — there is no prior to show, and inventing
+    one from the title board (a player's chance of winning the tournament is not
+    their chance of winning a first-round match) would be a fabricated number
+    wearing a real player's name.
+    """
+    out: dict[tuple, dict[str, float]] = {}
+    for matchup in reg.matchups:
+        players = matchup.get("players")
+        if not isinstance(players, list) or len(players) != 2:
+            continue
+        block = next(
+            (
+                b for b in (matchup.get("sources") or [])
+                if isinstance(b, dict) and b.get("status") == "live"
+            ),
+            None,
+        )
+        if block is None:
+            continue
+        sides = block.get("sides")
+        if not isinstance(sides, dict) or set(sides) != set(players):
+            continue
+
+        raw: list[Optional[float]] = []
+        for entity_key in players:
+            side = sides.get(entity_key) or {}
+            outcome_id = side.get("outcome_id")
+            loaded = prices.get(outcome_id) if isinstance(outcome_id, int) else None
+            raw.append(_as_float((loaded or {}).get("opening_probability")))
+
+        a_open, b_open, _sum, coherent = normalize_pair(raw[0], raw[1])
+        if not coherent or a_open is None or b_open is None:
+            continue
+        out[(str(matchup.get("draw")), tuple(sorted(players)))] = {
+            players[0]: a_open,
+            players[1]: b_open,
+        }
+    return out
+
+
 def build_results(
     register: dict[str, Any],
     *,
     results: dict[str, Any],
+    prices: Optional[dict[int, dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Decided matches, with the score (UX-P139, Alex's item 9).
 
@@ -421,7 +550,7 @@ def build_results(
     reg = TournamentRegister(register)
     by_draw = (results or {}).get("draws") or {}
 
-    from app.services.espn_tennis import normalize_name
+    from app.services.espn_tennis import COMPLETION_UNKNOWN, normalize_name
 
     # (draw, normalized name) -> player. Built once; the join is a lookup.
     by_name: dict[tuple[str, str], dict[str, Any]] = {}
@@ -443,6 +572,12 @@ def build_results(
                 (str(matchup.get("draw")), tuple(sorted(players)))
             ] = str(matchup.get("matchup_key"))
 
+    # What the market said BEFORE the match (UX-P146). Same pair key as the
+    # matchup lookup above, so a result carries its prior exactly when the
+    # register still pins the market that published it.
+    prematch_by_pair = _prematch_by_pair(reg, prices or {})
+    with_prematch = 0
+
     for draw, found_by_pair in sorted(by_draw.items()):
         for found in found_by_pair.values():
             entries = [
@@ -463,6 +598,10 @@ def build_results(
                 winner_mismatch += 1
                 continue
 
+            prematch = prematch_by_pair.get((draw, tuple(sorted(keys))))
+            if prematch:
+                with_prematch += 1
+
             rows.append({
                 "matchup_key": matchup_by_pair.get(
                     (draw, tuple(sorted(keys))),
@@ -477,14 +616,26 @@ def build_results(
                 "round": found.get("espn_round") or "",
                 "players": [
                     {"entity_key": key, "display_name": entry.get("display_name"),
-                     "seed": entry.get("seed"), "is_winner": key == winner_key}
+                     "seed": entry.get("seed"), "is_winner": key == winner_key,
+                     # WHAT THE MARKET SAID BEFORE IT (UX-P146). `None` where no
+                     # match market was ever registered for this pair — an
+                     # absence the section states rather than fills in. See
+                     # `_prematch_by_pair` for why the opening quote and not the
+                     # current one.
+                     "prematch_probability": (prematch or {}).get(key)}
                     for key, entry in zip(keys, entries)
                 ],
                 "winner_entity_key": winner_key,
-                # Winner's games first, set by set. `None` for a retirement or a
-                # partial read — see `format_score`, which refuses rather than
-                # printing half a result as a whole one.
+                # Winner's games first, set by set. `None` for a WALKOVER (no
+                # set was played) or a partial read — see `format_score`.
                 "score": found.get("score"),
+                # HOW it ended (UX-P147, Alex's item 5): `final`, `retired`,
+                # `walkover`, or `unknown`. The row that made him ask carried
+                # neither a score nor a reason; ESPN had the reason all along
+                # (`STATUS_WALKOVER`) and this is it reaching the reader. It
+                # also marks the eight retirements whose scores are REAL but
+                # partial, which nothing on the page said before.
+                "completion": found.get("completion") or COMPLETION_UNKNOWN,
                 "completed_at": found.get("completed_at"),
                 "source_round": found.get("espn_round"),
                 "source": "espn",
@@ -502,8 +653,17 @@ def build_results(
         # of the qualifying draw, by design.
         "unregistered_pairs": unregistered_pair,
         "winner_not_registered": winner_mismatch,
+        # How many of `matches` carry a pre-match probability (UX-P146). The
+        # section prints this ratio: a prior shown on 12 rows and absent on 64
+        # reads as a bug unless the page says which it is.
+        "with_prematch": with_prematch,
         "source_competitions": (results or {}).get("stats", {}).get("final", 0),
         "source_scored": (results or {}).get("stats", {}).get("scored", 0),
+        # UX-P147: how the unscored ones ended, counted at the source rather
+        # than guessed in prose. The provenance line said "retirement or
+        # walkover" because nobody had measured which; now it can name them.
+        "source_walkovers": (results or {}).get("stats", {}).get("walkovers", 0),
+        "source_retirements": (results or {}).get("stats", {}).get("retirements", 0),
         "source_errors": (results or {}).get("errors") or [],
     }
 
@@ -524,15 +684,62 @@ def build_props(
     A prop whose outcomes are all unpriced still renders: knowing the question
     is being asked is worth something, and an empty probability is honest where
     an invented one is not.
+
+    ═══ A COMPARISON IS COMPLETE OR IT IS NOT LIVE (CERT-430, finding 1) ═══
+
+    A card built from ONE market may be partially quoted and still current: an
+    eighty-name field with sixty unpriced rows is a field with sixty unpriced
+    rows, and the ones that are quoted are the card.
+
+    A card built from SEVERAL DECLARED MARKETS is a different object.  Its whole
+    reason to exist is the comparison — "Who wins a second major this year?" is
+    two questions printed side by side — and a leg with no reading does not
+    make the comparison thinner, it makes it *false*.  The measured specimen:
+    Alcaraz unpriced, Sinner fresh at .555, and this function returned the card
+    as ``price_state='live'`` because only PRICED outcomes voted on freshness.
+    Rendered, that is one man's number under a two-man question, in the
+    confident type.  Gotcha #53's shape exactly — an absence read as a good
+    answer.
+
+    So a declared leg that produced no reading is a contributor that was never
+    seen, and ``governing_age_hours`` already knows what those are worth.  The
+    card still RENDERS (Alex, 2026-08-28: illiquid questions are never hidden);
+    it renders muted, with every declared subject on it, and ``unpriced_legs``
+    names the ones we have nothing for so the page can say so out loud.
     """
     out: list[dict[str, Any]] = []
     for prop in TournamentRegister(register).props:
         views: list[dict[str, Any]] = []
         priced_times: list[Optional[datetime]] = []
+        card_liquidity: list[Optional[str]] = []
+        card_liquidity_reasons: set[str] = set()
+        # WHAT THE REGISTER DECLARED, not what happened to arrive.  A leg is
+        # identified by its external id where it has one, because our own
+        # `market_id` is a local surrogate a re-ingest can move.
+        declared = [
+            str(entry.get("market_external_id") or entry.get("market_id"))
+            for entry in (prop.get("markets") or [])
+            if isinstance(entry, dict)
+        ]
+        if not declared:
+            # A pre-`markets` register entry: one card, one market, by shape.
+            declared = [
+                str(
+                    prop.get("market_external_id")
+                    or prop.get("market_id")
+                    or prop.get("key")
+                )
+            ]
+        legs_with_a_reading: set[str] = set()
 
         for outcome in prop.get("outcomes") or []:
             if not isinstance(outcome, dict):
                 continue
+            leg = str(
+                outcome.get("market_external_id")
+                or outcome.get("market_id")
+                or declared[0]
+            )
             loaded = prices.get(outcome.get("outcome_id")) or {}
             probability = _as_float(loaded.get("probability"))
             observed = loaded.get("observed_at")
@@ -546,6 +753,7 @@ def build_props(
                 # unpriced one has no reading to be stale, and counting it as
                 # dark would paint every partially-quoted card dark.
                 priced_times.append(observed)
+                legs_with_a_reading.add(leg)
             views.append({
                 "entity_key": outcome.get("entity_key"),
                 "display_name": outcome.get("display_name"),
@@ -564,12 +772,39 @@ def build_props(
                 # register, never inferred here — see the answer rule in
                 # `tournament_register.validate_prop`.
                 "is_answer": outcome.get("is_answer") is True,
+                # Its own book grade (UX-P157). Per row rather than per card,
+                # because a field card's leader can be heavily traded while the
+                # tail rows it is printed above are not quoted by anybody.
+                "liquidity": (
+                    (loaded.get("liquidity") or {}).get("level") or LIQUIDITY_UNKNOWN
+                ),
+                "liquidity_reasons": sorted(
+                    (loaded.get("liquidity") or {}).get("reasons") or []
+                ),
             })
+            if probability is not None:
+                # Only a PRICED row votes on the CARD's grade, matching the
+                # freshness rule three lines up. An unpriced row has no book
+                # reading to be thin, and letting it vote would mark every
+                # partially-quoted field card as barely traded.
+                card_liquidity.append((loaded.get("liquidity") or {}).get("level"))
+                card_liquidity_reasons.update(
+                    (loaded.get("liquidity") or {}).get("reasons") or []
+                )
 
         # The card's own state is the AND over its priced outcomes: a ranked
         # field is a published artifact too, and a stale member can outrank
         # fresh ones inside it.
-        age = governing_age_hours(priced_times, now)
+        #
+        # AND over its DECLARED LEGS too, when there is more than one of them.
+        # A leg that produced nothing is a contributor older than any
+        # timestamp, which is what `governing_age_hours` reads `None` as; see
+        # the comparison note in this function's docstring.
+        unpriced_legs = [leg for leg in declared if leg not in legs_with_a_reading]
+        contributors: list[Optional[datetime]] = list(priced_times)
+        if len(declared) > 1 and unpriced_legs:
+            contributors.append(None)
+        age = governing_age_hours(contributors, now)
         state = price_state(age)
         newest = freshest_observation(priced_times)
         freshest_age = (now - newest).total_seconds() / 3600.0 if newest else None
@@ -588,6 +823,13 @@ def build_props(
             "draw": prop.get("draw"),
             "source": prop.get("source"),
             "outcomes": views,
+            # HOW MANY MARKETS THE REGISTER DECLARED for this card, and which of
+            # them we have nothing for. `legs > 1` is what makes a card a
+            # comparison, and the renderer needs both facts: to print every
+            # declared subject rather than only the quoted ones, and to name the
+            # missing one instead of leaving a two-name question one name short.
+            "legs": len(declared),
+            "unpriced_legs": unpriced_legs,
             # `None` is a real, supported state and NOT a defect: it means this
             # question has no single answering outcome (a field market), so the
             # card must show a ranked list rather than one headline number.
@@ -605,6 +847,9 @@ def build_props(
             ),
             "stale_outcomes": stale_outcomes,
             "mixed_freshness": 0 < len(stale_outcomes) < len(priced_times),
+            # THE AND over the card's priced rows (UX-P157, #2256).
+            "liquidity": thinnest_liquidity(card_liquidity),
+            "liquidity_reasons": sorted(card_liquidity_reasons),
         })
     return out
 

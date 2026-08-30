@@ -117,13 +117,17 @@ describe("a stale board says so, visibly", () => {
   it("renders a notice naming the age of the reading", () => {
     const html = renderToStaticMarkup(<TournamentBoard board={DARK_BOARD} />);
     expect(html).toContain('data-testid="price-state-notice"');
-    expect(html).toContain("Prices paused");
+    expect(html).toContain("Updates paused");
     expect(html).toContain("8 days ago");
   });
 
   it("says the numbers are not live, in words", () => {
+    // UX-P146: the sentence used to end "not live prices". Alex's product-wide
+    // ruling took the noun; the ADMISSION is what this test is for and it is
+    // unchanged, so the assertion moved with the wording rather than being
+    // dropped.
     const html = renderToStaticMarkup(<TournamentBoard board={DARK_BOARD} />);
-    expect(html).toContain("not live prices");
+    expect(html).toContain("not live ones");
   });
 
   it("marks every row non-live in the markup itself", () => {
@@ -158,7 +162,7 @@ describe("a live board does NOT cry wolf", () => {
   it("renders no notice at all", () => {
     const html = renderToStaticMarkup(<TournamentBoard board={board()} />);
     expect(html).not.toContain('data-testid="price-state-notice"');
-    expect(html).not.toContain("Prices paused");
+    expect(html).not.toContain("Updates paused");
   });
 
   it("marks its rows live", () => {
@@ -265,8 +269,15 @@ describe("a row blended from a fresh source and a stale one", () => {
     expect(html).not.toContain("1 hour ago");
   });
 
-  it("names the stale source rather than implying the whole row is abandoned", () => {
-    expect(html).toContain("Polymarket");
+  it("says only PART of it is old, rather than implying the whole row is abandoned", () => {
+    // UX-P150, ruling 141: this used to assert the venue NAME ("Polymarket").
+    // Alex banned venue names in reader copy on 2026-08-28 — a reader gets our
+    // probability, not our sourcing. The honesty property the assertion exists
+    // for is untouched and is what is pinned here: the line has to distinguish
+    // "one of the readings behind this is old" from "nobody has looked at this
+    // in three weeks", and a count does that as well as a name did.
+    expect(html).toContain("one reading");
+    expect(html).not.toContain("Polymarket");
   });
 });
 
@@ -275,8 +286,20 @@ describe("rowFreshnessLabel", () => {
     expect(rowFreshnessLabel(row())).toBeNull();
   });
 
-  it("names the stale contributor on a mixed row", () => {
-    expect(rowFreshnessLabel(MIXED_ROW)).toBe("Polymarket 20 days ago");
+  it("counts the stale contributors on a mixed row, without naming them", () => {
+    // Ruling 141. The count is the fact; the venue was never the fact.
+    expect(rowFreshnessLabel(MIXED_ROW)).toBe("one reading 20 days ago");
+  });
+
+  it("pluralises when more than one leg is old but not all of them", () => {
+    // Three-source rows exist and "two reading 20 days ago" would be the kind
+    // of sentence a reader files under "nobody looked at this".
+    expect(
+      rowFreshnessLabel({
+        ...MIXED_ROW,
+        stale_sources: ["polymarket", "odds_api"],
+      })
+    ).toBe("two readings 20 days ago");
   });
 
   it("falls back to a bare age when EVERY contributor is stale", () => {
@@ -332,9 +355,9 @@ describe("boardNotice", () => {
     const never = boardNotice(
       board({ price_state: "dark", age_hours: null, newest_observed_at: null })
     );
-    expect(never?.headline).toBe("No prices yet");
+    expect(never?.headline).toBe("No numbers yet");
     const quiet = boardNotice(board({ price_state: "dark", age_hours: 200 }));
-    expect(quiet?.headline).toBe("Prices paused");
+    expect(quiet?.headline).toBe("Updates paused");
   });
 });
 
@@ -497,12 +520,15 @@ describe("board rendering", () => {
     expect(html).not.toContain("52.0%");
   });
 
-  it("declares unpriced registered players instead of hiding them", () => {
+  it("declares players with no price instead of hiding them", () => {
     const html = renderToStaticMarkup(
       <TournamentBoard board={board({ unpriced: 12 })} />
     );
     expect(html).toContain('data-testid="board-unpriced"');
-    expect(html).toContain("12 more registered players have no price");
+    // UX-P145: was "12 more registered players have no price". *Registered* is
+    // the name of our JSON file. The COUNT is the point of the line and it is
+    // still here — the reader must not be shown a board that looks complete.
+    expect(html).toContain("12 more players in this draw have no number yet");
   });
 
   it("renders an honest empty board", () => {
@@ -512,7 +538,7 @@ describe("board rendering", () => {
       />
     );
     expect(html).toContain('data-testid="board-empty"');
-    expect(html).toContain("No prices yet");
+    expect(html).toContain("No numbers yet");
   });
 
   it("whispers the source count without becoming a comparison surface", () => {

@@ -1,0 +1,58 @@
+{
+  "_captured": "2026-08-29",
+  "_source": "GET https://api.bainluck.com/api/weather/rain",
+  "_note": "Banked BEFORE a line of the UX-P170 fix was written. `daily` is empty and `monthly` carries one row, so the shipped RainForecast renders an infinite loading skeleton in the left card and a single row under a header claiming 10 cities in the right one.",
+  "served_before": {
+    "daily": [],
+    "monthly": [
+      {
+        "city": "NYC",
+        "prob": 0,
+        "src": "kalshi",
+        "delta24h": 0
+      }
+    ]
+  },
+  "_daily_population": {
+    "query": "futures_markets WHERE name ILIKE 'Will it rain in NYC on%'",
+    "rows": 147,
+    "all_status": "resolved",
+    "latest_resolution_date": "2026-07-22",
+    "note": "Every NYC daily-rain market has resolved. Capture stopped upstream; the endpoint is correctly empty."
+  },
+  "_monthly_population": {
+    "query": "futures_markets WHERE name ILIKE 'Rain in%in%' AND llm_sport_category='weather' AND status='open'",
+    "open_rows": 14,
+    "fresh_rows": 1,
+    "note": "10 cities exist for Aug 2026, so the hardcoded '10 cities' was once true. 13 of 14 fail the 7-day freshness gate in _open_weather_query(); the one survivor is 'Rain in NYC in Nov 2026?' \u2014 which the card labelled with the browser's CURRENT month.",
+    "open_markets": [
+      "Rain in NYC in Aug 2026?",
+      "Rain in Los Angeles in Aug 2026?",
+      "Rain in Seattle in Aug 2026?",
+      "Rain in Houston in Aug 2026?",
+      "Rain in Austin in Aug 2026?",
+      "Rain in San Francisco in Aug 2026?",
+      "Rain in Miami in Aug 2026?",
+      "Rain in Chicago in Aug 2026?",
+      "Rain in Denver in Aug 2026?",
+      "Rain in Dallas in Aug 2026?",
+      "Rain in NYC in Sep 2026?",
+      "Rain in NYC in Oct 2026?",
+      "Rain in NYC in Nov 2026?",
+      "Rain in NYC in Dec 2026?"
+    ],
+    "only_fresh_market": "Rain in NYC in Nov 2026?"
+  },
+  "_other_sections_today": {
+    "featured": 5,
+    "cities": 48,
+    "climate": 17,
+    "wildcards": 3,
+    "events": {
+      "hurricane": 45,
+      "earthquake": 4,
+      "tornadoes": 1
+    },
+    "note": "Non-empty today, so no reader sees their skeleton path. Parked, not fixed."
+  }
+}

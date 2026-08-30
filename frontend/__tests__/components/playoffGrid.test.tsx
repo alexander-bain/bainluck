@@ -407,7 +407,12 @@ describe("ruling 4 — the semifinal column and the sum check", () => {
     const html = renderToStaticMarkup(<PlayoffGrid grid={model} />);
     expect(html).toContain('data-testid="grid-monotonicity"');
     expect(html).toContain("Cameron Norrie (SF → F)");
-    expect(html).toContain("shown as quoted");
+    // UX-P145 reworded the sentence around this ("are priced higher" → "have a
+    // higher chance"). What the assertion is FOR is unchanged: the page says it
+    // noticed and still shows the market's own numbers rather than correcting
+    // them. `tournamentPlainLanguage.test.tsx` guards the vocabulary.
+    expect(html).toContain("shown exactly as quoted");
+    expect(html).toContain("higher chance for a later round");
   });
 });
 
@@ -496,7 +501,7 @@ describe("item 1 — the draw panel states the date and time", () => {
 describe("the cell vocabulary", () => {
   it("names every state in a sentence a reader can hear", () => {
     expect(gridCellExplanation(cell({ state: "live" }), "To reach the semi-finals"))
-      .toContain("Live price");
+      .toContain("Live number");
     expect(gridCellExplanation(cell({ state: "stale", age_hours: 27 }), "SF"))
       .toContain("27h ago");
     expect(gridCellExplanation(cell({ state: "no_market", note: "No SF market at kalshi" }), "SF"))

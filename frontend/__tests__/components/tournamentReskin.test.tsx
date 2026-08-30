@@ -20,6 +20,10 @@
  * "shows three" is satisfied by a component that can never expand.
  */
 
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -57,7 +61,8 @@ import {
   answerOutcome,
   printedOutcomes,
   propGoverningAgeHours,
-  propIsDark,
+  propIncompleteComparison,
+  propIsQuiet,
   propIsPresentedAsLive,
   propStaleOutcomes,
   propsForDraw,
@@ -120,6 +125,109 @@ function board(count: number, overrides: Partial<TournamentBoardData> = {}): Tou
 const render = (node: React.ReactElement) => renderToStaticMarkup(node);
 const count = (html: string, needle: string) =>
   (html.match(new RegExp(needle, "g")) ?? []).length;
+
+// ---------------------------------------------------------------------------
+// THE BACKEND-PRODUCED SPECIMEN (CERT-433 G1)
+//
+// The CERT-430 block below used to build its card from a local literal that
+// spelled out `price_state: "dark"` and `unpriced_legs`. CERT-433 killed that
+// proof: deleting the backend rule that PRODUCES those fields left this suite
+// green, because the fixture already contained the repaired answer. A fixture
+// that hardcodes the repaired payload cannot fail when its producer is deleted.
+//
+// THE ROOT IS ONE LAYER DEEPER THAN "THE FIXTURE WAS HARDCODED", and it is why
+// re-typing the fixture would not have been enough. The two layers are
+// REDUNDANT, NOT COUPLED: they reach the same verdict from DIFFERENT fields.
+// `build_props` grades the card from its declared legs and publishes
+// `price_state`; `propIsPresentedAsLive` never reads `price_state` at all and
+// re-derives completeness from `legs` plus the null probabilities. So even a
+// perfectly backend-produced payload leaves the render assertions green when
+// the backend rule is deleted — the renderer does not read the field that
+// changed. Two rules that agree today and share no input can drift apart with
+// nothing going red.
+//
+// So this file does two things it did not do before: it renders a payload the
+// BACKEND ACTUALLY PRODUCED, and it asserts the two layers AGREE about it.
+//
+// Spawning python3 is deliberate and is the only way to make that assertion
+// honest here. `jest.setup.network.js` blocks the network, not `child_process`,
+// and the producer is pure: no database, no network, no third-party import, a
+// literal clock. It runs under a bare interpreter on a CI runner that never
+// installed our Python requirements.
+//
+// IT MUST NEVER SKIP. A specimen that quietly opts out when the interpreter is
+// missing is the same defect one level up — "it returned" is not "it worked"
+// (gotcha #53). Every failure below throws.
+// ---------------------------------------------------------------------------
+
+const REPO_ROOT = join(__dirname, "..", "..", "..");
+const SPECIMEN_PRODUCER = join(
+  "backend",
+  "scripts",
+  "emit_comparison_specimen.py"
+);
+
+interface ComparisonSpecimen {
+  produced_by: string;
+  now: string;
+  legs: { alcaraz: string; sinner: string };
+  cases: Record<"incomplete" | "complete", PropMarket & { price_state: string }>;
+}
+
+function produceComparisonSpecimen(): ComparisonSpecimen {
+  const script = join(REPO_ROOT, SPECIMEN_PRODUCER);
+  if (!existsSync(script)) {
+    throw new Error(
+      `the CERT-430 specimen producer is missing at ${SPECIMEN_PRODUCER}. ` +
+        "This suite renders what the backend builds; it must not fall back to a " +
+        "literal, because a literal is what CERT-433 blocked."
+    );
+  }
+  let stdout: string;
+  try {
+    stdout = execFileSync("python3", [script], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env: { ...process.env, PYTHONPATH: join(REPO_ROOT, "backend") },
+      timeout: 60_000,
+    });
+  } catch (error) {
+    const detail = error as { stderr?: string | Buffer; message?: string };
+    throw new Error(
+      `could not run ${SPECIMEN_PRODUCER}: ${detail.message ?? error}\n` +
+        `${detail.stderr ?? ""}`
+    );
+  }
+  const parsed = JSON.parse(stdout) as ComparisonSpecimen;
+  // Shape, not values. A producer that emitted `{}` would otherwise turn every
+  // assertion below into a comparison against `undefined`, which reads as a
+  // confusing render bug rather than as a broken producer.
+  expect(parsed.produced_by).toBe(
+    "backend/app/utils/tournament_slate.py:build_props"
+  );
+  for (const key of ["incomplete", "complete"] as const) {
+    expect(Array.isArray(parsed.cases?.[key]?.outcomes)).toBe(true);
+  }
+  return parsed;
+}
+
+const SPECIMEN = produceComparisonSpecimen();
+
+/** The card the backend published for one case, as the route would serve it. */
+const producedComparison = (which: "incomplete" | "complete"): PropMarket =>
+  SPECIMEN.cases[which];
+
+/**
+ * Does the BACKEND's published grade claim this card is current?
+ *
+ * `price_state` is the backend's whole answer to "may this be presented as
+ * live", and it is the field the deleted contributor moves. Reading it here is
+ * what couples the two layers: the renderer's own answer is computed from
+ * different inputs, so asserting the two agree is a real cross-layer check
+ * rather than a restatement of either rule.
+ */
+const backendPresentsAsLive = (which: "incomplete" | "complete"): boolean =>
+  SPECIMEN.cases[which].price_state === "live";
 
 /**
  * The chart's props at their DEFAULT selection (UX-P137, ruling 6).
@@ -428,34 +536,40 @@ describe("where to watch", () => {
     expect(html).not.toContain('data-testid="slate-broadcast"');
   });
 
-  it("prints the channel once the row is opened", () => {
+  /* ═══ UX-P154 MOVED THE ANSWER AGAIN, AND THESE TWO INVERTED ═══
+   *
+   * Ruling 7's "detail view" was an accordion inside the row. Alex's item 2
+   * (2026-08-28) deleted the accordion — the whole card is the link — so the
+   * detail view is the EVENT PAGE, and the channel renders in
+   * `TournamentExtensions` (guarded in `tournamentExtensions.test.tsx`).
+   *
+   * The `matchBroadcast` resolution above is UNCHANGED and still tested: the
+   * per-match preference, the region fallback and the `scope` tag are all the
+   * same facts, still resolved on this list's entries, and still carried into
+   * the payload. What moved is only where they are printed. So these two
+   * assert the negative that a moved feature usually loses — the row does not
+   * quietly keep a copy.
+   */
+  it("prints no channel on the row IN ANY STATE — there are no states left", () => {
     const entries = matchListFromSlate([slateMatch(1)], { broadcasts });
-    const html = render(
-      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
-    );
-    expect(count(html, 'data-testid="match-detail-broadcast"')).toBe(1);
-    expect(count(html, 'data-broadcast-scope="tournament"')).toBe(0);
-    expect(html).toContain('data-scope="tournament"');
+    const html = render(<TournamentMatches entries={entries} />);
+    expect(html).not.toContain('data-testid="match-detail-broadcast"');
+    expect(html).not.toContain("ESPN");
+    // The resolution itself still ran — this is not green because the entry
+    // has no broadcast to print.
+    expect(entries[0].broadcast?.scope).toBe("tournament");
+    expect(entries[0].broadcast?.channels).toEqual(["ESPN", "ESPN2"]);
   });
 
-  it("a match with its own channel overrides the region-wide one", () => {
+  it("a match with its own channel is still resolved, and still not on the row", () => {
     const entries = matchListFromSlate(
       [slateMatch(1, { broadcast: { region: "US", channels: ["ESPN+"], note: null } })],
       { broadcasts }
     );
-    const html = render(
-      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
-    );
-    expect(html).toContain('data-scope="match"');
-    expect(html).toContain("ESPN+");
-  });
-
-  it("prints no channel line at all when the register has no mapping", () => {
-    const entries = matchListFromSlate([slateMatch(1)]);
-    const html = render(
-      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
-    );
-    expect(html).not.toContain('data-testid="match-detail-broadcast"');
+    expect(entries[0].broadcast?.scope).toBe("match");
+    expect(entries[0].broadcast?.channels).toEqual(["ESPN+"]);
+    const html = render(<TournamentMatches entries={entries} />);
+    expect(html).not.toContain("ESPN+");
   });
 
   it("a long round collapses to five matches with an expander (ruling 5)", () => {
@@ -713,7 +827,8 @@ describe("curated props", () => {
   it("renders an honest empty section rather than vanishing", () => {
     const html = render(<TournamentProps markets={[]} draw="mens-singles" />);
     expect(html).toContain('data-testid="tournament-props"');
-    expect(html).toContain("Nothing curated yet");
+    // UX-P145: "Nothing curated yet" → "Nothing to ask yet".
+    expect(html).toContain("Nothing to ask yet");
     expect(html).not.toMatch(/\d+%/);
   });
 
@@ -759,14 +874,17 @@ describe("curated props", () => {
    * Fresh leader, stale runner-up — the card the old rule called live.
    *
    * ⚠️ THE RUNNER-UP'S AGE IS A PARAMETER SINCE UX-P138, and the default moved
-   * from 480 hours to 30. Ruling 8's rotation drops a card whose governing age
-   * is past `PROP_DARK_AFTER_HOURS`, so a 480-hour specimen no longer RENDERS
-   * at all — it rotates out before `PropCard` sees it. Left at 480 these
-   * render assertions would have been asserting against an empty section and
-   * passing for the wrong reason, which is how a fixed defect quietly comes
-   * back. The pure-layer assertions below still use 480, because the rule they
-   * test does not care, and the interaction between the two rulings has its
-   * own test at the end of this block.
+   * from 480 hours to 30. The reason was ruling 8's rotation: a card past the
+   * 48-hour boundary did not RENDER at all, so a 480-hour specimen made these
+   * render assertions pass against an empty section — a fixed defect quietly
+   * coming back.
+   *
+   * UX-P154 removed that hazard at the source. Alex's item 4 (2026-08-28)
+   * overruled the rotation — a curated question is never hidden for age — so a
+   * 480-hour card renders now, muted and saying its age. The 30-hour default
+   * STAYS: it is the shape most of these assertions are about (a card that is
+   * old but not remarkable), and the 480-hour case has its own test at the end
+   * of this block, which is where the two rules meet.
    */
   const freshLeaderStaleRunner = (runnerAgeHours = 30) =>
     market({
@@ -807,20 +925,33 @@ describe("curated props", () => {
     expect(propGoverningAgeHours(freshLeaderStaleRunner())).toBe(30);
   });
 
-  it("RULING 8 MEETS CERT-411: the twenty-day card rotates out, still not live", () => {
-    // The two rules compose rather than replace each other, and this is the
-    // test that says which does what. `propIsPresentedAsLive` is still false
-    // for the 480-hour specimen — the CERT-411 fix is untouched — and ruling
-    // 8's rotation then removes the card from the section entirely, because a
-    // three-week-old number is not a question worth asking. If rotation were
-    // ever loosened, the muted-with-a-reason rendering above is what catches
-    // the card instead.
+  it("ITEM 4 MEETS CERT-411: the twenty-day card RENDERS, still not live", () => {
+    /* The two rules compose, and UX-P154 changed which one owns the outcome.
+     *
+     * Until now ruling 8's rotation removed this card from the section
+     * entirely, and this test asserted the empty state. Alex's item 4
+     * (2026-08-28) reverses that half: illiquid props render with honest
+     * freshness indication, never hidden — *"that's part of the value of the
+     * product."*
+     *
+     * CERT-411's rule is UNTOUCHED and is now the one doing all the work:
+     * `propIsPresentedAsLive` is still false for the 480-hour specimen, so the
+     * card renders muted, with its age, and naming the outcome that is old.
+     * That was always the fallback this test's old comment said would catch the
+     * card "if rotation were ever loosened" — it has been, and it does.
+     */
     const ancient = freshLeaderStaleRunner(480);
     expect(propIsPresentedAsLive(ancient)).toBe(false);
-    expect(propIsDark(ancient)).toBe(true);
+    expect(propIsQuiet(ancient)).toBe(true);
     const html = render(<TournamentProps markets={[ancient]} draw="mens-singles" />);
-    expect(html).toContain('data-testid="props-empty"');
-    expect(html).toContain("gone dark and rotated out");
+    expect(html).not.toContain('data-testid="props-empty"');
+    expect(html).toContain('data-testid="prop-market"');
+    expect(html).toContain('data-live="false"');
+    expect(html).toContain('data-freshness="quiet"');
+    // With its age, and with the old outcome named — the number is never shown
+    // as current, which is the property CERT-411 bought.
+    expect(html).toContain("Last number 20 days ago");
+    expect(html).toContain("RUNNER");
   });
 
   it("an outcome the card does not PRINT cannot demote it", () => {
@@ -889,5 +1020,183 @@ describe("curated props", () => {
     });
     expect(printedOutcomes(unpriced)).toEqual([]);
     expect(propIsPresentedAsLive(unpriced)).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // CERT-430 finding 1 — A COMPARISON IS COMPLETE OR IT IS NOT PRESENTED
+  // -------------------------------------------------------------------------
+  //
+  // THE SPECIMEN, executed by the cert on this branch and retained here as a
+  // permanent red: the register declares `second-major` across TWO markets;
+  // Alcaraz's leg had no reading and Sinner's was fresh at .555. The card came
+  // back `price_state='live'`, `rankedOutcomes` dropped the unpriced row for
+  // having nothing to rank it by, and the section rendered ONE player, in the
+  // confident type, under **"Who wins a second major this year?"**
+  //
+  // Every step of that was locally reasonable, which is why it needs a test
+  // rather than a rule of thumb. The fix is not "hide the card" — Alex, item 4:
+  // illiquid questions render, never hidden — it is that a card built from
+  // several declared markets prints every declared subject, is never live while
+  // one of them is missing, and SAYS which one is missing.
+
+  // THE CARD IS NO LONGER TYPED OUT HERE. It is whatever
+  // `backend/app/utils/tournament_slate.py:build_props` publishes for CERT-430's
+  // executed scenario — Alcaraz's leg unpriced, Sinner's fresh at .555 — fetched
+  // by the module-scope producer at the top of this file. See the block there
+  // for why a literal could not hold this proof (CERT-433).
+  const comparison = (alcarazProbability: number | null) =>
+    producedComparison(alcarazProbability === null ? "incomplete" : "complete");
+
+  it("SPECIMEN: the backend's grade and the rendered card agree, and both say NO", () => {
+    // THE CROSS-LAYER KILL (CERT-433 G1). Everything else in this block is
+    // computed by the renderer from `legs` and the null probability, so it stays
+    // green when the backend rule is deleted. This assertion does not: the
+    // backend's own published grade is on the left, the renderer's independent
+    // answer is on the right, and the specimen is the case where they must both
+    // refuse. Delete `contributors.append(None)` in `build_props` and the left
+    // side flips to live while the right side does not — red, here, in this
+    // block, which is what the fixture could never do.
+    expect(propIsPresentedAsLive(producedComparison("incomplete"))).toBe(
+      backendPresentsAsLive("incomplete")
+    );
+    expect(backendPresentsAsLive("incomplete")).toBe(false);
+    // The backend also NAMES the missing leg. A payload that graded the card
+    // correctly but published no `unpriced_legs` would leave the page unable to
+    // say which subject it is missing.
+    expect(producedComparison("incomplete").unpriced_legs).toEqual([
+      SPECIMEN.legs.alcaraz,
+    ]);
+    expect(producedComparison("incomplete").legs).toBe(2);
+  });
+
+  it("SPECIMEN: one fresh leg cannot publish a live one-player comparison", () => {
+    const card = comparison(null);
+    // The fresh leg still looks live on its own — that is what the old rule saw.
+    expect(rankedOutcomes(card).map((o) => o.display_name)).toEqual(["Jannik Sinner"]);
+    expect(rankedOutcomes(card)[0].probability_is_live).toBe(true);
+    // The card must not be, and it must not be one row long.
+    expect(propIsPresentedAsLive(card)).toBe(false);
+    expect(printedOutcomes(card).map((o) => o.display_name)).toEqual([
+      "Jannik Sinner",
+      "Carlos Alcaraz",
+    ]);
+    expect(propIncompleteComparison(card)?.subjects.map((o) => o.display_name)).toEqual([
+      "Carlos Alcaraz",
+    ]);
+
+    const html = render(<TournamentProps markets={[card]} draw="mens-singles" />);
+    expect(html).toContain('data-live="false"');
+    expect(html).not.toContain('data-live="true"');
+    expect(html).toContain('data-incomplete="true"');
+    // BOTH men are on the card. The missing one is named, in words, and the
+    // sentence says the comparison is not complete — the alarm, on the page.
+    expect(count(html, 'data-testid="prop-field-row"')).toBe(2);
+    expect(html).toContain("Carlos Alcaraz");
+    expect(html).toContain("Jannik Sinner");
+    expect(html).toContain("No number yet");
+    expect(html).toContain(
+      "No number has reached us for Carlos Alcaraz yet, so this comparison is not complete."
+    );
+  });
+
+  it("the same card with BOTH legs quoted is live and says nothing", () => {
+    // The other direction, and the reason the rule above is not just "mute
+    // comparisons": a rule that darkened every multi-market card would pass
+    // every assertion in the specimen and take the section's best card with it.
+    const card = comparison(0.25);
+    expect(propIncompleteComparison(card)).toBeNull();
+    expect(propIsPresentedAsLive(card)).toBe(true);
+    // THE NON-VACUITY CONTROL for the kill above. A producer that always
+    // emitted a dark card, or a backend rule that darkened every comparison,
+    // would satisfy the specimen and quietly destroy the section. So the same
+    // agreement is asserted in the other direction, on the same producer, and
+    // this side must read LIVE.
+    expect(backendPresentsAsLive("complete")).toBe(true);
+    expect(propIsPresentedAsLive(card)).toBe(backendPresentsAsLive("complete"));
+    expect(card.unpriced_legs).toEqual([]);
+
+    const html = render(<TournamentProps markets={[card]} draw="mens-singles" />);
+    expect(html).toContain('data-live="true"');
+    expect(html).toContain('data-incomplete="false"');
+    expect(html).not.toContain('data-testid="prop-incomplete"');
+    expect(html).not.toContain("No number yet");
+    expect(count(html, 'data-testid="prop-field-row"')).toBe(2);
+  });
+
+  it("writes the CERT-430 card as the reader sees it, and asserts its own content", () => {
+    // The artifact for this queue, from the SHIPPED component and a payload the
+    // BACKEND built. Both panels are the same card: the one whose second leg
+    // never priced, and the control where it did.
+    const incomplete = render(
+      <TournamentProps markets={[producedComparison("incomplete")]} draw="mens-singles" />
+    );
+    const complete = render(
+      <TournamentProps markets={[producedComparison("complete")]} draw="mens-singles" />
+    );
+
+    // The rig refuses to emit a file that does not show the behaviour it claims.
+    expect(incomplete).toContain("Carlos Alcaraz");
+    expect(incomplete).toContain("No number yet");
+    expect(incomplete).toContain('data-incomplete="true"');
+    expect(complete).toContain('data-incomplete="false"');
+    expect(complete).not.toContain("No number yet");
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("fs");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const path = require("path");
+    const out = process.env.UXP174_ARTIFACT_DIR;
+    if (!out) return; // opt-in; the assertions above are the gate
+    fs.mkdirSync(out, { recursive: true });
+    fs.writeFileSync(
+      path.join(out, "cert430-comparison-card.html"),
+      `<!doctype html><meta charset="utf-8">
+<title>UX-P174 — the CERT-430 comparison card</title>
+<body style="font-family:system-ui;margin:0;padding:24px;background:#fff">
+<h1 style="font:600 18px system-ui">UX-P174 — CERT-430 / CERT-433</h1>
+<p style="color:#666;font:14px system-ui;max-width:74ch">
+Both panels are the shipped <code>components/tournament/TournamentProps.tsx</code>,
+rendering a payload built by the production
+<code>app/utils/tournament_slate.py:build_props</code> and handed over by
+<code>backend/scripts/emit_comparison_specimen.py</code> — not by a fixture.
+That is the repair CERT-433 withheld the token for: the card below used to be
+typed out by hand with the repaired answer already in it, so deleting the
+backend rule that produces it left this suite green.</p>
+<h2 style="font:600 15px system-ui">THE SPECIMEN — Alcaraz's leg never priced
+(<code>price_state: ${producedComparison("incomplete").price_state}</code>)</h2>
+<div style="border:1px solid #ddd;padding:16px;border-radius:8px">${incomplete}</div>
+<h2 style="font:600 15px system-ui">THE CONTROL — both legs quoted
+(<code>price_state: ${producedComparison("complete").price_state}</code>)</h2>
+<div style="border:1px solid #ddd;padding:16px;border-radius:8px">${complete}</div>
+</body>`
+    );
+  });
+
+  it("a card the register declared MORE legs for than it delivered rows says so", () => {
+    // The other hole with the same consequence: not an unpriced leg, an absent
+    // one. From the reader's seat it is the same missing subject, so it gets
+    // the same treatment rather than rendering as a complete two-man card.
+    const card = comparison(0.25);
+    const short = { ...card, legs: 3 };
+    expect(propIncompleteComparison(short)?.undeclared).toBe(1);
+    const html = render(<TournamentProps markets={[short]} draw="mens-singles" />);
+    expect(html).toContain('data-incomplete="true"');
+    expect(html).toContain("one of the names in it");
+  });
+
+  it("an ordinary partly-quoted FIELD is untouched by the comparison rule", () => {
+    // A single-market field with unpriced rows is a field with unpriced rows —
+    // eighty names of which sixty are unquoted is normal, and printing sixty
+    // "No number yet" rows would be the cure killing the patient.
+    const field = market({
+      answer_entity_key: null,
+      outcomes: [
+        outcome("a", 0.4, true, 1),
+        { ...outcome("b", 0, true, 1), probability: null, age_hours: null },
+      ],
+    });
+    expect(propIncompleteComparison(field)).toBeNull();
+    expect(printedOutcomes(field).map((o) => o.entity_key)).toEqual(["a"]);
+    expect(propIsPresentedAsLive(field)).toBe(true);
   });
 });

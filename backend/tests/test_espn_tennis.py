@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from app.services.espn_tennis import (
     DRAW_SLUGS,
+    completion_of,
     format_score,
     normalize_name,
     pair_key,
@@ -100,9 +101,17 @@ class TestTheScore:
         ])
         assert score == "4-6, 6-3, 6-3"
 
-    def test_a_retirement_yields_no_score_rather_than_half_of_one(self):
-        """Unequal set counts is a retirement or a mid-match read. A partial
-        score printed as a final one is a stale price printed as live."""
+    def test_an_unequal_read_yields_no_score_rather_than_half_of_one(self):
+        """Unequal set counts is a mid-match read. A partial score printed as a
+        final one is a stale price printed as live.
+
+        ⚠️ UX-P147 renamed this from ``..._a_retirement_...``, because that is
+        not what it proves and the mismatch was hiding a live defect. A REAL
+        retirement reports EQUAL set counts — ESPN fills the abandoned set in on
+        both sides — so it never reaches this branch. See
+        ``TestHowAMatchEnded`` for the eight production rows this test was
+        wrongly believed to cover.
+        """
         assert format_score([
             _competitor("W", winner=True, sets=[6, 2]),
             _competitor("L", winner=False, sets=[4]),
@@ -122,6 +131,124 @@ class TestTheScore:
 
     def test_a_doubles_team_of_one_competitor_yields_no_score(self):
         assert format_score([_competitor("Solo", winner=True, sets=[6])]) is None
+
+
+# ---------------------------------------------------------------------------
+# HOW a match ended (UX-P147, Alex's item 5)
+# ---------------------------------------------------------------------------
+#
+# Alex, on the UX-P146 artifact: one row printed "no score", and he asked for
+# the root cause — ingest gap or render fallback.  Measured against the live
+# ESPN scoreboard 2026-08-28T00:4xZ it is neither.  Competition 184769,
+# "Qualifying Final", is ``STATUS_WALKOVER`` with the note "Grigor Dimitrov
+# (BUL) bt Otto Virtanen (FIN) w/o" and NO ``linescores`` on either competitor.
+# Virtanen withdrew before a ball was struck; there was never a score to ingest.
+#
+# The same census over all 1,250 US Open competitions on that scoreboard:
+#
+#     STATUS_FINAL      434   line scores both sides
+#     STATUS_RETIRED      8   line scores both sides, EQUAL LENGTH
+#     STATUS_WALKOVER     2   no line scores at all
+#     STATUS_SCHEDULED  806   (792 unplayed + 14 in progress; `state` filters)
+#
+# So there are two defects, not one: we could not say "walkover", and we were
+# printing eight partial scores as finished ones.
+
+class TestHowAMatchEnded:
+    def test_a_walkover_is_named_rather_than_shrugged_at(self):
+        parsed = parse_results(
+            [
+                _payload([
+                    {
+                        "id": "184769",
+                        "date": "2026-08-27T16:30Z",
+                        # ESPN's real shape for this fixture: a winner flag, and
+                        # no `linescores` key at all on either competitor.
+                        "status": {"type": {
+                            "state": "post",
+                            "name": "STATUS_WALKOVER",
+                            "detail": "Walkover",
+                        }},
+                        "competitors": [
+                            {"winner": True, "athlete": {"displayName": "Grigor Dimitrov"}},
+                            {"winner": False, "athlete": {"displayName": "Otto Virtanen"}},
+                        ],
+                        "round": {"displayName": "Qualifying Final"},
+                    }
+                ])
+            ],
+            event_name="US Open",
+        )
+        found = parsed["draws"]["mens-singles"][
+            pair_key(["Grigor Dimitrov", "Otto Virtanen"])
+        ]
+        assert found["score"] is None
+        assert found["completion"] == "walkover"
+        assert parsed["stats"]["walkovers"] == 1
+
+    def test_a_retirement_keeps_its_real_score_and_is_marked(self):
+        """The eight rows nobody had looked at.
+
+        ``Dusan Lajovic (SER) bt SoonWoo Kwon (KOR) 4-6 7-5 3-1 ret`` — equal
+        set counts, so ``format_score`` returns ``4-6, 7-5, 3-1``, which is not
+        a scoreline a completed tennis match can have.  The score is TRUE and
+        is kept; the completion is what makes it honest.
+        """
+        parsed = parse_results(
+            [
+                _payload([
+                    {
+                        "id": "184600",
+                        "date": "2026-08-24T15:05Z",
+                        "status": {"type": {
+                            "state": "post",
+                            "name": "STATUS_RETIRED",
+                            "detail": "Retired",
+                        }},
+                        "competitors": [
+                            _competitor("Dusan Lajovic", winner=True, sets=[4, 7, 3]),
+                            _competitor("SoonWoo Kwon", winner=False, sets=[6, 5, 1]),
+                        ],
+                        "round": {"displayName": "Qualifying 1st Round"},
+                    }
+                ])
+            ],
+            event_name="US Open",
+        )
+        found = parsed["draws"]["mens-singles"][
+            pair_key(["Dusan Lajovic", "SoonWoo Kwon"])
+        ]
+        assert found["score"] == "4-6, 7-5, 3-1"
+        assert found["completion"] == "retired"
+        assert parsed["stats"]["retirements"] == 1
+        assert parsed["stats"]["walkovers"] == 0
+
+    def test_an_ordinary_final_says_so(self):
+        parsed = parse_results(
+            [_payload([_competition(
+                _competitor("Winner", winner=True, sets=[7, 6]),
+                _competitor("Loser", winner=False, sets=[6, 3]),
+            )])],
+            event_name="US Open",
+        )
+        found = next(iter(parsed["draws"]["mens-singles"].values()))
+        # `_competition`'s status carries no `name`, exactly like a payload from
+        # before this field was read — and that must NOT become a confident
+        # "final". Inventing a completion is the same defect in the other
+        # direction from failing to read one.
+        assert found["completion"] == "unknown"
+        assert parsed["stats"]["walkovers"] == 0
+        assert parsed["stats"]["retirements"] == 0
+
+    def test_an_unrecognised_status_degrades_to_unknown_not_to_final(self):
+        assert completion_of({"name": "STATUS_FINAL"}) == "final"
+        assert completion_of({"name": "STATUS_RETIRED"}) == "retired"
+        assert completion_of({"name": "STATUS_WALKOVER"}) == "walkover"
+        assert completion_of({"name": "STATUS_SOMETHING_ESPN_ADDS_IN_2027"}) == "unknown"
+        assert completion_of({}) == "unknown"
+        # Keyed on the ENUM, never on the display text, which can be reworded
+        # or localised without notice.
+        assert completion_of({"detail": "Walkover"}) == "unknown"
 
 
 # ---------------------------------------------------------------------------

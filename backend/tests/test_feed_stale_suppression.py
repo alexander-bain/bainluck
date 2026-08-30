@@ -650,8 +650,14 @@ class TestDisplayRankMatchesProbability:
         assert '"rank": position,' in src
 
     def test_sports_card_rank_is_positional(self):
+        # UX-P163: the enumerated list is now `card_outcomes`, matching the Discover
+        # sibling above. The property this test guards — `rank` comes from
+        # `enumerate`, never from the stale stored `rank` column — is unchanged; only
+        # WHICH list is enumerated moved, so that the slice and the display scale
+        # agree on what the card is (a no-bid ~100% "Other" is in neither).
         src = self._sports_mode_source()
-        assert "for position, o in enumerate(sorted_outcomes[:3], start=1)" in src
+        assert "for position, o in enumerate(card_outcomes[:3], start=1)" in src
+        assert '"rank": position,' in src
 
     def test_scoring_paths_keep_the_stored_rank(self):
         # Deliberate boundary: `outcomes_data` feeds SCORING and carries

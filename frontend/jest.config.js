@@ -25,6 +25,10 @@ module.exports = {
   setupFiles: ['<rootDir>/jest.setup.network.js'],
 
   moduleNameMapper: {
+    // MUST precede the `^@/` alias: that alias matches
+    // `@/app/politics/politics.module.css` and would hand ts-jest raw CSS,
+    // which dies on `Unexpected token '.'`. See the proxy's own header.
+    '\\.module\\.css$': '<rootDir>/__tests__/helpers/cssModuleProxy.js',
     '^@/(.*)$': '<rootDir>/$1',
   },
   transform: {

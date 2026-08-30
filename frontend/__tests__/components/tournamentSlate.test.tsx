@@ -217,7 +217,7 @@ describe("independent binaries", () => {
 
   it("counts the refusals so a thin slate is explainable", () => {
     const html = render(slate({ matches: [incoherent], incoherent: 1 }));
-    expect(html).toContain("1 match has prices that do not agree");
+    expect(html).toContain("1 match has numbers that do not agree");
   });
 });
 
@@ -237,13 +237,18 @@ describe("script vs divergence", () => {
   it("does NOT restate the two numbers as a sentence (UX-P138, ruling 6)", () => {
     // `matchNarrative` printed "Clara Burel opened at 65%, up to 72%" directly
     // beneath a row already showing `72%` and `+7`. Every token in it except
-    // the opening price was a third rendering of a number six pixels away.
-    // Deleted at the source; the surviving fact lives in `matchDetailNote` and
-    // renders only behind the tap. The full ruling-6 coverage is in
+    // the OPENING PRICE was a third rendering of a number six pixels away.
+    // Deleted at the source; the one surviving fact lives in `matchDetailNote`.
+    //
+    // UX-P154 moved that sentence onto the card, because the drawer it used to
+    // sit behind is gone (the whole card is the link now). So the assertion is
+    // the one ruling 6 actually made — the RESTATEMENT is absent — rather than
+    // "no sentence anywhere", which was only ever true because of where the
+    // sentence happened to live. Full ruling-6 coverage in
     // `tournamentMatches.test.tsx`.
     const html = render(slate());
-    expect(html).not.toContain("opened at");
     expect(html).not.toContain("up to");
+    expect(html).not.toContain("72%, up");
   });
 
   it("says nothing at all about a flat match, rather than saying it three ways", () => {
@@ -287,7 +292,7 @@ describe("honesty treatment", () => {
   it("presents a live row in the live treatment", () => {
     const html = render(slate());
     expect(html).toContain('data-live="true"');
-    expect(html).not.toContain("Prices paused");
+    expect(html).not.toContain("Updates paused");
   });
 
   it("never upgrades a row the server did not call live", () => {
@@ -396,15 +401,15 @@ describe("honesty treatment", () => {
 
   it("says so in words when the slate is not live", () => {
     const html = render(slate({ price_state: "stale", age_hours: 30 }));
-    expect(html).toContain("Prices paused");
-    expect(html).toContain("not live prices");
+    expect(html).toContain("Updates paused");
+    expect(html).toContain("not live ones");
   });
 
   it("distinguishes never-observed from merely stale", () => {
     const notice = slateNotice(
       slate({ price_state: "dark", newest_observed_at: null, age_hours: null })
     );
-    expect(notice?.headline).toBe("No prices yet");
+    expect(notice?.headline).toBe("No numbers yet");
   });
 
   it("is silent when genuinely live", () => {

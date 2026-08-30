@@ -3,6 +3,9 @@
  */
 
 import type { ConfidenceSignals } from "@/lib/confidence";
+// The props section is shared with the tournament hub's match rows — one
+// definition of a prop card, not a second copy that agrees today (UX-P152).
+import type { MatchProp } from "@/lib/matchDetail";
 
 export interface Sport {
   id: number;
@@ -938,6 +941,15 @@ export interface FeedFuturesOutcome {
   probability: number | null;
   rank: number | null;
   movement: number | null;
+  /**
+   * The whole percent the SERVER rendered for this outcome (#2060/#2088), under
+   * the card rule rather than one independent rounding per side. Annotated PER
+   * OUTCOME rather than served as a card-level array because `FeedCard` re-orders
+   * this list (`leaderFirstSlice`) before printing it — a positional array would
+   * be mis-paired on exactly the cards where the stored rank disagrees with the
+   * probability order. Optional only for a payload from a pre-#2088 backend.
+   */
+  rendered_percent?: number | null;
 }
 
 export interface FeedFuturesData {
@@ -952,6 +964,15 @@ export interface FeedFuturesData {
   status: string;
   resolution_date: string | null;
   top_outcomes: FeedFuturesOutcome[];
+  /**
+   * Why this card's printed percents do not total 100, or null if they do (#2088).
+   *
+   * The absence of the key and a served null are DIFFERENT facts and the card
+   * treats them differently: absent means "pre-#2088 payload, derive it locally",
+   * null means "the server checked and they total 100". Null for any arity other
+   * than two, meaning "no claim about a total", never "checked and fine".
+   */
+  card_sum_reason?: string | null;
   outcome_count: number;
   canonical_market_key: string | null;
   /** Canonical market shape (`FuturesMarket.market_type`) — Queue 310. */
@@ -983,8 +1004,11 @@ export interface FeedTournamentData {
   key: string;
   name: string;
   slug?: string;
-  tour?: string;
-  tour_label?: string;
+  // Nullable since UX-P185: a tournament whose tour we cannot evidence carries no
+  // tour rather than a guessed "pga". Consumers must use `||`, never a .get-style
+  // default — the key is present, the value is null.
+  tour?: string | null;
+  tour_label?: string | null;
   is_major: boolean;
   venue?: string | null;
   location?: string | null;
@@ -1260,8 +1284,9 @@ export interface GolfTournament {
   is_major: boolean;
   is_tour_event?: boolean;
   is_womens?: boolean;
-  tour?: string;
-  tour_label?: string;
+  // Nullable since UX-P185 — see FeedTournamentData.tour.
+  tour?: string | null;
+  tour_label?: string | null;
   commence_time: string | null;
   resolution_date: string | null;
   start_date?: string | null;
@@ -1290,11 +1315,19 @@ export interface GolfMover {
   probability: number;
 }
 
+// UX-P169: a scheduled tournament, not an `events` row. The old shape was
+// `{id, name, commence_time, status}` fed from the `events` table, which holds
+// six closed golf rows in all of history — the list was always empty. These
+// come from the DataGolf schedule and so have no event id to link to.
 export interface GolfUpcomingEvent {
-  id: number;
+  key: string | null;
   name: string;
-  commence_time: string | null;
-  status: string;
+  start_date: string | null;
+  end_date: string | null;
+  venue: string | null;
+  location: string | null;
+  tour: string | null;
+  tour_label: string | null;
 }
 
 export interface GolfCurrentEvent {
@@ -1631,6 +1664,24 @@ export interface ChampionshipGridResponse {
    *  exceeds the 25s wait_for — the frontend must treat this as an error, not
    *  an empty/infinite-skeleton state. */
   error?: string;
+  /** #1484 truthful degradation. The route labels a last-good serve rather than
+   *  passing it off as this minute's build, and it grades the two causes
+   *  differently — see `_mark_last_good` in `routes/playoffs.py`:
+   *
+   *  * `stale` alone (`stale_reason: "cache_miss"`) is ROUTINE — the fresh key
+   *    was cold between warms, so the bounded last-good key answered. The grid
+   *    is real and complete, just not this minute's. Worth a timestamp, never
+   *    an alarm: three healthy grids carry it on an ordinary deploy.
+   *  * `degraded` (`degraded_reason: "timeout"`) is a REAL DEFECT — the live
+   *    build FAILED and old numbers are standing in for a measurement that
+   *    could not be made. It must read as one.
+   *
+   *  Both were published and neither was read, so a degraded grid rendered
+   *  identically to a fresh one (UX-P175). */
+  stale?: boolean;
+  stale_reason?: string;
+  degraded?: boolean;
+  degraded_reason?: string;
 }
 
 /** Team Progression types (event detail → championship grid row) */
@@ -2074,4 +2125,86 @@ export interface CompetitionEdition {
   concept_key: string | null;
   start: string | null; // ISO date (YYYY-MM-DD)
   end: string | null; // ISO date (YYYY-MM-DD)
+}
+
+/* ─── Tournament extensions on a standard event page (UX-P152) ───
+ *
+ * A tournament is a container for ordinary events (Alex, 2026-08-28), so a
+ * tennis match renders on `/events/{id}` like any other game and the tournament
+ * adds sections to it. This is what `GET /api/tournaments/by-event/{id}`
+ * returns.
+ *
+ * `advancement` deliberately reuses the shape of the league grid's per-team
+ * progression, so one component renders both. See
+ * `components/event/AdvancementPath`.
+ */
+
+export interface TournamentAdvancementStage {
+  key: string;
+  /** "Quarter-finals" — the destination in words, from the register's column. */
+  label: string;
+  probability: number | null;
+  /** `null` when nothing was measured twice — never a 0 standing in for it. */
+  trend_24h: number | null;
+  sources: { source: string; probability: number | null }[];
+}
+
+export interface TournamentAdvancementRow {
+  name: string;
+  short_name: string;
+  team_id: number | null;
+  logo_url: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+  /** The one standing fact a draw holds about a player — "Seed 3". */
+  record: string | null;
+  conference: string | null;
+  stages: TournamentAdvancementStage[];
+  /**
+   * Does the ladder fall the way a draw must — never likelier later?
+   *
+   * `false` means the market priced "reach the final" above "reach the semis"
+   * for this player. Reported and not corrected (the grid's standing ruling:
+   * 21 of 84 ladder players violate it, all in the sub-5% tail, and it is the
+   * market's own incoherence). The card says so out loud, because at one
+   * match's magnification a silent inversion reads as our mistake.
+   */
+  monotonic?: boolean;
+}
+
+export interface TournamentAdvancement {
+  event_id: number;
+  league: string | null;
+  league_name?: string;
+  grid_url?: string | null;
+  columns?: { key: string; label: string; order: number }[];
+  home_team: TournamentAdvancementRow | null;
+  away_team: TournamentAdvancementRow | null;
+  /** `event` when the two cards were ordered against the event row, else `register`. */
+  side_order?: "event" | "register";
+}
+
+export interface EventTournamentResponse {
+  event_id: number;
+  /** `null` for almost every event on the site — the ordinary answer, not an error. */
+  tournament: { slug: string; title: string; url: string } | null;
+  /** Named, when there is one: `NOT_IN_REGISTER`, `REGISTER_MOVED`. */
+  reason?: string;
+  matchup_key?: string;
+  round?: string | null;
+  draw_label?: string | null;
+  advancement?: TournamentAdvancement | null;
+  props: MatchProp[];
+  props_count: number;
+  props_dropped: Record<string, number>;
+  decided: boolean;
+  /**
+   * Where to watch, by region (UX-P154). The route has always returned it —
+   * `"broadcasts": reg.broadcasts` — and nothing read it, because Alex's
+   * ruling 7 put where-to-watch behind the match row's tap and the row owned
+   * the drawer. UX-P154 deleted the drawer (the whole card is the link now), so
+   * the ruling's "detail view" is this page and the field is finally consumed.
+   */
+  broadcasts?: { region: string; channels: string[]; note: string | null }[];
+  generated_at?: string;
 }

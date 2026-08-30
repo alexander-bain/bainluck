@@ -56,6 +56,8 @@ export interface PageViewParams {
     | 'masters_live'
     | 'sport_hub' | 'sport_league' | 'sport_event'
     | 'tournament'
+    // UX-P149: one match's own page under a tournament hub.
+    | 'tournament_match'
     | 'wrestlemania'
     | 'weather'
     | 'economics'
@@ -250,6 +252,8 @@ export interface ScrollDepthParams {
     | 'masters_live'
     | 'sport_hub' | 'sport_league' | 'sport_event'
     | 'tournament'
+    // UX-P149: one match's own page under a tournament hub.
+    | 'tournament_match'
     | 'wrestlemania'
     | 'weather'
     | 'economics'
@@ -282,6 +286,8 @@ export interface TimeOnPageParams {
     | 'masters_live'
     | 'sport_hub' | 'sport_league' | 'sport_event'
     | 'tournament'
+    // UX-P149: one match's own page under a tournament hub.
+    | 'tournament_match'
     | 'wrestlemania'
     | 'weather'
     | 'economics'

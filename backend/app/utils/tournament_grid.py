@@ -111,6 +111,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from app.utils.futures_source_merge import blend_with_verdict
+from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
 from app.utils.tournament_board import (
     _age_hours,
     draw_label,
@@ -212,6 +213,8 @@ def _cell(
     censused_at: Optional[str] = None,
     blend_rule: Optional[str] = None,
     divergent: bool = False,
+    liquidity: str = LIQUIDITY_UNKNOWN,
+    liquidity_reasons: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     return {
         "state": state,
@@ -234,6 +237,17 @@ def _cell(
         # and a stale claim about the world.
         "censused_at": censused_at,
         "is_alarm": state in ALARM_STATES,
+        # ── HOW THIN THE MARKET BEHIND THIS NUMBER IS (UX-P157, #2256/#2257).
+        # Defaults to `unknown` on every non-priced state, which is the truth:
+        # a settled cell, a no-market cell and an alarm have no live book to
+        # grade. `unknown` draws nothing, so those cells are unchanged.
+        #
+        # THIS FIELD MAY NEVER DECIDE WHETHER A CELL RENDERS. Alex's ruling and
+        # the grid charter both forbid deleting a thin cell; Q428 measured what
+        # filtering on this signal would cost (416 priced cells -> ~120) and
+        # refused it. It is a mark beside the number, and nothing else.
+        "liquidity": liquidity,
+        "liquidity_reasons": sorted(liquidity_reasons or []),
     }
 
 
@@ -299,7 +313,9 @@ def _price_cell(
         # register was loaded past validation — loud, and never a blank.
         return _cell(
             CELL_UNREGISTERED,
-            note="Cell registered with no source blocks — census incomplete",
+            # UX-P145: user-visible via the cell tooltip. Was "Cell registered
+            # with no source blocks — census incomplete".
+            note="We have not found a market for this question yet",
             censused_at=censused_at,
         )
 
@@ -308,6 +324,11 @@ def _price_cell(
     unlinked_views: list[dict[str, Any]] = []
     observed_times: list[Optional[datetime]] = []
     unlinked: list[str] = []
+    # A blended cell is only as solid as its THINNEST book — the same rule
+    # `governing_age_hours` applies to age, for the same reason: the reader sees
+    # one number, so the number answers for everything inside it.
+    leg_liquidity_levels: list[Optional[str]] = []
+    leg_liquidity_reasons: set[str] = set()
 
     for block in live_blocks:
         loaded = prices.get(block.get("outcome_id")) or {}
@@ -332,6 +353,7 @@ def _price_cell(
 
         blend_rows.append({"source": block.get("source"), "probability": probability})
         source_age = _age_hours(observed, now)
+        leg_liquidity = (loaded.get("liquidity") or {}).get("level")
         source_views.append({
             "source": block.get("source"),
             "probability": round(probability, 6),
@@ -339,8 +361,11 @@ def _price_cell(
             "age_hours": round(source_age, 2) if source_age is not None else None,
             "price_state": price_state(source_age),
             "market_external_id": block.get("market_external_id"),
+            "liquidity": leg_liquidity,
         })
         observed_times.append(observed)
+        leg_liquidity_levels.append(leg_liquidity)
+        leg_liquidity_reasons.update((loaded.get("liquidity") or {}).get("reasons") or [])
 
     if unlinked:
         # ── PARTIAL IS STILL BROKEN, AND IT IS THE HARDER CASE TO SEE.
@@ -360,11 +385,23 @@ def _price_cell(
         # number with a footnote.  So the number is WITHHELD, not muted: a price
         # the reader can see is a price the reader will believe, and one leg of
         # a two-leg blend is not the number this cell promised.
+        # UX-P145 — THIS STRING IS READ BY USERS, which is easy to miss from
+        # here.  It rides `note` into `gridCellExplanation()` and comes out as
+        # the cell's `title=` tooltip AND its screen-reader text
+        # (`frontend/lib/playoffGrid.ts`).  It used to say "N of M registered
+        # sources priced; unpriced: ..." — *registered* is the name of our JSON
+        # file, *priced* is a trading verb, and *sources* is our word for Kalshi
+        # and Polymarket.  Three pieces of pipeline vocabulary in a sentence
+        # aimed at somebody who wanted to know why a cell is blank.
+        #
+        # The market ids STAY.  They are the diagnostic half and Alex's
+        # amendment requires an alarm to name the market that did not resolve;
+        # a name is not jargon.  Only the framing changed.
         priced_note = (
-            f"{len(source_views)} of {len(live_blocks)} registered sources priced; "
-            f"unpriced: {'; '.join(unlinked)}"
+            f"We have a number from {len(source_views)} of {len(live_blocks)} markets; "
+            f"still missing: {'; '.join(unlinked)}"
             if source_views
-            else f"Registered but unpriced: {'; '.join(unlinked)}"
+            else f"We could not read a number from: {'; '.join(unlinked)}"
         )
         cell = _cell(
             CELL_UNLINKED,
@@ -381,7 +418,9 @@ def _price_cell(
     if blend is None:
         return _cell(
             CELL_UNLINKED,
-            note="Registered and priced, but the blend refused both legs",
+            # UX-P145: user-visible via the cell tooltip. Was "Registered and
+            # priced, but the blend refused both legs" — every noun in it ours.
+            note="Both markets quoted a number, but we could not combine them into one",
             censused_at=censused_at,
             sources=source_views,
         )
@@ -401,6 +440,11 @@ def _price_cell(
         censused_at=censused_at,
         blend_rule=rule,
         divergent=divergence is not None,
+        liquidity=thinnest_liquidity(leg_liquidity_levels),
+        # The union over the legs, not the thinnest leg's own list: a cell built
+        # from one untraded book and one impossibly-wide book has BOTH problems,
+        # and the reveal should be able to name both.
+        liquidity_reasons=sorted(leg_liquidity_reasons),
     )
     cell["freshest_observed_at"] = newest.isoformat() if newest else None
     # Every registered leg loaded, or this function returned an alarm above.
@@ -645,7 +689,9 @@ def build_playoff_grid(
                 # neighbours, and counted so the page cannot look complete.
                 cells[name] = _cell(
                     CELL_UNREGISTERED,
-                    note=f"No {SHORT_LABELS.get(name, name)} cell registered for this player",
+                    # UX-P145: user-visible via the cell tooltip. Was "No {X}
+                    # cell registered for this player".
+                    note=f"We have not found a {SHORT_LABELS.get(name, name)} market for this player",
                 )
             else:
                 blocks = [b for b in (reach.get("sources") or []) if isinstance(b, dict)]
@@ -664,7 +710,10 @@ def build_playoff_grid(
         elif title_probability is None:
             cells["title"] = _cell(
                 CELL_NO_MARKET,
-                note="No title price on either winner field",
+                # UX-P146: user-visible via the cell tooltip. Was "No title
+                # price on either winner field" — Alex's product-wide ruling
+                # bans *price* as a noun in copy; the word is PROBABILITY.
+                note="Neither winner market has a number for this player yet",
             )
         else:
             title_state = board_row.get("price_state") or "dark"
@@ -675,6 +724,12 @@ def build_playoff_grid(
                 age_hours=board_row.get("age_hours"),
                 blend_rule=board_row.get("blend_rule"),
                 divergent=bool(board_row.get("divergent")),
+                # INHERITED, not re-derived. The title cell IS the board's cell
+                # (see the comment above it); a second grading pass over the
+                # same two books is exactly the "second opinion one tab away"
+                # this column exists to avoid.
+                liquidity=str(board_row.get("liquidity") or LIQUIDITY_UNKNOWN),
+                liquidity_reasons=list(board_row.get("liquidity_reasons") or []),
             )
             cells["title"]["observed_at"] = board_row.get("observed_at")
         counts[cells["title"]["state"]] = counts.get(cells["title"]["state"], 0) + 1

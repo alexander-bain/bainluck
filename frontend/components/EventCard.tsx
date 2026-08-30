@@ -1,22 +1,21 @@
 "use client";
 
 import { useEffect } from "react";
-import Link from "next/link";
 import { useSpring, useTransform } from "framer-motion";
 import { motion } from "@/components/motion";
 import type { Event } from "@/lib/types";
 import { getLeagueDisplay } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 import { cn } from "@/lib/utils";
-import { Card } from "@/components/ui/card";
+import EventCardShell from "./EventCardShell";
 import PersonalizedBadge from "./PersonalizedBadge";
 import ProbabilityBar from "./ProbabilityBar";
 import EntityImage from "./EntityImage";
 import { isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { teamColorStyle } from "@/lib/teamColors";
-import { fadeIn } from "@/lib/animations";
 import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
+import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
@@ -99,6 +98,18 @@ export default function EventCard({
   const odds = event.current_odds;
   const opening = event.opening_odds;
 
+  // UX-P166 — the live footer's "Opened 62/38" prints both sides of one question
+  // in fixed positions, which makes it a duel. Rounding the two independently
+  // printed 101 whenever the opening line landed on a half-percent: measured on
+  // production 2026-08-29, 207 of 24,117 events carrying an opening line do, and
+  // none print 99. The away side is derived as `1 - home` when absent, exactly as
+  // before, which is precisely what makes the pair an exact complement and the
+  // both-sides-round-up case reachable.
+  const [openedAwayPct, openedHomePct] = renderedDuelPercents(
+    opening?.away_probability ?? (opening ? 1 - opening.home_probability : null),
+    opening?.home_probability,
+  );
+
   // Determine which probability to display based on game status
   let homeProb: number | null;
   let awayProb: number | null;
@@ -173,39 +184,27 @@ export default function EventCard({
   const awayShort = event.away_team.split(" ").pop() || event.away_team;
 
   return (
-    <Link
+    // UX-P083 (#1860) / UX-P154: the stable hook the browser rail counts and the
+    // link-and-card treatment both live in `EventCardShell` now. Ruling 047's
+    // acceptance is "the league page renders the SHARED event card", and that is
+    // a claim about WHICH COMPONENT rendered — unanswerable from the DOM unless
+    // the shared card marks itself. It moved one level down so the tournament
+    // match list can make the same claim without copying a wrapper, which is
+    // exactly the "reinventing the event card" Alex named.
+    <EventCardShell
       href={`/events/${event.id}`}
-      className="h-full"
       onClick={handleCardClick}
-      // UX-P083 (#1860): the stable hook the browser rail counts. Ruling 047's
-      // acceptance is "the league page renders the SHARED event card", and that
-      // is a claim about WHICH COMPONENT rendered — unanswerable from the DOM
-      // unless the shared card marks itself. Lives on the shared card rather
-      // than on each caller, so a future league-local variant cannot inherit it
-      // by copying a wrapper.
-      data-testid="event-card"
-      aria-label={`${event.away_team} at ${event.home_team}${isLive ? " - Live" : isFinished ? " - Final" : ""}`}
+      live={isLive}
+      finished={isFinished}
+      ariaLabel={`${event.away_team} at ${event.home_team}${isLive ? " - Live" : isFinished ? " - Final" : ""}`}
+      style={teamColorStyle(
+        event.home_team_data?.primary_color,
+        event.away_team_data?.primary_color,
+        event.home_team_data?.secondary_color,
+        event.away_team_data?.secondary_color,
+      )}
     >
-      <motion.div
-        variants={fadeIn}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card
-          className={cn(
-            "h-full flex flex-col p-3 sm:p-4 transition-all cursor-pointer group/card",
-            "bg-surface-card border-surface-border",
-            "hover:bg-surface-elevated hover:shadow-card-hover hover:scale-[1.005] hover:border-surface-elevated",
-            isLive && "border-l-[3px] border-l-accent-live ring-1 ring-accent-live/20",
-            isFinished && "opacity-80 hover:opacity-100 hover:scale-100",
-          )}
-          style={teamColorStyle(
-            event.home_team_data?.primary_color,
-            event.away_team_data?.primary_color,
-            event.home_team_data?.secondary_color,
-            event.away_team_data?.secondary_color,
-          )}
-        >
+      <>
           {/* Top bar: league + status + pin */}
           <div className="flex items-center justify-between gap-2 mb-2.5">
             <div className="flex items-center gap-1.5 min-w-0">
@@ -441,9 +440,9 @@ export default function EventCard({
                 <span className="text-text-muted">
                   Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
                 </span>
-              ) : isLive && opening ? (
+              ) : isLive && opening && openedHomePct !== null && openedAwayPct !== null ? (
                 <span className="text-text-muted">
-                  Opened <span className="font-mono text-text-secondary">{Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}</span>
+                  Opened <span className="font-mono text-text-secondary">{openedHomePct}/{openedAwayPct}</span>
                 </span>
               ) : null}
               {event.espn?.broadcast && (
@@ -453,9 +452,8 @@ export default function EventCard({
               )}
             </div>
           )}
-        </Card>
-      </motion.div>
-    </Link>
+      </>
+    </EventCardShell>
   );
 }
 

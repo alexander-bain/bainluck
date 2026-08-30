@@ -35,6 +35,8 @@ from app.utils.graded_card import (
     NATIVE_SERVED_OUTCOMES,
     OMITTED,
     card_fingerprint,
+    card_sum,
+    card_sum_reason,
     drift_outcome,
     flip_readiness,
     rendered_card_percents,
@@ -614,10 +616,18 @@ def _serialize_labeling_candidate(
 
     # Item 1. One card-level decision for the whole field, so the two sides of one
     # question cannot be rounded twice and printed as 101.
+    # #2088. Both default to None for a withheld field: there is no card to total, and
+    # None must not read as "checked and fine" here any more than it does in the rule.
+    display_sum = None
+    display_sum_reason = None
     if display_outcomes is not None:
-        percents = rendered_card_percents(
-            [o.get("probability") for o in display_outcomes]
-        )
+        display_probabilities = [o.get("probability") for o in display_outcomes]
+        percents = rendered_card_percents(display_probabilities)
+        # The total this card prints and, when it is not 100, why — served rather than
+        # re-derived per client. Pure over the percents already inside the fingerprint,
+        # so it adds no new drift surface. See `graded_card.card_sum_reason`.
+        display_sum = card_sum(display_probabilities)
+        display_sum_reason = card_sum_reason(display_probabilities)
         display_outcomes = [
             {
                 **o,
@@ -696,6 +706,13 @@ def _serialize_labeling_candidate(
         # drops these; it is carried on the row so a debug read can see WHAT
         # was dropped and why rather than just a smaller list (no silent caps).
         "unrenderable_reason": unlabelable,
+        # ── #2088: the total, and why it is not 100 ──────────────────────────────
+        # A card reading `57 / 40` looks broken in precisely the way `93 / 8` looked
+        # broken, and the reader cannot tell "these are two real prices that genuinely
+        # do not sum to 100" from "our renderer is buggy again". Serving the reason is
+        # what makes the count of UNEXPLAINED non-100 cards assertable — and zero.
+        "rendered_sum": display_sum,
+        "card_sum_reason": display_sum_reason,
         "resolution_date": (
             market.resolution_date.isoformat() if market.resolution_date else None
         ),

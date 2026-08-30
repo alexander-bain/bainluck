@@ -18,6 +18,7 @@ Two things are pinned here that the pure-logic suite cannot reach:
 import inspect
 
 from app.routes import tournaments
+from app.utils import tournament_event_link
 
 
 class TestSlugResolution:
@@ -198,7 +199,11 @@ class TestSlateContract:
 
     def test_slate_and_board_loads_are_both_bounded_id_lists(self):
         """Neither half may become a table scan as the register grows."""
-        source = inspect.getsource(tournaments.get_tournament)
+        # UX-P152: the hub's body moved to `_hub_payload` so the event page's
+        # tournament sections come out of the SAME build. `get_tournament` is
+        # now a four-line slug check in front of it, so the assertions about
+        # what the build does read the build.
+        source = inspect.getsource(tournaments._hub_payload)
         assert "matchup_outcome_ids" in source
         assert "board_outcome_ids" in source
         # Trend series stay a board concern; loading them for the slate's ~130
@@ -250,7 +255,11 @@ class TestAutoLinkedMatchups:
         reader — the bounded outcome-id lists especially — looking at the
         unlinked register while the payload claimed otherwise.
         """
-        source = inspect.getsource(tournaments.get_tournament)
+        # UX-P152: the hub's body moved to `_hub_payload` so the event page's
+        # tournament sections come out of the SAME build. `get_tournament` is
+        # now a four-line slug check in front of it, so the assertions about
+        # what the build does read the build.
+        source = inspect.getsource(tournaments._hub_payload)
         assert source.index("apply_resolved_links") < source.index(
             "TournamentRegister(register)"
         )
@@ -275,3 +284,162 @@ class TestAutoLinkedMatchups:
         )
         assert applied == 0
         assert out["matchups"][0]["sources"][0]["market_id"] == 1
+
+
+class TestEventTournamentExtensions:
+    """A standard event's tournament sections — GET /api/tournaments/by-event/{id}.
+
+    UX-P152 replaced UX-P149's parallel match page with this. Alex, on that
+    artifact: *"It seems like we're reinventing the event page here"*, and then
+    *"I thought that tournaments were containers for related events."* They are,
+    and 94 standard `events` rows for the 96 registered R128 fixtures appeared
+    on 2026-08-27 when the Odds API ingested the main draw — the day after
+    UX-P149 measured that none existed.
+
+    What is pinned here is what the pure-logic suite cannot reach: that the
+    ordinary answer is cheap and is not an error, and that the parallel route
+    is gone rather than merely unlinked.
+    """
+
+    async def test_the_match_page_route_no_longer_exists(self, client):
+        """Not merely unlinked — GONE. Two doors to one thing is the bug.
+
+        A surface left mounted but unreferenced is exactly the shape of
+        `GridPlayoffPathPair`, the dead advancement component this queue found
+        while answering Alex's question about what the MLB page shows: fully
+        plumbed, never rendered, and the reason the code had two plausible
+        answers where the product has one.
+        """
+        resp = await client.get(
+            "/api/tournaments/us-open/matches/"
+            "mens-singles:alexander-bublik-vs-j-j-wolf:2026-08-30"
+        )
+        assert resp.status_code == 404
+
+    async def test_a_non_tournament_event_is_a_null_not_a_404(self, client):
+        """The ordinary answer for almost every event on the site.
+
+        An error status for the ordinary answer is how a health check learns to
+        ignore a real one.
+        """
+        resp = await client.get("/api/tournaments/by-event/999999999")
+        # Either the event does not exist (404) or it does and is not in a
+        # tournament (200 + null) — never a 500, and never a 404 for the
+        # second case, which is what this pins.
+        assert resp.status_code in (200, 404)
+        if resp.status_code == 200:
+            assert resp.json()["tournament"] is None
+
+    async def test_the_no_costs_one_indexed_read_and_never_a_register(self):
+        """A Lakers event page must not pay for the US Open being on.
+
+        The sport-key gate has to come BEFORE `_hub_payload`, or a single event
+        page for an unrelated game triggers a full tournament build on a cold
+        cache.
+        """
+        source = inspect.getsource(tournaments.get_event_tournament)
+        gate = source.index('return {"event_id": event_id, "tournament": None}')
+        assert gate < source.index("_hub_payload"), (
+            "the sport-key gate must short-circuit before any register load"
+        )
+
+    async def test_membership_is_named_never_inferred_from_the_slug(self):
+        """Same posture as `espn_event_name`: three strings a human can check."""
+        assert tournaments.REGISTERED_TOURNAMENTS["us-open"]["sport_keys"] == (
+            "tennis_atp_us_open",
+            "tennis_wta_us_open",
+        )
+
+    async def test_it_never_name_matches_the_two_players_sitting_right_there(self):
+        """The event row carries both player names. The route must not use them.
+
+        This is the shortcut that would work most of the time and put two real
+        players' names over a third match's numbers the rest of it.
+        """
+        source = inspect.getsource(tournaments.get_event_tournament)
+        assert "resolve_matchup_events" not in source, (
+            "resolution happens in `_hub_payload` and is READ here"
+        )
+        assert 'by_event") or {}).get(' in source
+        for shortcut in ("home_team_name ==", "in home_team_name", ".lower()"):
+            assert shortcut not in source
+
+    async def test_the_hub_publishes_the_link_map_and_its_named_gaps(self, client):
+        """NO SILENT CAPS. A fixture with no click-through is a counted gap.
+
+        A row that quietly stopped being a link and a fixture nobody quotes look
+        identical from the outside (gotcha #53).
+        """
+        body = (await client.get("/api/tournaments/us-open")).json()
+        links = body["event_links"]
+        assert isinstance(links["by_event"], dict)
+        assert isinstance(links["linked"], int)
+        assert isinstance(links["unresolved"], dict)
+        for reason in links["unresolved"]:
+            assert reason in tournament_event_link.UNRESOLVED_REASONS
+
+    async def test_slate_rows_carry_the_event_they_route_to(self, client):
+        """The routing fix, end to end: a match card addresses `/events/{id}`.
+
+        ⚠️ **The clock is not an input to this property, and it used to be.**
+        Until UX-P187 this drove the route and asserted `rows` non-empty. The
+        register is a COMMITTED FILE with fixed `scheduled_date` values and
+        `build_slate` drops anything older than `now - MATCH_STALE_AFTER_HOURS`
+        as `ALREADY_PLAYED` — `tournament_slate.py` says so in as many words:
+        "The register is a file and the clock is not." The us-open register's
+        latest matchup starts `2026-08-30T04:00:00Z`, so at **10:00:00 UTC on
+        2026-08-30** the last row aged out, every one of the 124 matchups
+        dropped, and the assertion began failing on unchanged code. It had
+        passed an hour earlier.
+
+        So the anchor is now taken FROM the register — its own latest scheduled
+        start — and there is no branch on the wall clock (gotcha #44: if your
+        anchor contains an `if`, it isn't fixed). The anti-vacuity assertion is
+        RE-ASSERTED against that clock rather than deleted; a stand-in that
+        stops qualifying gets re-pointed, never dropped.
+        """
+        from datetime import datetime, timedelta
+
+        from app.utils.tournament_register import load_register
+        from app.utils.tournament_slate import build_slate
+
+        body = (await client.get("/api/tournaments/us-open")).json()
+        by_matchup = body["event_links"]["by_matchup"]
+
+        def check(rows):
+            for row in rows:
+                assert "event_id" in row
+                assert row["event_id"] is None or isinstance(row["event_id"], int)
+                # Whatever the link map resolved must actually reach the rows —
+                # a resolution nobody renders is not a ship.
+                expected = by_matchup.get(row["matchup_key"])
+                if expected is not None:
+                    assert row["event_id"] == expected
+
+        # The route's own rows, however many the clock has left it. Vacuous on
+        # its own, which is exactly why the register-anchored pass below exists.
+        check(body["slate"]["matches"])
+
+        register = load_register(
+            "us-open", tournaments.REGISTERED_TOURNAMENTS["us-open"]["season"]
+        )
+        starts = [
+            datetime.fromisoformat(str(m["scheduled_date"]).replace("Z", "+00:00"))
+            for m in (register.get("matchups") or [])
+            if m.get("scheduled_date")
+        ]
+        assert starts, "the committed register has no scheduled matchups at all"
+        # One second after the last registered start: every matchup is inside
+        # its staleness window, so the slate is at its fullest. Derived from the
+        # file, so it stays true however long the file sits here.
+        anchored = build_slate(
+            register,
+            prices={},
+            now=max(starts) + timedelta(seconds=1),
+            event_ids=by_matchup,
+        )
+        assert anchored["matches"], (
+            "no slate rows even at the register's own clock — the drop is not "
+            "staleness: %r" % (anchored.get("dropped"),)
+        )
+        check(anchored["matches"])

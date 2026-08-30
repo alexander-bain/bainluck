@@ -10,7 +10,7 @@ import {
 import ErrorState from "@/components/ErrorState";
 import EconomicsSkeleton from "@/components/skeletons/EconomicsSkeleton";
 import { fetchEconomics } from "@/lib/api";
-import type { EconData } from "@/lib/api";
+import type { EconData, EconDistribution } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Fed Heatmap Section
@@ -85,7 +85,9 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
 
 function RateCutsChart({ cuts }: { cuts: [number, string][] }) {
   if (!cuts.length) return null;
-  const max = Math.max(...cuts.map(c => c[0]));
+  // Floor the divisor: an all-zero field makes prob/max NaN, which the browser
+  // drops from the style declaration silently — no error, no bar.
+  const max = Math.max(...cuts.map(c => c[0]), 0.1);
   return (
     <div className="flex flex-col gap-2 mt-2">
       {cuts.map(([prob, label], i) => {
@@ -107,6 +109,54 @@ function RateCutsChart({ cuts }: { cuts: [number, string][] }) {
         );
       })}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Wide markets — the ones too multi-outcome for a Market row
+// ---------------------------------------------------------------------------
+
+/** Cumulative "at least X" thresholds. Each row is an independent probability
+ *  of clearing its own bar, so they legitimately sum past 100% and are scaled
+ *  against 100, never against each other. */
+function ThresholdLadder({ rows }: { rows: [number, string][] }) {
+  return (
+    <div className="flex flex-col gap-1.5 mt-1">
+      {rows.map(([prob, label], i) => {
+        const col = probColor(prob);
+        return (
+          <div key={i} className="grid items-center gap-2" style={{ gridTemplateColumns: "1fr 90px 40px" }}>
+            <span className="text-[12px] text-text-secondary leading-snug min-w-0 truncate">{label}</span>
+            <div className="h-[5px] bg-surface-secondary rounded-full overflow-hidden">
+              <div className="h-full rounded-full" style={{ width: `${Math.max(prob, 1.5)}%`, background: col }} />
+            </div>
+            <span className="font-mono text-[12px] font-semibold text-right" style={{ color: col }}>
+              {Math.round(prob)}%
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DistributionCard({ dist }: { dist: EconDistribution }) {
+  if (!dist.rows.length) return null;
+  const isLadder = dist.kind === "ladder";
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="text-[13px] font-semibold text-text-primary leading-snug">{dist.q}</div>
+        <SourceChip src={dist.src} />
+      </div>
+      {isLadder
+        ? <ThresholdLadder rows={dist.rows} />
+        : <Histogram buckets={dist.rows} color="#10B981" />}
+      <FooterNote
+        left={isLadder ? "Chance of clearing each threshold" : `${dist.rows.length} brackets`}
+        right={isLadder ? "Thresholds overlap" : "Modal bracket highlighted"}
+      />
+    </Card>
   );
 }
 
@@ -439,17 +489,30 @@ export default function EconomicsPage() {
           </section>
         )}
 
-        {/* Government & Fiscal */}
-        {t.government && t.government.count > 0 && (
+        {/* Government & Fiscal
+            Gate on what this section RENDERS, not on the theme's market count.
+            `count` counts every government market; the rows below only cover
+            the narrow ones. Gating on `count` is how this section came to draw
+            a header, a "3 active" badge and an empty card. */}
+        {t.government && ((t.government.markets?.length ?? 0) > 0 || (t.government.distributions?.length ?? 0) > 0) && (
           <section className="mb-12">
             <SectionHeader kicker="Government & Fiscal" title="Shutdowns, debt, DOGE" count={t.government.count} />
-            <Card>
-              <div className="grid md:grid-cols-2 gap-x-6">
-                {t.government.markets?.map((m: any, i: number) => (
-                  <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
+            {t.government.markets && t.government.markets.length > 0 && (
+              <Card>
+                <div className="grid md:grid-cols-2 gap-x-6">
+                  {t.government.markets.map((m, i) => (
+                    <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
+                  ))}
+                </div>
+              </Card>
+            )}
+            {t.government.distributions && t.government.distributions.length > 0 && (
+              <div className={`grid md:grid-cols-2 lg:grid-cols-3 gap-3.5 ${t.government.markets?.length ? "mt-3.5" : ""}`}>
+                {t.government.distributions.map((d, i) => (
+                  <DistributionCard key={i} dist={d} />
                 ))}
               </div>
-            </Card>
+            )}
           </section>
         )}
       </div>

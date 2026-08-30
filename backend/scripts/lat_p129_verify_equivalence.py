@@ -21,6 +21,7 @@ Run from ``backend/``:  ``python3 scripts/lat_p129_verify_equivalence.py``
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -34,13 +35,32 @@ from app.config.league_configs import (  # noqa: E402
     get_league_config,
 )
 from app.models import FuturesMarket  # noqa: E402
-from app.routes.playoffs import (  # noqa: E402
-    _build_grid_market_filters,
-    _league_pattern_to_ilike,
-)
+from app.routes.playoffs import _build_grid_market_filters  # noqa: E402
 
 API = os.environ["BAINLUCK_API"]
 TOKEN = os.environ["ADMIN_TOKEN"]
+
+
+def _old_league_pattern_to_ilike(pattern_str: str) -> str:
+    """The pre-LAT-P129 converter, transcribed so this script keeps its subject.
+
+    It used to be imported from ``app.routes.playoffs``. UX-P173 retired it
+    there — it stripped ``\\b`` and ``\\s`` in one pass, so ``\\s+`` was left as a
+    bare ``+`` and every multi-word pattern compiled to an impossible literal.
+    This script's whole job is to reproduce the OLD behaviour, so it now carries
+    its own copy rather than importing one production no longer has.
+
+    ⚠️ READ THE VERDICT ACCORDINGLY. This script answered "is LAT-P129's refactor
+    lossless against pre-LAT-P129?" and the answer was yes. It is NOT a check on
+    the current tree: the union with UX-P173 changes the result set ON PURPOSE
+    (la-liga 0 -> 4 markets, champions-league 0 -> 4, epl 3 -> 5, nfl 2 -> 11,
+    ncaa-football 1 -> 106, no league losing one). A DELTA here is now expected
+    for every name-matched league, and its absence would be the bug.
+    """
+    sql_pattern = re.sub(r"\\[bs]", "", pattern_str)
+    sql_pattern = re.sub(r"\\s\+|\\s\*", "%", sql_pattern)
+    sql_pattern = re.sub(r"[()?\[\]^$]", "", sql_pattern)
+    return sql_pattern.replace("\\", "").strip()
 
 
 def old_filters(config):
@@ -55,7 +75,7 @@ def old_filters(config):
     category_conditions = []
     if config.league_name_patterns:
         for pattern_str in config.league_name_patterns:
-            sql_pattern = _league_pattern_to_ilike(pattern_str)
+            sql_pattern = _old_league_pattern_to_ilike(pattern_str)
             if sql_pattern:
                 category_conditions.append(
                     and_(

@@ -32,7 +32,11 @@ from app.utils.graded_card import (
     LABEL_PASS_SERVED_OUTCOMES,
     NATIVE_SERVED_OUTCOMES,
     OMITTED,
+    SUM_INDEPENDENT_PRICES,
+    SUM_UNPRICED_OUTCOME,
     card_fingerprint,
+    card_sum,
+    card_sum_reason,
     drift_outcome,
     is_complement_pair,
     rendered_card_percents,
@@ -47,6 +51,7 @@ CONTRACT = json.loads(CONTRACT_PATH.read_text())
 CASES = CONTRACT["cases"]
 CARD_CASES = CONTRACT["card_cases"]
 DUEL_CASES = CONTRACT["duel_cases"]
+CARD_SUM_CASES = CONTRACT["card_sum_cases"]
 
 
 # ── 1. THE PERCENT, AGAINST THE SHARED TABLE ────────────────────────────────
@@ -203,6 +208,109 @@ def test_a_complement_pair_always_renders_exactly_one_hundred():
     assert len(pairs) >= 6
     for case in pairs:
         assert sum(case["percents"]) == 100, case["probabilities"]
+
+
+# ── 1b-ii. WHY THE TWO NUMBERS DO NOT ADD UP (#2088) ────────────────────────
+
+
+@pytest.mark.parametrize(
+    "case", CARD_SUM_CASES, ids=[str(c["probabilities"]) for c in CARD_SUM_CASES]
+)
+def test_card_sum_and_reason_match_the_contract(case):
+    assert card_sum(case["probabilities"]) == case["sum"]
+    assert card_sum_reason(case["probabilities"]) == case["reason"]
+
+
+def test_the_card_sum_table_carries_both_directions():
+    """Gotcha #43 again, and it is the whole point of the table.
+
+    A reason that only ever fires is wallpaper; a reason that can never fire is
+    dead code. The table must hold BOTH rows that earn a reason and rows that
+    provably cannot — and the ones that cannot must include complement pairs,
+    because those are the cards #2060 fixed and a regression there would put an
+    apology on a card that is already correct.
+    """
+    reasoned = [c for c in CARD_SUM_CASES if c["reason"] is not None]
+    unreasoned = [c for c in CARD_SUM_CASES if c["reason"] is None]
+    assert len(reasoned) >= 4, "no firing rows — the reason could be dead code"
+    assert len(unreasoned) >= 4, "no silent rows — the reason could be wallpaper"
+
+    pairs = [c for c in CARD_SUM_CASES if c["complement_pair"]]
+    assert len(pairs) >= 3
+    for case in pairs:
+        assert case["reason"] is None, (
+            f"{case['probabilities']} is a complement pair and earned a reason — "
+            f"#2060 normalizes these to 100, so a reason here is an apology for a "
+            f"card that is correct"
+        )
+
+
+def test_the_card_sum_reason_is_derivable_from_the_percents_alone():
+    """It is a function of THE PICTURE, and that is what keeps it out of the
+    fingerprint.
+
+    `card_fingerprint` already digests the rendered percents. If the reason were
+    derivable from anything else — a raw float, a book, a clock — then a card
+    could change its explanation without changing its fingerprint, and the drift
+    gate would stop being able to say "the picture changed". Proven here rather
+    than asserted in a comment: two different probability inputs that render the
+    same percents must carry the same reason.
+    """
+    by_percents: dict[tuple, set] = {}
+    for case in CARD_SUM_CASES:
+        key = tuple(case["percents"])
+        by_percents.setdefault(key, set()).add(case["reason"])
+    for percents, reasons in by_percents.items():
+        assert len(reasons) == 1, (
+            f"percents {list(percents)} carry more than one reason {reasons} — "
+            f"the reason is not a function of the rendered card"
+        )
+
+    # And directly: same picture from different floats, same reason.
+    assert rendered_card_percents([0.57, 0.40]) == rendered_card_percents(
+        [0.5749, 0.4022]
+    )
+    assert card_sum_reason([0.57, 0.40]) == card_sum_reason([0.5749, 0.4022])
+
+
+def test_the_two_reasons_name_different_facts():
+    """An unpriced side and a missed total are different things.
+
+    Folding them into one reason would tell the reader "these two prices do not
+    agree" about a card that only has one price — ruling 086's shape, where a
+    store that folds absence and disagreement together cannot report either.
+    """
+    assert card_sum_reason([0.57, None]) == SUM_UNPRICED_OUTCOME
+    assert card_sum_reason([0.57, 0.40]) == SUM_INDEPENDENT_PRICES
+    assert SUM_UNPRICED_OUTCOME != SUM_INDEPENDENT_PRICES
+
+
+def test_the_card_sum_contract_pins_the_filed_and_the_live_specimen():
+    """The table may not be defanged by deleting the rows that motivated it.
+
+    #2088's filed exemplar (0.57/0.40 -> 97) and the row measured live on
+    2026-08-29 (0.507/0.478 -> 99) must both stay, and must both earn a reason.
+    They differ in direction — one under 100, one over the lower band edge — so
+    keeping only one would leave half the class unproven.
+    """
+    filed = [c for c in CARD_SUM_CASES if c["probabilities"] == [0.57, 0.4]]
+    live = [c for c in CARD_SUM_CASES if c["probabilities"] == [0.507, 0.478]]
+    assert filed and live, "the motivating specimens are gone from the table"
+    assert filed[0]["sum"] == 97 and filed[0]["reason"] == SUM_INDEPENDENT_PRICES
+    assert live[0]["sum"] == 99 and live[0]["reason"] == SUM_INDEPENDENT_PRICES
+
+
+def test_a_three_outcome_field_is_out_of_scope_and_says_so_by_being_null():
+    """The scope boundary, pinned so a later queue widens it deliberately.
+
+    A three-outcome field totalling 97 is the independent-binary class (gotcha
+    #23) and is governed by `field_coherence` / `_feed_display_scale`. This rule
+    returns None there — and None means "no claim about a total", not "fine".
+    """
+    assert card_sum([0.5, 0.3, 0.17]) == 97
+    assert card_sum_reason([0.5, 0.3, 0.17]) is None
+    assert card_sum_reason([0.6]) is None
+    assert card_sum_reason([]) is None
 
 
 # ── 1c. THE DUEL — THE SAME QUESTION IN FIXED POSITIONS (UX-P114) ───────────

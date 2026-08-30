@@ -140,6 +140,11 @@ export interface MatchListSide {
   titleChance: number | null;
   isWinner: boolean;
   placeholder: SidePlaceholder;
+  /** UX-P157. This side's own book grade — see `lib/liquidity`. */
+  liquidity?: string | null;
+  liquidity_reasons?: string[] | null;
+  /** The side's own last reading, for the reveal's "precisely when". */
+  observedAt?: string | null;
 }
 
 export interface MatchListEntry {
@@ -205,6 +210,21 @@ export interface MatchListEntry {
    * is fixed would send a reader from a rich page to a bare one.
    */
   eventId: number | null;
+  /**
+   * THE REGISTER'S KEY FOR THIS FIXTURE, and the address of its own page
+   * (UX-P149) — `/tournaments/{slug}/matches/{matchupKey}`.
+   *
+   * Separate from `id`, which is the LIST's key and is a draw-slot id on a
+   * bracket-sourced row. Only a registered matchup has a page, so a bracket
+   * row that never joined a slate row carries `null` here and renders no link
+   * rather than one that 404s.
+   *
+   * This is what `eventId` was reaching for and could not have: it is
+   * register-owned, it exists today on every priced fixture, and it needs no
+   * `events` row — which is the blocker lane1's Q426 note named as the reason
+   * the props had nowhere to go.
+   */
+  matchupKey: string | null;
   source: "slate" | "bracket";
 }
 
@@ -252,10 +272,13 @@ export function matchDetailNote(entry: {
     // which names a disagreement between two numbers that do not exist. The
     // released main draw is 96 such rows; getting this sentence wrong would
     // have been the page's most-printed sentence on ceremony day.
-    return "Nobody is quoting this match yet. It is in the draw; the price comes later.";
+    // UX-P146: "the price comes later" — Alex's product-wide ruling on the noun.
+    // Ruling 142: "the number comes later" was still a promise about a listing
+    // we do not control. The fact is the fixture is real and has no probability.
+    return "Nobody is quoting this match yet. It is in the draw with no probability against it.";
   }
   if (!entry.coherent) {
-    return "The two prices for this match do not agree yet, so we are not showing a split.";
+    return "The two numbers for this match do not agree yet, so we are not showing a split.";
   }
 
   if (entry.decided) {
@@ -308,6 +331,11 @@ function sideFromSlate(
     titleChance: titleChances[side.entity_key] ?? null,
     isWinner: winnerKey !== null && winnerKey === side.entity_key,
     placeholder: "none",
+    // UX-P157. PER SIDE and not per row: a 90/10 is two separate venue rows,
+    // and it is routinely the underdog's that nobody will trade at.
+    liquidity: side.liquidity ?? null,
+    liquidity_reasons: side.liquidity_reasons ?? null,
+    observedAt: side.observed_at ?? null,
   };
 }
 
@@ -360,6 +388,7 @@ export function matchListFromSlate(
       broadcast: matchBroadcast(match, options.broadcasts, options.region),
       detailNote: null,
       eventId: match.event_id ?? null,
+      matchupKey: match.matchup_key ?? null,
       source: "slate",
     };
     entry.detailNote = matchDetailNote(entry);
@@ -431,8 +460,12 @@ export function matchListFromBracket(
         if (slot === null) {
           return {
             entityKey: null,
+            // UX-P145: was "No registered player". The reader does not have a
+            // register; they have a draw with a slot nobody has filled in.
+            // `placeholder: "register-hole"` keeps our name for it where our
+            // names belong — on a data attribute, not in the sentence.
             displayName:
-              from === null ? "No registered player" : `Winner of ${from.replace("-", " #")}`,
+              from === null ? "Player to be confirmed" : `Winner of ${from.replace("-", " #")}`,
             seed: null,
             image: null,
             matchProbability: null,
@@ -496,6 +529,7 @@ export function matchListFromBracket(
         // A positioned draw slot has no event of its own; the link, like the
         // price, comes from the slate row it absorbed.
         eventId: joined?.event_id ?? null,
+        matchupKey: joined?.matchup_key ?? null,
         source: "bracket",
       };
       entry.detailNote = matchDetailNote(entry);

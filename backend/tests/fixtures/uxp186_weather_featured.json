@@ -1,0 +1,129 @@
+{
+  "_what": "GET /api/weather/featured and /api/weather/wildcards, captured from production 2026-08-30 BEFORE UX-P186. Neither payload carries a `leader` key: every card printed a probability with no referent.",
+  "_captured_utc": "2026-08-30",
+  "served_before_featured": [
+    {
+      "q": "Where will it rain on Aug 29, 2026?",
+      "prob": 78,
+      "src": "kalshi",
+      "tag": "Daily rain",
+      "closes": "Mon, Aug 31",
+      "market_id": 59704867
+    },
+    {
+      "q": "Exceptional drought (D4) by state — week of September 1, 2026",
+      "prob": 98,
+      "src": "polymarket",
+      "tag": "Weather",
+      "closes": "Thu, Sep 3",
+      "market_id": 59646564
+    },
+    {
+      "q": "Highest temperature in Los Angeles on August 31?",
+      "prob": 45,
+      "src": "polymarket",
+      "tag": "Temperature",
+      "closes": "Mon, Aug 31",
+      "market_id": 59746940
+    },
+    {
+      "q": "Highest temperature in Jeddah on August 31?",
+      "prob": 31,
+      "src": "polymarket",
+      "tag": "Temperature",
+      "closes": "Mon, Aug 31",
+      "market_id": 59731158
+    },
+    {
+      "q": "Highest temperature in Beijing on August 31?",
+      "prob": 30,
+      "src": "polymarket",
+      "tag": "Temperature",
+      "closes": "Mon, Aug 31",
+      "market_id": 59731168
+    }
+  ],
+  "served_before_wildcards": [
+    {
+      "q": "Major volcano eruption in 2026?",
+      "prob": 68,
+      "src": "kalshi",
+      "closes": "Tue, Jun 29",
+      "tag": "Wild card"
+    },
+    {
+      "q": "Will a supervolcano erupt before 2050?",
+      "prob": 27,
+      "src": "kalshi",
+      "closes": "Sat, Jan 8",
+      "tag": "Weather"
+    },
+    {
+      "q": "Min Arctic sea ice extent this summer?",
+      "prob": 16,
+      "src": "polymarket",
+      "closes": "Thu, Oct 1",
+      "tag": "Wild card"
+    }
+  ],
+  "_featured_census": [
+    {
+      "q": "Where will it rain on Aug 29, 2026?",
+      "served_prob": 78,
+      "n_outcomes": 22,
+      "leader": "Minneapolis",
+      "leader_pct": 78.5
+    },
+    {
+      "q": "Exceptional drought (D4) by state — week of September 1, 2026",
+      "served_prob": 98,
+      "n_outcomes": 42,
+      "leader": "Colorado",
+      "leader_pct": 98.0
+    },
+    {
+      "q": "Highest temperature in Los Angeles on August 31?",
+      "served_prob": 45,
+      "n_outcomes": 11,
+      "leader": "78-79°F",
+      "leader_pct": 45.0
+    },
+    {
+      "q": "Highest temperature in Jeddah on August 31?",
+      "served_prob": 31,
+      "n_outcomes": 11,
+      "leader": "39°C",
+      "leader_pct": 31.0
+    },
+    {
+      "q": "Highest temperature in Beijing on August 31?",
+      "served_prob": 30,
+      "n_outcomes": 11,
+      "leader": "30°C",
+      "leader_pct": 30.5
+    }
+  ],
+  "_wildcards_census": [
+    {
+      "q": "Major volcano eruption in 2026?",
+      "served_prob": 68,
+      "n_outcomes": 3,
+      "leader": "At least 2",
+      "leader_pct": 68.0
+    },
+    {
+      "q": "Will a supervolcano erupt before 2050?",
+      "served_prob": 27,
+      "n_outcomes": 1,
+      "leader": "Yes",
+      "leader_pct": 26.7
+    },
+    {
+      "q": "Min Arctic sea ice extent this summer?",
+      "served_prob": 16,
+      "n_outcomes": 7,
+      "leader": "4.0-4.2m sq km",
+      "leader_pct": 16.4
+    }
+  ]
+}

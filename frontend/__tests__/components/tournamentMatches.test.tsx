@@ -27,6 +27,8 @@
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import fs from "node:fs";
+import path from "node:path";
 
 import TournamentMatches from "@/components/tournament/TournamentMatches";
 import {
@@ -386,8 +388,11 @@ describe("nothing renders blank", () => {
     const html = renderToStaticMarkup(
       <TournamentMatches entries={buildMatchList({ rounds: holed })} initialRound="R128" />
     );
+    // UX-P145: OUR name for the gap stays on the data attribute, where our
+    // names belong; the reader gets a sentence about their draw instead of
+    // about our JSON file ("No registered player" → "Player to be confirmed").
     expect(html).toContain('data-placeholder="register-hole"');
-    expect(html).toContain("No registered player");
+    expect(html).toContain("Player to be confirmed");
   });
 
   it("an incoherent pair shows both names and no split", () => {
@@ -406,7 +411,7 @@ describe("nothing renders blank", () => {
       ],
     });
     const html = renderToStaticMarkup(
-      <TournamentMatches entries={matchListFromSlate([incoherent])} initialOpenMatchId={incoherent.matchup_key} />
+      <TournamentMatches entries={matchListFromSlate([incoherent])} />
     );
     expect(html).toContain("Carlos Alcaraz vs Andrey Rublev");
     expect(html).toContain("do not agree");
@@ -435,9 +440,7 @@ describe("ruling 6 — the redundancy is dead", () => {
     });
     const [entry] = matchListFromSlate([flat]);
     expect(entry.detailNote).toBeNull();
-    const html = renderToStaticMarkup(
-      <TournamentMatches entries={[entry]} initialOpenMatchId={entry.id} />
-    );
+    const html = renderToStaticMarkup(<TournamentMatches entries={[entry]} />);
     expect(html).not.toContain("has not moved");
   });
 
@@ -449,12 +452,38 @@ describe("ruling 6 — the redundancy is dead", () => {
     expect(entry.detailNote).not.toContain("+4");
   });
 
-  it("the row itself carries no restating sentence", () => {
+  it("the row carries the one sentence and nothing else (UX-P154)", () => {
+    /* The sentence moved ONTO the card when UX-P154 deleted the drawer it used
+     * to sit in — Alex's item 2: the whole card is the link, so there is no
+     * accordion left to hide anything behind.
+     *
+     * Ruling 6 is unchanged and still enforced: a sentence appears only when it
+     * adds something the numbers cannot say. `matchDetailNote` decides that and
+     * returns `null` for most rows; the tests above and below pin both sides. */
     const html = renderToStaticMarkup(<TournamentMatches entries={matchListFromSlate([match()])} />);
-    // Closed row: number, delta, no prose.
     expect(html).toContain('data-testid="match-move"');
+    expect(html).toContain('data-testid="match-detail-note"');
+    expect(html).toContain("opened at");
+  });
+
+  it("a flat row still prints no sentence at all — ruling 6 is intact", () => {
+    const flat = match({
+      has_moved: false,
+      sides: [
+        side({ probability: 0.65, opening_probability: 0.65, move: 0 }),
+        side({
+          entity_key: "andrey-rublev",
+          display_name: "Andrey Rublev",
+          probability: 0.35,
+          opening_probability: 0.35,
+          move: 0,
+        }),
+      ],
+    });
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={matchListFromSlate([flat])} />
+    );
     expect(html).not.toContain('data-testid="match-detail-note"');
-    expect(html).not.toContain("opened at");
   });
 
   it("names the upset, because THAT comparison is not on the row", () => {
@@ -497,68 +526,48 @@ describe("ruling 6 — the redundancy is dead", () => {
 // Ruling 7 — where to watch is behind the tap, and ONLY behind the tap
 // ---------------------------------------------------------------------------
 
-describe("ruling 7 — where to watch lives in the detail view", () => {
+/* ═══ RULING 7 KEPT ITS FORCE AND CHANGED ITS VENUE (UX-P154) ═══
+ *
+ * Alex's ruling 7: *"where-to-watch moves to the DETAIL view"* — not onto every
+ * row, because a single line at the top of a long list is wrong and a line per
+ * row is noise. UX-P138 implemented "the detail view" as an accordion inside
+ * the row.
+ *
+ * Alex's item 2, 2026-08-28: the whole match card is clickable, exactly like
+ * every other card in the product; no link row. So the accordion is gone, and
+ * the detail view is the EVENT PAGE. The channel renders in
+ * `TournamentExtensions` — guarded in `tournamentExtensions.test.tsx` — and the
+ * property this block still owns is the negative one: **it did not come back
+ * onto the row.** That is the half a moved feature usually loses.
+ */
+describe("ruling 7 — where to watch is NOT on the match row", () => {
   const entries = matchListFromSlate([match()], { broadcasts: BROADCASTS });
 
-  it("is NOT on the closed row", () => {
+  it("is not on the row, in any state — there are no states left", () => {
     const html = renderToStaticMarkup(<TournamentMatches entries={entries} />);
     expect(html).not.toContain("ESPN");
     expect(html).not.toContain('data-testid="match-detail-broadcast"');
   });
 
-  it("appears when the row is opened", () => {
-    const html = renderToStaticMarkup(
-      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
-    );
-    expect(html).toContain('data-testid="match-detail-broadcast"');
-    expect(html).toContain("ESPN, ESPN2");
-  });
-
-  it("is in exactly ONE place — a guard that only checked the detail would pass twice", () => {
-    const html = renderToStaticMarkup(
-      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
-    );
-    expect(count(html, "ESPN, ESPN2")).toBe(1);
-  });
-
-  it("tags the answer as region-wide, because that is all the register holds", () => {
-    const html = renderToStaticMarkup(
-      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
-    );
-    expect(html).toContain('data-scope="tournament"');
-  });
-
-  it("prefers a per-match channel the moment the register carries one", () => {
+  it("is not on the row even when the register carries a per-match channel", () => {
+    // The case most likely to tempt a future change back onto the row: a real
+    // per-match answer, which is exactly the thing ruling 7 said belongs in the
+    // detail view rather than in the list.
     const own = matchListFromSlate(
       [match({ broadcast: { region: "US", channels: ["Court 17 stream"], note: null } })],
       { broadcasts: BROADCASTS }
     );
-    const html = renderToStaticMarkup(
-      <TournamentMatches entries={own} initialOpenMatchId={own[0].id} />
-    );
-    expect(html).toContain('data-scope="match"');
-    expect(html).toContain("Court 17 stream");
+    const html = renderToStaticMarkup(<TournamentMatches entries={own} />);
+    expect(html).not.toContain("Court 17 stream");
   });
 
-  it("offers no tap at all on a row with nothing behind it", () => {
-    const bare = matchListFromSlate([
-      match({
-        has_moved: false,
-        sides: [
-          side({ probability: 0.5, opening_probability: 0.5, move: 0 }),
-          side({
-            entity_key: "andrey-rublev",
-            display_name: "Andrey Rublev",
-            probability: 0.5,
-            opening_probability: 0.5,
-            move: 0,
-          }),
-        ],
-      }),
-    ]);
-    const html = renderToStaticMarkup(<TournamentMatches entries={bare} />);
-    expect(html).toContain("disabled");
-    expect(html).not.toContain(">Details<");
+  it("the accordion is gone — no toggle, no expanded state, no link row", () => {
+    const html = renderToStaticMarkup(<TournamentMatches entries={entries} />);
+    expect(html).not.toContain('data-testid="match-row-toggle"');
+    expect(html).not.toContain('data-testid="match-detail"');
+    expect(html).not.toContain('data-testid="match-page-link"');
+    expect(html).not.toContain("See more on this match");
+    expect(html).not.toContain("aria-expanded");
   });
 });
 
@@ -587,10 +596,10 @@ describe("honesty treatment", () => {
     const html = renderToStaticMarkup(
       <TournamentMatches
         entries={matchListFromSlate([match()])}
-        notice={{ tone: "stale", headline: "Prices paused", detail: "Last reading 9 hours ago." }}
+        notice={{ tone: "stale", headline: "Updates paused", detail: "Last reading 9 hours ago." }}
       />
     );
-    expect(html).toContain("Prices paused");
+    expect(html).toContain("Updates paused");
     expect(html).toContain('data-testid="matches-notice"');
   });
 
@@ -636,26 +645,92 @@ describe("collapse — five, then an expander that says how many", () => {
 // ---------------------------------------------------------------------------
 
 describe("item 7 — matches click through to the event page", () => {
+  /**
+   * UX-P152 merged the two links these tests were written against into one.
+   *
+   * There were two: item 7's `match-event-link` to `/events/{id}`, which
+   * rendered on nothing because no fixture carried an event id, and UX-P149's
+   * `match-page-link` to a tournament-private match URL, built BECAUSE the
+   * first had nowhere to go. Both premises expired on 2026-08-27, when the Odds
+   * API ingested the main draw and 94 standard `events` rows appeared for the
+   * 96 registered R128 fixtures. The parallel page is deleted; one link remains
+   * and it addresses `/events/{id}`.
+   *
+   * UX-P154 then deleted the link ROW as well. Alex: *"no 'See more on this
+   * match' link row — the whole match card is clickable, exactly like every
+   * other card in the product."* So there is no `match-page-link` any more;
+   * the card itself is the anchor, and it marks itself `event-card` — the same
+   * hook ruling 047's acceptance is written against for the league page.
+   *
+   * The behaviour these tests pin — a link exactly when there is an event to
+   * link to — is unchanged.
+   */
   it("renders NO link when the register pins no event", () => {
-    // The honest state today: checked 2026-08-26, none of the 66 registered US
-    // Open matchups has an `events` row, because the qualifying draw was never
-    // ingested as events. A dead affordance is worse than an absent one.
+    // Still the honest state for the 28 registered QUALIFYING matchups: their
+    // markets carry no `event_id` because the qualifying draw was never
+    // ingested as events. A dead affordance is worse than an absent one — so
+    // the card renders inert, with no anchor and no pointer treatment.
     const entries = matchListFromSlate([match()]);
     expect(entries[0].eventId).toBeNull();
-    const html = renderToStaticMarkup(
-      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
-    );
-    expect(html).not.toContain('data-testid="match-event-link"');
+    const html = renderToStaticMarkup(<TournamentMatches entries={entries} />);
+    expect(html).not.toContain('href="/events/');
+    expect(html).toContain('data-linked="false"');
+    // Still drawn by the shared card — the marker is a claim about which
+    // component rendered, which is true whether or not it links anywhere.
+    expect(html).toContain('data-testid="event-card"');
   });
 
-  it("renders the link to /events/{id} the moment the register pins one", () => {
+  it("THE WHOLE CARD is the link the moment the register pins an event", () => {
     const entries = matchListFromSlate([match({ event_id: 15201771 })]);
     expect(entries[0].eventId).toBe(15201771);
-    const html = renderToStaticMarkup(
-      <TournamentMatches entries={entries} initialOpenMatchId={entries[0].id} />
-    );
-    expect(html).toContain('data-testid="match-event-link"');
+    const html = renderToStaticMarkup(<TournamentMatches entries={entries} />);
     expect(html).toContain('href="/events/15201771"');
+    expect(html).toContain('data-linked="true"');
+    // And it is the CARD that carries it, not a row inside the card.
+    expect(html).not.toContain('data-testid="match-page-link"');
+    expect(html).not.toContain("See more on this match");
+    expect(count(html, 'href="/events/15201771"')).toBe(1);
+  });
+
+  it("the tournament list renders THE SHARED event card, not a copy of one", () => {
+    /* Alex: *"it kinda feels like we're reinventing the event card inside the
+     * tournament product"*, and: the tournament list uses THE standard
+     * event-card component.
+     *
+     * `data-testid="event-card"` lives on `EventCardShell` and nowhere else, so
+     * this assertion is answerable from the DOM: it is true only if the shared
+     * component drew the row. A tournament-local card that copied the styling
+     * could not produce it without importing the shell, which is the point.
+     */
+    const entries = matchListFromSlate([match({ event_id: 15201771 })]);
+    const html = renderToStaticMarkup(<TournamentMatches entries={entries} />);
+    expect(count(html, 'data-testid="event-card"')).toBe(1);
+    // The shell is a real import, not a copied attribute.
+    const shell = fs.readFileSync(
+      path.join(__dirname, "..", "..", "components", "EventCardShell.tsx"),
+      "utf8"
+    );
+    expect(shell).toContain('export const EVENT_CARD_TESTID = "event-card"');
+    const list = fs.readFileSync(
+      path.join(__dirname, "..", "..", "components", "tournament", "TournamentMatches.tsx"),
+      "utf8"
+    );
+    expect(list).toContain('from "@/components/EventCardShell"');
+    // The marker is EMITTED in exactly one component. Two emitters would be two
+    // cards claiming to be the shared one, which is the state this whole item
+    // exists to end. (`EventCardShell` names it; every other reference in the
+    // tree is a comment or a test.)
+    const emitters = fs
+      .readdirSync(path.join(__dirname, "..", "..", "components"), { recursive: true })
+      .filter((f) => typeof f === "string" && f.endsWith(".tsx"))
+      .filter((f) => {
+        const src = fs.readFileSync(
+          path.join(__dirname, "..", "..", "components", f as string),
+          "utf8"
+        );
+        return src.includes("data-testid={EVENT_CARD_TESTID}");
+      });
+    expect(emitters).toEqual(["EventCardShell.tsx"]);
   });
 
   it("carries the link through the bracket join, from the slate row it absorbed", () => {

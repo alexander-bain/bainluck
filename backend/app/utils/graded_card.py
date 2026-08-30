@@ -216,6 +216,88 @@ def rendered_card_percents(probabilities: list[Any] | None) -> list[int | None]:
     return [leader, 100 - leader]
 
 
+# ── WHY A CARD'S TWO NUMBERS DO NOT ADD UP (#2088) ───────────────────────────────
+#
+# `rendered_card_percents` fixed the pair that SHOULD total 100 and deliberately left
+# alone the pair that should not. That was right — normalizing a pair summing to 0.97
+# would invent three points of probability rather than round one — but it shipped the
+# reader a card reading `57 / 40` with nothing on it saying why, which is
+# indistinguishable from the `93 / 8` bug it had just fixed. INT-104 measured UX-P113's
+# own deploy check at **17 of 18** and filed #2088 for exactly that: *an unexplained
+# non-100 is the defect; a labelled one is a fact.*
+#
+# ** RE-MEASURED ON PRODUCTION 2026-08-29 ** over the same endpoint the issue used
+# (`/api/admin/ranking-judgments/candidates?limit=100`): 100 cards, **18 two-outcome,
+# 17 summing to 100, 1 summing to 99** — `Diane Parry vs Ann Li: Set 2 Winner`, served
+# `[51, 48]`. A different market from the filed exemplar and the same shape: the two
+# sides of one tennis set, quoted independently, landing just UNDER the band. The
+# class is live and it is not the filed row, so it is a population and not an anecdote.
+#
+# ** THE REASON IS NOT AN ILLIQUIDITY MARK, AND THAT WAS CHECKED RATHER THAN ASSUMED. **
+# `utils/market_liquidity.grade_liquidity` is the obvious thing to reach for — #2088's
+# own text calls this "the source-disagreement / illiquidity class" and UX-P157/158 had
+# just built a graded mark for it. On the filed exemplar it returns **`traded`**: the
+# book is `0.55 / 0.59`, a four-cent spread against a `0.57` midpoint, nowhere near
+# `ask - bid >= midpoint`; and `volume_updated_at` is not written on this population at
+# all, so the volume fact is not even checkable. Drawing a thinness mark here would be
+# a verdict that module explicitly refuses to reach, invented on a surface where Alex
+# grades. The honest reason is the arithmetic one, and it needs no book: these are two
+# INDEPENDENTLY QUOTED sides, not two halves of one question.
+#
+# ** SCOPE, STATED SO A LATER QUEUE DOES NOT WIDEN IT BY ACCIDENT: two outcomes only. **
+# A three-outcome field totalling 97 is the independent-binary class (gotcha #23) and
+# already has its own machinery — `field_coherence` decides whether it may be drawn at
+# all, and `feed._feed_display_scale` decides its basis. Handing it this reason would be
+# a different ruling rather than this one implemented, and it would put an explanation
+# on a large share of Discover at a moment when the density of the liquidity mark is
+# itself an open question with Alex. Arity other than two returns `None` — and `None`
+# here means "this card makes no claim about a total", never "checked and fine".
+
+#: A served outcome has no price at all, so there is no total to check.
+SUM_UNPRICED_OUTCOME = "unpriced_outcome"
+#: Both sides are priced and the pair is outside the complement band — the venue is
+#: quoting two independent questions, so the total is whatever the two books say.
+SUM_INDEPENDENT_PRICES = "independent_prices"
+
+
+def card_sum(probabilities: list[Any] | None) -> int | None:
+    """The integer total a surface actually prints for one card, or ``None``.
+
+    ``None`` when the card prints no number at all. An unpriced outcome contributes
+    nothing rather than a zero — "no price" and "0%" are different cards, the same
+    distinction `rendered_percent` draws — so a `[57, None]` card totals 57 and is
+    explained by `card_sum_reason` rather than silently reported as a 43-point miss.
+    """
+    percents = [p for p in rendered_card_percents(probabilities) if p is not None]
+    if not percents:
+        return None
+    return sum(percents)
+
+
+def card_sum_reason(probabilities: list[Any] | None) -> str | None:
+    """Why this card's printed percents do not total 100, or ``None`` if they do.
+
+    Pure, and taken over `rendered_card_percents` rather than over the raw floats, so
+    it answers for **the picture** — the same discipline `card_fingerprint` is built
+    on. A complement pair is normalized, rounded once and derived, so it totals 100 by
+    construction and can never earn a reason; that direction is asserted as explicitly
+    as the firing one, because a guard that only proves it fires is how the Sports tab
+    got emptied (gotcha #43).
+
+    ``None`` is returned for any arity other than two — see the scope note above. It
+    means "no claim about a total is being made here", not "checked and fine", and the
+    surfaces must not render it as a clean bill of health.
+    """
+    if not probabilities or len(probabilities) != 2:
+        return None
+    percents = rendered_card_percents(probabilities)
+    if any(p is None for p in percents):
+        return SUM_UNPRICED_OUTCOME
+    if sum(percents) == 100:
+        return None
+    return SUM_INDEPENDENT_PRICES
+
+
 # ── THE SAME QUESTION, IN FIXED POSITIONS INSTEAD OF SORTED ORDER (UX-P114) ──────
 #
 # `rendered_card_percents` above assumes SERVED ORDER, where index 0 is the headline

@@ -2,9 +2,24 @@
 
 import useSWR from "swr";
 import { fetchFeed } from "@/lib/api";
-import type { FeedEventData, FeedFuturesData } from "@/lib/types";
+import type { FeedConceptData, FeedEventData, FeedFuturesData } from "@/lib/types";
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
+import { eventPath } from "@/lib/eventKey";
+
+/** The item types this section knows how to render.
+ *
+ * UX-P177: this was an inverted list — `event` rendered, `tournament` returned
+ * null, and EVERYTHING ELSE fell through to the futures branch. `concept` and
+ * `bundle` are both in `FeedItem["type"]` and neither carries a numeric `id`, so
+ * a concept rendered as `/futures/undefined` with no probability beside it.
+ * Measured live on 2026-08-29: every one of the four rows on `/futures/195`'s
+ * "More Mma" section was a concept, so all four were dead links.
+ *
+ * An allowlist means the next type added to the union is invisible here until
+ * someone teaches this component to draw it, rather than silently broken.
+ */
+const RENDERABLE = new Set(["event", "futures", "concept"]);
 
 interface RelatedByTagProps {
   /** Tag queries to filter by, e.g. ["sport:basketball"] */
@@ -36,14 +51,15 @@ export default function RelatedByTag({
 
   // Filter out the current item and limit
   const items = data.items
+    .filter((item) => RENDERABLE.has(item.type))
     .filter((item) => {
       if (excludeId === undefined) return true;
       const id =
         item.type === "event"
           ? (item.data as FeedEventData).id
-          : item.type === "tournament"
-          ? null
-          : (item.data as FeedFuturesData).id;
+          : item.type === "futures"
+          ? (item.data as FeedFuturesData).id
+          : null;
       return !(item.type === excludeType && id === excludeId);
     })
     .slice(0, limit);
@@ -90,8 +106,34 @@ export default function RelatedByTag({
             );
           }
 
-          // Tournament — skip in related-by-tag (these are full cards elsewhere)
-          if (item.type === "tournament") return null;
+          // Event concepts (UFC cards, F1 Grands Prix, cycling grand tours) link
+          // to /event/{key}, never /futures/{id} — a concept has no numeric id.
+          // The leader is guarded exactly as `ConceptFeedCard` guards it, never
+          // laxer: presence plus a real name plus a numeric probability.
+          if (item.type === "concept") {
+            const d = item.data as FeedConceptData;
+            const leader =
+              d.leader && (d.leader.name ?? "").trim() &&
+              typeof d.leader.probability === "number"
+                ? d.leader
+                : null;
+            return (
+              <Link
+                key={`rel-concept-${d.key}`}
+                href={eventPath(d.key)}
+                className="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors"
+              >
+                <span className="text-xs font-medium text-text-primary truncate flex-1 min-w-0">
+                  {d.name}
+                </span>
+                {leader && (
+                  <span className="text-xs text-text-muted shrink-0 ml-2">
+                    {leader.name} {formatProbability(leader.probability)}
+                  </span>
+                )}
+              </Link>
+            );
+          }
 
           // Futures
           const d = item.data as FeedFuturesData;

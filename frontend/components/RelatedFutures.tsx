@@ -7,6 +7,7 @@ import type { RelatedFuture, RelatedFuturesResponse, TeamProgressionResponse } f
 import { fetchRelatedFutures, formatProbability } from "@/lib/api";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import EntityImage from "./EntityImage";
+import AdvancementPath from "@/components/event/AdvancementPath";
 
 interface TeamStandings {
   wins?: number;
@@ -1340,112 +1341,19 @@ function PlayoffPathPair({
 }
 
 /** Grid-based playoff path — always available for both teams from championship grid data */
-function GridPlayoffPathPair({
-  teamProgression,
-  homeTeam,
-  awayTeam,
-  homeColor,
-  awayColor,
-  homeLogo,
-  awayLogo,
-}: {
-  teamProgression: TeamProgressionResponse;
-  homeTeam: string;
-  awayTeam: string;
-  homeColor: string;
-  awayColor: string;
-  homeLogo?: string;
-  awayLogo?: string;
-}) {
-  const { home_team, away_team, grid_url } = teamProgression;
-
-  if (!home_team && !away_team) return null;
-
-  function renderCard(
-    team: NonNullable<TeamProgressionResponse["home_team"]>,
-    color: string,
-    logo?: string,
-  ) {
-    const stages = team.stages.filter((s) => s.probability !== null);
-    if (stages.length === 0) return <div />;
-    return (
-      <div
-        className="rounded-xl border overflow-hidden bg-surface-card"
-        style={{ borderLeftWidth: 3, borderLeftColor: color }}
-      >
-        <div className="flex items-center gap-2 px-3 py-2.5">
-          {(logo || team.logo_url) ? (
-            <img src={logo || team.logo_url!} alt="" className="w-7 h-7 object-contain" />
-          ) : (
-            <div
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-extrabold text-[10px]"
-              style={{ backgroundColor: color }}
-            >
-              {team.short_name.slice(0, 3).toUpperCase()}
-            </div>
-          )}
-          <span className="text-[13px] font-bold flex-1">{team.short_name}</span>
-          {team.record && (
-            <span className="text-[9px] font-medium text-text-muted">{team.record}</span>
-          )}
-        </div>
-        <div className="px-3 pb-2.5">
-          {stages.map((stage) => {
-            const pct = Math.round(stage.probability! * 100);
-            return (
-              <div
-                key={stage.key}
-                className="flex items-center gap-1.5 py-1"
-              >
-                <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${
-                  pct >= 95 ? "bg-emerald-500" : pct >= 30 ? "bg-amber-500" : "bg-text-muted"
-                }`} />
-                <span className="text-[11px] text-text-secondary flex-1">{stage.label}</span>
-                <span
-                  className={`text-[11px] font-bold font-mono ${
-                    pct >= 95 ? "text-emerald-500" : ""
-                  }`}
-                  style={pct >= 95 ? undefined : { color: pct >= 30 ? undefined : "var(--text-muted)" }}
-                >
-                  {pct >= 95 ? "done" : `${pct}%`}
-                </span>
-                {stage.trend_24h !== null && stage.trend_24h !== 0 && (
-                  <span className={`text-[9px] font-mono ${
-                    stage.trend_24h > 0 ? "text-emerald-500" : "text-red-400"
-                  }`}>
-                    {stage.trend_24h > 0 ? "+" : ""}{Math.round(stage.trend_24h * 100)}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-        {/* Source indicators */}
-        {stages[0]?.sources && stages[0].sources.length > 0 && (
-          <div className="flex items-center gap-1 px-3 pb-2">
-            {stages[0].sources.map((s, i) => (
-              <div key={i} className={`w-1.5 h-1.5 rounded-full ${
-                s.source === "odds_api" ? "bg-emerald-500" :
-                s.source === "kalshi" ? "bg-blue-500" :
-                s.source === "polymarket" ? "bg-amber-500" : "bg-text-muted"
-              }`} />
-            ))}
-            <span className="text-[8px] text-text-muted ml-0.5">
-              {stages[0].sources.length} source{stages[0].sources.length !== 1 ? "s" : ""}
-            </span>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      {away_team ? renderCard(away_team, awayColor, awayLogo) : <div />}
-      {home_team ? renderCard(home_team, homeColor, homeLogo) : <div />}
-    </div>
-  );
-}
+/* UX-P152 — `GridPlayoffPathPair` was DELETED here (was ~105 lines).
+ *
+ * It was written to render `/api/events/{id}/team-progression`, the event page
+ * fetches that endpoint and passes the response down as `teamProgression`, and
+ * the component was NEVER MOUNTED. Nothing on any event page has ever rendered
+ * it. What ships is the `CHAMPIONSHIP PATH` block inside each team card, fed by
+ * the related-futures playoff markets — now `components/event/AdvancementPath`.
+ *
+ * Removed rather than wired up, because a second answer to "what does the event
+ * page show for advancement" is exactly what made Alex's question hard to answer
+ * from the code. `teamProgression` is still read below as `hasGridProgression`,
+ * which is a real gate on other sections and is left alone.
+ */
 
 // ─── V5 SEASON STATS (compact side-by-side list) ───
 function SeasonStatRow({ future, teamColor }: { future: RelatedFuture; teamColor: string }) {
@@ -2595,31 +2503,9 @@ export default function RelatedFutures({
                   </div>
                 </div>
 
-                {homePathEntries.length > 0 && (
-                  <>
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">CHAMPIONSHIP PATH</div>
-                    <div className="space-y-0.5 mb-5">
-                      {homePathEntries.map((p) => (
-                        <div key={p.label} className="flex items-center gap-3 py-1.5">
-                          <div className="text-sm w-36 shrink-0 text-text-secondary">{p.label}</div>
-                          <div className="flex-1 h-2 rounded-full bg-surface-border overflow-hidden">
-                            <div className={`h-full rounded-full transition-all duration-500 ${p.resolved ? "bg-accent-live" : "bg-violet-400"}`} style={{ width: `${p.resolved ? 100 : p.prob * 100}%` }} />
-                          </div>
-                          <div className="w-28 text-right flex items-center justify-end gap-2">
-                            {p.change != null && Math.abs(p.change) >= 0.005 && (
-                              <span className={`text-xs font-mono tabular-nums ${p.change > 0 ? "text-accent-brand" : "text-accent-danger"}`}>
-                                {p.change > 0 ? "\u2191" : "\u2193"} {(Math.abs(p.change) * 100).toFixed(1)}%
-                              </span>
-                            )}
-                            <span className={`font-mono tabular-nums text-sm font-bold ${p.resolved ? "text-accent-live" : ""}`}>
-                              {p.resolved ? "\u2713 clinched" : `${Math.round(p.prob * 100)}%`}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+                {/* UX-P152: was an inline copy, here and on the other card.
+                    One component now — see components/event/AdvancementPath. */}
+                <AdvancementPath stages={homePathEntries} testId="home-championship-path" />
 
                 {homeAwards.length > 0 && (() => {
                   const byPlayer = new Map<string, Array<{ label: string; prob: number }>>();
@@ -2683,31 +2569,9 @@ export default function RelatedFutures({
                   </div>
                 </div>
 
-                {awayPathEntries.length > 0 && (
-                  <>
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">CHAMPIONSHIP PATH</div>
-                    <div className="space-y-0.5 mb-5">
-                      {awayPathEntries.map((p) => (
-                        <div key={p.label} className="flex items-center gap-3 py-1.5">
-                          <div className="text-sm w-36 shrink-0 text-text-secondary">{p.label}</div>
-                          <div className="flex-1 h-2 rounded-full bg-surface-border overflow-hidden">
-                            <div className={`h-full rounded-full transition-all duration-500 ${p.resolved ? "bg-accent-live" : "bg-violet-400"}`} style={{ width: `${p.resolved ? 100 : p.prob * 100}%` }} />
-                          </div>
-                          <div className="w-28 text-right flex items-center justify-end gap-2">
-                            {p.change != null && Math.abs(p.change) >= 0.005 && (
-                              <span className={`text-xs font-mono tabular-nums ${p.change > 0 ? "text-accent-brand" : "text-accent-danger"}`}>
-                                {p.change > 0 ? "\u2191" : "\u2193"} {(Math.abs(p.change) * 100).toFixed(1)}%
-                              </span>
-                            )}
-                            <span className={`font-mono tabular-nums text-sm font-bold ${p.resolved ? "text-accent-live" : ""}`}>
-                              {p.resolved ? "\u2713 clinched" : `${Math.round(p.prob * 100)}%`}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+                {/* UX-P152: was an inline copy, here and on the other card.
+                    One component now — see components/event/AdvancementPath. */}
+                <AdvancementPath stages={awayPathEntries} testId="away-championship-path" />
 
                 {awayAwards.length > 0 && (() => {
                   const byPlayer = new Map<string, Array<{ label: string; prob: number }>>();

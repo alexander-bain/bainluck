@@ -25,6 +25,25 @@ the championship boards, so the candidates are the remaining seven:
     KXGRANDSLAM-CALC26       Alcaraz calendar slam
     KXGRANDSLAM-JSIN26       Sinner calendar slam
 
+**THE NATIONALITY SWEEP (Q443, Alex's women's-curation ruling 2026-08-28).**
+That Day-1 list was a nine-market census taken before the draw, and it is the
+reason the women's tab shipped empty: not one of the nine is a women's question
+this section may ask.  Re-run as a SWEEP rather than a lookup — all 6,000 open
+Kalshi events paginated and filtered on ticker and title, 2026-08-29 — the
+US-Open-relevant open universe is 30 events, and the ones this list did not
+have are:
+
+    KXWTANATSTAGE-26QF       American women to reach the quarterfinals   PRICED
+    KXWTANATSTAGE-26SF       American women to reach the semifinals      UNQUOTED
+    KXATPNATSTAGE-26FIN      American men to reach the final             PRICED
+    KXATPNATSTAGE-26QF/SF    American men, earlier rounds                PRICED
+
+A sweep and not a lookup is the point: the nationality series were reachable by
+exactly the query that was never run, and a nine-market census recorded their
+absence as the universe.  Everything else the sweep returned is either an
+outright field (the boards), a per-player advance ladder (the grid, UX-P139),
+or off-tournament (ATP #1 on Dec 31, Djokovic's retirement).
+
 Input is one `/api/admin/db-query` dump, in the shape that endpoint returns:
 
     SELECT fm.id   AS market_id,
@@ -40,7 +59,8 @@ Input is one `/api/admin/db-query` dump, in the shape that endpoint returns:
      WHERE fm.external_id IN ('KXATPCOMPETE-26USOALC','KXATPCOMPETE-26USOSIN',
                               'KXATPGRANDSLAM-26','KXATPGRANDSLAMFIELD-26',
                               'KXWTAGRANDSLAM-26','KXGRANDSLAM-CALC26',
-                              'KXGRANDSLAM-JSIN26')
+                              'KXGRANDSLAM-JSIN26','KXWTANATSTAGE-26QF',
+                              'KXATPNATSTAGE-26FIN')
        AND fm.status = 'open'
      ORDER BY fm.external_id, fo.current_probability DESC NULLS LAST;
 
@@ -64,6 +84,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.utils.prop_template_family import (  # noqa: E402
+    detect_template_families,
+    outcome_signature,
+)
 from app.utils.tournament_register import (  # noqa: E402
     classify,
     us_open_2026_contract,
@@ -79,32 +103,35 @@ from app.utils.tournament_register import (  # noqa: E402
 #: single answering outcome, and the page ranks instead of printing a headline.
 #: The script REFUSES a curation whose named answer is absent from the dump —
 #: silently producing an unanswered card is how a wrong number gets shipped.
+#:
+#: ``outcomes`` (optional) pins a SUBSET of the market's legs. See
+#: :func:`main` for why a subset is a curation decision and not a filter.
 CURATION: dict[str, dict] = {
-    # RETITLED 2026-08-25 (UX-P134) against the census. The old title was "Can
-    # Sinner complete the calendar slam?" and this market cannot answer it: its
-    # outcomes are the threshold ladder 1+/2+/3+, and "all four" is not among
-    # them. The card would have printed the ladder's max, `1+` at 99%, under a
-    # calendar-slam question — 99% for something whose real probability is
-    # about 1%. The market DOES answer a better US Open question anyway: Sinner
-    # already has one major this year, so `2+` is "does he win this one".
-    "KXGRANDSLAM-JSIN26": {
-        "key": "sinner-second-major",
-        "title": "Can Sinner win a second major this year?",
-        "hook": "He already has one in 2026. The next chance is this fortnight.",
-        "draw": "mens-singles",
-        "answer": "2+ Grand Slam wins",
-    },
-    # Same retitle, same reason. Alcaraz's ladder does carry "All 4 Grand Slam
-    # wins" (1%), so a calendar-slam card would at least be answerable here —
-    # but a 1% card is not a question anybody is asking two days out, and the
-    # asymmetry with Sinner's market would read as a data bug.
-    "KXGRANDSLAM-CALC26": {
-        "key": "alcaraz-second-major",
-        "title": "Can Alcaraz win a second major this year?",
-        "hook": "The other half of the men's duopoly, chasing the same thing.",
-        "draw": "mens-singles",
-        "answer": "2+ Grand Slam wins",
-    },
+    # ═══ KXGRANDSLAM-JSIN26 / KXGRANDSLAM-CALC26 ARE NOT CURATED HERE ═══
+    #
+    # Both are members of the template family ``"{} grand slam wins in 2026"``,
+    # curated as one card by ``FAMILY_CURATION`` below. The detector claims a
+    # family's markets, so curating either one here as a card of its own would
+    # put the same market on two cards. Retiring them here is what makes the
+    # family card legal.
+    #
+    # KEEP THIS MEASUREMENT (Q443, 2026-08-29) — it is why a family card's
+    # single ``compare_outcome`` per member is REQUIRED, not just tidier.
+    # Pinning a market's whole ladder pinned legs nothing is permitted or able
+    # to refresh:
+    #   * `KXGRANDSLAM-JSIN26-1` ("1+ Grand Slam wins") is graded — `is_winner`
+    #     TRUE, Kalshi `finalized` / `result: yes` — and `_write_prices` refuses
+    #     a settled outcome by design (gotcha #21).
+    #   * `KXGRANDSLAM-JSIN26-3` ("3+ Grand Slam wins") was DELISTED: the venue
+    #     event carried three legs when the curation was written and carries two
+    #     today, so that ticker can never appear in a price payload again. Frozen
+    #     at a 2026-07-24 1%.
+    #   * Alcaraz's ladder is the same shape — `All 4 Grand Slam wins` is not
+    #     listed at the venue and `3+` is graded no.
+    # A card's freshness is the AND over its priced legs, so each unrefreshable
+    # pin bought a permanent dark contributor and no information — neither leg is
+    # printed. ``compare_outcome`` names ONE outcome per member market, so the
+    # defect cannot recur on a family card by construction.
     "KXATPCOMPETE-26USOSIN": {
         "key": "sinner-competes",
         "title": "Will Sinner actually play?",
@@ -112,29 +139,187 @@ CURATION: dict[str, dict] = {
         "draw": "mens-singles",
         "answer": "Yes",
     },
+    # ── THE WOMEN'S SECTION (Q443, Alex's ruling of 2026-08-28) ─────────────
+    #
+    # "Register edit adding non-advance women's questions — Sabalenka
+    # back-to-back, first-time major winner, all-American final — PLUS the
+    # nationality props once the discovery fix lands."  The discovery fix
+    # landed (Q426), so all five nationality series are in the database with
+    # prices.  What follows is that ruling, curated against what the venues
+    # actually quote rather than against what the wording hoped for; the two
+    # directions with no market behind them are in DECLINED, named, not
+    # quietly dropped.
+    "KXWTAGRANDSLAM-26": {
+        "key": "sabalenka-title-defence",
+        "title": "Can Sabalenka go back-to-back?",
+        # Every clause measured, not recalled. She won the 2025 US Open (the
+        # settled Polymarket field 33520 resolves her leg YES). The US Open is
+        # the last major of the calendar year, and her 2026 leg is still
+        # `active` — so on this market "wins a major in 2026" and "wins this
+        # tournament" are now the same event, and the hook says so rather than
+        # letting the title quietly assume it.
+        "hook": "She won here last year — and with the US Open the last major of 2026, this market is now exactly that question.",
+        "draw": "womens-singles",
+        "answer": "Aryna Sabalenka",
+        # ONE LEG OF A SEVENTEEN-NAME FIELD. UX-P135 declined this whole market
+        # for a reason that was true of the FIELD and is not true of this leg:
+        # "its leaders are already-settled 99s". They still are — Rybakina .99
+        # and Andreeva .99, one of them graded — which is exactly why the card
+        # pins neither. A field whose top rows are decided facts is a dull row
+        # wearing a probability; one contender's own leg, at .235 and moving,
+        # is a question.
+        "outcomes": ["Aryna Sabalenka"],
+    },
+    "KXWTANATSTAGE-26QF": {
+        "key": "usa-women-quarterfinal-count",
+        "title": "Can three American women reach the quarterfinals?",
+        "hook": "One market for the whole American contingent, with a rung for one right through seven.",
+        "draw": "womens-singles",
+        # THE RUNG IS THE CURATION. The ladder runs 1+ through 7+; `1+` at .895
+        # is an announcement and `7+` at .03 is a lottery ticket. `3+` is the
+        # rung the market itself cannot separate, and picking it here rather
+        # than at render time is the answer rule (UX-P134) doing its job — the
+        # renderer's old "biggest number" would have printed 90% under this
+        # question.
+        "answer": "3+ Americans",
+        "outcomes": ["3+ Americans"],
+    },
+    "KXATPNATSTAGE-26FIN": {
+        "key": "usa-men-final-berth",
+        # ALEX SAID "ALL-AMERICAN FINAL"; THE VENUE ONLY LISTS ONE RUNG.
+        # `KXATPNATSTAGE-26FIN` carries a single leg, `1+ Americans` — there is
+        # no `2+`, so "both finalists American" is not a question anybody
+        # quotes. This is the same direction at the depth the market supports,
+        # and the title says the weaker thing rather than the title saying the
+        # stronger one over the weaker one's number.
+        "title": "Will an American reach the men's final?",
+        "hook": "The market asks about the American men as a group, not one at a time.",
+        "draw": "mens-singles",
+        # `Yes` and not `1+ Americans`: the venue's own `yes_sub_title` is the
+        # latter but our ingest stored the former, and the curation names the
+        # outcome as WE hold it. The first run of this pass named the venue's
+        # label and the script refused it, which is that refusal earning its
+        # keep on its author.
+        "answer": "Yes",
+    },
+}
+
+#: ONE CARD PER TEMPLATE FAMILY — AND THE SYSTEM FINDS THE FAMILY (UX-P154).
+#:
+#: ═══ ALEX'S QUESTION, 2026-08-28, quoted (ruling 144) ═══
+#:
+#: On UX-P151's combined second-major card: *"clearly looks better"*, and then:
+#: *"Was this a bespoke solution? I thought we'd built tools to identify groups
+#: and surface them as groups. Why didn't any of them trigger?"*
+#:
+#: **It was bespoke.**  UX-P151 shipped a `COMBINED_CURATION` map in which a
+#: human wrote down two market tickers, the outcome name to pull from each, and
+#: the label each row should print.  Nothing in it was detected; the pass only
+#: checked that what a human had typed still existed.  Add a third player and
+#: the card would not have noticed him.
+#:
+#: Why nothing triggered is answered at length, with the measurements, in
+#: `app/utils/prop_template_family.py`.  The short version is that the two
+#: things that could have fired both could not: the props renderer's family rule
+#: is a CAP whose only outputs are two cards or one card and a deletion, and it
+#: had been keyed on the whole register key since UX-P147, making it
+#: structurally unreachable; and the real grouper, `prop_families.py`, is not
+#: wired to this pass and returns `None` for `"Carlos Alcaraz: Grand Slam wins
+#: in 2026"` anyway.
+#:
+#: ═══ WHAT THIS MAP IS NOW ═══
+#:
+#: Keyed on the SKELETON the detector produces — the question with the subject
+#: slot empty — and it carries only the things a machine cannot know: the
+#: sentence a reader sees, why it is interesting, which draw it belongs to, and
+#: which of the shared outcomes the card compares.
+#:
+#: Everything else is DERIVED: which markets are in the family, how many there
+#: are, who each row is, and what each row is called.  A third `KXGRANDSLAM-*`
+#: market with the same ladder joins this card with no edit here, which is the
+#: only real test of "by the system".
+#:
+#: THE ROWS ARE THE SOURCE'S OWN WORDS.  UX-P151 renamed "2+ Grand Slam wins" to
+#: a hand-written "Alcaraz"; the rows now read "Carlos Alcaraz" because that is
+#: what the market's own title calls him.  Alex, item 4 of the same directive:
+#: *"the market's own words are USED when they are the market's words."*  A
+#: curated rename is a claim about a number that nothing downstream can check.
+#:
+#: WHY NO ``answer``.  A card with a single headline number needs one outcome
+#: that answers its question, and a family has one per member by construction.
+#: So it is a FIELD card: ``answer_entity_key`` is ``None``, the renderer ranks
+#: instead of leading, and "which number goes in the big type" is never guessed.
+#:
+#: WHAT THE HOOK IS DOING.  The title Alex wrote reads as a race — *who* wins —
+#: and these are INDEPENDENT binaries that can both resolve Yes: there are four
+#: majors a year and each man needs two of them, not the same two.  Their
+#: numbers do not sum to 100 and must never be normalised so they do (the same
+#: rule the cycling GC field carries).  The title is his, verbatim; the hook is
+#: what stops it being read as an exclusive race.
+FAMILY_CURATION: dict[str, dict] = {
+    "{} grand slam wins in 2026": {
+        "key": "second-major",
+        "title": "Who wins a second major this year?",
+        "hook": (
+            "Both already have one in 2026. These are two separate questions — "
+            "they could both do it, or neither."
+        ),
+        "draw": "mens-singles",
+        #: Matched EXACTLY against each member's own outcome names, never
+        #: fuzzily. The detector has already proved every member offers the same
+        #: set, so naming it once names it for all of them.
+        "compare_outcome": "2+ Grand Slam wins",
+    },
 }
 
 #: Curated OUT, with the reason, because a silent omission is indistinguishable
 #: from an oversight and this section's whole claim is that the bar was applied.
 #:
-#: `KXATPGRANDSLAM-26` / `KXWTAGRANDSLAM-26` — "Who will win *a* Grand Slam in
-#: 2026?", resolving 2027-01-07. Two defects, either one disqualifying. (1) It
-#: is a SEASON question, not a US Open question: it stays open through the
-#: Australian Open five months after this tournament ends. (2) Its leaders are
-#: already-settled 99s — Sinner .99, Zverev .99, Alcaraz .97 on the men's side,
-#: Rybakina .99 and Andreeva .99 on the women's — because those players have
+#: `KXATPGRANDSLAM-26` — "Who will win *a* Grand Slam in 2026?", resolving
+#: 2027-01-07. Two defects, either one disqualifying. (1) It is a SEASON
+#: question, not a US Open question: it stays open through the Australian Open
+#: five months after this tournament ends. (2) Its leaders are already-settled
+#: 99s — Sinner .99, Zverev .99, Alcaraz .97 — because those players have
 #: already won a major this year. A "prop" whose top rows are decided facts is
-#: a dull row wearing a probability. These were curated IN by UX-P132 under the
-#: titles "Will anyone win the men's/women's calendar slam?", which the markets
-#: do not ask; that misdescription is the third reason.
+#: a dull row wearing a probability. It was curated IN by UX-P132 under the
+#: title "Will anyone win the men's calendar slam?", which the market does not
+#: ask; that misdescription is the third reason. Its women's twin
+#: `KXWTAGRANDSLAM-26` carried the identical objection and is now curated IN as
+#: ONE LEG — see `sabalenka-title-defence` above; the objection was to the
+#: field, and a single contender's leg is a different object.
 #:
 #: `KXATPGRANDSLAMFIELD-26` — "any man other than Alcaraz and Sinner", Yes at
 #: .99. Already happened. Never curated in; recorded so the next pass does not
 #: rediscover it as a candidate.
 DECLINED: dict[str, str] = {
     "KXATPGRANDSLAM-26": "season-long field resolving 2027-01-07; leaders already settled at .97-.99",
-    "KXWTAGRANDSLAM-26": "season-long field resolving 2027-01-07; leaders already settled at .99",
     "KXATPGRANDSLAMFIELD-26": "already resolved in substance (Yes .99); not a US Open question",
+    # ── THE NATIONALITY SWEEP'S REMAINDER (Q443) ────────────────────────────
+    # Three of the five series the sweep found are declined, and each for its
+    # own reason rather than for one blanket one.
+    #
+    # `KXWTANATSTAGE-26SF` is the interesting refusal: it EXISTS and it is
+    # UNQUOTABLE. All three legs read 0 open interest, 0 volume, no trade, and
+    # a 0.02/0.90 book, so `_kalshi_yes_probability`'s spread guard refuses
+    # every one of them — which is why the market holds zero outcome rows in
+    # our database despite having been ingested. Curating it would put a
+    # question on the page with nothing under it, and the refusal upstream is
+    # the same guard that stops us fabricating a .46 midpoint out of an
+    # untradeable book (#181).
+    "KXWTANATSTAGE-26SF": (
+        "exists and is unquotable — all three legs 0 open interest, 0 volume, "
+        "no trade, 0.02/0.90 book, so the Kalshi spread guard refuses them and "
+        "we hold no outcome rows for it"
+    ),
+    "KXATPNATSTAGE-26QF": (
+        "real and priced, but three 'how many Americans reach X' cards is the "
+        "repeating template ruling 8 forbids; one nationality question per draw "
+        "— the men keep the final, the women keep the quarterfinals"
+    ),
+    "KXATPNATSTAGE-26SF": (
+        "real and priced, and declined for the same repeating-template reason "
+        "as KXATPNATSTAGE-26QF; the men's nationality question is the final"
+    ),
     # CURATED OUT 2026-08-26 (UX-P135), having been curated IN by UX-P134.
     # "Will Alcaraz actually play?" was measured at Yes .905 and 808.7h old —
     # 33.7 days without a reading, the oldest thing in the section. The draw
@@ -142,6 +327,103 @@ DECLINED: dict[str, str] = {
     # `KXATPCOMPETE-26USOSIN` is KEPT: at Yes .63 and 186.7h it is both the
     # freshest incumbent and genuinely undecided, which is the whole difference.
     "KXATPCOMPETE-26USOALC": "Yes .905 at 808.7h (33.7d); near-decided and the draw resolves it tomorrow",
+}
+
+#: Card keys this pass RETIRES, and where they went — merged into the register's
+#: own ``props_declined`` on every run.
+#:
+#: `props_declined` used to be hand-maintained while `props` was generated, so
+#: the two could disagree and only a test noticed.  That is the wrong way round:
+#: the pass that removes a card is the thing that knows why, and
+#: ``test_every_prop_removed_from_the_register_says_why_it_went`` exists because
+#: a silent removal is indistinguishable from an oversight.  Merged, never
+#: replaced — the eight UX-P139 grid-cell reasons are hand-written and stay.
+RETIRED: dict[str, str] = {
+    "alcaraz-second-major": (
+        "retired INTO `second-major` (UX-P151, Alex 2026-08-28): Alcaraz is a leg of the "
+        "combined card now, not a card of his own. The number did not go anywhere — it is "
+        "the Alcaraz row"
+    ),
+    "sinner-second-major": (
+        "retired INTO `second-major` (UX-P151, Alex 2026-08-28): Sinner is a leg of the "
+        "combined card now, not a card of his own. The number did not go anywhere — it is "
+        "the Sinner row"
+    ),
+}
+
+# ---------------------------------------------------------------------------
+# THE WOMEN'S SECTION (UX-P147, Alex's item 7) — RULED YES, AND BLOCKED
+# ---------------------------------------------------------------------------
+#
+# Alex ruled YES on a women's props section and named the direction he wanted:
+# **Sabalenka back-to-back, first-time major winner, all-American final**, plus
+# the nationality props "once lane1/012's discovery fix lands (do not hand-enter
+# what discovery should find)".
+#
+# The curation is written and the section is ready.  What is missing is the
+# markets, and the census below is the whole reason this file still ships two
+# men's cards and no women's ones.  Three sweeps, 2026-08-27/28:
+#
+# **1. Our database.**  Every open US-Open market at either source that is not
+# an advance-to-round binary, a qualifying match, or a celebrity-attendance
+# novelty: seventeen rows, and all seventeen are the two winner fields, the six
+# Polymarket reach-ladders, the two Kalshi "to play" markets, or unrelated
+# tickers that matched on the words ("RÜFÜS DU SOL Streams in 2026").  Nothing
+# a woman's props section could print.
+#
+# **2. Polymarket upstream** (Gamma, `tag_slug=tennis`, 60 open events).  The
+# two winner fields, the eight reach-ladders, "Who will attend the US Open
+# Finals?", and a Chipotle promotion.  No non-advance women's question exists.
+#
+# **3. Kalshi upstream — the full open book.**  13,511 open events scanned by
+# ticker and title.  Twelve US-Open-specific markets exist that WE DO NOT HOLD:
+#
+#     KXWTANATSTAGE-26QF     Women's Singles: Americans to Reach Quarterfinals
+#     KXWTANATSTAGE-26SF     Women's Singles: Americans to Reach Semifinals
+#     KXATPNATSTAGE-26QF     Men's Singles: Americans to Reach Quarterfinals
+#     KXATPNATSTAGE-26SF     Men's Singles: Americans to Reach Semifinals
+#     KXATPNATSTAGE-26FIN    Men's Singles: Americans to Reach Final
+#     KXATPWTA-26USO         US Open Exacta (80 men-and-women pairings)
+#     KXWTAADVANCE-26USO{QUAR,SEMI,FIN}   women's reach-fields
+#     KXATPADVANCE-26USO{QUAR,SEMI,FIN}   men's reach-fields
+#
+# `SELECT ... WHERE external_id IN (...)` over those twelve returns **0 rows**.
+# The `NATSTAGE` family IS the nationality prop Alex asked for, and
+# `KXATPNATSTAGE-26FIN` is as close as any market gets to "all-American final".
+# So his parenthetical governs: do not hand-enter them.  They are lane1/012's.
+#
+# ** AND THE PART THAT CHANGES THE DEPENDENCY. **  Discovery is necessary and
+# NOT sufficient.  Measured on Kalshi's own API the same night, every one of the
+# six NATSTAGE markets is::
+#
+#     last_price_dollars 0.0000   open_interest_fp 0.00   liquidity_dollars 0.0000
+#     yes_bid 0.02  yes_ask 0.90                (KXWTANATSTAGE-26SF-1, "1+ Americans")
+#
+# Zero trades, zero open interest, an 88-cent spread.  Ingesting them tomorrow
+# would put a question on the page with no number under it.  So the women's
+# section is blocked on the market TRADING, not only on us fetching it, and the
+# report says so rather than letting a discovery fix be mistaken for the unlock.
+#
+# **"Sabalenka back-to-back" and "first-time major winner" do not exist as
+# markets anywhere.**  Not at Kalshi (all 13,511 open events), not at
+# Polymarket.  The only thing that could print under either title is a slice of
+# the women's winner field, which is the board directly above — one number
+# answering two differently-worded questions is the divergence this register
+# refuses, and it is the same defect UX-P134 fixed when it stopped a
+# threshold-ladder maximum from answering a calendar-slam question.
+#
+# WHAT IS READY.  `curatedProps` takes a draw and does not care which; the
+# renderer, the rotation, the honesty treatment and the empty-state sentence
+# already work for `womens-singles`, and were re-verified this queue.  The day a
+# NATSTAGE market lands with a price, it is an entry in `CURATION` and nothing
+# else.
+WOMENS_NON_ADVANCE_CENSUS: dict[str, str] = {
+    "KXWTANATSTAGE-26QF": "not ingested (0 rows); and 0 trades / 0 OI / .02-.90 spread upstream",
+    "KXWTANATSTAGE-26SF": "not ingested (0 rows); and 0 trades / 0 OI / .02-.90 spread upstream",
+    "KXATPNATSTAGE-26FIN": "the closest market to 'all-American final'; not ingested, 0 OI",
+    "KXATPWTA-26USO": "US Open Exacta, 80 pairings — genuinely fun, not ingested, unpriced",
+    "sabalenka-back-to-back": "NO MARKET EXISTS at either source. Would have to be the winner field's Sabalenka row, which is the board above",
+    "first-time-major-winner": "NO MARKET EXISTS at either source. Would have to be derived from the winner field, which the client never does (ruling 003)",
 }
 
 # ---------------------------------------------------------------------------
@@ -247,6 +529,54 @@ def read_query_dump(path: Path) -> list[dict]:
     return [dict(zip(payload["columns"], row)) for row in payload["rows"]]
 
 
+#: The one market state this pass may write a card from.  Everything else —
+#: ``closed``, ``settled``, ``finalized`` — is a question that has stopped being
+#: a question.
+OPEN_STATUS = "open"
+
+
+def refuse_non_open(rows: list[dict], label: str) -> list[str]:
+    """Every row must be an OPEN market, and the dump must be able to say so.
+
+    ═══ CERT-430, FINDING 3 ═══
+
+    The documented query filters ``fm.status = 'open'`` and nothing checked that
+    it had.  The cert executed the gap: flipping one leg's status to ``closed``
+    in the dump returned exit 0 and wrote the combined card, while the adjacent
+    missing-leg and duplicate-outcome controls both refused.  A settled leg is
+    the worst possible member of a comparison — its number is not stale, it is
+    *over*, and nothing downstream can tell that from a quiet market.
+
+    So the precondition is verified here rather than trusted, and it is verified
+    in the direction that fails safe: a dump with no ``status`` column at all is
+    refused too.  A guard that silently passes when its evidence is missing is
+    the gotcha #53 shape — an absent answer read as a good one — and it is
+    exactly how this one would come back.
+
+    Returns the refusal lines; empty means the dump is clean.
+    """
+    if not rows:
+        return []
+    if any("status" not in row for row in rows):
+        return [
+            f"REFUSED: {label} carries no `status` column, so this pass cannot "
+            "verify that every market is open. Re-run the documented query — it "
+            "selects `fm.status` for exactly this reason.",
+        ]
+    bad: dict[str, set[str]] = {}
+    for row in rows:
+        status = str(row.get("status") or "").strip()
+        if status != OPEN_STATUS:
+            bad.setdefault(str(row["market_ext"]), set()).add(status or "(empty)")
+    return [
+        f"REFUSED: {label} market {market_ext} is "
+        f"{'/'.join(sorted(states))}, not {OPEN_STATUS!r}. A settled or closed "
+        "market is not a question — the whole pass stops rather than writing a "
+        "card around it."
+        for market_ext, states in sorted(bad.items())
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--register", required=True)
@@ -264,15 +594,29 @@ def main() -> int:
 
     register = json.loads(Path(args.register).read_text())
     rows = read_query_dump(Path(args.dump))
+    refusals = refuse_non_open(rows, args.dump)
     if args.advance_dump:
-        rows = rows + read_query_dump(Path(args.advance_dump))
+        advance_rows = read_query_dump(Path(args.advance_dump))
+        refusals += refuse_non_open(advance_rows, args.advance_dump)
+        rows = rows + advance_rows
+
+    # BEFORE ANYTHING IS DECIDED. A closed leg must not reach curation, family
+    # detection or the writer — see `refuse_non_open`. Every refusal in the dump
+    # is printed, not just the first: a curator re-running after each one, one
+    # market at a time, is how a five-minute fix becomes an afternoon.
+    if refusals:
+        for line in refusals:
+            print(line, file=sys.stderr)
+        return 1
 
     # One curation table, assembled from two. Keeping them separate above is
     # editorial (the two populations were surveyed on different days, against
     # different bars); keeping them separate HERE would duplicate the refusal
     # logic, which is the part that must not diverge.
     curation = {**CURATION, **ADVANCE_CURATION}
-    keys = [spec["key"] for spec in curation.values()]
+    keys = [spec["key"] for spec in curation.values()] + [
+        spec["key"] for spec in FAMILY_CURATION.values()
+    ]
     if len(set(keys)) != len(keys):
         # Two curations writing one card key would silently drop one of them,
         # and the section would be short with nothing to point at.
@@ -283,17 +627,129 @@ def main() -> int:
     for row in rows:
         by_market.setdefault(str(row["market_ext"]), []).append(row)
 
+    # ── THE SYSTEM FINDS THE FAMILIES (UX-P154, Alex's item 1) ───────────────
+    #
+    # Detection runs over everything in the dump that has not been curated OUT,
+    # and it runs BEFORE anything decides what a card is. Declined tickers are
+    # excluded first: a market we have already refused on its merits must not be
+    # able to drag a good one into a family, and it must not be able to raise a
+    # refusal about a question nobody is going to write.
+    candidates = [
+        {
+            "market_ext": market_ext,
+            "market_name": market_rows[0]["market_name"],
+            "source": market_rows[0]["source"],
+            "outcomes": [str(r["outcome_name"]) for r in market_rows],
+        }
+        for market_ext, market_rows in sorted(by_market.items())
+        if market_ext not in DECLINED
+    ]
+    families = detect_template_families(candidates)
+
+    # EVERY DETECTED FAMILY NEEDS A QUESTION, or the pass stops.
+    #
+    # This is the refusal that makes the detector worth having. Without it a
+    # newly-listed family would either ship as N repeated cards (the UX-P147
+    # failure) or be silently dropped (the UX-P138 failure); with it, the pass
+    # tells the curator that a family exists, what its skeleton is, and which
+    # markets are in it — which is the whole of what they need to write one line.
+    uncurated = [f for f in families if f.skeleton not in FAMILY_CURATION]
+    if uncurated:
+        for family in uncurated:
+            print(
+                f"REFUSED: template family {family.skeleton!r} is not curated. "
+                f"Members: {list(family.market_exts)}. "
+                f"Shared outcomes: {list(family.signature)}. "
+                "These markets ask one question about different subjects and would "
+                "otherwise ship as repeated cards. Add a FAMILY_CURATION entry keyed "
+                "on that skeleton, or decline the markets.",
+                file=sys.stderr,
+            )
+        return 1
+
+    detected_skeletons = {f.skeleton for f in families}
+    stale = sorted(set(FAMILY_CURATION) - detected_skeletons)
+    if stale:
+        # A curated family the detector no longer finds. Either a source renamed
+        # a market out of the shape, or a member stopped being returned. Both are
+        # "the card you curated is not the card that would ship", and both are a
+        # decision to re-make rather than a shape to absorb.
+        print(
+            f"REFUSED: curated families {stale} are not present in this dump. "
+            f"Detected: {sorted(detected_skeletons)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    # A market in a family must NOT also produce a card of its own. Without this
+    # the register would carry both the comparison and the single-subject cards
+    # it replaced, which is the repetition Alex ruled out arriving by a different
+    # door.
+    family_markets = {ext for f in families for ext in f.market_exts}
+    claimed_by_both = family_markets & set(curation)
+    if claimed_by_both:
+        print(
+            f"REFUSED: {sorted(claimed_by_both)} is curated as its own card AND is a "
+            "member of a detected template family. Pick one.",
+            file=sys.stderr,
+        )
+        return 1
+
     props: list[dict] = []
     skipped: list[str] = []
     for market_ext, market_rows in sorted(by_market.items()):
+        if market_ext in family_markets:
+            # A member of a detected family, consumed by its combined card
+            # below. Not skipped, and not below the bar.
+            continue
         spec = curation.get(market_ext)
         if spec is None:
             # In the dump but not curated. Not an error — it is the bar working.
             skipped.append(market_ext)
             continue
 
-        answer_name = spec.get("answer")
         names = [str(r["outcome_name"]) for r in market_rows]
+
+        # THE SUBSET (Q443). A curated question may be answered by ONE leg of a
+        # market that also carries legs the question does not ask — Sabalenka's
+        # leg of a seventeen-name field, one rung of a seven-rung ladder.
+        #
+        # This is a CURATION decision and not a filter, and the difference is
+        # what it costs to get wrong. A pinned outcome is an identity the price
+        # rail must keep fresh (`registered_market_ids` -> the registered arm of
+        # `futures_price_refresh`) and the card's freshness is the AND over its
+        # priced legs, so every leg pinned for decoration is a leg that can dark
+        # the card. Two of them already did: `KXGRANDSLAM-JSIN26`'s `1+` is
+        # graded and the rail refuses to re-price a settled outcome, and its
+        # `3+` was delisted by the venue outright — so the card asked for a live
+        # reading from two rows nothing was permitted or able to write, and
+        # rendered dark on an answer leg that was forty minutes old.
+        #
+        # REFUSED LOUDLY when a pinned name is not in the dump, for the same
+        # reason the answer refusal below exists: a curation that no longer
+        # matches its market is a decision to re-make, not a shape to absorb. A
+        # subset that drops its own answer falls through to that refusal.
+        #
+        # Deliberately the SAME sentence as the answer refusal — "is not an
+        # outcome of this market" — because they are one class of refusal with
+        # two entry points, and a second wording is a second thing for a reader
+        # (and for a guard) to learn.
+        pinned = spec.get("outcomes")
+        if pinned is not None:
+            absent = [name for name in pinned if name not in names]
+            if absent:
+                for name in absent:
+                    print(
+                        f"REFUSED {market_ext}: curated outcome {name!r} is not "
+                        f"an outcome of this market. Present: {names}",
+                        file=sys.stderr,
+                    )
+                return 1
+            keep = set(pinned)
+            market_rows = [r for r in market_rows if str(r["outcome_name"]) in keep]
+            names = [str(r["outcome_name"]) for r in market_rows]
+
+        answer_name = spec.get("answer")
         if answer_name is not None and answer_name not in names:
             # REFUSE, loudly. The alternative is a card with a question and no
             # answer, which the renderer would fall back to ranking — quietly
@@ -315,12 +771,23 @@ def main() -> int:
             "source": market_rows[0]["source"],
             "market_id": market_rows[0]["market_id"],
             "market_external_id": market_ext,
+            "markets": [
+                {"market_id": market_rows[0]["market_id"], "market_external_id": market_ext}
+            ],
             "outcomes": [
                 {
                     "entity_key": f"{spec['key']}:{str(r['outcome_name']).lower().replace(' ', '-')}",
                     "display_name": r["outcome_name"],
                     "outcome_id": r["outcome_id"],
                     "is_answer": str(r["outcome_name"]) == answer_name,
+                    # PER-OUTCOME PROVENANCE, on every card and not only the
+                    # combined ones. It is what makes "these two numbers come
+                    # from two different markets" a readable property of the
+                    # file rather than something a reader of it has to infer,
+                    # and the committed-register guard asserts the answer rule
+                    # off exactly this field.
+                    "market_id": r["market_id"],
+                    "market_external_id": market_ext,
                 }
                 for r in market_rows
             ],
@@ -332,7 +799,122 @@ def main() -> int:
             },
         })
 
+    # ── One card per DETECTED family: one question, one row per member ───────
+    #
+    # UX-P151 built this loop from a hand-written list of legs; UX-P154 builds it
+    # from `detect_template_families`. Nothing below names a ticker, a player or
+    # a count — the family says who is in it, and the curation says what the
+    # question is called.
+    #
+    # Every refusal here is loud and fatal, and that is the whole design. A
+    # comparison card that quietly loses a member is WORSE than no card: it
+    # prints one man's number under "who wins", which is the exact class of
+    # defect UX-P134 fixed when it stopped a ladder maximum answering a slam
+    # question.
+    for family in sorted(families, key=lambda f: f.skeleton):
+        spec = FAMILY_CURATION[family.skeleton]
+        key = spec["key"]
+        compare = spec["compare_outcome"]
+
+        # THE COMPARISON MUST COME OUT OF THE SHARED SET. `family.signature` is
+        # the INTERSECTION of the members' outcome names, so an outcome one
+        # member does not offer cannot be named here — which is the check that
+        # makes "one column, same question, every member" true by construction
+        # rather than by the curator having looked.
+        if outcome_signature([compare]) and outcome_signature([compare])[0] not in (
+            family.signature
+        ):
+            print(
+                f"REFUSED {key}: compared outcome {compare!r} is not offered by every member "
+                f"of {family.skeleton!r}. Shared outcomes: {list(family.signature)}.",
+                file=sys.stderr,
+            )
+            return 1
+
+        outcomes: list[dict] = []
+        legs_evidence: list[dict] = []
+        for member in family.members:
+            market_rows = by_market[member.market_ext]
+            match = [r for r in market_rows if str(r["outcome_name"]) == compare]
+            if len(match) != 1:
+                names = [str(r["outcome_name"]) for r in market_rows]
+                print(
+                    f"REFUSED {key}: compared outcome {compare!r} matched {len(match)} rows "
+                    f"in {member.market_ext}. Present: {names}",
+                    file=sys.stderr,
+                )
+                return 1
+            row = match[0]
+            slug = member.display_name.lower().replace(" ", "-")
+            outcomes.append({
+                "entity_key": f"{key}:{slug}",
+                # THE SOURCE'S OWN WORDS (Alex, item 4). Derived from the
+                # market's own title, not curated — see `subject_display`.
+                "display_name": member.display_name,
+                "outcome_id": row["outcome_id"],
+                # NO ANSWER, by construction — see FAMILY_CURATION's note. A
+                # family has one candidate answer per member, so no single
+                # outcome answers the question; the card is a field and the
+                # renderer ranks it.
+                "is_answer": False,
+                "market_id": row["market_id"],
+                "market_external_id": member.market_ext,
+            })
+            legs_evidence.append({
+                "market_external_id": member.market_ext,
+                "market_name": member.market_name,
+                "source_outcome_name": compare,
+                # The DERIVATION is what is recorded now, not a rename. Two
+                # facts a reader of this file can check against the market
+                # title: the subject the detector isolated, and the skeleton
+                # every member shares.
+                "subject": member.display_name,
+            })
+
+        # One `source` on the card, so it has to be true of every member. A
+        # cross-source comparison is a real thing to want and this shape cannot
+        # honestly describe it, so refuse rather than pick the first one.
+        member_sources = {member.source for member in family.members}
+        if len(member_sources) != 1:
+            print(
+                f"REFUSED {key}: members span {sorted(member_sources)} and the card carries "
+                "one `source`. A cross-source card needs a shape that can say so.",
+                file=sys.stderr,
+            )
+            return 1
+
+        props.append({
+            "key": key,
+            "title": spec["title"],
+            "hook": spec["hook"],
+            "draw": spec["draw"],
+            "source": member_sources.pop(),
+            "markets": [
+                {
+                    "market_id": o["market_id"],
+                    "market_external_id": o["market_external_id"],
+                }
+                for o in outcomes
+            ],
+            "outcomes": outcomes,
+            "evidence": {
+                "kind": "prop-census-family",
+                "observed_at": args.observed_at,
+                # THE DETECTION IS THE EVIDENCE. `skeleton` is the shared
+                # question the detector found and `shared_outcomes` is the set
+                # every member offers — the two facts that make this one card
+                # rather than N. A reader of the register can check both against
+                # the market titles without running anything.
+                "skeleton": family.skeleton,
+                "shared_outcomes": list(family.signature),
+                "legs": legs_evidence,
+                "answer": None,
+            },
+        })
+
     register["props"] = props
+    # Merged, never replaced: the hand-written UX-P139 grid-cell reasons stay.
+    register["props_declined"] = {**(register.get("props_declined") or {}), **RETIRED}
     register["version"] = args.version
     register["supersedes_version"] = args.supersedes_version
 
@@ -356,11 +938,23 @@ def main() -> int:
 
     print(f"curated props: {len(props)}")
     for prop in props:
-        print(f"  {prop['key']}: {len(prop['outcomes'])} outcomes ({prop['market_external_id']})")
+        tickers = ", ".join(m["market_external_id"] for m in prop["markets"])
+        print(f"  {prop['key']}: {len(prop['outcomes'])} outcomes ({tickers})")
     print(f"in the dump but below the bar: {len(skipped)} {skipped}")
     missing = sorted(set(curation) - set(by_market))
     if missing:
         print(f"curated but ABSENT from the dump: {missing}")
+    # NO SILENT DETECTION. What the detector found is printed on every run, with
+    # the subjects it isolated, because a family that quietly gains or loses a
+    # member changes what a card says and nothing else would report it.
+    print(f"template families detected: {len(families)}")
+    for family in families:
+        subjects = ", ".join(m.display_name for m in family.members)
+        print(
+            f"  {family.skeleton!r} -> {FAMILY_CURATION[family.skeleton]['key']} "
+            f"[{subjects}]"
+        )
+    print(f"retired into a combined card: {sorted(RETIRED)}")
     print(f"findings: {findings or 'none'}")
     print(f"verdict:  {verdict}")
 

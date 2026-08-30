@@ -52,12 +52,6 @@ function rainTextColor(prob: number): string {
   return "var(--text-secondary)";
 }
 
-function currentMonth(): string {
-  const months = ["January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December"];
-  return months[new Date().getMonth()];
-}
-
 /* ── Skeletons ───────────────────────────────────────────────────────── */
 
 function RainDaySkeleton() {
@@ -108,11 +102,17 @@ function MonthlySkeleton() {
 
 export default function RainForecast() {
   const { data: liveRain, error } = useSWR("weather-rain", fetchRain, { refreshInterval: 3600000 });
+  // Only `undefined` means still-loading. A 200 carrying an empty list means
+  // loaded-and-empty, and must show an honest card rather than a skeleton that
+  // pulses forever (the daily NYC series stopped resolving on 2026-07-22).
+  const loaded = liveRain !== undefined;
   const rain: RainDay[] | null = (liveRain as { daily: RainDay[] })?.daily?.length ? (liveRain as { daily: RainDay[] }).daily : null;
   const monthlyLive = (liveRain as { monthly: MonthlyRainType[] })?.monthly;
   const monthly: MonthlyRainType[] | null = monthlyLive?.length ? monthlyLive : null;
-  const maxMonthly = monthly ? Math.max(...monthly.map((m) => m.prob)) : 0;
-  const month = currentMonth();
+  // Floor of 1: every surviving row can be 0%, and a bare max would make the
+  // bar width 0/0 = NaN, which the browser drops on the floor silently.
+  const maxMonthly = monthly ? Math.max(1, ...monthly.map((m) => m.prob)) : 0;
+  const cityCount = monthly?.length ?? 0;
 
   return (
     <section className="pt-14 px-4 md:px-6">
@@ -131,7 +131,7 @@ export default function RainForecast() {
                   NYC · 7-day rain probability
                 </h3>
                 <p className="text-text-secondary text-sm mt-0.5">
-                  Daily &ldquo;Will it rain?&rdquo; markets from Kalshi
+                  Daily &ldquo;Will it rain?&rdquo; questions, one per day
                 </p>
               </div>
               <SourceBadge src="kalshi" />
@@ -140,6 +140,11 @@ export default function RainForecast() {
             {error && !rain ? (
               <div className="py-12 text-center">
                 <p className="text-text-secondary text-sm">Failed to load rain data</p>
+              </div>
+            ) : loaded && !rain ? (
+              <div className="py-12 text-center">
+                <p className="text-text-secondary text-sm">No live rain markets right now</p>
+                <p className="text-text-muted text-xs mt-1.5">Daily &ldquo;will it rain?&rdquo; questions appear here when they reopen.</p>
               </div>
             ) : !rain ? (
               <RainDaySkeleton />
@@ -220,17 +225,24 @@ export default function RainForecast() {
                 className="text-text-primary"
                 style={{ fontSize: 20, fontWeight: 600 }}
               >
-                {month} rainfall
+                Monthly rainfall
               </h3>
               <SourceBadge src="kalshi" />
             </div>
             <p className="text-text-secondary text-sm mb-5">
-              &ldquo;Above 1 inch this month&rdquo; — 10 cities
+              {monthly
+                ? `“Above 1 inch of rain” — ${cityCount} ${cityCount === 1 ? "city" : "cities"}`
+                : "“Above 1 inch of rain”, city by city"}
             </p>
 
             {error && !monthly ? (
               <div className="py-12 text-center">
                 <p className="text-text-secondary text-sm">Failed to load monthly data</p>
+              </div>
+            ) : loaded && !monthly ? (
+              <div className="py-12 text-center">
+                <p className="text-text-secondary text-sm">No live rainfall markets right now</p>
+                <p className="text-text-muted text-xs mt-1.5">Monthly city markets appear here when they reopen.</p>
               </div>
             ) : !monthly ? (
               <MonthlySkeleton />
@@ -247,9 +259,16 @@ export default function RainForecast() {
                       className="grid items-center gap-2"
                       style={{ gridTemplateColumns: "90px 1fr 42px 36px" }}
                     >
-                      <span className="text-sm text-text-primary font-medium truncate">
-                        {m.city}
-                      </span>
+                      <div className="min-w-0">
+                        <span className="block text-sm text-text-primary font-medium truncate">
+                          {m.city}
+                        </span>
+                        {m.period && (
+                          <span className="block text-[10px] font-mono text-text-muted truncate">
+                            {m.period}
+                          </span>
+                        )}
+                      </div>
                       <div className="h-[7px] rounded-full overflow-hidden bg-surface-elevated">
                         <div
                           className="h-full rounded-full transition-all duration-700 ease-out"
@@ -278,7 +297,9 @@ export default function RainForecast() {
 
             <div className="mt-4 pt-3 border-t border-dashed border-surface-border text-xs text-text-muted flex items-center justify-between">
               <span>24h change shown at right</span>
-              <span className="font-mono">Kalshi · 10 cities</span>
+              <span className="font-mono">
+                {monthly ? `Kalshi · ${cityCount} ${cityCount === 1 ? "city" : "cities"}` : "Kalshi"}
+              </span>
             </div>
           </div>
         </div>

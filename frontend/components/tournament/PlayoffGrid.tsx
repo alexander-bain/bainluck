@@ -2,11 +2,11 @@
 
 import React from "react";
 
+import LiquidityMark from "../LiquidityMark";
+import { LIQUIDITY_DEFINITION } from "@/lib/liquidity";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
-  GRID_COLUMN_WIDTH_PX,
-  GRID_NAME_WIDTH_PX,
   GRID_SECTION_LABEL,
   columnSumSentence,
   formatAge,
@@ -15,6 +15,7 @@ import {
   gridCellGlyph,
   gridScrolls,
   gridWidthPx,
+  markedCellCount,
   type GridCell,
   type GridColumn,
   type PlayoffGrid as PlayoffGridModel,
@@ -66,12 +67,92 @@ import {
 
 const ALARM_STATES = new Set(["unlinked", "unregistered"]);
 
+/**
+ * The grid's two column widths, as CSS variables with a `lg` override.
+ *
+ * Tailwind arbitrary properties, so the desktop measurements answer to the same
+ * breakpoint as everything else on the page and no JS ever has to know how wide
+ * the window is.
+ *
+ * ⚠️ WRITTEN OUT AS A LITERAL ON PURPOSE, and it must stay one. Tailwind's JIT
+ * finds classes by scanning source text for candidates; it does not execute the
+ * file. Composing this out of `GRID_NAME_WIDTH_PX` and friends — which is what
+ * the first draft of this did, to avoid typing a number twice — means the
+ * string `[--grid-name-w:118px]` never literally appears anywhere, so Tailwind
+ * emits no rule for it, `var(--grid-name-w)` resolves to nothing, and every
+ * grid track collapses. It fails at RUNTIME with a green build and a green
+ * typecheck, which is the worst way for a layout to break.
+ *
+ * The duplication that buys is real, so it is guarded rather than tolerated:
+ * `playoffGridDesktop.test.tsx` parses these four values back out of the string
+ * and asserts they equal the exported constants.
+ */
+export const GRID_SIZING =
+  "[--grid-name-w:118px] [--grid-col-w:46px] lg:[--grid-name-w:236px] lg:[--grid-col-w:84px]";
+
+/**
+ * ═══ THE SPARK BARS — RULED IN (UX-P147) ═══
+ *
+ * UX-P146 built these behind a prop defaulting to OFF and rendered both
+ * options for Alex's eye (`reach-table-with-bars.html` / `reach-table-plain.html`).
+ * He ruled: **"Option A is great"** — the bars. So the default is ON and the
+ * prop stays only as the seam the plain mock is still rendered through, because
+ * a comparison artifact that cannot draw the rejected option stops being a
+ * comparison the moment somebody asks the question again.
+ *
+ * What a bar is: a single faint rule under the number, filled from the right to
+ * the cell's own probability. One colour for every column and every row — a bar
+ * is a length, and colour-coding it would add a second variable to a table
+ * whose whole claim is that each cell answers exactly its own column. No
+ * labels, no axis, no gridline: the number IS the label and it is already
+ * there. `aria-hidden`, because it says nothing the cell's own screen-reader
+ * sentence does not.
+ *
+ * ═══ AND THE TRUNCATION HE NAMED WITH IT ═══
+ *
+ * *"Player names truncate too early when the window is **not super wide**."*
+ * The emphasis is his and it is the diagnosis. The name track was a FIXED
+ * `var(--grid-name-w)` while every value column was `minmax(var(--grid-col-w),
+ * 1fr)`, so every pixel a window gained went to the numbers and none of it to
+ * the names — and `--grid-name-w` only steps up to 236px at `lg`.
+ *
+ * Between 560px and 1024px of viewport, therefore, the grid was drawing the
+ * PHONE's 118px name box inside up to 830px of available width: "Tomas Martin
+ * Etcheverry" cut to about "Tomas Marti", five value columns at ~140px each
+ * holding a three-character percentage, and — now the bars are on — a bar
+ * stretched across the whitespace that was paid for with his surname. Above
+ * `lg` nothing truncates and nothing changes, which is exactly why the
+ * complaint is scoped to windows that are not super wide.
+ *
+ * Alex's rule for the fix is the fix: **names get priority over bar width; bars
+ * compress first.** See `gridTemplate` below.
+ */
+function SparkBar({ probability }: { probability: number }) {
+  const pct = Math.max(0, Math.min(1, probability)) * 100;
+  return (
+    <span
+      aria-hidden="true"
+      className="mt-1 block h-[3px] w-full overflow-hidden rounded-full bg-surface-elevated"
+      data-testid="grid-spark-bar"
+      data-fill={pct.toFixed(1)}
+    >
+      <span
+        className="ml-auto block h-full rounded-full bg-text-muted/45"
+        style={{ width: `${pct}%` }}
+      />
+    </span>
+  );
+}
+
 function Cell({
   cell,
   column,
+  sparkBars = true,
 }: {
   cell: GridCell | undefined;
   column: GridColumn;
+  /** On since UX-P147 — see `SparkBar`. `false` renders the plain mock. */
+  sparkBars?: boolean;
 }) {
   if (!cell) {
     // Structurally unreachable — the builder emits a cell for every column of
@@ -109,7 +190,7 @@ function Cell({
     return (
       <span
         {...shared}
-        className={`text-[9.5px] font-semibold uppercase tracking-tight ${
+        className={`text-[9.5px] font-semibold uppercase tracking-tight lg:text-[11px] ${
           isAlarm ? "text-accent-danger" : "text-text-muted/70"
         }`}
       >
@@ -119,24 +200,99 @@ function Cell({
     );
   }
 
+  const barred = sparkBars && typeof cell.probability === "number";
+
   return (
     <span
       {...shared}
-      className={`text-[13px] font-bold tabular-nums ${
+      className={`text-[13px] font-bold tabular-nums lg:text-[15px] ${
         cell.probability_is_live ? "text-text-primary" : "text-text-secondary"
-      }`}
+      } ${barred ? "block w-full" : ""}`}
     >
       <span className="sr-only">{explanation} </span>
-      <span aria-hidden="true">{text}</span>
+      <span
+        aria-hidden="true"
+        className={barred ? "flex items-center justify-end gap-1" : undefined}
+      >
+        {text}
+        {/* UX-P157. Inside the number's own line so it cannot be mistaken for
+            a mark on the row or on the column — it belongs to THIS cell.
+            No `onReveal`: a 46px value track has nowhere to put a panel, and
+            the cell's `title` already carries the same sentence (see
+            `gridCellExplanation`). The sr-only text above carries it too, so
+            the mark is `aria-hidden` chrome here rather than a second,
+            duplicate announcement on every thin cell in a 336-cell grid. */}
+        <LiquidityMark facts={cell} observedAt={cell.observed_at} size="sm" decorative />
+      </span>
+      {barred && <SparkBar probability={cell.probability as number} />}
     </span>
   );
+}
+
+/**
+ * ONE template, two sets of measurements — and, since UX-P147, an ORDER OF
+ * PRIORITY between the two kinds of track.
+ *
+ * The widths are CSS variables set by `GRID_SIZING`, so the phone keeps the
+ * 118/46 every prior ruling was verdicted against and a `lg` window gets
+ * 236/84.
+ *
+ * ═══ WHAT CHANGED, AND WHY IT IS `max-content` ═══
+ *
+ * It was `var(--grid-name-w) repeat(n, minmax(var(--grid-col-w), 1fr))` — the
+ * name track FIXED, the value tracks flexible. Every pixel of extra window
+ * therefore went to the numbers, so a 900px window truncated a name at exactly
+ * the character a 600px one did. Alex, item 1: *"names get priority over bar
+ * width; bars compress first."*
+ *
+ * So the name track is `minmax(var(--grid-name-w), max-content)`. Read it as
+ * the sentence it is: *never narrower than the measured minimum, never wider
+ * than the longest name in this table.* The CSS grid algorithm then does
+ * exactly what Alex asked, in this order:
+ *
+ *   1. every track starts at its minimum — the name at 118/236, each value
+ *      column at 46/84, which is the phone's layout unchanged;
+ *   2. **"maximize tracks"** hands out free space to non-flexible tracks up to
+ *      their growth limits. `max-content` is a growth limit; `1fr` is not
+ *      (a flexible track's growth limit is frozen at its base size for this
+ *      step). So the NAME grows first, and stops the moment the longest name
+ *      fits whole;
+ *   3. **"expand flexible tracks"** gives whatever is left to the `1fr` value
+ *      columns, which is where the bars live.
+ *
+ * Bars compress first because they are last in that order, and they can only
+ * compress to `var(--grid-col-w)` — a floor wide enough for `100%` — after
+ * which the grid scrolls rather than crushing them, exactly as ruling 5 says.
+ *
+ * ⚠️ THE PHONE IS UNTOUCHED, and this is the property to keep. At 390px there
+ * is no free space, step 2 distributes nothing, and the name track sits at its
+ * 118px minimum truncating precisely as before. `max-content` cannot widen a
+ * track past the space available — it is a *growth limit*, not a minimum — so
+ * it cannot overflow a narrow window either.
+ *
+ * ⚠️ AND `lg` AND ABOVE IS UNTOUCHED TOO, for the mirror reason. There the
+ * minimum is already 236px, which was measured as "the widest real name plus a
+ * seed badge with nothing clipped"; the longest name on the men's grid is
+ * "Tomas Martin Etcheverry" and it fits. A `max-content` growth limit BELOW the
+ * base size is clamped up to it by the spec, so the track does not grow, the
+ * free space still goes to the bars, and the desktop layout every prior ruling
+ * was verdicted against is byte-identical. The change bites in exactly the
+ * range Alex named — 560px to 1024px — and nowhere else.
+ *
+ * A NOTE ON WHAT `max-content` MEASURES. It is the longest name in the WHOLE
+ * table, not per row, because grid tracks are shared. That is the correct
+ * reading of "names get priority": a column sized to its longest entry is a
+ * column where no name is cut while another row has slack.
+ */
+export function gridTemplate(columnCount: number): string {
+  return `minmax(var(--grid-name-w), max-content) repeat(${columnCount}, minmax(var(--grid-col-w), 1fr))`;
 }
 
 function SumCheck({ grid }: { grid: PlayoffGridModel }) {
   const failing = grid.columnSums.filter((check) => check.verdict !== "pass");
   return (
     <details
-      className="mt-2 rounded-xl border border-surface-border bg-surface-card px-3 py-2"
+      className="mt-2 max-w-[80ch] rounded-xl border border-surface-border bg-surface-card px-3 py-2"
       data-testid="grid-sum-check"
       data-failing={failing.length}
     >
@@ -172,7 +328,7 @@ function SumCheck({ grid }: { grid: PlayoffGridModel }) {
       </ul>
       {grid.monotonicityViolations.length > 0 && (
         <p
-          className="mt-2 border-t border-surface-border pt-1.5 text-[11px] leading-snug text-text-muted"
+          className="mt-2 max-w-[80ch] border-t border-surface-border pt-1.5 text-[11px] leading-snug text-text-muted"
           data-testid="grid-monotonicity"
           data-count={grid.monotonicityViolations.length}
         >
@@ -180,14 +336,14 @@ function SumCheck({ grid }: { grid: PlayoffGridModel }) {
               than the semis; where the market says otherwise we show the
               market and say that we noticed. */}
           {grid.monotonicityViolations.length} player
-          {grid.monotonicityViolations.length === 1 ? " is" : "s are"} priced higher for a
+          {grid.monotonicityViolations.length === 1 ? " has" : "s have"} a higher chance for a
           later round than an earlier one —{" "}
           {grid.monotonicityViolations
             .slice(0, 3)
             .map((v) => `${v.display_name} (${v.earlier} → ${v.later})`)
             .join(", ")}
           {grid.monotonicityViolations.length > 3 ? " and others" : ""}. That is the
-          market disagreeing with itself in thin books, shown as quoted.
+          market disagreeing with itself where trading is thin, shown exactly as quoted.
         </p>
       )}
     </details>
@@ -198,11 +354,19 @@ export default function PlayoffGrid({
   grid,
   drawLabel,
   initialExpanded = false,
+  sparkBars = true,
 }: {
   grid: PlayoffGridModel;
   drawLabel?: string;
   /** Capture seam: render the full field rather than the collapsed five. */
   initialExpanded?: boolean;
+  /**
+   * Draw a faint bar under each numeric cell. **ON since UX-P147** — Alex saw
+   * `reach-table-with-bars.html` beside `reach-table-plain.html` and ruled
+   * "Option A is great". The prop survives so the plain artifact can still be
+   * re-rendered from the shipped component. See `SparkBar` above.
+   */
+  sparkBars?: boolean;
 }) {
   const [expanded, setExpanded] = React.useState(initialExpanded);
 
@@ -214,15 +378,20 @@ export default function PlayoffGrid({
       >
         <div className="text-[15px] font-semibold text-text-primary">Nothing to chart yet</div>
         <p className="mt-1 text-[13px] text-text-secondary">
-          Nobody in this draw has a priced round to reach.
+          {/* UX-P145: "a priced round to reach" — *priced* as a verb. */}
+          No market has a number yet for how far anyone in this draw gets.
         </p>
       </div>
     );
   }
 
   const visible = expanded ? grid.rows : grid.rows.slice(0, COLLAPSED_LIST_COUNT);
-  const template = `${GRID_NAME_WIDTH_PX}px repeat(${grid.columns.length}, ${GRID_COLUMN_WIDTH_PX}px)`;
+  const template = gridTemplate(grid.columns.length);
   const scrolls = gridScrolls(grid.columns.length);
+  // Over the WHOLE grid, not the five visible rows: the key explains a symbol
+  // that is one "show more" away, and a key that appears on expand would look
+  // like the marks appeared with it.
+  const marked = markedCellCount(grid);
 
   return (
     <section
@@ -245,7 +414,7 @@ export default function PlayoffGrid({
           and hoping. */}
       {grid.alarmCells > 0 && (
         <div
-          className="mb-2 rounded-xl border border-accent-danger/40 bg-accent-danger/5 px-3 py-2 text-[11.5px] leading-snug text-accent-danger"
+          className="mb-2 max-w-[80ch] rounded-xl border border-accent-danger/40 bg-accent-danger/5 px-3 py-2 text-[11.5px] leading-snug text-accent-danger"
           data-testid="grid-alarm-banner"
           data-count={grid.alarmCells}
         >
@@ -262,14 +431,21 @@ export default function PlayoffGrid({
           scrolling body under a fixed header, is how a column header ends up
           over the wrong column. */}
       <div
-        className={`overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${
-          scrolls ? "overflow-x-auto" : ""
+        className={`overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${GRID_SIZING} ${
+          scrolls ? "overflow-x-auto lg:overflow-x-visible" : ""
         }`}
         data-testid="grid-scroller"
       >
-        <div style={scrolls ? { minWidth: `${gridWidthPx(grid.columns.length)}px` } : undefined}>
+        {/* The phone's scroll floor. `lg:min-w-0` retires it in a desktop
+            window, where the grid is already wider than this and pinning it to
+            a phone measurement would be the only thing keeping the columns
+            narrow. Ruling 5 applies where ruling 5 was measured. */}
+        <div
+          className={scrolls ? "lg:!min-w-0" : undefined}
+          style={scrolls ? { minWidth: `${gridWidthPx(grid.columns.length)}px` } : undefined}
+        >
           <div
-            className="grid items-center gap-1.5 border-b border-surface-border px-3.5 py-2 text-[9.5px] font-bold uppercase tracking-[0.05em] text-text-muted"
+            className="grid items-center gap-1.5 border-b border-surface-border px-3.5 py-2 text-[9.5px] font-bold uppercase tracking-[0.05em] text-text-muted lg:px-5 lg:py-2.5 lg:text-[10.5px]"
             style={{ gridTemplateColumns: template }}
             data-testid="grid-header"
           >
@@ -298,7 +474,7 @@ export default function PlayoffGrid({
             {visible.map((row) => (
               <li
                 key={row.entityKey}
-                className="grid items-center gap-1.5 border-t border-surface-border px-3.5 py-2 first:border-t-0"
+                className="grid items-center gap-1.5 border-t border-surface-border px-3.5 py-2 first:border-t-0 lg:px-5 lg:py-2.5"
                 style={{ gridTemplateColumns: template }}
                 data-testid="grid-row"
                 data-entity={row.entityKey}
@@ -317,8 +493,12 @@ export default function PlayoffGrid({
                       the last column. 18 + 4 leaves 96px, which fits "Carlos
                       Alcaraz" whole and truncates "Auger-Aliassime [11]"
                       slightly earlier than before. */}
+                  {/* The 18px stays. A responsive avatar means a second render
+                      path for an <img> whose intrinsic size is a prop, and the
+                      desktop name box is 236px — the crop was never the reason
+                      names truncated up there, the 118px box was. */}
                   <PlayerAvatar name={row.displayName} image={row.image} size={18} />
-                  <span className="ml-1 self-center truncate text-[13.5px] font-semibold text-text-primary">
+                  <span className="ml-1 self-center truncate text-[13.5px] font-semibold text-text-primary lg:text-[15px]">
                     {row.displayName}
                   </span>
                   {row.seed !== null && (
@@ -329,7 +509,11 @@ export default function PlayoffGrid({
                 </span>
                 {grid.columns.map((column) => (
                   <span key={column.key} className="text-right">
-                    <Cell cell={row.cells[column.key]} column={column} />
+                    <Cell
+                      cell={row.cells[column.key]}
+                      column={column}
+                      sparkBars={sparkBars}
+                    />
                   </span>
                 ))}
               </li>
@@ -349,21 +533,75 @@ export default function PlayoffGrid({
       {/* THE LEGEND, AND THE COUNTERS. Every cell is in exactly one bucket and
           the buckets add to the total — a grid that cannot account for its own
           cells is not one anybody should trust. */}
-      <p className="mt-2 text-[11px] leading-snug text-text-muted" data-testid="grid-legend">
+      {/* max-w on the PROSE, not on the grid (Alex: "sensible max-width for
+          text sections only"). The table above wants every pixel of a 1280px
+          shell; this paragraph at that width is ~200 characters a line. */}
+      <p
+        className="mt-2 max-w-[80ch] text-[11px] leading-snug text-text-muted"
+        data-testid="grid-legend"
+      >
         <b className="font-semibold text-text-secondary" data-testid="grid-coverage">
           {grid.pricedCells} of {grid.totalCells}
         </b>{" "}
-        cells carry a market price.{" "}
+        {/* UX-P146: was "cells carry a market price" / "every number is a price
+            somebody quoted". Alex's product-wide ruling on the noun. */}
+        cells carry a number from a real market.{" "}
         {grid.noMarketCells > 0 && (
           <span data-testid="grid-no-market">
+            {/* Ruling 141 (Alex, 2026-08-28): venue names are banned in reader
+                copy — "we asked Kalshi and Polymarket and neither runs that
+                market" told a tennis reader our sourcing. The admission it
+                carried is the load-bearing half and survives intact: the cell
+                is blank because the QUESTION is not being answered anywhere,
+                not because we failed to read it. */}
             <b className="font-semibold text-text-secondary">{grid.noMarketCells}</b> say{" "}
-            <span className="uppercase">no mkt</span> — we asked Kalshi and Polymarket and
-            neither runs that market.{" "}
+            <span className="uppercase">no mkt</span> — nobody is answering that
+            question, so we have nothing to show.{" "}
           </span>
         )}
-        Nothing here is calculated from anything else: every number is a price somebody
+        Nothing here is calculated from anything else: every number is one a market
         quoted for exactly the question in its column.
       </p>
+
+      {/* ═══ THE ILLIQUIDITY KEY (UX-P157, Alex's ruling / #2256) ═══
+
+          Said ONCE, under the grid, and only when the grid actually has marks
+          on it — a key to a symbol that is not on screen is furniture. The two
+          glyphs are the real component at the real size, not a drawing of it:
+          if the mark ever changes shape this key changes with it, which is the
+          only way a key stays true without anybody remembering to update it. */}
+      {marked > 0 && (
+        <p
+          className="mt-1.5 flex max-w-[80ch] items-start gap-1.5 text-[11px] leading-snug text-text-muted"
+          data-testid="grid-liquidity-key"
+          data-marked={marked}
+        >
+          <span className="mt-[3px] flex shrink-0 items-center gap-1">
+            <LiquidityMark
+              facts={{ liquidity: "thin", liquidity_reasons: ["no_trades_24h"] }}
+              size="sm"
+              decorative
+            />
+            <LiquidityMark
+              facts={{
+                liquidity: "barely",
+                liquidity_reasons: ["no_trades_24h", "spread_exceeds_price"],
+              }}
+              size="sm"
+              decorative
+            />
+          </span>
+          {/* The lead-in is a COUNT and nothing else. It used to restate what
+              the definition says next ("come off a market barely anybody is
+              trading"), which put the same clause on screen twice in a row —
+              the verbosity Alex's 2026-08-29 ruling was about, one paragraph
+              below the tooltip it was about. */}
+          <span>
+            <b className="font-semibold text-text-secondary">{marked}</b> of{" "}
+            {grid.pricedCells} numbers here carry a mark. {LIQUIDITY_DEFINITION}
+          </span>
+        </p>
+      )}
 
       <SumCheck grid={grid} />
     </section>

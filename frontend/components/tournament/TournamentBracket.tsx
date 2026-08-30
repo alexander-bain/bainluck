@@ -42,7 +42,7 @@ function DrawNotice({
 }) {
   return (
     <div
-      className="rounded-2xl border border-dashed border-surface-border bg-surface-card px-4 py-4"
+      className="max-w-[80ch] rounded-2xl border border-dashed border-surface-border bg-surface-card px-4 py-4"
       data-testid="draw-notice"
       data-has-release-time={drawReleaseLabel ? "true" : "false"}
     >
@@ -65,8 +65,10 @@ function DrawNotice({
             <span data-testid="main-draw-label">{mainDrawLabel}</span>.{" "}
           </>
         )}
+        {/* UX-P145: "the market prices how far each player gets" — *prices* as
+            a verb. Same fact, said the way a reader would say it. */}
         {hasGrid
-          ? "Who plays whom fills in then. The chances below are already live — the market prices how far each player gets before it knows the path."
+          ? "Who plays whom fills in then. The chances below are already live — the market has a number for how far each player gets before it knows the path."
           : "Who gets how far fills in here once the draw is made."}
       </p>
     </div>

@@ -39,6 +39,7 @@ import type {
   ChampionshipGridResponse,
   GolfScheduleResponse,
   TeamProgressionResponse,
+  EventTournamentResponse,
   SportHierarchyListResponse,
   SportHierarchy,
   EventConceptResponse,
@@ -1617,6 +1618,17 @@ export interface HubResponse {
   emoji: string;
   blurb: string;
   sport_key: string;
+  // UX-P167 (#2167) — the section heading vocabulary, declared per competition.
+  //
+  // Sport-SPECIFIC words only: the combat hubs send
+  // `{matches: "Fight Markets", props: "Fight Props", season_stats: "Fighter
+  // Stats"}` and golf/tennis/esports send `{}`. The client holds the neutral
+  // default for every key, so an absent field (an older cached payload — the hub
+  // mirror lives up to 24h) reads plain and true rather than reading like
+  // another sport. Optional for exactly that reason.
+  section_labels?: Record<string, string>;
+  /** Heading over the `upcoming` rail — "Upcoming Cards" for combat, "Upcoming Tournaments" for golf/tennis. */
+  upcoming_label?: string;
   upcoming: HubUpcoming[];
   sections: Record<string, LeagueMarket[]>;
   total_markets: number;
@@ -1728,6 +1740,21 @@ export interface EconThemeSimple {
   markets: EconMarketRow[];
 }
 
+/** A multi-outcome market too wide for a Market row.
+ *  `kind: "ladder"` rows are independent cumulative thresholds and legitimately
+ *  sum over 100%; `kind: "brackets"` rows are a normalized partition. */
+export interface EconDistribution {
+  q: string;
+  kind: "ladder" | "brackets";
+  rows: [number, string][];
+  src: string;
+  market_id: number;
+}
+
+export interface EconThemeGovernment extends EconThemeSimple {
+  distributions: EconDistribution[];
+}
+
 export interface EconThemeHousing {
   count: number;
   mortgage_brackets: number[][];
@@ -1746,7 +1773,7 @@ export interface EconData {
     energy: EconThemeEnergy;
     housing: EconThemeHousing;
     trade: EconThemeSimple;
-    government: EconThemeSimple;
+    government: EconThemeGovernment;
   };
   by_source: { kalshi: number; polymarket: number };
 }
@@ -1807,6 +1834,10 @@ export interface PoliticsThemeSimple {
 
 export interface CrossSourceMatch {
   q: string;
+  /** The single outcome both `kalshi` and `poly` price. Optional only because
+   *  /api/politics is served from an hourly precompute: for up to an hour
+   *  after a deploy the cached body predates the field. */
+  outcome?: string;
   kalshi: number;
   poly: number;
   delta: number;
@@ -2270,4 +2301,25 @@ export async function fetchSourceIntelligence(): Promise<SourceIntelligenceData>
  */
 export async function fetchTournament(slug: string): Promise<TournamentPayload> {
   return apiFetch<TournamentPayload>(`/api/tournaments/${encodeURIComponent(slug)}`);
+}
+
+/* UX-P152: `fetchTournamentMatch` was DELETED here. The match page it fetched
+ * is gone — a match is an ordinary event and renders on `/events/{id}`. Its
+ * replacement is `fetchEventTournament` below, keyed on the event id rather
+ * than on a tournament-private matchup key.
+ */
+
+
+/**
+ * A standard event's tournament extensions — advancement and the match's other
+ * questions (UX-P152).
+ *
+ * Returns `{tournament: null}` for almost every event, which is the ordinary
+ * answer and not an error: the caller renders nothing and the endpoint answers
+ * it in one indexed read.
+ */
+export async function fetchEventTournament(
+  eventId: number
+): Promise<EventTournamentResponse> {
+  return apiFetch<EventTournamentResponse>(`/api/tournaments/by-event/${eventId}`);
 }

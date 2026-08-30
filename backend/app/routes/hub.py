@@ -82,6 +82,34 @@ class HubConfig:
     # dedicated "props" section. league_futures lumps combat-sport game_props
     # in with fights, so this recovers a real props section on the hub.
     prop_classifier_domain: str | None = None
+    # ── UX-P167 (#2167): the section vocabulary is CONFIG, not page code ──
+    #
+    # This module's own header says the config entry IS the whole adapter and
+    # "everything else is generic". The section HEADINGS were the one thing that
+    # never made it in: the page hard-coded MMA's words into a competition-blind
+    # map written when MMA was the only hub, so `/hub/tennis` printed
+    # "Fight Markets" over 103 tennis markets and `/hub/golf` printed "Fighter
+    # Stats" over five golf markets.
+    #
+    # Only the sport-SPECIFIC words live here. The client keeps a neutral default
+    # for every key ("Matches", "Props", "Player Stats"), so a hub that declares
+    # nothing — and a payload cached before this shipped — reads plain and true
+    # rather than reading like someone else's sport. Overriding is how a hub
+    # earns fight vocabulary, not how it escapes it.
+    section_labels: dict[str, str] = field(default_factory=dict)
+    # Heading over the `upcoming` rail. "Cards" is combat vocabulary; a tennis
+    # slam and a golf major are tournaments. Neutral default on the client.
+    upcoming_label: str = "Upcoming"
+
+
+# The combat hubs' shared vocabulary — MMA and boxing are the same sport shape
+# (a card of two-sided fights + fight props), so they share one map rather than
+# two copies that can drift.
+_COMBAT_SECTION_LABELS = {
+    "matches": "Fight Markets",
+    "props": "Fight Props",
+    "season_stats": "Fighter Stats",
+}
 
 
 # Per-domain prop classifiers. Signature: (external_id, name) -> prop_type | None.
@@ -104,6 +132,8 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         sport_key="mma_mixed_martial_arts",
         concept_domain="ufc",
         prop_classifier_domain="ufc",
+        section_labels=_COMBAT_SECTION_LABELS,
+        upcoming_label="Upcoming Cards",
     ),
     # B5 (L2-86): boxing drops in as ONE config entry — the combat engine
     # (event_combat/event_boxing) supplies the upcoming lister + prop classifier,
@@ -121,6 +151,8 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         sport_key="boxing_boxing",
         concept_domain="boxing",
         prop_classifier_domain="boxing",
+        section_labels=_COMBAT_SECTION_LABELS,
+        upcoming_label="Upcoming Cards",
     ),
     # B6 (L2-87): golf + tennis hubs drop in as config over the winner-field event
     # concepts. Each links to the per-event surface (/event/event:golf|tennis:<slug>);
@@ -137,6 +169,10 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         ),
         sport_key="golf_pga",
         concept_domain="golf",
+        # No section overrides — golf takes the neutral defaults. Its
+        # `season_stats` section printed "Fighter Stats" over five golf markets
+        # until UX-P167 (#2167).
+        upcoming_label="Upcoming Tournaments",
     ),
     "tennis": HubConfig(
         slug="tennis",
@@ -149,6 +185,10 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         ),
         sport_key="tennis_atp",
         concept_domain="tennis",
+        # No section overrides — tennis takes the neutral defaults. Its `matches`
+        # section printed "Fight Markets" over 103 tennis markets during US Open
+        # week until UX-P167 (#2167).
+        upcoming_label="Upcoming Tournaments",
     ),
     # L2-92 (B4): esports drops in as a sections-ONLY hub. The data is messy —
     # thousands of per-map "Team A vs Team B" matchup rows across LoL/CS2/Valorant/
@@ -168,6 +208,11 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         ),
         sport_key="esports",
         concept_domain=None,
+        # Neutral defaults. Esports printed "Fight Markets" over 98 markets until
+        # UX-P167 (#2167). `upcoming_label` is declared even though this hub has
+        # no rail today (no `concept_domain`), so wiring one later cannot
+        # resurrect "Upcoming Cards" by omission.
+        upcoming_label="Upcoming Tournaments",
     ),
 }
 
@@ -400,6 +445,12 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
         "emoji": cfg.emoji,
         "blurb": cfg.blurb,
         "sport_key": cfg.sport_key,
+        # UX-P167 (#2167): the heading vocabulary travels WITH the payload, the
+        # same way `label`/`title`/`blurb` already do. A hub that overrides
+        # nothing serves `{}` — an explicit "no sport-specific words here",
+        # which the client renders as its neutral defaults.
+        "section_labels": dict(cfg.section_labels),
+        "upcoming_label": cfg.upcoming_label,
         "upcoming": upcoming,
         "sections": sections,
         "total_markets": sum(len(v) for v in sections.values()),

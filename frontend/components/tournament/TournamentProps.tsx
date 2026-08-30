@@ -2,21 +2,23 @@
 
 import React from "react";
 
+import LiquidityMark from "../LiquidityMark";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
+import { LIQUIDITY_DEFINITION, isMarked, readLiquidity } from "@/lib/liquidity";
 import {
-  FIELD_RANK_LIMIT,
+  FRESHNESS_DEFINITION,
   answerOutcome,
   curatedProps,
   curatedPropsEmptyReason,
   formatPropProbability,
-  propGoverningAgeHours,
   printedOutcomes,
+  propFreshness,
+  propIncompleteComparison,
   propIsPresentedAsLive,
-  propStaleOutcomes,
-  rankedOutcomes,
+  propIsResolved,
   type PropMarket,
+  type PropOutcome,
 } from "@/lib/tournamentProps";
-import { stalenessLabel } from "@/lib/tournament";
 
 /**
  * The curated questions section (UX-P132 re-skin, Alex's item 5).
@@ -85,12 +87,167 @@ import { stalenessLabel } from "@/lib/tournament";
 /** Alex's pick, ruled UX-P140. Every surface reads it from here. */
 export const SECTION_HEADING = "More predictions";
 
-function PropCard({ market }: { market: PropMarket }) {
+/**
+ * ═══ HOW A QUIET QUESTION SHOWS ITS AGE — AN OPEN RIFF (UX-P154, item 3) ═══
+ *
+ * Alex, 2026-08-28: *"continuing to riff on this until we have a better
+ * solution would be great"*, and: *"this is an open riff, not a settled
+ * design."* So the treatment is a named variant rather than a hard-coded
+ * layout, and the artifact renders all three from THIS component with the same
+ * data — a drawing of an alternative proves nothing about what it would look
+ * like on the page.
+ *
+ *   • `labelled` — the shipped default. A self-labelling chip beside the
+ *     number: `Last number 32 hours ago`. Cheapest in space, and it answers
+ *     the "32 hours since WHAT" question inline.
+ *   • `sentence` — a full line under the number: "We have not seen a new
+ *     number for this question in 32 hours." Least ambiguous, most vertical.
+ *   • `dot` — a three-state dot plus a compact age (`32h`), with the meaning
+ *     given once in the section header. Densest; scales to a long section
+ *     where a sentence per card would drown the questions.
+ *
+ * The default is `labelled` because the ambiguity Alex named is a WORDING
+ * problem, and the chip is the only one of the three that carries the label on
+ * every card without spending a line on it. `dot` is the one to try if the
+ * section grows past a handful of cards.
+ */
+export type FreshnessVariant = "labelled" | "sentence" | "dot";
+
+export const DEFAULT_FRESHNESS_VARIANT: FreshnessVariant = "labelled";
+
+function FreshnessMark({
+  market,
+  variant,
+}: {
+  market: PropMarket;
+  variant: FreshnessVariant;
+}) {
+  const fresh = propFreshness(market);
+  if (fresh.state === "fresh") return null;
+
+  // NAME THE OLD ONES WHEN ONLY SOME ARE OLD (CERT-411 round 2). A row built
+  // from a one-hour reading and a twenty-day one is muted, and the bare age
+  // would read as "we have not looked at this in three weeks", which is false.
+  const printedCount = printedOutcomes(market).length;
+  const partial =
+    fresh.staleOutcomes.length > 0 && fresh.staleOutcomes.length < printedCount
+      ? `${fresh.staleOutcomes.map((o) => o.display_name).join(" + ")}: `
+      : "";
+  const tone = fresh.state === "quiet" ? "text-accent-warning" : "text-text-muted";
+
+  if (variant === "sentence") {
+    return (
+      <p
+        className={`mt-1 text-[11.5px] leading-snug ${tone}`}
+        data-testid="prop-age"
+        data-variant="sentence"
+        data-state={fresh.state}
+      >
+        {partial}
+        {fresh.ageHours === null
+          ? "We have not seen a number for this question yet."
+          : `We have not seen a new number for this question in ${fresh.age.replace(
+              / ago$/,
+              ""
+            )}.`}
+      </p>
+    );
+  }
+
+  if (variant === "dot") {
+    return (
+      <span
+        className={`ml-2 inline-flex shrink-0 items-center gap-1 text-[10.5px] tabular-nums ${tone}`}
+        data-testid="prop-age"
+        data-variant="dot"
+        data-state={fresh.state}
+        title={fresh.label}
+      >
+        <span
+          aria-hidden="true"
+          className={`h-1.5 w-1.5 rounded-full ${
+            fresh.state === "quiet" ? "bg-accent-warning" : "bg-text-muted"
+          }`}
+        />
+        <span className="sr-only">{fresh.label}. </span>
+        <span aria-hidden="true">{compactAge(fresh.ageHours)}</span>
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={`shrink-0 rounded bg-surface-border/40 px-1.5 py-px text-[10.5px] font-medium ${tone}`}
+      data-testid="prop-age"
+      data-variant="labelled"
+      data-state={fresh.state}
+    >
+      {partial}
+      {fresh.label}
+    </span>
+  );
+}
+
+/** "32h" / "20d" / "—". Only the `dot` variant, which labels itself elsewhere. */
+function compactAge(ageHours: number | null): string {
+  if (ageHours === null || !Number.isFinite(ageHours)) return "—";
+  if (ageHours < 48) return `${Math.floor(ageHours)}h`;
+  return `${Math.floor(ageHours / 24)}d`;
+}
+
+/** "A" / "A and B" / "A, B and C" — the page's own list voice, not an Oxford one. */
+function nameList(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
+ * What an incomplete comparison says out loud (CERT-430, finding 1).
+ *
+ * The sentence names the SUBJECT, not the market: "no number for Carlos
+ * Alcaraz" is a fact the reader can hold, where "leg KXGRANDSLAM-CALC26 is
+ * unpriced" is one of ours. Phrased as a fact about our knowledge — "has
+ * reached us" — for the same reason `FRESHNESS_DEFINITION` is: we cannot tell a
+ * market nobody quoted from a market we are not reading, and only one of those
+ * two would be the market's fault.
+ */
+function incompleteComparisonNote(incomplete: {
+  subjects: PropOutcome[];
+  undeclared: number;
+}): string {
+  const named = incomplete.subjects
+    .map((outcome) => outcome.display_name)
+    .filter((name) => Boolean(name));
+  const unnamed = incomplete.undeclared;
+  const who =
+    named.length === 0
+      ? unnamed === 1
+        ? "one of the names in it"
+        : `${unnamed} of the names in it`
+      : `${nameList(named)}${unnamed > 0 ? ` and ${unnamed} more` : ""}`;
+  return `No number has reached us for ${who} yet, so this comparison is not complete.`;
+}
+
+function PropCard({
+  market,
+  variant,
+}: {
+  market: PropMarket;
+  variant: FreshnessVariant;
+}) {
   // The headline number is the CURATED answer, never the biggest number in the
   // market. See `answerOutcome` for the measured specimen this rule exists to
   // stop: a 99% printed under a question whose true answer was 1%.
   const answer = answerOutcome(market);
-  const ranked = answer === null ? rankedOutcomes(market) : [];
+  // ONE LIST, THE SAME ONE THE RULES ARE COMPUTED FROM. This used to re-derive
+  // `rankedOutcomes(...).slice(FIELD_RANK_LIMIT)` beside `printedOutcomes`,
+  // which is how a card could print rows that had no vote on its own liveness.
+  // A comparison's rows come back from here complete, unquoted ones included.
+  const rows = answer === null ? printedOutcomes(market) : [];
+  // A DECLARED SUBJECT WE HAVE NO NUMBER FOR (CERT-430, finding 1). Non-null
+  // means this card is a comparison with a hole in it: it renders, with every
+  // subject, muted, and it says which one is missing.
+  const incomplete = propIncompleteComparison(market);
 
   // LIVENESS IS THE AND OVER EVERY PRINTED OUTCOME (CERT-411 round 2).
   // This used to read `ranked[0].probability_is_live` — the leader's flag,
@@ -99,9 +256,22 @@ function PropCard({ market }: { market: PropMarket }) {
   // with no age on it anywhere. The rule now lives in the pure layer with the
   // board's and the slate's, so all three surfaces cannot drift apart again.
   const isLive = propIsPresentedAsLive(market);
-  const stale = propStaleOutcomes(market);
-  const printedCount = printedOutcomes(market).length;
-  const freshness = isLive ? null : stalenessLabel(propGoverningAgeHours(market));
+  const fresh = propFreshness(market);
+  // A CARD THAT LOOKS DECIDED SAYS SO — IT IS NOT DELETED (Alex, item 4).
+  // `propIsResolved` infers settlement from the number sitting at a rail, which
+  // on an illiquid market is a guess. So the card is labelled rather than
+  // hidden, and the label says "looks", because that is the strength of the
+  // evidence we have. Real settlement detection is lane1's.
+  const looksDecided = propIsResolved(market);
+  // THE NON-HOVER PATH ON THE WEB, and the rehearsal for the native one
+  // (UX-P157). A phone browser has no hover either, so the same tap that a
+  // SwiftUI long-press will perform opens the same sentence here. Card-local
+  // state: two cards open at once is fine and closing one must not close the
+  // other.
+  const [revealed, setRevealed] = React.useState<string | null>(null);
+  const toggleReveal = React.useCallback((sentence: string) => {
+    setRevealed((open) => (open === sentence ? null : sentence));
+  }, []);
 
   return (
     <li
@@ -110,65 +280,133 @@ function PropCard({ market }: { market: PropMarket }) {
       data-key={market.key}
       data-live={isLive ? "true" : "false"}
       data-price-state={market.price_state}
+      data-freshness={fresh.state}
       data-shape={answer ? "answer" : "field"}
+      data-decided={looksDecided ? "true" : "false"}
+      data-incomplete={incomplete ? "true" : "false"}
     >
       <div className="flex items-baseline justify-between gap-3">
         <span className="min-w-0 text-[14px] font-semibold text-text-primary">
           {market.title}
         </span>
-        {answer && (
-          <span
-            className={`shrink-0 text-[17px] font-bold tabular-nums tracking-tight ${
-              isLive ? "text-text-primary" : "text-text-secondary"
-            }`}
-            data-testid="prop-probability"
-          >
-            {formatPropProbability(answer.probability)}
-          </span>
-        )}
+        <span className="flex shrink-0 items-baseline gap-2">
+          {/* An incomplete comparison gets the sentence below instead of the
+              age chip. Both are the card admitting something, and "Last number
+              20 hours ago" beside a row that has never had a number at all is
+              the less true of the two — it answers a question the reader did
+              not ask yet and hides the one they will. */}
+          {variant !== "sentence" && incomplete === null && (
+            <FreshnessMark market={market} variant={variant} />
+          )}
+          {/* UX-P157. Beside the freshness chip and NOT merged into it: a
+              question can be quoted four minutes ago on a market nobody will
+              trade at, which is the whole of Q428's residual, and one mark
+              standing for both facts would make that case unsayable. */}
+          <LiquidityMark
+            facts={market}
+            observedAt={market.observed_at}
+            onReveal={toggleReveal}
+          />
+          {answer && (
+            <span
+              className={`shrink-0 text-[17px] font-bold tabular-nums tracking-tight ${
+                isLive ? "text-text-primary" : "text-text-secondary"
+              }`}
+              data-testid="prop-probability"
+            >
+              {formatPropProbability(answer.probability)}
+            </span>
+          )}
+        </span>
       </div>
 
-      <div className="mt-px text-[11.5px] text-text-muted">
-        {answer && <span data-testid="prop-answer">{answer.display_name}</span>}
-        {/* THE STATED REASON (CERT-411 round 2). A muted card that does not
-            say why it is muted is read as a bug, or not read at all. Names the
-            stale outcomes when only some of them are old, exactly as
-            `rowFreshnessLabel` does on the boards — a page that words one
-            admission two ways teaches the reader one of them is decorative. */}
-        {freshness !== null && (
-          <span className="text-accent-warning" data-testid="prop-age">
-            {answer ? " · " : ""}
-            {stale.length > 0 && stale.length < printedCount
-              ? `${stale.map((outcome) => outcome.display_name).join(" + ")} ${freshness}`
-              : freshness}
-          </span>
-        )}
-      </div>
+      {(answer || looksDecided) && (
+        <div className="mt-px text-[11.5px] text-text-muted">
+          {answer && <span data-testid="prop-answer">{answer.display_name}</span>}
+          {looksDecided && (
+            <span data-testid="prop-decided">
+              {answer ? " · " : ""}Looks decided
+            </span>
+          )}
+        </div>
+      )}
+      {variant === "sentence" && incomplete === null && (
+        <FreshnessMark market={market} variant={variant} />
+      )}
 
       {/* A field market ranks instead. There is deliberately no headline
           number here: "who will win a slam" has no single answer, and picking
           the leader to fill the slot is exactly the guess this card refuses. */}
-      {answer === null && ranked.length > 0 && (
+      {answer === null && rows.length > 0 && (
         <ol className="mt-1.5 space-y-0.5" data-testid="prop-field">
-          {ranked.slice(0, FIELD_RANK_LIMIT).map((outcome) => (
+          {rows.map((outcome) => (
             <li
               key={outcome.entity_key}
               className="flex items-baseline justify-between gap-3 text-[12px]"
               data-testid="prop-field-row"
+              data-priced={outcome.probability === null ? "false" : "true"}
             >
               <span className="min-w-0 truncate text-text-secondary">
                 {outcome.display_name}
               </span>
-              <span
-                className={`shrink-0 tabular-nums ${
-                  outcome.probability_is_live ? "text-text-primary" : "text-text-secondary"
-                }`}
-              >
-                {formatPropProbability(outcome.probability)}
-              </span>
+              {/* A SUBJECT WITH NO READING SAYS SO IN WORDS. An em dash in the
+                  number column reads as "zero" or as a layout artefact; the
+                  point of keeping this row is that the reader knows a name is
+                  in the comparison and that we have nothing for it. */}
+              {outcome.probability === null ? (
+                <span className="shrink-0 text-text-muted" data-testid="prop-field-missing">
+                  No number yet
+                </span>
+              ) : (
+                <span className="flex shrink-0 items-center gap-1">
+                  {/* PER ROW, because a field card's leader can be heavily
+                      traded while the tail it is printed above is quoted by
+                      nobody — marking only the card would say the wrong thing
+                      about both ends of it. */}
+                  <LiquidityMark
+                    facts={outcome}
+                    observedAt={outcome.observed_at}
+                    size="sm"
+                    onReveal={toggleReveal}
+                  />
+                  <span
+                    className={`tabular-nums ${
+                      outcome.probability_is_live
+                        ? "text-text-primary"
+                        : "text-text-secondary"
+                    }`}
+                  >
+                    {formatPropProbability(outcome.probability)}
+                  </span>
+                </span>
+              )}
             </li>
           ))}
         </ol>
+      )}
+
+      {incomplete && (
+        <p
+          className="mt-1.5 text-[11.5px] leading-snug text-accent-warning"
+          data-testid="prop-incomplete"
+          data-missing={incomplete.subjects.length + incomplete.undeclared}
+        >
+          {incompleteComparisonNote(incomplete)}
+        </p>
+      )}
+
+      {/* THE TAPPED REVEAL (UX-P157). Inline under the card rather than in a
+          floating popover: a popover on a phone covers the number the reader
+          just asked about, and this sentence is only meaningful while that
+          number is on screen. Dismissed by tapping the mark again. */}
+      {revealed !== null && (
+        <p
+          className="mt-1.5 rounded-lg bg-surface-elevated px-2 py-1.5 text-[11.5px] leading-snug text-text-secondary"
+          data-testid="prop-liquidity-reveal"
+          role="status"
+        >
+          {revealed}
+        </p>
       )}
 
       {market.hook && (
@@ -215,12 +453,22 @@ function MovedToGrid({ dropped }: { dropped: number }) {
 export default function TournamentProps({
   markets,
   draw,
+  variant = DEFAULT_FRESHNESS_VARIANT,
 }: {
   markets: PropMarket[];
   draw: string;
+  /**
+   * The illiquidity treatment (UX-P154, item 3). Alex asked for variants to
+   * look at and said the design is *"an open riff, not a settled design"*, so
+   * this is a real seam rather than a test hook: the artifact renders all three
+   * from this component, and production takes the default. See
+   * `FreshnessVariant`.
+   */
+  variant?: FreshnessVariant;
 }) {
-  // ROTATION (ruling 8) — advance-to-round questions to the grid, resolved and
-  // dark ones out, one card per template family, most interesting first.
+  // Advance-to-round questions move to the grid; template families combine into
+  // one card; most interesting first. NOTHING is hidden for age or for looking
+  // decided — Alex's item 4, 2026-08-28.
   const curated = curatedProps(markets, draw);
   const visible = curated.markets;
   const [expanded, setExpanded] = React.useState(false);
@@ -247,24 +495,37 @@ export default function TournamentProps({
         <div
           className="overflow-hidden rounded-2xl border border-surface-border bg-surface-card px-3.5 py-3.5"
           data-testid="props-empty"
+          /* Kept at its old name and always "0" (UX-P154). The attribute was a
+             contract this page's guards read; deleting it would make the guards
+             pass by having nothing to check, where holding it at zero makes
+             "no question is hidden for age" an assertable fact. */
           data-dropped-dark={curated.dropped.dark}
           data-dropped-advance={curated.dropped.advance}
         >
           <div className="text-[14px] font-semibold text-text-primary">
-            {reason === null ? "Nothing curated yet" : "Nothing worth asking right now"}
+            {reason === null ? "Nothing to ask yet" : "Nothing worth asking right now"}
           </div>
-          <p className="mt-1 text-[12.5px] leading-snug text-text-secondary" data-testid="props-empty-reason">
+          <p
+            className="mt-1 max-w-[62ch] text-[12.5px] leading-snug text-text-secondary"
+            data-testid="props-empty-reason"
+          >
+            {/* Ruling 142: the fallback ended "New questions are coming — check
+                back soon." A section that cannot name a date should not name a
+                time at all; what it owes the reader is the present fact. */}
             {reason ??
-              "Beyond the title race and today’s matches, we only show questions we think are worth asking. None are registered for this draw yet."}
+              "Beyond the title race and today’s matches, we only show questions worth asking. This draw has none with a probability against them."}
           </p>
-          {/* WHAT WILL BE HERE. A section that only apologises reads as a dead
-              feature; naming the next thing reads as one between deliveries.
-              Deliberately a statement about the SOURCES, not a promise about a
-              date — we do not control when they list. */}
-          <p className="mt-2 border-t border-surface-border pt-2 text-[11.5px] leading-snug text-text-muted">
-            Questions like <i>Will Sinner actually play?</i> live here. Once the main
-            draw starts, Kalshi and Polymarket list more of them beyond who-reaches-what,
-            and the ones worth asking appear here as they are priced.
+          {/* WHAT THIS SECTION IS. Ruling 142 (Alex, 2026-08-28): a section
+              states what it IS, not what it WILL be — "we should make it the
+              thing it's supposed to be", not describe the thing it might
+              become. The old line promised a future ("Once the main draw
+              starts… show up here as soon as they have a number") and named
+              two venues while doing it, which ruling 141 bans outright.
+              Present tense, our number, no date we do not control. */}
+          <p className="mt-2 max-w-[62ch] border-t border-surface-border pt-2 text-[11.5px] leading-snug text-text-muted">
+            This section holds the questions about this draw worth asking beyond who
+            reaches which round — <i>Will Sinner actually play?</i> is the shape of one.
+            None have a probability against them today.
           </p>
         </div>
         <MovedToGrid dropped={curated.dropped.advance} />
@@ -273,9 +534,26 @@ export default function TournamentProps({
   }
 
   const shown = expanded ? visible : visible.slice(0, COLLAPSED_LIST_COUNT);
-
-  const rotatedOut =
-    curated.dropped.dark + curated.dropped.resolved + curated.dropped.template;
+  // WHETHER ANY CARD OWES THE READER AN AGE. The definition line is printed
+  // once per section and only when something on screen needs it — a definition
+  // standing over a section of live numbers is a footnote about nothing.
+  // An incomplete comparison prints its own sentence instead of an age chip, so
+  // it does not summon the definition of an age nothing on screen is showing.
+  const anyQuiet = shown.some(
+    (market) =>
+      propIncompleteComparison(market) === null &&
+      propFreshness(market).state !== "fresh"
+  );
+  // The same gate for the mark, over the CARD and every row it prints: a field
+  // card can be unmarked itself while a tail row inside it carries a mark, and
+  // an unexplained symbol is worse than the number it sits beside.
+  const anyThin = shown.some(
+    (market) =>
+      isMarked(readLiquidity(market.liquidity)) ||
+      (market.outcomes ?? []).some((outcome) =>
+        isMarked(readLiquidity(outcome.liquidity))
+      )
+  );
 
   return (
     <section data-testid="tournament-props" data-considered={curated.considered}>
@@ -291,7 +569,7 @@ export default function TournamentProps({
       <div className="overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
         <ul>
           {shown.map((market) => (
-            <PropCard key={market.key} market={market} />
+            <PropCard key={market.key} market={market} variant={variant} />
           ))}
         </ul>
         {visible.length > COLLAPSED_LIST_COUNT && (
@@ -303,15 +581,67 @@ export default function TournamentProps({
         )}
       </div>
 
-      {/* NO SILENT ROTATION. A section that quietly shrank from eleven cards to
-          one reads as "not much is happening"; the truth may be that ten
-          questions went dark, which is a different problem for a different
-          person. Advance-to-round drops are NOT counted here — they did not
-          rotate out, they moved, and the sentence says where. */}
-      {rotatedOut > 0 && (
-        <p className="mt-2 text-[11px] text-text-muted" data-testid="props-rotated-out">
-          {rotatedOut} other question{rotatedOut === 1 ? "" : "s"} rotated out — answered,
-          gone dark, or a near-duplicate of one above.
+      {/* WHAT THE AGE MEANS, ONCE (UX-P154, Alex's item 3).
+
+          "32 hours ago" is ambiguous — created? updated? last traded? — and
+          the answer is none of those: it is when a probability for that
+          question last reached us. That is a definition, so it belongs once
+          under the section and not on every card, where it would be four
+          repetitions of a footnote. The cards carry the STATUS; this carries
+          the UNIT. */}
+      {anyQuiet && (
+        <p
+          className="mt-2 max-w-[62ch] text-[11px] leading-snug text-text-muted"
+          data-testid="props-freshness-definition"
+        >
+          {FRESHNESS_DEFINITION}
+        </p>
+      )}
+
+      {/* AND WHAT THE MARK MEANS, ONCE (UX-P157, Alex's illiquidity ruling).
+          Same rule as the sentence above it and deliberately a SECOND
+          paragraph, not an extension of the first: age and thinness are two
+          independent facts about a question, and a reader who has worked out
+          what one mark means has learned nothing about the other. Gated on a
+          mark actually being on screen. */}
+      {anyThin && (
+        <p
+          className="mt-1.5 flex max-w-[62ch] items-start gap-1.5 text-[11px] leading-snug text-text-muted"
+          data-testid="props-liquidity-definition"
+        >
+          <span className="mt-[3px] flex shrink-0 items-center gap-1">
+            <LiquidityMark
+              facts={{ liquidity: "thin", liquidity_reasons: ["no_trades_24h"] }}
+              size="sm"
+              decorative
+            />
+            <LiquidityMark
+              facts={{
+                liquidity: "barely",
+                liquidity_reasons: ["no_trades_24h", "spread_exceeds_price"],
+              }}
+              size="sm"
+              decorative
+            />
+          </span>
+          <span>{LIQUIDITY_DEFINITION}</span>
+        </p>
+      )}
+
+      {/* A COMBINED CARD SAYS IT IS ONE (UX-P154, Alex's item 1). Not an
+          apology — the opposite. Two questions became one card and every
+          subject is on it, which is a thing worth being told rather than a
+          shrinkage to explain away. `props-rotated-out` was the old testid for
+          the sentence that counted HIDDEN cards; nothing is hidden now, so the
+          name went with the behaviour. */}
+      {curated.combined > 0 && (
+        <p
+          className="mt-2 max-w-[62ch] text-[11px] text-text-muted"
+          data-testid="props-combined"
+          data-combined={curated.combined}
+        >
+          {curated.combined + 1} of the questions above ask the same thing, so they share
+          one card.
         </p>
       )}
       <MovedToGrid dropped={curated.dropped.advance} />

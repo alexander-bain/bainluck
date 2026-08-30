@@ -1,0 +1,288 @@
+{
+  "_source": "GET https://api.bainluck.com/api/golf, captured 2026-08-29",
+  "_why": "UX-P161: the live field whose every row printed 0%. Kept verbatim so the capture rig renders real numbers, not invented ones.",
+  "tournaments": [
+    {
+      "key": "rogers_charity_classic",
+      "name": "Rogers Charity Classic",
+      "golfers": [
+        {
+          "name": "Billy Andrade",
+          "probability": 0.003,
+          "rank": 1,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Woody Austin",
+          "probability": 0.003,
+          "rank": 2,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Shane Bertsch",
+          "probability": 0.003,
+          "rank": 3,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Olin Browne",
+          "probability": 0.003,
+          "rank": 4,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Greg Chalmers",
+          "probability": 0.003,
+          "rank": 5,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "K.J. Choi",
+          "probability": 0.003,
+          "rank": 6,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Joe Durant",
+          "probability": 0.003,
+          "rank": 7,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Steve Flesch",
+          "probability": 0.003,
+          "rank": 8,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Harrison Frazar",
+          "probability": 0.003,
+          "rank": 9,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Tim Herron",
+          "probability": 0.003,
+          "rank": 10,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Brandt Jobe",
+          "probability": 0.003,
+          "rank": 11,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Robert Karlsson",
+          "probability": 0.003,
+          "rank": 12,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Jeff Maggert",
+          "probability": 0.003,
+          "rank": 13,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Wes Martin",
+          "probability": 0.003,
+          "rank": 14,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        },
+        {
+          "name": "Scott McCarron",
+          "probability": 0.003,
+          "rank": 15,
+          "movement_24h": null,
+          "sources": {
+            "kalshi": 0.003
+          }
+        }
+      ]
+    },
+    {
+      "key": "tour_championship",
+      "name": "Tour Championship",
+      "golfers": [
+        {
+          "name": "Scottie Scheffler",
+          "probability": 0.187,
+          "rank": 1,
+          "movement_24h": -0.0275,
+          "sources": {
+            "datagolf_model": 0.187
+          }
+        },
+        {
+          "name": "Viktor Hovland",
+          "probability": 0.161,
+          "rank": 2,
+          "movement_24h": 0.0856,
+          "sources": {
+            "datagolf_model": 0.161
+          }
+        },
+        {
+          "name": "Ryan Gerard",
+          "probability": 0.121,
+          "rank": 3,
+          "movement_24h": 0.0885,
+          "sources": {
+            "datagolf_model": 0.121
+          }
+        },
+        {
+          "name": "Chris Gotterup",
+          "probability": 0.114,
+          "rank": 4,
+          "movement_24h": 0.0302,
+          "sources": {
+            "datagolf_model": 0.114
+          }
+        },
+        {
+          "name": "Collin Morikawa",
+          "probability": 0.101,
+          "rank": 5,
+          "movement_24h": 0.0163,
+          "sources": {
+            "datagolf_model": 0.101
+          }
+        },
+        {
+          "name": "Cameron Young",
+          "probability": 0.075,
+          "rank": 6,
+          "movement_24h": 0.0701,
+          "sources": {
+            "datagolf_model": 0.075
+          }
+        },
+        {
+          "name": "Ludvig Aberg",
+          "probability": 0.05,
+          "rank": 7,
+          "movement_24h": -0.0118,
+          "sources": {
+            "datagolf_model": 0.05
+          }
+        },
+        {
+          "name": "Matt Fitzpatrick",
+          "probability": 0.034,
+          "rank": 8,
+          "movement_24h": 0.0031,
+          "sources": {
+            "datagolf_model": 0.034
+          }
+        },
+        {
+          "name": "Sam Burns",
+          "probability": 0.026,
+          "rank": 9,
+          "movement_24h": -0.0151,
+          "sources": {
+            "datagolf_model": 0.026
+          }
+        },
+        {
+          "name": "Adam Scott",
+          "probability": 0.025,
+          "rank": 10,
+          "movement_24h": 0.0048,
+          "sources": {
+            "datagolf_model": 0.025
+          }
+        },
+        {
+          "name": "Justin Rose",
+          "probability": 0.021,
+          "rank": 11,
+          "movement_24h": 0.016,
+          "sources": {
+            "datagolf_model": 0.021
+          }
+        },
+        {
+          "name": "Gary Woodland",
+          "probability": 0.011,
+          "rank": 12,
+          "movement_24h": -0.0049,
+          "sources": {
+            "datagolf_model": 0.011
+          }
+        },
+        {
+          "name": "Russell Henley",
+          "probability": 0.01,
+          "rank": 13,
+          "movement_24h": 0.0081,
+          "sources": {
+            "datagolf_model": 0.01
+          }
+        },
+        {
+          "name": "Rory McIlroy",
+          "probability": 0.008,
+          "rank": 14,
+          "movement_24h": -0.0276,
+          "sources": {
+            "datagolf_model": 0.008
+          }
+        },
+        {
+          "name": "Tom Kim",
+          "probability": 0.007,
+          "rank": 15,
+          "movement_24h": -0.0031,
+          "sources": {
+            "datagolf_model": 0.007
+          }
+        }
+      ]
+    }
+  ]
+}

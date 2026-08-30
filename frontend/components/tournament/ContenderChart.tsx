@@ -18,6 +18,7 @@ import {
   seriesEndpoint,
   seriesPoints,
   timeframeIsDrawable,
+  type AxisTickTier,
   type Timeframe,
 } from "@/lib/contenderChart";
 import { TITLE_COLUMN_LABEL } from "@/lib/bracket";
@@ -70,6 +71,32 @@ import { formatBoardProbability, type TournamentRow } from "@/lib/tournament";
 
 const WIDTH = 320;
 const HEIGHT = 96;
+
+/**
+ * Where each tick tier starts being drawn (UX-P147, Alex's item 2: the axis is
+ * "still oddly sparse").
+ *
+ * `axisTicks` emits one set of ticks for every width and tags each with the
+ * narrowest plot its label fits in; this is the half that spends the tag. The
+ * axis therefore goes 4 labels → 7 → 13 as the window grows, from a single
+ * server render, with no viewport measurement anywhere — see `axisTicks` for
+ * the slot arithmetic and the clearance budget behind those three counts.
+ *
+ * `block` rather than `inline` on the way back because these classes are shared
+ * by an SVG `<line>` and an HTML `<span>`: SVG renders on any display value
+ * that is not `none`, and the span is absolutely positioned, so `block` is
+ * correct for both and `inline` would be wrong for neither-but-confusing.
+ *
+ * The BREAKPOINTS are the plot widths `lg:h-40` / `2xl:h-56` were measured
+ * against on the same element, deliberately — one story about how wide this
+ * chart is, not two.
+ */
+const TICK_TIER_VISIBILITY: Record<AxisTickTier, string> = {
+  end: "",
+  major: "",
+  wide: "hidden lg:block",
+  fine: "hidden 2xl:block",
+};
 
 export default function ContenderChart({
   rows,
@@ -199,7 +226,32 @@ export default function ContenderChart({
         <>
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-          className="block h-24 w-full"
+          /**
+           * UX-P145: `h-24` (96px) is the phone's height, and on a phone the
+           * plot is ~358px wide, so the drawn aspect is roughly 3.7:1. In the
+           * desktop left column the same 96px sits under ~690px of width —
+           * nearly 7:1 — and a title race flattens into a set of horizontal
+           * lines that no longer show the thing the section exists to show.
+           * `lg:h-40` (160px) restores the phone's proportions at desktop
+           * width. Nothing else changes: `preserveAspectRatio="none"` means the
+           * viewBox never needed to match the rendered box, and the axis labels
+           * are HTML positioned by percentage for exactly that reason.
+           *
+           * UX-P146 adds the third step, because killing the page's 1280px
+           * column moved the width this was measured against. The left track,
+           * end to end, arithmetic rather than estimate:
+           *
+           *   `lg`  (1024px window) → 1024 − 48 site − 48 page − 32 gap,
+           *                           ×1.35/2.35, − 28 card = ~486px plot
+           *   `xl`  (1280px window) → same chain = ~627px
+           *   `2xl` (1600px+, where `max-w-content` finally binds) = ~817px
+           *
+           * Against 160px those are 3.0:1, 3.9:1 and 5.1:1 — so the aspect was
+           * fine where UX-P145 measured it and goes flat again past `xl`, which
+           * is exactly the range the shell used to cut off. `2xl:h-56` (224px)
+           * puts the widest case back at 3.6:1, next to the phone's 3.7.
+           */
+          className="block h-24 w-full lg:h-40 2xl:h-56"
           preserveAspectRatio="none"
           role="img"
           aria-label={
@@ -222,11 +274,12 @@ export default function ContenderChart({
               y2={HEIGHT}
               stroke="currentColor"
               strokeWidth={1}
-              className="text-surface-border"
+              className={`text-surface-border ${TICK_TIER_VISIBILITY[tick.tier]}`}
               opacity={0.7}
               vectorEffect="non-scaling-stroke"
               data-testid="chart-axis-tick"
               data-date={tick.date}
+              data-tier={tick.tier}
             />
           ))}
           {series.map((entry) => {
@@ -276,7 +329,10 @@ export default function ContenderChart({
             return (
               <span
                 key={tick.date}
-                className="absolute top-0 whitespace-nowrap text-[9.5px] tabular-nums text-text-muted"
+                className={`absolute top-0 whitespace-nowrap text-[9.5px] tabular-nums text-text-muted ${
+                  TICK_TIER_VISIBILITY[tick.tier]
+                }`}
+                data-tier={tick.tier}
                 style={{
                   left: `${(tick.x / WIDTH) * 100}%`,
                   transform: first

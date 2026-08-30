@@ -74,6 +74,9 @@ export interface TournamentRow {
   divergent: boolean;
   trend: TournamentTrendPoint[];
   trend_delta: number | null;
+  /** UX-P157. The AND over this row's contributors — see `lib/liquidity`. */
+  liquidity?: string | null;
+  liquidity_reasons?: string[] | null;
 }
 
 export interface TournamentBoardData {
@@ -166,16 +169,24 @@ export function stalenessLabel(ageHours: number | null): string {
   return `${days} days ago`;
 }
 
-/** How a source id reads in a sentence. Unknown ids pass through unchanged. */
-const SOURCE_LABELS: Record<string, string> = {
-  kalshi: "Kalshi",
-  polymarket: "Polymarket",
-  odds_api: "sportsbooks",
-  espn: "ESPN",
-};
+/**
+ * How MANY readings behind this number are old — never WHICH venue they are.
+ *
+ * Ruling 141 (Alex, 2026-08-28) bans venue names in reader copy: a reader gets
+ * our probability, not our sourcing. This function is what replaced the
+ * `SOURCE_LABELS` map that turned `polymarket` into "Polymarket" for the line
+ * under a muted row.
+ *
+ * The name was never the load-bearing part. What that line has to say is *some
+ * of this is old, not all of it* — see `rowFreshnessLabel` for why. A count
+ * says exactly that, in the page's own honesty vocabulary ("no reading yet"),
+ * and it says it without handing the reader a venue they never asked about.
+ */
+const COUNT_WORDS = ["no", "one", "two", "three", "four", "five"];
 
-export function sourceLabel(source: string): string {
-  return SOURCE_LABELS[source] ?? source;
+export function readingCountLabel(count: number): string {
+  const word = COUNT_WORDS[count] ?? String(count);
+  return `${word} reading${count === 1 ? "" : "s"}`;
 }
 
 /**
@@ -184,20 +195,24 @@ export function sourceLabel(source: string): string {
  * `null` for a live row — a healthy row says nothing, or the admission stops
  * being an admission.
  *
- * The mixed case is the one this function exists for (UX-P135). A row blended
- * from a one-hour Kalshi price and a twenty-day Polymarket price is muted, and
- * "20 days ago" alone would be read as "we have not looked at this in three
- * weeks" — which is false and would make the whole board look more abandoned
- * than it is. Naming the stale leg is both more honest and less alarming:
- * "Polymarket 20 days ago" says exactly what is wrong and implies the rest is
- * not. It deliberately reports the GOVERNING age, never the freshest, because
- * the age has to be true of the number printed beside it.
+ * The mixed case is the one this function exists for (UX-P135). A row built
+ * from a one-hour reading and a twenty-day one is muted, and "20 days ago"
+ * alone would be read as "we have not looked at this in three weeks" — which
+ * is false and would make the whole board look more abandoned than it is.
+ * Saying that only PART of it is old is both more honest and less alarming.
+ * It deliberately reports the GOVERNING age, never the freshest, because the
+ * age has to be true of the number printed beside it.
+ *
+ * UX-P150, ruling 141: this used to name the stale leg — "Polymarket 20 days
+ * ago". The count carries the same fact ("one reading 20 days ago") and the
+ * venue name is not ours to put in front of a reader. `stale_sources` is
+ * still the payload field it reads; only the rendering changed.
  */
 export function rowFreshnessLabel(row: TournamentRow): string | null {
   if (rowIsPresentedAsLive(row)) return null;
   const when = stalenessLabel(row.age_hours);
   if (row.mixed_freshness && row.stale_sources.length > 0) {
-    return `${row.stale_sources.map(sourceLabel).join(" + ")} ${when}`;
+    return `${readingCountLabel(row.stale_sources.length)} ${when}`;
   }
   return when;
 }
@@ -211,9 +226,15 @@ export interface BoardNotice {
 /**
  * The visible admission. `null` only when the board is genuinely live.
  *
- * The wording says what we are showing and what we are not: "the last
- * confirmed reading, not a live price". A banner that only says "some data may
- * be delayed" lets the reader keep believing the number.
+ * The wording says what we are showing and what we are not: the last confirmed
+ * reading, not a live one. A banner that only says "some data may be delayed"
+ * lets the reader keep believing the number.
+ *
+ * UX-P146: said *price* four times and now says none. Alex's product-wide
+ * ruling — "'price' as a noun is banned in user-facing copy; the word is
+ * PROBABILITY". The admission is unchanged in force and in specificity; only
+ * the vocabulary moved. See `tournamentPlainLanguage.test.tsx`, which pins both
+ * halves: the banned word absent AND the staleness still stated.
  */
 export function boardNotice(board: TournamentBoardData): BoardNotice | null {
   if (board.price_state === "live") return null;
@@ -221,15 +242,15 @@ export function boardNotice(board: TournamentBoardData): BoardNotice | null {
   if (board.price_state === "dark" && board.newest_observed_at === null) {
     return {
       tone: "dark",
-      headline: "No prices yet",
+      headline: "No numbers yet",
       detail:
-        "We have not recorded a price for this draw. Nothing below is a live number.",
+        "No market has put a probability on this draw yet. Nothing below is a live number.",
     };
   }
   return {
     tone: board.price_state,
-    headline: "Prices paused",
-    detail: `Last confirmed reading ${when}. These are the last prices we saw, not live prices.`,
+    headline: "Updates paused",
+    detail: `Last confirmed reading ${when}. These are the last probabilities we saw, not live ones.`,
   };
 }
 

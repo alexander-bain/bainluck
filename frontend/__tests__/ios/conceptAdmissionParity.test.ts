@@ -204,7 +204,16 @@ describe("the table is worth answering to", () => {
  * question being asked at all.
  */
 describe("registry — a fourth copy cannot appear undeclared", () => {
-  const SKIP = ["node_modules", ".next", ".git", "DerivedData", "build", "artifacts"];
+  const SKIP = ["node_modules", ".next", ".git", "DerivedData", "build"];
+  //: Scratch output directories. `artifacts` was already skipped by name; the
+  //: per-queue dirs beside it (`artifacts-ux-p177/…`) are the same kind of thing
+  //: and were not, because the match was exact. They hold mutation harnesses
+  //: whose find/replace strings are VERBATIM copies of the source they mutate —
+  //: a scratch file quoting a decider is not a decider, and treating it as one
+  //: makes the registry unanswerable rather than strict. No shipped source path
+  //: is exempted by this: the non-vacuity control below still has to find all
+  //: three real implementations.
+  const SKIP_PREFIX = ["artifacts"];
   const EXT = [".py", ".ts", ".tsx", ".swift"];
   const VOCAB = [
     '"event"',
@@ -239,6 +248,7 @@ describe("registry — a fourth copy cannot appear undeclared", () => {
   function walk(dir: string, out: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {
       if (SKIP.includes(entry)) continue;
+      if (SKIP_PREFIX.some((p) => entry.startsWith(p))) continue;
       const full = join(dir, entry);
       let st;
       try {

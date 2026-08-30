@@ -58,7 +58,19 @@ import type { TournamentBoardData, TournamentPayload } from "@/lib/tournament";
 
 const MOCKS = path.join(__dirname, "..", "..", "..", "docs", "mocks", "us-open");
 const SLATE_PATH = path.join(MOCKS, "slate-2026-08-25.json");
-const PAYLOAD_PATH = path.join(MOCKS, "payload-2026-08-27.json");
+/**
+ * UX-P151: moved from `payload-2026-08-27.json` to the 08-28 capture.
+ *
+ * Not a refresh for its own sake. The 08-27 payload was captured BEFORE Alex's
+ * combined-card ruling and carries the two `*-second-major` cards it replaced,
+ * so a props assertion read off it is an assertion about a superseded
+ * curation. The whole rig moves rather than the props panel alone, because
+ * UX-P142's rule for this file is that one payload feeds every panel — a rig
+ * reading boards from one capture and questions from another is the exact
+ * "was that real or a mock artifact?" ambiguity the capture script exists to
+ * remove.
+ */
+const PAYLOAD_PATH = path.join(MOCKS, "payload-2026-08-28.json");
 
 function loadPayload(): TournamentPayload {
   return JSON.parse(fs.readFileSync(PAYLOAD_PATH, "utf8")) as TournamentPayload;
@@ -191,6 +203,22 @@ function mainDrawFrom(board: TournamentBoardData, template: SlateMatch): SlateMa
       probability_is_live: true,
       price_state: "live",
       age_hours: 0.2,
+      // ⚠️ EXPLICITLY PRICED (UX-P154). The template is a REAL slate row, and
+      // since the main draw was released every real row carries
+      // `priced: false` — no book has opened on those fixtures. This panel's
+      // whole subject is ruling 1 ("both numbers on a row"), so inheriting the
+      // template's `priced` silently emptied the number column and left a panel
+      // captioned "match number big, title chance as a chip" with no match
+      // number in it. Latent since the rig moved to the 08-28 payload: the
+      // artifact assertions only run when `UX_CAPTURE_DIR` is set, so CI never
+      // saw it.
+      priced: true,
+      // ...and coherent with it: a real main-draw row is counted incoherent
+      // BECAUSE it is unpriced (there is no split to trust), and an
+      // incoherent row collapses to two names with no numbers at all.
+      coherent: true,
+      raw_sum: 1,
+      opening_raw_sum: 1,
       sides: [
         {
           ...template.sides[0],
@@ -310,7 +338,7 @@ describe("US Open board capture rig", () => {
     expect(allRows.filter((r) => r.probability_is_live).length).toBeGreaterThan(60);
   });
 
-  it("DARK PATH: a dark board still says prices are paused", () => {
+  it("DARK PATH: a dark board still says updates are paused", () => {
     // The renderer's other half, now that production is live. Built by muting
     // the real board rather than by a literal, so it cannot drift from the
     // shape the backend emits.
@@ -326,7 +354,7 @@ describe("US Open board capture rig", () => {
       })),
     };
     const html = renderToStaticMarkup(<TournamentBoard board={dark} />);
-    expect(html).toContain("Prices paused");
+    expect(html).toContain("Updates paused");
     expect(html).toContain('data-live="false"');
     expect(html).not.toContain('data-live="true"');
   });
@@ -336,7 +364,7 @@ describe("US Open board capture rig", () => {
     const html = renderToStaticMarkup(<TournamentBoard board={live} />);
     expect(html).toContain('data-live="true"');
     expect(html).not.toContain('data-live="false"');
-    expect(html).not.toContain("Prices paused");
+    expect(html).not.toContain("Updates paused");
     expect(html).not.toContain('data-testid="row-age"');
     const perRow = html.split('data-testid="board-row"').slice(1);
     expect(perRow.length).toBe(3);
@@ -405,42 +433,127 @@ describe("US Open board capture rig", () => {
       .toHaveLength(0);
   });
 
-  it("register v7 carries ONE second-major card, not two — item 11's repetition", () => {
-    // "The two *-second-major cards ARE the repeating template you named" was
-    // the sentence Alex could not parse. What it meant: those two cards ask one
-    // question about two different players, which is a template. The runtime
-    // rule dropped one of them at every render; v7 drops it from the file, so
-    // the template is gone rather than hidden.
+  it("ONE COMBINED second-major card, with BOTH players on it — Alex 2026-08-28", () => {
+    // ═══ THE RULING, QUOTED ═══
+    //
+    // Alex, 2026-08-28 ~10:45am PT: *"ONE COMBINED CARD — 'Who wins a second
+    // major this year?' — showing BOTH players' probabilities (Alcaraz 2+
+    // majors, Sinner 2+ majors, each from its own real Kalshi market:
+    // KXGRANDSLAM-CALC26-family and KXGRANDSLAM-JSIN26)."*
+    //
+    // WHAT THIS ASSERTION USED TO SAY, and why replacing it is the fix rather
+    // than a relaxation. It read `expect(family).toEqual(["sinner-second-
+    // major"])` — one card, Alcaraz deleted — under a comment claiming that
+    // was Alex's item 11. It was a PARAPHRASE of his note, and the paraphrase
+    // inverted it: he objected to one templated question printed twice, and
+    // what shipped was one of the two players removed from the product. He
+    // then had to say *"DIFFERENT PLAYERS and must both render"* (UX-P147) to
+    // get Alcaraz back, and the two cards came back with the repetition.
+    //
+    // The combined card satisfies BOTH notes at once, which is why it is the
+    // resolution and not a third opinion: both players are present, and there
+    // is exactly one question on the page instead of the same one twice.
     const props = loadProps();
-    const family = props.filter((p) => p.key.endsWith("-second-major"));
-    expect(family.map((p) => p.key)).toEqual(["sinner-second-major"]);
+    const family = props.filter((p) => p.key.includes("second-major"));
+    expect(family.map((p) => p.key)).toEqual(["second-major"]);
+
+    const card = family[0];
+    expect(card.title).toBe("Who wins a second major this year?");
+    // BOTH players' probabilities, which is the load-bearing half of the
+    // ruling. A card that renders with one leg would satisfy "one card".
+    //
+    // UX-P154: the rows are the MARKET'S own names for the two men, derived by
+    // `prop_template_family.subject_display` from the market titles. UX-P151
+    // hand-wrote "Alcaraz" / "Sinner", and Alex's item 4 in the same review is
+    // the reason that changed: *"the market's own words are USED when they are
+    // the market's words."*
+    expect(card.outcomes.map((o) => o.display_name)).toEqual([
+      "Carlos Alcaraz",
+      "Jannik Sinner",
+    ]);
+    for (const outcome of card.outcomes) {
+      expect(typeof outcome.probability).toBe("number");
+    }
+    // Field shape: no single outcome answers a comparison, so nothing is
+    // promoted into the headline slot and the renderer ranks instead.
+    expect(card.answer_entity_key).toBeNull();
   });
 
-  it("RULING 8 ON REAL DATA: the questions section is EMPTY, and says why", () => {
-    // The finding, asserted so it cannot be softened into a caption. Both
-    // remaining curated markets are dark: `sinner-competes` at ~190 hours,
-    // `sinner-second-major` at ~810. Applying the rotation Alex asked for
-    // empties the section on both draws today.
+  it("the combined card RENDERS both numbers when it is live", () => {
+    // The register and the payload can both be right and the reader still see
+    // one number — `printedOutcomes` caps a field at FIELD_RANK_LIMIT and the
+    // whole card rotates out while it is dark. So this asserts the RENDER, on
+    // the real card, with only the server-owned liveness fields moved.
+    const card = loadProps().find((p) => p.key === "second-major");
+    expect(card).toBeDefined();
+    const html = renderToStaticMarkup(
+      <TournamentProps markets={freshQuestions([card as PropMarket])} draw="mens-singles" />
+    );
+    expect(html).toContain('data-key="second-major"');
+    expect(html).toContain('data-shape="field"');
+    expect(html).toContain("Who wins a second major this year?");
+    // Both names and both numbers, in ranked order — Sinner .555 above
+    // Alcaraz .25 on the readings this payload carries.
+    expect(html).toContain("Sinner");
+    expect(html).toContain("Alcaraz");
+    expect(html).toContain("56%");
+    expect(html).toContain("25%");
+    // And the two are NOT normalised to sum to 100: four majors a year means
+    // both men can win a second one, and a card that made them add up would be
+    // inventing an exclusivity the markets do not have.
+    expect(html).not.toContain("69%");
+    expect(html).not.toContain("31%");
+  });
+
+  it("ITEM 4 ON REAL DATA: the questions section is POPULATED, with its ages", () => {
+    /* ═══ THE SHIP, ON THE REAL REGISTER (UX-P154, Alex's item 4) ═══
+     *
+     * This assertion is inverted from what it said this morning, and the
+     * inversion IS the change. Both curated cards are old on this capture —
+     * `sinner-competes` at ~234 hours and `second-major` at ~856 on both of its
+     * legs — and until now that emptied the section on both draws.
+     *
+     * Alex: illiquid props render with honest freshness indication, never
+     * hidden — *"that's part of the value of the product."*
+     */
     const props = loadProps();
-    for (const draw of ["mens-singles", "womens-singles"]) {
-      const html = renderToStaticMarkup(<TournamentProps markets={props} draw={draw} />);
-      expect(html).toContain('data-testid="props-empty"');
-    }
-    const men = renderToStaticMarkup(<TournamentProps markets={props} draw="mens-singles" />);
-    expect(men).toContain("gone dark and rotated out");
+    const men = renderToStaticMarkup(
+      <TournamentProps markets={props} draw="mens-singles" />
+    );
+    expect(men).not.toContain('data-testid="props-empty"');
+    expect(men).toContain('data-testid="prop-market"');
+    // The real questions, on the page, in Alex's own curated words.
+    expect(men).toContain("Will Sinner actually play?");
+    expect(men).toContain("Who wins a second major this year?");
+    // Each with its OWN age, said in a way that answers "the age of what".
+    expect(men).toContain("Last number");
+    expect(men).toContain("not when it was created");
+    // And never presented as current: 856 hours is not a live number.
+    expect(men).toContain('data-live="false"');
+    expect(men).toContain('data-freshness="quiet"');
+
+    // The women's draw genuinely has no non-advance question on file — a
+    // measured absence, not a hidden card, and still the honest empty state.
+    const women = renderToStaticMarkup(
+      <TournamentProps markets={props} draw="womens-singles" />
+    );
+    expect(women).toContain('data-testid="props-empty"');
   });
 
   it("ITEM 10: the empty section is a CARD, not a dashed whisper", () => {
     // Why it was invisible: it rendered in all nine panels of the UX-P138
     // artifact — as a dashed 12.5px box between two solid white cards, which
     // reads as a divider. Same border and background as a populated card now.
+    //
+    // UX-P154: the men's draw is no longer a way to reach this branch, so the
+    // specimen is the women's draw, which has nothing on file at all.
     const html = renderToStaticMarkup(
-      <TournamentProps markets={loadProps()} draw="mens-singles" />
+      <TournamentProps markets={loadProps()} draw="womens-singles" />
     );
     expect(html).toContain('data-testid="props-empty"');
     expect(html).not.toContain("border-dashed");
-    // And it names what will be here, so it reads as between deliveries
-    // rather than as a dead feature.
+    // And it names the shape of what belongs here, so it reads as a section
+    // between deliveries rather than as a dead feature.
     expect(html).toContain("Will Sinner actually play?");
   });
 
@@ -664,9 +777,6 @@ describe("US Open board capture rig", () => {
       broadcasts: BROADCASTS,
     });
 
-    // Ruling 7: one row's detail view open.
-    const detailOpenId = mainDrawEntries[0]?.id;
-
     // READ, not built (UX-P139): the amendment makes cell provenance a
     // correctness property, so the grid arrives whole from the route.
     const grid = readPlayoffGrid(payload.grids?.["mens-singles"]);
@@ -817,8 +927,8 @@ number old enough to stop being a price is removed rather than shown quietly.
 <div class="rail">
   ${phone(
     payload.title,
-    "Ruling 7 — one row tapped open",
-    panel(men, mainDrawEntries, { matchExtra: { initialOpenMatchId: detailOpenId } })
+    "UX-P154 — the whole card is the link; the accordion is gone",
+    panel(men, mainDrawEntries)
   )}
   ${phone(
     payload.title,
@@ -856,13 +966,9 @@ number old enough to stop being a price is removed rather than shown quietly.
   )}
   ${phone(
     payload.title,
-    "An unpriced fixture, tapped open — what it says instead of a number",
+    "An unpriced fixture — what it says instead of a number",
     panel(men, menMatches, {
-      matchExtra: {
-        initialRound: "R128",
-        initialExpanded: true,
-        initialOpenMatchId: menR128[0]?.id,
-      },
+      matchExtra: { initialRound: "R128", initialExpanded: true },
     })
   )}
 </div>
@@ -891,7 +997,9 @@ number old enough to stop being a price is removed rather than shown quietly.
       html.indexOf('data-testid="tournament-matches"')
     );
     expect(html).toContain('data-testid="match-round-strip"');
-    expect((html.match(/data-testid="match-round-pill"/g) ?? []).length).toBeGreaterThan(2);
+    expect(
+      (html.match(/data-testid="match-round-pill"/g) ?? []).length
+    ).toBeGreaterThanOrEqual(2);
     // 1. Both numbers, and the chip says what it is.
     expect(html).toContain('data-testid="match-probability"');
     expect(html).toContain('data-testid="match-title-chip"');
@@ -909,21 +1017,28 @@ number old enough to stop being a price is removed rather than shown quietly.
     expect(html).toContain('data-selected="4"');
     // 6. No restating sentence anywhere in the artifact's RENDERED rows.
     expect(html).not.toContain('data-testid="slate-narrative"');
-    // 7. Where to watch: present, and ONLY in a detail view.
-    expect(html).toContain('data-testid="match-detail-broadcast"');
+    // 7. Where to watch: NOT on the match list at all (UX-P154, Alex's item 2).
+    //    Ruling 7 put it "in the DETAIL view"; the detail view is the event page
+    //    now, because the whole card is the link and the accordion is gone. The
+    //    positive is guarded in `tournamentExtensions.test.tsx`; what this
+    //    artifact owns is that it did not leak back onto a row.
+    expect(html).not.toContain('data-testid="match-detail-broadcast"');
     expect(html).not.toContain('data-testid="slate-row-broadcast"');
-    // ONE channel line PER OPEN DETAIL VIEW and nowhere else — the real form of
-    // ruling 7's rule. It was hard-coded to 1 when the artifact had exactly one
-    // tapped-open row; UX-P142 opens a second (an unpriced main-draw fixture),
-    // so the constant is now the count of detail views rather than a literal,
-    // and the "and nowhere else" half is what the equality actually asserts.
-    const openDetails = (html.match(/data-testid="match-detail-broadcast"/g) ?? []).length;
-    expect(openDetails).toBe(2);
-    expect((html.match(/ESPN, ESPN2, ESPN\+/g) ?? []).length).toBe(openDetails);
-    // 8. The rotation: empty-with-a-reason on real data, populated on panel 9.
-    expect(html).toContain("gone dark and rotated out");
+    expect(html).not.toContain("ESPN, ESPN2, ESPN+");
+    // ...and the accordion it lived in is gone with it.
+    expect(html).not.toContain('data-testid="match-row-toggle"');
+    expect(html).not.toContain("See more on this match");
+    // The whole card is the target, and it is THE shared event card.
+    expect(html).toContain('data-testid="event-card"');
+    // 8. NOTHING IS HIDDEN FOR AGE (UX-P154, Alex's item 4). This assertion is
+    //    inverted: the artifact used to have to contain "have not seen a new
+    //    number on N questions", the empty state that shipped every day.
+    expect(html).not.toContain("have not seen a new number on");
     expect(html).toContain('data-testid="props-moved-to-grid"');
     expect(html).toContain('data-testid="prop-market"');
+    // Each quiet card saying its own age, and the unit defined once per section.
+    expect(html).toContain("Last number");
+    expect(html).toContain('data-testid="props-freshness-definition"');
     // Collapsed everywhere.
     expect((html.match(/data-testid="show-more"/g) ?? []).length).toBeGreaterThan(4);
     // The pre-draw bracket panel still carries both boards.
@@ -936,11 +1051,11 @@ number old enough to stop being a price is removed rather than shown quietly.
     expect((html.match(/data-round="R128"/g) ?? []).length).toBeGreaterThan(45);
     expect(html).toContain("Round of 128");
     // ...and the unpriced fixture says the right thing about itself.
-    expect(html).toContain("No market yet");
-    expect(html).not.toContain("The two prices for this match do not agree");
-    // The detail note only renders on a TAPPED-OPEN row, so it needs a panel
-    // of its own or the sentence written for the page's most common state is
-    // in the code and not in the artifact Alex looks at.
+    expect(html).toContain("No probability yet");
+    expect(html).not.toContain("The two numbers for this match do not agree");
+    // The detail note rides the CARD since UX-P154 deleted the drawer, so the
+    // sentence written for the page's most common state is in the artifact
+    // without needing a panel of its own.
     expect(html).toContain("Nobody is quoting this match yet");
     // (b) The x-axis, in the rendered chart rather than in a unit test.
     expect(html).toContain('data-testid="chart-axis"');

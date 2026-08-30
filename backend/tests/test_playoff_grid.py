@@ -1129,8 +1129,29 @@ class TestNbaCupExcludeConfig:
         )
 
     def test_exclude_prefixes_default_empty_elsewhere(self):
-        # Only leagues that need it opt in; the field defaults to empty.
-        assert MLB_CONFIG.external_id_exclude_prefixes == []
+        """Only leagues that need it opt in; the field defaults to empty.
+
+        This used to assert on MLB as a stand-in for "a league that doesn't opt
+        in". MLB now opts in (UX-P173: `KXTEAMSINWS`, a World Series *matchup*
+        market that reaches the Champion column via `\\bPro\\s+Baseball\\b`), so
+        the claim is made against the default itself — which is what the test
+        was always about — plus a league that genuinely carries none.
+        """
+        assert LeagueConfig(
+            slug="x",
+            name="X",
+            sport_category="soccer",
+            sport_keys=[],
+            stage_key="soccer",
+            columns=[],
+        ).external_id_exclude_prefixes == []
+        assert NHL_CONFIG.external_id_exclude_prefixes == []
+
+    def test_every_exclude_prefix_is_deliberate(self):
+        """A prefix here silently removes markets, so each one is named."""
+        assert NBA_CONFIG.external_id_exclude_prefixes == ["KXNBACUP"]
+        assert NFL_CONFIG.external_id_exclude_prefixes == ["KXSBHOST"]
+        assert MLB_CONFIG.external_id_exclude_prefixes == ["KXTEAMSINWS"]
 
 
 class TestMatchingRulePatterns:

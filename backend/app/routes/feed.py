@@ -19,7 +19,7 @@ import re
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -29,7 +29,6 @@ from sqlalchemy import (
     or_,
     func,
     case,
-    cast,
     column,
     exists,
     literal,
@@ -39,7 +38,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, load_only, selectinload
-from sqlalchemy.dialects.postgresql import JSONB
 
 from app.dependencies.auth import get_optional_user
 # Admission bounds for the shared candidate base live WITH the base (they exist
@@ -73,6 +71,7 @@ from app.utils.feed_event_candidates import (
     event_candidate_ids,
 )
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
+from app.utils.graded_card import card_sum_reason, rendered_card_percents
 from app.utils.discover_bundles import (
     assemble_awards_theme_bundles,
     assemble_discover_comparison_bundles,
@@ -183,7 +182,10 @@ from app.utils.labeling_queue import (
     review_key_for_feed_item as _review_key_for_feed_item,
 )
 from app.utils.name_normalization import names_match as _team_name_matches
-from app.utils.outcome_display import display_rank_order
+from app.utils.outcome_display import (
+    display_rank_order,
+    drop_dominant_field_outcomes,
+)
 from app.utils.personalization import (
     PersonalizationContext,
     compute_event_multiplier,
@@ -2659,13 +2661,27 @@ async def get_feed(
         # rankable concepts (the "UFC 329 wasn't bubbling" gap). Gated on
         # include_events, so the futures-only feed audit never sees them.
         _skip_concepts = not include_events
+        _concept_sport_filter: tuple[str, ...] | None = None
         if static_tag_filter:
-            _concept_sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
-            # Concepts exist for combat cards (mma) + motorsports GPs (f1). A sport
-            # filter for anything else means the concept streams have nothing to add.
-            _concept_allowed = {"sport:mma", "sport:motorsports", "sport:f1"}
-            if _concept_sport_tags and not (set(_concept_sport_tags) & _concept_allowed):
-                _skip_concepts = True
+            # UX-P177: this gate used to be the WHOLE tag story. It decided
+            # whether to RUN the tier — against a hand-written allowlist that had
+            # already lost `cycling` — and then built the tier with no filter at
+            # all, so the concept stream was gated by the sport tag and never
+            # filtered by it. Measured on production 2026-08-29:
+            # `?tags=["sport:mma"]` served 16 concepts of which 5 were foreign,
+            # `?tags=["sport:motorsports"]` served the SAME 16 of which 12 were,
+            # and `?tags=["sport:cycling"]` served 0 while the Vuelta sat on the
+            # other two. Both halves are now one function, derived from
+            # `CONCEPT_SOURCES`, so the alias vocabulary cannot fork again.
+            #
+            # The cache key already carried the tag tuple, so it was never the
+            # bug and is unchanged — the BUILDER is what ignored the tag.
+            from app.utils.event_concept_population import concept_filter_for_tags
+
+            _tag_skip, _concept_sport_filter = concept_filter_for_tags(
+                static_tag_filter
+            )
+            _skip_concepts = _skip_concepts or _tag_skip
         if not _skip_concepts:
             try:
                 # #2143: the concept build is principal-INDEPENDENT — it takes
@@ -2705,7 +2721,14 @@ async def get_feed(
                 )
 
                 async def _build_concepts():
-                    return await _score_event_concepts(db, now, sport, ctx)
+                    # `sport` (the ?sport= param) keeps precedence; the
+                    # tag-derived filter only speaks when the caller named no
+                    # sport, which is exactly what both readers of this path do
+                    # — `/categories/[slug]` and `RelatedByTag` send `tags` and
+                    # nothing else.
+                    return await _score_event_concepts(
+                        db, now, sport or _concept_sport_filter, ctx
+                    )
 
                 concept_items = await _shared_get_or_build(
                     "concepts",
@@ -3842,6 +3865,60 @@ def _normalize_feed_probabilities(
         if o.get("probability"):
             o["probability"] = round(o["probability"] / scale, 4)
     return top_outcomes
+
+
+# ── THE CARD RULE REACHES DISCOVER (#2088 criterion 3) ──────────────────────────
+#
+# #2060 gave a two-outcome card ONE rounding (normalize the complement pair, round the
+# headline once, derive the other side) and #2088 gave the pair that legitimately does
+# not total 100 a sentence saying so. Both shipped on the LABELING surfaces only.
+# Discover — the surface an actual reader lands on — never received either: until this
+# function there was no `rendered_percent` anywhere in this file, and `FeedCard.tsx`
+# printed `Math.round(outcome.probability * 100)` per outcome, independently, exactly
+# the arithmetic #2060 exists to replace.
+#
+# `_feed_display_scale` is NOT that rule and does not stand in for it. Its band is
+# ONE-SIDED: it divides down when a field sums above ~1.01 and does nothing at all
+# below 1.00. So a pair summing to 0.97 reaches the reader as `57 / 40` with no
+# explanation, and a pair summing to exactly 1.00 on the half-cent grid reaches them
+# as `85 / 16`. The two compose correctly and that is why this runs AFTER the scale:
+# the scale decides the BASIS, this decides what is PRINTED on that basis.
+#
+# ** MEASURED ON THE DEPLOYED FEED 2026-08-29 ** (`GET /api/feed?limit=100`, 64 futures
+# cards carrying printed outcomes): **2 cards print 101 today** — `Which party will win
+# the U.S. House?` (0.845/0.155 -> 85 + 16) and `Will Neuralink's valuation hit (HIGH)
+# $47.5B` (0.725/0.275 -> 73 + 28) — and **2 print an unexplained non-100** — `Which of
+# these parties will win a Riksdag seat?` (29 + 22) and `Texas State House winner?`
+# (25 + 16). Four of 64, 6.3%: two get their numbers corrected, two get a sentence.
+#
+# ** THE PERCENT IS WRITTEN PER OUTCOME, NOT AS A CARD-LEVEL LIST, AND THAT IS
+# LOAD-BEARING. ** `FeedCard.tsx` re-orders this list through `leaderFirstSlice` before
+# printing it, so a positional array served beside the outcomes would be silently
+# mis-paired on exactly the cards where the stored rank disagrees with the probability
+# order (UX-P005 class (a): ~23% of feed-surfaced markets). Annotating the dict travels
+# with the row through any re-ordering the client does.
+
+
+def _apply_card_percents(top_outcomes_data: list[dict]) -> str | None:
+    """Write `rendered_percent` onto each PRINTED outcome; return the card's sum reason.
+
+    Taken over the already-sliced, already-scaled `top_outcomes_data`, which IS the
+    printed card: both call sites build it from `[:3]` and then hand it through
+    `_normalize_feed_probabilities`, so the probabilities here are the display basis
+    and the arity here is the arity a reader sees. Deriving the rule from anything
+    wider (the market's full outcome list) would answer for a card nobody is shown.
+
+    The returned reason is `card_sum_reason`'s, scope note included: **`None` for any
+    arity other than two**, meaning "this card makes no claim about a total" and never
+    "checked and fine". A card printing two outcomes always has exactly two — the slice
+    is `[:3]`, so arity two implies the field itself is two — which is why the reason
+    can never land on a card that also says "+20 more" (`remaining_outcome_count` was 0
+    on all four affected cards in the measurement above, and is 0 by construction).
+    """
+    probabilities = [o.get("probability") for o in top_outcomes_data]
+    for outcome, percent in zip(top_outcomes_data, rendered_card_percents(probabilities)):
+        outcome["rendered_percent"] = percent
+    return card_sum_reason(probabilities)
 
 
 def _top_outcomes_for_trace(
@@ -5609,10 +5686,10 @@ async def _score_events(
     # Push static tags to SQL via GIN containment index (@>)
     # Only for tags that don't change after event creation (sport, league, tier, etc.)
     if static_tag_filter:
-        import json as _json_mod
+        from app.utils.jsonb_containment import jsonb_contains
 
         candidate_conditions.append(
-            Event.event_tags.op("@>")(cast(_json_mod.dumps(static_tag_filter), JSONB))
+            jsonb_contains(Event.event_tags, static_tag_filter)
         )
 
     query = (
@@ -6281,11 +6358,23 @@ async def _score_sports_mode_futures(
                 else None
             )
 
+        # UX-P163: same removal as `_score_futures`, and it has to be here too —
+        # the two serializers print the same card type and a fix in one of them
+        # would just move the disagreement between surfaces instead of ending it.
+        # Sports mode has no mixed-binary strip, so this IS its card list. Scoring
+        # (`sorted_outcomes[:10]`), the leader pick and `outcomes_data`'s settled
+        # filter deliberately keep reading the full list: this narrows what the card
+        # SAYS, never what surfaces or ranks.
+        card_outcomes = drop_dominant_field_outcomes(
+            sorted_outcomes,
+            lambda o: o.name,
+            lambda o: float(o.current_probability) if o.current_probability else None,
+        )
         # Queue 283 (#1487): ONE display-probability basis, shared by the
         # mini-list, distribution, and headline/context leader copy. Sports mode
-        # draws every outcome surface from sorted_outcomes (no mixed-binary
+        # draws every outcome surface from card_outcomes (no mixed-binary
         # strip). leader_prob stays RAW for hook staleness/eligibility below.
-        _display_scale = _feed_display_scale(sorted_outcomes)
+        _display_scale = _feed_display_scale(card_outcomes)
         display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
 
         probs_available = [
@@ -6582,14 +6671,17 @@ async def _score_sports_mode_futures(
                     else None
                 ),
             }
-            for position, o in enumerate(sorted_outcomes[:3], start=1)
+            for position, o in enumerate(card_outcomes[:3], start=1)
         ]
         top_outcomes_data = humanize_outcome_names_for_feed(
             top_outcomes_data, market.name
         )
         top_outcomes_data = _normalize_feed_probabilities(
-            top_outcomes_data, sorted_outcomes
+            top_outcomes_data, card_outcomes
         )
+        # #2088 criterion 3: the printed percents and the reason they may not total
+        # 100. AFTER the scale, so the rule is applied to the displayed basis.
+        _card_sum_reason = _apply_card_percents(top_outcomes_data)
 
         source_names = (
             (_canonical_source_names_cache or {}).get(
@@ -6617,7 +6709,7 @@ async def _score_sports_mode_futures(
                     else None
                 ),
             }
-            for o in sorted_outcomes
+            for o in card_outcomes
         ]
         discover_card = classify_discover_card_archetype(
             name=market.name,
@@ -6656,6 +6748,10 @@ async def _score_sports_mode_futures(
                 market.resolution_date.isoformat() if market.resolution_date else None
             ),
             "top_outcomes": top_outcomes_data,
+            # #2088: served even when null — null is "checked, and they do total
+            # 100", which is a different fact from the key being absent (a payload
+            # from before this shipped). The client keys its fallback on absence.
+            "card_sum_reason": _card_sum_reason,
             "outcome_count": len(market.outcomes),
             "canonical_market_key": market.canonical_market_key,
             "group_id": market.group_id,
@@ -6872,12 +6968,10 @@ def _discover_candidate_pool_specs(
         )
 
     if static_tag_filter:
-        import json as _json_mod
+        from app.utils.jsonb_containment import jsonb_contains
 
         id_filters.append(
-            FuturesMarket.market_tags.op("@>")(
-                cast(_json_mod.dumps(static_tag_filter), JSONB)
-            )
+            jsonb_contains(FuturesMarket.market_tags, static_tag_filter)
         )
 
     # Pool 1: sports futures (capped — tier-ordered so best surface first).
@@ -7522,6 +7616,27 @@ async def _score_futures(
             # field so the card renders a clean nominee distribution (never a binary
             # merged into a candidate list). Pure binary markets pass through untouched.
             card_outcomes = _strip_mixed_binary_meta(sorted_outcomes)
+            # UX-P163: and a ~100% field outcome ("Other") is not merely demoted for
+            # this card — it is REMOVED from it. `display_rank_order` above put it at
+            # the end, which keeps it out of a top-N slot only while the list is
+            # LONGER than N; market 112903 arrived here as exactly three rows, so
+            # "the end" was still inside the `[:3]` below.
+            #
+            # The halving is the reason this is a bug and not a tidy-up. That row's
+            # no-bid 1.0 (bid 0.0000 / ask 1.0000) also sat in `_feed_display_scale`'s
+            # divisor directly beneath, pushing the surviving sum to exactly 2.0 — the
+            # inclusive top of the band — so EVERY number the payload carried was
+            # halved: Discover headlined `Democratic Party 43%` on 2026-08-29 while
+            # `/api/futures/112903` served 0.855 at the same moment. Dropped BEFORE
+            # the scale for that reason. The shared ranker's demote-not-delete
+            # contract is deliberate and untouched (`test_other_at_100_leaves_the_top_n`).
+            card_outcomes = drop_dominant_field_outcomes(
+                card_outcomes,
+                lambda o: o.name,
+                lambda o: (
+                    float(o.current_probability) if o.current_probability else None
+                ),
+            )
             # Queue 283 (#1487): ONE display-probability basis for this card.
             # _display_scale is the single divisor every VISIBLE surface uses —
             # the mini-list (top_outcomes), the distribution (discover_card), and
@@ -7998,6 +8113,9 @@ async def _score_futures(
             top_outcomes_data = _normalize_feed_probabilities(
                 top_outcomes_data, card_outcomes
             )
+            # #2088 criterion 3: the printed percents and the reason they may not
+            # total 100. AFTER the scale, so the rule sees the displayed basis.
+            _card_sum_reason = _apply_card_percents(top_outcomes_data)
 
             source_names = (
                 (_canonical_source_names_cache or {}).get(
@@ -8065,6 +8183,9 @@ async def _score_futures(
                     market.resolution_date.isoformat() if market.resolution_date else None
                 ),
                 "top_outcomes": top_outcomes_data,
+                # #2088: served even when null — see the note on the other
+                # serializer. Null means "checked"; absent means "pre-#2088 build".
+                "card_sum_reason": _card_sum_reason,
                 "outcome_count": len(market.outcomes),
                 "canonical_market_key": market.canonical_market_key,
                 "group_id": market.group_id,
@@ -8657,7 +8778,13 @@ def _outcomes_overlap(item_a: dict, item_b: dict) -> bool:
 # old process-local ``_golf_cache`` + inline ``get_golf`` rebuild is retired so a
 # dyno restart no longer pays the ~8.9s cold rebuild on the request path.
 
-_DEFAULT_FEED_TOURS = frozenset({"pga", "major", "dp_world", "lpga", "liv"})
+# `None` is a member on purpose (UX-P185). A tournament whose tour we cannot
+# evidence used to reach the filter below as a guessed "pga" and therefore always
+# passed it; now that it honestly says "unknown", leaving None out would delete it
+# from Discover instead of merely un-badging it. It stays eligible for the DEFAULT
+# audience and is deliberately absent from the per-tour sets computed below — an
+# unknown tour cannot claim to be the tour a user actually picked.
+_DEFAULT_FEED_TOURS = frozenset({"pga", "major", "dp_world", "lpga", "liv", None})
 
 # Map tournament tour values to user affinity keys
 _TOUR_AFFINITY_KEYS: dict[str, str] = {
@@ -8669,8 +8796,11 @@ _TOUR_AFFINITY_KEYS: dict[str, str] = {
 }
 
 
-def _compute_user_feed_tours(ctx) -> set[str]:
-    """Compute which golf tours a user wants to see based on sport affinities."""
+def _compute_user_feed_tours(ctx) -> set[str | None]:
+    """Compute which golf tours a user wants to see based on sport affinities.
+
+    `None` is a legal member and means "tour unknown" — see `_DEFAULT_FEED_TOURS`.
+    """
     if not ctx or not ctx.is_authenticated or not ctx.sport_affinities:
         return set(_DEFAULT_FEED_TOURS)
 
@@ -8688,8 +8818,9 @@ def _compute_user_feed_tours(ctx) -> set[str]:
         # Show all tours (preserves old behavior)
         return set(_DEFAULT_FEED_TOURS)
 
-    # New-style user — filter by tour preference
-    tours: set[str] = set()
+    # New-style user — filter by tour preference. No None: an unevidenced tour
+    # cannot claim to be one of the tours this user chose.
+    tours: set[str | None] = set()
     for tour, affinity_key in _TOUR_AFFINITY_KEYS.items():
         if ctx.sport_affinities.get(affinity_key, 0.0) > 0.05:
             tours.add(tour)
@@ -8799,8 +8930,11 @@ async def _score_golf_tournaments(
         # Build the reason text
         leader = golfers[0]
         leader_pct = round(leader["probability"] * 100, 1)
+        # `or`, not a .get() default: UX-P185 lets `tour_label` be present-and-None
+        # for a tournament whose tour we cannot evidence, and a .get() default only
+        # fires on an ABSENT key — this line would otherwise read "None: X leads…".
         reason = (
-            f"{t.get('tour_label', 'Golf')}: {leader['name']} leads at {leader_pct}%"
+            f"{t.get('tour_label') or 'Golf'}: {leader['name']} leads at {leader_pct}%"
         )
         if leader.get("movement_24h") and abs(leader["movement_24h"]) >= 0.01:
             mv = leader["movement_24h"]
@@ -9313,7 +9447,7 @@ async def _resolve_concept_leader(db: AsyncSession, key: str) -> Optional[dict]:
 async def _score_event_concepts(
     db: AsyncSession,
     now: datetime,
-    sport_filter: Optional[str],
+    sport_filter: Optional[Union[str, tuple[str, ...]]],
     ctx=None,
 ) -> list[dict]:
     """Score event concepts (UFC cards + F1 Grands Prix, L2-84/L2-86) for the

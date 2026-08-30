@@ -195,6 +195,49 @@ def demote_dominant_field(
     return outcomes
 
 
+def drop_dominant_field_outcomes(
+    items: Sequence[_T],
+    name_of: Callable[[_T], str | None],
+    prob_of: Callable[[_T], float | None],
+) -> list[_T]:
+    """Remove field outcomes priced ``>= _FIELD_DOMINANT_MIN`` from a list that is
+    about to be SLICED and SCALED into a card.
+
+    UX-P163. :func:`display_rank_order` DEMOTES such a row to the end rather than
+    deleting it, deliberately — "the field's share stays visible" is asserted by
+    ``test_other_at_100_leaves_the_top_n`` and must not change. But demotion only
+    keeps the row out of a top-N slot while the list is LONGER than N, and a card
+    slices ``[:3]`` off a list the placeholder filter has already shortened. On
+    ``/api/feed`` 2026-08-29, market 112903 ("Which party will win the House in
+    2026?") reached this point as exactly three rows — ``Democratic Party 0.855``,
+    ``Republican Party 0.145``, and a demoted ``Other 1.0`` — so "the end" was still
+    inside the card, and this module's own stated rule ("must not occupy a leader or
+    top-N slot") was not achieved by ordering alone.
+
+    Worse than the wasted row: that ``Other`` is a no-bid ask (measured bid
+    ``0.0000`` / ask ``1.0000``, gotcha #17/#19), and its 1.0 was still counted in
+    ``_feed_display_scale``'s divisor. The three surviving rows summed to exactly
+    2.0 — the inclusive top of the normalization band — so EVERY number the card
+    printed was halved, and Discover rendered ``Democratic Party 43%`` against a
+    book price of 85.5% that the market page was showing at the same moment.
+    Removing the row that is "never a real answer" from the card is what makes the
+    divisor honest; the halving is a symptom of counting it, not a separate bug.
+
+    NEVER EMPTIES, for the same reason :func:`display_rank_order` does not: if every
+    item is a dominant field outcome the input is returned unchanged, because an
+    honest-empty decision belongs to the surface and a silent zero-outcome card is a
+    worse artifact than a labelled one.
+    """
+    kept = [
+        i
+        for i in items
+        if not (
+            is_field_outcome(name_of(i)) and (prob_of(i) or 0) >= _FIELD_DOMINANT_MIN
+        )
+    ]
+    return kept if kept else list(items)
+
+
 def display_rank_order(
     items: Sequence[_T],
     name_of: Callable[[_T], str | None],

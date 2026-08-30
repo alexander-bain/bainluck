@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import LiquidityMark from "../LiquidityMark";
 import TrendSparkline from "./TrendSparkline";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore from "./ShowMore";
@@ -47,6 +48,10 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
   // Names the old leg when only one of them is old (UX-P135), so a row muted
   // by a stale Polymarket price does not read as "nobody has looked at this".
   const freshness = rowFreshnessLabel(row);
+  const [revealed, setRevealed] = React.useState<string | null>(null);
+  const toggleReveal = React.useCallback((sentence: string) => {
+    setRevealed((open) => (open === sentence ? null : sentence));
+  }, []);
 
   return (
     <li
@@ -96,9 +101,35 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
                   {freshness}
                 </span>
               )}
+              {/* UX-P157. On the honesty line rather than beside the number,
+                  and that is a measurement, not a preference: the number track
+                  is 52px and "100%" in 19px bold tabular figures already fills
+                  it. This line is where the row's other caveats live, so the
+                  mark is in company rather than alone.
+
+                  Universal means ONE symbol and ONE sentence everywhere, not
+                  one pixel offset everywhere — the four surfaces have four
+                  different amounts of room and pretending otherwise is how a
+                  signal gets dropped from the cramped one. */}
+              <LiquidityMark
+                facts={row}
+                observedAt={row.observed_at}
+                size="sm"
+                className="ml-1 align-baseline"
+                onReveal={toggleReveal}
+              />
             </>
           )}
         </div>
+        {revealed !== null && (
+          <p
+            className="mt-1 text-[10.5px] leading-snug text-text-secondary"
+            data-testid="row-liquidity-reveal"
+            role="status"
+          >
+            {revealed}
+          </p>
+        )}
       </div>
 
       <div className="text-right">
@@ -187,9 +218,12 @@ export default function TournamentBoard({
         {board.rows.length === 0 ? (
           <div className="px-4 py-6 text-center text-[13.5px] text-text-secondary" data-testid="board-empty">
             <div className="mb-1 text-[15px] font-semibold text-text-primary">
-              No prices to show
+              {/* UX-P145 took the trading VERB out of "nobody has priced it
+                  yet" and kept the noun. UX-P146: Alex's product-wide ruling
+                  takes the noun too — the word is PROBABILITY. */}
+              No numbers to show
             </div>
-            We know who is in this draw, but nobody has priced it yet.
+            We know who is in this draw, but no market has put a number on it yet.
           </div>
         ) : (
           <>
@@ -233,8 +267,10 @@ export default function TournamentBoard({
             className="border-t border-surface-border px-3.5 py-2 text-[11px] text-text-muted"
             data-testid="board-unpriced"
           >
-            {board.unpriced} more registered {board.unpriced === 1 ? "player has" : "players have"} no
-            price.
+            {/* UX-P145: was "N more registered players" — *registered* is the
+                name of our JSON file, not a fact about the draw. */}
+            {board.unpriced} more {board.unpriced === 1 ? "player in" : "players in"} this draw{" "}
+            {board.unpriced === 1 ? "has" : "have"} no number yet.
           </div>
         )}
       </div>
