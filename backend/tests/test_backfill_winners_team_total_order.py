@@ -95,14 +95,21 @@ class TestTeamTotalGrader:
             is None
         )
 
-    def test_unmatched_team_returns_none_rather_than_guessing(self):
-        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+    def test_unmatched_team_is_flagged_unresolved_rather_than_guessed(self):
+        """CERT-499: an unattributable leg must NOT return the same `None` that
+        means "not a team-total leg". The caller has to be able to tell them
+        apart — one is none of its business, the other is a refusal it must
+        count and act on."""
+        from app.tasks.backfill_winners import (
+            _TEAM_TOTAL_UNRESOLVED,
+            _team_total_outcome_is_winner,
+        )
 
         assert (
             _team_total_outcome_is_winner(
                 "Toronto over 1.5 runs scored", _HOME, _AWAY, _HOME_SCORE, _AWAY_SCORE
             )
-            is None
+            is _TEAM_TOTAL_UNRESOLVED
         )
 
     def test_missing_score_returns_none(self):
@@ -371,7 +378,10 @@ class TestSharedCityIdentity:
         )
 
     def test_the_bare_shared_city_is_refused_rather_than_guessed(self):
-        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+        from app.tasks.backfill_winners import (
+            _TEAM_TOTAL_UNRESOLVED,
+            _team_total_outcome_is_winner,
+        )
 
         assert (
             _team_total_outcome_is_winner(
@@ -381,13 +391,16 @@ class TestSharedCityIdentity:
                 2,
                 6,
             )
-            is None
+            is _TEAM_TOTAL_UNRESOLVED
         )
 
     def test_an_unresolvable_abbreviation_is_refused_not_assigned(self):
         """'Chicago WS' has no remaining token starting with 'ws'. Refusing is
         the designed outcome — an ungraded row beats a wrong one."""
-        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+        from app.tasks.backfill_winners import (
+            _TEAM_TOTAL_UNRESOLVED,
+            _team_total_outcome_is_winner,
+        )
 
         assert (
             _team_total_outcome_is_winner(
@@ -397,7 +410,7 @@ class TestSharedCityIdentity:
                 2,
                 6,
             )
-            is None
+            is _TEAM_TOTAL_UNRESOLVED
         )
 
     def test_every_catalogued_shared_city_pair_resolves_or_refuses_but_never_flips(
@@ -440,3 +453,83 @@ class TestSharedCityIdentity:
             )
             is False
         )
+
+
+class TestAthleticsAliasAndDeferral:
+    """CERT-499: the 56 production `A's` legs, and the silence that hid them.
+
+    `normalize_team_name("A's")` is `"a's"` by design (its own docstring says so)
+    while the event side spells the club `Athletics`, so the exclusivity rule
+    refused every one of them — and the refusal was invisible, because a parsed
+    sibling marked the market resolved. Since `game_score` is not in
+    `OVERWRITABLE_WINNER_SOURCES_SQL` and the candidate scan drops markets that
+    already carry a non-overwritable winner, that did not defer those legs, it
+    stranded them permanently.
+    """
+
+    def test_the_athletics_alias_resolves_against_its_real_opponents(self):
+        """21 of the 56 legs face Houston. `Astros` also begins with 'a', which
+        is why a generic possessive-strip-and-prefix rule cannot do this job and
+        an explicit alias can."""
+        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+
+        for opponent in (
+            "Houston Astros",
+            "Philadelphia Phillies",
+            "Chicago White Sox",
+            "New York Mets",
+            "New York Yankees",
+        ):
+            assert (
+                _team_total_outcome_is_winner(
+                    "A's over 0.5 runs scored", "Athletics", opponent, 3, 5
+                )
+                is True
+            ), opponent
+            assert (
+                _team_total_outcome_is_winner(
+                    "A's over 7.5 runs scored", "Athletics", opponent, 3, 5
+                )
+                is False
+            ), opponent
+
+    def test_the_opponents_own_leg_is_still_graded_off_the_opponent(self):
+        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+
+        assert (
+            _team_total_outcome_is_winner(
+                "Houston over 4.5 runs scored", "Athletics", "Houston Astros", 3, 5
+            )
+            is True
+        )
+
+
+@pytest.mark.asyncio
+class TestDeferralWritesNothingOnAnUnattributableLeg:
+    """CERT-499: all-or-nothing, driven through the REAL resolver."""
+
+    async def test_an_unattributable_leg_defers_the_WHOLE_market(self, monkeypatch):
+        """All-or-nothing. A partial `game_score` grade is permanent, so writing
+        the readable legs would strand the unreadable one forever."""
+        legs = list(_LEGS) + [(999, "Toronto over 4.5 runs scored")]
+        writes, stats = await _writes_for(legs, monkeypatch)
+        assert writes == {}, "no leg may be written when one is unattributable"
+        assert stats["team_total_unresolved_legs"] == 1
+        assert stats["team_total_deferred_markets"] == 1
+        assert stats["total"] == 0
+
+    async def test_a_clean_market_is_unaffected_by_the_deferral_rule(self, monkeypatch):
+        writes, stats = await _writes_for(list(_LEGS), monkeypatch)
+        assert writes == _EXPECTED
+        assert stats["team_total_unresolved_legs"] == 0
+        assert stats["team_total_deferred_markets"] == 0
+        assert stats["total"] == 1
+
+    async def test_a_non_team_total_leg_does_NOT_defer_the_market(self, monkeypatch):
+        """ "Yes" is not a team total, so it is none of this branch's business and
+        must not be confused with a refusal. This is the whole reason the
+        sentinel exists instead of a second `None`."""
+        writes, stats = await _writes_for(list(_LEGS) + [(999, "Yes")], monkeypatch)
+        assert writes == _EXPECTED
+        assert stats["team_total_deferred_markets"] == 0
+        assert stats["total"] == 1

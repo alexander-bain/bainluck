@@ -1590,6 +1590,27 @@ def _total_outcome_is_winner(outcome_name, home_score, away_score):
     return total > line if direction == "over" else total < line
 
 
+#: CERT-499: the ONE provider nickname that production actually contains and that
+#: no normalizer resolves. `normalize_team_name("A's")` is `"a's"` BY DESIGN — its
+#: docstring says so, and it is shared with playoffs/march-madness/admin, so it is
+#: not this resolver's to change. The event side spells the club `Athletics`.
+#:
+#: Deliberately NOT a general rule. Stripping the possessive to `a` and
+#: prefix-matching would resolve `A's` against `Athletics` — and equally against
+#: `Astros`, which is the opponent on 21 of the 56 production legs. There is no
+#: rule that maps `A's` to one rather than the other; there is only the fact. So
+#: this table is facts, sourced from the measured population (Athletics legs face
+#: Houston 21, Philadelphia 14, Chicago White Sox 7, NY Mets 7, NY Yankees 7), and
+#: anything not listed is REFUSED rather than guessed.
+_PROVIDER_CLUB_ALIASES = {"a's": "athletics"}
+
+#: Returned when a leg IS a team total but its club cannot be resolved. Distinct
+#: from None ("not a team-total leg, not my business") because the caller must
+#: treat the two differently — see the branch in
+#: `_resolve_kalshi_spread_total_from_scores`.
+_TEAM_TOTAL_UNRESOLVED = object()
+
+
 def _exclusive_team_side(team_tokens, home_tokens, away_tokens):
     """Which side does ``team_tokens`` name — ``"home"``, ``"away"``, or None?
 
@@ -1622,6 +1643,7 @@ def _exclusive_team_side(team_tokens, home_tokens, away_tokens):
     ``Chicago WS`` against White Sox / Cubs deliberately returns None: no
     remaining token starts with ``ws``. Refusing is the designed outcome.
     """
+    team_tokens = {_PROVIDER_CLUB_ALIASES.get(t, t) for t in team_tokens}
     shared = home_tokens & away_tokens
     home_only = home_tokens - shared
     away_only = away_tokens - shared
@@ -1715,8 +1737,14 @@ def _team_total_outcome_is_winner(
         team_score = home_score
     elif side == "away":
         team_score = away_score
+    # CERT-499: this leg IS a team total — the regex matched — and we could not
+    # tell whose it is. Say so loudly instead of returning the same None that
+    # means "not a team-total leg": a `game_score` winner is NOT in
+    # OVERWRITABLE_WINNER_SOURCES_SQL, so grading the siblings and skipping this
+    # one drops the market out of every future candidate scan and strands this
+    # ladder permanently. All 56 production `A's` legs went this way.
     else:
-        return None
+        return _TEAM_TOTAL_UNRESOLVED
     line = float(tm.group(3))
     return (
         team_score > line
@@ -1888,6 +1916,11 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
         "h1_total": 0,
         "no_plays": 0,
         "no_parse": 0,
+        # CERT-499: a refusal that is not counted is a refusal nobody finds. These
+        # two make "the grader declined to attribute this leg" a number in the
+        # phase summary instead of silence.
+        "team_total_unresolved_legs": 0,
+        "team_total_deferred_markets": 0,
         "errors": [],
     }
 
@@ -1973,7 +2006,19 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                 # `stats["total"]` stays a per-MARKET count, exactly as before,
                 # so the phase summary keeps its old meaning; only correctness
                 # moves in this change.
-                resolved_team_total = False
+                #
+                # CERT-499: the write is ALL-OR-NOTHING across the market, and
+                # that is the whole point rather than tidiness. `game_score` is
+                # not in OVERWRITABLE_WINNER_SOURCES_SQL, and the candidate scan
+                # drops any market that already carries a non-overwritable
+                # winner — so grading thirteen legs and skipping one does not
+                # leave the fourteenth for later, it strands it FOREVER. All 56
+                # production `A's` legs were being lost exactly that way. If any
+                # leg is a team total we cannot attribute, the market is
+                # deferred intact and counted, so it stays a candidate and shows
+                # up in the phase summary instead of vanishing silently.
+                tt_writes: list[tuple[int, bool]] = []
+                tt_unresolved = 0
                 for oc in outcomes_list:
                     won = _team_total_outcome_is_winner(
                         oc.name,
@@ -1982,16 +2027,24 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                         row.home_score,
                         row.away_score,
                     )
-                    if won is None:
-                        continue
-                    await session.execute(
-                        text(
-                            "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
-                        ),
-                        {"won": won, "oid": oc.id},
-                    )
-                    resolved_team_total = True
-                if resolved_team_total:
+                    if won is _TEAM_TOTAL_UNRESOLVED:
+                        tt_unresolved += 1
+                    elif won is not None:
+                        tt_writes.append((oc.id, won))
+                if tt_unresolved:
+                    # Deferred, NOT resolved: write nothing, keep the market in
+                    # the candidate set, and make the refusal countable.
+                    stats["team_total_unresolved_legs"] += tt_unresolved
+                    stats["team_total_deferred_markets"] += 1
+                    continue
+                if tt_writes:
+                    for _oid, _won in tt_writes:
+                        await session.execute(
+                            text(
+                                "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                            ),
+                            {"won": _won, "oid": _oid},
+                        )
                     stats["total"] += 1
                     continue
 
