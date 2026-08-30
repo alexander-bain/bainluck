@@ -28,6 +28,7 @@ from app.utils.cross_source_matching import (
     is_resolved as _is_resolved,
     source as _source,
 )
+from app.utils.futures_liveness import market_reads_settled
 from app.utils.market_staleness import should_exclude_from_featured
 
 logger = logging.getLogger(__name__)
@@ -663,6 +664,16 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
         ):
             continue
         if _is_non_politics(m):
+            continue
+        # CERT-452: a decided election must not render as an open question.
+        # None of the filters around this one can see settlement — `status` is
+        # `'open'` on a settled Kalshi market (gotcha #33) and the stale cutoff
+        # reads `resolution_date`, which on the named specimen
+        # `KXGAPRIMARY1R-26MAY19` says 2027 for a primary held in May. The one
+        # shared read-side answer lives in `futures_liveness`; measured
+        # 2026-08-30 it removes 280 of the 305 settled politics markets that
+        # render today and keeps the 25 genuine independent bundles.
+        if market_reads_settled(m, now=now):
             continue
         if m.resolution_date and m.resolution_date < stale_cutoff:
             continue

@@ -128,17 +128,60 @@ VENUE_SETTLED_NOW_SQL = (
 #:
 #: Written against the alias ``fm``. The winner sub-select uses ``fo_w`` so it
 #: cannot collide with a caller's own ``fo``.
+#:
+#: 🔴 THE WINNER ARM IS GATED ON PROVEN MUTUAL EXCLUSIVITY (CERT-452).
+#: It used to read "any outcome of this market has won ⇒ the market is over",
+#: which is true of a winner FIELD and false of an independent bundle whose legs
+#: resolve separately. `_write_prices` refuses only the individual settled
+#: outcome; the SELECTOR was dropping the whole parent, so one settled leg froze
+#: every live sibling and removed them from the alarm denominator in the same
+#: instant — the quiet direction this module exists to engineer against.
+#:
+#: Not a hypothetical and not a zero-instance snapshot. Measured in production
+#: 2026-08-30: **716** markets passed every other liveness bound and were retired
+#: by the bare winner arm. **345** of them are classified by our own shape
+#: classifier as NOT exactly-one-winner — "Who will win a WTA Grand Slam in
+#: 2026?", "Who will win a ATP Grand Slam in 2026?", "<city> pro baseball wins
+#: this season?" — and 309 of those still held live legs, **4,282 priced
+#: outcomes** frozen out of refresh behind a sibling's win.
+#:
+#: The gate is ``shape.expected_winners = '1'``, the classifier's own positive
+#: statement that exactly one of these outcomes can win (it travels with
+#: ``outcome_relation: competitors`` and ``mutually_exclusive:true`` in the
+#: evidence). It is written as a POSITIVE requirement wrapped in ``COALESCE`` so
+#: that an unclassified or differently-classified market fails SAFE — it keeps
+#: the market live and noisy rather than silently retiring it. A bare
+#: ``NOT (x = '1' AND ...)`` would evaluate to NULL on absent metadata and filter
+#: the row out, which is the exact inversion of the intent.
+#:
+#: What this costs #2222: of its named nineteen, six are proven exactly-one-winner
+#: and stay retired here. ``KXGAPRIMARY1R-26MAY19`` is classified
+#: ``expected_winners: null / confidence: low`` and now falls through to the venue
+#: stamp — the same arm that already carries the three of the nineteen that have
+#: no winner recorded at all. It is the only tier-1 market re-admitted; the other
+#: 344 are tier 2+. The venue's own answer is the right authority for a market our
+#: classifier cannot vouch for, which is what that arm is for.
 SETTLED_PREDICATE_SQL = f"""
-       NOT EXISTS (
-             SELECT 1 FROM futures_outcomes fo_w
-              WHERE fo_w.market_id = fm.id
-                AND fo_w.is_winner IS TRUE
-           )
+       (
+             COALESCE(fm.market_metadata->'shape'->>'expected_winners', '') <> '1'
+          OR NOT EXISTS (
+                SELECT 1 FROM futures_outcomes fo_w
+                 WHERE fo_w.market_id = fm.id
+                   AND fo_w.is_winner IS TRUE
+              )
+       )
        AND (
              fm.market_metadata->>'{VENUE_SETTLED_KEY}' IS NULL
           OR fm.market_metadata->>'{VENUE_SETTLED_KEY}' > {_VENUE_SETTLED_CUTOFF_SQL}
            )
 """
+
+#: The mutual-exclusivity gate on its own, so a caller can report WHY a market
+#: was or was not eligible for the winner shortcut without restating the test.
+#: One definition, the same reason this module exists.
+EXACTLY_ONE_WINNER_SQL = (
+    "COALESCE(fm.market_metadata->'shape'->>'expected_winners', '') = '1'"
+)
 
 #: The pre-#2222 bounds, kept verbatim and kept separate: they are the ones the
 #: existing dashboards, CERT-404 G5 and the task's own comments describe.
@@ -155,11 +198,16 @@ LIVE_MARKET_SQL = f"{BASE_LIVENESS_SQL}       AND {SETTLED_PREDICATE_SQL.strip()
 #: Which of the two settled bounds retired a market, for the guard's exclusion
 #: report. A market can satisfy both; the winner is named first because it is
 #: our own reading and does not depend on an upstream being reachable.
-SETTLED_EXCLUSION_REASON_SQL = """
-        CASE WHEN EXISTS (
-                  SELECT 1 FROM futures_outcomes fo_w
-                   WHERE fo_w.market_id = fm.id AND fo_w.is_winner IS TRUE
-                ) THEN 'has_winner'
+#:
+#: Must state the SAME winner test the predicate does, gate included — a reason
+#: column that says ``has_winner`` about a market the predicate retired on its
+#: venue stamp is a report that cannot be reconciled with the thing it reports on.
+SETTLED_EXCLUSION_REASON_SQL = f"""
+        CASE WHEN {EXACTLY_ONE_WINNER_SQL}
+                  AND EXISTS (
+                        SELECT 1 FROM futures_outcomes fo_w
+                         WHERE fo_w.market_id = fm.id AND fo_w.is_winner IS TRUE
+                      ) THEN 'has_winner'
              ELSE 'venue_settled' END
 """
 
@@ -171,6 +219,88 @@ SETTLED_EXCLUSION_REASON_SQL = """
 #: this population and its reasons alongside its verdict, so "zero dark" always
 #: arrives with "and here is what I ruled out, and why".
 SETTLED_ONLY_SQL = f"NOT ({SETTLED_PREDICATE_SQL.strip()})"
+
+
+def market_reads_settled(market, *, now=None) -> bool:
+    """Is this market's contest DECIDED, for the purposes of RENDERING it?
+
+    🔴 THE READ SIDE FAILS THE OTHER WAY FROM THE WRITE SIDE, AND THAT IS THE
+    DESIGN (CERT-452). Everything above answers *is it worth asking a venue for
+    this price*, and it fails OPEN — an uncertain market stays live and noisy,
+    because a wrongly-excluded writer stops pricing something silently. This
+    answers a different question — *may we print this as an open question* — and
+    the costs are the mirror image:
+
+    * printing a decided election as a live forecast is a false number on the
+      page, which is the TRUTH pillar and the thing CERT-452 blocked on;
+    * not printing a card is a visible absence.
+
+    So this one fails toward SILENCE. It is deliberately allowed to be stricter
+    than :data:`SETTLED_PREDICATE_SQL`, and the two are not interchangeable.
+
+    Measured 2026-08-30: **305** open `politics`/`geopolitics` markets carry a
+    graded winner and render today as live forecasts, the named
+    `KXGAPRIMARY1R-26MAY19` (Georgia primary, one winner, three rendered
+    outcomes, a 2027 resolution date) among them. This predicate hides 280 of
+    them and keeps 25 — the genuine independent bundles whose other legs are
+    still ungraded.
+
+    TWO ARMS, and neither is `status`. Gotcha #33: a settled Kalshi market keeps
+    ``status='open'``, so the route's ``status == 'open'`` filter has never been
+    a settled test, and the future-but-wrong ``resolution_date`` is not one
+    either — Georgia's says 2027.
+
+    1. **We graded it.** An outcome is ``is_winner IS TRUE`` *and* the contest is
+       one where that ends it: either the classifier vouches for exactly one
+       winner (:data:`EXACTLY_ONE_WINNER_SQL`'s Python twin) or every other leg
+       already carries a ``resolution_source``. Both arms are needed — Georgia
+       is ``expected_winners: null, confidence: low`` and would survive the first
+       alone; a live independent bundle whose legs are ungraded would be hidden
+       by a bare "any winner" and must not be.
+
+       ``IS TRUE`` only, never ``= FALSE``: ``is_winner`` is nullable with
+       ``default=False``, so FALSE is ambiguous between "lost" and "nobody
+       looked". The same reading as everywhere else in this module.
+
+    2. **The venue said so, twice, across the confirmation window.** The same
+       stamp and the same delay the write side uses. A single bad read from an
+       upstream cannot blank a card.
+
+    Pure and defensive: an unloaded ``outcomes`` collection, absent metadata or
+    an unparseable stamp all read NOT settled, so a market is never hidden by a
+    shape this function failed to understand.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    outcomes = list(getattr(market, "outcomes", None) or [])
+    if any(getattr(o, "is_winner", None) is True for o in outcomes):
+        meta = getattr(market, "market_metadata", None) or {}
+        shape = meta.get("shape") if isinstance(meta, dict) else None
+        exclusive = (
+            isinstance(shape, dict)
+            and str(shape.get("expected_winners")) == "1"
+        )
+        all_legs_graded = all(
+            getattr(o, "is_winner", None) is True
+            or getattr(o, "resolution_source", None) is not None
+            for o in outcomes
+        )
+        if exclusive or all_legs_graded:
+            return True
+
+    meta = getattr(market, "market_metadata", None) or {}
+    stamp = meta.get(VENUE_SETTLED_KEY) if isinstance(meta, dict) else None
+    if isinstance(stamp, str) and stamp:
+        now = now or datetime.now(timezone.utc)
+        try:
+            seen = datetime.fromisoformat(stamp).replace(tzinfo=timezone.utc)
+        except ValueError:
+            # Same failure direction as the SQL comparison: a stamp we cannot
+            # read leaves the market visible rather than silently retiring it.
+            return False
+        if seen <= now - timedelta(hours=VENUE_SETTLED_CONFIRM_HOURS):
+            return True
+    return False
 
 
 def preserve_venue_settled(new_metadata, existing_column):

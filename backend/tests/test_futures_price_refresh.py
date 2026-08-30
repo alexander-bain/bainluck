@@ -85,6 +85,7 @@ class TestSelectionPredicate:
         because the f-strings indent it differently at each site.
         """
         import app.routes.admin_source_health as _health
+        import app.tasks.tournament_price_refresh as _tpr
         from app.utils.futures_liveness import LIVE_MARKET_SQL
 
         shared = _normalise(LIVE_MARKET_SQL)
@@ -97,9 +98,44 @@ class TestSelectionPredicate:
             "guard._PRICE_DARK_WORST_SQL": _health._PRICE_DARK_WORST_SQL,
             "guard._REGISTERED_DARK_SQL": _health._REGISTERED_DARK_SQL,
             "guard._REGISTERED_ELIGIBLE_SQL": _health._REGISTERED_ELIGIBLE_SQL,
+            # CERT-452: the seventh. `tournament_price_refresh` runs every ten
+            # minutes against register-pinned Polymarket identities and was
+            # outside this predicate entirely, so a market the hourly refresher
+            # and its guard had both retired kept being fetched and its settled
+            # outcomes overwritten.
+            "tournament._LIVE_REGISTERED_CONDITIONS_SQL":
+                _tpr._LIVE_REGISTERED_CONDITIONS_SQL,
         }
         for name, sql in askers.items():
             assert shared in _normalise(sql), f"{name} does not compose LIVE_MARKET_SQL"
+
+    def test_the_census_cannot_be_satisfied_by_a_short_list(self):
+        """CERT-452's structural finding, not just its instance.
+
+        The dictionary above is hand-maintained, so it discovers nothing: it
+        enumerated six askers for as long as there were seven, and the seventh
+        was a Tier-1 unattended writer on a ten-minute cadence. This asserts the
+        count so ADDING an asker without enrolling it fails here rather than in
+        production — the same reason `ENFORCED_TASKS` needs a terminal.
+
+        If you are here because you added a price asker: enrol it above, do not
+        bump this number alone.
+        """
+        import inspect
+
+        import app.routes.admin_source_health as _health
+        import app.tasks.tournament_price_refresh as _tpr
+
+        enrolled = 7
+        found = sum(
+            inspect.getsource(mod).count("{LIVE_MARKET_SQL}")
+            for mod in (fpr, _health, _tpr)
+        )
+        assert found == enrolled + 1, (
+            f"{found - 1} interpolation sites across the three asker modules but "
+            f"{enrolled} enrolled in the census "
+            f"(the +1 is the task's own remaining_stale census)"
+        )
 
     def test_the_remaining_stale_census_is_an_asker_too(self):
         """The task's own closing count is the number the run REPORTS.

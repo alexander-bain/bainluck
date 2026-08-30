@@ -488,3 +488,230 @@ class TestTheFailingRunKeepsItsOwnSummary:
         src = inspect.getsource(_tracked_run)
         failed_branch = src.split("elif verdict.verdict == FAILED:")[1].split("elif")[0]
         assert "result_summary=summary" in failed_branch
+
+
+# --- CERT-452 ----------------------------------------------------------------
+
+
+class _Out:
+    def __init__(self, is_winner=None, resolution_source=None):
+        self.is_winner = is_winner
+        self.resolution_source = resolution_source
+
+
+class _Mkt:
+    def __init__(self, outcomes=(), metadata=None):
+        self.outcomes = list(outcomes)
+        self.market_metadata = metadata
+
+
+def _exclusive(meta=None):
+    m = dict(meta or {})
+    m["shape"] = {"expected_winners": 1, "outcome_relation": "competitors"}
+    return m
+
+
+class TestTheWinnerShortcutIsGatedOnMutualExclusivity:
+    """CERT-452 P1. One winning leg used to retire an entire independent bundle.
+
+    `_write_prices` refuses only the individual settled outcome; the SELECTOR
+    dropped the whole parent as soon as ANY outcome won. On a field whose legs
+    resolve independently that freezes every still-live sibling and removes it
+    from the alarm denominator in the same instant — the quiet direction.
+
+    Not a zero-instance snapshot. Measured in production 2026-08-30: 716 markets
+    were retired by the bare winner arm, 345 of them classified by our own shape
+    classifier as NOT exactly-one-winner ("Who will win a WTA Grand Slam in
+    2026?", "<city> pro baseball wins this season?"), and 309 of those still held
+    live legs — 4,282 priced outcomes frozen behind a sibling's win.
+    """
+
+    def test_the_predicate_requires_the_exclusivity_gate(self):
+        sql = _norm(liveness.SETTLED_PREDICATE_SQL)
+        assert "expected_winners" in sql
+        assert "is_winner is true" in sql
+
+    def test_the_gate_is_null_safe_so_an_unclassified_market_stays_live(self):
+        """The failure direction is the whole point.
+
+        A bare `NOT (shape->>'expected_winners' = '1' AND EXISTS(...))` is NULL
+        on a market with no shape metadata, and a NULL in a WHERE filters the
+        row OUT — silently retiring exactly the markets we know least about.
+        COALESCE makes the requirement positive, so unknown means live.
+        """
+        assert "coalesce" in _norm(liveness.SETTLED_PREDICATE_SQL)
+        assert "coalesce" in _norm(liveness.EXACTLY_ONE_WINNER_SQL)
+
+    def test_the_exclusion_reason_states_the_same_test_as_the_predicate(self):
+        """A guard that reports `has_winner` about a market the predicate
+        actually retired on its venue stamp is a report that cannot be
+        reconciled with the thing it reports on."""
+        reason = _norm(liveness.SETTLED_EXCLUSION_REASON_SQL)
+        assert _norm(liveness.EXACTLY_ONE_WINNER_SQL) in reason
+        assert "has_winner" in liveness.SETTLED_EXCLUSION_REASON_SQL
+        assert "venue_settled" in liveness.SETTLED_EXCLUSION_REASON_SQL
+
+
+class TestTheReadSideSettledPredicate:
+    """CERT-452 P1. Stopping the WRITES never stopped the READ.
+
+    `/api/politics` still served `KXGAPRIMARY1R-26MAY19` — one graded winner,
+    three rendered outcomes, a 2027 resolution date on a primary held in May.
+    Neither `status` (gotcha #33) nor `resolution_date` can see that.
+    """
+
+    def test_the_georgia_shape_reads_settled(self):
+        """Its classifier says `expected_winners: null, confidence: low`, so the
+        exclusivity gate alone would not catch it — every other leg carrying a
+        `resolution_source` is what does."""
+        m = _Mkt([
+            _Out(is_winner=True, resolution_source="kalshi"),
+            _Out(resolution_source="kalshi"),
+            _Out(resolution_source="kalshi"),
+        ])
+        assert liveness.market_reads_settled(m) is True
+
+    def test_a_proven_exclusive_field_reads_settled_on_the_winner_alone(self):
+        m = _Mkt([_Out(is_winner=True), _Out(), _Out()], _exclusive())
+        assert liveness.market_reads_settled(m) is True
+
+    def test_an_independent_bundle_with_ungraded_legs_stays_visible(self):
+        """The kill, and the reason this is not just `any winner`. 25 open
+        politics markets are this shape and they are live."""
+        m = _Mkt([_Out(is_winner=True, resolution_source="kalshi"), _Out(), _Out()])
+        assert liveness.market_reads_settled(m) is False
+
+    def test_no_winner_is_never_settled_however_graded_the_legs_look(self):
+        """`KXSB-27`, the live control: 32 outcomes, every one carrying a
+        `resolution_source`, no winner. `resolution_source` is written on live
+        markets too, so it may only ever be read ALONGSIDE a winner."""
+        m = _Mkt([_Out(resolution_source="kalshi") for _ in range(32)], _exclusive())
+        assert liveness.market_reads_settled(m) is False
+
+    def test_a_false_is_winner_is_not_a_winner(self):
+        """`is_winner` is nullable with `default=False`; FALSE is ambiguous
+        between "lost" and "nobody looked", so only TRUE may be read."""
+        m = _Mkt([_Out(is_winner=False), _Out(is_winner=False)], _exclusive())
+        assert liveness.market_reads_settled(m) is False
+
+    def test_a_confirmed_venue_stamp_settles_it(self):
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+        old = (now - timedelta(hours=liveness.VENUE_SETTLED_CONFIRM_HOURS + 1)
+               ).strftime("%Y-%m-%dT%H:%M:%S")
+        m = _Mkt([_Out()], {liveness.VENUE_SETTLED_KEY: old})
+        assert liveness.market_reads_settled(m, now=now) is True
+
+    def test_a_fresh_venue_stamp_hides_nothing(self):
+        """Same confirmation delay as the write side: one bad read from an
+        upstream must not blank a card."""
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+        fresh = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
+        m = _Mkt([_Out()], {liveness.VENUE_SETTLED_KEY: fresh})
+        assert liveness.market_reads_settled(m, now=now) is False
+
+    def test_a_stamp_we_cannot_parse_leaves_the_card_visible(self):
+        m = _Mkt([_Out()], {liveness.VENUE_SETTLED_KEY: "not-a-date"})
+        assert liveness.market_reads_settled(m) is False
+
+    def test_a_market_with_nothing_loaded_is_not_settled(self):
+        """Never hide a card because of a shape this function did not
+        understand."""
+        assert liveness.market_reads_settled(_Mkt()) is False
+        assert liveness.market_reads_settled(_Mkt([], None)) is False
+
+    def test_the_politics_route_actually_calls_it(self):
+        """A predicate no caller asks changes nothing on the page."""
+        import inspect
+
+        from app.routes import politics as politics_route
+
+        source = inspect.getsource(politics_route.get_politics)
+        assert "market_reads_settled(" in source
+
+
+class TestTheSeventhPriceAsker:
+    """CERT-452 P1. `tournament_price_refresh` runs every ten minutes, imported
+    nothing from `futures_liveness`, and filtered on no liveness signal at all.
+    A registered settled market kept being fetched and overwritten after the
+    hourly refresher and its guard had both correctly retired it."""
+
+    def test_it_composes_the_shared_predicate(self):
+        from app.tasks import tournament_price_refresh as tpr
+
+        assert _norm(liveness.LIVE_MARKET_SQL) in _norm(
+            tpr._LIVE_REGISTERED_CONDITIONS_SQL
+        )
+
+    def test_it_filters_before_the_venue_fetch(self):
+        """A retired market must also stop costing a Gamma request."""
+        import inspect
+
+        from app.tasks import tournament_price_refresh as tpr
+
+        source = inspect.getsource(tpr._refresh_registered_tournament_prices)
+        assert source.index("_live_conditions(") < source.index(
+            "get_markets_by_conditions("
+        )
+
+    def test_the_write_path_still_refuses_a_graded_outcome(self):
+        """Both bounds are needed: a market can be live while one of its legs
+        has resolved, which is exactly why the market-level winner shortcut had
+        to be narrowed."""
+        import inspect
+
+        from app.tasks import tournament_price_refresh as tpr
+
+        source = _norm(inspect.getsource(tpr._write_refreshed_prices))
+        assert "is_winner.is_not(true)" in source
+        assert "is_winner == false" not in source
+
+    async def test_the_filter_keeps_only_what_the_predicate_admits(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.tasks import tournament_price_refresh as tpr
+
+        session = MagicMock()
+        session.execute = AsyncMock(
+            return_value=MagicMock(all=MagicMock(return_value=[("live-b",)]))
+        )
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        with patch("app.tasks.base.get_task_session", return_value=ctx):
+            out = await tpr._live_conditions(["live-b", "dead-a", "dead-c"])
+        assert out == ["live-b"]
+
+    async def test_the_filter_fails_OPEN_on_a_read_error(self):
+        """A filter that failed closed would blank the grid on a transient
+        error — the loud version of the silent staleness this task exists to
+        end. `_write_prices`' per-outcome refusal still holds the line."""
+        from unittest.mock import patch
+
+        from app.tasks import tournament_price_refresh as tpr
+
+        with patch("app.tasks.base.get_task_session",
+                   side_effect=RuntimeError("db down")):
+            out = await tpr._live_conditions(["a", "b"])
+        assert out == ["a", "b"]
+
+    async def test_an_all_settled_register_is_no_work_and_never_green(self):
+        from unittest.mock import AsyncMock, patch
+
+        from app.tasks import tournament_price_refresh as tpr
+
+        with patch.object(tpr, "load_register", create=True), \
+             patch("app.utils.tournament_register.load_register",
+                   return_value={"players": [{"sources": [{
+                       "source": "polymarket",
+                       "market_external_id": "0xdead",
+                       "outcome_id": 1,
+                   }]}]}), \
+             patch.object(tpr, "_live_conditions", AsyncMock(return_value=[])):
+            out = await tpr._refresh_registered_tournament_prices([("us-open", "2026")])
+        assert out["terminal"] == "no_work"
+        assert out["reason"] == "all_registered_markets_settled"
+        assert out["conditions_settled"] == 1
