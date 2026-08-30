@@ -239,6 +239,65 @@ def normalize_name(name: str) -> str:
     return result
 
 
+# College feeds (Kalshi above all) write a trailing "State" as "St." —
+# "Ball St.", "Ohio St.", "Boise St.". The same two letters mean "Saint" when
+# they LEAD a name ("St. Louis Cardinals", "St. Francis Fighting Saints") or sit
+# interior to one ("Mount St. Mary's"), so the expansion is position-guarded:
+# only a trailing abbreviation qualifies, and only when something precedes it.
+_TRAILING_STATE_RE = re.compile(r"(?<=\S)\s+St\.?$", re.IGNORECASE)
+
+# A token-trailing period carries no identity: "Youngstown St Penguins" and
+# "Youngstown St." name the same school.
+_TOKEN_TRAILING_PERIOD_RE = re.compile(r"\.(?=\s|$)")
+
+
+def expand_trailing_state_abbrev(name: str) -> str:
+    """Expand a trailing "St."/"St" abbreviation to "State".
+
+    Case and diacritics are preserved, so the result is safe to feed straight
+    into an ILIKE pattern. Names that do not end in the abbreviation — and
+    names where "St." leads or sits interior — are returned unchanged.
+
+    Examples:
+        "Ball St."             -> "Ball State"
+        "Michigan St"          -> "Michigan State"
+        "St. Louis Cardinals"  -> "St. Louis Cardinals"   (Saint, not State)
+        "Mount St. Mary's"     -> "Mount St. Mary's"      (Saint, not State)
+    """
+    if not name:
+        return name
+    return _TRAILING_STATE_RE.sub(" State", name)
+
+
+def normalize_team_name_for_matching(name: str) -> str:
+    """`normalize_name` plus the college-feed variations that otherwise block a
+    correct market → event link.
+
+    Unlike `expand_trailing_state_abbrev` — which feeds an ILIKE pattern, where
+    a wrong guess costs a wrong candidate row — this is a CANONICAL form used to
+    compare two names to each other. It expands "st"/"st." in any position but
+    the first, because both sides receive the identical treatment: an expansion
+    that is linguistically wrong ("Mount St. Mary's" -> "mount state mary's") is
+    harmless as long as it is applied consistently and collides no two distinct
+    teams. A LEADING "st." is left alone — that one really is "Saint", and
+    "St. Louis" must never read as a state school.
+
+    Examples:
+        "Ball St."               -> "ball state"
+        "Youngstown St Penguins" -> "youngstown state penguins"
+        "St. Louis Cardinals"    -> "st louis cardinals"
+    """
+    normalized = normalize_name(name)
+    if not normalized:
+        return ""
+    normalized = _TOKEN_TRAILING_PERIOD_RE.sub("", normalized)
+    tokens = normalized.split()
+    return " ".join(
+        "state" if i > 0 and token == "st" else token
+        for i, token in enumerate(tokens)
+    )
+
+
 def _expand_abbreviations(name: str) -> str:
     """Expand common abbreviations in a normalized name.
 

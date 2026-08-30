@@ -12,7 +12,10 @@ import logging
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 
-from app.utils.name_normalization import normalize_name as _normalize_name
+from app.utils.name_normalization import (
+    expand_trailing_state_abbrev as _expand_trailing_state_abbrev,
+    normalize_team_name_for_matching as _normalize_for_matching,
+)
 from app.utils.sport_keys import (
     KALSHI_GAME_TICKER_PREFIXES as _KALSHI_GAME_TICKER_PREFIXES,
     KALSHI_TICKER_TO_SPORT_KEY as _TICKER_TO_SPORT_PREFIX,
@@ -639,9 +642,13 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     - Full name match: "Boston Celtics" == "Boston Celtics"
     - Substring: "Celtics" in "Boston Celtics"
     - Normalized (accents, case): "lakers" == "Lakers"
+    - College "St." abbreviation: "Ball St." == "Ball State Cardinals"
+
+    The "St." expansion is trailing-only, so "Ohio St." still does NOT match
+    "Ohio Bobcats" and "St. Louis" is never read as a state school.
     """
-    mt = _normalize_name(market_team)
-    et = _normalize_name(event_team)
+    mt = _normalize_for_matching(market_team)
+    et = _normalize_for_matching(event_team)
 
     if not mt or not et:
         return False
@@ -1490,6 +1497,7 @@ def _expand_team_search_terms(team: str) -> list[str]:
     - Abbreviated names ("WSH Capitals" → also search "Capitals")
     - City abbreviations ("MIN" → also search "Minnesota")
     - City-only names ("Pittsburgh" → already matches "Pittsburgh Pirates")
+    - College "St." abbreviation ("Ball St." → also search "Ball State")
 
     Returns [original] plus expanded terms.
     """
@@ -1513,6 +1521,15 @@ def _expand_team_search_terms(team: str) -> list[str]:
         expanded = _CITY_ABBREV_TO_NAME.get(team.lower())
         if expanded:
             terms.append(expanded)
+
+    # College feeds write a trailing "State" as "St.", and "%Ball St.%" matches
+    # no event row that has ever existed. Add the expansion as its own term.
+    # Deliberately AFTER the mascot rule above: that rule reads the original
+    # name, whose last word is "St." (under its 5-char floor), so the bare
+    # "%State%" — which would drag in every state school — is never emitted.
+    state_expanded = _expand_trailing_state_abbrev(team)
+    if state_expanded != team:
+        terms.append(state_expanded)
 
     return terms
 
