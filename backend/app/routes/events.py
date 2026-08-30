@@ -9201,24 +9201,49 @@ async def _build_related_futures(
 
     # Load season markets across all tiers in one query with per-tier limits.
     # Uses a window function to rank within each tier, then filters to top 100.
+    #
+    # 🔴 THIS IS THE QUERY THAT COSTS THE WAIT, and it does not depend on the
+    # event. Production `pg_stat_statements` 2026-08-30: 2,245 calls, mean
+    # 1,061 ms, max 30,773 ms — the dominant query of a build LAT-P136 cached
+    # but explicitly did not speed up (its P136-1). Every input above derives
+    # from the SPORT (`ext_id_patterns`, `compatible_sport_ids`, `llm_category`,
+    # `kalshi_roots`, the gender flags) or from `event_is_finished`, so the
+    # answer is shared by every event in the sport and the route was re-deriving
+    # it per event page. Why it cannot instead be indexed away (en_US collation
+    # defeats a prefix LIKE) and why the expensive arms cannot be dropped (they
+    # carry real rows for americanfootball, basketball and tennis) are both
+    # measured in `utils/season_market_discovery.py`.
+    #
+    # `debug` bypasses, in both directions, for the same reason the cache ladder
+    # at the top of this route does: a debug request must be able to see the
+    # uncached truth, and must never publish it to a normal reader.
     from sqlalchemy import text as _sql_text
-    _tier_query = await db.execute(
-        select(FuturesMarket.id, FuturesMarket.market_tier)
-        .where(
-            *base_season_filters,
-            FuturesMarket.market_tier.in_([1, 2, 3, 4]),
-        )
-        .order_by(FuturesMarket.market_tier, FuturesMarket.id)
-        .limit(400)
+
+    from app.utils import season_market_discovery as _smd
+
+    season_market_ids = (
+        None if debug else _smd.read(event_sport_key, event_is_finished)
     )
-    _tier_rows = _tier_query.all()
-    _tier_counts: dict[int, int] = {}
-    season_market_ids = []
-    for row in _tier_rows:
-        tier = row.market_tier or 4
-        _tier_counts[tier] = _tier_counts.get(tier, 0) + 1
-        if _tier_counts[tier] <= 100:
-            season_market_ids.append(row.id)
+    if season_market_ids is None:
+        _tier_query = await db.execute(
+            select(FuturesMarket.id, FuturesMarket.market_tier)
+            .where(
+                *base_season_filters,
+                FuturesMarket.market_tier.in_([1, 2, 3, 4]),
+            )
+            .order_by(FuturesMarket.market_tier, FuturesMarket.id)
+            .limit(400)
+        )
+        _tier_rows = _tier_query.all()
+        _tier_counts: dict[int, int] = {}
+        season_market_ids = []
+        for row in _tier_rows:
+            tier = row.market_tier or 4
+            _tier_counts[tier] = _tier_counts.get(tier, 0) + 1
+            if _tier_counts[tier] <= 100:
+                season_market_ids.append(row.id)
+        if not debug:
+            _smd.write(event_sport_key, event_is_finished, season_market_ids)
 
     # Debug: tier breakdown of season markets
     if debug and season_market_ids:
