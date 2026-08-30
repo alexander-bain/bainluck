@@ -362,17 +362,67 @@ class TestEventTournamentExtensions:
             assert reason in tournament_event_link.UNRESOLVED_REASONS
 
     async def test_slate_rows_carry_the_event_they_route_to(self, client):
-        """The routing fix, end to end: a match card addresses `/events/{id}`."""
+        """The routing fix, end to end: a match card addresses `/events/{id}`.
+
+        ⚠️ **The clock is not an input to this property, and it used to be.**
+        Until UX-P187 this drove the route and asserted `rows` non-empty. The
+        register is a COMMITTED FILE with fixed `scheduled_date` values and
+        `build_slate` drops anything older than `now - MATCH_STALE_AFTER_HOURS`
+        as `ALREADY_PLAYED` — `tournament_slate.py` says so in as many words:
+        "The register is a file and the clock is not." The us-open register's
+        latest matchup starts `2026-08-30T04:00:00Z`, so at **10:00:00 UTC on
+        2026-08-30** the last row aged out, every one of the 124 matchups
+        dropped, and the assertion began failing on unchanged code. It had
+        passed an hour earlier.
+
+        So the anchor is now taken FROM the register — its own latest scheduled
+        start — and there is no branch on the wall clock (gotcha #44: if your
+        anchor contains an `if`, it isn't fixed). The anti-vacuity assertion is
+        RE-ASSERTED against that clock rather than deleted; a stand-in that
+        stops qualifying gets re-pointed, never dropped.
+        """
+        from datetime import datetime, timedelta
+
+        from app.utils.tournament_register import load_register
+        from app.utils.tournament_slate import build_slate
+
         body = (await client.get("/api/tournaments/us-open")).json()
-        rows = body["slate"]["matches"]
-        assert rows, "no slate rows to check"
-        for row in rows:
-            assert "event_id" in row
-            assert row["event_id"] is None or isinstance(row["event_id"], int)
-        # Whatever the link map resolved must actually reach the rows — a
-        # resolution nobody renders is not a ship.
         by_matchup = body["event_links"]["by_matchup"]
-        for row in rows:
-            expected = by_matchup.get(row["matchup_key"])
-            if expected is not None:
-                assert row["event_id"] == expected
+
+        def check(rows):
+            for row in rows:
+                assert "event_id" in row
+                assert row["event_id"] is None or isinstance(row["event_id"], int)
+                # Whatever the link map resolved must actually reach the rows —
+                # a resolution nobody renders is not a ship.
+                expected = by_matchup.get(row["matchup_key"])
+                if expected is not None:
+                    assert row["event_id"] == expected
+
+        # The route's own rows, however many the clock has left it. Vacuous on
+        # its own, which is exactly why the register-anchored pass below exists.
+        check(body["slate"]["matches"])
+
+        register = load_register(
+            "us-open", tournaments.REGISTERED_TOURNAMENTS["us-open"]["season"]
+        )
+        starts = [
+            datetime.fromisoformat(str(m["scheduled_date"]).replace("Z", "+00:00"))
+            for m in (register.get("matchups") or [])
+            if m.get("scheduled_date")
+        ]
+        assert starts, "the committed register has no scheduled matchups at all"
+        # One second after the last registered start: every matchup is inside
+        # its staleness window, so the slate is at its fullest. Derived from the
+        # file, so it stays true however long the file sits here.
+        anchored = build_slate(
+            register,
+            prices={},
+            now=max(starts) + timedelta(seconds=1),
+            event_ids=by_matchup,
+        )
+        assert anchored["matches"], (
+            "no slate rows even at the register's own clock — the drop is not "
+            "staleness: %r" % (anchored.get("dropped"),)
+        )
+        check(anchored["matches"])
