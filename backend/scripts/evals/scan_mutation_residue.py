@@ -151,6 +151,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # the real route. That trade is argued in the harness docstring.
     "search_suggestions_cold_mutations": [("MUTANTS", 2, 3, "TARGET")],
     "search_word_test_mutations": [("MUTANTS", 2, 3, 1)],
+    # LAT-P146. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above. Two targets in one table — the
+    # shared population module and the adapter that consumes it — so the target
+    # is carried per-entry at index 4, the `futures_categories_warm_mutations`
+    # shape.
+    "tennis_population_mutations": [("MUTANTS", 2, 3, 4)],
     "typeahead_concept_provenance_mutations": [("MUTATIONS", 2, 3, "TARGET")],
     "typeahead_warmer_mutations": [("MUTATIONS", 3, 4, 1)],
 }
