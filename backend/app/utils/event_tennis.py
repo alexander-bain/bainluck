@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -382,13 +382,18 @@ class TennisEventAdapter:
     domain = "tennis"
 
     async def build_event(self, slug: str, db: AsyncSession) -> dict | None:
-        from datetime import datetime, timedelta, timezone
-        from app.models import FuturesMarket
+        from datetime import datetime, timezone
         from app.utils.name_normalization import clean_slug
         from app.utils.outcome_display import (
             is_field_outcome,
             is_placeholder_outcome_name,
             normalize_display_probs,
+        )
+        from app.utils.tennis_population import (
+            attach_outcomes,
+            load_outcomes,
+            load_population,
+            winner_candidate_ids,
         )
 
         now = datetime.now(timezone.utc)
@@ -398,25 +403,29 @@ class TennisEventAdapter:
         # it settles; without this it drops out of the query and the page vanishes
         # right when the champion is crowned (Sunday night of a slam). Bounded by
         # resolution_date so ancient tournaments never resurface / clutter matching.
-        resolved_cutoff = now - timedelta(days=_RESOLVED_WINDOW_DAYS)
-        q = (
-            select(FuturesMarket)
-            .options(selectinload(FuturesMarket.outcomes))
-            .where(
-                FuturesMarket.llm_sport_category == "tennis",
-                or_(
-                    FuturesMarket.status == "open",
-                    and_(
-                        FuturesMarket.status.in_(("resolved", "closed", "settled")),
-                        FuturesMarket.resolution_date.isnot(None),
-                        FuturesMarket.resolution_date >= resolved_cutoff,
-                    ),
-                ),
-            )
+        #
+        # LAT-P146: the SAME two arms, fetched differently. Loading them as ORM
+        # rows with `selectinload(outcomes)` cost 23,101 markets and 50,842
+        # outcomes in ~47 queries to render 1,307 children — measured 21.0 s on
+        # the US Open, and 30.3 s (Heroku H12, an error page) on one of its alias
+        # slugs. The open arm is now read fresh off its own partial index; the
+        # resolved arm is a sequential scan of a 1.6 GB table that is identical
+        # for every tennis key, so it is fetched once and shared, as a strict
+        # superset whose window is re-applied here. Identity only: no price and
+        # no grade is ever read from the shared half.
+        # `app/utils/tennis_population.py` carries the measurements.
+        markets = await load_population(
+            db, now=now, window_days=_RESOLVED_WINDOW_DAYS
         )
-        markets = list((await db.execute(q)).scalars().unique().all())
         if not markets:
             return None
+
+        # LAT-P146: outcomes for the winner CANDIDATES, and nothing else yet —
+        # `winner_candidate_ids` is a superset of every market the resolver below
+        # can ask a count about, derived from the same name-only tests it uses.
+        attach_outcomes(
+            markets, await load_outcomes(db, winner_candidate_ids(markets, slug))
+        )
 
         def _real_outcome_count(m) -> int:
             return sum(
@@ -512,7 +521,13 @@ class TennisEventAdapter:
             if m.id != winner.id and m.group_id and market_in_event(m.name, entrant_keys):
                 matched_containers.add(m.group_id)
 
-        matchup_ids, prop_ids, children = [], [], []
+        # LAT-P146: association first, outcomes second. Every one of the three
+        # methods above reads a NAME or a `group_id` — none of them needs a price
+        # — so the children can be identified before anything is loaded, and then
+        # their outcomes fetched in ONE query instead of the whole population's in
+        # forty-seven. Measured on the US Open: 1,307 children out of a 23,101
+        # market population, so ~94% of that load was never read.
+        associated: list[tuple[object, str]] = []
         for m in markets:
             if m.id == winner.id:
                 continue
@@ -524,6 +539,15 @@ class TennisEventAdapter:
                 method = "token"
             else:
                 continue
+            associated.append((m, method))
+
+        attach_outcomes(
+            (m for m, _ in associated),
+            await load_outcomes(db, [m.id for m, _ in associated]),
+        )
+
+        matchup_ids, prop_ids, children = [], [], []
+        for m, method in associated:
             outs = sorted(
                 (m.outcomes or []),
                 key=lambda o: float(o.current_probability or 0),
