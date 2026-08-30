@@ -409,9 +409,11 @@ async def reclassify_misclassified_events(
             sport = sport_result.scalar_one_or_none()
             if not sport:
                 # Create the sport
+                from app.utils.sport_keys import sport_display_name
+
                 sport = Sport(
                     key=correct_sport_key,
-                    name=correct_sport_key.replace("_", " ").title(),
+                    name=sport_display_name(correct_sport_key),
                     group=correct_sport_key.split("_")[0],
                     active=True,
                 )

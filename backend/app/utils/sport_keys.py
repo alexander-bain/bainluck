@@ -227,6 +227,70 @@ SPORT_PREFIX_TO_LLM_CATEGORY: dict[str, str] = {
 
 
 # =============================================================================
+# 5b. SPORT_PREFIX_DISPLAY_NAME — sport key prefix → the English word the site
+#     already prints for that sport
+# =============================================================================
+#
+# These are not new words. Each one is the `name` the frontend's SPORT_CATEGORIES
+# table (`frontend/lib/sportCategories.ts`) already renders for the same sport, so
+# a row named from here reads the same as every other card in the same category.
+#
+# The reason this map exists: fifteen `sports` rows were carrying their own key in
+# `Sport.name` — `tennis_other`, `soccer_other`, `esports` and the rest of the
+# `*_other` catch-all family. `Sport.name` is the CURATED display name, and it is
+# served raw as `sport_name` by thirteen route payloads, so those rows printed a
+# payload key wherever a reader expected a category. `aussierules` is the one
+# entry that does NOT mirror the frontend, which says "AFL": AFL is a single
+# league, and a catch-all bucket has to name the sport, not one of its leagues.
+SPORT_PREFIX_DISPLAY_NAME: dict[str, str] = {
+    "americanfootball": "Football",
+    "aussierules": "Australian Rules",
+    "baseball": "Baseball",
+    "basketball": "Basketball",
+    "boxing": "Boxing",
+    "cricket": "Cricket",
+    "curling": "Curling",
+    "esports": "Esports",
+    "fieldhockey": "Field Hockey",
+    "golf": "Golf",
+    "icehockey": "Hockey",
+    "lacrosse": "Lacrosse",
+    "mma": "MMA",
+    "motorsport": "Motorsport",
+    "rugby": "Rugby",
+    "soccer": "Soccer",
+    "tennis": "Tennis",
+}
+
+# The catch-all suffix the Odds API uses for "this sport, league not otherwise
+# mapped". `tennis_other` is every tennis event outside a named tour.
+_SPORT_CATCH_ALL_SUFFIX = "_other"
+
+
+def sport_display_name(sport_key: str) -> str:
+    """Return the display name to store in ``Sport.name`` for ``sport_key``.
+
+    Two shapes get the curated English word: the catch-all bucket
+    (``tennis_other`` → "Tennis") and a bare sport prefix used as a key in its own
+    right (``esports`` → "Esports"). Everything else keeps the title-cased
+    fallback the auto-create paths have always used, so a named league key is
+    unaffected: ``soccer_epl`` still comes back "Soccer Epl".
+    """
+    if not sport_key:
+        return ""
+
+    prefix = sport_key
+    if sport_key.endswith(_SPORT_CATCH_ALL_SUFFIX):
+        prefix = sport_key[: -len(_SPORT_CATCH_ALL_SUFFIX)]
+
+    curated = SPORT_PREFIX_DISPLAY_NAME.get(prefix)
+    if curated:
+        return curated
+
+    return sport_key.replace("_", " ").title()
+
+
+# =============================================================================
 # 6. LLM_CATEGORY_TO_SPORT_PREFIX — LLM category → sport key prefix
 # =============================================================================
 

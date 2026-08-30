@@ -1519,9 +1519,11 @@ async def _poll_sport_odds(sport_key: str):
             sport = result.scalar_one_or_none()
 
             if not sport:
+                from app.utils.sport_keys import sport_display_name
+
                 sport = Sport(
                     key=sport_key,
-                    name=sport_key.replace("_", " ").title(),
+                    name=sport_display_name(sport_key),
                     active=True,
                 )
                 session.add(sport)

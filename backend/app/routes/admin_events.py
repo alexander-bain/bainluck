@@ -70,7 +70,9 @@ async def create_event_manually(
     )
     sport = sport_result.scalar_one_or_none()
     if not sport:
-        display_name = sport_name or sport_key.replace("_", " ").title()
+        from app.utils.sport_keys import sport_display_name
+
+        display_name = sport_name or sport_display_name(sport_key)
         group = sport_key.split("_")[0].title() if "_" in sport_key else display_name
         sport = Sport(key=sport_key, name=display_name, group=group, active=True)
         db.add(sport)
