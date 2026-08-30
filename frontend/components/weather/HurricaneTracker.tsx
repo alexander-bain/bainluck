@@ -2,20 +2,15 @@
 
 import { probColor, type EventMarket } from "./data";
 import { SourceBadge } from "./SourceBadge";
-import ProbabilityNumber from "./ProbabilityNumber";
-
-const months = [
-  { m: "May", p: 21 },
-  { m: "Jun", p: 34 },
-  { m: "Jul", p: 58 },
-  { m: "Aug", p: 78 },
-  { m: "Sep", p: 88 },
-  { m: "Oct", p: 60 },
-  { m: "Nov", p: 24 },
-];
 
 export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
-  const marketRows = items.slice(0, 4);
+  // Every number this card prints is a market price out of `items`. It used to
+  // print eight that were not: a hard-coded 80% hero and a seven-bar monthly
+  // climatology chart, both survivors of the fabricated-data purge (567e22b4,
+  // 8484c3ce) that emptied `data.ts` but never opened this file. Measured
+  // against the real payload on 2026-08-30, the card rendered twelve
+  // percentages and only four of them came from a market.
+  const marketRows = items.slice(0, 8);
 
   return (
     <div
@@ -25,123 +20,46 @@ export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
         padding: 22,
       }}
     >
-      {/* Header */}
-      <div className="flex items-start justify-between" style={{ marginBottom: 20 }}>
-        <div>
-          <div
-            className="flex items-center"
-            style={{ gap: 6, marginBottom: 6 }}
-          >
-            <span
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                backgroundColor: "#B91C1C",
-                flexShrink: 0,
-              }}
-            />
-            <span
-              style={{
-                fontSize: 11.5,
-                fontWeight: 600,
-                letterSpacing: "0.5px",
-                textTransform: "uppercase",
-                color: "#B91C1C",
-              }}
-            >
-              Hurricane Season &middot; 2026
-            </span>
-          </div>
-          <h3
-            style={{
-              fontSize: 20,
-              fontWeight: 600,
-              color: "#111827",
-              margin: 0,
-            }}
-          >
-            Atlantic season tracker
-          </h3>
-        </div>
-
-        <div className="flex flex-col items-end" style={{ gap: 2 }}>
-          <ProbabilityNumber value={80} size={32} forceColor="#22C55E" />
+      {/* Header. The basin is deliberately not named: the rail behind this card
+          is `FuturesMarket.name ILIKE '%hurricane%'` (routes/weather.py) with no
+          basin filter at all, so "Atlantic" was a claim the data could not back —
+          the live payload carries Pacific-named storms alongside Atlantic ones. */}
+      <div style={{ marginBottom: 20 }}>
+        <div
+          className="flex items-center"
+          style={{ gap: 6, marginBottom: 6 }}
+        >
           <span
             style={{
-              fontSize: 11,
-              color: "#6B7280",
-              textAlign: "right",
-              maxWidth: 130,
-              lineHeight: 1.3,
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              backgroundColor: "#B91C1C",
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              fontSize: 11.5,
+              fontWeight: 600,
+              letterSpacing: "0.5px",
+              textTransform: "uppercase",
+              color: "#B91C1C",
             }}
           >
-            &ge;1 major hurricane in 2026
+            Hurricane Season
           </span>
         </div>
-      </div>
-
-      {/* Monthly bars */}
-      <div style={{ marginBottom: 20 }}>
-        <div className="flex items-end" style={{ gap: 8, height: 120 }}>
-          {months.map((mo) => {
-            const isPeak = mo.p >= 70;
-            const opacity = 0.28 + (mo.p / 100) * 0.72;
-            const barHeight = (mo.p / 100) * 100;
-
-            return (
-              <div
-                key={mo.m}
-                className="flex flex-col items-center flex-1"
-                style={{ height: "100%", justifyContent: "flex-end" }}
-              >
-                <span
-                  className="font-mono"
-                  style={{
-                    fontSize: 11,
-                    fontWeight: isPeak ? 700 : 400,
-                    color: isPeak ? "#B91C1C" : "#9CA3AF",
-                    marginBottom: 4,
-                  }}
-                >
-                  {mo.p}%
-                </span>
-                <div
-                  style={{
-                    width: "100%",
-                    height: barHeight,
-                    borderRadius: 4,
-                    background: "linear-gradient(180deg, #EF4444, #F87171)",
-                    opacity,
-                  }}
-                />
-              </div>
-            );
-          })}
-        </div>
-
-        <div
-          className="flex"
+        <h3
           style={{
-            gap: 8,
-            borderTop: "1px solid #E5E7EB",
-            paddingTop: 6,
-            marginTop: 6,
+            fontSize: 20,
+            fontWeight: 600,
+            color: "#111827",
+            margin: 0,
           }}
         >
-          {months.map((mo) => (
-            <div
-              key={mo.m}
-              className="flex-1 text-center"
-              style={{
-                fontSize: 11,
-                color: "#6B7280",
-              }}
-            >
-              {mo.m}
-            </div>
-          ))}
-        </div>
+          Hurricane markets
+        </h3>
       </div>
 
       {/* Market rows */}
