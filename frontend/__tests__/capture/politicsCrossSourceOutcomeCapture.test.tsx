@@ -219,8 +219,11 @@ describe("UX-P187 · every number on the card says what it prices", () => {
     const text = visibleText(markup(CrossSourceCard, AFTER));
     expect(text).toContain("Next President of Estonia?");
     expect(text).toContain("Ülle Madise");
-    expect(text).toContain("97.5%");
-    expect(text).toContain("34.6%");
+    // `98%` / `35%`, not `97.5%` / `34.6%`: UX-P191 routed this card through
+    // `formatProbabilityPercent`, the site's single home for the decision. The
+    // served payload is unchanged — only what the card prints from it.
+    expect(text).toContain("98%");
+    expect(text).toContain("35%");
   });
 
   test("the name tracks the payload — it is not hard-coded", () => {
@@ -249,7 +252,7 @@ describe("UX-P187 · every number on the card says what it prices", () => {
       }),
     );
     expect(text).toContain("Yes");
-    expect(text).toContain("30.5%");
+    expect(text).toContain("31%"); // 30.5 half-up, UX-P191
   });
 
   test("a pre-deploy cached payload renders no caption AND no empty element", () => {
@@ -258,7 +261,7 @@ describe("UX-P187 · every number on the card says what it prices", () => {
     // degrade to what it looked like before, not to a blank gap.
     const { outcome: _dropped, ...cached } = AFTER;
     const m = markup(CrossSourceCard, cached as CrossSourceMatch);
-    expect(visibleText(m)).toContain("97.5%");
+    expect(visibleText(m)).toContain("98%"); // UX-P191
     expect(captionCount(m)).toBe(0);
   });
 

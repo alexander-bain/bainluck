@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import group_markets_by_group_id
+from app.utils.graded_card import rendered_percent
 from app.utils.outcome_display import drop_duplicate_binary_legs
 from app.utils.market_staleness import should_exclude_from_featured, is_title_implied_stale
 
@@ -78,13 +79,30 @@ def _format_closes(dt: datetime | None) -> str | None:
 
 
 def _highest_prob(market: FuturesMarket) -> float:
-    """Return the highest current_probability among a market's outcomes, as 0-100 int."""
+    """Return the highest current_probability among a market's outcomes, as 0-100 int.
+
+    ** The rounding is ``rendered_percent``, NOT ``round()``. ** This printed
+    ``round(best * 100)``, and Python's built-in is banker's rounding, so every
+    probability landing exactly on a ``.5`` with an even floor rendered one point
+    LOW against the number the rest of the product prints for the same value —
+    ``0.085`` is **8%** here and **9%** on web (``Math.round``), on native
+    (``.rounded()``) and in the server's own fingerprint (#1933,
+    ``contracts/rendered_percent.json``).
+
+    Measured on production 2026-08-30 over the 442 open weather markets this
+    route serves: 203 have a leader on a ``.5`` boundary and **81 of them
+    disagreed** — 18.3% of the page. At the outcome level (this function plus
+    the two below) it was **373 of 2,650 priced outcomes, 14.1%**. Not a
+    rounding preference: a wrong number, on the one surface whose whole job is
+    to print it.
+    """
     best = 0.0
     for o in market.outcomes:
         p = float(o.current_probability or 0)
         if p > best:
             best = p
-    return round(best * 100)
+    printed = rendered_percent(best)
+    return 0 if printed is None else printed
 
 
 def _market_source(market: FuturesMarket) -> str:
@@ -643,7 +661,8 @@ async def get_cities(db: AsyncSession):
         sources.add(_market_source(chosen))
 
         for o in chosen.outcomes:
-            p = round(float(o.current_probability or 0) * 100)
+            # Half-up, like every other surface — see ``_highest_prob``.
+            p = rendered_percent(float(o.current_probability or 0)) or 0
             sort_key = _extract_sort_temp(o.name)
             dist.append({"label": o.name, "prob": p, "_sort": sort_key})
             if float(o.current_probability or 0) > mode_prob:
@@ -834,10 +853,14 @@ def _get_yes_probability(market: FuturesMarket) -> int:
 
     For binary markets (will it rain?), return the Yes probability.
     Falls back to highest probability outcome if no 'Yes' found.
+
+    Half-up, like every other surface — see ``_highest_prob``. The two branches
+    must round by the same rule or the rain card would print a different number
+    depending on whether the market happened to name its leg "Yes".
     """
     for o in market.outcomes:
         if o.name and o.name.lower() in ("yes", "y"):
-            return round(float(o.current_probability or 0) * 100)
+            return rendered_percent(float(o.current_probability or 0)) or 0
     # Fallback: use highest probability
     return _highest_prob(market)
 

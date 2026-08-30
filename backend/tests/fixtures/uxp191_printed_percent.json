@@ -1,0 +1,754 @@
+{
+ "banked_utc": "2026-08-30T14:4x:00Z",
+ "note": "UX-P191. Production specimens banked BEFORE the fix. weather_* read from GET /api/weather/* plus a db-query for the underlying probabilities; politics_* is the verbatim GET /api/politics cross_source array.",
+ "weather_census": {
+  "open_weather_markets": 442,
+  "markets_leader_on_half_boundary": 203,
+  "markets_where_bankers_prints_low": 81,
+  "priced_open_weather_outcomes": 2650,
+  "outcomes_where_bankers_prints_low": 373,
+  "served_numbers_sampled": 500,
+  "served_numbers_that_change": 71
+ },
+ "weather_served_changed": [
+  {
+   "surface": "featured",
+   "market_id": 59704867,
+   "outcome": "headline",
+   "served_printed": 78,
+   "before": 78,
+   "after": 79,
+   "probability": 0.785
+  },
+  {
+   "surface": "featured",
+   "market_id": 59731168,
+   "outcome": "headline",
+   "served_printed": 30,
+   "before": 30,
+   "after": 31,
+   "probability": 0.305
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803960,
+   "outcome": "40°C",
+   "served_printed": 8,
+   "before": 8,
+   "after": 9,
+   "probability": 0.085
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803967,
+   "outcome": "31°C",
+   "served_printed": 12,
+   "before": 12,
+   "after": 13,
+   "probability": 0.125
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803967,
+   "outcome": "32°C",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803986,
+   "outcome": "25°C",
+   "served_printed": 8,
+   "before": 8,
+   "after": 9,
+   "probability": 0.085
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803965,
+   "outcome": "23°C",
+   "served_printed": 2,
+   "before": 2,
+   "after": 3,
+   "probability": 0.025
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803965,
+   "outcome": "25°C",
+   "served_printed": 6,
+   "before": 6,
+   "after": 7,
+   "probability": 0.065
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803965,
+   "outcome": "27°C",
+   "served_printed": 36,
+   "before": 36,
+   "after": 37,
+   "probability": 0.365
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803965,
+   "outcome": "28°C",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803982,
+   "outcome": "25°C or below",
+   "served_printed": 0,
+   "before": 0,
+   "after": 1,
+   "probability": 0.005
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803982,
+   "outcome": "29°C",
+   "served_printed": 16,
+   "before": 16,
+   "after": 17,
+   "probability": 0.165
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803982,
+   "outcome": "32°C",
+   "served_printed": 8,
+   "before": 8,
+   "after": 9,
+   "probability": 0.085
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803973,
+   "outcome": "34°C",
+   "served_printed": 40,
+   "before": 40,
+   "after": 41,
+   "probability": 0.405
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803973,
+   "outcome": "35°C",
+   "served_printed": 46,
+   "before": 46,
+   "after": 47,
+   "probability": 0.465
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59705518,
+   "outcome": "85° to 86°",
+   "served_printed": 48,
+   "before": 48,
+   "after": 49,
+   "probability": 0.485
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59705511,
+   "outcome": "105° or below",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59705511,
+   "outcome": "110° to 111°",
+   "served_printed": 52,
+   "before": 52,
+   "after": 53,
+   "probability": 0.525
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803966,
+   "outcome": "22°C",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803966,
+   "outcome": "23°C",
+   "served_printed": 10,
+   "before": 10,
+   "after": 11,
+   "probability": 0.105
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803966,
+   "outcome": "24°C",
+   "served_printed": 16,
+   "before": 16,
+   "after": 17,
+   "probability": 0.165
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59814244,
+   "outcome": "104-105°F",
+   "served_printed": 2,
+   "before": 2,
+   "after": 3,
+   "probability": 0.025
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803972,
+   "outcome": "30°C",
+   "served_printed": 0,
+   "before": 0,
+   "after": 1,
+   "probability": 0.005
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803972,
+   "outcome": "32°C",
+   "served_printed": 2,
+   "before": 2,
+   "after": 3,
+   "probability": 0.025
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803972,
+   "outcome": "33°C",
+   "served_printed": 8,
+   "before": 8,
+   "after": 9,
+   "probability": 0.085
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59705514,
+   "outcome": "82° to 83°",
+   "served_printed": 20,
+   "before": 20,
+   "after": 21,
+   "probability": 0.205
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59746941,
+   "outcome": "70-71°F",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59738427,
+   "outcome": "78-79°F",
+   "served_printed": 6,
+   "before": 6,
+   "after": 7,
+   "probability": 0.065
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59738427,
+   "outcome": "80-81°F",
+   "served_printed": 24,
+   "before": 24,
+   "after": 25,
+   "probability": 0.245
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59738427,
+   "outcome": "88-89°F",
+   "served_printed": 2,
+   "before": 2,
+   "after": 3,
+   "probability": 0.025
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59814243,
+   "outcome": "88-89°F",
+   "served_printed": 30,
+   "before": 30,
+   "after": 31,
+   "probability": 0.305
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59746939,
+   "outcome": "60-61°F",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59746939,
+   "outcome": "70-71°F",
+   "served_printed": 8,
+   "before": 8,
+   "after": 9,
+   "probability": 0.085
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59705509,
+   "outcome": "96° to 97°",
+   "served_printed": 30,
+   "before": 30,
+   "after": 31,
+   "probability": 0.305
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59705509,
+   "outcome": "100° to 101°",
+   "served_printed": 8,
+   "before": 8,
+   "after": 9,
+   "probability": 0.085
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59705513,
+   "outcome": "96° or above",
+   "served_printed": 6,
+   "before": 6,
+   "after": 7,
+   "probability": 0.065
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59812991,
+   "outcome": "92-93°F",
+   "served_printed": 20,
+   "before": 20,
+   "after": 21,
+   "probability": 0.205
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59814248,
+   "outcome": "84-85°F",
+   "served_printed": 24,
+   "before": 24,
+   "after": 25,
+   "probability": 0.245
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803985,
+   "outcome": "26°C",
+   "served_printed": 24,
+   "before": 24,
+   "after": 25,
+   "probability": 0.245
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803985,
+   "outcome": "28°C",
+   "served_printed": 26,
+   "before": 26,
+   "after": 27,
+   "probability": 0.265
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803981,
+   "outcome": "24°C",
+   "served_printed": 44,
+   "before": 44,
+   "after": 45,
+   "probability": 0.445
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803963,
+   "outcome": "20°C",
+   "served_printed": 44,
+   "before": 44,
+   "after": 45,
+   "probability": 0.445
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803983,
+   "outcome": "14°C",
+   "served_printed": 52,
+   "before": 52,
+   "after": 53,
+   "probability": 0.525
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803956,
+   "outcome": "34°C",
+   "served_printed": 2,
+   "before": 2,
+   "after": 3,
+   "probability": 0.025
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803964,
+   "outcome": "28°C",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803964,
+   "outcome": "29°C",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803964,
+   "outcome": "34°C",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59835763,
+   "outcome": "30°C",
+   "served_printed": 30,
+   "before": 30,
+   "after": 31,
+   "probability": 0.305
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59751088,
+   "outcome": "30°C",
+   "served_printed": 18,
+   "before": 18,
+   "after": 19,
+   "probability": 0.185
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59751087,
+   "outcome": "17°C",
+   "served_printed": 2,
+   "before": 2,
+   "after": 3,
+   "probability": 0.025
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803962,
+   "outcome": "18°C",
+   "served_printed": 10,
+   "before": 10,
+   "after": 11,
+   "probability": 0.105
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803969,
+   "outcome": "28°C",
+   "served_printed": 2,
+   "before": 2,
+   "after": 3,
+   "probability": 0.025
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803968,
+   "outcome": "32°C",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803968,
+   "outcome": "33°C",
+   "served_printed": 10,
+   "before": 10,
+   "after": 11,
+   "probability": 0.105
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803968,
+   "outcome": "36°C",
+   "served_printed": 18,
+   "before": 18,
+   "after": 19,
+   "probability": 0.185
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803970,
+   "outcome": "28°C",
+   "served_printed": 22,
+   "before": 22,
+   "after": 23,
+   "probability": 0.225
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803970,
+   "outcome": "32°C",
+   "served_printed": 6,
+   "before": 6,
+   "after": 7,
+   "probability": 0.065
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803971,
+   "outcome": "31°C",
+   "served_printed": 32,
+   "before": 32,
+   "after": 33,
+   "probability": 0.325
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803971,
+   "outcome": "32°C",
+   "served_printed": 24,
+   "before": 24,
+   "after": 25,
+   "probability": 0.245
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803976,
+   "outcome": "33°C",
+   "served_printed": 60,
+   "before": 60,
+   "after": 61,
+   "probability": 0.605
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803977,
+   "outcome": "31°C",
+   "served_printed": 24,
+   "before": 24,
+   "after": 25,
+   "probability": 0.245
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803978,
+   "outcome": "33°C",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803978,
+   "outcome": "34°C",
+   "served_printed": 2,
+   "before": 2,
+   "after": 3,
+   "probability": 0.025
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803978,
+   "outcome": "35°C or higher",
+   "served_printed": 0,
+   "before": 0,
+   "after": 1,
+   "probability": 0.005
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803979,
+   "outcome": "29°C",
+   "served_printed": 16,
+   "before": 16,
+   "after": 17,
+   "probability": 0.165
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803979,
+   "outcome": "33°C",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803984,
+   "outcome": "26°C",
+   "served_printed": 0,
+   "before": 0,
+   "after": 1,
+   "probability": 0.005
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803984,
+   "outcome": "28°C",
+   "served_printed": 4,
+   "before": 4,
+   "after": 5,
+   "probability": 0.045
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803984,
+   "outcome": "29°C",
+   "served_printed": 24,
+   "before": 24,
+   "after": 25,
+   "probability": 0.245
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803984,
+   "outcome": "32°C",
+   "served_printed": 2,
+   "before": 2,
+   "after": 3,
+   "probability": 0.025
+  },
+  {
+   "surface": "cities:high",
+   "market_id": 59803987,
+   "outcome": "23°C",
+   "served_printed": 34,
+   "before": 34,
+   "after": 35,
+   "probability": 0.345
+  }
+ ],
+ "weather_specimens": [
+  {
+   "market_id": 59708196,
+   "name": "Lowest temperature in Seattle on Aug 28, 2026?",
+   "source": "kalshi",
+   "probability": 0.985,
+   "before": 98,
+   "after": 99
+  },
+  {
+   "market_id": 59647771,
+   "name": "Will Louisiana have D4 (Exceptional Drought) this week?",
+   "source": "polymarket",
+   "probability": 0.965,
+   "before": 96,
+   "after": 97
+  },
+  {
+   "market_id": 59699701,
+   "name": "Hurricane Lowell category?",
+   "source": "kalshi",
+   "probability": 0.885,
+   "before": 88,
+   "after": 89
+  }
+ ],
+ "politics_cross_source_served": [
+  {
+   "q": "Will Trump talk to Mojtaba Khamenei?",
+   "kalshi": 4.5,
+   "poly": 86.0,
+   "delta": 81.5,
+   "category": "presidential",
+   "kalshi_market_id": 52755865,
+   "poly_market_id": 3961814
+  },
+  {
+   "q": "Next President of Estonia?",
+   "kalshi": 97.5,
+   "poly": 34.6,
+   "delta": 62.9,
+   "category": "presidential",
+   "kalshi_market_id": 59165073,
+   "poly_market_id": 57305363
+  },
+  {
+   "q": "How many House seats will Democrats win in Louisiana?",
+   "kalshi": 92.5,
+   "poly": 36.0,
+   "delta": 56.5,
+   "category": "congressional",
+   "kalshi_market_id": 16755287,
+   "poly_market_id": 58840985
+  },
+  {
+   "q": "How many House seats will Democrats win in Georgia?",
+   "kalshi": 88.0,
+   "poly": 37.5,
+   "delta": 50.5,
+   "category": "congressional",
+   "kalshi_market_id": 59693678,
+   "poly_market_id": 58840989
+  },
+  {
+   "q": "Will the federal gas tax be suspended?",
+   "kalshi": 16.0,
+   "poly": 66.4,
+   "delta": 50.4,
+   "category": "other",
+   "kalshi_market_id": 19528696,
+   "poly_market_id": 20569038
+  },
+  {
+   "q": "How many House seats will Democrats win in Illinois?",
+   "kalshi": 92.5,
+   "poly": 43.0,
+   "delta": 49.5,
+   "category": "congressional",
+   "kalshi_market_id": 59693677,
+   "poly_market_id": 58835465
+  },
+  {
+   "q": "Massachusetts Democratic Senate primary margin of victory?",
+   "kalshi": 66.5,
+   "poly": 18.5,
+   "delta": 48.0,
+   "category": "presidential",
+   "kalshi_market_id": 52755634,
+   "poly_market_id": 59329605
+  },
+  {
+   "q": "How many House seats will Democrats win in Utah?",
+   "kalshi": 95.0,
+   "poly": 49.0,
+   "delta": 46.0,
+   "category": "congressional",
+   "kalshi_market_id": 16755285,
+   "poly_market_id": 58835467
+  }
+ ]
+}
