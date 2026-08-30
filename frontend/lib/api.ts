@@ -1834,6 +1834,10 @@ export interface PoliticsThemeSimple {
 
 export interface CrossSourceMatch {
   q: string;
+  /** The single outcome both `kalshi` and `poly` price. Optional only because
+   *  /api/politics is served from an hourly precompute: for up to an hour
+   *  after a deploy the cached body predates the field. */
+  outcome?: string;
   kalshi: number;
   poly: number;
   delta: number;
