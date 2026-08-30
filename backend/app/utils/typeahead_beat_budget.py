@@ -1077,7 +1077,29 @@ def free_background_slots(
 #: branches touch this file (`lane1/q419-settlement-beat`, `program/ux-120`,
 #: `rescue/ux-121-prerebase-d4e510df`, `lane1/q342`), and `program/latency-92`
 #: and `-93` are unmerged but add no beat. Re-measure at merge; do not add to it.
-BACKGROUND_BEAT_COUNT = 107
+#:
+#: 🔴 LAT-P137 RE-DERIVATION (latency, 2026-08-30): **107 → 108, explicit
+#: 62 → 63.** One beat added, `warm-futures-categories` (`*/5`, `background`,
+#: `expires: 300`) — the producer for the Search page's category census, which
+#: LAT-P122 gave a shared slot and a 24 h mirror and nothing to rebuild it, so
+#: the tier still costs 1,365 ms to whoever opens `/search` more than 25 minutes
+#: after the last build (measured on production 2026-08-30,
+#: `docs/audits/latency/lat-p137-the-census-with-no-producer.md`).
+#: Census RUN over the assembled `beat_schedule` on this branch and PRINTED —
+#: `explicit 63 implicit 45 total 108` — not incremented (#1910); base is
+#: `64b7a034`, so 107 was the correct starting reading and 108 is the measured
+#: one.
+#: ✅ THE FALL-THROUGH HALF STILL DID NOT MOVE: **45**. The beat names its queue.
+#: **COST, declared rather than left to the next re-derivation:** one census
+#: build per period. The build is 1.37-1.59 s measured across three production
+#: reads, so 288 fires a day is ~0.46 % of ONE `background` slot-day against the
+#: two this queue has. It is the cheapest occupant added since this ledger
+#: started counting, and it is on `background` rather than `realtime` for
+#: LAT-P115's reason: a punctual rail is for payloads that go stale in seconds,
+#: and this one is a census of open futures markets whose own ingest is hourly.
+#: ⚠️ The standing note above applies: this branch is unmerged. Re-measure at
+#: merge; do not add to it.
+BACKGROUND_BEAT_COUNT = 108
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls

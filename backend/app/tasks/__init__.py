@@ -3004,6 +3004,28 @@ def warm_event_concepts(self):
     return _tracked_run("warm_event_concepts", _warm_event_concepts())
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=60,
+    time_limit=75,
+    name="app.tasks.warm_futures_categories",
+)
+def warm_futures_categories(self):
+    """Keep the Search page's category census warm (LAT-P137, every 5 min).
+
+    Budget: ONE census build, measured 1.37-1.59 s, bounded inside the task at
+    `BUILD_TIMEOUT_SECONDS` (30 s) — that is the longest uninterrupted op, and
+    the soft limit here is twice it so a wedged build is reported by the inner
+    timeout with a reason rather than killed by the outer one without.
+
+    NOTE the module is `futures_categories_warm`, not `warm_futures_categories`:
+    a submodule sharing a name with a registered task is shadowed by the task on
+    `from app.tasks import <name>`, the trap `warm_event_concepts` records above.
+    """
+    from app.tasks.futures_categories_warm import _warm_futures_categories
+    return _tracked_run("warm_futures_categories", _warm_futures_categories())
+
+
 @celery_app.task(bind=True, soft_time_limit=100, time_limit=115, name="app.tasks.warm_typeahead")
 def warm_typeahead(self, head_size: int = None):
     """Keep `/typeahead`'s hot pages resident so a user never pays the cold read.
@@ -3352,6 +3374,22 @@ def transition_event_statuses():
 # =============================================================================
 # Beat schedule
 # =============================================================================
+
+
+def _futures_categories_warm_minutes() -> int:
+    """The `warm-futures-categories` cadence, in whole minutes.
+
+    LAT-P137. A one-line indirection so the beat entry below spells a DERIVED
+    period (`futures_categories_warm.warm_period_minutes()`, computed from the
+    tier's own stale-serve ceiling) instead of a literal that can fall out of
+    step with the contract it exists to cover. Kept as a named function rather
+    than an inline import so the beat entry reads as a schedule rather than as
+    an import statement.
+    """
+    from app.tasks.futures_categories_warm import warm_period_minutes
+
+    return warm_period_minutes()
+
 
 celery_app.conf.beat_schedule = {
     "poll-odds-adaptive": {
@@ -3748,6 +3786,29 @@ celery_app.conf.beat_schedule = {
         # in ~0.44s and schedules one revalidation, so this cadence governs
         # content freshness, not user-visible latency.
         "schedule": crontab(minute="*/5"),
+        "options": {"queue": "background"},
+    },
+    "warm-futures-categories": {
+        "task": "app.tasks.warm_futures_categories",
+        # LAT-P137. The Search page's category grid. LAT-P122 gave that census a
+        # shared slot and a 24h mirror but no producer, so the tier still costs
+        # 1,365 ms — measured on production 2026-08-30 — to whoever opens
+        # `/search` more than `stale_serve_ceiling_seconds()` (25 min) after the
+        # last build. This beat is that producer.
+        #
+        # 🔴 THE PERIOD IS DERIVED, NOT TYPED. `warm_period_minutes()` divides
+        # the tier's own stale-serve ceiling by one more than the number of
+        # missed deliveries it must survive, so a queue that shortens the
+        # ceiling shortens this cadence with it instead of leaving a warmer
+        # that quietly no longer covers the gap it was added for (#2236's
+        # shape: a 120 in one file and a 60 in another with nothing comparing
+        # them).
+        #
+        # COST, stated: one build per period. The build is 1.37-1.59 s measured,
+        # so at */5 this is ~0.46 % of one `background` slot-day — declared here
+        # rather than left for the next re-derivation of BACKGROUND_BEAT_COUNT
+        # to discover.
+        "schedule": crontab(minute=f"*/{_futures_categories_warm_minutes()}"),
         "options": {"queue": "background"},
     },
     "warm-typeahead": {
@@ -4739,6 +4800,14 @@ _EXPIRING_WARMER_BEATS = {
     "refresh-open-commentary": 180,          # 180 s — #1609 saw 5 enqueued; also the only
                                              # OpenAI caller, so dropping stale work saves spend
     "warm-event-concepts": 300,              # */5 min
+
+    # LAT-P137. One period, so #1609's flat rule applies unamended: the pass is
+    # one ~1.4 s build against a 300 s beat, so a fire that could not start IS
+    # superseded by the next one — and superseded exactly, because the next fire
+    # rebuilds the same census from the same predicate. The bound is DERIVED
+    # from the period for the same reason the period is derived from the tier's
+    # ceiling: three numbers that must agree, and only one of them typed.
+    "warm-futures-categories": _futures_categories_warm_minutes() * 60,
 
     # LAT-P090/#2211. 20 s == the beat period, so the flat #1609 rule applies
     # unamended: this task's WALL (~4-8 s steady state, ~10 ms on a floor skip)
