@@ -164,6 +164,15 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # files are swept whichever mutant left residue.
     "search_suggestions_movers_pool_mutations": [("MUTANTS", 3, 4, 1)],
     "search_word_test_mutations": [("MUTANTS", 2, 3, 1)],
+    # LAT-P144. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above — and note `season_` sorts AFTER
+    # every `search_` entry, which is easy to get wrong by eye. Two targets in
+    # one table (the route's ask and the module's policy) carried per-entry at
+    # index 1, the same shape as its sibling `related_futures_shared_cache_
+    # mutations`, because the defect it pins is that the two halves have to
+    # AGREE: a cache that is never consulted and a cache that answers wrongly
+    # are different bugs and both have to be visible.
+    "season_market_discovery_mutations": [("MUTANTS", 3, 4, 1)],
     # LAT-P146. Alphabetical, for the reason spelled out under
     # `futures_movers_warm_mutations` above. Two targets in one table — the
     # shared population module and the adapter that consumes it — so the target
