@@ -203,7 +203,7 @@ assertion when the schema the gate builds is not the schema that is deployed.
 
 | gate | result |
 |---|---|
-| full backend suite | **22,828 passed / 0 failed / 124 skipped / 61 xfailed**, 1,023 s |
+| full backend suite | **22,828 passed / 0 failed / 124 skipped / 61 xfailed, EXIT CODE 0 read by value**, 1,041.68 s |
 | collect reconciliation | 23,013 = 22,828 + 124 + 61 exactly; **22,990 without the new file**, which is what LAT-P145 and LAT-P146 each independently measured for master — so the new file's **23** is measured, not derived |
 | new guards | **23**, `tests/test_latest_observation_lat_p147.py` |
 | mutation battery | **15/15 killed, exit 0** (`scripts/evals/latest_observation_mutations.py`) |
