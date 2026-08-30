@@ -73,8 +73,16 @@ DISPOSITIONS: dict[str, tuple[str, str | None, str]] = {
     "kalshi/tech": (BANKED, None, "CAL-P132 — banked; a third of the category is podcast word bingo"),
 
     "kalshi/entertainment": (REFUSED, "13-CAL", "CAL-P122 §6i — every passing policy deletes the filtered class; 13-CAL HOLDs RULE E2 behind 12-CAL"),
-    "polymarket/golf": (REFUSED, None, "refused with measurement"),
-    "polymarket/economics": (REFUSED, None, "refused with measurement"),
+    # CAL-P143: these two cited the string "refused with measurement" — the
+    # disposition wearing a citation's clothes. Both documents existed and
+    # nothing pointed at them. See artifacts/cal-p143/refusal-register.py, which
+    # is keyed on the REFUSAL rather than on the board and therefore also holds
+    # the fourth one (polymarket/tech, CAL-P132) that this map cannot: it is no
+    # longer among the queued 19, and a cell that leaves the board leaves this
+    # ledger. A hold that leaves the board is resolved; a refusal that leaves the
+    # board is still a refusal.
+    "polymarket/golf": (REFUSED, None, "CAL-P130 RULE-DESIGN-polymarket-golf.md — 15 partitions searched exhaustively, no subset clears the bar at any retention"),
+    "polymarket/economics": (REFUSED, None, "CAL-P131 RULE-DESIGN-polymarket-economics.md — 16 partitions, exhaustive; and §4 finds 508 published outcomes that could not have lost, naming clean_vms (12-CAL) as the candidate mechanism"),
 
     "polymarket/soccer": (HELD, "19-CAL", "CAL-P128 FINDING-sigma-sweep — NOT ESTABLISHED, recommend off the board"),
     "kalshi/golf": (HELD, "17-CAL", "CAL-P127 RULE-DESIGN §17-CAL — not established, measured sigma 1.42; CAL-P128 confirms independently at 1.48"),
