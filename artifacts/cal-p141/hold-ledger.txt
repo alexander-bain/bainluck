@@ -18,18 +18,15 @@ CAL-P140 HOLD LEDGER — the conveyor's step 1, as a number
     19-CAL       37,730 total   polymarket/soccer
              polymarket/soccer is not established — same precedent as the six CAL-P120 removed
                  37,730  cell blocked outright
+    20-CAL       26,340 total   polymarket/basketball, polymarket/hockey
+             polymarket/basketball AND polymarket/hockey are scored over 43.44%- and 26.79%-duplicate rows — both need the 
+                 26,340  cell blocked outright
     17-CAL       16,976 total   kalshi/golf
              kalshi/golf is not established (sigma 1.42, confirmed 1.48) — take it off the board
                  16,976  cell blocked outright
     14-CAL       16,498 total   polymarket/cricket
              polymarket/cricket admits no rule at all — 1,971 candidates searched exhaustively
                  16,498  cell blocked outright
-    20-CAL       16,395 total   polymarket/basketball
-             polymarket/basketball cannot be scored until its phantom is explained
-                 16,395  cell blocked outright
-    21-CAL        9,945 total   polymarket/hockey
-             polymarket/hockey has an unexplained 0.780 rail/payload divergence
-                  9,945  cell blocked outright
 
   the board, by disposition:
      1. polymarket/baseball                          78,265  banked
@@ -47,7 +44,7 @@ CAL-P140 HOLD LEDGER — the conveyor's step 1, as a number
     13. odds_api_bookmaker/icehockey_nhl             12,035  off_by_ruling
     14. odds_api_bookmaker/basketball_wncaab         12,006  off_by_ruling
     15. polymarket/economics                         11,608  refused_with_measurement
-    16. polymarket/hockey                             9,945  held_on_alex  [21-CAL]
+    16. polymarket/hockey                             9,945  held_on_alex  [20-CAL]
     17. kalshi/tech                                   9,578  banked
     18. odds_api_bookmaker/basketball_wnba            8,351  off_by_ruling
     19. odds_api_bookmaker/basketball_euroleague      5,092  off_by_ruling

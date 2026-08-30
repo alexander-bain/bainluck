@@ -79,8 +79,14 @@ DISPOSITIONS: dict[str, tuple[str, str | None, str]] = {
     "polymarket/soccer": (HELD, "19-CAL", "CAL-P128 FINDING-sigma-sweep — NOT ESTABLISHED, recommend off the board"),
     "kalshi/golf": (HELD, "17-CAL", "CAL-P127 RULE-DESIGN §17-CAL — not established, measured sigma 1.42; CAL-P128 confirms independently at 1.48"),
     "polymarket/cricket": (HELD, "14-CAL", "CAL-P123 — all 1,971 candidate rules searched, none reaches bar"),
-    "polymarket/basketball": (HELD, "20-CAL", "CAL-P128 FINDING-sigma-sweep — cannot be scored until its phantom is explained"),
-    "polymarket/hockey": (HELD, "21-CAL", "CAL-P128 FINDING-sigma-sweep — unexplained 0.780 rail/payload divergence"),
+    # CAL-P141 measured both of these. The divergence that held them is a
+    # duplicate-ROW count, not missing data: in both cells the replica sees every
+    # outcome the payload publishes (outcome coverage 1.0009 and 1.0042) and
+    # simply does not reproduce the payload's duplicate rows. So neither cell is
+    # waiting to be EXPLAINED any more — both are waiting on the same phantom
+    # REPAIR, which is the outcome-grain dedup on alex-inbox/calibration-911.
+    "polymarket/basketball": (HELD, "20-CAL", "CAL-P128 FINDING-sigma-sweep — 43.44% phantom; CAL-P141 measured rowcov 0.6424 / outcov 1.0009, so the hold is the dedup, not an explanation"),
+    "polymarket/hockey": (HELD, "20-CAL", "CAL-P128 filed this as 21-CAL; CAL-P141 measured it at 26.79% phantom, rowcov 0.7799 / outcov 1.0042 — the same mechanism as basketball, so it folds into 20-CAL"),
 
     "odds_api_bookmaker/basketball_nba": (OFF, None, "CAL-P120 §6g"),
     "odds_api_bookmaker/baseball_mlb_preseason": (OFF, None, "CAL-P120 §6g"),
@@ -140,12 +146,22 @@ QUESTIONS: dict[str, dict] = {
     "19-CAL": {"summary": "polymarket/soccer is not established — same precedent as the six CAL-P120 removed",
                "blocks": "polymarket/soccer", "depends_on": None, "note": None,
                "source": "artifacts/cal-p128/FINDING-sigma-sweep.md"},
-    "20-CAL": {"summary": "polymarket/basketball cannot be scored until its phantom is explained",
-               "blocks": "polymarket/basketball", "depends_on": None, "note": None,
-               "source": "artifacts/cal-p128/FINDING-sigma-sweep.md"},
-    "21-CAL": {"summary": "polymarket/hockey has an unexplained 0.780 rail/payload divergence",
-               "blocks": "polymarket/hockey", "depends_on": None, "note": None,
-               "source": "artifacts/cal-p128/FINDING-sigma-sweep.md"},
+    "20-CAL": {"summary": "polymarket/basketball AND polymarket/hockey are scored over "
+                          "43.44%- and 26.79%-duplicate rows — both need the outcome-grain "
+                          "dedup, neither needs a further explanation",
+               "blocks": "polymarket/basketball, polymarket/hockey",
+               "depends_on": None,
+               "note": "CAL-P141 absorbed 21-CAL into this. It is the same mechanism in both "
+                       "cells and the repair is the dedup on alex-inbox/calibration-911, so "
+                       "answering it twice would double-count the question, not the outcomes",
+               "source": "artifacts/cal-p128/FINDING-sigma-sweep.md + "
+                         "artifacts/cal-p141/reconcile-duplication.json"},
+    # 21-CAL is deliberately absent, not deleted-and-forgotten: CAL-P128 filed it
+    # as "routing note, no decision" pending exactly the measurement CAL-P141 ran
+    # (`cell-polymarket-hockey.json`). It asked whether hockey's 0.780 was
+    # basketball's cause or a second one; it is basketball's cause. A routing note
+    # discharges on its measurement, so there is nothing left for Alex to answer —
+    # and leaving it on the board would show a hold nobody can clear.
 }
 
 SCORECARD = "backend/scripts/calibration_scorecard.py"
