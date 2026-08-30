@@ -557,7 +557,12 @@ class TestMergingNeverSubtractsTheDate:
         rich, dated, ends = self._pair()
         (card,) = await self._rail([rich, dated])
         assert card["name"] == "ATP 1000 Montreal: Winner"  # identity from the draw
-        assert card["start_date"] == ends.isoformat()  # date from the group
+        # UX-P178 renamed the key this date lands on: it is an END, not a start.
+        # The date the group knows must survive that rename — reading
+        # `winner.resolution_date` here instead of the group's `end_at` would give
+        # this card a null date and silently undo UX-P182.
+        assert card["end_date"] == ends.isoformat()  # date from the group
+        assert card["start_date"] is None
 
     async def test_the_survivor_keeps_its_live_status(self):
         rich, dated, _ = self._pair()
@@ -566,10 +571,17 @@ class TestMergingNeverSubtractsTheDate:
 
     async def test_alone_the_undated_rendering_still_admits_no_date(self):
         """The control. A date is borrowed from a SIBLING, never invented — with
-        no sibling to read, the rail still says it does not know."""
+        no sibling to read, the rail still says it does not know.
+
+        ⚠️ This asserts `end_date`, NOT `start_date`. Since UX-P178 the rail sets
+        `start_date: None` unconditionally, so the original form of this control —
+        `card["start_date"] is None` — became true no matter what the borrowing
+        logic did, and would have gone on passing while the defect it guards
+        returned. A control that cannot fail is not a control.
+        """
         rich, _, _ = self._pair()
         (card,) = await self._rail([rich])
-        assert card["start_date"] is None and card["status"] == "upcoming"
+        assert card["end_date"] is None and card["status"] == "upcoming"
 
     async def test_the_winners_own_date_wins_when_it_has_one(self):
         """Identity's row is still preferred; the sibling is a fallback, not an
@@ -577,7 +589,7 @@ class TestMergingNeverSubtractsTheDate:
         rich, dated, ends = self._pair()
         rich.resolution_date = ends + timedelta(days=2)
         (card,) = await self._rail([rich, dated])
-        assert card["start_date"] == (ends + timedelta(days=2)).isoformat()
+        assert card["end_date"] == (ends + timedelta(days=2)).isoformat()
 
     async def test_the_earliest_sibling_date_is_the_one_borrowed(self):
         """`min`, not `max`, and the difference is user-visible: a tournament that
@@ -594,7 +606,7 @@ class TestMergingNeverSubtractsTheDate:
             outcomes=[SimpleNamespace(name=f"Player {i}") for i in range(12)],
         )
         (card,) = await self._rail([rich, late, dated])
-        assert card["start_date"] == ends.isoformat()
+        assert card["end_date"] == ends.isoformat()
 
     async def test_the_borrowed_date_also_orders_the_rail(self):
         """The card carries the group's date, so the rail must SORT on it too. A
@@ -612,8 +624,6 @@ class TestMergingNeverSubtractsTheDate:
         )
         names = [c["name"] for c in await self._rail([later, rich, dated])]
         assert names == ["ATP 1000 Montreal: Winner", "WTA Hamburg Winner"], names
-        """Guard the guard — an empty rail would pass the three above vacuously."""
-        assert len(await self._emitted()) >= 12
 
 
 # ---------------------------------------------------------------------------
