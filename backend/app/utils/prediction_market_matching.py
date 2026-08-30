@@ -13,6 +13,7 @@ from typing import Optional
 from datetime import datetime, timedelta, timezone
 
 from app.utils.name_normalization import (
+    _MATCH_STOPWORDS,
     expand_trailing_state_abbrev as _expand_trailing_state_abbrev,
     normalize_team_name_for_matching as _normalize_for_matching,
 )
@@ -1044,6 +1045,16 @@ def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
     return None
 
 
+# Shortest name allowed to bind as a whole-word acronym in _fuzzy_team_match.
+# Three, because that is the shortest real acronym in the corpus (TCU, USC, UAB,
+# UCF, LIU, SMU, BYU, VMI, LSU, PSG, QPR) and because it keeps every two-letter
+# club designator ("fc", "sc", "ac", "as", "cf", "us") below the floor, where it
+# cannot bind two different clubs to each other. It is NOT sufficient on its own
+# — _MATCH_STOPWORDS also holds three-letter entries — so the check below refuses
+# that set by name as well.
+_ACRONYM_MIN_LEN = 3
+
+
 def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     """
     Check if a team name from a prediction market matches an event team name.
@@ -1053,6 +1064,8 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     - Substring: "Celtics" in "Boston Celtics"
     - Normalized (accents, case): "lakers" == "Lakers"
     - College "St." abbreviation: "Ball St." == "Ball State Cardinals"
+    - Whole-word acronym: "TCU" == "TCU Horned Frogs" (but "LA" still does NOT
+      reach "Los Angeles Lakers" — see the acronym block below)
 
     The "St." expansion is trailing-only, so "Ohio St." still does NOT match
     "Ohio Bobcats" and "St. Louis" is never read as a state school.
@@ -1080,6 +1093,28 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
         shorter = mt_words if len(mt_words) <= len(et_words) else et_words
         longer = et_words if len(mt_words) <= len(et_words) else mt_words
         if shorter.issubset(longer):
+            return True
+
+    # Acronym-as-whole-word (Q457). The >=4 containment floor above exists to stop
+    # "LA" reaching "Los Angeles Lakers" — a SUBSTRING accident. But it also refuses
+    # every school and club that writes itself as a three-letter acronym: Kalshi
+    # ships "TCU vs North Carolina" while the event row is "TCU Horned Frogs", and
+    # "tcu" is three characters, so the containment test is never even tried. Those
+    # are not substring accidents — the acronym is a WHOLE WORD of the event name.
+    #
+    # Matching on token equality keeps the floor's intent exactly rather than
+    # weakening it: "la" is not a token of "los angeles lakers", so the case the
+    # floor was written for still does not match.
+    #
+    # The stopword refusal is not belt-and-braces. _MATCH_STOPWORDS carries the
+    # names that do NOT carry identity, and it is not all two-character club
+    # designators — "the" and "and" are three, and would otherwise clear the
+    # floor and bind any two rows that happen to share an English article.
+    # Consuming the canonical set means a stopword added later cannot silently
+    # become a binding token.
+    short, long_ = (mt, et) if len(mt) <= len(et) else (et, mt)
+    if len(short) >= _ACRONYM_MIN_LEN and short not in _MATCH_STOPWORDS:
+        if short in long_.split():
             return True
 
     return False
