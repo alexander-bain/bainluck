@@ -1,4 +1,28 @@
-"use client";
+/**
+ * UX-P180 — the VERBATIM pre-fix `TournamentCard`, committed as a fixture.
+ *
+ * Produced by `git show 1b38f6fbd2f7cb693c4de594171da2e9e60432c2:frontend/components/TournamentCard.tsx`
+ * — i.e. THE CODE SHIPPING IN PRODUCTION when this branch was cut — with only
+ * the `"use client"` pragma removed (a fixture is never a route boundary) and
+ * this header prepended. Nothing else is touched.
+ *
+ * ⚠️ It is regenerated from master, NOT from ux-125 @ 124cab6c where UX-P180 was
+ * first authored. That tree also carried UX-P161 (`formatProbability` instead of
+ * `toFixed(0)`), which is real but is not on master — using it as BEFORE would
+ * have made the CONTROL panels differ for a reason that has nothing to do with
+ * this fix, and would have shown the reader a card production never rendered.
+ *
+ * It exists so the BEFORE panels of `artifacts-ux-p180/golf-tournament-card.html`
+ * are real renders of the broken component rather than drawings of one: the
+ * fixed `_isLive` cannot produce a card that is dark during its own final round,
+ * so there is no other way to show the defect.
+ *
+ * The defect lives in `_isLive` — search this file for `now <= new Date`.
+ *
+ * ⚠️ DO NOT "FIX" THIS FILE. Its whole value is that it is wrong in exactly the
+ * way production is wrong today.
+ */
+
 
 import Link from "next/link";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
@@ -346,33 +370,15 @@ function _isCupEvent(tournament: GolfTournament): boolean {
 }
 
 function _isLive(tournament: GolfTournament): boolean {
-  const now = new Date();
-
-  // ⚠️ `start_date` / `end_date` are CALENDAR DATES stamped at midnight UTC —
-  // the first and LAST DAY of the tournament, not the instants it starts and
-  // stops. Measured on the served payload: 188 of 188 `pga_schedule` stamps and
-  // 6 of 6 tournament windows are exactly `T00:00:00+00:00`. Comparing `now`
-  // against the raw `end_date` instant retired the tournament at the START of
-  // its final day, so the card went dark for the whole of the final round — in
-  // every timezone, UTC included. The window closes when that day is OVER.
-  //
-  // And the window is a VETO, not a last-resort fallback. The sibling deciders
-  // of this same boundary already treat it that way: `isTournamentLive` (end +1d)
-  // and `isCompleted` (end +24h) in app/categories/golf/tournaments/[slug]/page.tsx.
-  // As a fallback it was unreachable whenever `movement_24h` was non-zero, and
-  // residual 24h movement outlives a tournament by a day — which left a pulsing
-  // LIVE dot on a card whose champion had already been decided.
-  if (tournament.start_date && tournament.end_date) {
-    const start = new Date(tournament.start_date);
-    const endOfLastDay = new Date(new Date(tournament.end_date).getTime() + 86400000);
-    return now >= start && now < endOfLastDay;
-  }
-
   if (tournament.schedule_status === "in-progress") return true;
-  // No schedule window to veto against — fall back to the price signal.
-  return tournament.golfers.some(
-    (g) => g.movement_24h !== null && Math.abs(g.movement_24h) >= 0.01,
-  );
+  // Fallback: significant movement = in progress
+  if (tournament.golfers.some((g) => g.movement_24h !== null && Math.abs(g.movement_24h) >= 0.01)) return true;
+  // Fallback: between start_date and end_date
+  if (tournament.start_date && tournament.end_date) {
+    const now = new Date();
+    return now >= new Date(tournament.start_date) && now <= new Date(tournament.end_date);
+  }
+  return false;
 }
 
 function _currentRound(tournament: GolfTournament): string {
