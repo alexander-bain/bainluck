@@ -8550,7 +8550,13 @@ def _outcomes_overlap(item_a: dict, item_b: dict) -> bool:
 # old process-local ``_golf_cache`` + inline ``get_golf`` rebuild is retired so a
 # dyno restart no longer pays the ~8.9s cold rebuild on the request path.
 
-_DEFAULT_FEED_TOURS = frozenset({"pga", "major", "dp_world", "lpga", "liv"})
+# `None` is a member on purpose (UX-P185). A tournament whose tour we cannot
+# evidence used to reach the filter below as a guessed "pga" and therefore always
+# passed it; now that it honestly says "unknown", leaving None out would delete it
+# from Discover instead of merely un-badging it. It stays eligible for the DEFAULT
+# audience and is deliberately absent from the per-tour sets computed below — an
+# unknown tour cannot claim to be the tour a user actually picked.
+_DEFAULT_FEED_TOURS = frozenset({"pga", "major", "dp_world", "lpga", "liv", None})
 
 # Map tournament tour values to user affinity keys
 _TOUR_AFFINITY_KEYS: dict[str, str] = {
@@ -8562,8 +8568,11 @@ _TOUR_AFFINITY_KEYS: dict[str, str] = {
 }
 
 
-def _compute_user_feed_tours(ctx) -> set[str]:
-    """Compute which golf tours a user wants to see based on sport affinities."""
+def _compute_user_feed_tours(ctx) -> set[str | None]:
+    """Compute which golf tours a user wants to see based on sport affinities.
+
+    `None` is a legal member and means "tour unknown" — see `_DEFAULT_FEED_TOURS`.
+    """
     if not ctx or not ctx.is_authenticated or not ctx.sport_affinities:
         return set(_DEFAULT_FEED_TOURS)
 
@@ -8581,8 +8590,9 @@ def _compute_user_feed_tours(ctx) -> set[str]:
         # Show all tours (preserves old behavior)
         return set(_DEFAULT_FEED_TOURS)
 
-    # New-style user — filter by tour preference
-    tours: set[str] = set()
+    # New-style user — filter by tour preference. No None: an unevidenced tour
+    # cannot claim to be one of the tours this user chose.
+    tours: set[str | None] = set()
     for tour, affinity_key in _TOUR_AFFINITY_KEYS.items():
         if ctx.sport_affinities.get(affinity_key, 0.0) > 0.05:
             tours.add(tour)
@@ -8692,8 +8702,11 @@ async def _score_golf_tournaments(
         # Build the reason text
         leader = golfers[0]
         leader_pct = round(leader["probability"] * 100, 1)
+        # `or`, not a .get() default: UX-P185 lets `tour_label` be present-and-None
+        # for a tournament whose tour we cannot evidence, and a .get() default only
+        # fires on an ABSENT key — this line would otherwise read "None: X leads…".
         reason = (
-            f"{t.get('tour_label', 'Golf')}: {leader['name']} leads at {leader_pct}%"
+            f"{t.get('tour_label') or 'Golf'}: {leader['name']} leads at {leader_pct}%"
         )
         if leader.get("movement_24h") and abs(leader["movement_24h"]) >= 0.01:
             mv = leader["movement_24h"]

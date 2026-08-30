@@ -1,0 +1,137 @@
+{
+  "_source": "production /api/admin/db-query + GET /api/golf, 2026-08-30",
+  "_what": "The honest BEFORE for UX-P185. `served_before` is a verbatim read of the served /api/golf payload; `markets` are the futures_markets/futures_outcomes rows behind the two DP World Tour events of that week, plus the controls the fix must not move. Banked because the site rotates weekly: the Omega European Masters will have rolled off by the time anyone re-reads this.",
+
+  "served_before": [
+    {"name": "Tour Championship", "tour": "pga", "tour_label": "PGA Tour", "verdict": "correct — DataGolf metadata says pga"},
+    {"name": "Omega European Masters", "tour": "pga", "tour_label": "PGA Tour", "verdict": "WRONG — a DP World Tour event, ticker KXDPWORLDTOUR-OMEM26"},
+    {"name": "Husqvarna British Masters", "tour": "dp_world", "tour_label": "DP World Tour", "verdict": "correct — DataGolf covered it"},
+    {"name": "Golfers To Win A Pga Tour Major In 2027", "tour": "pga", "tour_label": "PGA Tour", "verdict": "defensible — the title says PGA Tour"},
+    {"name": "Golfers To Win A Pga Tour Major Before 2030", "tour": "pga", "tour_label": "PGA Tour", "verdict": "defensible — the title says PGA Tour"},
+    {"name": "New Zealand Darts Masters", "tour": "pga", "tour_label": "PGA Tour", "verdict": "leaves the page entirely under UX-P168, already on this stack"},
+    {"name": "Asia Masters 2026", "tour": "pga", "tour_label": "PGA Tour", "verdict": "leaves the page entirely under UX-P168, already on this stack"}
+  ],
+
+  "markets": [
+    {
+      "id": 59759220,
+      "name": "Omega European Masters Winner",
+      "source": "kalshi",
+      "external_id": "KXDPWORLDTOUR-OMEM26",
+      "llm_sport_category": "golf",
+      "status": "open",
+      "commence_time": "2026-09-20T00:00:00+00:00",
+      "resolution_date": "2026-09-20T00:00:00+00:00",
+      "market_metadata": null,
+      "outcomes": [
+        {"id": 222605753, "name": "Andreas Halvorsen", "current_probability": 0.1},
+        {"id": 222605754, "name": "Adrian Meronk", "current_probability": 0.1},
+        {"id": 222605755, "name": "Eddie Pepperell", "current_probability": 0.1},
+        {"id": 222605756, "name": "Antoine Rozner", "current_probability": 0.1}
+      ]
+    },
+    {
+      "id": 59512401,
+      "name": "Husqvarna British Masters hosted by Sir Nick Faldo Winner",
+      "source": "kalshi",
+      "external_id": "KXDPWORLDTOUR-HUBMHBSNF26",
+      "llm_sport_category": "golf",
+      "status": "open",
+      "commence_time": "2026-08-27T00:00:00+00:00",
+      "resolution_date": "2026-08-31T00:00:00+00:00",
+      "market_metadata": null,
+      "outcomes": [
+        {"id": 900000001, "name": "Marco Penge", "current_probability": 0.12},
+        {"id": 900000002, "name": "Alex Fitzpatrick", "current_probability": 0.09}
+      ]
+    },
+    {
+      "id": 59485745,
+      "name": "TOUR Championship - Winner",
+      "source": "datagolf",
+      "external_id": "datagolf:pga:60:win",
+      "llm_sport_category": "golf",
+      "status": "open",
+      "commence_time": "2026-08-27T00:00:00+00:00",
+      "resolution_date": "2026-08-31T00:00:00+00:00",
+      "market_metadata": {"tour": "pga"},
+      "outcomes": [
+        {"id": 900000003, "name": "Scottie Scheffler", "current_probability": 0.28},
+        {"id": 900000004, "name": "Rory McIlroy", "current_probability": 0.14}
+      ]
+    },
+    {
+      "id": 56775495,
+      "name": "Golfers to win a PGA Tour Major in 2027 ",
+      "source": "kalshi",
+      "external_id": "KXGOLFMAJOR-27",
+      "llm_sport_category": "golf",
+      "status": "open",
+      "commence_time": "2027-12-31T00:00:00+00:00",
+      "resolution_date": "2027-12-31T00:00:00+00:00",
+      "market_metadata": null,
+      "outcomes": [
+        {"id": 900000005, "name": "Scottie Scheffler", "current_probability": 0.4},
+        {"id": 900000006, "name": "Jon Rahm", "current_probability": 0.2}
+      ]
+    },
+    {
+      "id": 59174241,
+      "name": "AdventHealth Championship Winner",
+      "source": "kalshi",
+      "external_id": "KXKFTOUR-ADC26",
+      "llm_sport_category": "golf",
+      "status": "open",
+      "commence_time": "2026-08-23T00:00:00+00:00",
+      "resolution_date": "2026-09-06T00:00:00+00:00",
+      "market_metadata": null,
+      "outcomes": [
+        {"id": 900000007, "name": "Chandler Blanchet", "current_probability": 0.07},
+        {"id": 900000008, "name": "Kevin Roy", "current_probability": 0.06}
+      ]
+    }
+  ],
+
+  "synthetic_source_scoping_probe": {
+    "_what": "NOT a production row. The served population carries no market whose external_id is Kalshi-shaped on a non-Kalshi source, so removing the `source == 'kalshi'` scoping at the call site survives every guard built from real rows. A mutation that survives because the population has no specimen is a guard gap, not a false positive — so here is the specimen.",
+    "_expected": "tour null, tour_label null. The ticker must be invisible because the row is not Kalshi's; if the scoping is dropped this reads dp_world.",
+    "market": {
+      "id": 990001,
+      "name": "Omega European Masters Winner",
+      "source": "polymarket",
+      "external_id": "KXDPWORLDTOUR-SYNTHETIC26",
+      "llm_sport_category": "golf",
+      "status": "open",
+      "commence_time": "2026-09-20T00:00:00+00:00",
+      "resolution_date": "2026-09-20T00:00:00+00:00",
+      "market_metadata": null,
+      "outcomes": [
+        {"id": 990101, "name": "Adrian Meronk", "current_probability": 0.1},
+        {"id": 990102, "name": "Eddie Pepperell", "current_probability": 0.09}
+      ]
+    }
+  },
+
+  "kalshi_series_sweep_2026_08_30": {
+    "_what": "Every Kalshi series whose segment (text before the first '-') starts with a prefix the fix trusts, or with the one prefix it REFUSES. Swept over the whole futures_markets table.",
+    "trusted": {
+      "KXDPWORLDTOUR": {"series": 5, "markets": 63, "non_golf": 0},
+      "KXLPGA": {"series": 4, "markets": 52, "non_golf": 0},
+      "KXKFTOUR": {"series": 1, "markets": 15, "non_golf": 0}
+    },
+    "refused": {
+      "KXLIV": {
+        "series": 11,
+        "markets": 70,
+        "non_golf": 1,
+        "the_contaminant": "KXLIVENATIONUS — 'Courts consider Live Nation a monopoly?', llm_sport_category 'legal'",
+        "why_no_rule_is_needed": "every LIV Golf event names itself in the market title, and `\\bliv\\s+golf\\b` already claims it"
+      }
+    },
+    "why_the_match_is_anchored_to_the_series_segment": {
+      "KXECULPGAME": {"markets": 210, "contains": "LPGA", "actually": "Ecuadorian league football"},
+      "KXEFLCHAMPIONSHIPGAME": {"markets": 224, "contains": "PGA", "actually": "English Championship football"},
+      "_and": "15 more '...CUPGAME' series all contain 'PGA'"
+    }
+  }
+}

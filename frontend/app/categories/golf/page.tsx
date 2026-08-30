@@ -142,6 +142,11 @@ function EvolutionViewWithCallback({
 // Tour display order for per-tour sections
 const TOUR_ORDER = ["major", "pga", "dp_world", "lpga", "liv", "korn_ferry", "sunshine", "asian", "tgl"];
 
+// UX-P185: a tournament whose tour the backend cannot evidence now arrives with
+// `tour: null` instead of a guessed "pga", and buckets under the "other" key above.
+// Without a label that bucket renders its raw key as a heading — "⛳ other".
+const TOUR_FALLBACK_LABEL: Record<string, string> = { other: "Other Tournaments" };
+
 // ============================================================================
 // Main Page
 // ============================================================================
@@ -255,7 +260,7 @@ export default function GolfPage() {
       if (grouped[tour]) {
         sections.push({
           tour,
-          label: grouped[tour][0]?.tour_label || tour,
+          label: grouped[tour][0]?.tour_label || TOUR_FALLBACK_LABEL[tour] || tour,
           tournaments: grouped[tour],
         });
         delete grouped[tour];
@@ -265,7 +270,7 @@ export default function GolfPage() {
     for (const [tour, tournaments] of Object.entries(grouped)) {
       sections.push({
         tour,
-        label: tournaments[0]?.tour_label || tour,
+        label: tournaments[0]?.tour_label || TOUR_FALLBACK_LABEL[tour] || tour,
         tournaments,
       });
     }
