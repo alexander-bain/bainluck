@@ -124,13 +124,16 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         That is why ``covered_by_value`` moves 3 -> 4 here while
         ``uncovered_count`` stands still at 48.
 
-        CERT-497 (2026-08-30) added a sixth, ``_BOOKMAKER_ROW_REQUIRED_KEYS``
-        (52 -> 53, uncovered 48 -> 49), and it is the first addition that moves
-        the count below as well. Its argument is made in that test, not here.
+        CERT-497/CERT-502 (2026-08-30) added a sixth and a seventh,
+        ``_BOOKMAKER_ROW_REQUIRED_KEYS`` and ``BOOKMAKER_CURVE_SOURCE``
+        (52 -> 54, uncovered 48 -> 50). Both are behaviour-only, both are
+        classified as such, and **neither moves the count below** — which is the
+        separation this docstring promises, restored after CERT-502 found the
+        first attempt breaking it.
         """
-        assert artifact["input_count"] == 53
+        assert artifact["input_count"] == 54
         assert len(artifact["covered_by_value"]) == 4
-        assert artifact["uncovered_count"] == 49
+        assert artifact["uncovered_count"] == 50
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -177,38 +180,37 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         and moved the total in the test above and not this one — which is the
         separation that test's docstring promises.
 
-        🔴 22 -> 23 AT CERT-497 (2026-08-30). THE PARAGRAPH ABOVE SAYS THE D21
-        ENTRY "SHOULD BE THE LAST ONE ACCEPTED ON THAT ARGUMENT WITHOUT A FRESH
-        ONE." THIS IS THE FRESH ONE, AND IT IS THE OPPOSITE ARGUMENT.
+        🔴 CAL-P152 RAISED THIS PIN 22 -> 23 AND **CERT-502 BLOCKED ON IT AS A
+        MEASUREMENT-INTEGRITY REGRESSION. THE RAISE IS WITHDRAWN. THE NUMBER IS
+        22 AND THE WITHDRAWAL IS RECORDED HERE RATHER THAN REVERTED SILENTLY.**
 
-        The new entry is ``_BOOKMAKER_ROW_REQUIRED_KEYS`` — the set of keys
-        every row under ``BOOKMAKER_CURVE_REDIS_KEY`` must carry before the
-        reader will admit it. It is counted for the same mechanical reason as
-        its predecessor (it is interpolated into the refusal message, so the
-        detector sees it), but it is ACCEPTED for the reverse reason.
+        The argument offered was that ``_BOOKMAKER_ROW_REQUIRED_KEYS`` can
+        quietly move the published population, which is true, and that this made
+        it the FRESH argument the paragraph above demands. The cert's answer is
+        the right one: *this* count does not mean "can move the population" — the
+        docstring above says it moves "only when an input reaches the emitted
+        SQL". The constant does not reach SQL, the raising docstring SAID it does
+        not reach SQL, and counting it anyway would have left the guard green
+        while its category stopped meaning what downstream reviewers read it to
+        mean. **A tripwire you widen the definition of is not a tripwire.**
 
-        ``BOOKMAKER_CURVE_REDIS_KEY`` was argued in on the grounds that its
-        failure mode is LOUD by construction. This constant's is SILENT by
-        construction, and that is exactly why it belongs in a count of the
-        surface that can quietly move the published population. Loosen it — drop
-        ``winners``, say — and the reader stops refusing payloads CERT-497
-        showed it must refuse: the ~96,026-outcome curve either goes out short
-        with ``degraded=None`` or the build dies past its own refusal boundary.
-        Nothing in the payload would say which. It is the most load-bearing
-        member of this count, not the most benign one, and it is the first
-        member admitted on that basis.
+        So the constant is no longer interpolated into the refusal message — the
+        message names the offending key and the fixed prose already names the
+        curve, so nothing an operator needs was lost — and the detector now
+        classifies it, correctly, as behaviour-only. ``BOOKMAKER_CURVE_SOURCE``
+        (CERT-502's own repair) was written the same way for the same reason.
+        Both move the totals in the test above and neither moves this one.
 
-        It is deliberately NOT promoted to ``covered_by_value`` alongside
-        ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS``. That list is for inputs
-        interpolated into the EMITTED SQL, where hashing the builder's source
-        misses the substituted value; this constant never reaches the SQL and
-        never shapes the resumable population, so hashing it into
-        ``_main_input_fingerprint`` would invalidate live cursors for a read-side
-        validator change and overload a key whose docstring scopes it to
-        SQL-shaping inputs. Its four ``BOOKMAKER_CURVE_*`` siblings are treated
-        the same way, and consistency across the family is the point.
+        🔴 **THE HONEST RESIDUE, LEFT VISIBLE:** the D21 entry that took this pin
+        from 21 to 22 has exactly the same problem — ``BOOKMAKER_CURVE_REDIS_KEY``
+        is a Redis key, not SQL, and its own paragraph above concedes "It is NOT
+        SQL". It is left counted because unwinding it is a separate question
+        about the DETECTOR (it cannot distinguish diagnostic interpolation from
+        emitted SQL), not about this repair, and quietly lowering a pin while
+        being blocked for quietly raising one would be the same error twice.
+        CERT-502's fix-sketch names that detector change as the real remedy.
         """
-        assert artifact["uncovered_sql_shaping"] == 23
+        assert artifact["uncovered_sql_shaping"] == 22
 
     def test_the_four_hashed_roots_are_derived_not_declared_here(self, artifact):
         assert sorted(artifact["hashed_roots"]) == [
@@ -249,9 +251,10 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         designed to lift is not a protection you can keep spending. The cross-
         module FIVE is still the assertion that carries the meaning.
 
-        43 -> 44 at CERT-497 (``_BOOKMAKER_ROW_REQUIRED_KEYS``). Same direction,
-        same reason: it is defined in the build module, so the FIVE is untouched
-        and this arithmetic is the only thing that moves."""
+        43 -> 45 at CERT-497/CERT-502 (``_BOOKMAKER_ROW_REQUIRED_KEYS`` and
+        ``BOOKMAKER_CURVE_SOURCE``). Same direction, same reason: both are
+        defined in the build module, so the FIVE is untouched and this
+        arithmetic is the only thing that moves."""
         cross = sorted(
             r["name"]
             for r in artifact["inputs"]
@@ -265,7 +268,7 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
         ]
-        assert len(cross) + 44 == artifact["uncovered_count"]
+        assert len(cross) + 45 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

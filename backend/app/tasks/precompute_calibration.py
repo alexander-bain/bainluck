@@ -64,6 +64,19 @@ BOOKMAKER_CURVE_REDIS_KEY = "bainluck:bookmaker_calibration"
 BOOKMAKER_CURVE_ABSENT_REFUSAL = "bookmaker_curve_key_absent"
 BOOKMAKER_CURVE_UNREADABLE_REFUSAL = "bookmaker_curve_key_unreadable"
 
+#: CERT-502 P1. The ONLY value `source` may hold in a row under
+#: `BOOKMAKER_CURVE_REDIS_KEY` — `_precompute_bookmaker_calibration` emits it as a
+#: literal, once, for every bucket it writes.
+#:
+#: This is a provenance check, not a type check, and it is the difference between
+#: the two that CERT-502 found. `r.source` is part of the merge KEY, so a
+#: complete, type-correct row carrying `source="kalshi"` was admitted with
+#: `degraded=None` and merged into KALSHI's published curve — moving bookmaker
+#: mass into another source's calibration while keeping the outcome COUNT
+#: identical, which is precisely the shape the population gate cannot see.
+#: Proving a row is well-formed is not proving it came from its only writer.
+BOOKMAKER_CURVE_SOURCE = "odds_api_bookmaker"
+
 #: What the reader expects to find, for the refusal message only. Approximate by
 #: construction — it is the magnitude the outage was measured at
 #: (alex-inbox/calibration-907 §"what you will need to do after it deploys"), and
@@ -172,6 +185,23 @@ def _bookmaker_row_defect(row: dict) -> str | None:
     for key in ("source", "category"):
         if not isinstance(row[key], str):
             return "%r is %s, not a str" % (key, type(row[key]).__name__)
+
+    # 🔴 CERT-502 P1 — PROVENANCE, not shape, and the distinction is the finding.
+    # Every check around this one proves the row is WELL-FORMED. None of them
+    # proves it came from its only writer, and `r.source` is part of the merge
+    # KEY: a complete, type-correct row carrying `source="kalshi"` was admitted
+    # with `degraded=None` and merged into KALSHI's published curve. The outcome
+    # COUNT is unchanged by that, so the population gate cannot see it either —
+    # bookmaker mass silently becomes another source's calibration.
+    #
+    # The expected value is NOT interpolated (`_shape_of`'s discipline applies to
+    # the constant too): the message names the offending key, and the fixed prose
+    # below already tells an operator which curve this key carries.
+    if row["source"] != BOOKMAKER_CURVE_SOURCE:
+        return (
+            "'source' is not the one this key's only writer emits — the row "
+            "claims a different source and would be merged under it"
+        )
     for key in ("n", "winners"):
         if not isinstance(row[key], int) or isinstance(row[key], bool):
             return "%r is %s, not an int" % (key, type(row[key]).__name__)
@@ -403,18 +433,17 @@ def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
             return _degrade(
                 BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
                 "%s parsed as a list of %d dict(s), but row %d is not a "
-                "bookmaker row: %s. Every row is required to carry %s (the keys "
-                "this reader dereferences), so the per-bookmaker curve (~%s "
-                "outcomes, source odds_api_bookmaker) cannot be assembled. Its "
-                "only writer emits all of them from a single aggregate, so a "
-                "row missing one did not come from a healthy sweep. Nothing "
-                "published, prior snapshot preserved."
+                "bookmaker row: %s. So the per-bookmaker curve (~%s outcomes, "
+                "source odds_api_bookmaker) cannot be assembled. Its only "
+                "writer emits every required key from a single aggregate under "
+                "one hard-coded source, so a row that fails this check did not "
+                "come from a healthy sweep. Nothing published, prior snapshot "
+                "preserved."
                 % (
                     BOOKMAKER_CURVE_REDIS_KEY,
                     len(raw),
                     _idx,
                     _defect,
-                    ", ".join(_BOOKMAKER_ROW_REQUIRED_KEYS),
                     _expected,
                 ),
             )

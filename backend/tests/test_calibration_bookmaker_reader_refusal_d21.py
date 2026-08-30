@@ -355,6 +355,17 @@ _ROW_LEVEL_DEFECTS = [
     ([_row(category=None)], "a null category is not a by_category line"),
     ([_row(price_moved="yes")], "price_moved must stay a bool or null"),
     ([_row(), _row(category="icehockey_nhl", n=7, winners=99)], "the SECOND row"),
+    # 🔴 CERT-502 P1. PROVENANCE, not shape. Every row below is COMPLETE and
+    # type-correct and would have been admitted with `degraded=None`; `r.source`
+    # is part of the merge key, so each one moves bookmaker mass into another
+    # source's published curve while leaving the outcome COUNT untouched — which
+    # is exactly the shape the population gate cannot see.
+    ([_row(source="kalshi")], "CERT-502 repro: contaminates the KALSHI curve"),
+    ([_row(source="polymarket")], "CERT-502: any other real source"),
+    ([_row(source="odds_api")], "CERT-502: the neighbouring events curve"),
+    ([_row(source="")], "CERT-502: an empty source is still a str"),
+    ([_row(source="Odds_API_Bookmaker")], "CERT-502: case must match exactly"),
+    ([_row(), _row(category="icehockey_nhl", source="kalshi")], "one bad row of two"),
 ]
 
 
@@ -450,6 +461,50 @@ def test_a_payload_of_sound_rows_is_still_read_whole():
     assert degraded is None
     assert len(rows) == 4 and excluded == 0
     assert sum(r.n for r in rows) == 5015
+
+
+def test_a_wrong_source_row_is_refused_rather_than_merged_under_that_source():
+    """🔴 CERT-502 P1, stated on its own because shape and PROVENANCE differ.
+
+    Every other check in this file proves a row is WELL-FORMED. None of them
+    proves it came from its only writer — and on the CERT-497 head a complete,
+    type-correct row carrying ``source="kalshi"`` was admitted with
+    ``degraded=None``, converted, and merged under Kalshi's bucket key.
+
+    The damage is the quiet kind. The outcome COUNT does not change, so the
+    population gate that guards this build cannot see it; ~96K outcomes of
+    bookmaker mass simply become part of a different source's published
+    calibration curve. Nothing refuses, nothing logs, and the page shows a
+    number for Kalshi that Kalshi did not earn.
+    """
+    payload = json.dumps([_row(source="kalshi")])
+
+    rows, excluded, degraded = _read(_Redis(payload), refuse=False)
+    assert rows == [], "a wrong-source row must never reach the merge"
+    assert degraded == UNREADABLE
+    assert excluded == 0
+
+    with pytest.raises(RuntimeError) as excinfo:
+        _read(_Redis(payload))
+    assert UNREADABLE in str(excinfo.value)
+    assert "'source'" in str(excinfo.value), "the operator must be told WHICH key"
+
+
+def test_the_expected_source_is_the_literal_the_writer_actually_emits():
+    """The provenance check is only as good as the value it compares against.
+
+    Pinned against the writer's own bucket literal, read from source, for the
+    same reason as the required-key set: a reader asserting a source string the
+    writer stopped emitting would refuse every row of a healthy sweep — a
+    self-inflicted outage in the code written to prevent one.
+    """
+    writer = (Path(pc.__file__).parent / "backfill_winners.py").read_text()
+    assert pc.BOOKMAKER_CURVE_SOURCE == "odds_api_bookmaker"
+    assert f'"source": "{pc.BOOKMAKER_CURVE_SOURCE}"' in writer, (
+        "the writer no longer emits this source literal. Either it moved and "
+        "the reader's constant must move with it, or the provenance check is "
+        "now refusing every healthy row."
+    )
 
 
 def test_an_UNKNOWN_extra_key_is_tolerated_so_the_writer_can_grow_a_column():
