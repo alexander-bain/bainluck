@@ -1,0 +1,1363 @@
+{
+ "_provenance": "Captured 2026-08-30 from production /api/events/{id} and /api/events/{id}/game-markets for the two events named in #1728. `box_score` is the event's FULL players payload (pruning it by outcome name drops players the grader reaches only after normalization). `published` is what production rendered at capture time.",
+ "events": {
+  "15187845": {
+   "box_score": {
+    "Adam Frazier": {
+     "at bats": 1.0,
+     "batting average": 0.2,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Ben Joyce": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Blake Weiman": {
+     "hits": 2.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Brandon Nimmo": {
+     "at bats": 4.0,
+     "batting average": 0.276,
+     "hits": 2.0,
+     "home runs": 0.0,
+     "rbis": 1.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Cam Cauley": {
+     "at bats": 1.0,
+     "batting average": 0.214,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Chase Silseth": {
+     "hits": 1.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Corey Seager": {
+     "at bats": 5.0,
+     "batting average": 0.195,
+     "hits": 1.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 1.0,
+     "walks": 0.0
+    },
+    "Denzer Guzman": {
+     "at bats": 1.0,
+     "batting average": 0.226,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Elias Diaz": {
+     "at bats": 5.0,
+     "batting average": 0.241,
+     "hits": 2.0,
+     "home runs": 0.0,
+     "rbis": 1.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Evan Carter": {
+     "at bats": 2.0,
+     "batting average": 0.193,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Ezequiel Duran": {
+     "at bats": 5.0,
+     "batting average": 0.271,
+     "hits": 1.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 1.0,
+     "walks": 0.0
+    },
+    "Jacob Latz": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Jake Burger": {
+     "at bats": 5.0,
+     "batting average": 0.237,
+     "hits": 1.0,
+     "home runs": 0.0,
+     "rbis": 2.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Joc Pederson": {
+     "at bats": 1.0,
+     "batting average": 0.248,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Jonah Bride": {
+     "at bats": 1.0,
+     "batting average": 0.2,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Jose Fermin": {
+     "hits": 1.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Jose Siri": {
+     "at bats": 4.0,
+     "batting average": 0.264,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Josh Lowe": {
+     "at bats": 1.0,
+     "batting average": 0.202,
+     "hits": 1.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Justin Foscue": {
+     "at bats": 4.0,
+     "batting average": 0.255,
+     "hits": 1.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Luke Murphy": {
+     "hits": 1.0,
+     "home runs": 0.0,
+     "runs": 3.0,
+     "walks": 1.0
+    },
+    "MacKenzie Gore": {
+     "hits": 4.0,
+     "home runs": 1.0,
+     "runs": 1.0,
+     "walks": 2.0
+    },
+    "Mike Trout": {
+     "at bats": 2.0,
+     "batting average": 0.237,
+     "hits": 1.0,
+     "home runs": 1.0,
+     "rbis": 1.0,
+     "runs": 1.0,
+     "walks": 3.0
+    },
+    "Moises Ballesteros": {
+     "at bats": 4.0,
+     "batting average": 0.22,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Nicky Lopez": {
+     "at bats": 1.0,
+     "batting average": 0.276,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 1.0,
+     "walks": 0.0
+    },
+    "Nolan Schanuel": {
+     "at bats": 5.0,
+     "batting average": 0.27,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Oswald Peraza": {
+     "at bats": 3.0,
+     "batting average": 0.233,
+     "hits": 1.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Peyton Gray": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Reid Detmers": {
+     "hits": 3.0,
+     "home runs": 0.0,
+     "runs": 1.0,
+     "walks": 4.0
+    },
+    "Robby Ahlstrom": {
+     "hits": 1.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Samy Natera Jr.": {
+     "hits": 1.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Tayler Saucedo": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Travis d'Arnaud": {
+     "at bats": 1.0,
+     "batting average": 0.2,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Tyler Alexander": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Tyler Heineman": {
+     "at bats": 1.0,
+     "batting average": 0.179,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Vaughn Grissom": {
+     "at bats": 4.0,
+     "batting average": 0.253,
+     "hits": 2.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Wade Meckler": {
+     "at bats": 3.0,
+     "batting average": 0.305,
+     "hits": 1.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Wyatt Langford": {
+     "at bats": 2.0,
+     "batting average": 0.259,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 1.0,
+     "walks": 3.0
+    },
+    "Zach Neto": {
+     "at bats": 5.0,
+     "batting average": 0.223,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    }
+   },
+   "hrr_props": [
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Corey Seager: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Corey Seager: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Corey Seager: 5+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Wyatt Langford: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Wyatt Langford: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Wyatt Langford: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Wyatt Langford: 5+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Mike Trout: 3+",
+     "published": {
+      "actual": 1.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Mike Trout: 5+",
+     "published": {
+      "actual": 1.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Zach Neto: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Zach Neto: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Zach Neto: 5+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Nolan Schanuel: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Nolan Schanuel: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Nolan Schanuel: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Ezequiel Duran: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Ezequiel Duran: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Wade Meckler: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Wade Meckler: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Justin Foscue: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Justin Foscue: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Justin Foscue: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Justin Foscue: 5+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Jonah Bride: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Brandon Nimmo: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Brandon Nimmo: 5+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Mois\u00e9s Ballesteros: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Travis d'Arnaud: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Travis d'Arnaud: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Travis d'Arnaud: 5+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Jose Siri: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Jose Siri: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Jose Siri: 5+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Vaughn Grissom: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Vaughn Grissom: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Vaughn Grissom: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Sebasti\u00e1n Rivero: 2+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Sebasti\u00e1n Rivero: 3+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Sebasti\u00e1n Rivero: 4+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Jorge Soler: 2+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Jorge Soler: 3+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Jorge Soler: 4+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Jo Adell: 2+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Jo Adell: 3+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Jo Adell: 4+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Jo Adell: 5+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Kyle Higashioka: 2+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Sam Haggerty: 2+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Sam Haggerty: 3+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Adam Frazier: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Adam Frazier: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Michael Helman: 2+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Michael Helman: 5+",
+     "published": {
+      "actual": null,
+      "hit": null,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Texas vs Los Angeles A: Hits + Runs + RBIs",
+     "outcome_name": "Oswald Peraza: 5+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    }
+   ]
+  },
+  "15191146": {
+   "box_score": {
+    "Andrew Benintendi": {
+     "at bats": 1.0,
+     "batting average": 0.247,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Angel Genao": {
+     "at bats": 3.0,
+     "batting average": 0.368,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 1.0,
+     "walks": 1.0
+    },
+    "Braden Montgomery": {
+     "at bats": 3.0,
+     "batting average": 0.235,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 1.0,
+     "walks": 1.0
+    },
+    "Brayan Rocchio": {
+     "at bats": 4.0,
+     "batting average": 0.254,
+     "hits": 1.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Brenton Doyle": {
+     "at bats": 5.0,
+     "batting average": 0.221,
+     "hits": 2.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 1.0,
+     "walks": 0.0
+    },
+    "Bryan Hudson": {
+     "hits": 1.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Cade Smith": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Chase DeLauter": {
+     "at bats": 3.0,
+     "batting average": 0.277,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 1.0,
+     "walks": 2.0
+    },
+    "Colin Holderman": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Colson Montgomery": {
+     "at bats": 3.0,
+     "batting average": 0.215,
+     "hits": 1.0,
+     "home runs": 1.0,
+     "rbis": 3.0,
+     "runs": 1.0,
+     "walks": 0.0
+    },
+    "Craig Yoho": {
+     "hits": 2.0,
+     "home runs": 1.0,
+     "runs": 4.0,
+     "walks": 4.0
+    },
+    "Davis Martin": {
+     "hits": 2.0,
+     "home runs": 0.0,
+     "runs": 2.0,
+     "walks": 1.0
+    },
+    "Edgar Quero": {
+     "at bats": 1.0,
+     "batting average": 0.194,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 3.0
+    },
+    "Erik Sabrowski": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 3.0
+    },
+    "Hagen Smith": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 4.0
+    },
+    "Huascar Brazoban": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Hunter Gaddis": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Jo Adell": {
+     "at bats": 3.0,
+     "batting average": 0.234,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Joey Cantillo": {
+     "hits": 3.0,
+     "home runs": 0.0,
+     "runs": 1.0,
+     "walks": 0.0
+    },
+    "Jordan Hicks": {
+     "hits": 1.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Jose Ramirez": {
+     "at bats": 3.0,
+     "batting average": 0.238,
+     "hits": 2.0,
+     "home runs": 0.0,
+     "rbis": 1.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Luisangel Acuna": {
+     "at bats": 4.0,
+     "batting average": 0.243,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Miguel Vargas": {
+     "at bats": 3.0,
+     "batting average": 0.235,
+     "hits": 1.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 1.0,
+     "walks": 2.0
+    },
+    "Munetaka Murakami": {
+     "at bats": 4.0,
+     "batting average": 0.237,
+     "hits": 1.0,
+     "home runs": 0.0,
+     "rbis": 1.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Nathaniel Lowe": {
+     "at bats": 2.0,
+     "batting average": 0.267,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 1.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Patrick Bailey": {
+     "at bats": 2.0,
+     "batting average": 0.191,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 2.0
+    },
+    "Randal Grichuk": {
+     "at bats": 3.0,
+     "batting average": 0.262,
+     "hits": 1.0,
+     "home runs": 0.0,
+     "rbis": 1.0,
+     "runs": 1.0,
+     "walks": 0.0
+    },
+    "Rhys Hoskins": {
+     "at bats": 2.0,
+     "batting average": 0.182,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Sam Antonacci": {
+     "at bats": 1.0,
+     "batting average": 0.273,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 2.0
+    },
+    "Sean Newcomb": {
+     "hits": 1.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Steven Kwan": {
+     "at bats": 5.0,
+     "batting average": 0.265,
+     "hits": 2.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 1.0,
+     "walks": 0.0
+    },
+    "Tim Herrin": {
+     "hits": 1.0,
+     "home runs": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    },
+    "Travis Bazzana": {
+     "at bats": 3.0,
+     "batting average": 0.241,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 1.0
+    },
+    "Trevor Richards": {
+     "hits": 0.0,
+     "home runs": 0.0,
+     "runs": 1.0,
+     "walks": 2.0
+    },
+    "Tristan Peters": {
+     "at bats": 0.0,
+     "batting average": 0.265,
+     "hits": 0.0,
+     "home runs": 0.0,
+     "rbis": 0.0,
+     "runs": 0.0,
+     "walks": 0.0
+    }
+   },
+   "hrr_props": [
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Chase DeLauter: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Munetaka Murakami: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Munetaka Murakami: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Travis Bazzana: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Edgar Quero: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Edgar Quero: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Angel Genao: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Angel Genao: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Steven Kwan: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Steven Kwan: 5+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Jos\u00e9 Ram\u00edrez: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Jos\u00e9 Ram\u00edrez: 5+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Nathaniel Lowe: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Nathaniel Lowe: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Jo Adell: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Luisangel Acu\u00f1a: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Luisangel Acu\u00f1a: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Miguel Vargas: 3+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 3.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Miguel Vargas: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Braden Montgomery: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Brenton Doyle: 4+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 4.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Brayan Rocchio: 2+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 2.0
+    },
+    {
+     "market_name": "Cleveland vs Chicago WS: Hits + Runs + RBIs",
+     "outcome_name": "Sam Antonacci: 5+",
+     "published": {
+      "actual": 0.0,
+      "hit": false,
+      "resolution_source": "api_settlement"
+     },
+     "threshold": 5.0
+    }
+   ]
+  }
+ }
+}

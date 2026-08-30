@@ -2875,6 +2875,10 @@ _PROP_TICKER_TO_STAT = {
     # bare "strikeouts" would grade every pitcher prop off a BATTER's K count.
     "kxmlbks": "pitching strikeouts",
     "kxnba2d": "double doubles",
+    # #1728: KXMLBRBI is the standalone RBI series. It had no mapping at all,
+    # so every one of its outcomes fell through to "cannot compute" and was
+    # withheld — honest, but ungraded.
+    "kxmlbrbi": "rbis",
 }
 
 _PROP_RE = re.compile(r"^(.+?):\s*(\d+)\+\s*$")
@@ -2898,7 +2902,76 @@ _COMBO_STATS = {
     # separately and have NO "points" field, so mapping kxnhlpts to a singular
     # "points" stat always returned 0 -> every points prop graded a loser (#937).
     "kxnhlpts": ["goals", "assists"],
+    # #1728: "Hits + Runs + RBIs" is a COMPOSITE, and it had no mapping — so it
+    # prefix-matched `kxmlbhr` above and published the batter's HOME RUN total
+    # as its actual. A 2-hit game printed a red MISS on a prop that hit.
+    "kxmlbhrr": ["hits", "runs", "rbis"],
 }
+
+
+def _prop_stats_for_ticker(ticker_lower: str):
+    """The box-score stat key(s) a Kalshi prop ticker grades against, or None.
+
+    ** LONGEST PREFIX WINS, NEVER FIRST. ** Both tables above are matched by
+    ticker PREFIX, and some series tickers are proper prefixes of others:
+    ``KXMLBHRR`` (Hits + Runs + RBIs) extends ``KXMLBHR`` (home runs), and
+    ``KXNBAPRA`` (points+rebounds+assists) extends ``KXNBAPR`` (points+rebounds).
+    Under first-match-wins the SHORTER key answers first and the longer series
+    is graded as a different statistic entirely — that is #1728, measured on
+    production as 1,890 event-linked ``KXMLBHRR`` markets whose published
+    `actual` was a home-run count.
+
+    Hand-ordering the dict literals would fix today's two collisions and
+    re-break on the next series Kalshi adds, so the RULE is the fix and dict
+    insertion order is deliberately NOT load-bearing. Singles are checked
+    against the same best-so-far length as combos, so a combo can outrank a
+    single and vice versa.
+    """
+    best_prefix = None
+    best_stats = None
+    for table, wrap in ((_PROP_TICKER_TO_STAT, lambda s: [s]),
+                        (_COMBO_STATS, list)):
+        for prefix, stat in table.items():
+            if not ticker_lower.startswith(prefix):
+                continue
+            if best_prefix is None or len(prefix) > len(best_prefix):
+                best_prefix, best_stats = prefix, wrap(stat)
+    return best_stats
+
+
+# Stats the parser writes ONLY when the player achieved them, so absence is a
+# genuine ZERO rather than a failed lookup: `espn_api.py` writes "double
+# doubles" only when `dd_count >= 2`. Every other stat is written for every
+# player in its group, so a missing key there means the lookup failed.
+_PRESENCE_FLAG_STATS = frozenset({"double doubles", "triple doubles"})
+
+
+def _sum_prop_stats(player_stats: dict, stat_keys: list):
+    """A prop's actual, or None when any leg is unresolvable (#1728).
+
+    ** A MISSING KEY IS NOT A ZERO. ** The previous `get(stat, 0)` turned an
+    unresolvable leg into a silent partial sum and then published a confident
+    verdict off it, which is the same false-verdict class this pass exists to
+    correct. A composite grades only when EVERY leg resolves; otherwise the
+    caller withholds (`hit: null`), because no verdict beats a wrong one.
+
+    The exception is real and is why this is a function and not an `all()`:
+    for `_PRESENCE_FLAG_STATS` the parser omits the key precisely when the
+    answer is zero, so withholding there would strip a correct "no" from every
+    player who did not record a double-double.
+    """
+    total = 0.0
+    for s in stat_keys:
+        v = player_stats.get(s)
+        if v is None:
+            if s in _PRESENCE_FLAG_STATS:
+                continue
+            return None
+        try:
+            total += float(v)
+        except (TypeError, ValueError):
+            return None
+    return total
 
 
 async def _resolve_kalshi_player_props_from_boxscore():
@@ -2996,19 +3069,10 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     for row in by_event[ev_id]:
                         ticker_lower = (row.ticker or "").lower()
 
-                        stat_name = None
-                        combo_stats = None
-                        for prefix, stat in _PROP_TICKER_TO_STAT.items():
-                            if ticker_lower.startswith(prefix):
-                                stat_name = stat
-                                break
-                        if not stat_name:
-                            for prefix, stat_list in _COMBO_STATS.items():
-                                if ticker_lower.startswith(prefix):
-                                    combo_stats = stat_list
-                                    break
-                        if not stat_name and not combo_stats:
+                        stat_keys = _prop_stats_for_ticker(ticker_lower)
+                        if not stat_keys:
                             continue
+                        stat_name = stat_keys[0] if len(stat_keys) == 1 else None
 
                         m = _PROP_RE.match(row.outcome_name or "")
                         if m:
@@ -3035,10 +3099,7 @@ async def _resolve_kalshi_player_props_from_boxscore():
                             stats["no_player"] += 1
                             continue
 
-                        if combo_stats:
-                            actual = sum(player_stats.get(s, 0) for s in combo_stats)
-                        else:
-                            actual = player_stats.get(stat_name, 0)
+                        actual = _sum_prop_stats(player_stats, stat_keys)
 
                         if actual is None:
                             stats["no_player"] += 1
