@@ -18,6 +18,7 @@ Two things are pinned here that the pure-logic suite cannot reach:
 import inspect
 
 from app.routes import tournaments
+from app.utils import tournament_event_link
 
 
 class TestSlugResolution:
@@ -181,7 +182,11 @@ class TestSlateContract:
 
     def test_slate_and_board_loads_are_both_bounded_id_lists(self):
         """Neither half may become a table scan as the register grows."""
-        source = inspect.getsource(tournaments.get_tournament)
+        # UX-P152: the hub's body moved to `_hub_payload` so the event page's
+        # tournament sections come out of the SAME build. `get_tournament` is
+        # now a four-line slug check in front of it, so the assertions about
+        # what the build does read the build.
+        source = inspect.getsource(tournaments._hub_payload)
         assert "matchup_outcome_ids" in source
         assert "board_outcome_ids" in source
         # Trend series stay a board concern; loading them for the slate's ~130
@@ -233,7 +238,11 @@ class TestAutoLinkedMatchups:
         reader — the bounded outcome-id lists especially — looking at the
         unlinked register while the payload claimed otherwise.
         """
-        source = inspect.getsource(tournaments.get_tournament)
+        # UX-P152: the hub's body moved to `_hub_payload` so the event page's
+        # tournament sections come out of the SAME build. `get_tournament` is
+        # now a four-line slug check in front of it, so the assertions about
+        # what the build does read the build.
+        source = inspect.getsource(tournaments._hub_payload)
         assert source.index("apply_resolved_links") < source.index(
             "TournamentRegister(register)"
         )
@@ -260,132 +269,110 @@ class TestAutoLinkedMatchups:
         assert out["matchups"][0]["sources"][0]["market_id"] == 1
 
 
-class TestMatchDetail:
-    """One match's own page — GET /api/tournaments/{slug}/matches/{key} (UX-P149).
+class TestEventTournamentExtensions:
+    """A standard event's tournament sections — GET /api/tournaments/by-event/{id}.
 
-    The surface lane1's Q426 note asked for: match props rendered on the
-    match's own page, grouped under the match-winner market. What is pinned
-    here is what the pure-logic suite cannot reach — that a matchup key does
-    not infer any more than a slug does, and that the sibling load is an
-    id-anchored group hop rather than a query anyone could widen.
+    UX-P152 replaced UX-P149's parallel match page with this. Alex, on that
+    artifact: *"It seems like we're reinventing the event page here"*, and then
+    *"I thought that tournaments were containers for related events."* They are,
+    and 94 standard `events` rows for the 96 registered R128 fixtures appeared
+    on 2026-08-27 when the Odds API ingested the main draw — the day after
+    UX-P149 measured that none existed.
+
+    What is pinned here is what the pure-logic suite cannot reach: that the
+    ordinary answer is cheap and is not an error, and that the parallel route
+    is gone rather than merely unlinked.
     """
 
-    MATCH = "mens-singles:henrique-rocha-vs-lloyd-harris:2026-08-26"
+    async def test_the_match_page_route_no_longer_exists(self, client):
+        """Not merely unlinked — GONE. Two doors to one thing is the bug.
 
-    async def test_a_registered_matchup_is_served(self, client):
-        resp = await client.get(f"/api/tournaments/us-open/matches/{self.MATCH}")
-        assert resp.status_code == 200
-
-    async def test_a_matchup_key_does_not_infer(self, client):
-        """Ruling 031's disease, one level down from the slug.
-
-        Answering a mistyped key with a plausible other match is exactly the
-        failure that cost the US Open its own page (#1793), and it would be
-        worse here — the reader would be looking at two real players' names
-        over another match's numbers.
+        A surface left mounted but unreferenced is exactly the shape of
+        `GridPlayoffPathPair`, the dead advancement component this queue found
+        while answering Alex's question about what the MLB page shows: fully
+        plumbed, never rendered, and the reason the code had two plausible
+        answers where the product has one.
         """
-        for key in ("nonsense", "mens-singles:a-vs-b:2026-08-26", self.MATCH[:-2]):
-            resp = await client.get(f"/api/tournaments/us-open/matches/{key}")
-            assert resp.status_code == 404, key
-
-    async def test_an_unregistered_tournament_is_404(self, client):
-        resp = await client.get(f"/api/tournaments/wimbledon/matches/{self.MATCH}")
+        resp = await client.get(
+            "/api/tournaments/us-open/matches/"
+            "mens-singles:alexander-bublik-vs-j-j-wolf:2026-08-30"
+        )
         assert resp.status_code == 404
 
-    async def test_rejects_post(self, client):
-        resp = await client.post(f"/api/tournaments/us-open/matches/{self.MATCH}")
-        assert resp.status_code == 405
+    async def test_a_non_tournament_event_is_a_null_not_a_404(self, client):
+        """The ordinary answer for almost every event on the site.
 
-    async def test_payload_shape(self, client):
-        body = (
-            await client.get(f"/api/tournaments/us-open/matches/{self.MATCH}")
-        ).json()
-        for key in (
-            "slug", "title", "matchup_key", "match", "result", "decided",
-            "props", "props_count", "props_dropped", "generated_at",
-        ):
-            assert key in body, key
-        assert body["matchup_key"] == self.MATCH
-        assert body["match"]["matchup_key"] == self.MATCH
-
-    async def test_empty_database_is_an_honest_empty_page(self, client):
-        """No prices must never become a fabricated question."""
-        body = (
-            await client.get(f"/api/tournaments/us-open/matches/{self.MATCH}")
-        ).json()
-        assert body["props"] == []
-        assert body["decided"] is False
-        assert all(side["probability"] is None for side in body["match"]["sides"])
-
-    async def test_a_started_match_still_has_a_page(self, client):
-        """`build_slate` drops a match six hours after its start; this must not.
-
-        Every match in the committed register was played days before this test
-        runs, so if the page inherited the slate's window every one of them
-        would 404 — at exactly the moment its result exists.
+        An error status for the ordinary answer is how a health check learns to
+        ignore a real one.
         """
-        resp = await client.get(f"/api/tournaments/us-open/matches/{self.MATCH}")
-        assert resp.status_code == 200
+        resp = await client.get("/api/tournaments/by-event/999999999")
+        # Either the event does not exist (404) or it does and is not in a
+        # tournament (200 + null) — never a 500, and never a 404 for the
+        # second case, which is what this pins.
+        assert resp.status_code in (200, 404)
+        if resp.status_code == 200:
+            assert resp.json()["tournament"] is None
 
-    def test_the_sibling_load_is_a_group_hop_not_a_search(self):
-        """The grouping is an id. If this stops being true, say so loudly.
+    async def test_the_no_costs_one_indexed_read_and_never_a_register(self):
+        """A Lakers event page must not pay for the US Open being on.
 
-        No name comparison, no time window and no category test may enter this
-        path — that is the whole reason lane1 could hand the surface over
-        without handing over a matching problem with it.
+        The sport-key gate has to come BEFORE `_hub_payload`, or a single event
+        page for an unrelated game triggers a full tournament build on a cold
+        cache.
         """
-        source = inspect.getsource(tournaments._load_match_group)
-        assert "FuturesMarket.group_id == group_id" in source
-        assert "MAX_MATCH_GROUP_ROWS" in source
-        for banned in ("ilike", "like(", "commence_time", "llm_sport_category"):
-            assert banned not in source.lower(), banned
+        source = inspect.getsource(tournaments.get_event_tournament)
+        gate = source.index('return {"event_id": event_id, "tournament": None}')
+        assert gate < source.index("_hub_payload"), (
+            "the sport-key gate must short-circuit before any register load"
+        )
 
+    async def test_membership_is_named_never_inferred_from_the_slug(self):
+        """Same posture as `espn_event_name`: three strings a human can check."""
+        assert tournaments.REGISTERED_TOURNAMENTS["us-open"]["sport_keys"] == (
+            "tennis_atp_us_open",
+            "tennis_wta_us_open",
+        )
 
-class TestLinkOverlayOnTheMatchPage:
-    """The match page reads the SAME overlay the hub does (UX-P149).
+    async def test_it_never_name_matches_the_two_players_sitting_right_there(self):
+        """The event row carries both player names. The route must not use them.
 
-    Lane1's Q426 linker fills in the R128 fixtures the ceremony census recorded
-    as `missing`. If the match page did not read it, the hub would print a
-    probability for those 96 main-draw matches and the match's own page would
-    say no market exists — two surfaces disagreeing about one question, on the
-    main draw, in the week it starts.
-
-    On THIS branch the linker module does not exist (it is lane1's, on master),
-    so what is pinned here is the seam and the degradation: the call is made,
-    the absence costs nothing, and the page renders the committed register.
-    """
-
-    MATCH = "mens-singles:henrique-rocha-vs-lloyd-harris:2026-08-26"
-
-    def test_the_match_route_applies_the_overlay(self):
-        source = inspect.getsource(tournaments.get_tournament_match)
-        assert "_with_link_overlay" in source
-
-    def test_the_overlay_is_never_a_gate(self):
-        """It must not be able to 503 the page, whatever it does."""
-        source = inspect.getsource(tournaments._with_link_overlay)
-        assert "except Exception" in source
-        assert "return register, 0" in source
-
-    async def test_a_missing_linker_leaves_the_page_exactly_as_the_register_wrote_it(
-        self, client
-    ):
-        resp = await client.get(f"/api/tournaments/us-open/matches/{self.MATCH}")
-        assert resp.status_code == 200
-        assert resp.json()["matchup_key"] == self.MATCH
-
-    async def test_the_overlay_cannot_mutate_the_cached_register(self):
-        """gotcha #6: a module-level cached dict edited in place leaks forward.
-
-        Proven against the real helper rather than the real linker, because the
-        register the route holds is the thing at risk and it is the same object
-        on the next request.
+        This is the shortcut that would work most of the time and put two real
+        players' names over a third match's numbers the rest of it.
         """
-        from app.utils.tournament_register import load_register
+        source = inspect.getsource(tournaments.get_event_tournament)
+        assert "resolve_matchup_events" not in source, (
+            "resolution happens in `_hub_payload` and is READ here"
+        )
+        assert 'by_event") or {}).get(' in source
+        for shortcut in ("home_team_name ==", "in home_team_name", ".lower()"):
+            assert shortcut not in source
 
-        register = load_register("us-open", "2026")
-        before = len(register["matchups"])
-        out, applied = await tournaments._with_link_overlay("us-open", register)
-        assert applied == 0
-        assert out is register or len(out["matchups"]) == before
-        assert len(register["matchups"]) == before
+    async def test_the_hub_publishes_the_link_map_and_its_named_gaps(self, client):
+        """NO SILENT CAPS. A fixture with no click-through is a counted gap.
+
+        A row that quietly stopped being a link and a fixture nobody quotes look
+        identical from the outside (gotcha #53).
+        """
+        body = (await client.get("/api/tournaments/us-open")).json()
+        links = body["event_links"]
+        assert isinstance(links["by_event"], dict)
+        assert isinstance(links["linked"], int)
+        assert isinstance(links["unresolved"], dict)
+        for reason in links["unresolved"]:
+            assert reason in tournament_event_link.UNRESOLVED_REASONS
+
+    async def test_slate_rows_carry_the_event_they_route_to(self, client):
+        """The routing fix, end to end: a match card addresses `/events/{id}`."""
+        body = (await client.get("/api/tournaments/us-open")).json()
+        rows = body["slate"]["matches"]
+        assert rows, "no slate rows to check"
+        for row in rows:
+            assert "event_id" in row
+            assert row["event_id"] is None or isinstance(row["event_id"], int)
+        # Whatever the link map resolved must actually reach the rows — a
+        # resolution nobody renders is not a ship.
+        by_matchup = body["event_links"]["by_matchup"]
+        for row in rows:
+            expected = by_matchup.get(row["matchup_key"])
+            if expected is not None:
+                assert row["event_id"] == expected

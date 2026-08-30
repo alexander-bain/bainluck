@@ -105,6 +105,26 @@ class _Result:
     def scalars(self):
         return _Scalars(self._rows)
 
+    # ── The union with master's `browse_futures` ─────────────────────────────
+    #
+    # UX-P165 wrote this double against a route that read its page through
+    # `.scalars()`. Master has since folded the separate COUNT away: the page
+    # query is now `select(FuturesMarket, func.count().over())` read as
+    # `(await db.execute(query)).unique().all()`, so a row is the PAIR
+    # `(market, browse_total)` and the total rides on every row.
+    #
+    # `.unique()` is not decoration there — the query eager-loads
+    # `FuturesMarket.outcomes`, and SQLAlchemy REQUIRES `unique()` on a result
+    # containing joined eager loads. A double without it fails with
+    # `'_Result' object has no attribute 'unique'`, which is what 13 of these
+    # tests did on the union: ux-122's double meeting master's route, neither
+    # of them wrong on its own.
+    def unique(self):
+        return self
+
+    def all(self):
+        return [(row, len(self._rows)) for row in self._rows]
+
 
 class FakeDB:
     """Returns the same rows for the count query and the page query, which is all

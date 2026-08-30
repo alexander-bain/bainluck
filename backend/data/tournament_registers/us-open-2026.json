@@ -21168,7 +21168,9 @@
           "entity_key": "usa-men-final-berth:yes",
           "display_name": "Yes",
           "outcome_id": 222299660,
-          "is_answer": true
+          "is_answer": true,
+          "market_id": 59694147,
+          "market_external_id": "KXATPNATSTAGE-26FIN"
         }
       ],
       "evidence": {
@@ -21176,7 +21178,13 @@
         "observed_at": "2026-08-29T21:12:00+00:00",
         "market_name": "US Open Men's Singles: Americans to Reach Final",
         "answer": "Yes"
-      }
+      },
+      "markets": [
+        {
+          "market_id": 59694147,
+          "market_external_id": "KXATPNATSTAGE-26FIN"
+        }
+      ]
     },
     {
       "key": "second-major",
@@ -21250,7 +21258,9 @@
           "entity_key": "sabalenka-title-defence:aryna-sabalenka",
           "display_name": "Aryna Sabalenka",
           "outcome_id": 1181,
-          "is_answer": true
+          "is_answer": true,
+          "market_id": 194,
+          "market_external_id": "KXWTAGRANDSLAM-26"
         }
       ],
       "evidence": {
@@ -21258,7 +21268,13 @@
         "observed_at": "2026-08-29T21:12:00+00:00",
         "market_name": "Who will win a WTA Grand Slam in 2026?",
         "answer": "Aryna Sabalenka"
-      }
+      },
+      "markets": [
+        {
+          "market_id": 194,
+          "market_external_id": "KXWTAGRANDSLAM-26"
+        }
+      ]
     },
     {
       "key": "usa-women-quarterfinal-count",
@@ -21273,7 +21289,9 @@
           "entity_key": "usa-women-quarterfinal-count:3+-americans",
           "display_name": "3+ Americans",
           "outcome_id": 222299663,
-          "is_answer": true
+          "is_answer": true,
+          "market_id": 59694149,
+          "market_external_id": "KXWTANATSTAGE-26QF"
         }
       ],
       "evidence": {
@@ -21281,7 +21299,13 @@
         "observed_at": "2026-08-29T21:12:00+00:00",
         "market_name": "US Open Women's Singles: Americans to Reach Quarterfinals",
         "answer": "3+ Americans"
-      }
+      },
+      "markets": [
+        {
+          "market_id": 59694149,
+          "market_external_id": "KXWTANATSTAGE-26QF"
+        }
+      ]
     }
   ],
   "props_observed_at": "2026-08-29T21:12:00+00:00",
