@@ -485,18 +485,31 @@ async def compute_watermark(db, result: dict[str, Any]) -> datetime | None:
 # ---------------------------------------------------------------------------
 
 
-def read_slot(rc, key: str) -> dict[str, Any] | None:
-    """Read one cache slot, returning a usable current-generation payload or None."""
+def read_slot_raw(rc, key: str) -> tuple[Any, dict[str, Any] | None]:
+    """`read_slot`'s verdict, PLUS the exact bytes that verdict was taken on.
+
+    A caller that intends to *conditionally overwrite* a slot needs both halves
+    and needs them from ONE read: the payload to make the decision, and the bytes
+    to prove at write time that the thing it judged is still the thing it is about
+    to replace. Fetching them separately would reintroduce, one level down, the
+    very race the compare-and-set below exists to close (CERT-480 finding 1).
+
+    `raw` is None both when the key is absent and when the read itself failed.
+    They are deliberately not distinguished: both mean "I hold no bytes I can
+    honestly claim are current", and both route to the strictest arm of the CAS
+    ("write only if still absent"), which declines the moment any concurrent
+    writer has published anything at all.
+    """
     if rc is None:
-        return None
+        return None, None
     try:
         raw = rc.get(key)
     except Exception:
         logger.warning("event-concept cache: read failed for %s", key)
-        return None
+        return None, None
     payload = decode_payload(raw)
     if payload is None:
-        return None
+        return raw, None
     defect = envelope_defect(payload)
     if defect is not None:
         # A pre-envelope payload has no `cache` block at all and is the ordinary,
@@ -509,8 +522,17 @@ def read_slot(rc, key: str) -> dict[str, Any] | None:
             logger.warning(
                 "event-concept cache: refusing malformed payload for %s (%s)", key, defect
             )
-        return None
-    return payload
+        return raw, None
+    return raw, payload
+
+
+def read_slot(rc, key: str) -> dict[str, Any] | None:
+    """Read one cache slot, returning a usable current-generation payload or None.
+
+    The whole of the validation lives in `read_slot_raw`, so the payload a reader
+    accepts and the payload a conditional writer judges can never drift apart.
+    """
+    return read_slot_raw(rc, key)[1]
 
 
 def write_payload(
@@ -549,6 +571,97 @@ def write_payload(
         rc.delete(keys.negative)
     except Exception:
         logger.warning("event-concept cache: write failed for %s", keys.primary)
+
+
+# Compare-and-set, and it is the same lesson as `_RELEASE_IF_OWNER_LUA` below.
+# "Publish the mirror only if what is stored is not already better" is a
+# check-then-act, and a caller that spends one round trip on the check and
+# another on the act has not implemented it: between the two, a concurrent
+# COMPLETE build can land and be overwritten by this one's partial, downgrading
+# the mirror for a full 24 hours. That is CERT-480 finding 1, and the ordering
+# is legal on two web dynos with no lock between them:
+#
+#     partial worker   reads mirror -> absent/partial, decides "publish"
+#     full worker                      writes primary + FULL mirror
+#     partial worker   writes ------------------------> partial over the full
+#
+# The precondition compared here is the STORED BYTES, not a re-derived quality,
+# for two reasons. It needs no knowledge of the payload codec, so this script
+# cannot drift from `encode_payload`. And "nothing changed since I looked" is
+# strictly STRONGER than "it is still not full" — it also declines to clobber a
+# fresher partial, which is harmless, and that is the safe direction to err in.
+_SETEX_IF_UNCHANGED_LUA = """
+local current = redis.call('get', KEYS[1])
+if ARGV[1] == '1' then
+    if current then return 0 end
+elseif current ~= ARGV[2] then
+    return 0
+end
+redis.call('setex', KEYS[1], ARGV[3], ARGV[4])
+return 1
+"""
+
+
+def setex_if_unchanged(rc, key: str, expected: Any, ttl: int, value: Any) -> bool:
+    """`SETEX key ttl value`, but only while `key` still holds exactly `expected`.
+
+    `expected=None` means "only while `key` is still ABSENT". That is a distinct
+    precondition from "holds empty bytes" and is carried in its own ARGV rather
+    than by an in-band sentinel, because a sentinel that a stored value could
+    ever equal is not a precondition, it is a coincidence waiting to happen.
+
+    Returns True only when this call actually wrote.
+
+    Fails CLOSED, exactly like `release_refresh_lock`. False covers both "somebody
+    changed it under us" — the point — and "the compare-and-set could not run at
+    all", and both leave the stored value ALONE. Declining to publish costs at
+    most one rebuild's worth of staleness; publishing on a check we could not
+    verify is the downgrade this function exists to prevent.
+    """
+    if rc is None:
+        return False
+    try:
+        return bool(
+            rc.eval(
+                _SETEX_IF_UNCHANGED_LUA,
+                1,
+                key,
+                "1" if expected is None else "0",
+                b"" if expected is None else expected,
+                int(ttl),
+                value,
+            )
+        )
+    except Exception:
+        logger.warning(
+            "event-concept cache: conditional write failed for %s; leaving it alone", key
+        )
+        return False
+
+
+def publish_mirror_if_unchanged(
+    rc, keys: ConceptCacheKeys, payload: dict[str, Any], expected: Any
+) -> bool:
+    """Write the 24h mirror iff it still holds exactly the bytes `expected`.
+
+    The conditional counterpart to `write_payload(mirror=True)`, for the one
+    caller-side rule that cannot be expressed by a boolean decided in advance:
+    "store this unless something better is already there" is only true at the
+    instant it is written.
+
+    `expected` must be the `raw` half of a `read_slot_raw` on `keys.stale` — the
+    bytes the caller's own judgement was taken on. `STALE_TTL` and the codec stay
+    in here, unparameterised, for the same reason `write_payload` keeps them: the
+    mirror's job is to outlive an outage, and that is the same job for every tier.
+    """
+    if rc is None:
+        return False
+    try:
+        encoded = encode_payload(payload)
+    except Exception:
+        logger.warning("event-concept cache: could not encode mirror for %s", keys.stale)
+        return False
+    return setex_if_unchanged(rc, keys.stale, expected, STALE_TTL, encoded)
 
 
 def write_negative(rc, keys: ConceptCacheKeys) -> None:

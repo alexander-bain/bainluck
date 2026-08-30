@@ -59,6 +59,7 @@ post-deploy first-touch read on this endpoint is the falsifier.
 
 import logging
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import Text, and_, any_, literal, or_, select, text
@@ -78,7 +79,9 @@ from app.utils.event_concept_cache import (
     cache_keys,
     get_client,
     note_build_loss,
+    publish_mirror_if_unchanged,
     read_slot,
+    read_slot_raw,
     release_refresh_lock,
     stamp_envelope,
     take_build_quality,
@@ -437,25 +440,45 @@ async def build_prop_families(team: Team, db: AsyncSession, cap: int) -> tuple[d
     return payload, False
 
 
-def _mirror_is_full(rc, keys: ConceptCacheKeys) -> bool:
-    """Is the 24h mirror already holding a COMPLETE answer for this key?
+def _stored_mirror(rc, keys: ConceptCacheKeys) -> tuple[Any, bool]:
+    """The 24h mirror's exact bytes, and whether they hold a COMPLETE answer.
 
-    Read through `read_slot`, never `rc.get` — a payload from a retired
+    Both halves come from ONE read, and that is the whole point of the function
+    (CERT-480 finding 1). The bytes are what the caller hands to
+    `publish_mirror_if_unchanged` as its precondition, so the value that was
+    JUDGED here and the value that is COMPARED there are guaranteed to be the
+    same observation. Re-reading to get the bytes would leave a window between
+    the two reads and put the race straight back.
+
+    Read through `read_slot_raw`, never a bare `rc.get` — a payload from a retired
     generation, or one that fails envelope validation, reads as a miss there and
     must read as "no mirror worth protecting" here too. Anything unreadable is
     False, which routes to "write the mirror": the safe direction, because the
-    alternative is declining to store the only answer we have.
+    alternative is declining to store the only answer we have. The BYTES are still
+    returned in that case, so the conditional write stays anchored to whatever is
+    actually sitting in the slot.
     """
     try:
-        stored = read_slot(rc, keys.stale)
+        raw, stored = read_slot_raw(rc, keys.stale)
     except Exception:
-        return False
+        return None, False
     if not isinstance(stored, dict):
-        return False
+        return raw, False
     envelope = stored.get(ENVELOPE_FIELD)
     if not isinstance(envelope, dict):
-        return False
-    return envelope.get("quality") == QUALITY_FULL
+        return raw, False
+    return raw, envelope.get("quality") == QUALITY_FULL
+
+
+def _mirror_is_full(rc, keys: ConceptCacheKeys) -> bool:
+    """Is the 24h mirror already holding a COMPLETE answer for this key?
+
+    The predicate on its own, for callers that only want the verdict. A WRITER
+    must not use this: by the time it acts on the answer, the answer can be
+    false, and that is precisely CERT-480 finding 1. Writers take both halves
+    from `_stored_mirror` and let the compare-and-set settle it.
+    """
+    return _stored_mirror(rc, keys)[1]
 
 
 async def build_and_cache_prop_families(
@@ -531,13 +554,32 @@ async def build_and_cache_prop_families(
         )
         return stamped, True
 
+    # The primary write is what ends the rebuild loop, so it is unconditional and
+    # goes first. The mirror is the CONTESTED slot: it is settled separately, by a
+    # compare-and-set against the very bytes the read above judged, so that a
+    # complete build landing in between cannot be overwritten (CERT-480 finding 1).
+    mirror_raw, mirror_is_full = _stored_mirror(rc, keys)
     write_payload(
         rc,
         keys,
         stamped,
         primary_ttl=PROP_FAMILIES_PRIMARY_TTL,
-        mirror=not _mirror_is_full(rc, keys),
+        mirror=False,
     )
+    if not mirror_is_full and not publish_mirror_if_unchanged(
+        rc, keys, stamped, mirror_raw
+    ):
+        # Somebody published to this key between the read and the write. On this
+        # path that is a COMPLETE build racing a partial, and LOSING that race is
+        # the correct outcome, not an error — so the response is unaffected.
+        # Logged at info because it is this fix's only observable footprint: it
+        # should be rare, and a flood of it means same-key cold builds have
+        # stopped being single-flighted.
+        logger.info(
+            "prop-families: mirror for team %s changed under a partial build — "
+            "declined to publish (%s)",
+            team.id, ",".join(reasons),
+        )
     return stamped, False
 
 
