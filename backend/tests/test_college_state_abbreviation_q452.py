@@ -1,4 +1,4 @@
-"""Q452 (#2320): "Ohio St." and "Ohio State Buckeyes" are the same team.
+"""Q452 (#2318): "Ohio St." and "Ohio State Buckeyes" are the same team.
 
 Kalshi writes college team names with the ``St.`` abbreviation ("Ohio St.",
 "Ball St.", "Boise St."); our events store the expanded form ("Ohio State
@@ -19,9 +19,15 @@ carried zero Kalshi markets, and 410 unlinked open Kalshi markets with a
 forward resolution date carry a ``St.`` name.
 
 The rule is positional, which is the half the existing ``_COLLEGE_ABBREVIATIONS``
-gets wrong: a LEADING ``St.`` is "Saint" ("St. Louis", "St. John's"), a
-non-leading one is "State". Expanding it unconditionally makes
-``names_match("St. Louis", "Louisiana State")`` return True, which it does today.
+gets wrong: a ``St.`` in the FINAL token position is "State" ("Ohio St."),
+anywhere else it is "Saint" ("St. Louis", "Mount St. Mary's"). Expanding it
+unconditionally makes ``names_match("St. Louis", "Louisiana State")`` return
+True, which it does today.
+
+Counted rather than assumed — over the 410 markets above, 57 distinct team names
+carry ``St.`` finally and all are State, 13 carry it leading and all are Saint,
+and one is medial ("Mount St. Mary's") and is Saint. A first draft of this rule
+keyed on "is it leading", which gets that last one wrong.
 """
 
 import pytest
@@ -132,7 +138,17 @@ class TestSearchTermsReachTheEvent:
         assert "Ohio St." in _expand_team_search_terms("Ohio St.")
 
     def test_leading_saint_is_not_expanded_to_state(self):
-        assert not _ilike_hits("St. Louis", "Louisiana State Tigers")
+        """The term this rule contributes for "St. Louis" is the Saint reading.
+
+        Asserted on the emitted term rather than on whether "St. Louis" reaches
+        "Louisiana State Tigers": it DOES reach it, via the pre-existing mascot
+        heuristic ("Louis" is a substring of "Louisiana"), which this queue did
+        not introduce and does not touch. Testing the reachability here would
+        pass or fail for a reason that has nothing to do with the rule.
+        """
+        terms = {t.lower() for t in _expand_team_search_terms("St. Louis")}
+        assert "saint louis" in terms
+        assert "state louis" not in terms
 
 
 # ── Half 2: the both-teams gate in _score_candidates ──────────────────────

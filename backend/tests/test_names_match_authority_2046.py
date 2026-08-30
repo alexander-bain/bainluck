@@ -207,7 +207,7 @@ SHARED_GENERIC_SUFFIX = [
     # "X State" — the worst family. icehockey_ncaa: 61/61 accepts wrong.
     ("Arizona State", "Ohio State"),
     ("Michigan State", "Penn State"),
-    ("Bemidji State", "St. Cloud State"),
+    # ("Bemidji State", "St. Cloud State") — PROMOTED, see FIXED_FALSE_ACCEPTS.
     ("Ferris State", "Minnesota State"),
     # "X City" — soccer_england_efl_cup
     ("Birmingham City", "Manchester City"),
@@ -295,6 +295,41 @@ ALL_FALSE_ACCEPTS = (
     + [("soccer-intl", a, b) for a, b in SHARED_TOKEN_SOCCER_INTL]
     + [("ambiguous-bare", a, b) for a, b in AMBIGUOUS_BARE_ALIAS]
 )
+
+
+# ── promoted: false accepts that are FIXED and must stay fixed ──────────────
+
+FIXED_FALSE_ACCEPTS = [
+    # Q452 (#2318). "St." was expanded to "state" unconditionally, so
+    # "St. Cloud State" normalized to {state, cloud} and shared the token
+    # "state" with "Bemidji State" at exactly the 0.50 threshold. The
+    # expansion is now positional — a LEADING "St." is Saint — so
+    # "St. Cloud State" is {saint, cloud, state} and the overlap is 0.33.
+    #
+    # Promoted out of the xfail list per this module's own instruction: an
+    # XPASS under strict=True is the signal to make it a plain assertion.
+    ("generic-suffix", "Bemidji State", "St. Cloud State"),
+]
+
+
+class TestFixedFalseAccepts:
+    """Pairs that USED to false-accept and no longer do. Regression floor.
+
+    These are not aspirational — each one is a defect that was measured, fixed,
+    and must not come back. A failure here is a genuine regression, not a
+    known-issue reminder.
+    """
+
+    @pytest.mark.parametrize(
+        "family,a,b",
+        FIXED_FALSE_ACCEPTS,
+        ids=[f"{fam}:{a}|{b}" for fam, a, b in FIXED_FALSE_ACCEPTS],
+    )
+    def test_stays_fixed(self, family, a, b):
+        assert names_match(a, b) is False, (
+            f"[{family}] {a!r} and {b!r} are DIFFERENT teams and this pair was "
+            f"already fixed once — this is a regression"
+        )
 
 
 class TestKnownFalseAccepts:

@@ -12,7 +12,10 @@ import logging
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 
-from app.utils.name_normalization import normalize_name as _normalize_name
+from app.utils.name_normalization import (
+    expand_abbreviations,
+    normalize_name as _normalize_name,
+)
 from app.utils.sport_keys import (
     KALSHI_GAME_TICKER_PREFIXES as _KALSHI_GAME_TICKER_PREFIXES,
     KALSHI_TICKER_TO_SPORT_KEY as _TICKER_TO_SPORT_PREFIX,
@@ -662,6 +665,30 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     if len(mt_words) >= 2 and len(et_words) >= 2:
         shorter = mt_words if len(mt_words) <= len(et_words) else et_words
         longer = et_words if len(mt_words) <= len(et_words) else mt_words
+        if shorter.issubset(longer):
+            return True
+
+    # Abbreviation-expanded retry (Q452). Kalshi writes college teams as
+    # "Ohio St."; our events store "Ohio State Buckeyes", and "Ohio St." is not
+    # a substring of that. The rule already lives in the canonical normalizer —
+    # this consumes it rather than restating it. Strictly ADDITIVE: every pair
+    # that matched above already returned, so this can only add matches.
+    # The >=4 guard is this function's own, restated: it refuses to resolve a
+    # short abbreviation ("LA" must not reach "Los Angeles Lakers"), and an
+    # expansion must not rescue a name the function deliberately declines.
+    if len(mt) < 4 or len(et) < 4:
+        return False
+    emt, eet = expand_abbreviations(market_team), expand_abbreviations(event_team)
+    if (emt, eet) == (mt, et):
+        return False  # nothing expanded — the tests above were the whole answer
+    if emt == eet:
+        return True
+    if len(emt) >= 4 and len(eet) >= 4 and (emt in eet or eet in emt):
+        return True
+    emt_words, eet_words = set(emt.split()), set(eet.split())
+    if len(emt_words) >= 2 and len(eet_words) >= 2:
+        shorter = emt_words if len(emt_words) <= len(eet_words) else eet_words
+        longer = eet_words if len(emt_words) <= len(eet_words) else emt_words
         if shorter.issubset(longer):
             return True
 
@@ -1513,6 +1540,16 @@ def _expand_team_search_terms(team: str) -> list[str]:
         expanded = _CITY_ABBREV_TO_NAME.get(team.lower())
         if expanded:
             terms.append(expanded)
+
+    # Abbreviation-expanded form (Q452). Without this the ILIKE candidate fetch
+    # in _find_matching_event never reaches the event at all: '%Ohio St.%' is
+    # not a substring of "Ohio State Buckeyes", so a fix confined to
+    # _fuzzy_team_match would repair a gate that is never asked the question.
+    # Appended, never substituted — sources that already write the long form
+    # keep matching on the original term.
+    abbrev_expanded = expand_abbreviations(team)
+    if abbrev_expanded and abbrev_expanded not in {t.lower() for t in terms}:
+        terms.append(abbrev_expanded)
 
     return terms
 

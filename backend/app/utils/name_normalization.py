@@ -32,10 +32,8 @@ _MATCH_STOPWORDS = frozenset({
 })
 
 # College abbreviations expanded during token overlap scoring.
-# "St." → "State", "Mt." → "Mount", etc.
+# "Mt." → "Mount", etc. "St." is NOT here — it is positional, see below.
 _COLLEGE_ABBREVIATIONS: dict[str, str] = {
-    "st.": "state",
-    "st": "state",      # some sources omit the period
     "mt.": "mount",
     "mt": "mount",
     "n.": "north",
@@ -43,6 +41,18 @@ _COLLEGE_ABBREVIATIONS: dict[str, str] = {
     "e.": "east",
     "w.": "west",
 }
+
+# "St." is two different words and only its POSITION tells them apart:
+# trailing means State ("Ohio St."), anywhere else means Saint ("St. Louis",
+# "Mount St. Mary's"). Expanding it unconditionally to "state" — which this
+# module did until Q452 — gives "St. Louis" the token "state" and makes it
+# collide with "Louisiana State" at exactly the 0.50 overlap threshold.
+#
+# Measured over the 410 unlinked Kalshi markets carrying a "St." name
+# (production, 2026-08-30): 57 distinct team names have it as the FINAL token
+# and every one is State; 13 have it leading and every one is Saint; exactly
+# one is medial ("Mount St. Mary's") and it is Saint.
+_ST_TOKENS = frozenset({"st.", "st"})
 
 # Common city abbreviations used by ESPN and other sources.
 # Applied during token overlap scoring so "LA Clippers" matches "Los Angeles Clippers".
@@ -250,9 +260,12 @@ def _expand_abbreviations(name: str) -> str:
     normalizes first.
     """
     words = name.split()
+    last = len(words) - 1
     expanded: list[str] = []
-    for w in words:
-        if w in _CITY_ABBREVIATIONS:
+    for i, w in enumerate(words):
+        if w in _ST_TOKENS:
+            expanded.append("state" if i == last else "saint")
+        elif w in _CITY_ABBREVIATIONS:
             expanded.append(_CITY_ABBREVIATIONS[w])
         elif w in _COLLEGE_ABBREVIATIONS:
             expanded.append(_COLLEGE_ABBREVIATIONS[w])
