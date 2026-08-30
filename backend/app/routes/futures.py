@@ -16,7 +16,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
-from app.utils import probability_to_american
+from app.utils import movement_pool, probability_to_american
 from app.utils.tournament_stages import (
     get_stages_for_sport,
     classify_market_stage,
@@ -456,15 +456,16 @@ def _build_movers_query(limit: int, *, pooled: bool):
     conditions = [FuturesOutcome.probability_change_24h.isnot(None)]
 
     if pooled:
-        market_pool = (
-            select(FuturesMarket.id)
-            .where(
-                FuturesMarket.status.in_(_MOVERS_OPEN_STATUSES),
-                FuturesMarket.max_movement_24h.isnot(None),
-            )
-            .order_by(FuturesMarket.max_movement_24h.desc())
-            .limit(_movers_market_pool_size(limit))
-            .scalar_subquery()
+        # LAT-P151: the pool SHAPE moved to `app/utils/movement_pool.py` so the
+        # second consumer of this bound (search-suggestions section 3) reads the
+        # same claim about `max_movement_24h` rather than re-spelling it. The
+        # SIZE stays here — it scales with this route's caller-supplied `limit`,
+        # which is a decision the other consumer does not have. Nothing about
+        # the emitted SQL changes; `test_pooled_sql_bounds_the_market_scan` and
+        # the equivalence gate below it are the pins.
+        market_pool = movement_pool.market_pool_subquery(
+            pool_size=_movers_market_pool_size(limit),
+            statuses=_MOVERS_OPEN_STATUSES,
         )
         # `market_id IN pool` carries the status filter — the pool is already
         # restricted to open/active — so the join is not re-stated here.

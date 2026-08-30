@@ -18,6 +18,13 @@ expensive sections when the answer window was already full. Its own closing
 sentence names what was left: *"this degrades to slow once a minute, never to
 wrong."*
 
+🔴 READ THIS MODULE KNOWING THE BUILD COST BELOW IS HISTORICAL. Every millisecond
+quoted from here to the end of this docstring was measured on 2026-08-30 BEFORE
+LAT-P151; the build is now ~0.6 s and the reason is at the bottom, under "WHAT IS
+NOT DONE HERE". The numbers are kept as written because they are what the cache
+policy in this file was designed against, and a policy re-read against costs it
+never saw is a policy nobody can evaluate.
+
 This is that once a minute, measured on production `b7a7bbd0`, 2026-08-30, with
 `x-timing-split` server time:
 
@@ -103,6 +110,28 @@ WHAT IS NOT DONE HERE, NAMED SO IT IS A DECISION.
   * **The build is not made faster.** The 8-13 s is untouched; what changes is
     that a background task pays it instead of a person. P124-1 (the expression
     index) remains the fix for the build itself and remains parked.
+
+    🔴 **SUPERSEDED 2026-08-30 by LAT-P151, and P124-1 IS WITHDRAWN.** The build
+    is now ~0.6 s. The bullet above is left standing because it was true when
+    written and because the reasoning under it is still the reasoning — but its
+    conclusion was wrong in a way worth recording: an expression index was never
+    the only fix. `/api/futures/movers`, one route file over, had solved the
+    identical `ORDER BY abs(probability_change_24h) DESC` statement in LAT-P108
+    two days earlier, with no DDL, by ranking inside the top-N markets by
+    `max_movement_24h` — a provable superset of the answer. LAT-P124 and this
+    queue each parked an index request while the shipped, proven, measured fix
+    sat in the next file. `app/utils/movement_pool.py` now holds that bound in
+    one place so a third surface cannot repeat it.
+
+    Section 3 of the build, production `EXPLAIN (ANALYZE, BUFFERS)` 2026-08-30:
+    **9,498 ms -> 588 ms, 146,425 shared blocks -> 3,629, external merge to disk
+    -> top-N heapsort in memory.**
+
+    This does not make the mirror redundant. The tier still caches, still serves
+    stale under the ceiling, and still rebuilds behind a stale serve; what has
+    changed is that the reader who falls all the way through — past the primary,
+    past a ceiling-expired mirror, with no running loop to refresh behind them —
+    now waits under a second instead of between eight and eighteen.
   * **No warmer, and that is not an omission.** Serve-stale has no schedule that
     can silently stop (LAT-P116's note, and LAT-P115 shipped a warmer and then
     had to prove its producer still ran): the rebuild is triggered BY the request
