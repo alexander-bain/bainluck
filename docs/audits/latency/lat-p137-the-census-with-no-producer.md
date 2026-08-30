@@ -19,7 +19,7 @@ a line was written, first touch per member of the stated population, `x-timing-s
 | `/api/events/{id}/game-markets` | p50 **595**, max 1,282 ms over 10 distinct events | event page | ❌ already cached (LAT-P121); what remains is one cold build per event, and there are dozens |
 | `/api/leagues/{sport_key}` | p50 ~**200**, max 1,309 ms over **all 29** registered leagues | league pages | ❌ cached with a 24 h mirror; 15 of 29 built cold, none over 1.4 s. Parked P137-2 |
 | `/api/futures/browse?category=X&limit=20` | p50 **112**, max 878 ms over 14 categories | Search → tap a tile | ❌ **and it corrects LAT-P136:** that cycle ruled `/api/futures/browse` out as having "no UI caller" after grepping `browseFutures`. The caller is `fetchFuturesBrowse`, in `CategoryBrowser`. The endpoint IS user-visible — the 5,305 ms P136 measured was the no-category shape, which nothing asks for. On the shape the product asks for it is fine |
-| **`/api/futures/categories`** | **1,365 ms** cold, 24-28 ms warm | Search landing, gates the whole grid | ✅ **shipped** |
+| **`/api/futures/categories`** | **1,365 ms** then **2,775 ms** cold, 24-30 ms warm | Search landing, gates the whole grid | ✅ **shipped** |
 
 Two of those losers are worth more than their row. `/api/futures/movers` at `limit=20` read
 **1,991 ms** and is not in the table at all: shipped iOS asks `limit=10`, which LAT-P115 warmed, so
@@ -49,11 +49,21 @@ past 1,500 s                      the reader BLOCKS and rebuilds: 1,365 ms
 Measured this session, production `fe5ec72c`:
 
 ```
-00:41:37Z   wall=1365.4; db=1330.7; app=34.7; q=1     <- mirror over the ceiling: a reader built it
-00:50:08Z   wall=28.0;   db=0.0;    app=28.0; q=0     <- created_at 00:41:37
-00:50:11Z   wall=23.8;   db=0.0;    app=23.8; q=0     <- created_at 00:41:37
-01:03:20Z   wall=28.5;   db=0.0;    app=28.5; q=0     <- created_at 00:50:11, availability stale_ok
+00:41:37Z   wall=1365.4; db=1330.7; app=34.7;  q=1    <- mirror over the ceiling: a READER built it
+00:50:08Z   wall=28.0;   db=0.0;    app=28.0;  q=0    <- created_at 00:41:37   live
+00:50:11Z   wall=23.8;   db=0.0;    app=23.8;  q=0    <- created_at 00:41:37   live
+01:03:20Z   wall=28.5;   db=0.0;    app=28.5;  q=0    <- created_at 00:50:11   stale_ok
+01:13:20Z   wall=30.4;   db=0.0;    app=30.4;  q=0    <- created_at 01:03:27   stale_ok
+01:38:44Z   wall=2775.4; db=2636.5; app=138.8; q=1    <- SEVENTEEN SECONDS past the ceiling
 ```
+
+🔴 **THE LAST ROW IS THE MECHANISM, TIMED TO THE SECOND.** The previous build published at
+`01:13:27`; `stale_serve_ceiling_seconds()` is 1,500 s, so the mirror stopped being servable at
+`01:38:27`. A reader arriving at `01:38:44` — **17 seconds later** — blocked and rebuilt, and paid
+**2,775 ms**, twice the first cold reading. Nothing about the endpoint changed between 01:13 and
+01:38 except the clock. This is not a cold-start artifact, a deploy artifact or a tail sample: it is
+the tier's designed behaviour with no producer behind it, and it is reproducible on demand by simply
+not visiting `/search` for 25 minutes.
 
 The three fast reads are the finding as much as the slow one: **one person paid 1.4 s so the next
 few got 28 ms**, and nothing was scheduled to pay it instead of them. The 00:41 read establishes
