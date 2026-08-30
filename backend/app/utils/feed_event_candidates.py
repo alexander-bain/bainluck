@@ -144,6 +144,65 @@ def survivor_order():
     Ranking finer than "has sources" — by the *number* of sources, say — was
     declined: counting JSONB keys needs a correlated subquery per row across the
     whole window, and no measurement showed a benefit worth that.
+
+    ``has_opening`` WAS ADDED LATER (#2213), AND THE MEASUREMENT THAT WAS MISSING
+    ABOVE NOW EXISTS.  On 2026-08-25 the Red Sox–Marlins duplicate pair reached
+    the tiebreak with **both** rows carrying sources and **both** carrying a
+    score, so the decision fell all the way through to ``Event.id.asc()`` — and
+    the lowest id was the wrong row.  Ids are creation order, and the
+    schedule-only pipeline creates six days early:
+
+    ======================  =========================  =========================
+    row                     ``15228865`` (StatPal)     ``15291666`` (ESPN/odds)
+    ======================  =========================  =========================
+    created                 2026-08-19 (wins on id)    2026-08-25
+    sources                 ``mlb`` alone              espn + betting + stat_model
+    opening probabilities   none                       0.4209 / 0.5791
+    the card it renders     50%/50%, one signal bar    57%/43%, "Opened 58%/42%"
+    ======================  =========================  =========================
+
+    So "collapse to one card" would have kept the *worse* card — a coin-flip
+    reading off a single source, replacing a real blend — and the duplicate bug
+    would have been traded for a quality bug that is harder to see.  **Arriving
+    first is not evidence of being better; for this pair it is evidence of the
+    opposite**, because the pipeline that creates earliest is the one carrying
+    least.
+
+    ``opening_home_probability IS NOT NULL`` is a plain column test — no
+    subquery, no JSONB traversal — and it separates "a betting source has priced
+    this row" from "this row is a schedule entry".  It is deliberately a proxy
+    for richness rather than a measure of it; true source-count ranking stays
+    declined on the cost grounds above, which still hold for the 25,610-row
+    Discover pool.
+
+    WHERE IT SITS, AND WHY IT MOVED (CERT-407)
+    ------------------------------------------
+    The first version of this placed ``has_opening`` directly below
+    ``has_sources`` and therefore ABOVE ``has_score``.  CERT-407 blocked on that
+    ordering and the finding was right: it makes a row that has merely been
+    PRICED outrank a row that has actually been PLAYED.  Driven on a real pair,
+    it kept an opening-priced scoreless row and suppressed the only row carrying
+    ``2–1`` — trading #2213's duplicate bug for a fresher one in which My Stuff
+    shows a live card that does not know the score.
+
+    The two keys answer different questions and the order between them is the
+    whole content of the repair:
+
+    ``has_score``    is direct evidence about the FIXTURE — this row knows what
+                     is happening in the game.
+    ``has_opening``  is evidence about the PIPELINE that wrote the row — some
+                     betting source has priced it at least once.
+
+    Direct evidence about the game wins, so ``has_score`` leads.  The #2213 pair
+    is untouched by the swap because BOTH of its rows carry a score: the tie
+    ``has_opening`` was added to break is still the tie it breaks, one key later.
+    That non-obvious fact is why the repair keeps two separate tests — one for
+    the key's POSITION, one for its PRESENCE — since a corpus that proves either
+    alone will happily pass with the other broken.
+
+    The key remains inert for every pre-existing test in
+    ``test_feed_event_candidates.py`` (their fixtures set no opening odds), which
+    is the check that it widens the order rather than reordering it.
     """
     sources_text = func.cast(Event.win_probability_sources, String)
     has_sources = case(
@@ -156,11 +215,90 @@ def survivor_order():
         ),
         else_=0,
     )
+    has_opening = case(
+        (Event.opening_home_probability.isnot(None), 1),
+        else_=0,
+    )
     has_score = case(
         (or_(Event.home_score.isnot(None), Event.away_score.isnot(None)), 1),
         else_=0,
     )
-    return [has_sources.desc(), has_score.desc(), Event.id.asc()]
+    return [
+        has_sources.desc(),
+        has_score.desc(),
+        has_opening.desc(),
+        Event.id.asc(),
+    ]
+
+
+def _collapsed_subquery(where_clauses, name: str):
+    """The duplicate-collapse pass, shared by both callers.
+
+    Factored out for :func:`deduplicated_event_ids` (My Stuff) so the two
+    surfaces cannot drift into two different definitions of "the same fixture".
+    A second, subtly different partition key is a second set of duplicates.
+    """
+    dedup_partition = [
+        Event.sport_id,
+        Event.home_team_name,
+        Event.away_team_name,
+        Event.commence_time,
+        case((identity_incomplete_expr(), Event.id), else_=None),
+    ]
+
+    return (
+        select(
+            Event.id.label("id"),
+            status_tier_expr().label("tier"),
+            Event.commence_time.label("commence_time"),
+            func.row_number()
+            .over(partition_by=dedup_partition, order_by=survivor_order())
+            .label("dup_rn"),
+        )
+        .select_from(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(and_(*where_clauses))
+        .subquery(name)
+    )
+
+
+def deduplicated_event_ids(where_clauses) -> Select:
+    """A SELECT of event ids with duplicates collapsed and NO tier quotas.
+
+    WHY THIS EXISTS SEPARATELY (#2213)
+    ----------------------------------
+    ``event_candidate_ids`` does two things — collapse duplicates, then divide a
+    500-row budget across three status tiers — and only the Discover/Sports pool
+    ever called it.  **My Stuff took the other branch of the same ``if`` and got
+    neither guard**, so the collapse that has protected Discover since #2065 was
+    never applied to the surface Alex actually opens.
+
+    The bill arrived on 2026-08-25: My Stuff rendered "Live Now (2)" for ONE
+    game, Boston Red Sox @ Miami Marlins, as two cards disagreeing about it —
+    57%/43% on the ESPN/odds row and 50%/50% on the StatPal row.  Both rows carry
+    identical ``sport_id``, ``home_team_name``, ``away_team_name`` and
+    ``commence_time``, so the existing partition key would have collapsed them
+    unchanged.  Nothing new had to be invented; the guard simply was not wired to
+    this branch.
+
+    The quotas are deliberately NOT carried over.  They exist to stop one status
+    tier starving another out of a shared 500-row budget, and My Stuff's pool is
+    a different shape: it is already bounded to one user's teams, capped at 200,
+    and restricted to tier-1/2 sports.  Imposing a 200/150/150 split on a pool
+    that rarely exceeds 40 rows would add a cut that never binds — and if it ever
+    did bind, it would silently drop one of Alex's own games, which is worse than
+    the flood it would be guarding against.
+
+    Ruling 048 is untouched, and the distinction matters enough to restate: this
+    collapses two rows into one **CARD**, not into one **ROW**.  It mutates
+    nothing, is reversible by deleting the ``where``, and both rows remain fully
+    addressable at ``/api/events/{id}``.  Absorbing them into a single event row
+    would need an id-anchored correspondence, which measurement says does not
+    exist — 0 of 41 duplicate MLB pairs share any provider id (#2213).  That
+    merge stays the registry's, behind the anchor channel.
+    """
+    collapsed = _collapsed_subquery(where_clauses, "my_stuff_candidates_collapsed")
+    return select(collapsed.c.id).where(collapsed.c.dup_rn == 1)
 
 
 def event_candidate_ids(where_clauses) -> Select:
@@ -174,28 +312,7 @@ def event_candidate_ids(where_clauses) -> Select:
     pass on purpose: quotas computed over an unfiltered pool would hand a
     filtered request the wrong slice.
     """
-    dedup_partition = [
-        Event.sport_id,
-        Event.home_team_name,
-        Event.away_team_name,
-        Event.commence_time,
-        case((identity_incomplete_expr(), Event.id), else_=None),
-    ]
-
-    collapsed = (
-        select(
-            Event.id.label("id"),
-            status_tier_expr().label("tier"),
-            Event.commence_time.label("commence_time"),
-            func.row_number()
-            .over(partition_by=dedup_partition, order_by=survivor_order())
-            .label("dup_rn"),
-        )
-        .select_from(Event)
-        .join(Sport, Event.sport_id == Sport.id)
-        .where(and_(*where_clauses))
-        .subquery("feed_event_candidates_collapsed")
-    )
+    collapsed = _collapsed_subquery(where_clauses, "feed_event_candidates_collapsed")
 
     ranked = (
         select(
