@@ -15,6 +15,7 @@ from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
 from app.utils.event_child_repoint import repoint_event_children
 from app.utils.name_normalization import names_match as _canonical_names_match
+from app.utils.sport_keys import curated_sport_name
 from app.utils.espn_candidate_selection import select_espn_candidate
 from app.utils.espn_id_stamp import (
     REFUSED as ESPN_STAMP_REFUSED,
@@ -59,16 +60,19 @@ async def _sync_sports():
                 if not sport.get("active", False):
                     continue
 
-                # Upsert sport
+                # Upsert sport. CERT-487 [P1]: this is a Core insert, so the
+                # census guard's `Sport(` text scan never saw it — the provider
+                # title went into the curated column unread.
+                sport_name = curated_sport_name(sport["key"], sport.get("title"))
                 stmt = insert(Sport).values(
                     key=sport["key"],
-                    name=sport["title"],
+                    name=sport_name,
                     group=sport.get("group"),
                     active=True,
                 ).on_conflict_do_update(
                     index_elements=["key"],
                     set_={
-                        "name": sport["title"],
+                        "name": sport_name,
                         "group": sport.get("group"),
                         "active": True,
                     }

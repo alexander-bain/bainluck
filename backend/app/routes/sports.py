@@ -9,7 +9,11 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Sport
 from app.services import get_db, get_db_rw, OddsAPIService
-from app.utils.sport_keys import SPORT_HIERARCHY, get_sport_hierarchy
+from app.utils.sport_keys import (
+    SPORT_HIERARCHY,
+    curated_sport_name,
+    get_sport_hierarchy,
+)
 
 
 from app.routes.admin_utils import _check_admin_secret  # noqa: E402 — use shared auth
@@ -93,16 +97,18 @@ async def sync_sports_from_api(
                 skipped += 1
                 continue
 
-            # Upsert sport
+            # Upsert sport. CERT-487 [P1]: the second Core insert the census
+            # guard's `Sport(` text scan could not see.
+            sport_name = curated_sport_name(sport["key"], sport.get("title"))
             stmt = insert(Sport).values(
                 key=sport["key"],
-                name=sport["title"],
+                name=sport_name,
                 group=sport.get("group"),
                 active=True,
             ).on_conflict_do_update(
                 index_elements=["key"],
                 set_={
-                    "name": sport["title"],
+                    "name": sport_name,
                     "group": sport.get("group"),
                     "active": True,
                 }

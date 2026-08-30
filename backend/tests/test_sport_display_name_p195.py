@@ -25,6 +25,8 @@ import pytest
 
 from app.utils.sport_keys import (
     SPORT_PREFIX_DISPLAY_NAME,
+    curated_sport_name,
+    name_reads_as_a_key,
     sport_display_name,
 )
 
@@ -354,6 +356,53 @@ AUTO_CREATE_SITES = (
     "backend/app/routes/admin_events.py",
 )
 
+#: CERT-487 [P1]: a `Sport` row is also born from two SQLAlchemy Core upserts,
+#: which write `Sport.name` without ever spelling `Sport(`. The census below
+#: used to scan source lines for that literal, so these two were invisible to it
+#: — the ship claimed exactly three creation paths and there were five.
+CORE_UPSERT_SITES = (
+    "backend/app/routes/sports.py",
+    "backend/app/tasks/sports.py",
+)
+
+#: Every creation path names its row through this contract. `sport_display_name`
+#: stays legal because it IS the curated word; `curated_sport_name` is the
+#: boundary wrapper that also refuses a caller-supplied key-shaped name.
+NAMING_CONTRACT = frozenset({"curated_sport_name", "sport_display_name"})
+
+
+def _creation_sites(kind, model: str) -> set[str]:
+    """Every file under `backend/app` that creates a `model` row, by AST.
+
+    Two shapes, selected by `kind`:
+
+    * ``ast.Name`` — the ORM constructor, ``Sport(...)``.
+    * ``"insert"`` — a Core insert, ``insert(Sport)...``, which never spells the
+      constructor and so is invisible to any scan looking for one.
+
+    `class Sport(Base)` is a `ClassDef`, not a `Call`, so it needs no special
+    case — which is the point of doing this structurally.
+    """
+    found: set[str] = set()
+    for path in (REPO / "backend/app").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            if kind == "insert":
+                hit = (
+                    isinstance(node.func, ast.Name)
+                    and node.func.id == "insert"
+                    and any(
+                        isinstance(a, ast.Name) and a.id == model
+                        for a in node.args
+                    )
+                )
+            else:
+                hit = isinstance(node.func, ast.Name) and node.func.id == model
+            if hit:
+                found.add(str(path.relative_to(REPO)))
+    return found
+
 
 def _sport_name_arguments(rel: str) -> list[ast.AST]:
     """Every expression that can reach the `name=` of a `Sport(...)` in `rel`.
@@ -443,11 +492,12 @@ class TestNoCreationSiteMintsAKeyShapedName:
                 for n in ast.walk(node)
                 if isinstance(n, ast.Call)
                 and isinstance(n.func, ast.Name)
-                and n.func.id == "sport_display_name"
+                and n.func.id in NAMING_CONTRACT
             ]
             assert named_by, (
                 f"{rel}: a Sport(...) row is named by "
-                f"`{ast.unparse(node)}`, which never calls sport_display_name"
+                f"`{ast.unparse(node)}`, which never calls "
+                f"{' or '.join(sorted(NAMING_CONTRACT))}"
             )
 
     def test_the_ast_scan_sees_every_construction(self):
@@ -463,12 +513,339 @@ class TestNoCreationSiteMintsAKeyShapedName:
     def test_there_are_no_other_sport_constructions_to_miss(self):
         """The scan above is only complete if these are all of them.
 
-        Counted rather than assumed: a fourth `Sport(` appearing anywhere in the
+        Counted rather than assumed: a fourth ORM construction anywhere in the
         app means this file is guarding a subset and does not know it.
+
+        STRUCTURAL, not textual, and CERT-487 is the reason twice over. The
+        textual version missed two Core upserts because they never spell the
+        constructor — and then it flagged three files whose only offence was a
+        COMMENT quoting the constructor while explaining that very hole. A scan
+        that cannot tell code from prose about code was never a census.
         """
-        found = []
-        for path in (REPO / "backend/app").rglob("*.py"):
-            for line in path.read_text().splitlines():
-                if re.search(r"(?<![A-Za-z_])Sport\(", line) and "class Sport" not in line:
-                    found.append(str(path.relative_to(REPO)))
-        assert sorted(set(found)) == sorted(AUTO_CREATE_SITES), sorted(set(found))
+        found = _creation_sites(ast.Name, "Sport")
+        assert sorted(found) == sorted(AUTO_CREATE_SITES), sorted(found)
+
+    def test_the_census_also_sees_the_core_upserts(self):
+        """CERT-487 [P1]: a Core upsert is a creation path too.
+
+        The arm above answers "where is the constructor written", a question
+        about the ORM. This one asks where a `Sport` ROW is born, which is the
+        question the ship actually depends on — and the two answers differed by
+        two live upsert paths for the whole of UX-P195.
+        """
+        found = _creation_sites("insert", "Sport")
+        assert sorted(found) == sorted(CORE_UPSERT_SITES), sorted(found)
+
+    @pytest.mark.parametrize("rel", CORE_UPSERT_SITES)
+    def test_the_core_upsert_names_its_row_through_the_contract(self, rel):
+        """Every `name=` reaching an `insert(Sport)` routes through the contract.
+
+        Reads the `.values(...)` keyword and the `on_conflict_do_update` `set_`
+        mapping — BOTH, because an upsert that curates on insert and writes the
+        raw provider title on conflict is the same bug on the second run.
+        """
+        tree = ast.parse((REPO / rel).read_text())
+        functions = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+
+        def resolve(expr, call):
+            """Follow one level of local binding, as the ORM scan does."""
+            if not isinstance(expr, ast.Name):
+                return [expr]
+            out = []
+            for func in functions:
+                if not any(n is call for n in ast.walk(func)):
+                    continue
+                for stmt in ast.walk(func):
+                    if isinstance(stmt, ast.Assign) and any(
+                        isinstance(t, ast.Name) and t.id == expr.id
+                        for t in stmt.targets
+                    ):
+                        out.append(stmt.value)
+            return out
+
+        names: list[ast.AST] = []
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "insert"
+                and any(
+                    isinstance(a, ast.Name) and a.id == "Sport" for a in node.args
+                )
+            ):
+                continue
+            # `.values(name=...)` and `.on_conflict_do_update(set_={"name": ...})`
+            # both hang off the same enclosing statement.
+            enclosing = [
+                f for f in functions if any(n is node for n in ast.walk(f))
+            ]
+            for func in enclosing:
+                for sub in ast.walk(func):
+                    if isinstance(sub, ast.Call) and isinstance(
+                        sub.func, ast.Attribute
+                    ):
+                        if sub.func.attr == "values":
+                            for kw in sub.keywords:
+                                if kw.arg == "name":
+                                    names += resolve(kw.value, node)
+                        elif sub.func.attr == "on_conflict_do_update":
+                            for kw in sub.keywords:
+                                if kw.arg != "set_" or not isinstance(
+                                    kw.value, ast.Dict
+                                ):
+                                    continue
+                                for k, v in zip(kw.value.keys, kw.value.values):
+                                    if (
+                                        isinstance(k, ast.Constant)
+                                        and k.value == "name"
+                                    ):
+                                        names += resolve(v, node)
+
+        assert names, f"no insert(Sport) name= found in {rel}"
+        for node in names:
+            named_by = [
+                n
+                for n in ast.walk(node)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and n.func.id in NAMING_CONTRACT
+            ]
+            assert named_by, (
+                f"{rel}: an insert(Sport) row is named by "
+                f"`{ast.unparse(node)}`, which never calls "
+                f"{' or '.join(sorted(NAMING_CONTRACT))}"
+            )
+
+    def test_the_core_upsert_scan_is_not_vacuous(self):
+        """Vacuity companion: both arms of both upserts must be found.
+
+        `values(name=)` + `set_["name"]` at each of the two sites = four. A
+        parse that silently found nothing would pass the arm above.
+        """
+        counts = {}
+        for rel in CORE_UPSERT_SITES:
+            src = (REPO / rel).read_text()
+            counts[rel] = src.count("name=sport_name") + src.count(
+                '"name": sport_name'
+            )
+        assert counts == {rel: 2 for rel in CORE_UPSERT_SITES}, counts
+
+
+# ---------------------------------------------------------------------------
+# CERT-487 — the contract, driven at the call sites
+# ---------------------------------------------------------------------------
+
+
+class TestTheContractItself:
+    """`curated_sport_name` is the boundary every creation path names through."""
+
+    def test_a_caller_supplied_key_is_refused(self):
+        """CERT-487 [P1] verbatim: the attack that made the AST guard a liar.
+
+        `sport_name or sport_display_name(sport_key)` kept one branch calling the
+        helper, so the structural scan stayed green while this exact request
+        minted the row the whole ship exists to delete.
+        """
+        assert curated_sport_name("tennis_other", "tennis_other") == "Tennis"
+
+    @pytest.mark.parametrize("key", sorted(MEASURED_KEY_SHAPED_ROWS))
+    def test_no_measured_row_can_be_supplied_back_in(self, key):
+        out = curated_sport_name(key, key)
+        assert out == MEASURED_KEY_SHAPED_ROWS[key]
+        assert not name_reads_as_a_key(out, key)
+
+    def test_a_real_provider_title_survives_untouched(self):
+        """The refusal must stay narrow.
+
+        The fallback title-cases the KEY, so over-refusing replaces the Odds
+        API's "EPL" with "Soccer Epl" — a worse name. This is the arm that fails
+        if someone widens `name_reads_as_a_key` to "any lowercase string".
+        """
+        assert curated_sport_name("soccer_epl", "EPL") == "EPL"
+        assert curated_sport_name("soccer_epl", "Premier League") == "Premier League"
+
+    def test_an_absent_name_still_gets_the_curated_word(self):
+        assert curated_sport_name("tennis_other") == "Tennis"
+        assert curated_sport_name("soccer_epl") == "Soccer Epl"
+
+    def test_the_fallback_is_still_the_helper_verbatim(self):
+        """The wrapper must not become a second, drifting naming rule."""
+        for key in ("soccer_epl", "tennis_other", "esports", "curling_other"):
+            assert curated_sport_name(key, None) == sport_display_name(key)
+
+
+class _CapturingSession:
+    """Stub AsyncSession that records what the upsert actually bound."""
+
+    def __init__(self, scalar_result=None):
+        self.statements = []
+        self.added = []
+        self._scalar_result = scalar_result
+
+    async def execute(self, stmt):
+        self.statements.append(stmt)
+
+        class _R:
+            def scalar_one_or_none(_self):
+                return None
+
+            def all(_self):
+                return []
+
+            def scalars(_self):
+                return _self
+
+            def first(_self):
+                return None
+
+        return _R()
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def flush(self):
+        pass
+
+    async def commit(self):
+        pass
+
+    async def refresh(self, obj):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _upsert_name_values(stmt) -> dict[str, object]:
+    """The `name` this upsert sends on BOTH arms: insert, and on-conflict.
+
+    The two arms do not look alike once compiled. `.values(name=...)` keeps the
+    column name as its bind key, while `on_conflict_do_update(set_=...)` renders
+    an ANONYMOUS `%(param_N)s` — so the obvious `params["name"]` reads the insert
+    arm and silently reports nothing for the update arm.
+
+    UX-P197's own mutant M7 survived its first draft for exactly that reason:
+    curate on insert, write the raw provider title on conflict, and a test that
+    only read `params["name"]` stayed green. Which is this file's recurring
+    lesson one more time — the thing under test was present, but it was not what
+    ran. So the SET clause is located in the compiled SQL and its bind resolved.
+    """
+    import re as _re
+
+    from sqlalchemy.dialects import postgresql
+
+    compiled = stmt.compile(dialect=postgresql.dialect())
+    sql, params = str(compiled), compiled.params
+
+    out: dict[str, object] = {}
+    if "name" in params:
+        out["insert"] = params["name"]
+    m = _re.search(
+        r"DO UPDATE SET[^%]*?\bname\s*=\s*%\((\w+)\)s", sql, _re.S
+    )
+    if m:
+        out["on_conflict"] = params.get(m.group(1))
+    return out
+
+
+#: A provider payload whose `title` IS its key. The Odds API has not been
+#: observed emitting this, which is exactly why nothing caught the path: the
+#: guard proved a property of today's feed, not of the code.
+_KEY_SHAPED_FEED = [{"key": "tennis_other", "title": "tennis_other",
+                     "group": "Tennis", "active": True}]
+
+
+class TestTheCoreUpsertsAreDrivenNotJustScanned:
+    """CERT-487 [P1], asserted on BEHAVIOUR at the call site.
+
+    The lesson this file keeps paying for: a helper can be defined, imported and
+    green across all of its own unit tests while the call site quietly uses
+    something else. So these drive the real functions and read the value the
+    statement would actually send.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_task_upsert_curates_the_name(self, monkeypatch):
+        import app.tasks.sports as mod
+
+        class _Svc:
+            async def get_sports(self):
+                return _KEY_SHAPED_FEED
+
+            async def close(self):
+                pass
+
+        session = _CapturingSession()
+        monkeypatch.setattr(mod, "OddsAPIService", lambda: _Svc())
+        monkeypatch.setattr(mod, "get_task_session", lambda: session)
+
+        result = await mod._sync_sports()
+
+        assert result == {"synced": 1}
+        assert session.statements, "the upsert never ran — the arm is vacuous"
+        names = _upsert_name_values(session.statements[0])
+        assert set(names) == {"insert", "on_conflict"}, names
+        assert names == {"insert": "Tennis", "on_conflict": "Tennis"}, names
+
+    @pytest.mark.asyncio
+    async def test_the_route_upsert_curates_the_name(self, monkeypatch):
+        import app.routes.sports as mod
+
+        class _Svc:
+            async def get_sports(self):
+                return _KEY_SHAPED_FEED
+
+            async def close(self):
+                pass
+
+        session = _CapturingSession()
+        monkeypatch.setattr(mod, "OddsAPIService", lambda: _Svc())
+        monkeypatch.setattr(mod, "_check_admin_secret", lambda *a, **k: None)
+
+        result = await mod.sync_sports_from_api(
+            request=None, secret="x", db=session
+        )
+
+        assert result["synced"] == 1
+        assert session.statements, "the upsert never ran — the arm is vacuous"
+        names = _upsert_name_values(session.statements[0])
+        assert set(names) == {"insert", "on_conflict"}, names
+        assert names == {"insert": "Tennis", "on_conflict": "Tennis"}, names
+
+
+class TestTheAdminCreationPathIsDriven:
+    """CERT-487 [P1] on `admin_events.py`, driven rather than parsed."""
+
+    @pytest.mark.asyncio
+    async def test_a_posted_key_shaped_sport_name_does_not_reach_the_row(
+        self, monkeypatch
+    ):
+        import app.routes.admin_events as mod
+        from app.models.models import Sport
+
+        monkeypatch.setattr(mod, "_check_admin_secret", lambda *a, **k: None)
+        session = _CapturingSession()
+
+        await mod.create_event_manually(
+            request=None,
+            secret="x",
+            home_team="A",
+            away_team="B",
+            sport_key="tennis_other",
+            sport_name="tennis_other",   # the CERT-487 attack, as a query param
+            commence_time=None,
+            status="live",
+            db=session,
+        )
+
+        sports = [o for o in session.added if isinstance(o, Sport)]
+        assert len(sports) == 1, session.added
+        assert sports[0].name == "Tennis"
+        assert not name_reads_as_a_key(sports[0].name, "tennis_other")

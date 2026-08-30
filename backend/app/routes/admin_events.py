@@ -70,9 +70,12 @@ async def create_event_manually(
     )
     sport = sport_result.scalar_one_or_none()
     if not sport:
-        from app.utils.sport_keys import sport_display_name
+        from app.utils.sport_keys import curated_sport_name
 
-        display_name = sport_name or sport_display_name(sport_key)
+        # CERT-487 [P1]: `sport_name or sport_display_name(...)` let a caller
+        # POST sport_name="tennis_other" and mint the exact key-shaped row this
+        # ship exists to remove. The contract, not the caller, picks the name.
+        display_name = curated_sport_name(sport_key, sport_name)
         group = sport_key.split("_")[0].title() if "_" in sport_key else display_name
         sport = Sport(key=sport_key, name=display_name, group=group, active=True)
         db.add(sport)

@@ -290,6 +290,45 @@ def sport_display_name(sport_key: str) -> str:
     return sport_key.replace("_", " ").title()
 
 
+def name_reads_as_a_key(name: str | None, sport_key: str) -> bool:
+    """Is ``name`` a payload key wearing a display name's clothes?
+
+    Deliberately narrow. The measured population (2026-08-30,
+    ``SELECT key FROM sports WHERE name = key``) was fifteen rows where the name
+    was the key EXACTLY, and zero key-shaped in any other way — so the second arm
+    only generalises to the same shape (lowercase with an underscore, the tell
+    that made ``tennis_other`` legible as a field rather than a category).
+
+    It must stay narrow because the fallback it triggers is
+    :func:`sport_display_name`, which title-cases the key: widening this to "any
+    lowercase name" would replace a provider's "EPL" with "Soccer Epl", which is
+    a worse name, not a better one. A blank name reads as a key because there is
+    nothing there to print.
+    """
+    if not name:
+        return True
+    return name == sport_key or (name.islower() and "_" in name)
+
+
+def curated_sport_name(sport_key: str, supplied_name: str | None = None) -> str:
+    """The ONE place a ``Sport.name`` is chosen, for every creation path.
+
+    CERT-487 blocked UX-P195 because :func:`sport_display_name` existing was not
+    the same thing as every writer using it. Two Core ``insert(Sport)`` upserts
+    wrote a provider title straight through, and the admin path's
+    ``sport_name or sport_display_name(key)`` let a caller supply the very
+    key-shaped value the ship promised no path could mint — while a guard that
+    scanned for the literal text ``Sport(`` saw neither.
+
+    So the contract is a function every writer calls, not a rule every writer is
+    trusted to remember: a supplied name is kept when it is a real display name,
+    and falls back to the curated word when it :func:`name_reads_as_a_key`.
+    """
+    if not name_reads_as_a_key(supplied_name, sport_key):
+        return supplied_name  # type: ignore[return-value]  # narrowed by the guard
+    return sport_display_name(sport_key)
+
+
 # =============================================================================
 # 6. LLM_CATEGORY_TO_SPORT_PREFIX — LLM category → sport key prefix
 # =============================================================================
