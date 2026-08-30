@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
+from app.utils.latest_observation import load_latest_observed_at
 from app.utils.tournament_board import TREND_DAYS, build_boards
 from app.utils.tournament_grid import build_grids
 from app.tasks.tournament_matchup_linker import apply_resolved_links, read_links
@@ -175,20 +176,14 @@ async def _load_prices(
         )
     ).all()
 
-    observed = (
-        await session.execute(
-            select(
-                FuturesOddsSnapshot.outcome_id,
-                sqlfunc.max(FuturesOddsSnapshot.captured_at).label("observed_at"),
-            )
-            .where(
-                FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
-                FuturesOddsSnapshot.probability.isnot(None),
-            )
-            .group_by(FuturesOddsSnapshot.outcome_id)
-        )
-    ).all()
-    observed_by_id = {row.outcome_id: row.observed_at for row in observed}
+    # LAT-P147 (#2328). This was `max(captured_at) ... GROUP BY outcome_id`, and
+    # an aggregate cannot skip: it read 342,059 index tuples and 175,754 buffer
+    # blocks to return 514 numbers, which is 87-93% of this page's whole cold
+    # build. The register bounds the id list, so the same answer is one top-1
+    # index probe per outcome — 1,766 ms -> 118 ms, 514 rows, 0 diffs, measured
+    # on production. Why it is spelled the way it is (and why `NULLS LAST` is
+    # 19x worse) lives in `utils/latest_observation`, next to the statement.
+    observed_by_id = await load_latest_observed_at(session, outcome_ids)
 
     return {
         row.id: {
