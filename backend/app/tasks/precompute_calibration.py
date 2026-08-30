@@ -4276,13 +4276,28 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         """)
         truth_by_class = runner.reuse(PHASE_DIAGNOSTICS, "truth_by_class")
         if truth_by_class is None:
-            with runner.stage("read:truth_census"):
+            # D22: SOFT. This census is a pure diagnostic by its own comment
+            # above ("no source-bias interpretation; just the counts") and the
+            # publish gate reads none of it, yet it is an unbounded scan over
+            # every resolved futures row sitting in a required phase AHEAD of
+            # the publish. When the futures rebuild has a heavy beat it is
+            # squeezed under the ~104 s it needs and the whole publish dies.
+            # It now degrades to UNOBSERVED instead, and says so in the payload.
+            async with runner.soft_stage(db, "read:truth_census") as soft:
                 truth_result = await db.execute(truth_sql)
                 truth_by_class = {
                     r.truth_class: {"outcomes": int(r.outcomes), "markets": int(r.markets)}
                     for r in truth_result.all()
                 }
-            runner.record(PHASE_DIAGNOSTICS, "truth_by_class", truth_by_class)
+            if soft.failed:
+                # Left as None on purpose: ``_build_truth_evidence`` reports
+                # None as UNOBSERVED, and an empty dict would report a clean
+                # contract on no evidence. Not recorded either, so the phase's
+                # carried key set no longer matches and the NEXT beat re-reads
+                # it rather than inheriting a hole.
+                truth_by_class = None
+            else:
+                runner.record(PHASE_DIAGNOSTICS, "truth_by_class", truth_by_class)
 
         # -----------------------------------------------------------
         # Query 12: L2-78 Item 0 (flagged since L2-73) — the true resolved-data
@@ -4302,23 +4317,26 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         # Nothing about the query changed; only where it is accounted for.
         date_range = runner.reuse(PHASE_DIAGNOSTICS, "date_range")
         if date_range is None:
-            try:
-                with runner.stage("read:date_range"):
-                    dr = (
-                        await db.execute(
-                            text(
-                                "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
-                                "FROM futures_markets "
-                                "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
-                                "AND resolution_date <= NOW() "
-                                "AND resolution_date >= NOW() - INTERVAL '5 years'"
-                            )
+            # D22: this was a bare ``try``, and it cannot survive the failure
+            # it was written for. A statement timeout aborts the whole
+            # transaction, so the ``except`` caught the error and the phase's own
+            # commit raised anyway — the beat died with the handler right there.
+            # Same intent, now with the savepoint that makes it true. The
+            # ``if`` stays INSIDE: on a degraded read ``dr`` is never bound.
+            async with runner.soft_stage(db, "read:date_range"):
+                dr = (
+                    await db.execute(
+                        text(
+                            "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
+                            "FROM futures_markets "
+                            "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
+                            "AND resolution_date <= NOW() "
+                            "AND resolution_date >= NOW() - INTERVAL '5 years'"
                         )
-                    ).one()
+                    )
+                ).one()
                 if dr.lo and dr.hi:
                     date_range = {"start": dr.lo.isoformat(), "end": dr.hi.isoformat()}
-            except Exception:
-                logger.warning("calibration date_range aggregate failed", exc_info=True)
             runner.record(PHASE_DIAGNOSTICS, "date_range", date_range)
 
         if not _diagnostics_carried:
@@ -4899,7 +4917,7 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
 
 
 def _build_truth_evidence(
-    truth_by_class: dict,
+    truth_by_class: dict | None,
     *,
     mex_normalized_markets: int,
     mex_published_markets: int,
@@ -4915,6 +4933,13 @@ def _build_truth_evidence(
     an unknown resolution_source in the resolved population, or the Queue #259
     candidate==published partition breaking — never on a source-mix ratio.
     """
+    # D22: ``None`` means the census did not run this beat (its statement was
+    # cancelled and the beat published anyway). That is NOT the same as a census
+    # that ran and found nothing: with an empty dict every ``.get`` default is
+    # zero and ``contract_ok`` would come back True on no evidence at all. The
+    # distinction is carried all the way into the payload.
+    observed = truth_by_class is not None
+    truth_by_class = truth_by_class or {}
     unknown = truth_by_class.get("unknown", {"outcomes": 0, "markets": 0})
     price_derived = truth_by_class.get("price_derived", {"outcomes": 0, "markets": 0})
     partition_ok = mex_normalized_markets == mex_published_markets
@@ -4948,7 +4973,28 @@ def _build_truth_evidence(
             "published_markets": mex_published_markets,
             "ok": partition_ok,
         },
-        "contract_ok": not violations,
+        # D22. THREE fields, and they move together — a reader that checks only
+        # ``contract_ok`` must not be able to read an unobserved beat as a clean
+        # one, so it is ``None`` (not True, not False) when the census did not
+        # run: there is no violation, and there is also no evidence.
+        #
+        # A VIOLATION OUTRANKS UNOBSERVED, and the order of these branches is
+        # the whole reason to write them out. ``partition_invariant`` is derived
+        # from the aggregate, not from the census, so it still answers on a
+        # degraded beat — and a beat that FOUND a broken partition must report
+        # RED even though the other half of the artifact is missing. Ranking
+        # unobserved first would have hidden it.
+        "census_observed": observed,
+        "contract_status": (
+            "violated" if violations
+            else "ok" if observed
+            else "unobserved"
+        ),
+        "contract_ok": (
+            False if violations
+            else True if observed
+            else None
+        ),
         "contract_violations": violations,
     }
 
