@@ -173,7 +173,7 @@ CURATION: dict[str, dict] = {
     "KXWTANATSTAGE-26QF": {
         "key": "usa-women-quarterfinal-count",
         "title": "Can three American women reach the quarterfinals?",
-        "hook": "One market for the whole American contingent, priced from one right through seven.",
+        "hook": "One market for the whole American contingent, with a rung for one right through seven.",
         "draw": "womens-singles",
         # THE RUNG IS THE CURATION. The ladder runs 1+ through 7+; `1+` at .895
         # is an announcement and `7+` at .03 is a lottery ticket. `3+` is the
@@ -193,7 +193,7 @@ CURATION: dict[str, dict] = {
         # and the title says the weaker thing rather than the title saying the
         # stronger one over the weaker one's number.
         "title": "Will an American reach the men's final?",
-        "hook": "The market prices the American men as a group, not one at a time.",
+        "hook": "The market asks about the American men as a group, not one at a time.",
         "draw": "mens-singles",
         # `Yes` and not `1+ Americans`: the venue's own `yes_sub_title` is the
         # latter but our ingest stored the former, and the curation names the

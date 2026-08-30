@@ -21158,7 +21158,7 @@
     {
       "key": "usa-men-final-berth",
       "title": "Will an American reach the men's final?",
-      "hook": "The market prices the American men as a group, not one at a time.",
+      "hook": "The market asks about the American men as a group, not one at a time.",
       "draw": "mens-singles",
       "source": "kalshi",
       "market_id": 59694147,
@@ -21263,7 +21263,7 @@
     {
       "key": "usa-women-quarterfinal-count",
       "title": "Can three American women reach the quarterfinals?",
-      "hook": "One market for the whole American contingent, priced from one right through seven.",
+      "hook": "One market for the whole American contingent, with a rung for one right through seven.",
       "draw": "womens-singles",
       "source": "kalshi",
       "market_id": 59694149,

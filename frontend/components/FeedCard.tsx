@@ -6,7 +6,12 @@ import Image from "next/image";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GolfTournament } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
-import { renderedCardPercents, cardSumReason, renderedLeaderPercent } from "@/lib/renderedPercent";
+// `servedDuelPercents` for the CURRENT line (LAT-P120: prefer the server's own
+// rendered pair when it publishes one); `renderedDuelPercents` for the OPENING
+// line, where there is no served value to prefer — the three `opening_odds`
+// serializers publish two floats and no rendered percent, so the local contract
+// fallback IS the decision there rather than a stand-in for one (UX-P166).
+import { renderedDuelPercents, renderedCardPercents, cardSumReason, renderedLeaderPercent } from "@/lib/renderedPercent";
 import { cardSumExplanation } from "@/lib/cardSum";
 import { eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
