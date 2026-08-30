@@ -240,11 +240,14 @@ def normalize_name(name: str) -> str:
 
 
 def _expand_abbreviations(name: str) -> str:
-    """Expand common abbreviations in a normalized name.
+    """Expand common abbreviations in an ALREADY-NORMALIZED name.
 
     Handles city abbreviations ("la" -> "los angeles") and college
     abbreviations ("st." -> "state", "mt." -> "mount").
     Only expands when the abbreviation appears as a standalone word.
+
+    Callers outside this module want :func:`expand_abbreviations`, which
+    normalizes first.
     """
     words = name.split()
     expanded: list[str] = []
@@ -256,6 +259,22 @@ def _expand_abbreviations(name: str) -> str:
         else:
             expanded.append(w)
     return " ".join(expanded)
+
+
+def expand_abbreviations(name: str) -> str:
+    """Normalize ``name`` and expand its city/college abbreviations.
+
+    The public form of the rule that :func:`token_overlap_score` has always
+    applied internally. Exported so that name-matching code elsewhere consumes
+    THIS rule rather than growing a second copy of it.
+
+    Examples:
+        "Ohio St."            -> "ohio state"
+        "St. Louis Cardinals" -> "saint louis cardinals"
+    """
+    if not name:
+        return ""
+    return _expand_abbreviations(normalize_name(name))
 
 
 def token_overlap_score(name_a: str, name_b: str) -> float:
