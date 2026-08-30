@@ -102,6 +102,7 @@ class _FakeRedis:
         self.stored = stored
         self.get_calls = []
         self.setex_calls = []
+        self.delete_calls = []
         self._get_raises = get_raises
         self._setex_raises = setex_raises
 
@@ -115,6 +116,29 @@ class _FakeRedis:
         self.setex_calls.append((key, ttl, payload))
         if self._setex_raises:
             raise RuntimeError("redis down")
+
+    def delete(self, key):
+        # LAT-P139: `write_payload` clears the tier's negative slot on every
+        # write. This tier has no negative path, but the shared writer is shared
+        # and a double that cannot answer it would turn every write into a
+        # swallowed exception — i.e. into the LAT-P124 defect, in the fixtures.
+        self.delete_calls.append(key)
+
+
+def _stored(items, created_at=None):
+    """An enveloped payload, the way the tier actually stores one.
+
+    A bare `{"suggestions": [...]}` is what the pre-LAT-P139 writer produced and
+    `read_slot` now reads it as a MISS — deliberately, so no pre-envelope value
+    is ever served as though it carried one. Fixtures therefore have to build a
+    real envelope, and building it through the tier's own `stamp` is what stops
+    this helper drifting away from the producer.
+    """
+    from fastapi.encoders import jsonable_encoder
+
+    from app.utils import search_suggestions_cache as ssc
+
+    return jsonable_encoder(ssc.stamp({"suggestions": items}, created_at=created_at))
 
 
 @pytest.fixture
@@ -137,19 +161,29 @@ def redis_double(monkeypatch):
     return install
 
 
-#: A commence_time fixed in the far past.
+#: How far ahead of the route's own `now` a fixture game starts.
 #:
-#: 🔴 GOTCHA #44 — THE ANCHOR MUST NOT BRANCH ON THE CLOCK. Section 2's label
-#: picks between "Tips off in N min" and "Starts in Nh" on `minutes < 60`. A
-#: `now() + 1h` fixture sits near that boundary and would flip branch under a
-#: faked clock; a date this far behind puts `minutes` permanently and
-#: enormously negative, so the SAME branch is taken on every clock, forever.
-#: No assertion in this file reads `label` — the branch is pinned so that the
-#: code path under test is the same one every run, not so the text can be
-#: checked.
-_FIXED_COMMENCE = __import__("datetime").datetime(
-    2020, 1, 1, tzinfo=__import__("datetime").timezone.utc
-)
+#: 🔴 GOTCHA #44 — THE ANCHOR MUST NOT BRANCH ON THE CLOCK, AND THIS ONE DOES
+#: NOT: the offset is applied FIRST and 30 is `< 60` on every clock, forever, so
+#: the "Tips off in N min" branch is the one taken every run. There is no `if`
+#: in the anchor. The exact N varies and no assertion in this file reads it.
+#:
+#: 🔴 IT USED TO BE `datetime(2020, 1, 1)` — A DATE IN THE PAST — AND LAT-P139
+#: MOVED IT, WHICH IS A REAL BEHAVIOUR CHANGE AND NOT A FIXTURE TIDY-UP.
+#: The old route rendered a past commence_time as "Tips off in -3466080 min"
+#: without complaint; `search_suggestions_cache.countdown_label` returns None for
+#: a game that has already started and the section skips the item. Production
+#: cannot reach that case — section 2's query is `commence_time BETWEEN now AND
+#: now + 3h` — so the fixture was exercising a state the query forbids, and it
+#: only ever worked because the old label was unguarded arithmetic. A fixture in
+#: the future is what the query actually returns.
+_SOON_MINUTES = 30
+
+
+def _soon_commence():
+    from datetime import datetime, timedelta, timezone as _tz
+
+    return datetime.now(_tz.utc) + timedelta(minutes=_SOON_MINUTES)
 
 #: Eight distinct pairs. `_add` dedups on the lowercased query, and the query is
 #: the SHORTER of the two names, so every pair must have a distinct shorter name
@@ -176,7 +210,7 @@ def _soon_events(n):
             id=i + 1,
             home_team_name=h,
             away_team_name=a,
-            commence_time=_FIXED_COMMENCE,
+            commence_time=_soon_commence(),
         )
         for i, (h, a) in enumerate(_PAIRS[:n])
     ]
@@ -299,45 +333,85 @@ class TestTheCache:
     async def test_a_warm_slot_is_served_without_touching_the_database(
         self, redis_double
     ):
-        cached = {"suggestions": [{"query": "Aces", "label": "Live", "type": "event"}]}
+        cached = _stored(
+            [{"query": "Aces", "label": "Championship odds", "type": "futures"}]
+        )
         redis_double(_FakeRedis(stored=json.dumps(cached)))
         db = _RecordingDB([])  # raises on ANY execute
 
         resp = await search_suggestions(db=db)
 
-        assert resp == cached
+        assert resp["suggestions"] == cached["suggestions"]
         assert db.executed == [], "a cache hit must not query the database"
 
     async def test_the_key_is_shared_and_unparameterised(self, redis_double):
         """One slot for the fleet — the endpoint takes no argument and reads no
-        principal, so there is nothing to key on."""
-        rc = redis_double(_FakeRedis())
-        await search_suggestions(db=_full_window_db())
+        principal, so there is nothing to key on.
 
-        assert rc.get_calls == ["bainluck:search_suggestions:v1"]
-        assert [c[0] for c in rc.setex_calls] == ["bainluck:search_suggestions:v1"]
-
-    async def test_the_ttl_is_sixty_seconds_and_that_is_a_constraint(
-        self, redis_double
-    ):
-        """🔴 DO NOT WIDEN THIS TO BUY LATENCY.
-
-        `label` is baked at build time — "Tips off in 12 min", "Starts in 2h".
-        A mirror older than a minute prints a minute count that is wrong, which
-        is a formatting lie sold as a speed win (LAT-P122 / LAT-P123's trap on
-        the surface next door). If a longer TTL is ever wanted, the countdown has
-        to stop being baked FIRST.
+        LAT-P139 added the MIRROR beside it. The primary keeps its production
+        name, which is the whole reason the prefix and the slot were chosen the
+        way they were; the mirror is that name plus `:stale`.
         """
         rc = redis_double(_FakeRedis())
         await search_suggestions(db=_full_window_db())
 
-        assert [c[1] for c in rc.setex_calls] == [60]
+        assert rc.get_calls == [
+            "bainluck:search_suggestions:v1",
+            "bainluck:search_suggestions:v1:stale",
+        ], "a miss reads the primary and then the mirror, in that order"
+        assert [c[0] for c in rc.setex_calls] == [
+            "bainluck:search_suggestions:v1",
+            "bainluck:search_suggestions:v1:stale",
+        ]
 
-    async def test_the_written_payload_is_the_returned_payload(self, redis_double):
+    async def test_the_ttl_is_sixty_seconds_and_the_mirror_is_a_day(
+        self, redis_double
+    ):
+        """🔴 THE FRESH TTL IS STILL 60 s, AND THAT IS DELIBERATE.
+
+        LAT-P124 pinned 60 s with a reason: `label` was baked at build time, so a
+        copy older than a minute printed a wrong minute count. LAT-P139 removed
+        that reason rather than the constant — the countdown is rendered at SERVE
+        time now — and the fresh TTL stayed 60 s anyway, because how often the
+        tier rebuilds is a different question from how stale a reader's copy may
+        be. The mirror is what answers the second one, and it is a day.
+
+        So this is no longer "do not widen"; it is "widening this is a decision
+        about rebuild frequency, and it buys nothing, because the mirror already
+        means nobody waits."
+        """
+        rc = redis_double(_FakeRedis())
+        await search_suggestions(db=_full_window_db())
+
+        assert [c[1] for c in rc.setex_calls] == [60, 86400]
+
+    async def test_the_written_payload_is_the_returned_payload_plus_the_serve(
+        self, redis_double
+    ):
+        """🔴 STORED AND SERVED DIFFER BY EXACTLY THE RENDER AND THE AVAILABILITY.
+
+        They were byte-identical before LAT-P139 and they cannot be now: the
+        stored artifact carries `countdown_from` so a later reader can re-derive
+        the minute count, and the served body has it stripped and its labels
+        rendered. Asserting the difference is EXACTLY the render is what stops
+        the two drifting into two payloads.
+        """
+        from app.utils import search_suggestions_cache as ssc
+
         rc = redis_double(_FakeRedis())
         resp = await search_suggestions(db=_full_window_db())
 
-        assert json.loads(rc.setex_calls[0][2]) == resp
+        stored = json.loads(rc.setex_calls[0][2])
+        assert stored == json.loads(rc.setex_calls[1][2]), "both slots, one payload"
+        assert all(
+            ssc.COUNTDOWN_FIELD in s for s in stored["suggestions"]
+        ), "the stored copy must keep the deadlines or the mirror cannot render"
+        assert all(
+            ssc.COUNTDOWN_FIELD not in s for s in resp["suggestions"]
+        ), "the deadline is an internal field and must not reach the wire"
+        assert resp == ssc.with_availability(
+            ssc.render(stored), ssc.AVAILABILITY_LIVE
+        )
 
     async def test_a_dead_redis_still_serves_the_chips(self, redis_double):
         """A cache outage degrades to slow, never to blank."""
@@ -368,12 +442,31 @@ class TestTheCache:
 
 
 def _search_suggestions_source():
+    """The AST of the function that holds the five SECTIONS.
+
+    🔴 LAT-P139 SPLIT THE ROUTE AND THIS FOLLOWED THE BODY, NOT THE NAME.
+    `search_suggestions` is now the cache policy and `_build_search_suggestions`
+    is the build — the same split `get_related_futures` / `_build_related_futures`
+    already has one file over. Every assertion below is about the sections, so it
+    has to read the function the sections live in; pointing it at the policy
+    would make all three pass vacuously (no `8`, no `_window_full`, no
+    `_MAX_SUGGESTIONS` in it) and that is the silent-narrowing failure these
+    tests exist to refuse. Hence the explicit not-found error.
+    """
     src = pathlib.Path(events_routes.__file__).read_text()
     tree = ast.parse(src)
     for node in tree.body:
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "search_suggestions":
+        if (
+            isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "_build_search_suggestions"
+        ):
             return node
-    raise AssertionError("search_suggestions not found in app/routes/events.py")
+    raise AssertionError(
+        "_build_search_suggestions not found in app/routes/events.py — if the "
+        "build was renamed or re-inlined, re-target this helper. Do NOT point it "
+        "at a function without the sections in it; these tests would then pass "
+        "by describing nothing."
+    )
 
 
 class TestTheWindowConstantIsSingleSourced:

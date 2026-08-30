@@ -177,6 +177,17 @@ DISK_FREE: frozenset[str] = frozenset({
     # Placing it here rather than at the head of `SHAPES` also keeps this
     # branch off the hunk seven consecutive latency branches have collided on.
     "browse_single_scan_mutations",
+    # LAT-P139. Same construction again: the mutated tier is exec'd into a
+    # throwaway module and swapped into `sys.modules`, never written down.
+    #
+    # 🔴 IT SITS BETWEEN THE TWO LAT-P123 NAMES BECAUSE THE RULE IS ALPHABETICAL
+    # AND THE RULE WINS. `search_...` sorts between `browse_...` and
+    # `tag_counts_...`, so honouring the ordering splits the pair that one
+    # comment above introduced — the pair is still those two names, and this
+    # note is here so the next reader does not "tidy" the ordering back into a
+    # collision. Sorted insertion is not tidiness in this file; it is what has
+    # kept seven consecutive latency branches off the same hunk.
+    "search_suggestions_mirror_mutations",
     "tag_counts_group_by_mutations",
     # LAT-P135. Same construction: each mutant is a source STRING fed to the
     # guard's own imported checks, never written anywhere. Its oracle is
