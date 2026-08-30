@@ -219,13 +219,22 @@ VOLUME_OBSERVATION_MAX_AGE_HOURS = 24.0
 
 #: Said ONCE per surface, never per cell. The limit is part of the definition:
 #: a number with no mark on it has not been cleared, it has been left alone.
+#:
+#: ⚠️ THE TWO FACTS ABOVE ARE NOT IN IT, AND THAT IS A RULING (Alex, 2026-08-29,
+#: looking at the shipped page): *"no need to reference buyers and sellers. can
+#: just clarify that the numbers isn't moving and is less reliable."*  The grade
+#: is still the count of two failing facts — that is this module's job and it is
+#: unchanged — but the arithmetic that produced the count is ours to carry, not
+#: the reader's to parse.  "One sign of that" and "both" is the whole of what a
+#: reader needs to order two symbols.  Mirrored word for word in
+#: ``frontend/lib/liquidity.LIQUIDITY_DEFINITION`` and
+#: ``LiquidityMarkView.Liquidity.definition``.
 LIQUIDITY_DEFINITION = (
-    "We mark a number when the market behind it is barely being traded — nobody "
-    "has traded it in the last day, or the gap between what buyers offer and what "
-    "sellers want is wider than the number itself. A half mark means one of those "
-    "is true; a hollow mark means both are. Where a venue publishes nothing to "
-    "check against we cannot mark, so a number with no mark is one we have not "
-    "been able to question."
+    "We mark a number when the market behind it is barely being traded, which "
+    "usually means it hasn't moved in a while and is less reliable. A half mark "
+    "means we found one sign of that; a hollow mark means we found both. Where a "
+    "venue publishes nothing to check against we cannot mark, so a number with no "
+    "mark is one we have not been able to question."
 )
 
 

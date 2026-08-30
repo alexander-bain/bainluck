@@ -591,10 +591,14 @@ export default function PlayoffGrid({
               decorative
             />
           </span>
+          {/* The lead-in is a COUNT and nothing else. It used to restate what
+              the definition says next ("come off a market barely anybody is
+              trading"), which put the same clause on screen twice in a row —
+              the verbosity Alex's 2026-08-29 ruling was about, one paragraph
+              below the tooltip it was about. */}
           <span>
             <b className="font-semibold text-text-secondary">{marked}</b> of{" "}
-            {grid.pricedCells} numbers here come off a market barely anybody is
-            trading. {LIQUIDITY_DEFINITION}
+            {grid.pricedCells} numbers here carry a mark. {LIQUIDITY_DEFINITION}
           </span>
         </p>
       )}
