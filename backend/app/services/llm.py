@@ -276,6 +276,10 @@ SPORT_CATEGORIES = [
     "geopolitics",
     "legal",
     "culture",
+    # D19 (Alex, 2026-08-30): markets that resolve on WHAT SOMEONE SAYS at a
+    # keynote / earnings call / broadcast. They are not about the word's subject,
+    # so they belong on neither `tech` nor the subject shelf.
+    "soundbite",
     "other",
 ]
 

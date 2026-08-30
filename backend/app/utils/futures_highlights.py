@@ -94,6 +94,10 @@ CATEGORY_BASE_SCORES: dict[str, float] = {
     "health": 38.0,
     "weather": 32.0,
     "crypto": 28.0,
+    # D19: browsable on its own shelf, but a wall of near-identical "will X say
+    # 'Y'" cards is not page-one Discover material. Below crypto, above the
+    # sports floor it would otherwise inherit.
+    "soundbite": 22.0,
     # esports + crypto are near-zero-interest categories for Bain Luck users
     # (Alex product policy, 2026-06-12, SEQUENCE 0b1b). Without an explicit entry
     # esports falls through to SPORTS_CATEGORY_BASE (18.5) and rides the sports

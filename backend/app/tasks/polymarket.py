@@ -358,7 +358,7 @@ NON_SPORT_CATEGORIES = frozenset(
     {
         "other", "politics", "economics", "tech", "crypto",
         "weather", "health", "geopolitics", "legal",
-        "culture", "entertainment",
+        "culture", "entertainment", "soundbite",
     }
 )
 
