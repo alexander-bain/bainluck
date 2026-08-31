@@ -26,6 +26,9 @@ PAGE = Path("app/futures/[id]/page.tsx")
 CARD = Path("components/discover/FuturesCard.tsx")
 SHARED = Path("components/discover/shared.tsx")
 DISCOVER = Path("app/discover/page.tsx")
+# The card ROUTER — which component a feed item is rendered as. Distinct from the
+# page above, and mutant M exists because the first battery had no handle on it.
+ROUTER = Path("components/DiscoverCard.tsx")
 
 TEST_PATTERN = "pinAffordance"
 
@@ -117,6 +120,18 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
         "reader can never see what they have already pinned",
     ),
     (
+        "M",
+        ROUTER,
+        "trending={trending} pin={pinFor?.((item.data as FeedFuturesData).id)}",
+        "trending={trending}",
+        "🔴 CERT-606's DEFECT — ComparisonCard loses the pin. `DiscoverCard` routes "
+        "a FUTURES item there instead of to FuturesCard when suggested_format is "
+        "outcome_distribution with >=4 outcomes, so the same market shows a pin or "
+        "not depending on how the feed formatted it. The first battery could not "
+        "see it: enumerating the renderings INSIDE one component is not "
+        "enumerating the components a card type can BE",
+    ),
+    (
         "L",
         BTN,
         '      fill="none"\n      stroke="currentColor"',
@@ -142,7 +157,7 @@ def run_guards() -> int:
 
 
 def main() -> int:
-    files = (BTN, PAGE, CARD, SHARED, DISCOVER)
+    files = (BTN, PAGE, CARD, SHARED, DISCOVER, ROUTER)
     originals = {p: p.read_text() for p in files}
     original_shas = {p: sha(p) for p in files}
 

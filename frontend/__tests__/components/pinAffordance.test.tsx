@@ -284,6 +284,38 @@ describe("UX-P234: item 16 — Discover cards can be pinned, and every variant s
     expect(html).toContain("Share");
   });
 
+  test("🔴 EVERY COMPONENT A FUTURES ITEM CAN ROUTE TO IS HANDED THE PIN", () => {
+    // 🔴 THE ASSERTION CERT-606 HAD TO WRITE FOR ME, AND THE ONE THAT MATTERS MOST.
+    //
+    // The test below counts `<ActionBar>` inside FuturesCard and requires each to
+    // carry the pin. That looked exhaustive and was exhaustive within ONE
+    // component — while `DiscoverCard` routes a FUTURES item to `ComparisonCard`
+    // instead whenever `suggested_format === "outcome_distribution"` and there are
+    // >=4 outcomes. So the SAME market showed a pin or not depending on how the
+    // feed chose to format it, and every one of the 20 assertions here passed.
+    //
+    // The lesson is one level up from UX-P211's: enumerating the renderings INSIDE
+    // a component is not enumerating the components a card type can BE. Count the
+    // routing branches, not the JSX you happened to be editing.
+    const DISCOVER = readFileSync(join(__dirname, "../../components/DiscoverCard.tsx"), "utf8");
+    const code = codeOnly(DISCOVER);
+
+    // Every JSX element rendered on an `item.type === "futures"` branch.
+    const futuresBranch = code.slice(code.indexOf('item.type === "futures"'));
+    const routed = [...futuresBranch.matchAll(/<(FuturesCard|ComparisonCard)\b[^>]*>/g)];
+    expect(routed.length).toBeGreaterThanOrEqual(2); // both renderings exist
+
+    for (const [tag] of routed) {
+      expect(tag).toContain("pin={pinFor?.(");
+    }
+  });
+
+  test("ComparisonCard — the missed rendering — renders the pin it is handed", () => {
+    const CMP = readFileSync(join(__dirname, "../../components/discover/ComparisonCard.tsx"), "utf8");
+    expect(codeOnly(CMP)).toContain("pin={pin}");
+    expect(codeOnly(CMP)).not.toContain("usePinnedFutures");
+  });
+
   test("🔴 EVERY ActionBar in the Discover futures card is handed the pin", () => {
     // THE ASSERTION THIS FILE EXISTS FOR. `FuturesCard` renders four ActionBars
     // across four card variants; a pin wired into three of them is a pin that
