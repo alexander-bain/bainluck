@@ -41,6 +41,7 @@ import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import { movementExplanation as movementExplanationHelper, pickHeroOutcome } from "@/lib/futuresDetailDisplay";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
+import { independentOutcomesNote } from "@/lib/outcomeExclusivity";
 
 interface FuturesDetailPageProps {
   params: { id: string };
@@ -465,6 +466,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // behind the numeral. Empty ⇒ the hero falls back to a plain numeral.
   const ambientPoints = buildAmbientPoints(historyOutcomes, heroOutcome?.id ?? null);
 
+  // lane1-Q479 (defect 13). Counted off `market.outcomes`, not `outcome_count`:
+  // the note is a claim about the rows the reader can actually see and add up,
+  // and those two numbers are not the same field.
+  const independenceNote = independentOutcomesNote(
+    market.mutually_exclusive,
+    market.outcomes?.length ?? 0,
+    isResolved
+  );
+
   // L2-65 Item 1b / B7 L2-91: link UP to the richer event-concept surface. Prefer
   // the server-derived key (covers UFC/boxing/F1/golf-majors/tennis/awards and never
   // dead-links); fall back to the client resolver for older payloads. When there's
@@ -849,6 +859,25 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             </button>
           )}
         </div>
+
+        {/* lane1-Q479 (defect 13): a ranked list of rows each showing a percent is
+            the geometry of a race, and a reader adds up a race. When the SOURCE has
+            told us the set is NOT one — Kalshi's event `mutually_exclusive`,
+            Polymarket's `neg_risk`, already on this payload and already read by the
+            backend — the page has to say so, because on 109441 the honest answer to
+            "why don't these eight add to 100?" is "they were never meant to".
+            Only a positive denial prints: the column defaults to TRUE, so `true`
+            and absent are both silence rather than the opposite claim. Never a
+            renormalisation — the source says independent, and dividing by the
+            sibling sum would invent the exclusivity it denies. */}
+        {independenceNote && (
+          <p
+            data-testid="independent-outcomes-note"
+            className="text-sm text-text-secondary mb-4"
+          >
+            {independenceNote}
+          </p>
+        )}
 
         {/* Sort controls */}
         <div className="flex gap-2 mb-4 flex-wrap">
