@@ -194,6 +194,23 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # LAT-P175 (#2431): CHOSEN, not inherited. Omitting `max_age` takes
+    # Starlette's default of 600 s, which nobody picked — and the Discover feed
+    # request carries `x-session-id` (a non-simple header, `lib/api.ts`), so it
+    # is preflighted `bainluck.com` → `api.bainluck.com`. Any load more than ten
+    # minutes after the previous one re-pays a full round trip, measured at
+    # 215-252 ms on production, BEFORE the feed GET is allowed to start.
+    #
+    # 7200 is Chrome's hard cap on preflight-cache lifetime; a larger number is
+    # silently clamped there, so it is the largest value that is honest about
+    # what the browser will actually do. Firefox honours up to 86400 and Safari
+    # caps at 600, so this helps Chrome and Firefox and is a no-op on Safari.
+    #
+    # 🔴 ITS HONEST LIMIT: this does NOT fix the next-morning cold load. That
+    # visit is far outside any preflight cache and re-pays the round trip
+    # regardless. This buys the within-session and same-afternoon return only;
+    # the measured Priority 2 residual is #2143, not this.
+    max_age=7200,
     # L2-189: expose feed timing/cache headers so the browser can read them
     # cross-origin (bainluck.com → api.bainluck.com). CORS hides any
     # non-safelisted response header unless it is listed here; these are set
