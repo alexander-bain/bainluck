@@ -2756,22 +2756,31 @@ async def get_feed(
             # copy of this list goes to lose `cycling`.
             from app.utils.event_concept_population import (
                 concept_filter_for_category,
+                narrow_concept_filters,
             )
 
             _cat_skip, _cat_concept_filter = concept_filter_for_category(category)
             if _cat_skip:
                 _skip_concepts = True
-            elif _cat_concept_filter and _concept_sport_filter:
-                # Both a tag and a category spoke. A category page carrying a
-                # sport tag admits only what BOTH name; an empty intersection is
-                # a page with no concept tier, never the union of two filters.
-                _narrowed = tuple(
-                    a for a in _cat_concept_filter if a in _concept_sport_filter
+            else:
+                # Both a tag and a category may have spoken. A category page
+                # carrying a sport tag admits only what BOTH name; an empty
+                # intersection is a page with no concept tier, never the union
+                # of two filters.
+                #
+                # Q474 (CERT-561): that intersection was written here over the
+                # two filters' LITERAL STRINGS, and `CONCEPT_SOURCES` registers
+                # two names for one source on purpose — `category=mma` against
+                # `tags=["sport:ufc"]` intersected `("mma",)` with `("ufc",)` to
+                # empty and skipped the tier for a request whose halves name the
+                # same UFC source. Asked of the module that owns the vocabulary,
+                # which resolves both sides to source IDENTITY before comparing
+                # them, for the same reason the paragraph above gives: an alias
+                # is a way of saying a source, not the source.
+                _narrow_skip, _concept_sport_filter = narrow_concept_filters(
+                    _concept_sport_filter, _cat_concept_filter
                 )
-                _skip_concepts = _skip_concepts or not _narrowed
-                _concept_sport_filter = _narrowed or None
-            elif _cat_concept_filter:
-                _concept_sport_filter = _cat_concept_filter
+                _skip_concepts = _skip_concepts or _narrow_skip
         if not _skip_concepts:
             try:
                 # #2143: the concept build is principal-INDEPENDENT — it takes

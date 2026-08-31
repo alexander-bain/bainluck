@@ -638,3 +638,351 @@ def test_the_golf_vocabulary_is_one_constant_read_by_both_layers():
         "the route-level category gate must read the shared golf vocabulary"
     )
     assert "GOLF_TIER_SPORTS" in inspect.getsource(feed_mod._score_golf_tournaments)
+
+
+# ── A category and a tag naming ONE source must not cancel (Q474 / CERT-561) ──
+#
+# CERT-561 blocked the repair above, and it was right. `CONCEPT_SOURCES`
+# deliberately registers TWO names for the same source — UFC is reached by both
+# `mma` and `ufc`, F1 by both `motorsports` and `f1` — and Q472's new narrowing
+# intersected the two helpers' LITERAL STRINGS. `category=mma` yields
+# `("mma",)`, `tags=["sport:ufc"]` yields `("ufc",)`, their string intersection
+# is empty, and the tier was skipped for a request whose two halves name one
+# registered source. The narrowing is correct in intent and wrong in currency:
+# an alias is a way of SAYING a source, never the source itself.
+#
+# The whole reason `event_concept_population.py` exists is that a second copy of
+# this vocabulary loses an entry (UX-P177 lost `cycling`). Comparing aliases as
+# if they were identities is the same mistake one level down — not a second list
+# that can drift, but a single list read as though its rows had one name each.
+#
+# Reproduced through the real route on `b0e0da41`'s own bytes before fixing:
+# both pairs below served no concept card and made ZERO concept-builder calls.
+
+
+def _alias_pairs_for_one_source() -> list[tuple[str, str, str]]:
+    """Every (label, alias_a, alias_b) where one source answers to two names.
+
+    Derived from the registry rather than typed out, for the reason the module
+    docstring gives: a fourth source registered tomorrow with two aliases is
+    covered by these tests the same day, and a hand-written `[("mma","ufc"), …]`
+    here would be the third copy of the vocabulary this program has paid for.
+    """
+    from app.utils.event_concept_population import CONCEPT_SOURCES
+
+    pairs = []
+    for source in CONCEPT_SOURCES:
+        names = [a for a in source.aliases if a != "all"]
+        for i, first in enumerate(names):
+            for second in names[i + 1 :]:
+                pairs.append((source.label, first, second))
+    return pairs
+
+
+ALIAS_PAIRS = _alias_pairs_for_one_source()
+
+
+def test_the_registry_really_does_give_some_source_two_names():
+    """The premise of every test below.
+
+    If `CONCEPT_SOURCES` ever collapsed to one alias per source these would
+    parametrize to nothing and pass vacuously — the empty-parametrize trap. This
+    fails loudly instead."""
+    assert ALIAS_PAIRS, (
+        "no registered concept source has two non-wildcard aliases; the "
+        "alias/identity tests below would be vacuous"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("label,cat_alias,tag_alias", ALIAS_PAIRS)
+async def test_a_category_and_a_tag_naming_ONE_source_keep_that_source(
+    feed_client, adjacent_tier_probe, label, cat_alias, tag_alias
+):
+    """CERT-561's finding, through the real route, both orderings.
+
+    Both directions are driven because the intersection is written with the tag
+    filter on one side and the category filter on the other, and a fix that
+    canonicalises only one side passes half of this.
+
+    The shared concept artifact is cleared BETWEEN the two orderings, not just
+    at the top: they canonicalise to one filter, so the second would otherwise
+    be served the first's cached build and record zero builder calls — an
+    absence that looks exactly like the defect. (That sharing is itself correct,
+    and is pinned as its own guard below.)"""
+    from app.utils.principal_independent_cache import clear_shared_builds
+
+    for category, tag in ((cat_alias, tag_alias), (tag_alias, cat_alias)):
+        clear_shared_builds()
+        adjacent_tier_probe["concepts"].clear()
+        names = await _feed_names(
+            feed_client, category=category, tags=f'["sport:{tag}"]'
+        )
+        assert CONCEPT_STUB_NAME in names, (
+            f"category={category!r} + sport:{tag} both name the {label!r} source, "
+            f"yet the page carries no concept card: {names}"
+        )
+        assert adjacent_tier_probe["concepts"], (
+            f"category={category!r} + sport:{tag} skipped the concept tier "
+            f"entirely though both name {label!r}"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("label,cat_alias,tag_alias", ALIAS_PAIRS)
+async def test_that_narrowed_build_is_still_narrowed_to_the_one_source(
+    feed_client, adjacent_tier_probe, label, cat_alias, tag_alias
+):
+    """Running the tier is half the answer; running it UNFILTERED is CERT-542
+    again. The filter handed to the builder must select this source and no
+    other."""
+    from app.utils.event_concept_population import (
+        CONCEPT_SOURCES,
+        _source_applies,
+    )
+
+    await _feed_names(
+        feed_client, category=cat_alias, tags=f'["sport:{tag_alias}"]'
+    )
+    assert len(adjacent_tier_probe["concepts"]) == 1
+    handed = adjacent_tier_probe["concepts"][0]
+    assert handed, "the tier ran with NO filter — every source would be built"
+    selected = {s.label for s in CONCEPT_SOURCES if _source_applies(s.aliases, handed)}
+    assert selected == {label}, (
+        f"category={cat_alias!r} + sport:{tag_alias} must build exactly "
+        f"{{{label!r}}}; the filter {handed!r} selects {selected}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_category_and_a_tag_naming_DIFFERENT_sources_still_cancel(
+    feed_client, adjacent_tier_probe
+):
+    """The control that stops the fix from becoming a union.
+
+    `mma` and `cycling` are two different registered sources. A page asked for
+    both narrows to nothing, and nothing is a skipped tier — never the union,
+    which is the failure mode a canonicalising fix reaches for first."""
+    names = await _feed_names(feed_client, category="mma", tags='["sport:cycling"]')
+    assert CONCEPT_STUB_NAME not in names, (
+        f"a genuinely disjoint category/tag pair served concepts anyway: {names}"
+    )
+    assert adjacent_tier_probe["concepts"] == [], (
+        "a genuinely disjoint pair must SKIP the tier, not build and discard: "
+        f"{adjacent_tier_probe['concepts']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_same_alias_on_both_sides_still_serves_that_one_source(
+    feed_client, adjacent_tier_probe
+):
+    """The case Q472 already got right, pinned so the repair cannot lose it.
+
+    Asserted by what the filter SELECTS, not by the string it is spelled with.
+    The narrowed filter is now canonical — `("mma", "ufc")`, every non-wildcard
+    alias of the one shared source — which is the whole point of the repair, so
+    a test pinning the literal `("mma",)` here would forbid the fix rather than
+    guard the behaviour."""
+    from app.utils.event_concept_population import CONCEPT_SOURCES, _source_applies
+
+    names = await _feed_names(feed_client, category="mma", tags='["sport:mma"]')
+    assert CONCEPT_STUB_NAME in names, f"category=mma + sport:mma lost concepts: {names}"
+    assert len(adjacent_tier_probe["concepts"]) == 1
+    handed = adjacent_tier_probe["concepts"][0]
+    selected = {s.label for s in CONCEPT_SOURCES if _source_applies(s.aliases, handed)}
+    assert selected == {"ufc"}, (
+        f"category=mma + sport:mma must build exactly the UFC source; the "
+        f"filter {handed!r} selects {selected}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_two_spellings_of_one_source_share_a_single_concept_build(
+    feed_client, adjacent_tier_probe
+):
+    """The payoff of canonicalising rather than string-matching, made a guard.
+
+    `category=mma&tags=["sport:ufc"]` and `category=ufc&tags=["sport:mma"]` are
+    the same request said two ways. Before the repair they built nothing at all;
+    a fix that merely preserved each side's own spelling would build the same
+    artifact twice under two keys. They now narrow to one canonical filter, so
+    the second is served the first's build — the ~1s concept stage is paid once.
+
+    This is also the trap that made the ordering test above look like the defect
+    it was written to catch."""
+    await _feed_names(feed_client, category="mma", tags='["sport:ufc"]')
+    assert len(adjacent_tier_probe["concepts"]) == 1, (
+        f"the first spelling did not build: {adjacent_tier_probe['concepts']}"
+    )
+    await _feed_names(feed_client, category="ufc", tags='["sport:mma"]')
+    assert len(adjacent_tier_probe["concepts"]) == 1, (
+        "two spellings of one source rebuilt the concept tier instead of "
+        f"sharing it: {adjacent_tier_probe['concepts']}"
+    )
+
+
+# ── The canonicalisation's own properties (Q474 / CERT-561) ──────────────────
+
+
+def test_a_filter_and_the_sources_it_names_round_trip_for_every_subset():
+    """`concept_filter_for_sources` is the inverse of `concept_sources_named`.
+
+    The load-bearing property of the repair, and the one that stops the narrowed
+    filter from being *nearly* right. Checked over every subset of the registry
+    rather than the two pairs CERT-561 named, because a filter that selects one
+    source too many is the CERT-542 foreign-card defect and one too few is the
+    CERT-561 empty-page defect — both reachable from a plausible mis-derivation.
+    """
+    from itertools import combinations
+
+    from app.utils.event_concept_population import (
+        CONCEPT_SOURCES,
+        concept_filter_for_sources,
+        concept_sources_named,
+    )
+
+    labels = [s.label for s in CONCEPT_SOURCES]
+    for size in range(1, len(labels) + 1):
+        for subset in combinations(labels, size):
+            filt = concept_filter_for_sources(subset)
+            assert concept_sources_named(filt) == frozenset(subset), (
+                f"filter {filt!r} for sources {subset} selects "
+                f"{set(concept_sources_named(filt))}"
+            )
+
+
+def test_the_canonical_filter_never_emits_the_wildcard_alias():
+    """`all` is every source's alias, so one leaking in turns the narrowing the
+    repair adds into no narrowing at all — a silent return to CERT-542."""
+    from itertools import combinations
+
+    from app.utils.event_concept_population import (
+        CONCEPT_SOURCES,
+        concept_filter_for_sources,
+    )
+
+    labels = [s.label for s in CONCEPT_SOURCES]
+    assert any("all" in s.aliases for s in CONCEPT_SOURCES), (
+        "no source registers `all`; this guard would be vacuous"
+    )
+    for size in range(1, len(labels) + 1):
+        for subset in combinations(labels, size):
+            assert "all" not in concept_filter_for_sources(subset)
+
+
+def test_every_alias_of_a_shared_source_narrows_to_that_source():
+    """CERT-561's finding at the helper, over the whole registry.
+
+    Any two aliases of one source must narrow to that source — never to nothing,
+    which is the defect, and never to a second source, which would be a union.
+    """
+    from app.utils.event_concept_population import (
+        CONCEPT_SOURCES,
+        concept_sources_named,
+        narrow_concept_filters,
+    )
+
+    for source in CONCEPT_SOURCES:
+        names = [a for a in source.aliases if a != "all"]
+        for first in names:
+            for second in names:
+                skip, filt = narrow_concept_filters((first,), (second,))
+                assert skip is False, (
+                    f"{first!r} and {second!r} both name {source.label!r} and "
+                    "narrowed to nothing"
+                )
+                assert concept_sources_named(filt) == {source.label}, (
+                    f"{first!r} + {second!r} narrowed to "
+                    f"{set(concept_sources_named(filt))}, not {source.label!r}"
+                )
+
+
+def test_narrowing_disjoint_sources_skips_rather_than_unions():
+    from app.utils.event_concept_population import narrow_concept_filters
+
+    assert narrow_concept_filters(("mma",), ("cycling",)) == (True, None)
+    assert narrow_concept_filters(("ufc",), ("cycling",)) == (True, None)
+    assert narrow_concept_filters(("f1",), ("mma",)) == (True, None)
+
+
+def test_a_silent_side_passes_the_other_through_byte_for_byte():
+    """No churn on the single-filter paths.
+
+    Re-expanding a filter that is already correct would change the shared
+    concept cache key for every plain `?tags=` and `?category=` request without
+    changing one card that gets built."""
+    from app.utils.event_concept_population import narrow_concept_filters
+
+    assert narrow_concept_filters(None, ("mma",)) == (False, ("mma",))
+    assert narrow_concept_filters(("mma",), None) == (False, ("mma",))
+    assert narrow_concept_filters((), ("cycling",)) == (False, ("cycling",))
+    assert narrow_concept_filters(None, None) == (False, None)
+
+
+def test_the_canonicaliser_answers_with_the_same_predicate_the_builder_uses():
+    """`concept_sources_named` must not re-implement source selection.
+
+    Two copies of "does this filter name this source" is the drift this module
+    exists to prevent; anchored on the AST call node rather than the name
+    appearing anywhere in the file."""
+    import ast
+
+    from app.utils import event_concept_population as ecp
+
+    fn = ast.parse(inspect.getsource(ecp.concept_sources_named))
+    called = {
+        node.func.id
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_source_applies" in called, (
+        "concept_sources_named resolves membership itself instead of asking the "
+        "predicate list_all_concepts builds with"
+    )
+
+
+def test_the_canonical_filter_holds_for_a_source_whose_label_is_not_an_alias():
+    """The coincidence the repair refuses to rest on, made a real case.
+
+    All three sources registered today answer to their own label, so deriving
+    the narrowed filter from `source.label` instead of `source.aliases` passes
+    every other test in this file. It is still wrong: nothing in `ConceptSource`
+    requires the label to be an alias — the label is the log line and the aliases
+    are the selectors. A fourth source registered that way would narrow to a
+    filter selecting nothing, and its category page would go empty exactly the
+    way CERT-561's did.
+
+    So one is registered here, and the round-trip has to survive it."""
+    from app.utils import event_concept_population as ecp
+
+    synthetic = ecp.ConceptSource(
+        "darts-label-only",
+        ("darts", "oche"),
+        4,
+        "app.utils.event_darts",
+        "list_darts_concepts",
+        "darts",
+        ("name",),
+    )
+    assert synthetic.label not in synthetic.aliases, "the premise of this test"
+
+    original = ecp.CONCEPT_SOURCES
+    try:
+        ecp.CONCEPT_SOURCES = original + (synthetic,)
+        filt = ecp.concept_filter_for_sources({synthetic.label})
+        assert filt, (
+            "a source whose label is not one of its aliases narrowed to an "
+            "EMPTY filter — the label/alias coincidence is load-bearing"
+        )
+        assert ecp.concept_sources_named(filt) == {synthetic.label}, (
+            f"filter {filt!r} selects {set(ecp.concept_sources_named(filt))}"
+        )
+        skip, narrowed = ecp.narrow_concept_filters(("darts",), ("oche",))
+        assert skip is False and ecp.concept_sources_named(narrowed) == {
+            synthetic.label
+        }, "two aliases of the synthetic source did not narrow to it"
+    finally:
+        ecp.CONCEPT_SOURCES = original
+
+    assert ecp.CONCEPT_SOURCES is original, "the registry was not restored"
