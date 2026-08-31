@@ -1,21 +1,26 @@
-"""Spotify race probabilities are published as percents, not fractions.
+"""A Spotify-race market publishes its OWN leading probability.
 
 `_market_row` puts `prob` on the 0-100 scale (`current_probability * 100`), and every
-consumer of the entertainment payload reads it that way — `GenericMarketCard` renders it
-through `ProbPct`/`EntProbBar` directly.  The music builder's normalization step was
-written in the *feed's* 0-1 form (`sum > 1.05`, divide with no `* 100`), so it fired on
-essentially every non-empty race and divided percents by a percent sum.  Measured on
-production 2026-08-31, `GET /api/entertainment` published:
+consumer reads it that way — `GenericMarketCard` renders it through `ProbPct`/`EntProbBar`.
+
+`_build_music` used to divide every `spotify_race` row by the sum of the others, in the
+*feed's* 0-1 form (`sum > 1.05`, divide with no `* 100`).  Measured on production
+2026-08-31, `GET /api/entertainment` published:
 
     spotify_race[0].prob = 0.8   while its own leading outcome read 86.0
     spotify_race[1].prob = 0.2   while its own leading outcome read 21.5
 
-(86.0 + 21.5 = 107.5; each was divided by 107.5 and never scaled back up.)
+Correcting only the arithmetic (0-100: `> 105`, `/ sum * 100`) is NOT the fix — it
+publishes 80.0/20.0 for that same pair while their own outcomes still read 86.0/21.5, and
+the card labels the altered shares with the original outcome names (CERT-560).
 
-Politics `_normalize_outcome_probs` and economics `_brackets_from_outcomes` implement the
-same rule correctly on the 0-100 scale.  These tests pin the entertainment builder to that
-rule, in both directions — it must normalize an over-100 race, and it must leave a race
-that already sums sanely alone.
+Normalizing across MARKETS is meaningful only when the markets partition one question —
+politics `_normalize_outcome_probs` over the candidates of a single race.  `spotify_race`
+membership comes from the `kxspotify` ticker prefix, so it collects unrelated questions
+with no shared 100% to divide.  The cross-market step is therefore gone, and the invariant
+these tests pin is the simple one:
+
+    a row's published `prob` IS its own leading outcome's `prob`.
 """
 
 import io
@@ -69,86 +74,101 @@ def _probs(result):
     return [r["prob"] for r in result["spotify_race"]]
 
 
+PRODUCTION_PAIR = (
+    ("When will Spotify release 2026 Wrapped?", 0.86),
+    ("Will Playboi Carti release BABY BOI this year?", 0.215),
+)
+
+
 # ---------------------------------------------------------------------------
 # The production case, reproduced exactly
 # ---------------------------------------------------------------------------
 
 
-class TestSpotifyRaceScale:
-    def test_production_race_publishes_percents_not_fractions(self):
-        """The exact 2026-08-31 production pair: 86.0 / 21.5 -> 80.0 / 20.0, not 0.8 / 0.2."""
-        result = _build_music(
-            _race(
-                ("When will Spotify release 2026 Wrapped?", 0.86),
-                ("Will Playboi Carti release BABY BOI this year?", 0.215),
-            )
-        )
-        assert _probs(result) == [80.0, 20.0]
+class TestSpotifyRowKeepsItsOwnNumber:
+    def test_production_pair_publishes_its_own_probabilities(self):
+        """The exact 2026-08-31 production pair: 86.0 and 21.5.
 
-    def test_a_leading_market_never_renders_as_zero_percent(self):
-        """The user-visible symptom: `ProbPct` rounds the published number for display.
-
-        A market whose own leading outcome reads 86% must not be printed as 0%.
+        NOT 0.8 / 0.2 (the shipped bug) and NOT 80.0 / 20.0 (the scale-only repair
+        CERT-560 blocked — a share of an unrelated market's total).
         """
-        result = _build_music(
-            _race(
-                ("When will Spotify release 2026 Wrapped?", 0.86),
-                ("Will Playboi Carti release BABY BOI this year?", 0.215),
-            )
-        )
-        row = result["spotify_race"][0]
-        assert row["top_outcomes"][0]["prob"] == 86.0  # the market's own reading
-        assert round(row["prob"]) != 0, "headline rendered as 0% beside an 86% outcome"
+        result = _build_music(_race(*PRODUCTION_PAIR))
+        assert _probs(result) == [86.0, 21.5]
 
-    def test_normalized_race_sums_to_about_100(self):
-        result = _build_music(
-            _race(("A", 0.80), ("B", 0.60), ("C", 0.40), ("D", 0.30))
-        )
-        total = sum(_probs(result))
-        assert 99.0 <= total <= 101.0, f"expected ~100%, got {total}%"
+    def test_the_headline_equals_the_market_s_own_leading_outcome(self):
+        """The invariant that makes the whole class impossible to reintroduce.
+
+        Whatever normalization anyone adds later, a row's headline and its own top
+        outcome must not disagree — that disagreement is exactly what a reader sees.
+        """
+        result = _build_music(_race(*PRODUCTION_PAIR))
+        for row in result["spotify_race"]:
+            assert row["prob"] == row["top_outcomes"][0]["prob"], row["q"]
+
+    def test_the_displayed_integer_matches_the_market_s_own_outcome(self):
+        """The user-visible symptom, at display precision: `ProbPct` rounds.
+
+        Stated as "never renders 0%" this would MISS the real production case — the
+        shipped bug published 0.8 for the Wrapped market and `round(0.8)` is 1, so that
+        row rendered `1%`, not `0%`. Only the Carti row (0.2) rendered `0%`. The
+        invariant that catches both is that the printed integer must agree with the
+        market's own outcome. (The battery's mutant A survived the weaker phrasing.)
+        """
+        result = _build_music(_race(*PRODUCTION_PAIR))
+        for row in result["spotify_race"]:
+            assert round(row["prob"]) == round(row["top_outcomes"][0]["prob"]), row["q"]
 
     def test_every_published_prob_stays_on_the_percent_scale(self):
-        result = _build_music(
-            _race(("A", 0.80), ("B", 0.60), ("C", 0.40), ("D", 0.30))
-        )
+        result = _build_music(_race(("A", 0.80), ("B", 0.60), ("C", 0.40), ("D", 0.30)))
         for p in _probs(result):
             assert 1.0 <= p <= 100.0, f"{p} is not a percent"
 
     def test_relative_ordering_is_preserved(self):
-        result = _build_music(
-            _race(("A", 0.80), ("B", 0.60), ("C", 0.40), ("D", 0.30))
-        )
+        result = _build_music(_race(("A", 0.80), ("B", 0.60), ("C", 0.40), ("D", 0.30)))
         probs = _probs(result)
         assert probs == sorted(probs, reverse=True)
 
 
-class TestSpotifyRaceThreshold:
-    """The other direction: a race that already sums sanely must be left ALONE.
+class TestNoCrossMarketRescaling:
+    """Every row is left alone, at every total — that is the point.
 
-    This is the direction the 0-1 threshold got wrong — `> 1.05` is true of any race
-    containing a single market above 1.05%, so normalization fired unconditionally.
+    The old code's threshold made the behaviour depend on what OTHER markets happened
+    to be in the list. Each of these rows would have been rewritten under some version
+    of that rule; none may be rewritten now.
     """
 
-    def test_sane_race_under_the_threshold_is_untouched(self):
-        # 60 + 42 = 102: under 105, and deliberately NOT exactly 100.  A race that already
-        # sums to 100 is useless here — normalizing it is the identity, so such a test
-        # passes whether or not the threshold fires.  (The battery's mutant B survived
-        # that version of this row.)
-        result = _build_music(_race(("A", 0.60), ("B", 0.42)))
-        assert _probs(result) == [60.0, 42.0]
+    def test_a_race_summing_far_over_100_is_untouched(self):
+        # Under the 0-100 repair this became 44.4 / 33.3 / 22.2.
+        result = _build_music(_race(("A", 0.80), ("B", 0.60), ("C", 0.40)))
+        assert _probs(result) == [80.0, 60.0, 40.0]
 
-    def test_race_at_exactly_105_is_untouched(self):
-        result = _build_music(_race(("A", 0.65), ("B", 0.40)))
-        assert _probs(result) == [65.0, 40.0]
+    def test_a_race_summing_over_200_is_untouched(self):
+        # A "gentler" rescale that only fires on wild totals is the same class of bug.
+        # Without this row the battery's mutant C survives every behavioural guard and
+        # is caught only by the structural one.
+        result = _build_music(_race(("A", 0.90), ("B", 0.80), ("C", 0.70)))
+        assert _probs(result) == [90.0, 80.0, 70.0]
 
-    def test_small_race_well_under_100_is_untouched(self):
-        """Two long shots must stay long shots, not get inflated or divided."""
+    def test_a_race_summing_just_over_105_is_untouched(self):
+        result = _build_music(_race(("A", 0.86), ("B", 0.215)))
+        assert _probs(result) == [86.0, 21.5]
+
+    def test_a_race_summing_under_100_is_untouched(self):
         result = _build_music(_race(("A", 0.08), ("B", 0.03)))
         assert _probs(result) == [8.0, 3.0]
 
-    def test_single_market_race_is_untouched(self):
+    def test_a_single_market_race_is_untouched(self):
+        # The 0-1 form turned a lone 42% market into 1.0; the 0-100 form into 100.0.
         result = _build_music(_race(("A", 0.42)))
         assert _probs(result) == [42.0]
+
+    def test_adding_an_unrelated_market_does_not_move_the_others(self):
+        """The defect stated as a property: a row must not depend on its neighbours."""
+        alone = _probs(_build_music(_race(("Wrapped", 0.86))))
+        with_neighbour = _probs(
+            _build_music(_race(("Wrapped", 0.86), ("Unrelated", 0.215)))
+        )
+        assert alone[0] == with_neighbour[0] == 86.0
 
 
 # ---------------------------------------------------------------------------
@@ -156,9 +176,9 @@ class TestSpotifyRaceThreshold:
 # ---------------------------------------------------------------------------
 
 # These three routes all normalize a field that `_market_row` (or its local equivalent)
-# has already multiplied by 100, so their threshold must be the percent one.  `feed.py` is
-# deliberately NOT in this list: `_normalize_feed_probabilities` operates on raw 0-1
-# probabilities, where `1.05` is the correct constant.
+# has already multiplied by 100, so any threshold they carry must be the percent one.
+# `feed.py` is deliberately NOT in this list: `_normalize_feed_probabilities` operates on
+# raw 0-1 probabilities, where `1.05` is the correct constant.
 _PERCENT_SCALE_ROUTES = ("entertainment.py", "politics.py", "economics.py")
 
 _ROUTES_DIR = Path(__file__).resolve().parents[1] / "app" / "routes"
@@ -210,3 +230,12 @@ class TestPercentScaleThresholdClass:
         """Non-vacuity: the scan must actually fail when the 0-1 form is present."""
         planted = _strip_comments("if spotify_sum > 1.05:\n    pass\n")
         assert "1.05" in planted
+
+    def test_entertainment_no_longer_rescales_across_markets_at_all(self):
+        """A structural guard: the divisor itself is gone, not merely rescaled.
+
+        Comments are stripped first, so this cannot be satisfied or broken by the
+        rationale above the deleted block.
+        """
+        code = _strip_comments((_ROUTES_DIR / "entertainment.py").read_text())
+        assert "spotify_sum" not in code

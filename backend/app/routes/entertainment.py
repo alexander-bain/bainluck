@@ -385,16 +385,25 @@ def _build_music(themed: dict) -> dict:
                 side_markets.append(row)
 
     spotify_race.sort(key=lambda r: -r["prob"])
-    # Normalize Spotify race probabilities to sum to ~100% (independent binary markets).
-    # `row["prob"]` is a PERCENT (`_market_row` multiplies by 100), so both the threshold
-    # and the divisor are on the 0-100 scale — same rule as politics
-    # `_normalize_outcome_probs` and economics `_brackets_from_outcomes`.  This used to
-    # carry the feed's 0-1 form (`> 1.05`, no `* 100`), which fired on every non-empty
-    # race and published a fraction: a market reading 86.0 went out as 0.8.
-    spotify_sum = sum(r["prob"] for r in spotify_race if r["prob"] > 0)
-    if spotify_sum > 105 and spotify_race:
-        for r in spotify_race:
-            r["prob"] = round(r["prob"] / spotify_sum * 100, 1)
+    # NO CROSS-MARKET NORMALIZATION HERE — each row keeps its own leading outcome.
+    #
+    # This used to divide every row by the sum of the others, in the feed's 0-1 form
+    # (`> 1.05`, no `* 100`), so a market reading 86.0 was published as 0.8.  Correcting
+    # the arithmetic to the 0-100 form is NOT the fix: it publishes 80.0 for that same
+    # market while the market's own leading outcome still reads 86.0, and the card labels
+    # the altered share with the original outcome's name.
+    #
+    # Normalizing across MARKETS is only meaningful when the markets partition one
+    # question — which is what politics `_normalize_outcome_probs` does over the
+    # candidates of a single race.  `spotify_race` is not that: membership comes from the
+    # `kxspotify` ticker prefix, so it collects unrelated questions.  Today it holds a
+    # cumulative-threshold release-date market ("When will Wrapped drop?", outcomes
+    # 86.0/83.5/77.0, not mutually exclusive) alongside "Will Playboi Carti release BABY
+    # BOI this year?" — two different questions with no shared 100% to divide.
+    #
+    # No surface sums these headlines either: `SpotifyRace` renders the top_outcomes of
+    # ONE market, and its `< 2 outcomes` fallback renders independent cards.  So the
+    # normalization had no consumer and one victim, the number itself.
     billboard_watch.sort(key=lambda r: -r["prob"])
 
     billboard_groups, billboard_ungrouped = _group_threshold_markets(billboard_watch)
