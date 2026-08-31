@@ -14,6 +14,204 @@ fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to
 
 ---
 
+## STATUS 2026-08-31 19:5xZ (CAL-P161) — **CHECK 1 IS NOT "REFUTED" ANYWHERE ON THE TOP OF THE BOARD. IT IS UNMEASURED — THE SAMPLE IT RESTS ON IS BIASED LOW BY A FACTOR WE HAVE ALREADY MEASURED AS ∞ (0.000 → 0.148 ON THE SAME CELL).**
+
+*Executes CAL-P160's board-wide method correction — re-bound every cell's check 1 as
+`share × mean |price − outcome|` instead of `share` — from stored artifacts, zero queries. Doing
+the arithmetic did not re-close the rungs. It showed the **share input itself is void** for ranks
+1, 2, 3 and 4. This overturns CAL-P160's own "strengthened" soccer/cm bound, and it retires the
+`fallback share is 0.00–0.04 → ruled out` reading that has stood over this file since round 1.*
+
+### SESSION STATE (measured, `GET /api/admin/calibration-beat-gauges?full=true`)
+
+| gauge | session start (`18:37:31Z`) | session end (`19:42:39Z`) |
+|---|---|---|
+| `staged:units_banked` / `units_planned` | **65 / 128** — **NOT zeroed**; CAL-P160's Finding A signature did not fire | **70 / 128** |
+| `input_fingerprint` | `75faaed6`, unchanged | `75faaed6`, unchanged — **14** straight beats since `06:37Z` |
+| `staged:unit_ms_mean` | 217,588 | **186,191** |
+| `staged:beats_to_publish` | 9 | 5 |
+
+Published curve unchanged: `mce_closing_line` **1.86 pp**, `generated_at 2026-08-31T04:37:36Z`,
+population `q268`. Stale by design; the page is not broken. Hold per D34 remains ON —
+`precompute_calibration.py` untouched this session.
+
+Swap still in flight: `heroku pg:info -a bainluck` → `Status: Upgrading Plan: Replacing Primary`,
+plan still `Standard 0`, `66.1 GB / 64 GB (103.35%)`. **No folds ran.** Everything below is read
+from JSON already in this repo.
+
+### 🟢 FINDING 0 — CAL-P160'S "REFUTED AT THE FIRST MEASURABLE BEAT" IS ITSELF OVERTURNED: IT WAS THE SWAP'S TRANSIENT, EXACTLY AS ITS OWN HONEST BOUND ALLOWED
+
+CAL-P160 pre-registered the test: *"if `unit_ms_mean` returns toward 187,000 the degradation was
+the swap's transient; if it holds above 210,000 the prediction is refuted outright."* The
+`19:42:39Z` beat is the answer and it is unambiguous:
+
+| gauge | `17:37Z` pre | `18:37Z` degraded | **`19:42Z`** | verdict |
+|---|---:|---:|---:|---|
+| `staged:unit_ms_mean` | 187,139 | 217,588 | **186,191** | back to baseline — **transient** |
+| `staged:unit_ms_worst` | 135,937 | 250,681 | **146,637** | back in the 112–136k band |
+| `staged:units_banked` | 60 | 65 | **70** | +5, unbroken |
+| `staged:beats_to_publish` | 6 | 9 | 5 | — |
+
+**CAL-P160's Finding B verdict is withdrawn.** One degraded beat during a live primary swap was a
+transient, not a trend, and this lane called it a refutation on n=1. *(P159's underlying
+prediction is not thereby confirmed: it predicted cost would fall **toward 80,658 ms**. Cost
+returned to 186,191 — its pre-swap baseline, 2.3× above the predicted figure. The correct grade is
+**NOT YET SUPPORTED**, not "refuted": the upgrade has not settled, so the prediction has still
+never been tested under its own stated condition.)*
+
+### 🔴 FINDING 0b — **THE ETA THE HOLD RESTS ON IS WRONG BY ~2.3×. `beats_to_publish` IS NOT AN ETA.**
+
+Every directive since CAL-P158 has quoted `staged:beats_to_publish` as "the producer's OWN
+disclosed ETA, not an estimate." **It does not behave like one.** Over the 14 beats on fingerprint
+`75faaed6` the bank rose 5 → 70 — **65 units, +5 every single beat, zero exceptions** — while
+`beats_to_publish` fell only 9 → 5, and spiked back to 9 mid-run:
+
+```
+bank  5 10 15 20 25 30 35 40 45 50 55 60 65 70   (+5, 13/13 intervals)
+b2p   9  9  8  8  8  8  7  7  6  5  6  6  9  5   (non-monotonic; fell 4 while 65 units banked)
+```
+
+A real remaining-work ETA would have fallen ~13. This one tracks *recent in-beat throughput*, not
+remaining work, so it implies **11.6 units/beat** — a rate the producer has never once achieved.
+
+**The empirical clock is the trustworthy one.** 58 units remain at a measured, perfectly linear
++5/beat, over a measured mean beat interval of 60.4 min (`06:37:31Z` → `19:42:39Z`, 13 intervals):
+
+> **≈ 11.6 beats ≈ 11.7 hours → publish ≈ `2026-09-01 07:20Z` ≈ 00:20 PT tonight.**
+> Not the ~5 beats the gauge advertises.
+
+This does not change the hold — it changes what the hold *costs*, and that is Alex's call, so it
+is filed in `YOUR-TURN.md`. Any future directive quoting `beats_to_publish` as an ETA should quote
+`(units_planned − units_banked) / 5` instead and say so.
+
+### 🔴 FINDING A — THE RE-BOUND WAS EXECUTED, AND IT FAILED CLOSED, NOT OPEN
+
+CAL-P160 prescribed `share × mean |price − outcome|`. `mean |price − outcome|` is not stored, so
+each cell is bounded at its **maximum**: every fallback leg maximally wrong (`|p−o| = 1`), on the
+95% Clopper–Pearson **upper** bound of the sampled share. That is a hard ceiling — no
+distributional assumption. Read against `ece_eligible` from `artifacts/cal-p094/eligible_fold_all_cells.json`:
+
+| rank | cell | `ece_e` | `n_e` | sample | share | share↑95 | **ceiling pp** | **ceiling / ECE** |
+|---:|---|---:|---:|---|---:|---:|---:|---:|
+| 1 | baseball/quantity | 15.86 | 6,778 | **head** | 0.0045 | 0.0070 | 0.70 | 0.04 |
+| 2 | soccer/quantity | 8.51 | 5,749 | **head** | 0.0026 | 0.0095 | 0.95 | 0.11 |
+| 3 | soccer/container_member | 6.27 | 7,682 | **head** | 0.0050 | 0.0145 | 1.45 | 0.23 |
+| 4 | economics/quantity | 5.13 | 4,705 | **head** | 0.0448 | 0.0524 | **5.24** | **1.02** |
+| 6 | basketball/quantity | 5.73 | 2,104 | **random** | 0.1481 | 0.1798 | **17.98** | **3.14** |
+| 8 | tennis/quantity | 5.01 | 1,512 | **random** | 0.0304 | 0.0442 | 4.42 | 0.88 |
+| 9 | baseball/container_member | 12.44 | 286 | **head** | 0.0000 | 0.0130 | 1.30 | 0.10 |
+| 10 | golf/container_member | 25.11 | 118 | **head** | 0.0000 | 0.0081 | 0.81 | 0.03 |
+| 11 | esports/container_member | 3.15 | 8,217 | **head** | 0.0206 | 0.0443 | **4.43** | **1.41** |
+
+Taken at face value this closes ranks 1–3 hard (≤23% of the cell) and reopens 4, 6 and 11. **Do
+not take it at face value. The `sample` column is the whole story.**
+
+### 🔴 FINDING B — THE HEAD SAMPLE IS NOT MERELY BIASED; ITS BIAS HAS BEEN MEASURED, AND IT IS TOTAL
+
+Seven of the nine rows above are `ORDER BY id ASC LIMIT 500` head samples. Exactly one cell on
+this board was ever sampled **both** ways, and the two answers do not overlap:
+
+| basketball/quantity | n | fallback | share | artifact |
+|---|---:|---:|---:|---|
+| **head** (`ORDER BY id ASC LIMIT 500`) | 370 | 0 | **0.0000** | `round2/basketball_quantity_head_fallback.json` `179bbf20e2748d4c` 28.3ms |
+| **random** (Bernoulli 4%, unbiased) | 574 | 85 | **0.1481** | `round2/basketball_quantity_random_fallback.json` `c133ef220f2d71f1` 289.8ms |
+
+**The head sample read zero on a cell whose true share is ~15%.** The mechanism is already stated
+in this file (line ~969): oldest ids have `calibration_probability` backfilled to 100%, so the
+head is the one region of the id space where fallback *cannot* appear. This is not a wide error
+bar — it is a sample drawn from the complement of the population of interest. Corroborated in the
+same direction, never the other, on all three cells with both reads: tennis/q head 0.000 →
+random 0.0304; tennis/cm head 0.000 → random 0.0150; hockey/cm unordered heap 145/584 = **0.2483**.
+
+**Consequence, and it is the finding:** a Clopper–Pearson interval quantifies *sampling* error and
+says nothing about *selection* error. Every ceiling in Finding A's table marked `head` is
+therefore **not a bound at all** — it is a bound on the wrong population. The correct entry for
+those seven cells is **VOID**, not a number.
+
+**How much fallback would each head cell need to explain itself?** `ECE / (max(avg_open, 1−avg_open) × 100)`:
+
+| cell | `ece_e` | `avg_open` (fallback rows) | **required share** | is that reachable? |
+|---|---:|---:|---:|---|
+| golf/container_member | 25.11 | — | 25.1% | ~ hockey's measured 24.8% |
+| baseball/quantity | 15.86 | 0.843 | 18.8% | above basketball's 14.8%, below hockey's 24.8% |
+| baseball/container_member | 12.44 | — | 12.4% | **below basketball's measured 14.8%** |
+| economics/quantity | 5.13 | 0.538 | 9.5% | **below basketball's measured 14.8%** |
+| soccer/quantity | 8.51 | 0.010 | 8.6% | **below basketball's measured 14.8%** |
+| soccer/container_member | 6.27 | 0.977 | **6.4%** | **well below 14.8%** |
+| esports/container_member | 3.15 | 0.665 | **4.7%** | **well below 14.8%** |
+
+Every required share sits inside the range this project has actually measured on unbiased samples
+(1.5% – 24.8%). **Fallback alone can account for any of these cells at a share we have observed
+elsewhere on the same table.** Nothing here says it *does*. It says the rung is open.
+
+🔴 **This retires CAL-P160's own soccer/cm bound.** That entry wrote "check 1 refuted **by cost**,
+`0.005 × 97.7` ≈ ≤0.5 pp of 6.27" and called the rung closed-by-a-bound. The `0.005` is a head
+share on the cell class whose head reads zero when the truth is 0.148. The arithmetic was right;
+its input was void. **soccer/cm check 1 is reopened.** The correct statement is: *fallback would
+need to be ≥6.4% of soccer/cm legs, and we have never measured soccer/cm on an unbiased sample.*
+
+🟢 **One cell is genuinely closed, and only one.** `tennis/quantity`: unbiased random sample, 95%
+upper 0.0442, ceiling 4.42 pp against ECE 5.01 → **0.88×**. Closed — but only under the maximal
+`|p−o| = 1` assumption, with no margin. It is the sole check-1 verdict on this board currently
+resting on an unbiased measurement.
+
+### 🔴 FINDING C — THE `13.51` DISCRIMINATOR CANNOT RUN FROM STORED DATA, AND ITS PRE-REGISTRATION NEEDS ONE AMENDMENT
+
+`artifacts/cal-p094/pairclass_ece.json` stores **scalars only** (`ece`, `n`, `gap`, `winners` per
+class) — no per-bin vectors. CAL-P160's discriminator therefore genuinely requires a query and
+stays parked behind the swap. Confirmed, not assumed.
+
+The scalars do carry one structural fact that **amends** the pre-registration. Across every cell,
+the `ok` and `identical_noncomp` classes sit at *exactly* `winners = n/2` (soccer/cm ok
+2,834/5,668; baseball/q ok 2,439/4,880). That is **definitional, not a finding** — `pairclass`
+classifies two-leg pairs, and a well-formed pair contributes exactly one winner. But it has a
+consequence: in an exactly-paired class `mean(outcome)` is pinned at 0.5 by construction, so the
+class `gap` is **entirely** `mean(price) − 0.5`, i.e. a pair-sum deficit (soccer/cm pairs sum
+0.944, baseball/q 0.875), not a directional forecasting bias.
+
+**Amendment:** CAL-P094 rejected the collision partly because the gaps differ (−2.78 vs −6.23).
+Under the pairing, differing gaps mean nothing more than *differing pair-sum deficits* — so that
+half of CAL-P094's argument is void on a second, independent ground. **But the pair-sum route does
+not explain the collision either**: `golf/container_member`'s `ok` class sums to 0.9984 (near
+perfect) at ECE **25.11**, while soccer/cm sums to 0.944 at 13.51. Deficit and ECE do not track.
+When the discriminator runs it must record the **price histogram** alongside the per-bin error
+vector — under exact pairing the error vector is mirror-symmetric, so the price distribution is
+the part that actually carries cell identity.
+
+### 🟡 THE CELLS WHERE `ok` IS *NOT* PAIRED ARE A SEPARATE, UNNAMED CLASS
+
+Three `ok` classes break `winners = n/2` badly, and all three have **positive** gap:
+`economics/quantity` 1,752/4,705 = 37.2% (gap +4.20), `politics/quantity` 102/1,152 = 8.9%
+(+6.12), `geopolitics/quantity` 5/60 = 8.3% (+19.36). These are non-complementary multi-leg
+populations misclassified into a class whose name asserts they are clean pairs. **`economics/quantity`
+is rank 4 and is also one of the cells Finding A reopened** — two independent signals on the same
+cell. Not diagnosed here; recorded so it is not rediscovered a fourth time.
+
+### 🔴 WHAT THIS DOES TO THE NEXT QUERY — A RE-PRIORITISATION, STATED NOT SUBSTITUTED
+
+CAL-P160 pre-registered the per-bin `13.51` discriminator as the next query. **It should now run
+second.** The first query, when the swap settles, should be a **Bernoulli-random fallback
+re-measure on ranks 1–4** (`baseball/quantity`, `soccer/quantity`, `soccer/container_member`,
+`economics/quantity`), reusing the exact pattern already proven on basketball —
+`random() < 0.04 LIMIT 500` → `ANY` aggregation, `~290ms` measured, four cheap queries. Rationale:
+the collision check refines the *localisation* of a driver inside two cells; the random re-measure
+decides whether a **known, already-shipped defect class (#1978) is the driver of the top four
+cells at once**, and it is the rung every other rung on this board is stacked on top of. Also
+capture `avg(|price − outcome|)` over the fallback rows in the same pass so the next re-bound is
+exact instead of a ceiling.
+
+### CARRIED TO THE NEXT SESSION
+
+1. Read the gauge ring first (CAL-P160 Finding A signature — did not fire this session).
+2. CAL-P160's Finding B is **graded and withdrawn** (Finding 0). Nothing left open there. The live
+   number to carry is the bank and the **empirical** ETA, never `beats_to_publish` (Finding 0b).
+3. **Query 1 when the swap settles:** random fallback re-measure, ranks 1–4, + `avg|p−o|`.
+4. **Query 2:** the per-bin `13.51` discriminator, amended per Finding C to record price histograms.
+5. Check 1's status board-wide: **VOID on 7 cells, OPEN on basketball/q (3.14×), CLOSED on
+   tennis/q alone (0.88×).** Do not re-cite "fallback share is 0.00–0.04" — it is retired.
+
+---
+
 ## STATUS 2026-08-31 19:3xZ (CAL-P160) — **THE HOLD IS CORRECT BUT ITS STATED REASON IS WRONG: THE BANK IS IN POSTGRES, AND POSTGRES IS BEING REPLACED RIGHT NOW.**
 
 *Agrees with CAL-P159 on the verdict (do not touch the file) and corrects it on two load-bearing
@@ -1054,7 +1252,17 @@ Each cell Round 1: `ORDER BY id ASC LIMIT 500` head sample (biased old) + `ANY` 
 | tennis/container_member | 500 | 86 | 86 | 0 | 0.000 | 0.319 | 12 | 0.319 | null | `5f466f7e9c782e2d` 823ms [roster_tennis_container_member.json 500] | `c47e6fac67da488a` 278ms [outcomes_tennis_cm n=86] |
 | geopolitics/container_member | 500 | 591 | 568 | 23 | 0.039 | 0.302 | 186 | 0.283 | 0.763 | `59b82ff0efe18b12` 4050ms [roster_geopolitics_container_member.json 500] | `0ed89a509dfe3171` 138ms [outcomes_geopolitics n=591] |
 
-**Reading:** In the 1000-market samples where outcomes exist, **fallback share is 0.00–0.04** — i.e., almost every outcome has `calibration_probability IS NOT NULL`. This **rules out** the #1978 price-source fallback (using opening where calib missing) as the driver for these cells at this sample. Basketball's known 24pp mechanism must be verified on the full cell with `ece_complete` split: if fallback is rare, the mechanism is not fallback share but **which-price value** (opening vs closing value difference) even when calib exists. See basketball section.
+🔴 **RETIRED 2026-08-31 (CAL-P161) — DO NOT CITE THE READING BELOW.** Every row in this table
+except the ones marked otherwise is an `ORDER BY id ASC LIMIT 500` **head** sample, and the head
+sample has been measured against an unbiased random sample on one cell: basketball/quantity read
+**0.000** on the head and **0.1481** on the random draw. Oldest ids have `calibration_probability`
+backfilled to 100%, so the head is drawn from the one region of the id space where fallback cannot
+appear. These shares are not low-precision estimates of the cell — they are estimates of a
+different population. **Treat every head share here as VOID, not as a bound.** See CAL-P161
+Findings A/B at the top of this file for the per-cell ceilings, the required-share table, and the
+pre-registered random re-measure that replaces this reading.
+
+~~**Reading (VOID):** In the 1000-market samples where outcomes exist, **fallback share is 0.00–0.04** — i.e., almost every outcome has `calibration_probability IS NOT NULL`. This **rules out** the #1978 price-source fallback (using opening where calib missing) as the driver for these cells at this sample.~~ Basketball's known 24pp mechanism must be verified on the full cell with `ece_complete` split: if fallback is rare, the mechanism is not fallback share but **which-price value** (opening vs closing value difference) even when calib exists. See basketball section.
 
 *Every number above cites stored JSON: `artifacts/subcohort2/roster_*.json` (columns [id], row_count, duration_ms, sql_fingerprint) and `artifacts/subcohort2/outcomes_*.json` (columns [n,has_calib,fallback,avg_prob,winners,sum_prob,avg_calib,avg_open], fingerprint, duration_ms). Sample is 1000-market head, not full census — stated inline.*
 
