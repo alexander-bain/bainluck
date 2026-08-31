@@ -147,9 +147,11 @@ def default_sweep_id(now: datetime | None = None, source: str = SWEEP_SOURCE) ->
 #: there is no version of this string that can be updated in two places and missed
 #: in the third.
 #:
-#: ``is_winner`` is a NOT NULL boolean defaulting to false, so "no winner" is
+#: ``is_winner`` is a nullable boolean defaulting to false, and production stores
+#: that default rather than NULL for an ungraded outcome, so "no winner" is
 #: ``NOT EXISTS (... IS TRUE)`` and not a NULL test — a market whose outcomes all
-#: read false IS the population, not an absence of rows.
+#: read false IS the population, not an absence of rows. ``IS TRUE`` rather than
+#: ``= TRUE`` is what keeps that null-safe now the model admits NULL too.
 _COHORT_WHERE = """
     m.source = :source
   AND m.external_id IS NOT NULL

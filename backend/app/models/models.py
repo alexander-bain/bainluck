@@ -21,6 +21,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -869,8 +870,22 @@ class FuturesOutcome(Base):
     # column is altered (production is already nullable), no data moves, and
     # every writer keeps storing False for unsettled via the default below —
     # which still fires, including when ``None`` is passed explicitly.
+    #
+    # 🔴 THE `server_default` IS LOAD-BEARING AND IT IS THE HALF THAT WAS MISSING
+    # (CERT-521 [P1]). Nullability alone is not parity. Production's DDL is
+    # `boolean NULL DEFAULT false` — the migration that built it
+    # (`add_futures_tables.py`) declared `server_default='false'` — while a
+    # client-side `default=` only fires on an ORM insert. So with nullability
+    # widened and no server default, a RAW `INSERT` that omits the column, which
+    # is how every real-Postgres gate here seeds, would store NULL in the test
+    # database and FALSE in production. That is the same test/prod semantic split
+    # this column was widened to close, re-opened one layer down: a gate could
+    # manufacture "ungraded truth" out of a field it merely forgot to name.
+    # `tests/test_pg_gate_seed_completeness.py` states the asymmetry as its own
+    # reason to exist — "a raw INSERT bypasses SQLAlchemy's Python-side
+    # `default=` ... only a `server_default` is [excused]".
     is_winner: Mapped[Optional[bool]] = mapped_column(
-        Boolean, nullable=True, default=False
+        Boolean, nullable=True, default=False, server_default=text("false")
     )
     resolution_source: Mapped[Optional[str]] = mapped_column(String(30))
 

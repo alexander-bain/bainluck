@@ -281,6 +281,33 @@ jobs:
             exit 1
           fi
 
+      - name: futures_outcomes grade schema parity (real Postgres)
+        # CERT-521. `is_winner` was widened to nullable so a metadata-built test
+        # database could finally express "nobody graded this" — and the widening
+        # alone was a REGRESSION, because production's DDL is
+        # `boolean NULL DEFAULT false` while the model carried only a client-side
+        # `default=False`. A raw INSERT omitting the column would have stored NULL
+        # here and FALSE in production, and raw INSERT is how every gate in this
+        # job seeds. A gate could then manufacture ungraded truth out of a field
+        # it forgot to name.
+        #
+        # Real Postgres because a DEFAULT is applied by the SERVER. Four green
+        # metadata guards sat over `is_winner BOOLEAN,` and none of them could
+        # see the missing clause; only asking a database can tell what the
+        # emitted DDL actually does.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_futures_outcome_grade_schema_parity_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/grade_parity.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/grade_parity.txt; then
+            echo "::error::futures_outcomes grade schema parity SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Odds-enrichment equivalence (real Postgres)
         # LAT-P030/#1494. The odds enrichment stage was 84-95% of every slow team
         # query (measured 6,724ms of 12,182ms) because DISTINCT ON cannot skip: it

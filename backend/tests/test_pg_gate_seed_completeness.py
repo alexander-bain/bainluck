@@ -24,12 +24,22 @@ gap that let the last instance through.
 A raw INSERT bypasses SQLAlchemy's Python-side `default=`, so a column carrying
 one is NOT excused here the way it would be on an ORM insert; only a
 `server_default` is. That asymmetry is the trap this file is named after.
+
+CAL-P157 added the second half — `test_every_real_postgres_gate_is_wired_into_ci`.
+A complete seed proves the gate CAN run; it says nothing about whether anything
+ever runs it, and `search-recall` names its gate files one hand-written step at a
+time. The discovery arm found `test_feed_static_tag_filter_pg.py`, which is
+gated on `SEARCH_TEST_DATABASE_URL`, skips everywhere else, and is named by no
+step — so it has never executed once. It is allowlisted rather than wired here
+(turning on a gate that has never run belongs to whoever owns the feed, not to a
+model-parity queue) and reported, but nothing NEW can join it.
 """
 
 import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 from app.models.models import Base
 
@@ -42,6 +52,7 @@ COVERED = (
     "test_calibration_mode_price_source_scope_peers_pg.py",
     "test_create_wave_insert_bind_contract.py",
     "test_feed_static_tag_filter_pg.py",
+    "test_futures_outcome_grade_schema_parity_pg.py",
     "test_kalshi_cliff_bind_contract.py",
 )
 
@@ -138,4 +149,71 @@ def test_every_raw_insert_gate_is_covered():
         f"these real-Postgres gates seed with raw INSERT but are not in COVERED: "
         f"{uncovered}. Add them — a gate whose seed is unchecked is a gate that "
         "will first report its own bug as a red deploy."
+    )
+
+
+#: Real-Postgres gates that exist, cannot run outside CI, and that no CI step
+#: invokes. Every name here has NEVER EXECUTED. This is a disclosure, not a
+#: permission: it is frozen at the set CAL-P157 measured, so a new gate cannot
+#: join it silently.
+#:
+#: `test_feed_static_tag_filter_pg.py` — found by the arm below, owned by the
+#: feed, not wired here because switching on a never-run gate is a change whose
+#: blast radius belongs to the lane that can read its failures.
+_NEVER_WIRED = {"test_feed_static_tag_filter_pg.py"}
+
+CI_WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+
+
+def test_every_real_postgres_gate_is_wired_into_ci():
+    """A gate no CI step names is a gate that has never once run.
+
+    These files skip on every machine a human or an agent uses — `initdb` dies on
+    `shmget` in the sandbox — so `search-recall` is their only reader, and it
+    names each file in a hand-written step. Adding the file is therefore not
+    adding the gate, and the difference is invisible: the suite goes green either
+    way, and "0 skipped" is only asserted inside the step that does not exist.
+
+    `test_search_latency_contract.py` already makes this check, parametrized over
+    two hardcoded search gates. Hardcoding is what let a third slip past, so this
+    one DISCOVERS instead.
+    """
+    workflow = yaml.safe_load(CI_WORKFLOW.read_text())
+    job = workflow["jobs"]["search-recall"]
+    invoked = "\n".join(s.get("run") or "" for s in job["steps"])
+
+    unwired = sorted(
+        p.name
+        for p in INTEGRATION_DIR.glob("test_*.py")
+        if p.name not in _NEVER_WIRED
+        and "TEST_DATABASE_URL" in p.read_text()
+        and f"tests/integration/{p.name}" not in invoked
+    )
+    assert not unwired, (
+        f"these gates require a real Postgres and no `search-recall` step runs "
+        f"them: {unwired}. They skip everywhere else, so they have never "
+        f"executed — add a step (with the all-skipped detector its neighbours "
+        f"carry) rather than letting the file's existence read as coverage."
+    )
+
+
+def test_the_never_wired_allowlist_has_not_grown_stale():
+    """An allowlist that outlives its entries is the next silent gap.
+
+    If a name here gets wired, or deleted, this fails and the disclosure comes
+    out with it.
+    """
+    workflow = yaml.safe_load(CI_WORKFLOW.read_text())
+    invoked = "\n".join(
+        s.get("run") or "" for s in workflow["jobs"]["search-recall"]["steps"]
+    )
+    stale = sorted(
+        name
+        for name in _NEVER_WIRED
+        if not (INTEGRATION_DIR / name).exists()
+        or f"tests/integration/{name}" in invoked
+    )
+    assert not stale, (
+        f"these names are allowlisted as never-wired but are now wired or gone: "
+        f"{stale}. Remove them from _NEVER_WIRED."
     )
