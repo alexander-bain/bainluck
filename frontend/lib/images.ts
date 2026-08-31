@@ -43,6 +43,16 @@ function cacheSet<T>(key: string, data: T): void {
   lruSetItem(CACHE_PREFIX + key, JSON.stringify(entry), CACHE_PREFIX);
 }
 
+function cacheDelete(key: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(CACHE_PREFIX + key);
+  } catch {
+    // Store unavailable (private mode). A stale entry we cannot delete is
+    // still ignored by the reader, so this is safe to swallow.
+  }
+}
+
 // ============================================================================
 // 1. ESPN Player Headshots
 // ============================================================================
@@ -346,13 +356,153 @@ export function __resetWikipediaLookupState(): void {
 }
 
 /**
+ * UX-P235 (board item 14) — WHY A WIKIPEDIA SUMMARY IMAGE IS SOMETIMES REFUSED.
+ *
+ * `getWikipediaImage` asks Wikipedia *"what does this NAME look like?"* when the
+ * caller means *"what does this BRAND look like?"*, and a bare market-outcome name
+ * is often a common noun. Measured live 2026-08-31 on the eight outcomes of market
+ * 109441, the market Alex reviewed:
+ *
+ *   Amazon      disambiguation, no image            -> initials  (honest)
+ *   Max         disambiguation, no image            -> initials  (honest)
+ *   Netflix     `Netflix_UI_for_Web.png`            -> a SCREENSHOT of the web UI
+ *   Disney      `The_Walt_Disney_company_logo.svg`  -> the real logo, 330x171
+ *   Hulu        `Hulu_logo_(2018).svg`              -> the real logo
+ *   Paramount+  `Paramount_Plus.svg`                -> the real logo
+ *   🔴 Peacock  `Peacock_Plumage.jpg`, title "Peafowl", description
+ *               "Group of large game birds"         -> A PHOTOGRAPH OF A BIRD
+ *   🔴 Apple    `Pink_lady_and_cross_section.jpg`, description
+ *               "Edible fruit"                      -> A PHOTOGRAPH OF A FRUIT
+ *
+ * 🔴 **THE BOARD ITEM SAYS PEACOCK AND APPLE "RESOLVE CORRECTLY". THEY DO NOT** —
+ * they resolve to a bird and a fruit, rendered as confident circular brand marks
+ * beside a streaming-service probability. Only 2 of the 8 (Hulu, Paramount+) were
+ * ever right. Alex's own rule for this item is *a wrong logo is worse than no
+ * logo*, and a bird is the most wrong of the eight.
+ *
+ * So this refuses the answers Wikipedia's OWN metadata marks as not-a-brand, using
+ * fields already in the response we fetch — no second request, no new round trip on
+ * a page that renders 25 of these. A refusal falls back to the initials chip, which
+ * `EntityImage` now paints as an obvious placeholder rather than a brand tile.
+ *
+ * NOT ATTEMPTED HERE, and named in the report instead: **Wikidata's P154 "logo
+ * image"**, which is the *right* question and which I measured working —
+ * `Netflix -> Netflix logo.svg`, `Disney -> The Walt Disney Company Logo.svg`,
+ * while `Peacock` and `Apple` correctly have none. It would fix the Netflix
+ * screenshot too. It needs a SECOND network hop per outcome, and cold-load latency
+ * is a named priority today, so it is a deliberate follow-up rather than a thing to
+ * slip in unmeasured.
+ */
+
+/**
+ * Wikipedia's own one-line `description` for pages whose subject is a natural kind
+ * — never the subject of a market outcome, and never a brand.
+ *
+ * Deliberately a SHORT, EXPLICIT list of things we can prove are wrong, not a
+ * general "is this a company?" classifier. We cannot prove a page IS a brand; we
+ * can prove a page is a bird. Matching is on Wikipedia's curated short description,
+ * not on free prose, so it is stable.
+ *
+ * ⚠️ A racehorse, a hurricane or a boat named after an animal is a legitimate
+ * outcome — but its page's description is "racehorse" / "tropical cyclone", not
+ * "species of bird", so it is unaffected. The test file pins that.
+ */
+const NOT_A_BRAND_DESCRIPTIONS: readonly RegExp[] = [
+  /\bspecies\b/i,
+  /\bgenus\b/i,
+  /\bfamily of\b/i,
+  /\bgroup of .*(bird|fish|mammal|insect|reptile|animal|plant)/i,
+  /\b(bird|fish|mammal|insect|reptile|amphibian)s?\b(?!.*\b(team|club|logo|company|brand)\b)/i,
+  /\b(fruit|vegetable|plant|tree|flower|herb)\b(?!.*\b(company|brand|logo|band|film)\b)/i,
+  /\bchemical element\b/i,
+  /\b(given|family|sur)\s?names?\b/i,
+  /\btopics referred to by the same term\b/i,
+];
+
+/** True when Wikipedia's own metadata says this page is not a brand or an entity. */
+export function wikipediaSummaryIsNotABrand(summary: {
+  type?: string | null;
+  description?: string | null;
+}): boolean {
+  // Wikipedia stating outright that the name is ambiguous. Its own word for it.
+  if (summary.type === "disambiguation") return true;
+  const d = (summary.description || "").trim();
+  if (!d) return false;
+  return NOT_A_BRAND_DESCRIPTIONS.some((re) => re.test(d));
+}
+
+/**
+ * UX-P236 (CERT-610) — WHY THE CACHE STORES THE EVIDENCE AND NOT THE VERDICT.
+ *
+ * UX-P235 put the refusal in the fetch path only, and the fetch path is the one
+ * a returning user does not take. `img_wiki_*` has a 24-hour TTL, so every reader
+ * who had already loaded `/futures/109441` kept being served the bird straight
+ * out of localStorage: the new predicate never ran for them, and the ship — *"a
+ * wrong logo is worse than no logo"* — did not land for up to a day. CERT-610
+ * blocked on exactly that and was right.
+ *
+ * The narrow fix is to bump the cache key so old entries miss. It works once,
+ * and it re-arms the same trap the next time anyone edits the refusal rules:
+ * the policy would again be frozen into whatever it was at WRITE time, and the
+ * only thing standing between a reader and a stale verdict is an author
+ * remembering to bump a constant.
+ *
+ * So the entry stores what Wikipedia SAID (`type`, `description`, the thumbnail
+ * URL) rather than what we CONCLUDED, and `decideWikipediaImage` re-runs on
+ * every read. A change to `NOT_A_BRAND_DESCRIPTIONS` therefore takes effect for
+ * already-cached readers on their next paint, with no version to bump and no
+ * refetch. `k` marks the SHAPE, not the policy — it changes only if these
+ * fields do.
+ *
+ * The cost is a short description string per entry, in a cache that is already
+ * LRU-bounded (#L2-137).
+ */
+const WIKI_CACHE_SHAPE = "wiki-summary-1";
+
+interface WikipediaCacheEntry {
+  /** Shape marker. Entries written before UX-P236 lack it and are discarded. */
+  k: typeof WIKI_CACHE_SHAPE;
+  url: string | null;
+  type?: string | null;
+  description?: string | null;
+}
+
+function isWikipediaCacheEntry(value: unknown): value is WikipediaCacheEntry {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { k?: unknown }).k === WIKI_CACHE_SHAPE
+  );
+}
+
+/**
+ * The ONE place the refusal decision is made. Called on the fetch path and on
+ * every cache read, so the two can never disagree — which is the defect
+ * CERT-610 found.
+ */
+function decideWikipediaImage(entry: WikipediaCacheEntry): string | null {
+  // `?? null` because the entry comes back through `JSON.parse` of a store the
+  // user's browser owns: a truncated or hand-edited entry can carry the shape
+  // marker and no `url`, and `undefined` would escape the declared return type
+  // into every caller's `.then`.
+  return wikipediaSummaryIsNotABrand(entry) ? null : entry.url ?? null;
+}
+
+/**
  * Fetch a thumbnail image URL from Wikipedia for an entity name.
- * Returns null if not found, if the lookup fails, or while the circuit is open.
+ * Returns null if not found, if the lookup fails, if Wikipedia's own metadata says
+ * the page is not a brand (see above), or while the circuit is open.
  */
 export async function getWikipediaImage(entityName: string): Promise<string | null> {
   const cacheKey = `wiki_${entityName.toLowerCase().replace(/\s+/g, "_")}`;
-  const cached = cacheGet<string | null>(cacheKey);
-  if (cached !== undefined) return cached;
+  const cached = cacheGet<unknown>(cacheKey);
+  if (cached !== undefined) {
+    if (isWikipediaCacheEntry(cached)) return decideWikipediaImage(cached);
+    // A pre-UX-P236 entry: a bare URL string or null, holding a verdict reached
+    // before the refusal existed. It is exactly the poisoned kind, so it is
+    // dropped rather than trusted, and the name is looked up again below.
+    cacheDelete(cacheKey);
+  }
 
   // Refused recently — do not add to the pile. Falls back to initials, which is
   // what a failed lookup rendered anyway.
@@ -372,13 +522,24 @@ export async function getWikipediaImage(entityName: string): Promise<string | nu
       // The source answered, so it is healthy — even on a 404.
       WIKIPEDIA_CIRCUIT.recordSuccess();
       if (!res.ok) {
-        cacheSet(cacheKey, null);
+        // No article. There is no metadata to re-judge later, and "no article"
+        // is not a verdict that can go stale.
+        cacheSet<WikipediaCacheEntry>(cacheKey, { k: WIKI_CACHE_SHAPE, url: null });
         return null;
       }
       const data = await res.json();
-      const url: string | null = data.thumbnail?.source || null;
-      cacheSet(cacheKey, url);
-      return url;
+      // UX-P235: refuse a confidently-wrong picture before it becomes a brand
+      // mark. UX-P236: cache what Wikipedia said, not what we concluded, so the
+      // same bird is not fetched 25 times AND the refusal is re-applied to this
+      // entry on every later read.
+      const entry: WikipediaCacheEntry = {
+        k: WIKI_CACHE_SHAPE,
+        url: data.thumbnail?.source || null,
+        type: data.type ?? null,
+        description: data.description ?? null,
+      };
+      cacheSet(cacheKey, entry);
+      return decideWikipediaImage(entry);
     } catch {
       // A throw is the source refusing us (or the network being gone). Not
       // cached against the name — the name is probably fine, we are the problem.
