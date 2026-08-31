@@ -429,9 +429,17 @@ class TestTheOrderOfPlay:
         assert parsed["stats"]["in_progress"] == 1
         assert parsed["stats"]["upcoming"] == 0
 
-    def test_a_decided_competition_gets_no_entry(self):
-        """Absence IS the signal the slate reads. A `post` competition in this
-        map would put a finished match back on the day's card."""
+    def test_a_decided_competition_is_named_decided_rather_than_left_out(self):
+        """CERT-517: the map must say `post`, not imply it by omission.
+
+        Q463 left these out and let the slate read absence as "finished". That
+        made a live fixture on a failed tour — omitted for an entirely different
+        reason — indistinguishable from this one. Naming the state costs one
+        dict entry and makes absence mean only "the scoreboard did not say".
+
+        A decided competition is STILL a result: it goes on both, and the slate
+        drops it on the word.
+        """
         parsed = self._card([
             _competition(
                 _competitor("A B", winner=True, sets=[6, 6]),
@@ -439,8 +447,27 @@ class TestTheOrderOfPlay:
                 state="post", comp_id="184607",
             )
         ])
-        assert parsed["order_of_play"] == {}
+        assert parsed["order_of_play"]["184607"]["state"] == "decided"
+        assert parsed["stats"]["decided"] == 1
+        # Unchanged: it is still parsed into the results section.
         assert parsed["stats"]["final"] == 1
+        assert parsed["draws"]["mens-singles"]
+
+    def test_an_espn_state_we_have_no_word_for_is_not_published(self):
+        """An unknown state is not evidence, and inventing a word for it would
+        be the same absence-as-truth mistake pointing the other way. It is left
+        out, and the slate's clock fallback — not a DECIDED inference — is what
+        then applies."""
+        parsed = self._card([
+            _competition(
+                _competitor("A B", winner=False, sets=[]),
+                _competitor("C D", winner=False, sets=[]),
+                state="postponed", comp_id="182699",
+            )
+        ])
+        assert parsed["order_of_play"] == {}
+        assert parsed["stats"]["decided"] == 0
+        assert parsed["stats"]["upcoming"] == 0
 
     def test_a_tbd_placeholder_is_flagged_and_its_template_detail_dropped(self):
         """`detail` on a TBD row is an unsubstituted format string — "M/d -

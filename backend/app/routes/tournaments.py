@@ -781,6 +781,13 @@ async def _hub_payload(
         now=now,
         event_ids=event_links["by_matchup"],
         order_of_play=espn.get("order_of_play") or {},
+        # THE COMPLETENESS CONTEXT, NOT DISCARDED (CERT-517). The cached payload
+        # has always carried it; this route used to throw it away, which is what
+        # let a half-read scoreboard pass itself off as the whole one. A cached
+        # payload written before the flag existed reads as `False` — the safe
+        # side, since an unknown-completeness map is exactly the case where
+        # absence must not be trusted.
+        order_of_play_complete=espn.get("order_of_play_complete") is True,
     )
     payload["props"] = build_props(register, prices=prices, now=now)
     # THE PLAYOFF GRID (UX-P139). Built server-side, from `reaches` and the

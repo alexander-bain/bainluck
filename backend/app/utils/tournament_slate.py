@@ -238,6 +238,7 @@ def build_match_row(
     cutoff: Optional[datetime],
     event_ids: Optional[dict[str, int]] = None,
     order_of_play: Optional[dict[str, dict[str, Any]]] = None,
+    order_of_play_complete: bool = True,
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """ONE matchup -> one slate row, or a named reason it is not one.
 
@@ -265,6 +266,14 @@ def build_match_row(
     ``cutoff`` gates its refusal too, and for the same reason it gates the
     clock's: only a caller asking "what is on" wants a decided match withheld.
 
+    ``order_of_play_complete`` (CERT-517) is whether BOTH tours' scoreboards
+    were actually read.  ``fetch_tournament_results`` permits a per-tour failure
+    and the sync task caches the partial payload anyway — deliberately, because
+    half the results beat none — so "not in the map" has two very different
+    causes and only one of them is about the match.  It defaults to ``True``
+    because every caller that passes no map at all is on the pure clock
+    fallback, where the flag is not consulted.
+
     Returns ``(row, None)`` or ``(None, reason)``.  Never both, never neither.
     """
     players = matchup.get("players")
@@ -278,6 +287,13 @@ def build_match_row(
     # `comp_id` is an id the register pinned at the draw ceremony, so this is a
     # dict lookup and none of this page's no-request-time-name-matching posture
     # is spent on it.
+    # LAZY, like this module's other `espn_tennis` import, and load-bearing.
+    # `app/services/__init__` imports SQLAlchemy, and `test_comparison_specimen`
+    # runs the specimen producer with `-S` and no third-party packages to keep
+    # it runnable inside the frontend CI job. A module-level import here breaks
+    # that job — same discipline as gotcha #3's for `sport_keys`.
+    from app.services.espn_tennis import DECIDED_SLATE_STATE
+
     comp_id = espn_competition_id(matchup)
     listed = (order_of_play or {}).get(comp_id) if comp_id else None
     live_state: Optional[str] = None
@@ -292,22 +308,38 @@ def build_match_row(
         # — but only when ESPN has one. A missing or unparseable date must not
         # blank a start we already hold.
         started = _parse_moment(listed.get("start_at")) or started
-    elif comp_id and order_of_play and cutoff is not None:
-        # We hold an id, the scoreboard was read, and this fixture is not on it.
-        # That is what a DECIDED match looks like — `post` competitions are
-        # deliberately absent from the map — and it belongs to `build_results`.
-        # Its own reason, never folded into ALREADY_PLAYED: one of these is a
-        # fact from the source and the other is an inference from the clock.
-        return None, "DECIDED"
+        if live_state == DECIDED_SLATE_STATE and cutoff is not None:
+            # ESPN SAYS SO, IN A WORD (CERT-517).
+            #
+            # This is the ONLY route to DECIDED. Q463 inferred it from absence
+            # instead, and a partial scoreboard fetch — which
+            # `fetch_tournament_results` permits by design and the task caches
+            # anyway — then read every live fixture on the failed tour as
+            # finished. The match belongs to `build_results`; its own reason,
+            # never folded into ALREADY_PLAYED, because one of these is a fact
+            # from the source and the other is an inference from the clock.
+            return None, "DECIDED"
 
     if started is None:
         return None, "NO_SCHEDULED_START"
     if cutoff is not None and listed is None and started < cutoff:
-        # No scoreboard entry to go on: registered when it was upcoming, and it
-        # is not upcoming now. The register is a file and the clock is not.
-        # Reached by the qualifying draw, whose matchups the ceremony census
-        # never stamped with a competition id.
-        return None, "ALREADY_PLAYED"
+        # THE CLOCK, ONLY WHERE THE SCOREBOARD NEVER SPOKE.
+        #
+        # Registered when it was upcoming, not on the scoreboard now. Reached by
+        # the qualifying draw, whose matchups the ceremony census never stamped
+        # with a competition id at all.
+        #
+        # CERT-517: a fixture that DOES carry a pinned id is exempt while the
+        # scoreboard read is INCOMPLETE. A pinned id means the ceremony matched
+        # this fixture to a real ESPN competition, so a complete scoreboard
+        # would have said a word about it; its silence is then a fact about the
+        # fetch, and the register's `scheduled_date` — for the main draw, the
+        # 04:00Z midnight-local placeholder — is not a start to measure against.
+        # Dropping on it is exactly how opening day emptied itself. The
+        # qualifying draw has no id and is unaffected, so this exemption costs
+        # nothing on a healthy read and saves the card on a flaky one.
+        if not (comp_id and not order_of_play_complete):
+            return None, "ALREADY_PLAYED"
 
     block = next(
         (
@@ -489,6 +521,7 @@ def build_slate(
     max_stale_hours: float = MATCH_STALE_AFTER_HOURS,
     event_ids: Optional[dict[str, int]] = None,
     order_of_play: Optional[dict[str, dict[str, Any]]] = None,
+    order_of_play_complete: bool = True,
 ) -> dict[str, Any]:
     """Assemble the daily slate payload.
 
@@ -498,13 +531,18 @@ def build_slate(
     — is what makes the sides mapping load-bearing instead of decorative.
 
     ``order_of_play`` is ``espn_tennis.parse_results``' map of ESPN competition
-    id -> ``{"state", "start_at", ...}`` for every competition that is not
-    decided.  Where it speaks it is the authority on both questions the clock
-    rule was guessing at — is this fixture still to come, and when does it
-    actually start — for the reasons set out as doctrine 3 in the module
-    docstring.  ``None`` or ``{}`` leaves every fixture on the elapsed-time
-    fallback, which is what a caller with no scoreboard gets and what this page
-    did before Q463.
+    id -> ``{"state", "start_at", ...}`` for **every** competition on the
+    scoreboard, decided ones included.  Where it speaks it is the authority on
+    both questions the clock rule was guessing at — is this fixture still to
+    come, and when does it actually start — for the reasons set out as doctrine
+    3 in the module docstring.  ``None`` or ``{}`` leaves every fixture on the
+    elapsed-time fallback, which is what a caller with no scoreboard gets and
+    what this page did before Q463.
+
+    ``order_of_play_complete`` says whether that map is the whole scoreboard or
+    the surviving half of a partial fetch (CERT-517).  It is not a diagnostic:
+    a pinned fixture missing from an INCOMPLETE map is kept, because its absence
+    is then a fact about the fetch and not about the match.
     """
     reg = TournamentRegister(register)
     cutoff = now - timedelta(hours=max_stale_hours)
@@ -521,6 +559,7 @@ def build_slate(
             cutoff=cutoff,
             event_ids=event_ids,
             order_of_play=order_of_play,
+            order_of_play_complete=order_of_play_complete,
         )
         if row is None:
             reason = reason or "UNKNOWN"
@@ -560,6 +599,10 @@ def build_slate(
         # dropped by a clock rule.
         "in_progress": sum(1 for r in rows if r.get("live_state") == "in_progress"),
         "order_of_play_listed": len(order_of_play or {}),
+        # WHETHER THE MAP ABOVE IS THE WHOLE SCOREBOARD (CERT-517). A short
+        # slate under a partial fetch and a short slate on a quiet day are the
+        # same payload without this, and the second one is nobody's emergency.
+        "order_of_play_complete": bool(order_of_play_complete),
         "dropped": dict(sorted(dropped.items())),
         "price_state": price_state(slate_age),
         "newest_observed_at": newest_overall.isoformat() if newest_overall else None,

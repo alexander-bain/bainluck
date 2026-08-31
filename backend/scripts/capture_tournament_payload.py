@@ -222,6 +222,10 @@ def build_payload(slug: str, *, now: datetime) -> dict[str, Any]:
         prices=prices,
         now=now,
         order_of_play=espn.get("order_of_play") or {},
+        # The rig renders what the route renders, completeness included — a rig
+        # that reads the scoreboard differently from the route produces a
+        # real-looking artifact about a page that does not exist (CERT-517).
+        order_of_play_complete=espn.get("order_of_play_complete") is True,
     )
     payload["props"] = build_props(register, prices=prices, now=now)
     payload["grids"] = build_grids(

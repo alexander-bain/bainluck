@@ -375,8 +375,10 @@ def test_an_empty_slate_is_an_honest_shape_not_an_error():
     slate = build_slate(_register(matchups=[]), prices={}, now=NOW)
     assert slate == {
         "matches": [], "count": 0, "incoherent": 0, "dropped": {},
-        # Q463: an empty card must say whether the scoreboard was even read.
+        # Q463 / CERT-517: an empty card must say whether the scoreboard was
+        # read at all, and whether what was read was the whole of it.
         "in_progress": 0, "order_of_play_listed": 0,
+        "order_of_play_complete": True,
         "price_state": "dark", "newest_observed_at": None, "age_hours": None,
         "dark_after_hours": 48.0,
     }
@@ -1921,22 +1923,110 @@ def test_a_match_in_progress_outlives_the_elapsed_time_window():
     assert row["status_detail"] == "5th Set"
 
 
-def test_a_decided_match_leaves_because_espn_says_so_not_because_time_passed():
-    """`post` competitions are absent from the map, and absence is the signal.
+def test_a_decided_match_leaves_because_espn_says_the_word_not_because_it_is_absent():
+    """DECIDED is reachable ONLY from ESPN's explicit `post` state (CERT-517).
 
     Its own drop reason: one of these is a fact from the source and the other
     is an inference from the clock, and a short slate must say which.
+
+    Q463 read ABSENCE as decided, and this test asserted that. It was the
+    shipped defect in test form — see the sibling below for what absence under
+    a partial fetch then did to a live fixture.
     """
     soon = (NOW + timedelta(hours=2)).isoformat()
     slate = build_slate(
         _register(matchups=[_drawn_matchup(scheduled_date=soon)]),
         prices=_prices(),
         now=NOW,
-        # Scoreboard read, other fixtures on it, this one not.
-        order_of_play=_listed(comp_id="999999"),
+        # The fixture is ON the scoreboard, and the scoreboard says it is over.
+        order_of_play=_listed(state="decided"),
     )
     assert slate["count"] == 0
     assert slate["dropped"] == {"DECIDED": 1}
+
+
+def test_a_fixture_absent_from_a_complete_scoreboard_is_never_called_decided():
+    """Absence is a statement about the scoreboard, never about the match.
+
+    Complete read, this fixture unmentioned, and its start still ahead: it
+    stays. The only thing that may remove it is the clock, and the clock has
+    nothing to say about a match that has not started.
+    """
+    soon = (NOW + timedelta(hours=2)).isoformat()
+    slate = build_slate(
+        _register(matchups=[_drawn_matchup(scheduled_date=soon)]),
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(comp_id="999999"),
+        order_of_play_complete=True,
+    )
+    assert slate["dropped"] == {}
+    assert slate["count"] == 1
+
+
+def test_one_failed_tour_does_not_empty_the_card_of_its_live_fixtures():
+    """CERT-517's finding, red-first.
+
+    `fetch_tournament_results` permits a per-tour failure and the sync task
+    caches the partial payload — so a live fixture on the failed tour is simply
+    missing from the map. Under Q463 that read as DECIDED and the match
+    vanished: the shipped defect, back again, under a routine condition.
+
+    The fixture here is the opening-day shape exactly — a `04:00Z`
+    midnight-local placeholder, read hours later — so both the DECIDED
+    inference and the clock fallback would remove it if either were allowed to
+    fire on an incomplete read. It carries a pinned competition id, which is
+    what says the scoreboard OUGHT to have mentioned it.
+    """
+    midnight = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 4)).isoformat()
+    register = _register(matchups=[_drawn_matchup(scheduled_date=midnight)])
+
+    partial = build_slate(
+        register,
+        prices=_prices(),
+        now=NOW,
+        # The surviving tour's fixtures only. Ours is not among them.
+        order_of_play=_listed(comp_id="999999"),
+        order_of_play_complete=False,
+    )
+    assert partial["count"] == 1, partial["dropped"]
+    assert partial["dropped"] == {}
+    assert partial["order_of_play_complete"] is False
+
+    # ...and the same absence on a COMPLETE read still drops it on the clock,
+    # so the exemption is scoped to the partial case and has not quietly become
+    # "never drop anything".
+    whole = build_slate(
+        register,
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(comp_id="999999"),
+        order_of_play_complete=True,
+    )
+    assert whole["count"] == 0
+    assert whole["dropped"] == {"ALREADY_PLAYED": 1}
+
+
+def test_the_qualifying_draw_still_drops_on_the_clock_under_a_partial_fetch():
+    """The exemption is bought with a pinned id, and qualifying has none.
+
+    The 28 qualifying matchups the ceremony census never stamped are the
+    population the clock fallback exists for. A partial fetch must not
+    resurrect week-old matches into the day's card.
+    """
+    long_over = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 96)).isoformat()
+    matchup = _drawn_matchup(scheduled_date=long_over)
+    matchup["evidence"] = {}  # no `espn_competition_id` — the qualifying shape
+
+    slate = build_slate(
+        _register(matchups=[matchup]),
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(comp_id="999999"),
+        order_of_play_complete=False,
+    )
+    assert slate["count"] == 0
+    assert slate["dropped"] == {"ALREADY_PLAYED": 1}
 
 
 def test_a_tbd_start_is_flagged_rather_than_printed_as_midnight():
@@ -2070,6 +2160,11 @@ def test_the_route_hands_build_slate_the_order_of_play():
     ).read_text()
     call = _balanced_call(source, "build_slate(", after='payload["slate"]')
     assert "order_of_play=" in call
+    # CERT-517: and the completeness context with it. The cached payload has
+    # always carried `errors`/`tours_fetched`; this route DISCARDING them is the
+    # whole finding, so the arg that carries the reduction is guarded here or
+    # the repair is one deletion from being undone silently.
+    assert "order_of_play_complete=" in call
 
 
 def test_the_capture_rig_hands_build_slate_the_order_of_play():
@@ -2084,3 +2179,20 @@ def test_the_capture_rig_hands_build_slate_the_order_of_play():
     ).read_text()
     call = _balanced_call(source, "build_slate(", after='payload["slate"]')
     assert "order_of_play=" in call
+    assert "order_of_play_complete=" in call
+
+
+def test_the_fetch_reduces_completeness_where_it_knows_what_complete_means():
+    """CERT-517's other half: the flag must be WRITTEN, not just read.
+
+    `order_of_play_complete` is derived in `fetch_tournament_results`, the only
+    place that knows both the error list and how many tours there are. If a
+    consumer had to re-derive it from `len(TOURS)`, the second consumer would
+    get the rule subtly different — and the cached payload, which is what the
+    route actually reads, would carry no answer at all.
+    """
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "app" / "services" / "espn_tennis.py"
+    ).read_text()
+    assert 'result["order_of_play_complete"]' in source

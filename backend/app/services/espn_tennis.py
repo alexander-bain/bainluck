@@ -392,13 +392,32 @@ def format_score(competitors: list[dict[str, Any]]) -> Optional[str]:
     )
 
 
-#: ESPN ``status.type.state`` -> the word the slate uses for it.  ``post`` is
-#: absent on purpose: a decided match is a RESULT and has its own section, so
-#: there is no slate word for it and the slate drops it.
+#: ESPN ``status.type.state`` -> the word the slate uses for it.
+#:
+#: ``post`` IS HERE ON PURPOSE, and that is the whole of CERT-517's repair.
+#:
+#: Q463 shipped this map without it, so a decided match was represented in the
+#: order of play by its ABSENCE, and the slate dropped anything it could not
+#: find.  ``fetch_tournament_results`` deliberately permits a per-tour failure
+#: and the partial payload is cached and served — so one flaky tour made every
+#: LIVE fixture on it indistinguishable from a finished one, and the card could
+#: empty itself all over again under a routine condition.  That is the same
+#: absence-as-truth class the queue existed to kill (gotcha #53): an empty 200
+#: is a response shape, not an absence.
+#:
+#: With ``post`` named, absence means only "the scoreboard did not mention this
+#: fixture", which is a statement about the scoreboard and never about the
+#: match.  Nothing is dropped as decided except on this explicit word.
 SLATE_STATE_BY_ESPN_STATE: dict[str, str] = {
     "in": "in_progress",
     "pre": "upcoming",
+    "post": "decided",
 }
+
+#: The one ``SLATE_STATE_BY_ESPN_STATE`` value that means "this belongs to the
+#: results section, not the day's card".  Named so the slate tests the word
+#: rather than a membership check that would silently widen.
+DECIDED_SLATE_STATE = "decided"
 
 #: ESPN's ``status.type.shortDetail`` for a fixture it has not given a time yet.
 #:
@@ -474,8 +493,14 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
         # Q463: the day's card, counted where it is read. An empty slate is
         # either "nothing is on" or "the overlay joined nothing", and those need
         # different people (gotcha #53).
+        #
+        # CERT-517 added `decided`: these three are the `order_of_play` map's
+        # own census, and their sum is how many competitions the map speaks
+        # for. Keyed by the slate word so the counter cannot drift from the
+        # thing it counts.
         "in_progress": 0,
         "upcoming": 0,
+        "decided": 0,
     }
 
     for payload in payloads:
@@ -499,41 +524,49 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                     stats["competitions"] += 1
 
                     status = ((competition.get("status") or {}).get("type") or {})
-                    if status.get("state") not in FINAL_STATES:
-                        # NOT DECIDED — so it is the day's card, not a result.
-                        # Recorded before the `continue` that used to end the
-                        # story here; see the `order_of_play` section of this
-                        # function's docstring.
-                        slate_state = SLATE_STATE_BY_ESPN_STATE.get(
-                            str(status.get("state") or "")
+                    espn_state = str(status.get("state") or "")
+
+                    # EVERY COMPETITION THE SCOREBOARD NAMES IS PUBLISHED, AND
+                    # THAT INCLUDES THE FINISHED ONES (CERT-517).
+                    #
+                    # Written before the `continue` below, so the map is a
+                    # statement about all 1,250 competitions rather than only
+                    # the ones still to play. A caller can then read a missing
+                    # id as "the scoreboard did not mention it" and nothing
+                    # more — see `SLATE_STATE_BY_ESPN_STATE`.
+                    #
+                    # An ESPN state we have no word for is deliberately NOT
+                    # published: an unknown state is not evidence of anything,
+                    # and inventing a word for it would be the same mistake in
+                    # the other direction. It falls to the caller's fallback.
+                    slate_state = SLATE_STATE_BY_ESPN_STATE.get(espn_state)
+                    if slate_state is not None:
+                        tbd = (
+                            str(status.get("shortDetail") or "") == TBD_SHORT_DETAIL
                         )
-                        if slate_state is not None:
-                            tbd = (
-                                str(status.get("shortDetail") or "")
-                                == TBD_SHORT_DETAIL
-                            )
-                            order_of_play[comp_id] = {
-                                "espn_competition_id": comp_id,
-                                "draw": draw,
-                                "state": slate_state,
-                                # ESPN's own scheduled start — real once an order
-                                # of play is published, midnight-local until
-                                # then. `start_is_tbd` says which, so a caller
-                                # never has to infer it from the hour.
-                                "start_at": competition.get("date"),
-                                "start_is_tbd": tbd,
-                                # Dropped when it is the unsubstituted template
-                                # rather than text about this match. See
-                                # `TBD_SHORT_DETAIL`.
-                                "status_detail": None if tbd else status.get("detail"),
-                                "espn_round": (
-                                    (competition.get("round") or {}).get("displayName")
-                                ),
-                            }
-                            stats[
-                                "in_progress" if slate_state == "in_progress"
-                                else "upcoming"
-                            ] += 1
+                        order_of_play[comp_id] = {
+                            "espn_competition_id": comp_id,
+                            "draw": draw,
+                            "state": slate_state,
+                            # ESPN's own scheduled start — real once an order
+                            # of play is published, midnight-local until
+                            # then. `start_is_tbd` says which, so a caller
+                            # never has to infer it from the hour.
+                            "start_at": competition.get("date"),
+                            "start_is_tbd": tbd,
+                            # Dropped when it is the unsubstituted template
+                            # rather than text about this match. See
+                            # `TBD_SHORT_DETAIL`.
+                            "status_detail": None if tbd else status.get("detail"),
+                            "espn_round": (
+                                (competition.get("round") or {}).get("displayName")
+                            ),
+                        }
+                        stats[slate_state] += 1
+
+                    if espn_state not in FINAL_STATES:
+                        # NOT DECIDED — so it is the day's card, not a result,
+                        # and the result parsing below has nothing to read.
                         continue
                     stats["final"] += 1
 
@@ -613,6 +646,14 @@ async def fetch_tournament_results(
     result = parse_results(payloads, event_name=event_name)
     result["errors"] = errors
     result["tours_fetched"] = len(payloads)
+    # THE ONE BIT A READER OF THE CACHED PAYLOAD CANNOT DERIVE (CERT-517).
+    #
+    # `errors` and `tours_fetched` were already written and already cached, and
+    # the route already threw both away — so a consumer had no way to tell a
+    # whole-scoreboard read from half of one. The reduction is done HERE, at the
+    # only place that knows what a complete fetch even is, so no consumer has to
+    # re-derive it from `len(TOURS)` and get the rule subtly different.
+    result["order_of_play_complete"] = not errors and len(payloads) == len(TOURS)
     return result
 
 

@@ -1,0 +1,40 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<title>UX-P177 — "More MMA" stops sending readers to dead links for the wrong sport</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#f6f7f9; font-family:ui-sans-serif,system-ui,sans-serif; margin:0; padding:24px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:#555; font-size:13px; margin:0 0 24px; max-width:940px; }
+  section { margin-bottom:28px; }
+  h2 { font-size:15px; margin:0 0 4px; }
+  .note { color:#666; font-size:12px; margin:0 0 8px; max-width:940px; }
+  .frame { background:#fff; border:1px solid #dcdfe4; border-radius:10px; padding:12px; max-width:560px; }
+  code { background:#eceef1; padding:1px 4px; border-radius:3px; }
+</style></head>
+<body>
+<h1>UX-P177 — the &ldquo;More MMA&rdquo; section stops sending readers to dead links for the wrong sport</h1>
+<p class="sub">Every panel is a real React render. BEFORE is
+<code>__tests__/fixtures/uxp177RelatedByTagLegacy.tsx</code>, the verbatim pre-fix
+<code>components/RelatedByTag.tsx</code>; AFTER and CONTROL are the shipped component. The payload is a
+verbatim production <code>/api/feed?limit=9&amp;tags=["sport:mma"]</code> body read 2026-08-29 —
+the exact request the component builds. Nothing here is assembled.</p>
+
+      <section>
+        <h2>BEFORE — bainluck.com/futures/195, today</h2>
+        <p class="note">Four rows. Three are not MMA (Vuelta a España, two Grands Prix). All four link to <code>/futures/undefined</code>, because a concept has no numeric id and the component treated every non-event, non-tournament item as a futures market. None carries a probability.</p>
+        <div class="frame"><section class="mt-8"><h3 class="text-sm font-semibold text-text-secondary mb-3">More Mma</h3><div class="space-y-2"><a class="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors" href="/futures/undefined"><span class="text-xs font-medium text-text-primary truncate flex-1 min-w-0">Vuelta a España 2026</span></a><a class="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors" href="/futures/undefined"><span class="text-xs font-medium text-text-primary truncate flex-1 min-w-0">Fight Night: Nurmagomedov vs Song</span></a><a class="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors" href="/futures/undefined"><span class="text-xs font-medium text-text-primary truncate flex-1 min-w-0">Freedom 250 Grand Prix of Washington: Race Winner</span></a><a class="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors" href="/futures/undefined"><span class="text-xs font-medium text-text-primary truncate flex-1 min-w-0">Dutch Grand Prix: Driver Winner</span></a></div></section></div>
+      </section>
+
+      <section>
+        <h2>AFTER — the same payload, the shipped fix</h2>
+        <p class="note">Every row links to its concept page (<code>/event/ufc/26aug29</code>), and each carries its leader and probability. The foreign rows are still here because this panel isolates the RENDER fix — the backend filter that stops F1 and cycling reaching an MMA surface is proven separately in <code>backend/tests/test_feed_concept_tag_filter.py</code>, and after deploy this list is UFC-only.</p>
+        <div class="frame"><section class="mt-8"><h3 class="text-sm font-semibold text-text-secondary mb-3">More Mma</h3><div class="space-y-2"><a class="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors" href="/event/cycling/vuelta-2026"><span class="text-xs font-medium text-text-primary truncate flex-1 min-w-0">Vuelta a España 2026</span><span class="text-xs text-text-muted shrink-0 ml-2">Tadej Pogacar 75%</span></a><a class="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors" href="/event/ufc/26aug29"><span class="text-xs font-medium text-text-primary truncate flex-1 min-w-0">Fight Night: Nurmagomedov vs Song</span><span class="text-xs text-text-muted shrink-0 ml-2">Yadong Song 99%</span></a><a class="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors" href="/event/f1/freedom-250-grand-prix-of-washington-race-winner"><span class="text-xs font-medium text-text-primary truncate flex-1 min-w-0">Freedom 250 Grand Prix of Washington: Race Winner</span><span class="text-xs text-text-muted shrink-0 ml-2">Alex Palou 33%</span></a><a class="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors" href="/event/f1/dutch-grand-prix-driver-winner"><span class="text-xs font-medium text-text-primary truncate flex-1 min-w-0">Dutch Grand Prix: Driver Winner</span><span class="text-xs text-text-muted shrink-0 ml-2">Lando Norris 82%</span></a></div></section></div>
+      </section>
+
+      <section>
+        <h2>CONTROL — an ordinary futures payload, before and after are identical</h2>
+        <p class="note">Asserted byte-for-byte equal between the legacy and shipped components. A repair that fixed concepts by disturbing the ordinary row would pass every other assertion in this queue.</p>
+        <div class="frame"><section class="mt-8"><h3 class="text-sm font-semibold text-text-secondary mb-3">More Mma</h3><div class="space-y-2"><a class="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors" href="/futures/196"><span class="text-xs font-medium text-text-primary truncate flex-1 min-w-0">Middleweight Title Holder on Dec 31, 2026?</span><span class="text-xs text-text-muted shrink-0 ml-2">Khamzat Chimaev 62%</span></a><a class="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors" href="/futures/197"><span class="text-xs font-medium text-text-primary truncate flex-1 min-w-0">Lightweight Title Holder on Dec 31, 2026?</span><span class="text-xs text-text-muted shrink-0 ml-2">Islam Makhachev 55%</span></a></div></section></div>
+      </section>
+</body></html>
