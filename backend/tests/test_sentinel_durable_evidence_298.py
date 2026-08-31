@@ -409,21 +409,65 @@ class TestTheAnchorCannotExpireAgain:
             "on a day nobody changed anything. Anchor it to the real clock."
         )
 
-    def test_the_anchor_tracks_the_clock_rather_than_a_literal(self):
-        """The assertion above passes for a literal too — right up until it doesn't.
+    def test_the_anchor_is_DERIVED_from_the_clock_not_merely_NEAR_it(self):
+        """CERT-568 repair. The value-comparison version of this guard was a hole.
 
-        This one is the durable half: re-evaluate the anchor expression and require
-        it to MOVE with the clock. A literal cannot.
+        🔴 IT ORIGINALLY COMPARED `NOW` AGAINST A RE-DERIVED VALUE and passed if
+        the two were within an hour. That kills the ORIGINAL literal — a month
+        stale — and it kills nothing else. The cert broke it in one move: replace
+        the expression with a *fresh* hardcoded timestamp and the whole file stayed
+        green at 19/19, re-arming the identical no-code-change CI failure with a
+        one-hour fuse instead of a thirty-day one.
+
+        The lesson is general enough to be worth the words: **a guard against
+        "someone hardcoded a value" cannot itself be a check on the value.** Any
+        value test is satisfied by a value, which is exactly what you are trying to
+        forbid. It has to read the CODE.
+
+        So this reads the assignment's own AST and requires it to CALL something —
+        `datetime.now`, `time.time`, whatever — rather than construct a constant.
+        A literal has no `Call` node reaching the clock, and no amount of choosing
+        a friendly-looking date gives it one.
         """
-        import importlib
+        import ast
+        import pathlib
 
-        mod = importlib.import_module(__name__)
-        first = mod.NOW
-        recomputed = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(
-            microsecond=0
+        src = pathlib.Path(__file__).read_text()
+        tree = ast.parse(src)
+        assign = next(
+            (
+                n
+                for n in tree.body
+                if isinstance(n, ast.Assign)
+                and any(
+                    isinstance(t, ast.Name) and t.id == "NOW" for t in n.targets
+                )
+            ),
+            None,
         )
-        drift = abs((recomputed - first).total_seconds())
-        assert drift < 3600, (
-            f"the anchor is {drift:.0f}s away from a clock-relative value, so it is "
-            "a literal. See this class's docstring."
+        assert assign is not None, "module-level `NOW` assignment not found"
+
+        rhs = ast.dump(assign.value)
+        assert "attr='now'" in rhs or "attr='today'" in rhs or "id='time'" in rhs, (
+            "`NOW` is not derived from the clock — its right-hand side never calls "
+            f"`datetime.now`/`time`. It reads as:\n    {ast.unparse(assign.value)}\n"
+            "A hardcoded timestamp passes every check on its VALUE (it is 'recent' "
+            "on the day you write it) and then silently crosses "
+            "SENTINEL_MAX_AGE_S later, taking shard 4 red with no code change. "
+            "See this method's docstring."
         )
+        # And it must not be a constructed constant wearing a call's clothes,
+        # e.g. `datetime(2026, 9, 1, ...)` — which IS a Call node.
+        for node in ast.walk(assign.value):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                is_bare_datetime_ctor = (
+                    isinstance(fn, ast.Name) and fn.id == "datetime"
+                ) or (
+                    isinstance(fn, ast.Attribute)
+                    and fn.attr == "datetime"
+                )
+                assert not is_bare_datetime_ctor, (
+                    "`NOW` constructs a datetime literal. "
+                    f"It reads as:\n    {ast.unparse(assign.value)}"
+                )
