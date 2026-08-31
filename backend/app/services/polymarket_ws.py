@@ -140,9 +140,13 @@ class PolymarketWebSocket:
                         hb.cancel()
 
             except asyncio.CancelledError:
+                # Q460 (CERT-491): RE-RAISE — same contract as
+                # `app/services/kalshi_ws.py`. A `wait_for` timeout arrives as a
+                # cancellation; swallowing it turned every planned subscription
+                # recycle into a 10-second blackout in `run_kalshi_ws.py`.
                 logger.info("Polymarket WS cancelled, shutting down")
                 self._connected = False
-                return
+                raise
 
             except Exception as e:
                 self._connected = False

@@ -330,7 +330,12 @@ async def _run_kalshi_ws_consumer():
     except asyncio.TimeoutError:
         stats["status"] = "resubscribe"
     except asyncio.CancelledError:
-        pass
+        # Not the recycle — that arrives above as `TimeoutError` now that the
+        # service loop propagates (CERT-491). This is a real shutdown, so it
+        # must keep travelling: swallowing it would make `run_kalshi_ws.py`
+        # sleep and relaunch a consumer the process is trying to stop. The
+        # `finally` below still drains the buffer first.
+        raise
     finally:
         flush_task.cancel()
         stats_task.cancel()
@@ -385,6 +390,6 @@ async def _run_kalshi_ws_shadow_consumer():
     try:
         await ws.run(channels=["market_lifecycle_v2"], subscribe_all=True)
     except asyncio.CancelledError:
-        pass
+        raise  # shutdown must stop the runner, not restart it (CERT-491)
     logger.info("Kalshi WS SHADOW consumer exiting: %s", stats)
     return stats

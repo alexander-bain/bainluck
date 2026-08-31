@@ -193,9 +193,20 @@ class KalshiWebSocket:
                                 logger.exception("Trade handler error")
 
             except asyncio.CancelledError:
+                # Q460 (CERT-491): RE-RAISE, never `return`. The caller bounds
+                # this loop with `asyncio.wait_for(..., SUBSCRIPTION_REFRESH_
+                # SECONDS)`, and a timeout is delivered as a cancellation of the
+                # awaiting task. Swallowing it here let `wait_for` return
+                # normally instead of raising `TimeoutError`, so the consumer
+                # never set `status="resubscribe"` and `run_kalshi_ws.py` fell
+                # through to its 10s error backoff on EVERY planned recycle —
+                # ten dead seconds out of every ten minutes on the one stream
+                # this queue exists to keep live. Propagating lets
+                # `Timeout.__aexit__` convert it to `TimeoutError` as the caller
+                # expects, and lets a genuine shutdown cancel actually stop.
                 logger.info("Kalshi WS cancelled, shutting down")
                 self._connected = False
-                return
+                raise
 
             except Exception as e:
                 self._connected = False

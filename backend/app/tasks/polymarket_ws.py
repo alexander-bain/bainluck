@@ -400,7 +400,9 @@ async def _run_polymarket_ws_consumer():
     except asyncio.TimeoutError:
         stats["status"] = "resubscribe"
     except asyncio.CancelledError:
-        pass
+        # Real shutdown, not the planned recycle (CERT-491) — keep it travelling
+        # so the runner stops instead of relaunching. Buffer still drains below.
+        raise
     finally:
         flush_task.cancel()
         stats_task.cancel()
@@ -455,6 +457,6 @@ async def _run_polymarket_ws_shadow_consumer():
     try:
         await ws.run()
     except asyncio.CancelledError:
-        pass
+        raise  # shutdown must stop the runner, not restart it (CERT-491)
     logger.info("Polymarket WS SHADOW consumer exiting: %s", stats)
     return stats
