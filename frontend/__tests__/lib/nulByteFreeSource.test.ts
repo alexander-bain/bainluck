@@ -45,12 +45,31 @@ const SKIP_DIRS = new Set(["node_modules", ".next", "coverage", "dist", "build",
 
 const FRONTEND_ROOT = path.resolve(__dirname, "..", "..");
 
+/**
+ * ⚠️ THIS FUNCTION USED TO SWALLOW `readdirSync` ERRORS, AND CERT-539 WAS RIGHT
+ * THAT IT MADE THE GUARD THE THING IT WARNS ABOUT.
+ *
+ * The original body was `try { … } catch { return out; }`. An unreadable or
+ * missing root therefore contributed zero files SILENTLY, and the only
+ * anti-vacuity assertion was an aggregate floor of 500 against 859 real files
+ * — so any one root could disappear entirely and the sweep would still report
+ * clean. A check that reports green about bytes it never read is the exact
+ * failure this file exists to prevent; it does not get an exemption for being
+ * the check.
+ *
+ * It now throws with the path attached, and the per-root assertion below means
+ * no root can silently contribute nothing.
+ */
 function walk(dir: string, out: string[] = []): string[] {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return out;
+  } catch (err) {
+    throw new Error(
+      `cannot read ${dir} while sweeping for NUL bytes — a sweep that skips a ` +
+        `directory reports "clean" about files it never opened, which is the ` +
+        `failure this guard is about. Original error: ${(err as Error).message}`
+    );
   }
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
@@ -65,12 +84,50 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe("authored source carries no raw NUL byte", () => {
-  const files = ROOTS.flatMap((root) => walk(path.join(FRONTEND_ROOT, root)));
+  const byRoot = new Map(ROOTS.map((root) => [root, walk(path.join(FRONTEND_ROOT, root))]));
+  const files = [...byRoot.values()].flat();
+
+  /**
+   * ═══ CERT-539 — THE AGGREGATE FLOOR WAS NOT AN ANTI-VACUITY CHECK ═══
+   *
+   * `files.length > 500` was the only thing standing between this guard and a
+   * silent no-op, and it could not do the job: the tree has 859 matching files,
+   * so deleting the largest root still leaves 551 and the floor stays green.
+   * Every root could become unreadable one at a time and the sweep would report
+   * clean the whole way down.
+   *
+   * The real property is PER ROOT — each declared root must exist and must
+   * contribute files — and it is asserted first, with the counts printed in the
+   * failure so a zero is legible rather than inferred. `scripts` carries only
+   * two files, which is precisely why an aggregate could never have noticed it.
+   *
+   * The floor stays, as the secondary check it always was.
+   */
+  it("every declared root exists and contributes files — no root can vanish quietly", () => {
+    const counts = Object.fromEntries([...byRoot].map(([root, f]) => [root, f.length]));
+    const missing = ROOTS.filter((root) => !fs.existsSync(path.join(FRONTEND_ROOT, root)));
+    expect([missing, "roots declared but absent from disk"]).toEqual([
+      [],
+      "roots declared but absent from disk",
+    ]);
+    const empty = ROOTS.filter((root) => (byRoot.get(root) ?? []).length === 0);
+    expect([empty, counts]).toEqual([[], counts]);
+  });
 
   it("finds files to check — an empty sweep is not a passing sweep", () => {
     // The failure this guard is ABOUT is a check that reports clean because it
     // never ran. It would be an unusually poor joke for the guard to do it too.
+    // Kept as the SECONDARY check; the per-root assertion above is the real one.
     expect(files.length).toBeGreaterThan(500);
+  });
+
+  it("the walker refuses an unreadable directory instead of returning empty", () => {
+    // Proves the throw is real. Without this the fix is a comment: a `catch`
+    // reintroduced tomorrow would leave every other assertion in this file
+    // green, which is exactly how the defect got here the first time.
+    expect(() => walk(path.join(FRONTEND_ROOT, "no-such-root-uxp215"))).toThrow(
+      /cannot read .*no-such-root-uxp215/
+    );
   });
 
   it("reports the offenders by path, not just a count", () => {

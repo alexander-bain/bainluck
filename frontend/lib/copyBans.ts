@@ -394,37 +394,152 @@ export const PRICE_FORMAT_BANS: CopyBan[] = [
  * Every pattern below therefore names an all-of-history quantifier ATTACHED TO
  * OUR RECEIPT OF A NUMBER — a shape only our voice produces, and one a market
  * question cannot wander into.
+ *
+ * ═══ CERT-539 MOVED THE GROUP IN BOTH DIRECTIONS AT ONCE ═══
+ *
+ * The first encoding was six hand-written literals, and the cert found it wrong
+ * on both edges of the same scope:
+ *
+ *   • TOO NARROW. Five ordinary rewordings of the identical claim passed both
+ *     the predicate and the shipped-bundle scanner — "There has never been a
+ *     probability for this market.", "This question never had a probability.",
+ *     "We have not once received a number for this market.", "We did not
+ *     receive a number at any time.", "A probability has never been available
+ *     for this question." A rule a paraphrase walks around is a rule that
+ *     catches the sentence somebody already wrote, not the claim.
+ *   • TOO BROAD. Three patterns had drifted off the declared scope and matched
+ *     ordinary supported sports prose: "At no point did either player face a
+ *     break point.", "The comeback was never complete.", "Nobody ever scored
+ *     more than 30 points in this game." None of those says anything about our
+ *     receipt of a number, and each would have failed a product-wide build gate
+ *     on copy that is simply true.
+ *
+ * 🔴 THOSE ARE THE SAME DEFECT. Both come from writing whole sentences as
+ * literals: a literal cannot be widened without hand-enumerating grammar, and
+ * it cannot be kept in scope because the scope lives only in this comment. So
+ * the fix is not "more literals" — it is to make the SCOPE a value.
+ *
+ * `READING` is the noun the whole group is about: a number we may or may not
+ * have received. `OUR_SUBJECT` is the thing on the page that can be incomplete.
+ * Every pattern composes one of them, so widening the grammar cannot widen the
+ * scope, and a new noun is added in ONE place rather than in six regexes that
+ * have already drifted apart once. (The lane has counted six duplicated
+ * vocabularies across this repo — UX-P213-3. This is one fewer.)
  */
+
+/**
+ * A number we may or may not have received. THE scope of this whole group.
+ *
+ * ⚠️ `odds` IS DELIBERATELY ABSENT, AND IT WAS REMOVED AFTER A MEASUREMENT, not
+ * on taste. Including it fired `no-reading-ever` on `lib/story-content.ts`'s
+ * "No odds formats, ever. Nothing to deposit, nothing to buy." — a product
+ * promise about our UI, not a claim about our data. It is also a word our own
+ * voice does not use for a number (ruling 138: the word is PROBABILITY), so the
+ * only copy that can contain it is copy about the FORMAT. Nothing is lost.
+ *
+ * That false positive was caught by the negative pins UX-P213 wrote, which is
+ * the argument for keeping a list of true-and-supported copy beside every
+ * content rule: widening this vocabulary is now a change with a safety net.
+ */
+const READING =
+  "(?:number|price|probability|reading|quote|figure|estimate|value|answer|market|data)";
+
+/** A thing on OUR page that can be incomplete — not an event in the world. */
+const OUR_SUBJECT =
+  "(?:comparison|chart|card|series|history|record|reading|quote|number|price|probability|figure|estimate|data)";
+
+const rx = (source: string) => new RegExp(source, "i");
+
+/** Why-text shared by the patterns that quantify over an archive we do not hold. */
+const NOT_THE_ARCHIVE =
+  "quantifies over all of history; the payload carries the latest observation, not the archive (CERT-537/539)";
+
 export const HISTORY_CLAIM_BANS: CopyBan[] = [
   {
     id: "ever-reached-us",
     pattern: /\b(ever|never) (reached|arrived at|came to|got to) us\b/i,
-    why: "quantifies over all of history; the payload carries the latest observation, not the archive (CERT-537)",
+    why: NOT_THE_ARCHIVE,
   },
   {
     id: "no-reading-ever",
-    pattern: /\bno (number|price|probability|reading|quote|answer|market|data)s?\b[^.!?]{0,40}\bever\b/i,
-    why: "quantifies over all of history; the payload carries the latest observation, not the archive (CERT-537)",
+    pattern: rx(String.raw`\bno ${READING}s?\b[^.!?]{0,40}\bever\b`),
+    why: NOT_THE_ARCHIVE,
   },
   {
     id: "we-never-had",
     pattern: /\bwe (have )?never (had|held|received|saw|seen|got|read|recorded)\b/i,
     why: "a claim about our whole record, made from a payload that carries only the newest reading (CERT-537)",
   },
+  // ── CERT-539: the four grammar families that walked around the six above ──
   {
+    // "There has never been a probability for this market."
+    id: "there-was-never-a-reading",
+    pattern: rx(
+      String.raw`\bthere (?:has|have|had|was|were) never (?:been )?(?:a |an |any )?${READING}s?\b`
+    ),
+    why: NOT_THE_ARCHIVE,
+  },
+  {
+    // "This question never had a probability." — the subject need not be "we".
+    id: "never-had-a-reading",
+    pattern: rx(
+      String.raw`\bnever (?:had|held|carried|showed|shown|received|got|recorded|saw|seen) (?:a |an |any )?${READING}s?\b`
+    ),
+    why: "a claim about our whole record, made from a payload that carries only the newest reading (CERT-539)",
+  },
+  {
+    // "We have not once received a number for this market."
+    id: "not-once-received",
+    pattern: /\bnot once (?:received|got|read|saw|seen|recorded|held|had)\b/i,
+    why: "an all-of-history quantifier in a different word; same unsupportable claim (CERT-539)",
+  },
+  {
+    // "We did not receive a number at any time." The negation and the reading
+    // noun are both required, so "you can dismiss this at any time" is safe.
+    id: "no-reading-at-any-time",
+    pattern: rx(
+      String.raw`\b(?:no|not|n't|never)\b[^.!?]{0,60}\b${READING}s?\b[^.!?]{0,40}\bat any time\b`
+    ),
+    why: NOT_THE_ARCHIVE,
+  },
+  {
+    // "A probability has never been available for this question."
+    id: "reading-never-been",
+    pattern: rx(
+      String.raw`\b${READING}s?\b[^.!?]{0,30}\b(?:has|have|had|was|were) never been\b`
+    ),
+    why: NOT_THE_ARCHIVE,
+  },
+  // ── CERT-539: the three that had drifted OUT of scope, pulled back in ──
+  {
+    // Was `/\bwas never (complete|…)\b/`, which rejected "The comeback was
+    // never complete." The subject now has to be something on OUR page. At most
+    // two words may sit between it and the verb, so a subject mentioned earlier
+    // in a longer sentence cannot be borrowed by a later clause.
     id: "was-never-complete",
-    pattern: /\bwas never (complete|completed|available|quoted|published|reported|answered)\b/i,
+    pattern: rx(
+      String.raw`\b${OUR_SUBJECT}s?(?: [a-z]+){0,2} (?:was|were|has|have|had) never (?:complete|completed|available|quoted|published|reported|answered)\b`
+    ),
     why: "settles a question about the past that no field on the card records (CERT-537)",
   },
   {
+    // Was `/\b(nobody|no one|no-one) ever\b/`, which rejected "Nobody ever
+    // scored more than 30 points in this game." Bound to QUOTING, which is the
+    // thing we cannot distinguish from not having read.
     id: "nobody-ever",
-    pattern: /\b(nobody|no one|no-one) ever\b/i,
-    why: "quantifies over all of history; we cannot tell a market nobody quoted from one we were not reading (CERT-537)",
+    pattern:
+      /\b(?:nobody|no one|no-one) ever (?:quoted|priced|offered|published|reported|posted|listed|traded)\b/i,
+    why: "we cannot tell a market nobody quoted from one we were not reading (CERT-537)",
   },
   {
+    // Was a bare `/\bat no point\b/`, which rejected "At no point did either
+    // player face a break point." A reading noun must appear in the same
+    // clause, on either side of the quantifier.
     id: "at-no-point",
-    pattern: /\bat no point\b/i,
-    why: "quantifies over all of history; the payload carries the latest observation, not the archive (CERT-537)",
+    pattern: rx(
+      String.raw`\bat no point\b[^.!?]{0,60}\b${READING}s?\b|\b${READING}s?\b[^.!?]{0,60}\bat no point\b`
+    ),
+    why: NOT_THE_ARCHIVE,
   },
 ];
 
