@@ -166,6 +166,11 @@ MEASURED_UNION_TEAMS = 229
 #: lane's. What the build lane owes instead is DETECTION — see
 #: `coverage_exceeded` in the pass verdict, which is what makes seasonal growth
 #: trip in PRODUCTION rather than only against a constant frozen in this file.
+#:
+#: 🔴 AND THE TRIP IS THE TERMINAL (CERT-518). Recording the overflow in a field
+#: nothing reads left the enrolled warmer GREEN while the contract was broken; an
+#: overflowing pass now returns `terminal: partial`, so `task_verdict` — the
+#: consumer that already enforces this task — refuses it a green.
 COVERAGE_MARGIN_PASSES = 1
 
 #: Hard ceiling on how many teams one pass will consider. Not a target — a
@@ -418,13 +423,17 @@ async def _warm_prop_families() -> dict:
     # many teams it selected, so it compares that against the derived ceiling and
     # says so in its verdict. Same discipline as `truncated` directly below — no
     # silent caps, and here, no silent lapse.
+    #
+    # 🔴 AND SAYING SO MEANS A NON-GREEN TERMINAL, NOT A FIELD (CERT-518). The
+    # downgrade lives at the bottom of the pass, where the terminal is decided.
     _ceiling = coverage_ceiling_teams()
     coverage_exceeded = max(0, selected - _ceiling)
     if coverage_exceeded:
         logger.warning(
             "warm_prop_families: %d teams selected exceeds the %d-team coverage "
             "ceiling by %d — a full rotation no longer finishes inside the mirror, "
-            "so the tail of the set will go cold. Re-derive PASS_BUDGET_SECONDS or "
+            "so the tail of the set will go cold. This pass returns a PARTIAL "
+            "terminal until it is fixed. Re-derive PASS_BUDGET_SECONDS or "
             "tighten MIN_PROPS_TO_WARM.",
             selected, _ceiling, coverage_exceeded,
         )
@@ -519,6 +528,26 @@ async def _warm_prop_families() -> dict:
         terminal = "complete"
     else:
         terminal = "failed"
+
+    # 🔴 AN OVERFLOWING POPULATION MUST CHANGE THE TERMINAL, NOT JUST A COUNTER
+    # (CERT-518). The first version of the detector above logged a warning and
+    # put `coverage_exceeded` in the summary — and stopped there, so a pass that
+    # had just broken the mirror contract still returned `terminal: complete`
+    # and `verdict_for` classified it as an AUTHORITATIVE green. Nothing read
+    # the new field: the only references were this producer and its own tests.
+    # A detector whose detection cannot be seen by the health gate it exists to
+    # trip is a false green with extra steps (`app/utils/task_verdict.py`: "it
+    # returned" is not "it worked"), and CERT-515 had asked for a NON-GREEN
+    # terminal in as many words.
+    #
+    # `partial` and not `failed`, because the pass did the work it was asked to
+    # do — it rebuilt its slice; what it cannot do is get back round the whole
+    # set before the mirror lapses, which is the resumable-sweep-fell-short case
+    # `partial` names. A real `failed` is never softened: the downgrade only
+    # applies to a terminal that would otherwise read green.
+    if terminal == "complete" and coverage_exceeded:
+        terminal = "partial"
+
     return {
         "terminal": terminal,
         "selected": selected,

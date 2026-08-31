@@ -450,6 +450,85 @@ class TestSeasonalGrowthTripsAtRuntime:
         assert out["coverage_exceeded"] == 11, out
         assert out["coverage_ceiling"] == warm.coverage_ceiling_teams()
 
+    async def test_an_overflowing_pass_is_refused_a_green_verdict(self):
+        """🔴 CERT-518's finding, end to end through the ENFORCED classifier.
+
+        Reporting the overflow in a field was not detection: nothing outside this
+        module read `coverage_exceeded`, so a pass that had just broken the mirror
+        contract still returned `terminal: complete` and `verdict_for` called it an
+        AUTHORITATIVE green. This asserts the thing an operator actually sees — the
+        verdict the health gate acts on — not the counter that feeds it.
+        """
+        from app.utils import task_verdict as tv
+
+        oversized = list(range(1, warm.coverage_ceiling_teams() + 2))
+        rc = _FakeRedis()
+        _built, build = _built_recorder()
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _team_lookup_session(oversized)), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=build):
+            out = await warm._warm_prop_families()
+
+        assert out["coverage_exceeded"] == 1, out
+        assert out["terminal"] != "complete", (
+            "the pass broke the coverage contract and still reported a green "
+            f"terminal: {out}"
+        )
+
+        # The label the beat's `_tracked_run` passes, and the set that makes the
+        # classification binding. Both asserted, because a verdict computed for a
+        # task outside `ENFORCED_TASKS` is a non-authoritative unknown that reads
+        # GREEN however loud this summary is.
+        assert "warm_prop_families" in tv.ENFORCED_TASKS
+        verdict = tv.verdict_for("warm_prop_families", out)
+        assert verdict.verdict == tv.PARTIAL, verdict
+        assert verdict.authoritative is True, verdict
+        assert verdict.is_green is False, verdict
+
+    async def test_a_real_failure_is_never_softened_to_partial(self):
+        """The downgrade only ever takes a terminal DOWN. A pass that rebuilt
+        nothing is `failed` whether or not the population also overflowed —
+        otherwise the repair for a false green would have created a false amber.
+        """
+        from app.utils import task_verdict as tv
+
+        oversized = list(range(1, warm.coverage_ceiling_teams() + 2))
+        rc = _FakeRedis()
+
+        async def _explode(*a, **kw):
+            raise RuntimeError("build is down")
+
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _team_lookup_session(oversized)), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_explode):
+            out = await warm._warm_prop_families()
+
+        assert out["rebuilt"] == 0 and out["failed"] > 0, out
+        assert out["coverage_exceeded"] == 1, out
+        assert out["terminal"] == "failed", out
+        assert tv.verdict_for("warm_prop_families", out).verdict == tv.FAILED
+
+    async def test_a_healthy_population_still_earns_its_green(self):
+        """The other direction: the downgrade must not fire on a pass that is
+        inside the ceiling, or the gate cries wolf every hour and stops meaning
+        anything."""
+        from app.utils import task_verdict as tv
+
+        rc = _FakeRedis()
+        _built, build = _built_recorder()
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _team_lookup_session([1, 2, 3])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=build):
+            out = await warm._warm_prop_families()
+
+        assert out["terminal"] == "complete", out
+        verdict = tv.verdict_for("warm_prop_families", out)
+        assert verdict.verdict == tv.COMPLETE, verdict
+        assert verdict.is_green is True, verdict
+
     async def test_a_healthy_population_reports_zero_not_absent(self):
         """0 and 'the field is missing' are different facts (gotcha #53)."""
         rc = _FakeRedis()
@@ -480,6 +559,10 @@ class TestSeasonalGrowthTripsAtRuntime:
 
         assert out["truncated"] > 0
         assert out["coverage_exceeded"] == 0
+        # And only one of them is a contract breach: hitting the per-pass cap is
+        # the rotation working, so it must NOT cost the pass its green (CERT-518's
+        # repair must fire on overflow and on nothing else).
+        assert out["terminal"] == "complete", out
 
     def test_the_pass_budget_bounds_the_work_not_the_population(self):
         """Why widening the set is not a load increase: a pass stops at
