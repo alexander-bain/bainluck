@@ -679,13 +679,26 @@ def record_task_delivery(full_task_name: str):
     production 2026-08-11:
 
     * ``poll_all_odds`` returns ``{"skipped": True}`` from ``should_poll_now()``
-      before it ever reaches ``_tracked_run``. Its adaptive gate declines about
-      half of its fires **by design** — ``LIVE_POLL_INTERVAL`` is 32s against a
-      30s beat, so two consecutive fires can never both pass — and every decline
-      was recorded as a fire that did not happen. The surface graded it
+      before it ever reaches ``_tracked_run``. Its adaptive gate declined about
+      half of its fires — ``LIVE_POLL_INTERVAL`` was 32s against a 30s beat, so
+      two consecutive fires could never both pass — and every decline was
+      recorded as a fire that did not happen. The surface graded it
       ``ratio 0.50``, which was read as the ingestion beat running at half speed
       for two months. The realtime worker's own execution total says otherwise:
       66 deliveries in the 1,982s since the release, or one per 30.0s exactly.
+
+      🔴 **THIS PARAGRAPH USED TO SAY THAT DECLINE WAS "BY DESIGN". IT WAS NOT
+      (LAT-P159).** Correcting the instrument was right — a self-gated decline
+      genuinely is not a missed beat, which is what the rest of this docstring
+      is about — but the gate had no business declining. 32-against-30 was an
+      accident that doubled every live sport's odds cadence, and describing it
+      as intentional here is what kept it invisible for three weeks: the one
+      surface that would have flagged a task discarding half its deliveries had
+      been taught to expect exactly that. ``LIVE_POLL_INTERVAL`` is now derived
+      from ``ODDS_POLL_BEAT_SECONDS`` and sits below it, so the decline rate
+      should now be near zero while live. **A rising ``self_gated_fires`` on
+      this task is once again a real signal — most likely that the pass has
+      grown slower than the beat period.**
       ``sync_statpal_livescores`` — same 30s beat, same worker, same window, no
       self-gate — reads 65 deliveries and ``ratio 1.00``. Same beat, same
       infrastructure; the only difference is the gate, so the gate is the cause.

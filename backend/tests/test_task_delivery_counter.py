@@ -8,10 +8,19 @@ BOTH presented as a scheduling fault:
 
 * A **self-gating** task records nothing when it declines. ``poll_all_odds``
   returns ``{"skipped": True}`` from ``should_poll_now()`` before reaching
-  ``_tracked_run``, and its adaptive gate declines about half its fires by
-  design — ``LIVE_POLL_INTERVAL`` is 32s against a 30s beat, so two consecutive
-  fires can never both pass. The surface graded ``ratio 0.50`` and it was read
-  for two months as the ingestion beat running at half speed.
+  ``_tracked_run``, and its adaptive gate declined about half its fires —
+  ``LIVE_POLL_INTERVAL`` was 32s against a 30s beat, so two consecutive fires
+  could never both pass. The surface graded ``ratio 0.50`` and it was read for
+  two months as the ingestion beat running at half speed.
+
+  🔴 **THIS FILE USED TO CALL THAT DECLINE "BY DESIGN"; IT WAS A DEFECT
+  (LAT-P159).** These tests are unaffected — none of them asserts the 32/30
+  relationship, they drive synthetic counters — but the prose mattered: the
+  gate was discarding half of every live delivery for a two-second reason, and
+  three files describing it as intentional is why no lane went looking.
+  ``LIVE_POLL_INTERVAL`` is now derived from ``ODDS_POLL_BEAT_SECONDS``.
+  Behaviour under test here — that a self-gated decline is not a missed beat —
+  is unchanged and still correct.
 
 * A task that never calls ``_tracked_run`` **at all** never reaches
   ``record_task_label`` either, so it cannot be joined to the schedule. Thirty

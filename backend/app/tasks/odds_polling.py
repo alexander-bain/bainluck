@@ -60,6 +60,35 @@ logger = logging.getLogger(__name__)
 BETTING_BOOK_FLOOR = 3
 
 
+def tier_adjusted_interval(base_interval: float, tier: str, sport_key: str) -> float:
+    """Apply the sport-tier multiplier — to PRE-GAME traffic only (LAT-P159).
+
+    🔴 THE MULTIPLIER IS A PRE-GAME ECONOMY AND IT USED TO APPLY TO `live` TOO,
+    which made a live game's refresh rate a function of its league's POPULARITY:
+    60 s for the NBA, 120 s for NCAAF, 180 s for anything unlisted. Alex reported
+    a live Stanford game whose probability lagged the action — Stanford is
+    `americanfootball_ncaaf`, Tier 2 — so its odds were two minutes old by
+    construction. Betting carries weight 3.0 in `utils/aggregation.py`; it IS the
+    number on the card.
+
+    The file already said as much and then did the opposite: the adaptive
+    slowdown thirty lines down is guarded `tier != "live"` under the comment
+    *"live games always poll fast"*. Tiering exists to conserve quota on sports
+    nobody is watching YET. Once a game is live somebody is watching it, whatever
+    the league.
+
+    Extracted as a function rather than left inline because it is the rule a
+    guard has to be able to call. Re-implementing the rule under test in the test
+    is how this lane published a corruption count that moved four times
+    (LAT-P156); a guard must exercise the shipped code, not a copy that agrees
+    with it today.
+    """
+    if tier == "live":
+        return base_interval
+    sport_tier = SPORT_POLLING_TIERS.get(sport_key, SPORT_POLLING_DEFAULT_TIER)
+    return base_interval * SPORT_TIER_MULTIPLIERS.get(sport_tier, 4)
+
+
 def get_statpal_end_time(event) -> Optional[datetime]:
     """
     Extract StatPal end time from event — checks dedicated column first,
@@ -930,8 +959,7 @@ async def _poll_all_odds():
                 # Sport-tier multiplier: Tier 2 polls 2x slower, Tier 3 polls 4x slower.
                 # Core sports (Tier 1) keep default intervals; long-tail sports poll less.
                 sport_tier = SPORT_POLLING_TIERS.get(sport_key, SPORT_POLLING_DEFAULT_TIER)
-                tier_mult = SPORT_TIER_MULTIPLIERS.get(sport_tier, 4)
-                poll_interval = poll_interval * tier_mult
+                poll_interval = tier_adjusted_interval(poll_interval, tier, sport_key)
 
                 # Quota guard: in full-stop mode, only priority sports allowed
                 if quota_full_stop:
