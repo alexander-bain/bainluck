@@ -181,6 +181,7 @@ from app.utils.labeling_queue import (
     load_reviewed_ranking_keys as _load_reviewed_ranking_keys,
     review_key_for_feed_item as _review_key_for_feed_item,
 )
+from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.outcome_display import (
     display_rank_order,
@@ -4043,8 +4044,11 @@ def _apply_card_percents(top_outcomes_data: list[dict]) -> str | None:
 def _top_outcomes_for_trace(
     market: FuturesMarket,
 ) -> tuple[list[dict], str | None, float | None]:
+    # Q480: one condition, one outcome. The TRACE must agree with the card it
+    # explains — a debug view that still shows the dropped leg would send the next
+    # reader hunting a row the feed no longer serves.
     sorted_outcomes = sorted(
-        market.outcomes,
+        drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
         key=lambda o: (
             float(o.current_probability) if o.current_probability is not None else 0
         ),
@@ -6432,8 +6436,13 @@ async def _score_sports_mode_futures(
             if res_dt and res_dt < now:
                 continue
 
+        # Q480: one condition, one outcome. This is the card that read "New
+        # favorite: No: Who will Taylor Swift's bridesmai... (64%)" over ten people
+        # all rendering 0% — the "No" is the `_yes`/`_no` leg of ONE of those
+        # people's own sub-markets, duplicating a bare rung this market already
+        # holds. Dropped before the sort, so it can never win the leader pick.
         sorted_outcomes = sorted(
-            market.outcomes,
+            drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
             key=lambda o: float(o.current_probability) if o.current_probability else 0,
             reverse=True,
         )
@@ -7672,8 +7681,11 @@ async def _score_futures(
             leader_name = None
             leader_prob = None
 
+            # Q480: one condition, one outcome — see the sibling call in the card
+            # builder. This is the SCORING half of the same market, so the leg must
+            # go here too or the card and its score disagree about what is on it.
             sorted_outcomes = sorted(
-                market.outcomes,
+                drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
                 key=lambda o: float(o.current_probability) if o.current_probability else 0,
                 reverse=True,
             )

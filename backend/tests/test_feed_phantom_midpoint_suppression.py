@@ -23,6 +23,10 @@ class _Outcome:
     def __init__(self, id, name, prob, *, bid=None, ask=None):
         self.id = id
         self.name = name
+        # Q480: the display path reads `external_id` to drop a `_yes`/`_no`
+        # leg that duplicates a bare rung on the same market. None = not a
+        # leg, which is the pass-through case for these doubles.
+        self.external_id = None
         self.current_probability = prob
         self.probability_change_24h = 0.0
         self.opening_probability = None
