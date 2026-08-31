@@ -92,7 +92,10 @@ class _FakeDateTime(_real, metaclass=_FakeMeta):
 _dt.datetime = _FakeDateTime
 '''
 
+# Self-contained on purpose: CERT-625's baseline runs this WITHOUT ``_PATCH`` in
+# front of it, so it cannot borrow that block's ``import sys``.
 _PYTEST_TAIL = r'''
+import sys
 import pytest
 sys.exit(pytest.main({args!r}))
 '''
@@ -134,6 +137,44 @@ for p in problems:
     print("SELF-CHECK: " + p)
 sys.exit(1 if problems else 0)
 '''
+
+
+# CERT-625 — pytest's exit code is not a boolean, and reading it as one is how
+# this tool produced its SECOND false conclusion. Only `1` means "tests ran and
+# some failed"; every other nonzero value is a story about the harness (gotcha
+# #54). Before this, a nonexistent target (exit 4) and a throwaway `assert False`
+# with no clock import anywhere both printed "the target reads the clock".
+_PYTEST_EXIT = {
+    0: ("PASS", "all tests passed"),
+    1: ("FAIL", "tests ran and some failed"),
+    2: ("FAULT", "pytest was INTERRUPTED — the run did not complete"),
+    3: ("FAULT", "pytest INTERNAL ERROR"),
+    4: ("FAULT", "pytest USAGE ERROR — the target is probably not a valid file/nodeid"),
+    5: ("FAULT", "pytest collected NO TESTS — the target matches nothing"),
+}
+
+
+def _classify(returncode: int) -> tuple[str, str]:
+    """Map a pytest exit code to (verdict, why).
+
+    ``PASS``/``FAIL`` are results about the target. ``FAULT`` is a statement
+    about the run itself, and a FAULT anywhere must stop the sweep from drawing
+    any conclusion at all.
+    """
+    return _PYTEST_EXIT.get(returncode, ("FAULT", f"unrecognised pytest exit code {returncode}"))
+
+
+def _run_target(target: str, patch: str = "") -> tuple[int, str]:
+    """Run ``target`` under pytest, optionally clock-patched. -> (code, summary)."""
+    code = patch + _PYTEST_TAIL.format(
+        args=["-q", "--no-header", "-p", "no:cacheprovider", target]
+    )
+    proc = _run(code)
+    tail = [ln for ln in proc.stdout.strip().splitlines() if ln.strip()]
+    summary = tail[-1] if tail else "(no output)"
+    if not tail and proc.stderr.strip():
+        summary = proc.stderr.strip().splitlines()[-1]
+    return proc.returncode, summary
 
 
 def _points(at: datetime, offsets: list[float]) -> list[datetime]:
@@ -240,22 +281,68 @@ def main() -> int:
         return 0
     print("-" * 64)
 
-    failures = []
-    for inst in instants:
-        code = _PATCH.format(fake=inst.isoformat()) + _PYTEST_TAIL.format(
-            args=["-q", "--no-header", "-p", "no:cacheprovider", args.target]
+    # CERT-625 — THE BASELINE. The self-check proves the CLOCK is sound; it says
+    # nothing about the TARGET. A target that is simply broken fails at every
+    # faked point too, and "failed everywhere" is indistinguishable from clock
+    # dependence without a control. So run it once UNPATCHED, at the real clock,
+    # first. Only a target that is green here can have a red attributed to the
+    # clock — and this is also where an invalid target or a typo'd nodeid is
+    # caught, before twelve subprocesses report it as a finding.
+    base_code, base_summary = _run_target(args.target)
+    base_verdict, base_why = _classify(base_code)
+    print(f"baseline (real clock)   {base_verdict}   {base_summary}")
+
+    if base_verdict == "FAULT":
+        print("-" * 64)
+        print(f"HARNESS FAULT — {base_why} (pytest exit {base_code}).")
+        print(
+            f"NO CONCLUSION about {args.target} — the sweep did not run. "
+            "This is a statement about the run, not about the target's clock use."
         )
-        proc = _run(code)
-        tail = [ln for ln in proc.stdout.strip().splitlines() if ln.strip()]
-        summary = tail[-1] if tail else "(no output)"
-        ok = proc.returncode == 0
-        if not ok:
-            failures.append((inst, summary))
-        print(f"{inst:%Y-%m-%d %H:%M} UTC   {'PASS' if ok else 'FAIL'}   {summary}")
+        return 2
+
+    if base_verdict == "FAIL":
+        print("-" * 64)
+        print(f"{args.target} is ALREADY RED at the real clock.")
+        print(
+            "NO CONCLUSION about wall-clock dependence — a target that fails "
+            "before the clock is touched will fail at every faked point too, and "
+            "that red would be the target's existing breakage, not a time bomb. "
+            "Fix it green first, then sweep."
+        )
+        return 2
 
     print("-" * 64)
+
+    failures = []
+    faults = []
+    for inst in instants:
+        code, summary = _run_target(args.target, _PATCH.format(fake=inst.isoformat()))
+        verdict, why = _classify(code)
+        if verdict == "FAIL":
+            failures.append((inst, summary))
+        elif verdict == "FAULT":
+            faults.append((inst, code, why))
+        print(f"{inst:%Y-%m-%d %H:%M} UTC   {verdict:<5}  {summary}")
+
+    print("-" * 64)
+
+    # A single unreadable point poisons the whole sweep: the target may well read
+    # the clock, but this run cannot say so.
+    if faults:
+        print(f"HARNESS FAULT — {len(faults)}/{len(instants)} points did not produce a test result.")
+        for inst, code, why in faults:
+            print(f"  {inst:%Y-%m-%d %H:%M} UTC   pytest exit {code} — {why}")
+        print(
+            f"NO CONCLUSION about {args.target}. The target was green at the real "
+            "clock, so these are the run's failures, not the target's."
+        )
+        return 2
+
     if failures:
-        # Earned: the self-check above proved the only thing that moved is the clock.
+        # Earned three ways: the self-check proved only the clock moved, the
+        # baseline proved the target is otherwise green, and every point below
+        # returned a real pytest result rather than a harness story.
         print(f"{len(failures)}/{len(instants)} points FAILED — the target reads the clock.")
         return 1
     print(f"all {len(instants)} points green — invariant to wall-clock time.")

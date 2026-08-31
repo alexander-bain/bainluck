@@ -167,26 +167,42 @@ def test_a_harness_fault_yields_no_conclusion_and_never_runs_the_target(
     assert ran == [], "the target must not be run under a harness known to be unsound"
 
 
+class _Proc:
+    def __init__(self, returncode, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _scripted_run(monkeypatch, codes):
+    """Stub ``_run`` to return ``codes`` in order; first call is the BASELINE.
+
+    ``clock_sweep`` runs the target once unpatched before it sweeps, so a stub
+    that returns one fixed code cannot tell the two apart — which is exactly the
+    conflation CERT-625 was about.
+    """
+    monkeypatch.setattr(clock_sweep, "_self_check_problems", lambda inst: [])
+    seen: list[str] = []
+    it = iter(codes)
+
+    def _fake_run(source):
+        seen.append(source)
+        code = next(it, codes[-1])
+        summary = {0: "2 passed", 1: "1 failed, 1 passed"}.get(code, "no tests ran")
+        return _Proc(code, f"===== {summary} =====")
+
+    monkeypatch.setattr(clock_sweep, "_run", _fake_run)
+    return seen
+
+
 def test_a_sound_harness_still_reaches_a_verdict_about_the_target(monkeypatch, capsys):
     """The gate must not become a blanket refusal — the tool still has a job.
 
     Guards that only prove a thing is blocked can pass while the ship stops
-    working, so this asserts the green path still runs the target and grades it.
+    working, so this asserts the green path still runs the target and grades it:
+    green at the real clock, red under a faked one, verdict ``1``.
     """
-    monkeypatch.setattr(clock_sweep, "_self_check_problems", lambda inst: [])
-
-    class _Proc:
-        returncode = 1
-        stdout = "1 failed, 2 passed"
-        stderr = ""
-
-    seen: list[str] = []
-
-    def _fake_run(source):
-        seen.append(source)
-        return _Proc()
-
-    monkeypatch.setattr(clock_sweep, "_run", _fake_run)
+    seen = _scripted_run(monkeypatch, [0, 1])
     monkeypatch.setattr(
         sys, "argv", ["clock_sweep.py", "tests/whatever.py", "--offsets", "0", "--no-future"]
     )
@@ -199,6 +215,99 @@ def test_a_sound_harness_still_reaches_a_verdict_about_the_target(monkeypatch, c
     assert "tests/whatever.py" in seen[0]
     assert "reads the clock" in out
     assert "HARNESS FAULT" not in out
+
+
+def test_an_invariant_target_is_green_end_to_end(monkeypatch, capsys):
+    seen = _scripted_run(monkeypatch, [0, 0])
+    monkeypatch.setattr(
+        sys, "argv", ["clock_sweep.py", "tests/whatever.py", "--offsets", "0", "--no-future"]
+    )
+
+    assert clock_sweep.main() == 0
+    out = capsys.readouterr().out
+    assert "invariant to wall-clock time" in out
+    assert len(seen) == 3, "one baseline plus two swept points"
+
+
+# --- CERT-625: pytest's exit code is not a boolean ---------------------------
+
+
+@pytest.mark.parametrize(
+    "code,verdict",
+    [(0, "PASS"), (1, "FAIL"), (2, "FAULT"), (3, "FAULT"), (4, "FAULT"), (5, "FAULT"), (137, "FAULT")],
+)
+def test_only_exit_1_is_a_test_result(code, verdict):
+    """gotcha #54: `1` is a result; everything else is a story about the harness."""
+    assert clock_sweep._classify(code)[0] == verdict
+
+
+def test_an_invalid_target_is_a_fault_not_a_clock_finding(monkeypatch, capsys):
+    """A typo'd nodeid used to print "the target reads the clock" twelve times."""
+    _scripted_run(monkeypatch, [4])
+    monkeypatch.setattr(
+        sys, "argv", ["clock_sweep.py", "tests/nope.py", "--offsets", "0", "--no-future"]
+    )
+
+    rc = clock_sweep.main()
+    out = capsys.readouterr().out
+
+    assert rc == 2, "a usage error is a harness fault, not the target's 1"
+    assert "HARNESS FAULT" in out
+    assert "NO CONCLUSION" in out
+    assert "reads the clock" not in out
+
+
+def test_an_already_red_target_yields_no_conclusion(monkeypatch, capsys):
+    """An always-failing, clock-free target is not a time bomb.
+
+    Without a real-clock baseline, "fails at all 12 points" is indistinguishable
+    from clock dependence — so a plain `assert False` was reported as one.
+    """
+    seen = _scripted_run(monkeypatch, [1])
+    monkeypatch.setattr(
+        sys, "argv", ["clock_sweep.py", "tests/broken.py", "--offsets", "0", "--no-future"]
+    )
+
+    rc = clock_sweep.main()
+    out = capsys.readouterr().out
+
+    assert rc == 2
+    assert "ALREADY RED at the real clock" in out
+    assert "NO CONCLUSION" in out
+    assert "reads the clock" not in out
+    assert len(seen) == 1, "the sweep must not run once the baseline is red"
+
+
+def test_a_fault_at_one_swept_point_poisons_the_whole_sweep(monkeypatch, capsys):
+    """Baseline green, one point a real FAIL, one point exit 3.
+
+    The target may well read the clock — but this run cannot say so, and saying
+    so anyway is the class CERT-625 blocked.
+    """
+    _scripted_run(monkeypatch, [0, 1, 3])
+    monkeypatch.setattr(
+        sys, "argv", ["clock_sweep.py", "tests/whatever.py", "--offsets", "0,1", "--no-future"]
+    )
+
+    rc = clock_sweep.main()
+    out = capsys.readouterr().out
+
+    assert rc == 2
+    assert "HARNESS FAULT" in out
+    assert "INTERNAL ERROR" in out
+    assert "reads the clock" not in out
+
+
+def test_the_pytest_tail_is_self_contained(monkeypatch):
+    """The baseline runs it WITHOUT `_PATCH`, so it cannot borrow that import.
+
+    Regression pin: the first draft of the baseline crashed with
+    `NameError: name 'sys' is not defined` and the crash read as "already red".
+    """
+    proc = clock_sweep._run(
+        clock_sweep._PYTEST_TAIL.format(args=["--version"])
+    )
+    assert "NameError" not in proc.stderr, proc.stderr[-400:]
 
 
 def test_self_check_only_stops_before_the_target(monkeypatch, capsys):
