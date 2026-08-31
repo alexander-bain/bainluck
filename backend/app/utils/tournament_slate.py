@@ -54,7 +54,7 @@ without a database.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
@@ -695,6 +695,18 @@ def _prop_settlement(
             # `PROP_SETTLES_AT_NOT_ISO`, which is structural precisely so this
             # branch is unreachable on a register that passed its gate.
             settles_at = None
+    if settles_at is not None and settles_at.tzinfo is None:
+        # A NAIVE STAMP IS READ AS UTC (CERT-527), and this line is load-bearing
+        # rather than tidy. `is_iso8601` accepts an offset-less instant, so
+        # `2026-08-30T15:05:00` passes the register's gate — and comparing it
+        # with an aware `now` raises `TypeError`, which is a **500 on the whole
+        # tournament route** from curated data the validator called valid.
+        #
+        # UTC is the right reading and not a shrug: every other writer in this
+        # codebase stamps UTC, and `tournament_board._hours_since` already
+        # states the same rule for the same reason. Coercing here means no
+        # curated register can take the page down, whatever the gate let past.
+        settles_at = settles_at.replace(tzinfo=timezone.utc)
     if settles_at is None or now < settles_at:
         # Not yet, or never declared. Either way the card is a live question and
         # renders exactly as it did before this function existed.

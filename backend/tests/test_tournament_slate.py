@@ -576,6 +576,42 @@ def test_an_unparseable_instant_never_settles_a_card_by_accident():
     assert card["settled_answer"] is None
 
 
+def test_a_naive_settles_at_is_read_as_utc_and_never_500s_the_route():
+    """CERT-527. `is_iso8601` ACCEPTS an offset-less instant, so
+    `2026-08-30T15:05:00` passes the register's own gate — and comparing it
+    with an aware `now` raises `TypeError`, which is a 500 on the whole
+    tournament route from data the validator called valid.
+
+    UTC is the right reading rather than a shrug: every writer in this codebase
+    stamps UTC, and `tournament_board._hours_since` already states the same rule.
+    """
+    from app.utils.tournament_register import is_iso8601
+    # Offset STRIPPED from an instant already in the past, so the assertion is
+    # about the missing tzinfo and not about the clock (gotcha #44: offset
+    # first, then strip — never a literal that drifts past NOW).
+    naive = (NOW - timedelta(hours=6)).replace(tzinfo=None).isoformat()
+    # The premise: the gate really does let this through.
+    assert is_iso8601(naive) is True
+
+    card = build_props(
+        _register(props=[_prop(settles_at=naive, settled_answer="No")]),
+        prices={}, now=NOW,
+    )[0]
+    assert card["settled"] is True
+    assert card["settled_answer"] == "No"
+    # Normalised on the way out, so the client is never handed a bare instant.
+    assert card["settled_at"].endswith("+00:00")
+
+    # ...and the boundary still works on a naive stamp in the FUTURE, which is
+    # the arm a naive-as-UTC coercion could silently invert.
+    future = (NOW + timedelta(hours=3)).replace(tzinfo=None).isoformat()
+    later = build_props(
+        _register(props=[_prop(settles_at=future, settled_answer="No")]),
+        prices={}, now=NOW,
+    )[0]
+    assert later["settled"] is False
+
+
 def test_the_committed_register_answers_the_sinner_question():
     """THE SHIP, on the real file (Q465).
 
@@ -596,6 +632,19 @@ def test_the_committed_register_answers_the_sinner_question():
     assert sinner["settled"] is True
     assert sinner["settled_answer"] == "No"
     assert sinner["settled_at"] == "2026-08-30T15:05:00+00:00"
+
+    # CERT-527: the committed provenance must state a count that can be
+    # re-measured. The first version said "128 competitions"; ESPN returns 64
+    # competitions carrying 128 named athletes, and both tour payloads repeat
+    # the same 64 — so the original number was a double-count across tours, not
+    # a reading of the draw. The verdict was right and its evidence was not.
+    prop = next(p for p in register["props"] if p["key"] == "sinner-competes")
+    measured = prop["evidence"]["settled_evidence"]["measured"]
+    assert measured == {
+        "r1_competitions": 64,
+        "r1_named_athletes": 128,
+        "sinner_present": False,
+    }
 
     # ...and BEFORE the first ball the same file renders it as a live question,
     # so the field is a boundary in time and not a permanent relabelling.
