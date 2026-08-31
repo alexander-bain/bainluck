@@ -760,6 +760,15 @@ async def test_the_graded_losses_publish_under_their_own_category_not_a_siblings
     reverted, which is the whole finding undone. So the assertion is on the
     (id, category) pairs.
 
+    ⚠️ AND THE REVERTED ARM CHANGED SHAPE UNDER THE RULING — measured in CI, not
+    predicted. While the cricket variant was REFUSED, the coarse key had exactly
+    one admission row to match, so the loss legs were misfiled and not doubled;
+    the first cut of this test asserted "no duplication" on that basis and CI
+    correctly failed it. Option A admits that variant, so the coarse key now
+    matches BOTH and every outcome is emitted once per admitted variant. The
+    accident and the duplication are the same defect seen from two population
+    states, and this arm now asserts the one that is actually there.
+
     THE FALSIFIER, unchanged and still the one that matters: the WINNER
     variant's rows must survive intact. A join that removes duplicates by
     removing rows nobody ruled on is the failure mode this file is written
@@ -778,19 +787,29 @@ async def test_the_graded_losses_publish_under_their_own_category_not_a_siblings
         before = await _rows(session, _reverted(ctes), ASYM_IDS)
         after = await _rows(session, ctes, ASYM_IDS)
 
-        # THE ACCIDENT, still reproducible. The loss legs ride the sibling's
-        # admission row and land in the SIBLING'S bucket.
-        assert {oid: cat for oid, cat in before if oid in ASYM_LOSS_LEGS} == {
-            oid: "baseball" for oid in ASYM_LOSS_LEGS
-        }, (
-            "the loss rows must publish under the sibling variant's category "
-            f"under the old join — that IS the accident. got={before!r}"
+        # THE ACCIDENT, still reproducible: under the two-column key the loss
+        # legs match the SIBLING variant's admission row and land in the
+        # SIBLING'S bucket, which is a bucket their markets are not members of.
+        assert {(oid, "baseball") for oid in ASYM_LOSS_LEGS} <= set(before), (
+            "the loss rows must ALSO publish under the sibling variant's "
+            f"category under the old join — that IS the accident. got={before!r}"
         )
-        # Multiplicity, so the two effects are not confused: the loss rows match
-        # exactly ONE clean_vms row, so nothing here is doubled. This fixture
-        # isolates row LOSS from row duplication.
-        assert len(before) == len({oid for oid, _ in before}), (
-            f"the asymmetric fixture must not also duplicate (got {before!r})"
+        # 🔴 AND UNDER OPTION A THE OLD JOIN NOW *DUPLICATES* RATHER THAN
+        # MISPLACES. Before the ruling the cricket variant was refused, so the
+        # two-column key had exactly one `clean_vms` row to match and the loss
+        # legs were merely misfiled. The ruling admits that variant, so the same
+        # coarse key matches BOTH — every outcome of this virtual market is
+        # emitted once per admitted variant. That is D5's own defect, and this
+        # fixture now reproduces it on rows the ruling put there.
+        assert len(before) > len({oid for oid, _ in before}), (
+            "the reverted two-column join must now DUPLICATE — with two admitted "
+            "variants sharing one vm_id, a join carrying only (vm_id, source) "
+            f"cannot pick one. If it does not, D5 is not being reverted. got={before!r}"
+        )
+        # Nothing is LOST under the old join either; the failure is additive.
+        assert {oid for oid, _ in before} == set(ASYM_IDS), (
+            "every seeded outcome should appear under the coarse join, including "
+            f"the unknown-truth variant's. got={before!r}"
         )
 
         # THE RULING. Same four ids as the accident produced — and a different,
