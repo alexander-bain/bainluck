@@ -408,6 +408,13 @@ export interface FuturesMarket {
   status: "open" | "resolved" | "closed";
   source: string | null;
   external_id: string | null;
+  /**
+   * The canonical shape field (`FuturesMarket.market_type`, #194). Every surface
+   * keys its render kernel off this ONE value — see `lib/marketShape.ts`. Optional
+   * because older payload shapes (and the ~70k pre-backfill resolved rows) omit it;
+   * `resolveShape()` owns the fallback, callers must not re-derive shape themselves.
+   */
+  market_type?: string | null;
   mutually_exclusive: boolean;
   commence_time: string | null;
   resolution_date: string | null;

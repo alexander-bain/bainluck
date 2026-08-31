@@ -12,6 +12,8 @@
  *   quantity         → ladder-strip      (QuantityGroup — one question, many lines)
  *   duel             → split             (two-sided)
  *   field            → top-3             (ranked leaderboard)
+ *   participation    → top-3             (Top-N / make-cut; renders like a field
+ *                                         but keeps its own cohort identity)
  *   container_member → headliner+count   (rolls up into a container)
  *   unshaped         → (no native kernel)
  *
@@ -23,6 +25,7 @@ export const SHAPE_CLAIM = "claim";
 export const SHAPE_QUANTITY = "quantity";
 export const SHAPE_DUEL = "duel";
 export const SHAPE_FIELD = "field";
+export const SHAPE_PARTICIPATION = "participation";
 export const SHAPE_CONTAINER_MEMBER = "container_member";
 export const SHAPE_UNSHAPED = "unshaped";
 
@@ -31,6 +34,7 @@ export type MarketShape =
   | typeof SHAPE_QUANTITY
   | typeof SHAPE_DUEL
   | typeof SHAPE_FIELD
+  | typeof SHAPE_PARTICIPATION
   | typeof SHAPE_CONTAINER_MEMBER
   | typeof SHAPE_UNSHAPED;
 
@@ -47,6 +51,7 @@ const ALL_SHAPES: ReadonlySet<string> = new Set([
   SHAPE_QUANTITY,
   SHAPE_DUEL,
   SHAPE_FIELD,
+  SHAPE_PARTICIPATION,
   SHAPE_CONTAINER_MEMBER,
   SHAPE_UNSHAPED,
 ]);
@@ -57,6 +62,7 @@ export const SHAPE_TO_KERNEL: Record<MarketShape, MarketKernel> = {
   [SHAPE_QUANTITY]: "ladder-strip",
   [SHAPE_DUEL]: "split",
   [SHAPE_FIELD]: "top-3",
+  [SHAPE_PARTICIPATION]: "top-3",
   [SHAPE_CONTAINER_MEMBER]: "headliner+count",
   [SHAPE_UNSHAPED]: null,
 };
