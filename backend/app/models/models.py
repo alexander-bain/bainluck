@@ -852,8 +852,26 @@ class FuturesOutcome(Base):
     # Opening price derivation
     opening_source: Mapped[Optional[str]] = mapped_column(String(30))
 
-    # Resolution
-    is_winner: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Resolution.
+    #
+    # 🔴 NULLABLE ON PURPOSE, AND THE ANNOTATION IS THE WHOLE POINT (Alex,
+    # `runner-inbox/calibration/910`). Production has always been
+    # `is_nullable = YES` with a False default; the model said
+    # ``Mapped[bool]``, from which SQLAlchemy infers ``nullable=False``, so
+    # ``Base.metadata.create_all`` built the column **NOT NULL**. Every gate that
+    # builds its schema from this model therefore ran against a database in
+    # which "nobody graded this" was not expressible — and that distinction is
+    # exactly what 12-CAL, gotcha #21 and Queue 299 rung 1b rest on: NULL is
+    # UNKNOWN truth, False is an affirmative graded loss, and publishing the
+    # first as the second corrupts the calibration curve.
+    #
+    # This is a SCHEMA-EXPRESSIVENESS fix, not a behaviour change. No production
+    # column is altered (production is already nullable), no data moves, and
+    # every writer keeps storing False for unsettled via the default below —
+    # which still fires, including when ``None`` is passed explicitly.
+    is_winner: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True, default=False
+    )
     resolution_source: Mapped[Optional[str]] = mapped_column(String(30))
 
     # Trading activity (from Kalshi settled events API, per sub-market)
