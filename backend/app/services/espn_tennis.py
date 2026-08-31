@@ -501,6 +501,13 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
         "in_progress": 0,
         "upcoming": 0,
         "decided": 0,
+        # CERT-526: a competition whose ESPN state we have no word for is left
+        # OUT of the map (see `SLATE_STATE_BY_ESPN_STATE`) — which is the right
+        # call, but it means the map is silently short. Counted here so
+        # `order_of_play_complete` can refuse to call such a payload complete
+        # rather than letting a consumer read the hole as "not on the
+        # scoreboard".
+        "unknown_state": 0,
     }
 
     for payload in payloads:
@@ -563,6 +570,8 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                             ),
                         }
                         stats[slate_state] += 1
+                    else:
+                        stats["unknown_state"] += 1
 
                     if espn_state not in FINAL_STATES:
                         # NOT DECIDED — so it is the day's card, not a result,
@@ -653,7 +662,31 @@ async def fetch_tournament_results(
     # whole-scoreboard read from half of one. The reduction is done HERE, at the
     # only place that knows what a complete fetch even is, so no consumer has to
     # re-derive it from `len(TOURS)` and get the rule subtly different.
-    result["order_of_play_complete"] = not errors and len(payloads) == len(TOURS)
+    #
+    # ═══ CERT-526: TWO 200s ARE NOT A COMPLETE ANSWER ═══
+    #
+    # The first version of this line asked only "did both requests succeed",
+    # and that is the same mistake one level up: **a successful HTTP response
+    # that does not mention this tournament is an empty answer wearing a 200**
+    # (gotcha #53). Two ways the map can be short while every request worked:
+    #
+    #   * the payload carries no event matching `event_name` at all — a quiet
+    #     day, a renamed event, a scoreboard that has rolled over;
+    #   * a competition carries an ESPN state we have no word for, so it is
+    #     deliberately left out of the map.
+    #
+    # Either way a pinned fixture goes missing from a map that CLAIMS to be the
+    # whole scoreboard, the slate's pinned-id exemption does not fire, and the
+    # clock drops it on the `04:00Z` placeholder — recreating the empty card
+    # this whole queue exists to prevent. So completeness now requires that we
+    # actually saw the tournament and understood every competition on it.
+    stats = result.get("stats") or {}
+    result["order_of_play_complete"] = (
+        not errors
+        and len(payloads) == len(TOURS)
+        and bool(stats.get("events"))
+        and not stats.get("unknown_state")
+    )
     return result
 
 

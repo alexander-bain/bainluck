@@ -453,11 +453,16 @@ class TestTheOrderOfPlay:
         assert parsed["stats"]["final"] == 1
         assert parsed["draws"]["mens-singles"]
 
-    def test_an_espn_state_we_have_no_word_for_is_not_published(self):
+    def test_an_espn_state_we_have_no_word_for_is_not_published_but_IS_counted(self):
         """An unknown state is not evidence, and inventing a word for it would
         be the same absence-as-truth mistake pointing the other way. It is left
-        out, and the slate's clock fallback — not a DECIDED inference — is what
-        then applies."""
+        out, and the slate's clock fallback — not a DECIDED inference — applies.
+
+        CERT-526: but it must be COUNTED, or the map is silently short while
+        `order_of_play_complete` still says it is the whole scoreboard. A pinned
+        fixture in that hole then loses its exemption and the clock drops it on
+        the midnight placeholder — the empty card, again.
+        """
         parsed = self._card([
             _competition(
                 _competitor("A B", winner=False, sets=[]),
@@ -468,6 +473,19 @@ class TestTheOrderOfPlay:
         assert parsed["order_of_play"] == {}
         assert parsed["stats"]["decided"] == 0
         assert parsed["stats"]["upcoming"] == 0
+        assert parsed["stats"]["unknown_state"] == 1
+
+    def test_a_fully_understood_card_reports_no_unknown_states(self):
+        """The counter is a signal, so it must be able to read zero."""
+        parsed = self._card([
+            _competition(
+                _competitor("A B", winner=False, sets=[]),
+                _competitor("C D", winner=False, sets=[]),
+                state="pre", comp_id="182700",
+            )
+        ])
+        assert parsed["stats"]["unknown_state"] == 0
+        assert parsed["stats"]["events"] == 1
 
     def test_a_tbd_placeholder_is_flagged_and_its_template_detail_dropped(self):
         """`detail` on a TBD row is an unsubstituted format string — "M/d -

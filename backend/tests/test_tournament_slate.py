@@ -2196,3 +2196,104 @@ def test_the_fetch_reduces_completeness_where_it_knows_what_complete_means():
         / "app" / "services" / "espn_tennis.py"
     ).read_text()
     assert 'result["order_of_play_complete"]' in source
+
+
+def _fetched(monkeypatch, payloads, *, event_name="US Open"):
+    """Run `fetch_tournament_results` against canned scoreboards, no network."""
+    import asyncio
+
+    from app.services import espn_tennis
+
+    class _Response:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class _Client:
+        def __init__(self, *a, **k):
+            self._queue = list(payloads)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, params=None):
+            if not self._queue:
+                raise RuntimeError("tour unavailable")
+            return _Response(self._queue.pop(0))
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    return asyncio.run(espn_tennis.fetch_tournament_results(event_name))
+
+
+def _scoreboard(state="pre", comp_id="182655", name="US Open"):
+    return {"events": [{
+        "name": name,
+        "groupings": [{
+            "grouping": {"slug": "mens-singles"},
+            "competitions": [{
+                "id": comp_id,
+                "date": "2026-08-31T15:05Z",
+                "status": {"type": {"state": state, "detail": "d", "shortDetail": "s"}},
+                "round": {"displayName": "Round 1"},
+                "competitors": [
+                    {"athlete": {"displayName": "A B"}, "winner": True},
+                    {"athlete": {"displayName": "C D"}, "winner": False},
+                ],
+            }],
+        }],
+    }]}
+
+
+class TestTwoHundredsAreNotACompleteAnswer:
+    """CERT-526. `order_of_play_complete` asked only "did both requests
+    succeed", and a successful response that does not mention this tournament
+    is an empty answer wearing a 200 (gotcha #53).
+
+    Either hole leaves a pinned fixture missing from a map that CLAIMS to be
+    the whole scoreboard, which costs it the slate's pinned-id exemption and
+    hands it to the clock — and the clock drops it on the `04:00Z` placeholder.
+    That is the empty card, recreated.
+    """
+
+    def test_both_tours_read_and_understood_is_complete(self, monkeypatch):
+        result = _fetched(monkeypatch, [_scoreboard(), _scoreboard()])
+        assert result["errors"] == []
+        assert result["tours_fetched"] == 2
+        assert result["order_of_play_complete"] is True
+
+    def test_a_payload_that_never_mentions_this_tournament_is_NOT_complete(
+        self, monkeypatch
+    ):
+        """Two 200s, zero matching events. Nothing failed and we know nothing."""
+        other = _scoreboard(name="Winston-Salem Open")
+        result = _fetched(monkeypatch, [other, other])
+        assert result["errors"] == []
+        assert result["tours_fetched"] == 2
+        assert result["order_of_play"] == {}
+        assert result["order_of_play_complete"] is False
+
+    def test_a_state_we_could_not_read_makes_the_map_incomplete(self, monkeypatch):
+        """The map is short by exactly the competitions we had no word for."""
+        result = _fetched(
+            monkeypatch, [_scoreboard(state="postponed"), _scoreboard(state="postponed")]
+        )
+        assert result["errors"] == []
+        assert result["stats"]["unknown_state"] == 1
+        assert result["order_of_play_complete"] is False
+
+    def test_a_failed_tour_is_still_incomplete(self, monkeypatch):
+        """CERT-517's original case, unchanged by the CERT-526 widening."""
+        result = _fetched(monkeypatch, [_scoreboard()])
+        assert result["errors"]
+        assert result["tours_fetched"] == 1
+        assert result["order_of_play_complete"] is False
