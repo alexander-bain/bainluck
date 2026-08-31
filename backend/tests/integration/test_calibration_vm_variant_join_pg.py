@@ -181,6 +181,15 @@ ASYM_LEG_WINNER = {
     ASYM_MIXED_GRADED_LEG: False,
     ASYM_UNGRADED_LEG: None,
 }
+#: 🔴 THE UNGRADED LEG CARRIES NO RESOLUTION SOURCE, AND CERT-520 IS WHY.
+#: `is_winner IS NULL` alongside `resolution_source = 'api_settlement'` is a row
+#: that claims an authority settled the market and then withheld the verdict. It
+#: does not exist: measured 2026-08-31 over 3,893,126 production outcomes, all
+#: 2,536 rows with `is_winner IS NULL` also have `resolution_source IS NULL`.
+#: Seeding the contradictory shape is what let CAL-P156 believe a new rung was
+#: needed to exclude these rows — in production the truth-eligibility allowlist
+#: had already excluded every one of them.
+ASYM_LEG_SOURCE = {ASYM_UNGRADED_LEG: None}
 ASYM_LEGS = {**ASYM_LOSS_LEGS, **ASYM_WIN_LEGS, **ASYM_UNKNOWN_LEGS}
 ASYM_IDS = sorted(ASYM_LEGS)
 #: What the RULED producer publishes from this fixture (CERT-514): both admitted
@@ -190,6 +199,14 @@ ASYM_IDS = sorted(ASYM_LEGS)
 ASYM_PUBLISHED = sorted(
     {*ASYM_LOSS_LEGS, *ASYM_WIN_LEGS, ASYM_MIXED_GRADED_LEG}
 )
+#: Every seeded outcome that TRUTH ELIGIBILITY admits into `ranked_outcomes` at
+#: all. Identical to `ASYM_PUBLISHED` here, but it is a DIFFERENT statement and
+#: conflating them is what made CI red (CERT-520 [P1]): `ASYM_PUBLISHED` is what
+#: survives `deduped`'s rungs, `ASYM_REACHABLE` is what the eligibility WHERE
+#: clause lets through in the first place. The reverted-join oracle must compare
+#: against this one — reverting the join cannot resurrect a row that eligibility
+#: refused, so expecting `ASYM_IDS` there demands a row no arm can produce.
+ASYM_REACHABLE = sorted(set(ASYM_IDS) - {ASYM_UNGRADED_LEG})
 
 # Four DISTINCT prices on purpose. `mode_prices` deletes a price shared by more
 # than GREATEST(eligible/2, 2) legs; with every price unique no mode can form,
@@ -233,7 +250,16 @@ def _reverted(ctes: str) -> str:
     return ctes.replace(FIXED_JOIN, REVERTED_JOIN, 1)
 
 
-async def _seed_leg(session, market_id, *, price, category, event_id=None, winner=True):
+async def _seed_leg(
+    session,
+    market_id,
+    *,
+    price,
+    category,
+    event_id=None,
+    winner=True,
+    resolution_source="api_settlement",
+):
     """One resolved single-outcome market on the shared event.
 
     ``winner`` is the CERT-485 P1-a parameter. At its default the leg carries
@@ -247,6 +273,17 @@ async def _seed_leg(session, market_id, *, price, category, event_id=None, winne
     asymmetric fixture: `vm_stats.graded` counts `is_winner IS NOT NULL`, so a
     row nothing ever graded and a row graded a loss are different rows, and only
     the second may be published (gotcha #21).
+
+    🔴 ``resolution_source`` IS A PARAMETER BECAUSE CERT-520 PROVED THE FIXTURE
+    WAS FABRICATING A STATE. It used to be hardcoded ``'api_settlement'``, so the
+    "never graded" leg was seeded ``is_winner = NULL`` **with an authoritative
+    settlement source** — a self-contradictory row that claims an authority
+    settled the market while withholding the verdict, and which occurs **zero**
+    times in production. Measured 2026-08-31 over 3,893,126 outcomes: every one
+    of the 2,536 rows with ``is_winner IS NULL`` also has
+    ``resolution_source IS NULL``. Pass ``resolution_source=None`` for a
+    genuinely ungraded row; that is the shape production has, and it is the shape
+    the truth-eligibility allowlist refuses.
     """
     from sqlalchemy import text
 
@@ -271,7 +308,7 @@ async def _seed_leg(session, market_id, *, price, category, event_id=None, winne
             "INSERT INTO futures_outcomes (id, market_id, external_id, name, "
             "opening_probability, calibration_probability, is_winner, "
             "resolution_source, volume) VALUES "
-            "(:id, :mid, :xid, :nm, :p, :p, :win, 'api_settlement', 10)"
+            "(:id, :mid, :xid, :nm, :p, :p, :win, :src, 10)"
         ),
         {
             "id": market_id,
@@ -280,6 +317,7 @@ async def _seed_leg(session, market_id, *, price, category, event_id=None, winne
             "nm": f"leg-{market_id}",
             "p": price,
             "win": winner,
+            "src": resolution_source,
         },
     )
     # A real trade: without it the Polymarket legs are never-traded placeholders
@@ -446,6 +484,9 @@ async def _seed_asym(session):
             # winner / graded loss / never graded, and the last two are the
             # pair `is_winner`'s False default cannot tell apart.
             winner=ASYM_LEG_WINNER[mid],
+            # …and the never-graded leg carries NO source, which is the half
+            # CAL-P156 got wrong and CERT-520 caught. See ASYM_LEG_SOURCE.
+            resolution_source=ASYM_LEG_SOURCE.get(mid, "api_settlement"),
         )
     await session.commit()
 
@@ -801,10 +842,14 @@ async def test_the_graded_losses_publish_under_their_own_category_not_a_siblings
     removing rows nobody ruled on is the failure mode this file is written
     against.
 
-    AND THE UNKNOWN VARIANT MUST NOT APPEAR. `tennis` holds a scoreable graded
-    loss beside a never-graded lone claim; the arm refuses the pair. If a
-    `tennis` row publishes, an ungraded outcome just entered the curve as a
-    confident loss and no downstream rung will remove it.
+    🔴 AND THE ORACLE BELOW COUNTS THE MIXED VARIANT'S GRADED MEMBER ONLY —
+    CERT-520 [P1] IS EXACTLY THIS LINE GETTING IT WRONG. `_reverted` reverts the
+    D5 JOIN and nothing else, so the ungraded leg `771516` is still refused by
+    truth eligibility on BOTH sides of the comparison. An oracle written as
+    `== set(ASYM_IDS)` therefore demands a row that no arm of this test can
+    produce, and CI failed it 1/7 at the exact head. The reverted path is a
+    statement about the JOIN's blast radius, not about eligibility, and
+    `ASYM_REACHABLE` names the difference instead of leaving it implicit.
     """
     from app.tasks.precompute_calibration import _calibration_population_ctes
 
@@ -834,9 +879,17 @@ async def test_the_graded_losses_publish_under_their_own_category_not_a_siblings
             f"cannot pick one. If it does not, D5 is not being reverted. got={before!r}"
         )
         # Nothing is LOST under the old join either; the failure is additive.
-        assert {oid for oid, _ in before} == set(ASYM_IDS), (
-            "every seeded outcome should appear under the coarse join, including "
-            f"the unknown-truth variant's. got={before!r}"
+        #
+        # 🔴 THE ORACLE IS `ASYM_REACHABLE`, NOT `ASYM_IDS`, AND CERT-520 [P1]
+        # IS THIS EXACT LINE. `_reverted` swaps the JOIN and nothing else, so the
+        # ungraded leg is refused by TRUTH ELIGIBILITY on both sides — it is not
+        # reachable by any arm of this test. Demanding it here asserts a property
+        # of eligibility while claiming to measure the join, and it failed CI 1/7.
+        assert {oid for oid, _ in before} == set(ASYM_REACHABLE), (
+            "the coarse join must lose nothing that eligibility admits. Note the "
+            f"ungraded leg {ASYM_UNGRADED_LEG} is deliberately NOT expected: it "
+            f"has no resolution source, so neither the old join nor the new one "
+            f"can surface it. got={before!r}"
         )
 
         # THE RULING. Same four ids as the accident produced — and a different,
@@ -848,8 +901,8 @@ async def test_the_graded_losses_publish_under_their_own_category_not_a_siblings
             "only. If the loss rows are missing, D13's arm went back to "
             "per-VARIANT. If a winner row is missing, D5 is losing rows nobody "
             f"ruled on. If {ASYM_MIXED_GRADED_LEG} is missing, the fail-closed "
-            f"residue is back. If {ASYM_UNGRADED_LEG} is HERE, rung 1b is not "
-            f"catching unknown truth. got={after!r}"
+            f"residue is back. If {ASYM_UNGRADED_LEG} is HERE, truth eligibility "
+            f"let a source-less outcome through. got={after!r}"
         )
         assert {oid: cat for oid, cat in after} == {
             **{oid: "cricket" for oid in ASYM_LOSS_LEGS},
@@ -862,11 +915,11 @@ async def test_the_graded_losses_publish_under_their_own_category_not_a_siblings
             f"mechanism, and the accident back in the curve. got={after!r}"
         )
         assert ASYM_UNGRADED_LEG not in {oid for oid, _ in after}, (
-            "the never-graded leg published. `is_winner` is nullable with a "
-            "False default, so it is now a confident loss in the calibration "
-            "curve (gotcha #21). Its variant is admitted on purpose since "
-            "CERT-514 — rung 1b is what must remove THIS row, and it did not. "
-            f"got={after!r}"
+            "the never-graded leg published. Its variant is admitted on purpose "
+            "since CERT-514, and what must keep this ROW out is truth "
+            "eligibility — it carries `resolution_source = NULL`. If it is here, "
+            "unknown truth is in the curve as a confident loss (gotcha #21) and "
+            f"the allowlist is not doing its job. got={after!r}"
         )
 
     await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)
@@ -882,22 +935,15 @@ async def test_the_mixed_variant_publishes_only_its_graded_member():
     ``ungraded_lone_claims = 0``, so a variant holding one graded lone claim
     beside one ungraded lone claim was refused entirely — and the graded claim,
     which option A says publishes on its own account, was withheld because of a
-    SIBLING market's grade state. The cert called that the same coupling the
+    SIBLING market's grade state. CERT-514 called that the same coupling the
     ruling removes, on a smaller population, and blocked it.
 
-    The repair is a change of GRAIN, not a relaxation, and this test is the only
-    place both halves are executed together against real rows:
-
-      * the variant is ADMITTED — the graded loss reaches the curve; and
-      * the ungraded member is REMOVED anyway, by rung 1b, at market grain.
-
-    Take either half away and this fails. Drop rung 1b and 771516 publishes as a
-    confident loss off ``is_winner``'s False default (gotcha #21); restore the
-    residue conjunct and 771515 disappears with it.
-
-    ``_match_production_is_winner_nullability`` is why this can be seeded at all:
-    the ORM declares ``is_winner`` non-Optional, so a metadata-built database
-    makes it NOT NULL and "nobody graded this" is not expressible in it.
+    Removing the conjunct is the WHOLE fix, and the reason it is safe is the
+    thing CAL-P156 originally got wrong (CERT-520 [P2]): the ungraded leg is not
+    published, and never was, because it carries ``resolution_source = NULL`` and
+    the truth-eligibility allowlist in ``ranked_outcomes`` refuses it. No new
+    rung is involved. ``test_truth_eligibility_is_what_excludes_the_ungraded_
+    member`` below is the attribution.
     """
     from app.tasks.precompute_calibration import _calibration_population_ctes
 
@@ -910,62 +956,71 @@ async def test_the_mixed_variant_publishes_only_its_graded_member():
             "the mixed variant must contribute EXACTLY its graded member. "
             f"Missing {ASYM_MIXED_GRADED_LEG} means a graded lone claim is "
             "still being refused for an ungraded sibling's sake — CERT-514 "
-            f"[P1], unrepaired. Present {ASYM_UNGRADED_LEG} means the arm was "
-            "relaxed without rung 1b behind it and unknown truth is now a "
-            f"confident loss in the curve. got={published!r}"
+            f"[P1], unrepaired. Present {ASYM_UNGRADED_LEG} means an outcome "
+            "with no resolution source reached the curve, which would be a hole "
+            f"in truth eligibility itself. got={published!r}"
         )
 
     await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)
 
 
-async def test_rung_1b_is_what_removes_the_ungraded_member_not_the_arm():
+async def test_truth_eligibility_is_what_excludes_the_ungraded_member():
     """ATTRIBUTION. The row is gone — prove WHICH mechanism took it.
 
-    ``test_the_mixed_variant_publishes_only_its_graded_member`` asserts the
-    outcome; a passing outcome is consistent with the residue conjunct never
-    having been removed at all, because refusing the variant ALSO keeps 771516
-    out. So that test alone cannot tell the repair from the thing it replaced.
+    🔴 THIS TEST EXISTS BECAUSE THE OUTCOME ABOVE IS COMPATIBLE WITH THREE
+    DIFFERENT MECHANISMS, AND TWO OF THEM ARE WRONG.
 
-    This one reads the flag directly. ``is_ungraded_lone_claim`` must be TRUE for
-    the never-graded leg and FALSE for every other seeded row — including its own
-    variant's graded sibling, which is the pair rung 1b has to separate.
+    ``771516`` being absent from the curve is equally true if (a) truth
+    eligibility refused it — correct; (b) the variant-wide
+    ``ungraded_lone_claims = 0`` conjunct is still in the arm and refused the
+    whole variant — CERT-514's defect, unrepaired; or (c) some new rung removed
+    it at market grain — CAL-P156's first attempt, which CERT-520 blocked as dead
+    code. The published-rows assertion cannot tell them apart, and (b) would also
+    drop ``771515``, which is why the two are asserted together.
+
+    So this reads the boundary directly: the ungraded leg must be absent from
+    ``ranked_outcomes`` ENTIRELY — not flagged inside it — because eligibility is
+    a WHERE clause on that CTE, not a per-outcome exclusion flag applied later.
+    Its graded sibling must be present. That is a shape no other mechanism
+    produces.
     """
     from sqlalchemy import text
 
     from app.tasks.precompute_calibration import _calibration_population_ctes
 
     async def body(session):
-        flags = {
-            r.outcome_id: r.is_ungraded_lone_claim
+        present = {
+            r.outcome_id
             for r in (
                 await session.execute(
                     text(
                         "WITH "
                         + _calibration_population_ctes()
-                        + " SELECT outcome_id, is_ungraded_lone_claim "
-                        "FROM ranked_outcomes WHERE outcome_id = ANY(:ids)"
+                        + " SELECT outcome_id FROM ranked_outcomes "
+                        "WHERE outcome_id = ANY(:ids)"
                     ),
                     {"ids": ASYM_IDS},
                 )
             ).all()
         }
 
-        assert flags.get(ASYM_UNGRADED_LEG) is True, (
-            "rung 1b did not flag the never-graded lone claim, so whatever kept "
-            "it out of the curve was NOT the per-market rung — most likely the "
-            f"variant-wide residue is still in the arm. got={flags!r}"
+        assert ASYM_UNGRADED_LEG not in present, (
+            f"{ASYM_UNGRADED_LEG} reached `ranked_outcomes`. It has "
+            "`resolution_source = NULL`, so the truth-eligibility allowlist "
+            "should have refused it before any rung could be consulted. If it "
+            "is here, unknown truth is one WHERE clause away from the curve and "
+            f"the premise of this whole repair is wrong. got={sorted(present)!r}"
         )
-        assert flags.get(ASYM_MIXED_GRADED_LEG) is False, (
-            "rung 1b flagged the GRADED member of the mixed variant. It keys on "
-            "`graded_count = 0`; if this is True it is keying on winner "
-            f"cardinality and every honest lone-claim loss is about to be "
-            f"dropped from the curve. got={flags!r}"
+        assert ASYM_MIXED_GRADED_LEG in present, (
+            f"{ASYM_MIXED_GRADED_LEG} is an affirmatively graded loss with an "
+            "eligible source; if eligibility is dropping it too, the filter is "
+            f"over-broad and real losses are leaving the curve. "
+            f"got={sorted(present)!r}"
         )
-        assert not any(
-            flags.get(oid) for oid in (*ASYM_LOSS_LEGS, *ASYM_WIN_LEGS)
-        ), (
-            "rung 1b reached beyond the mixed variant. Those four legs are all "
-            f"affirmatively graded, so none is unknown truth. got={flags!r}"
+        # And the other two variants are untouched by any of this.
+        assert set(ASYM_LOSS_LEGS) | set(ASYM_WIN_LEGS) <= present, (
+            f"a graded leg outside the mixed variant went missing. "
+            f"got={sorted(present)!r}"
         )
 
     await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)

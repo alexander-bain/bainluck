@@ -100,17 +100,19 @@ def test_clean_vms_no_longer_drops_a_claim_for_losing():
     # ALONE. CAL-P155's `ungraded_lone_claims = 0` partner was blocked — being
     # variant-grained, it could only refuse the whole variant, so it went on
     # holding graded claims back for an ungraded sibling's sake. That does not
-    # licence publishing unknown truth: the exclusion moved to rung 1b, per
-    # market, and the two assertions below are a PAIR — the absence is only safe
-    # because the rung exists (gotcha #21).
+    # licence publishing unknown truth. It never depended on this arm: an
+    # ungraded outcome has no `resolution_source`, and the truth-eligibility
+    # allowlist in `ranked_outcomes` refuses it. CERT-520 measured it — all 2,536
+    # production rows with a NULL `is_winner` also have a NULL source — after
+    # CAL-P156 briefly added a redundant rung for them (gotcha #21).
     assert "ungraded_lone_claims = 0" not in body, (
         "the fail-closed residue is back in the arm; a graded lone claim is "
         "again waiting on a sibling market's grade state (CERT-514 [P1])"
     )
-    assert "ungraded_lone_claim_markets AS (" in sql, (
-        "the arm stopped refusing ungraded lone claims and rung 1b is not "
-        "there to catch them — that is a straight relaxation, and every "
-        "ungraded lone claim would publish as a confident loss"
+    assert "ungraded_lone_claim_markets" not in sql, (
+        "a rung keyed on `is_winner IS NULL` is back. CERT-520: it selects a "
+        "cohort truth eligibility has already removed, so it is dead code and a "
+        "fourth definition of 'graded' in this module"
     )
 
 
@@ -120,46 +122,10 @@ def test_rung_one_still_exempts_the_one_outcome_market():
 
     assert market_has_no_winner_authority(2, 0) is True
     assert market_has_no_winner_authority(9, 0) is True
-    # The lone claim. Rung 1 says "not an authority failure" — and since
-    # CERT-514 it is rung 1b that answers for this shape instead.
+    # The lone claim. Rung 1 says "not an authority failure", and nothing else
+    # here answers for the shape either: if it was never graded it has no
+    # resolution_source and truth eligibility removed it upstream (CERT-520).
     assert market_has_no_winner_authority(1, 0) is False
-
-
-def test_rung_1b_takes_exactly_the_shape_rung_1_declines():
-    """The two rungs must PARTITION the unknown-truth space, not overlap it.
-
-    Rung 1b is rung 1's complement. Asserted against rung 1 in the same test so
-    a future widening of either cannot open a gap or a double-count between
-    them: at ``n_outcomes >= 2`` rung 1 answers and rung 1b must stay silent; at
-    exactly one outcome rung 1 abstains and rung 1b answers.
-    """
-    from app.tasks.precompute_calibration import (
-        market_has_no_winner_authority,
-        market_is_ungraded_lone_claim,
-    )
-
-    # The lone claim nothing ever graded — rung 1b's whole population.
-    assert market_is_ungraded_lone_claim(1, 0) is True
-
-    # 🔴 THE CASE THE WHOLE REPAIR TURNS ON. A one-outcome market that WAS
-    # graded is a complete, scoreable prediction whether it won or lost, and
-    # rung 1b must not touch it. If this ever returns True the rung is keying on
-    # winner cardinality instead of on an affirmative grade, and every honest
-    # lone claim that resolved No leaves the curve.
-    assert market_is_ungraded_lone_claim(1, 1) is False
-
-    # Multi-outcome markets belong to rung 1, at any grade count.
-    for n_outcomes in (2, 3, 9):
-        for n_graded in (0, 1, n_outcomes):
-            assert market_is_ungraded_lone_claim(n_outcomes, n_graded) is False, (
-                f"rung 1b reached a {n_outcomes}-outcome market; that is rung "
-                f"1's population and admitting both double-counts the exclusion"
-            )
-
-    # And the complement holds in the other direction: the one shape rung 1b
-    # owns is exactly the one rung 1 declines.
-    assert market_has_no_winner_authority(1, 0) is False
-    assert market_is_ungraded_lone_claim(1, 0) is True
 
 
 def test_orphan_partition_still_requires_a_declared_field():
@@ -194,8 +160,9 @@ def test_a_graded_lone_claim_is_the_defect_arm_however_many_share_its_variant(
 
 @pytest.mark.parametrize("glc,why", [
     (0, "no graded lone claim at all — a multi-outcome vm that graded nobody, "
-        "or lone claims nothing ever graded. Either way rung 1 / rung 1b owns "
-        "it and this instrument must never report it as the defect"),
+        "or lone claims nothing ever graded. Either way rung 1 or truth "
+        "eligibility owns it and this instrument must never report it as the "
+        "defect"),
 ])
 def test_everything_else_is_the_other_arm(glc, why):
     assert mlc.classify_vm(glc) == mlc.ARM_OTHER, why
@@ -213,8 +180,9 @@ def test_an_ungraded_sibling_no_longer_moves_a_graded_claim_out_of_the_arm(ulc):
     be measuring two different populations, which is the failure this file's
     own ``test_the_kept_statement_reads_the_published_population`` guards.
 
-    The ungraded siblings are still excluded — by rung 1b, per market, one CTE
-    later. They are simply no longer a reason to refuse the variant.
+    The ungraded siblings are still excluded — by truth eligibility, which
+    refuses any outcome without a resolution source. They are simply no longer a
+    reason to refuse the whole variant.
     """
     for glc in (1, 3):
         assert mlc.classify_vm(glc) == mlc.ARM_LONE, (

@@ -49,18 +49,23 @@ variant-grained, so that conjunct could only refuse the WHOLE variant — and a
 graded lone claim's publication therefore still depended on a SIBLING market's
 grade state, which is the coupling option A was chosen to remove.
 
-The refusal itself was never in question, only where it happens. It now lives in
-the producer's **rung 1b** (``ungraded_lone_claim_markets``), which removes an
-ungraded lone claim at MARKET grain, so the arm no longer has to. That makes the
-two facts below a PAIR, and this suite asserts them as one:
+🔴 AND THE REFUSAL DID NOT NEED TO MOVE ANYWHERE, WHICH TOOK A SECOND BLOCK TO
+ESTABLISH. CAL-P156 first replaced the conjunct with a new "rung 1b" on
+``is_winner IS NULL``. CERT-520 blocked that and the measurement is decisive: of
+3,893,126 production outcomes only **2,536** have ``is_winner IS NULL``, and
+**every one of them also has ``resolution_source IS NULL``**. The truth-
+eligibility allowlist in ``ranked_outcomes`` had therefore already excluded all
+of them — the rung was dead code, and its census would have published a
+permanent zero.
 
-* the arm carries no variant-wide conjunct beside ``graded_lone_claims >= 1``
-  (:func:`assert_repaired_population` clause 4b), and
-* rung 1b exists, keys on ``graded_count = 0``, and is applied (clause 4c).
-
-Either alone is a bug. Clause 4b without 4c is a straight relaxation that
-publishes unknown truth as losses; 4c without 4b keeps the coupling the cert
-blocked. Nothing in this file should ever assert one without the other.
+So the premise both CAL-P155 and CAL-P156 reasoned from — "a single-outcome
+member nothing ever graded has NO rung to catch it" — was simply false. It has
+one, and always did: an ungraded outcome carries no ``resolution_source`` and is
+refused by truth eligibility, this repository's canonical grade authority
+(``calibration_graded_share.GRADED_PREDICATE = "fo.resolution_source IS NOT
+NULL"``). **Removing the conjunct is the entire fix.** Clause 4b pins its
+absence; nothing replaces it, and this file must not grow a clause asserting
+that something does.
 """
 
 from __future__ import annotations
@@ -128,8 +133,13 @@ def _cte_body(sql: str, name: str) -> str:
     """
     from app.utils.sql_comment_strip import strip_sql_comments
 
-    assert f"{name} AS (" in sql, f"{name} is gone from the population chain"
-    return strip_sql_comments(sql.split(f"{name} AS (", 1)[1].split(_CTE_END, 1)[0])
+    # `AS (` or `AS MATERIALIZED (` — `ranked_outcomes` is the latter, and a
+    # helper that only knew the first reported it "gone from the population
+    # chain", which is a confusing way to say "I do not understand this CTE".
+    for opener in (f"{name} AS (", f"{name} AS MATERIALIZED ("):
+        if opener in sql:
+            return strip_sql_comments(sql.split(opener, 1)[1].split(_CTE_END, 1)[0])
+    raise AssertionError(f"{name} is gone from the population chain")
 
 
 def assert_repaired_population(sql: str) -> None:
@@ -182,50 +192,31 @@ def assert_repaired_population(sql: str) -> None:
     assert "ungraded_lone_claims = 0" not in gate, (
         "the fail-closed residue is back: a graded lone claim is again waiting "
         "on a SIBLING market's grade state, which is what CERT-514 blocked. "
-        "Unknown truth leaves at market grain now, via rung 1b — not by "
-        "refusing the whole variant."
+        "It does not need replacing — an ungraded outcome has no "
+        "resolution_source and truth eligibility already refuses it (CERT-520)."
     )
 
-    # 4c. …and it leaves at market grain instead. Rung 1b is the ONLY thing
-    #     standing between an ungraded lone claim and the curve now that the arm
-    #     admits its variant, so clause 4b without this one would be a straight
-    #     relaxation. Both halves of the exchange, asserted together.
-    ulc = _cte_body(sql, "ungraded_lone_claim_markets")
-    assert "n_outcomes = 1" in ulc and "graded_count = 0" in ulc, (
-        "rung 1b must key on a one-outcome market with ZERO affirmative grades. "
-        "Winner cardinality cannot decide this shape — at one outcome 'nobody "
-        "won' is the ordinary result of a claim that resolved No."
+    # 4c. 🔴 AND NOTHING TOOK ITS PLACE — asserted, because the tempting repair
+    #     is to add one. CAL-P156 did exactly that and CERT-520 blocked it: a
+    #     rung keyed on `is_winner IS NULL` selects a 2,536-row production cohort
+    #     that the eligibility filter has ALREADY removed (all 2,536 also have
+    #     `resolution_source IS NULL`), so it is dead code that publishes a
+    #     permanent zero and introduces a FOURTH definition of "graded" in a
+    #     module whose sibling already warns about exactly that
+    #     (`calibration_graded_share.GRADED_PREDICATE`).
+    assert "ungraded_lone_claim_markets" not in sql, (
+        "a rung on `is_winner IS NULL` is back. It cannot fire: every "
+        "production row with a NULL is_winner also has a NULL resolution_source "
+        "and is refused by truth eligibility before any rung sees it. If the "
+        "ungraded lone-claim class needs COUNTING, that is a census before the "
+        "eligibility filter, not a rung after it (CERT-520 [P2])."
     )
-    # 🔴 SCOPED TO `deduped`, AND MUTATION IS WHY. This began as
-    # `"NOT ro.is_ungraded_lone_claim" in sql` and CAL-P156's battery killed it:
-    # the flag is applied in THREE places (twice in field_completeness' survivor
-    # counts, once in the publish filter), so deleting the ONE that gates the
-    # published curve left the assertion green on its siblings. A containment
-    # check over the whole chain cannot see which call site it matched.
-    # `deduped` is the CTE the curve is read from, so that is where it is pinned.
-    assert "NOT ro.is_ungraded_lone_claim" in _cte_body(sql, "deduped"), (
-        "rung 1b is not applied in `deduped` — the ungraded lone claims the arm "
-        "now admits would publish as confident losses (gotcha #21). Note it may "
-        "still appear in field_completeness; that does not gate the curve."
-    )
-    # And in the field-completeness counts, where a partial field must be
-    # dropped whole rather than normalized over survivors. Separate assertion,
-    # separate failure message — one site is not evidence about the other.
-    assert (
-        _cte_body(sql, "field_completeness").count("NOT ro.is_ungraded_lone_claim")
-        == 2
-    ), (
-        "rung 1b must be excluded from BOTH survivor counts, or a field that "
-        "loses a member to it normalizes over the survivors instead of being "
-        "dropped as PARTIAL"
-    )
-    assert (
-        "COUNT(*) FILTER (WHERE fo.is_winner IS NOT NULL) AS graded_count"
-        in _cte_body(sql, "market_result_shape")
-    ), (
-        "graded_count must be the is_winner-IS-NOT-NULL count. Derived as "
-        "n_outcomes - win_count it would be identically >= 1 for every "
-        "single-outcome market and rung 1b would never fire."
+    # The authority that DOES own the class is still where it always was.
+    assert "resolution_source IN" in _cte_body(sql, "ranked_outcomes"), (
+        "the truth-eligibility allowlist is gone from `ranked_outcomes`. That "
+        "filter — not any rung — is what keeps an ungraded outcome out of the "
+        "curve, and clause 4b's removal of the arm conjunct is only safe "
+        "because of it."
     )
 
     # 5. The two counts are PER MARKET and mean what the arm needs.
@@ -319,13 +310,15 @@ def test_an_ungraded_SIBLING_no_longer_refuses_a_graded_claim(ulc):
     state and that is the exact coupling Alex's option A removes. A narrower
     version of the defect is still the defect.
 
-    The refusal was never wrong, only its GRAIN — admission is variant-wide, so
-    a conjunct here could only ever refuse every graded claim in the variant
-    along with the one ungraded row it was aimed at. Unknown truth now leaves at
-    market grain, in the producer's rung 1b, which
-    ``assert_repaired_population`` clause 4c pins in the same breath as the
-    absence of this conjunct. Neither half is safe alone: without 4c this is a
-    straight relaxation that publishes unknown truth as confident losses.
+    The conjunct could only ever refuse every graded claim in the variant along
+    with the one ungraded row it was aimed at, because admission is variant-wide.
+
+    And nothing replaces it. Unknown truth never depended on this arm: an
+    ungraded outcome carries no ``resolution_source`` and the eligibility
+    allowlist refuses it before ``deduped`` is reached. ``assert_repaired_
+    population`` clause 4c pins BOTH halves of that — no replacement rung, and
+    the allowlist still present — because the tempting bad fix here is to add a
+    rung on ``is_winner IS NULL``, which CERT-520 proved is dead code.
     """
     assert mlc.lone_claim_is_restorable(1) is True, (
         f"a graded lone claim was refused because {ulc} ungraded lone claim(s) "
