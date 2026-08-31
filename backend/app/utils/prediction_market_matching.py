@@ -1272,6 +1272,55 @@ def kalshi_match_segment_key(external_id: Optional[str]) -> Optional[str]:
     return f"{sport_key}:{game_id}"
 
 
+def kalshi_game_twin_key(external_id: Optional[str]) -> Optional[str]:
+    """Kalshi's OWN key for one fixture, qualified by sport — for ANY sport.
+
+    Q476. ``kalshi_match_segment_key`` above answers the same question for
+    tennis only, because Q435 measured tennis and would not generalise on an
+    unmeasured tour. This function is that key without the tour restriction, and
+    it exists because the identical shape was then measured everywhere else:
+
+        KXEPLBTTS-26AUG30SUNFUL      both teams to score
+        KXEPLFTTS-26AUG30SUNFUL      first team to score
+        KXEPLSCORE-26AUG30SUNFUL     correct score
+        KXEPL1HSPREAD-26AUG30SUNFUL  first-half spread
+
+    ``26AUG30SUNFUL`` is Kalshi's own fixture token and is IDENTICAL across all
+    four. Every one of them returns ``"soccer_epl:26AUG30SUNFUL"``.
+
+    **Why this is arm A and not a heuristic.** The token is READ out of the
+    provider's ticker — same source, same key, parsed. No name is compared and no
+    time window is opened. Two markets returning the same value are the same
+    fixture because Kalshi says so (ruling 048 arm A, the wording
+    ``kalshi_match_segment_key`` already carries).
+
+    **Why the sport qualifier is load-bearing.** A bare ``kalshi_game_id`` token
+    must never key anything (``kalshi_anchor_key``'s second verbatim constraint,
+    Alex 2026-08-21): ``26AUG30SUNFUL`` is a string, and two sports minting the
+    same date+letters would collide silently. ``None`` when the sport does not
+    resolve, for the same reason.
+
+    **What it does NOT authorize.** This keys a market to a market. It is not an
+    event anchor, it writes nothing, and — exactly as for tennis — it must never
+    become one: the ``id_kind`` rules in ``provider_anchor_keys`` are unchanged by
+    this function's existence. Season futures are excluded for free rather than by
+    a second predicate, because ``kalshi_game_id`` finds no fixture token in one
+    (``KXEPLTOP4-26`` → ``None``); the CERT-409 hazard of promoting a date-shaped
+    futures ticker is therefore not reachable from here.
+    """
+    if not external_id:
+        return None
+    from app.utils.sport_keys import get_sport_key_from_ticker
+
+    sport_key = get_sport_key_from_ticker(external_id)
+    if not sport_key:
+        return None
+    game_id = kalshi_game_id(external_id)
+    if not game_id:
+        return None
+    return f"{sport_key}:{game_id}"
+
+
 # The Kalshi tennis series that price the MATCH ITSELF — who wins it. Everything
 # else carrying a match segment (set winners, exact score, game totals, game and
 # set handicaps) is a PROP *about* a match, and a prop is not evidence that a

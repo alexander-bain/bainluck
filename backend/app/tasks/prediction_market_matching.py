@@ -1431,6 +1431,214 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
         return stats
 
 
+#: How far back the twin drain looks, and it is a COST bound, not a coverage one.
+#:
+#: 🔴 **7 IS NOT A ROUND NUMBER — IT IS THE LAST VALUE BEFORE THE PLANNER FLIPS.**
+#: Measured on production 2026-08-31 with `EXPLAIN (ANALYZE, BUFFERS)` over the
+#: exact statement below, reading the ROOT node's blocks (summing the plan tree
+#: multiplies by depth and invents a regression that scales with nesting):
+#:
+#:     window   root blocks   rows
+#:      2 days       20,516   1,723
+#:      3 days       24,535   2,709
+#:      7 days       53,320   5,069   <- 53,317 / 53,320 / 53,323 over three reps
+#:     14 days      277,016   8,215
+#:     21 days      270,247  12,000
+#:
+#: 277k is the sequential scan of `futures_markets`, and it is a CLIFF rather
+#: than a slope: it costs the same at 14 days, at 21 days, and at a
+#: `-16d..+60d` band that would have covered both rails whole. Past 7 days the
+#: planner stops probing by `event_id` and reads the table. At 96 runs a day that
+#: is ~26 GB of buffer traffic against a database already at 103% of its plan —
+#: it would evict the cache many times an hour to tag rows that are already
+#: tagged.
+#:
+#: **Why a rolling 7 days still covers the RESULTS rail whole.** The tag is
+#: PERMANENT and `_tag_duplicate_of` is a write-on-change no-op, so a fixture only
+#: has to be seen ONCE. Every fixture passes through this window on its way to
+#: `RESULTS_LOOKBACK_DAYS = 14`, so in steady state a twin is tagged days before
+#: the results rail can render it.
+#:
+#: **What it does NOT cover, stated rather than implied:** (1) the UPCOMING rail
+#: reaches 51 days out (measured), so a twin on a distant fixture stays visible
+#: until that fixture comes within 7 days; (2) the backlog already older than 7
+#: days at deploy is never tagged and simply ages out of the 14-day results
+#: window. Getting both would need the drain driven off ticker-derived events
+#: (33,394 blocks, no time window) plus a per-(sport, day) sibling read — 64 such
+#: pairs exist, so it is tractable — and that is parked, not forgotten.
+TWIN_DRAIN_LOOKBACK_DAYS = 7
+
+#: Hard cap on Kalshi rows pulled for the twin drain, same posture as
+#: `MAX_KALSHI_SEGMENT_ROWS`. The window above is what actually bounds this
+#: (5,069 rows measured); the cap is here so a Kalshi series explosion cannot
+#: turn a bounded scan into an unbounded one. Rows are ordered by event
+#: commence_time DESC so the cap, when it bites, drops the OLDEST fixtures — the
+#: ones furthest from a rail.
+MAX_KALSHI_TWIN_ROWS = 12000
+
+
+async def _drain_kalshi_token_twins(session, now: datetime) -> dict:
+    """Q476: tag every event Kalshi's own fixture token proves is a duplicate.
+
+    ═══ THE DEFECT THIS CLOSES ═══
+
+    `/api/leagues/soccer_epl` on production 2026-08-31 returned EIGHT recent
+    results for FOUR games. Four cards carried a real scoreline; four were the
+    same four fixtures again at `00:00:00` with no score at all:
+
+        15290890  Manchester United v Ipswich Town  15:30Z  espn           5-2
+        15298940  Manchester United v Ipswich Town  00:00Z  kalshi_ticker  -
+        15290898  Sunderland v Fulham               13:00Z  espn           1-0
+        15298364  Sunderland v Fulham               00:00Z  kalshi_ticker  -
+        15299046  Sunderland AFC v Fulham FC        00:00Z  kalshi_ticker  -
+
+    Half of a flagship league page's "recent results" were results with no
+    result. `Sunderland v Fulham` printed three times, once under a different
+    name for the same two clubs — so a name key does not collapse them either.
+
+    ═══ WHY THE ROWS EXIST ═══
+
+    Kalshi prices one football match through many of its own events, one per
+    series (`KXEPLBTTS`, `KXEPLFTTS`, `KXEPLSCORE`, `KXEPL1HSPREAD`, …). Each
+    arrives as a separate id-less claim, and an id-less claim never absorbs — it
+    creates (ruling 048, gotcha #32). So each series mints its own event, at
+    midnight UTC because the ticker carries a date and no kick-off. Measured
+    across every league on 2026-08-31: **1,484 Kalshi fixture tokens are split
+    across 4,354 event rows — 2,870 excess rows in a 30-day window.**
+
+    ═══ WHY THIS IS ARM A, AND NOT THE LOOSENING RULING 048 FORBIDS ═══
+
+    Every one of those tickers carries the SAME fixture token, and so does a
+    market already sitting on the real row — measured, all four pairs:
+
+        26AUG30MUNIPS   -> 15290890 (espn, 5-2)  AND  15298940 (ticker, no score)
+        26AUG30SUNFUL   -> 15290898 (espn, 1-0)  AND  15298364, 15299046
+        26AUG30CFCBRI   -> 15290743 (espn, 4-3)  AND  15297751
+
+    That is a shared provider id ON the candidate, read out of the provider's own
+    ticker: arm A, the same evidence `_reconcile_kalshi_match_segments` acts on
+    for tennis, in the same words. No name is compared. No time window is opened.
+    Nothing is absorbed, repointed or deleted — this writes a LABEL, the one
+    `_tag_duplicate_of` already defines, and both rows stay addressable.
+
+    ═══ THE SAFETY INVARIANT, WHICH IS THE WHOLE ARGUMENT ═══
+
+    **A schedule-derived event is never tagged.** The survivor is chosen by
+    `_choose_segment_event` — the existing helper, unmodified — which hands back
+    a row only when EXACTLY ONE candidate came from a real schedule and refuses
+    outright otherwise. So every tagged row is a `kalshi_ticker` auto-create, and
+    the failure direction with no trace on the page (hiding a real game) is not
+    reachable: a real game has a schedule-derived row, and that row cannot be the
+    loser. The invariant is re-asserted below on every single tag rather than
+    inferred from the chooser, because a guard that reads an invariant out of a
+    helper's docstring goes vacuous the day the helper changes.
+
+    Refusal cases, all counted rather than silently skipped:
+
+    * **one candidate** — the overwhelmingly common case. Nothing to reconcile.
+    * **ambiguous** — two ticker-derived twins with no schedule-derived row, or
+      two schedule-derived rows (a genuine doubleheader whose ticker carries no
+      HHMM). Both are coin flips dressed as reconciliation. Nothing moves.
+
+    Idempotent: `_tag_duplicate_of`'s `NOT @>` predicate makes the re-tag a no-op
+    in the database, so this runs every 15 minutes and writes only on change.
+    """
+    from app.models.models import FuturesMarket, Event
+    from app.services.event_registry import _tag_duplicate_of
+    from app.utils.prediction_market_matching import kalshi_game_twin_key
+
+    stats = {
+        "candidates": 0, "tokens": 0, "split_tokens": 0,
+        "tagged": 0, "ambiguous": 0, "refused_schedule_derived": 0,
+    }
+    try:
+        rows = (
+            await session.execute(
+                select(
+                    FuturesMarket.external_id,
+                    FuturesMarket.event_id,
+                    Event.commence_time_source,
+                    Event.commence_time,
+                )
+                .join(Event, Event.id == FuturesMarket.event_id)
+                .where(
+                    FuturesMarket.source == "kalshi",
+                    FuturesMarket.event_id.isnot(None),
+                    Event.commence_time
+                    >= now - timedelta(days=TWIN_DRAIN_LOOKBACK_DAYS),
+                )
+                .order_by(Event.commence_time.desc())
+                .limit(MAX_KALSHI_TWIN_ROWS)
+            )
+        ).all()
+        stats["candidates"] = len(rows)
+
+        # ONE definition of "same fixture" — the pure helper, in Python. The
+        # census that sized this defect ran the equivalent extraction in SQL and
+        # was checked against this function on 537 real production tickers (0
+        # mismatches) precisely because a second definition is how the two drift.
+        tokens: dict[str, set] = {}
+        provenance: dict[int, str] = {}
+        for external_id, event_id, source, _commence in rows:
+            key = kalshi_game_twin_key(external_id)
+            if not key or not event_id:
+                continue
+            tokens.setdefault(key, set()).add(int(event_id))
+            provenance[int(event_id)] = source
+        stats["tokens"] = len(tokens)
+
+        for key, event_ids in tokens.items():
+            if len(event_ids) < 2:
+                continue
+            stats["split_tokens"] += 1
+            survivor, reason = _choose_segment_event(event_ids, provenance)
+            if survivor is None:
+                stats["ambiguous" if reason == "ambiguous" else "no_anchor"] = (
+                    stats.get(
+                        "ambiguous" if reason == "ambiguous" else "no_anchor", 0
+                    )
+                    + 1
+                )
+                continue
+            for loser in sorted(event_ids - {survivor}):
+                # The invariant, executed. `_choose_segment_event` returning a
+                # survivor already implies every loser is ticker-derived, but
+                # this is the line that has to be true for the page to be safe,
+                # so it is checked here where the write happens rather than
+                # trusted from one frame up.
+                if provenance.get(loser) != _TICKER_DERIVED_COMMENCE_SOURCE:
+                    stats["refused_schedule_derived"] += 1
+                    logger.error(
+                        "Q476 REFUSED: token %s would tag event %s "
+                        "(commence_time_source=%r) as a duplicate of %s, but only "
+                        "a ticker-derived row may ever be tagged",
+                        key, loser, provenance.get(loser), survivor,
+                    )
+                    continue
+                await _tag_duplicate_of(session, loser, survivor)
+                stats["tagged"] += 1
+
+        if stats["tagged"]:
+            await session.commit()
+        logger.info(
+            "Kalshi fixture-token twin drain (Q476): %d tagged across %d split "
+            "tokens of %d (%d ambiguous, %d refused, %d rows scanned)",
+            stats["tagged"], stats["split_tokens"], stats["tokens"],
+            stats.get("ambiguous", 0), stats["refused_schedule_derived"],
+            stats["candidates"],
+        )
+        return stats
+    except Exception as e:
+        logger.error("Kalshi fixture-token twin drain error: %s", e)
+        # Same posture as the Q435 reconcile above: an aborted transaction must
+        # not poison the shared session for the caller's next phase.
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        return stats
+
+
 async def _phase15_revalidate(
     session, stats: dict, now: datetime, _time_remaining,
 ) -> None:
@@ -1751,6 +1959,16 @@ async def _match_prediction_markets(limit: int = 500):
         # correct-date event is already where its segment siblings can see it.
         stats["funnel"]["kalshi_segment_reconcile"] = (
             await _reconcile_kalshi_match_segments(session)
+        )
+
+        # Q476: tag the event rows Kalshi's own fixture token proves are
+        # duplicates, so a league rail stops printing a game we already know the
+        # score of, twice. Runs LAST of the three reconcilers: both passes above
+        # move `event_id`, and this one reads those links to decide which rows are
+        # twins — reading them before they settle would tag against a link this
+        # very run is about to change.
+        stats["funnel"]["kalshi_token_twin_drain"] = (
+            await _drain_kalshi_token_twins(session, now)
         )
 
         # ── Phase 2: Write win_prob_snapshots for active linked markets ────
