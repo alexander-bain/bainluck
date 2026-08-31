@@ -76,18 +76,18 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         ROUTE,
         "revert the outcome branch to the 41-way OR — the 13,107 ms plan",
         "        branches.append((_BRANCH_OUTCOME_NAME, "
-        "FuturesOutcome.name.ilike(any_(_pats))))",
+        "_ilike_any(FuturesOutcome.name, _team_pats)))",
         "        branches.append((_BRANCH_OUTCOME_NAME, "
-        "or_(*[FuturesOutcome.name.ilike(p) for p in _name_pats])))",
+        "or_(*[FuturesOutcome.name.ilike(p) for p in _team_pats])))",
     ),
     (
         "M2",
         ROUTE,
         "revert the market branch to the 41-way OR — the 2,990 ms plan",
         "        branches.append((_BRANCH_MARKET_NAME, "
-        "FuturesMarket.name.ilike(any_(_pats))))",
+        "_ilike_any(FuturesMarket.name, _team_pats)))",
         "        branches.append((_BRANCH_MARKET_NAME, "
-        "or_(*[FuturesMarket.name.ilike(p) for p in _name_pats])))",
+        "or_(*[FuturesMarket.name.ilike(p) for p in _team_pats])))",
     ),
     # -- the predicate: go faster by answering less ---------------------------
     (
@@ -95,18 +95,20 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         ROUTE,
         "drop every roster pattern — 41 probes become 1 and the player props go "
         "with them. The endpoint gets 13 seconds faster and stops being correct.",
-        """    for player in _roster_player_names(team):
-        _name_pats.append(f"%{_escape_like(player)}%")""",
-        """    for player in []:
-        _name_pats.append(f"%{_escape_like(player)}%")""",
+        """    _roster_pats: list[str] = [
+        f"%{_escape_like(player)}%" for player in _roster_player_names(team)
+    ]""",
+        """    _roster_pats: list[str] = [
+        f"%{_escape_like(player)}%" for player in []
+    ]""",
     ),
     (
         "M4",
         ROUTE,
         "stop escaping LIKE metacharacters — a team called `100%` then matches "
         "the whole table",
-        '        _name_pats.append(f"%{_escape_like(team.name.strip())}%")',
-        '        _name_pats.append(f"%{team.name.strip()}%")',
+        '        _team_pats.append(f"%{_escape_like(team.name.strip())}%")',
+        '        _team_pats.append(f"%{team.name.strip()}%")',
     ),
     (
         "M5",

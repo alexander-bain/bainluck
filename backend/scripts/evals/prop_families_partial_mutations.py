@@ -110,7 +110,7 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M3",
         "ANY loss is unusable again — the pre-P145 whole-request degrade",
-        """    if len(lost) == len(branches):
+        """    if len(lost) + len(deferred) == len(branches):
         return _payload([]), True""",
         """    if lost:
         return _payload([]), True""",
@@ -119,7 +119,7 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M4",
         "set the timeout once, before the loop — branches 2 and 3 run unbounded",
-        """            await db.execute(text(f"SET LOCAL statement_timeout = '{_BRANCH_TIMEOUT_MS}'"))
+        """            await db.execute(text(f"SET LOCAL statement_timeout = '{_timeout_ms}'"))
             _result = (await db.execute(_branch(_cond))).all()""",
         """            _result = (await db.execute(_branch(_cond))).all()""",
         ROUTE,
@@ -200,10 +200,12 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M14",
         "a total loss is served as a normal build — an empty page grows an envelope",
-        """    payload, degraded = await build_and_cache_prop_families(team, db, cap, rc)
-    if degraded:""",
-        """    payload, degraded = await build_and_cache_prop_families(team, db, cap, rc)
-    if False:""",
+        """    payload, degraded = await build_and_cache_prop_families(
+        team, db, cap, rc, budget_ms=_READER_BUDGET_MS
+    )""",
+        """    payload, degraded = await build_and_cache_prop_families(
+        team, db, cap, rc, budget_ms=None
+    )""",
         ROUTE,
     ),
     (
