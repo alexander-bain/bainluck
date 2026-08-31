@@ -70,10 +70,32 @@ function render(market: unknown, id: string): string {
   return renderToStaticMarkup(<FuturesDetailPage params={{ id }} />);
 }
 
+/**
+ * Drop markup tags, leaving text.
+ *
+ * 🔴 A CHARACTER SCAN, NOT `replace(/<[^>]*>/g, "")`. CodeQL flagged the regex form
+ * as **high severity** `js/incomplete-multi-character-sanitization`, and it is right
+ * about the shape: a single-pass tag strip is the classic incomplete sanitizer,
+ * because one pass over `<<a>script>` leaves a tag behind. Nothing untrusted flows
+ * through this helper — it reads our own SSR output inside a test — but a new high
+ * alert is a real CI gate, and "it is only a test" is not a reason to ship the
+ * pattern people copy. A scan cannot be defeated by nesting.
+ */
+function stripTags(html: string): string {
+  let out = "";
+  let inTag = false;
+  for (const ch of html) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out;
+}
+
 /** Text content of the element carrying a given `data-testid`, tags stripped. */
 function testIdText(html: string, id: string): string | null {
   const m = new RegExp(`data-testid="${id}"[^>]*>([\\s\\S]*?)</`).exec(html);
-  return m ? m[1].replace(/<[^>]*>/g, "").trim() : null;
+  return m ? stripTags(m[1]).trim() : null;
 }
 
 /**
