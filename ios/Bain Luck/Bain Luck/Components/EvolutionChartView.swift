@@ -620,7 +620,8 @@ struct EvolutionChartView: View {
                 let isSelected = effectiveSelected.contains(outcome.name)
                 let isHighlighted = highlightedName == nil || highlightedName == outcome.name
                 let color = colorForOutcome(name: outcome.name, index: index)
-                let probPct = (outcome.currentProbability ?? 0) * 100
+                let probability = outcome.currentProbability
+                let probPct = (probability ?? 0) * 100
                 let changePct = (outcome.probabilityChange24h ?? 0) * 100
 
                 Button {
@@ -669,14 +670,18 @@ struct EvolutionChartView: View {
                                 ZStack(alignment: .leading) {
                                     RoundedRectangle(cornerRadius: 2)
                                         .fill(Color.barTrack.opacity(0.3))
-                                    RoundedRectangle(cornerRadius: 2)
-                                        .fill(color.opacity(0.6))
-                                        .frame(width: geo.size.width * min(1, probPct / 100))
+                                    if probability != nil {
+                                        RoundedRectangle(cornerRadius: 2)
+                                            .fill(color.opacity(0.6))
+                                            .frame(width: geo.size.width * min(1, probPct / 100))
+                                    }
                                 }
                             }
                             .frame(width: 24, height: 4)
 
-                            Text(probPct < 1 && probPct > 0
+                            Text(probability == nil
+                                 ? "—"
+                                 : probPct < 1 && probPct > 0
                                  ? String(format: "%.1f%%", probPct)
                                  : "\(Int(probPct.rounded()))%")
                                 .font(.subheadline)

@@ -262,14 +262,16 @@ struct NativeFuturesDiscoverCard: View {
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(Color.secondary.opacity(0.12))
-                    Capsule()
-                        .fill(isLeader ? Color.blue : Color.secondary.opacity(0.35))
-                        .frame(width: max(3, geo.size.width * (outcome.probability ?? 0)))
+                    if let probability = outcome.probability {
+                        Capsule()
+                            .fill(isLeader ? Color.blue : Color.secondary.opacity(0.35))
+                            .frame(width: max(3, geo.size.width * probability))
+                    }
                 }
             }
             .frame(height: 7)
 
-            Text("\(Int(((outcome.probability ?? 0) * 100).rounded()))%")
+            Text(outcome.probability.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
                 .font(.caption.weight(.bold).monospacedDigit())
                 .frame(width: 34, alignment: .trailing)
         }

@@ -1641,7 +1641,10 @@ private struct NativeIPOComparisonRow: View {
     }
 
     private func comparisonSummary(title: String, point: FeedDiscoverThresholdPoint?, emphasized: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        // The label already renders "-" when there is no point to describe; the
+        // percent used to disagree with it and claim 0%.
+        let probability: Double? = point?.probability
+        return VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.secondary)
@@ -1651,7 +1654,7 @@ private struct NativeIPOComparisonRow: View {
                 .foregroundStyle(emphasized ? .primary : .secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.76)
-            Text("\(Int(((point?.probability ?? 0) * 100).rounded()))%")
+            Text(probability.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
                 .font(.subheadline.weight(.black).monospacedDigit())
         }
     }
@@ -1687,7 +1690,7 @@ private struct NativeThresholdComparisonRow: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
-                        Text("\(Int(((point.probability ?? 0) * 100).rounded()))%")
+                        Text(point.probability.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
                             .font(.caption.weight(.black).monospacedDigit())
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1718,7 +1721,7 @@ private struct NativeCompactFuturesRow: View {
                 }
                 Spacer()
                 if let leader = data.topOutcomes?.first {
-                    Text("\(Int(((leader.probability ?? 0) * 100).rounded()))%")
+                    Text(leader.probability.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
                         .font(.subheadline.weight(.black).monospacedDigit())
                     MovementBadge(movement: leader.movement)
                 }

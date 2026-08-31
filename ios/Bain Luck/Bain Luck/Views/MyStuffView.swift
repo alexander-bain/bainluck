@@ -853,7 +853,8 @@ private struct PlayoffJourneyCard: View {
 
             // Stage rows
             ForEach(journey.stages, id: \.order) { stage in
-                let prob = stage.merged.avgProbability ?? 0
+                let probability = stage.merged.avgProbability
+                let prob = probability ?? 0
                 let achieved = prob >= 0.99
 
                 Button {
@@ -876,17 +877,19 @@ private struct PlayoffJourneyCard: View {
                             ZStack(alignment: .leading) {
                                 Capsule()
                                     .fill(Color.secondary.opacity(0.15))
-                                Capsule()
-                                    .fill(achieved
-                                          ? Color.green
-                                          : Color(hex: journey.teamColor ?? "#6b7280").opacity(0.5))
-                                    .frame(width: geo.size.width * min(prob, 1.0))
+                                if probability != nil {
+                                    Capsule()
+                                        .fill(achieved
+                                              ? Color.green
+                                              : Color(hex: journey.teamColor ?? "#6b7280").opacity(0.5))
+                                        .frame(width: geo.size.width * min(prob, 1.0))
+                                }
                             }
                         }
                         .frame(width: 40, height: 4)
 
                         // Probability value
-                        Text(achieved ? "done" : formatProbability(prob))
+                        Text(achieved ? "done" : probability.map { formatProbability($0) } ?? "—")
                             .font(.system(.caption, design: .monospaced))
                             .fontWeight(.medium)
                             .foregroundStyle(probTextColor(prob, achieved: achieved))
