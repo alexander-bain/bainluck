@@ -58,6 +58,7 @@ import {
   ALL_COPY_BANS,
   ATTRIBUTION_LITERALS,
   FUTURE_PROMISE_BANS,
+  HISTORY_CLAIM_BANS,
   VENUE_BANS,
   clauseAround,
   expandJsonPayload,
@@ -261,6 +262,115 @@ describe("the rules reject the copy Alex read on production", () => {
       expect(findBannedCopy(q, FUTURE_PROMISE_BANS)).toEqual([]);
     }
   });
+
+  /**
+   * ═══ CERT-537 — OUR VOICE MAY NOT SETTLE A QUESTION ABOUT ALL OF HISTORY ═══
+   *
+   * `HISTORY_CLAIM_BANS` is the newest group and the only one whose authority
+   * is a graded cert rather than an Alex ruling, so it is pinned harder than
+   * the others: the blocked sentences on one side, the shipped replacements on
+   * the other, and — because this rule lives one word away from vocabulary the
+   * product genuinely needs — a third list of TRUE past-tense copy that must
+   * survive it.
+   *
+   * The reasoning for the line it draws is in `lib/copyBans.ts`. The short
+   * version: an absolute quantifier over our receipt of a number is
+   * unsupportable in every wire shape, so a text scan can judge it; "…yet" is
+   * conditionally true, so a component judges it by reading `observed_at`.
+   */
+  describe("an absolute claim about all of history is rejected", () => {
+    const HISTORY_CLAIMS: [string, RegExp][] = [
+      // Verbatim, UX-P211 as shipped to CERT-537. Both halves of the sentence
+      // are independently banned, which is why the ban ids are asserted rather
+      // than a bare "something fired".
+      [
+        "No number ever reached us for Iga Swiatek, so this comparison was never complete.",
+        /ever-reached-us|no-reading-ever|was-never-complete/,
+      ],
+      ["No number ever reached us for Carlos Alcaraz.", /ever-reached-us/],
+      ["We never received a probability for this question.", /we-never-had/],
+      ["We have never seen a number on this market.", /we-never-had/],
+      ["Nobody ever quoted this match.", /nobody-ever/],
+      ["At no point did a probability arrive for this leg.", /at-no-point/],
+      ["This comparison was never complete.", /was-never-complete/],
+    ];
+
+    it.each(HISTORY_CLAIMS)("rejects %j", (sentence, whyPattern) => {
+      const hits = findBannedCopy(sentence, HISTORY_CLAIM_BANS);
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits.map((h) => h.ban.id).join(" | ")).toMatch(whyPattern);
+    });
+
+    /**
+     * The replacements `incompleteComparisonNote` now emits, pinned as PASSING
+     * beside the sentences they retired. A copy fix that trips a neighbouring
+     * rule is a copy fix that gets reverted, and this group is close enough to
+     * the retired wording that the risk is real rather than theoretical.
+     */
+    const REPLACEMENTS = [
+      "We have no number for Iga Swiatek, so this comparison is not complete and the question has closed.",
+      "We have no number for Carlos Alcaraz yet, so this comparison is not complete.",
+      "We have no number for 3 of the names in it, so this comparison is not complete and the question has closed.",
+    ];
+
+    it.each(REPLACEMENTS)("the shipped replacement passes: %j", (sentence) => {
+      expect(findBannedCopy(sentence)).toEqual([]);
+    });
+
+    /**
+     * ⚠️ THE HALF THIS GROUP DELIBERATELY DOES NOT BAN.
+     *
+     * "…has not reached us yet" is FALSE only when `observed_at` is populated,
+     * which a string cannot know. UX-P212 fixed that where it belongs, in the
+     * component. Pinning it as passing here is not an endorsement of the
+     * sentence — it records that the copy layer is knowingly silent about it,
+     * so a later reader does not "complete" this group by adding the pattern
+     * and discovering, one cert later, that it fires on correct copy.
+     */
+    it("the conditional tense is left to the component, on purpose", () => {
+      expect(
+        findBannedCopy("No number has reached us for Carlos Alcaraz yet.", HISTORY_CLAIM_BANS)
+      ).toEqual([]);
+    });
+
+    /**
+     * The reason this group is six narrow patterns and not `\bnever\b`. Every
+     * string below is real copy in this tree, every one is TRUE and supported
+     * by the data behind it, and a broad rule eats all of them.
+     */
+    const TRUE_PAST_TENSE = [
+      // components/PropDivergence*.tsx — a status a market really has.
+      "settled but never graded",
+      // lib/calibrationCohort.ts — a cohort DEFINED by the fact it states.
+      "Excluded: 412 untraded outcomes, whose price never moved off its opening line.",
+      "that never moved does not prove that it didn't.",
+      // lib/story-content.ts — a product promise, not a claim about our data.
+      "No odds formats, ever. Nothing to deposit, nothing to buy.",
+      // A market question may contain the word; markets write these, not us.
+      "Will Djokovic ever win another major?",
+      // The freshness copy the page really ships: bounded, and about what we
+      // HAVE rather than about all of history.
+      "Updates paused. These are the last probabilities we saw, not live ones.",
+      "No market has put a probability on today's matches.",
+      "Nobody is quoting this match yet. It is in the draw with no probability against it.",
+    ];
+
+    it.each(TRUE_PAST_TENSE)("supported past-tense copy survives: %j", (sentence) => {
+      expect(findBannedCopy(sentence, HISTORY_CLAIM_BANS)).toEqual([]);
+    });
+
+    it("every history rule is reachable — none is dead weight", () => {
+      // The `ALL_COPY_BANS` sweep above proves the ids are well-formed. This
+      // proves each PATTERN can actually fire, which is the property that
+      // decays silently when a regex is edited.
+      for (const ban of HISTORY_CLAIM_BANS) {
+        const fired = HISTORY_CLAIMS.some(([sentence]) =>
+          findBannedCopy(sentence, [ban]).length > 0
+        );
+        expect([ban.id, fired]).toEqual([ban.id, true]);
+      }
+    });
+  });
 });
 
 /* ─────────────────── the extractor, before it is trusted ─────────────────── */
@@ -347,6 +457,45 @@ describe("reading copy back out of minified JavaScript", () => {
       'function O(e){return e.n?"Live number.":"Once the main draw starts, Kalshi lists more of them."}';
     const hits = scanBundleSource("planted.js", planted);
     expect(hits.map((h) => h.ban.id).sort()).toEqual(["once-the", "venue-kalshi"]);
+  });
+
+  /**
+   * CERT-537's sentence, in the shape the bundle would actually carry it.
+   *
+   * The layer-1 pins prove `findBannedCopy` rejects the string. They do NOT
+   * prove the SHIPPED-COPY layer would have caught it, and those are different
+   * claims — the JSON hole above is this file's own worked example of layer 1
+   * passing while layer 2 read nothing. UX-P211's sentence is assembled from a
+   * template literal, so it reaches a chunk SPLIT at its interpolation, which
+   * is exactly the shape a naive plant would miss.
+   *
+   * So the plant is the emitted shape, not the source sentence: the ban has to
+   * fire on a fragment that no longer contains the subject's name. It does,
+   * because "No number ever reached us for " is banned by the quantifier and
+   * not by anything after it — which is the property that makes this group
+   * work on a minified bundle at all.
+   */
+  it("catches UX-P211's history claim in the shape a chunk really carries it", () => {
+    const planted =
+      'function T(e,t){return t?`No number ever reached us for ${e}, so this comparison was never complete.`:`We have no number for ${e} yet.`}';
+    const hits = scanBundleSource("app/tournaments/[slug]/page-0a584f.js", planted);
+    expect(hits.length).toBeGreaterThan(0);
+    // THREE rules fire on one sentence, and that is the intended shape rather
+    // than redundancy: "no number … ever" and "ever reached us" are different
+    // readings of the same quantifier, and "was never complete" is a second,
+    // independent claim in the trailing clause. A sentence that can only be
+    // caught by one pattern is one regex edit away from being served.
+    expect(hits.map((h) => h.ban.id).sort()).toEqual([
+      "ever-reached-us",
+      "no-reading-ever",
+      "was-never-complete",
+    ]);
+    // `app/tournaments` is the one surface with NO entry in OWED, so a hit
+    // there fails the gate outright rather than joining a debt list.
+    expect(hits.every((h) => h.surface === "app/tournaments")).toBe(true);
+    // The replacement half of the same ternary must NOT be a hit, or the guard
+    // would be firing on the chunk rather than on the sentence.
+    expect(hits.every((h) => !h.literal.includes("We have no number for"))).toBe(true);
   });
 });
 
@@ -833,11 +982,22 @@ describe("the built bundle — the bytes Vercel uploads", () => {
     // OWED only. `EXEMPT` is a statement about what the ruling ALLOWS on a
     // surface, not a measurement of what it currently says, so an exemption
     // that stops firing is not stale — it is a page that happened to reword.
-    const live = new Set(scanDir(dir).map((h) => `${h.surface} ${h.ban.id}`));
+    //
+    // ⚠️ THE SEPARATOR IS WRITTEN AS AN ESCAPE, NOT TYPED (UX-P210-3, UX-P213).
+    // It was two RAW NUL bytes until 2026-08-31, and a raw NUL makes the whole
+    // file binary to the tools that read this repo: `grep -c 'ban'` on it
+    // exited 1 — "no match" — against 27 real matches, and `git grep` returned
+    // nothing at all. That is worse than a wrong answer, because a grep that
+    // finds nothing reads exactly like a grep that ran. CERT-507 blocked
+    // `ux-150` partly on a reproduction that came back false HERE for this
+    // reason. NUL is still the right joiner — no surface or rule id can
+    // contain it — so only its spelling changed, and `nulByteFreeSource`
+    // keeps the next one out of the tree.
+    const live = new Set(scanDir(dir).map((h) => `${h.surface}\u0000${h.ban.id}`));
     const dead: string[] = [];
     for (const [surface, ids] of Object.entries(OWED)) {
       for (const id of ids) {
-        if (!live.has(`${surface} ${id}`)) dead.push(`${surface} → ${id}`);
+        if (!live.has(`${surface}\u0000${id}`)) dead.push(`${surface} → ${id}`);
       }
     }
     if (dead.length > 0) {

@@ -35,6 +35,13 @@
  * | `VENUE_BANS` | ruling 141 AS AMENDED, Alex 2026-08-28 | a page may not talk ABOUT its suppliers; it may still say which line is whose |
  * | `FUTURE_PROMISE_BANS` | ruling 142, Alex 2026-08-28 | a section states what it IS, not what it WILL be |
  * | `PRICE_FORMAT_BANS` | the standing no-price-format ruling, #2442 | the reader gets a probability, never a betting line |
+ * | `HISTORY_CLAIM_BANS` | CERT-537 (UX-P212), no ruling yet | our voice may not settle a question about ALL OF HISTORY |
+ *
+ * ⚠️ THE LAST ROW'S AUTHORITY IS A CERT FINDING, NOT AN ALEX RULING, AND THAT
+ * IS STATED RATHER THAN PAPERED OVER. Every other group here cites a ruling.
+ * This one encodes a graded BLOCK plus the doctrine line UX-P212 paid for; it
+ * is narrower than a ruling would be (see the group's own header for the line
+ * it deliberately does not cross) and it wants one.
  *
  * ═══ WHAT IS NOT BANNED ═══
  *
@@ -335,6 +342,92 @@ export const PRICE_FORMAT_BANS: CopyBan[] = [
   },
 ];
 
+/**
+ * CERT-537 / UX-P212. Our voice may not settle a question about ALL OF HISTORY.
+ *
+ * ═══ THE INCIDENT, AND WHY A COPY RULE ANSWERS IT ═══
+ *
+ * UX-P211 removed the live treatment from a settled comparison card and
+ * replaced it with a sentence about the past:
+ *
+ *   > No number ever reached us for Iga Swiatek, so this comparison was never
+ *   > complete.
+ *
+ * The card printed that beside `observed_at` — the timestamp of a number that
+ * had reached us. The route refutes its own copy: `PropOutcome.observed_at` is
+ * `max(captured_at)` **where `probability IS NOT NULL`**
+ * (`backend/app/utils/latest_observation.py`), loaded by a different statement
+ * than `current_probability`, so a null current value beside a populated
+ * timestamp is ordinary wire data and positive proof a number DID arrive.
+ *
+ * ═══ WHY THE ABSOLUTE FORM IS BANNABLE AS TEXT AND THE OTHER HALF IS NOT ═══
+ *
+ * This is the line the group draws, and it is a real distinction rather than a
+ * convenient one.
+ *
+ *   • "No number EVER reached us" quantifies over all of history. Nothing we
+ *     serve can support it: the newest observation is the most the payload
+ *     carries, and even a null `observed_at` proves nothing, because Kalshi
+ *     market data purges at ≥74/<86 days (`app/utils/kalshi_retention.py`) —
+ *     the archive the sentence appeals to is one we do not hold. It is
+ *     unsupportable in PRINCIPLE, in every wire shape, which is exactly the
+ *     kind of claim a text scan can judge without seeing a payload.
+ *   • "No number has reached us YET" is conditionally true — false only when
+ *     `observed_at` is populated. Whether it is right is a question about the
+ *     data in hand, so a component answers it by reading the field. Banning
+ *     the string would ban a sentence that is often correct, which is how a
+ *     rule earns a blanket suppression comment and stops being enforced.
+ *
+ * So: the absolute quantifier is banned here; the conditional tense is a
+ * payload check, and UX-P212 fixed it where payload checks belong — in
+ * `incompleteComparisonNote`, which now speaks only about what we HAVE.
+ *
+ * ═══ WHY NOT `\bnever\b` ═══
+ *
+ * Same reason `FUTURE_PROMISE_BANS` does not ban `\bwill\b`. Measured against
+ * this tree, the bare word is load-bearing in copy that is TRUE and supported:
+ * "settled but never graded" is a status a market really has, and
+ * `/calibration` says "whose price never moved off its opening line" of a
+ * cohort it defines by that very fact. A rule that eats those is a rule
+ * somebody switches off within a week.
+ *
+ * Every pattern below therefore names an all-of-history quantifier ATTACHED TO
+ * OUR RECEIPT OF A NUMBER — a shape only our voice produces, and one a market
+ * question cannot wander into.
+ */
+export const HISTORY_CLAIM_BANS: CopyBan[] = [
+  {
+    id: "ever-reached-us",
+    pattern: /\b(ever|never) (reached|arrived at|came to|got to) us\b/i,
+    why: "quantifies over all of history; the payload carries the latest observation, not the archive (CERT-537)",
+  },
+  {
+    id: "no-reading-ever",
+    pattern: /\bno (number|price|probability|reading|quote|answer|market|data)s?\b[^.!?]{0,40}\bever\b/i,
+    why: "quantifies over all of history; the payload carries the latest observation, not the archive (CERT-537)",
+  },
+  {
+    id: "we-never-had",
+    pattern: /\bwe (have )?never (had|held|received|saw|seen|got|read|recorded)\b/i,
+    why: "a claim about our whole record, made from a payload that carries only the newest reading (CERT-537)",
+  },
+  {
+    id: "was-never-complete",
+    pattern: /\bwas never (complete|completed|available|quoted|published|reported|answered)\b/i,
+    why: "settles a question about the past that no field on the card records (CERT-537)",
+  },
+  {
+    id: "nobody-ever",
+    pattern: /\b(nobody|no one|no-one) ever\b/i,
+    why: "quantifies over all of history; we cannot tell a market nobody quoted from one we were not reading (CERT-537)",
+  },
+  {
+    id: "at-no-point",
+    pattern: /\bat no point\b/i,
+    why: "quantifies over all of history; the payload carries the latest observation, not the archive (CERT-537)",
+  },
+];
+
 /** Every rule, in the order a report should read them. */
 export const ALL_COPY_BANS: CopyBan[] = [
   ...JARGON_BANS,
@@ -342,6 +435,7 @@ export const ALL_COPY_BANS: CopyBan[] = [
   ...VENUE_BANS,
   ...FUTURE_PROMISE_BANS,
   ...PRICE_FORMAT_BANS,
+  ...HISTORY_CLAIM_BANS,
 ];
 
 export interface CopyBanHit {
