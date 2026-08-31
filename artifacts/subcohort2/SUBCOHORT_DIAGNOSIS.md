@@ -17,12 +17,16 @@ fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to
 ## STATUS 2026-08-31 (CAL-P158) — NO CELL TAKEN, AND THAT IS THE FINDING: **THE PUBLISHER HAS BEEN DOWN FOR 12 HOURS, SO NO CELL FIX CAN SHOW A PUBLISHED DELTA.**
 
 *This entry exists to answer the charter's own question — the file went five days without an
-update; which reading is true? **Reading 1: no fix has landed against a ranked cell since
-2026-08-25.** `git log` on this file: last commit `ee25e1cd` (2026-08-25, CAL-P095). The lane's
-work from CAL-P150 through CAL-P157 is real and merged, but every commit of it is **publisher
-machinery** — publish gate, staged-futures cursor, phase budgets, `is_winner` nullability,
-instrument rings — not a ranked-cell mechanism. Nothing was fixed-and-not-written-back. The
-burn-down genuinely stopped, and this section says why it had to.*
+update; which reading is true? **Neither cleanly — it is a blend, and the second half is the
+defect.** `git log` on this file: last commit `ee25e1cd` (2026-08-25, CAL-P095). Most of
+CAL-P150→157 is publisher machinery (publish gate, staged-futures cursor, phase budgets,
+`is_winner` nullability, instrument rings) and correctly has nothing to say here. **But three
+commits on 2026-08-30 are curve-affecting and were never written back to this file** —
+`67f5a6d3` (D5: the curve's dedup join grouped on two of its five columns; 36.65% of published
+rows were the same outcome twice), `fd033079` (D12: rank 6 deleted, not fixed — the cell called
+`crypto` is 99.5% metal), `9c9f7abf` (D13: a lone claim published iff it WON). All three are in
+the deployed release v3957. So the write-back discipline this charter asks for did lapse, on
+exactly the commits that move the board.*
 
 ### THE BLOCKER: the hourly producer has not published since 04:37Z, and cannot get near its own deadline
 
@@ -75,7 +79,42 @@ the measurement it was sized against has moved. It is **not** a livelock: the tw
 differed from the five that completed, so cancellation is load-dependent slowness, not two poison
 slots. Convergence is real. It is just slower than the deadline.
 
-### Root cause is not in calibration code
+### THE SECOND BLOCKER, LATENT BEHIND THE FIRST: the publish gate refuses a completed build
+
+The last time a build actually COMPLETED — 05:37Z, one hour after the last publish — the publish
+gate **rejected** it (Sentry `7677836808`):
+
+> population fell **−10.5% (930,149 → 832,872)**, limit −5%, and population_version was not
+> bumped (still `'q268'`) — resolution only ADDS outcomes, so a shrink is a lost cohort or a
+> changed rule, never elapsed time
+
+This matters because it is **downstream of the throughput problem and therefore invisible**: no
+build has completed since, so the gate has not been reached in 11 hours. The moment throughput
+is fixed, this is what the build hits next.
+
+`calibration_publish_gate.py:815-865` is explicit that a shrink is excused by exactly one thing —
+`if verdict.version_bumped: return verdict`. A matching predicate never excuses it. So the
+sanctioned remedy for a deliberate rule change is to bump `CALIBRATION_POPULATION_VERSION`
+(`precompute_calibration.py:603`, currently `"q268"`) and, per that constant's own docstring,
+ship `COMPATIBLE_PREVIOUS_POPULATION_VERSIONS` **empty** if the methodology moved.
+
+**WHAT IS NOT ESTABLISHED, AND MUST NOT BE ASSUMED.** The tempting story is that yesterday's
+freeze-lift batch caused the shrink and simply forgot the bump. **That story is refuted by the
+clock:** the 05:37Z rejection ran on **v3955**, and `67f5a6d3` / `fd033079` / `9c9f7abf` are all
+NOT ancestors of v3955 — they arrived in v3956 (05:41Z) / v3957 (06:04Z), *after* the rejection.
+The gate class also has 51 lifetime events since 2026-08-18, so the shrink is a recurring
+condition that predates the batch, not a fresh side-effect of it.
+
+So the −10.5% is **cause-unestablished**, and the candidate it was measured on is already
+obsolete: the staged cursor's `input_fingerprint` has moved `b1820040… → 75faaed6…` across the
+v3957 deploy, so the next completed build is a *different* candidate whose population nobody has
+seen. **Do not bump the version to "fix" this.** A bump discards the 128-unit bank and restarts
+from zero (~14 beats by the q268 precedent, ~26 at today's 5-units/beat) — trading a page that is
+stale-but-showing-a-curve for one that could be dark indefinitely. The bump is only safe once
+throughput is fixed AND a completed build's population has been read and understood. Both
+sequencing constraints are the finding; neither is a task to start today.
+
+### Root cause of the throughput half is not in calibration code
 
 `unit_ms` has gone **80,658 ms → 185,161 ms (2.3×)** between the prior measurement and this beat
 (`staged:prior_unit_ms` vs `staged:unit_ms_mean`). Production Postgres is **still
