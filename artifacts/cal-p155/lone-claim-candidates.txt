@@ -1,0 +1,48 @@
+============================================================================================
+CAL-P155 stage 1 — variants that can hold two lone claims (CAL-P151-P1a)
+============================================================================================
+
+[1/4] GLOBAL TOTALS — the reconciliation target
+  resolved markets carrying group_id: 862,408
+  resolved markets carrying event_id: 435,105
+
+[2/4] EVENT-KEY SWEEP
+  event_id spans [1,273, 15,298,674) in 6 seed partitions
+  event [14000000,15298674) refused -> split at 14649337   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14000000,14649337) refused -> split at 14324668   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14324668,14649337) refused -> split at 14487002   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14649337,15298674) refused -> split at 14974005   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14649337,14974005) refused -> split at 14811671   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14649337,14811671) refused -> split at 14730504   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14730504,14811671) refused -> split at 14771087   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event: 10 partitions, 3 queued, 121,246 markets, 107s
+  event [14811671,14974005) refused -> split at 14892838   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14892838,14974005) refused -> split at 14933421   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14933421,14974005) refused -> split at 14953713   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14953713,14974005) refused -> split at 14963859   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14974005,15298674) refused -> split at 15136339   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14974005,15136339) refused -> split at 15055172   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [14974005,15055172) refused -> split at 15014588   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15136339,15298674) refused -> split at 15217506   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15136339,15217506) refused -> split at 15176922   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15136339,15176922) refused -> split at 15156630   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event: 20 partitions, 3 queued, 246,076 markets, 240s
+  event [15156630,15176922) refused -> split at 15166776   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15166776,15176922) refused -> split at 15171849   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15176922,15217506) refused -> split at 15197214   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15176922,15197214) refused -> split at 15187068   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15176922,15187068) refused -> split at 15181995   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15176922,15181995) refused -> split at 15179458   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15181995,15187068) refused -> split at 15184531   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15184531,15187068) refused -> split at 15185799   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15185799,15187068) refused -> split at 15186433   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15187068,15197214) refused -> split at 15192141   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15187068,15192141) refused -> split at 15189604   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15187068,15189604) refused -> split at 15188336   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event: 30 partitions, 5 queued, 362,305 markets, 385s
+  event [15189604,15192141) refused -> split at 15190872   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15192141,15197214) refused -> split at 15194677   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15197214,15217506) refused -> split at 15207360   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event [15217506,15298674) refused -> split at 15258090   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+
+[3/4] GROUP-KEY SWEEP
