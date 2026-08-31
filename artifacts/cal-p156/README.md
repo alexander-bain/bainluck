@@ -266,16 +266,42 @@ Session instruments, all **EXIT 0**:
 Nothing added to `PERMANENTLY_UNREADABLE`. **Nothing deployed**, so the headline
 is untouched and directive items 4 and 6 stay correctly ungated.
 
-## 8. FULL SUITE
+## 8. FULL SUITE — RUN ON THE MERGED TREE, NOT THE BRANCH
 
-Launched with a lane-unique `cache_dir=/tmp/CAL-P156-suite-cache` against
-contention from the `latency` and `ux` lanes' suites (both running concurrently,
-cwds resolved with `lsof -a -p PID -d cwd`). Result recorded in §10.
+Rule 3 asks for a merge onto current master before staging. Rather than run the
+branch alone and merge afterwards, the merged tree was materialised first and
+**everything below was run on it** — it is what actually ships.
 
-⚠️ First launch used `--CAL-P156-FULL-SUITE-TOKEN` as an argv token; pytest
-**rejected it** (`unrecognized arguments`) and the run never started. The tell
-was `pgrep` returning 0, not the log. `-o cache_dir=…` already carries a
-lane-unique token in argv and is a real flag; use that.
+```
+merge-tree --write-tree origin/master HEAD  -> 0fcbddc2, EXIT 0, no conflicts
+materialised at /tmp/CAL-P156-merged (detached worktree, probe commit deecb126)
+```
+
+| gate, ON THE MERGED TREE | result |
+|---|---|
+| pinned gates (12cal, p122, fingerprint ×2, result-authority-299, route-calibration, **pg-gate-seed-completeness**, startup) | **208 passed, EXIT 0** |
+| **full suite** | **24,465 passed · 0 failed · 138 skipped · 61 xfailed**, 1084 s |
+
+`grep -cE "^(FAILED|ERROR)"` over the full log returns **0**.
+
+⚠️ **`$?` was not captured** — the run was backgrounded with `nohup` and the pid
+had exited before the exit code could be read. The zero-failure summary line and
+the zero FAILED/ERROR grep are the evidence; the exit code itself is not. Same
+caveat CAL-P155 carried. *Fix for next time: wrap the backgrounded suite so it
+echoes its own `$?` into the log as its last line.*
+
+⚠️ **The first launch never ran at all.** It used
+`--CAL-P156-FULL-SUITE-TOKEN` as a lane-unique argv token and pytest **rejected
+it** (`error: unrecognized arguments`). The tell was `pgrep` returning 0 — the
+log's last lines looked like an ordinary header. `-o cache_dir=…` already carries
+a lane-unique token in argv **and is a real flag**; use that, and check `pgrep`
+after every background launch rather than the log.
+
+**File intersection with master since merge-base** (both sides touched):
+`.github/workflows/ci.yml`, `app/tasks/__init__.py`, `app/tasks/backfill_winners.py`,
+`tests/test_pg_gate_seed_completeness.py` — all from earlier commits in the
+calibration-119 stack, none from CAL-P156. `test_pg_gate_seed_completeness.py`
+is in the pinned set above **because** it intersects, and it passes on the merge.
 
 ## 9. FOR THE MEASUREMENT LANE
 
