@@ -15,15 +15,12 @@ from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
 from app.utils.game_pairing import IdCurrency, external_id_currency
 from app.utils.odds_math import moneyline_to_probability, project_scores
+from app.utils.polling_config import compute_effective_interval
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import (
     LIVE_POLL_INTERVAL,
     SOON_POLL_INTERVAL,
     LATER_POLL_INTERVAL,
-    MEDIUM_POLL_INTERVAL,
-    SLOW_POLL_INTERVAL,
-    MEDIUM_THRESHOLD,
-    SLOW_THRESHOLD,
     ODDS_STALE_MINUTES,
     MIN_HOURS_BEFORE_STALENESS_CHECK,
     SPORT_MAX_DURATIONS,
@@ -31,7 +28,6 @@ from app.tasks.config import (
     SPORT_POLLING_DEFAULT_TIER,
     SPORT_TIER_MULTIPLIERS,
     SPORT_REGION_OVERRIDES,
-    SPORT_MIN_POLL_INTERVALS,
 )
 from app.tasks.redis_state import (
     get_redis_client,
@@ -42,7 +38,6 @@ from app.tasks.redis_state import (
     POLL_STATE_KEY,
     QUOTA_GUARD_LIVE_ONLY,
     QUOTA_GUARD_PRIORITY_SPORTS,
-    QUOTA_GUARD_CONSERVATION_INTERVAL,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +53,35 @@ logger = logging.getLogger(__name__)
 # at all in any meaningful sense. Below three there is no consensus to report,
 # and reporting one anyway is what produced 87-13 on event 15192596.
 BETTING_BOOK_FLOOR = 3
+
+
+def tier_adjusted_interval(base_interval: float, tier: str, sport_key: str) -> float:
+    """Apply the sport-tier multiplier — to PRE-GAME traffic only (LAT-P159).
+
+    🔴 THE MULTIPLIER IS A PRE-GAME ECONOMY AND IT USED TO APPLY TO `live` TOO,
+    which made a live game's refresh rate a function of its league's POPULARITY:
+    60 s for the NBA, 120 s for NCAAF, 180 s for anything unlisted. Alex reported
+    a live Stanford game whose probability lagged the action — Stanford is
+    `americanfootball_ncaaf`, Tier 2 — so its odds were two minutes old by
+    construction. Betting carries weight 3.0 in `utils/aggregation.py`; it IS the
+    number on the card.
+
+    The file already said as much and then did the opposite: the adaptive
+    slowdown thirty lines down is guarded `tier != "live"` under the comment
+    *"live games always poll fast"*. Tiering exists to conserve quota on sports
+    nobody is watching YET. Once a game is live somebody is watching it, whatever
+    the league.
+
+    Extracted as a function rather than left inline because it is the rule a
+    guard has to be able to call. Re-implementing the rule under test in the test
+    is how this lane published a corruption count that moved four times
+    (LAT-P156); a guard must exercise the shipped code, not a copy that agrees
+    with it today.
+    """
+    if tier == "live":
+        return base_interval
+    sport_tier = SPORT_POLLING_TIERS.get(sport_key, SPORT_POLLING_DEFAULT_TIER)
+    return base_interval * SPORT_TIER_MULTIPLIERS.get(sport_tier, 4)
 
 
 def get_statpal_end_time(event) -> Optional[datetime]:
@@ -898,10 +922,92 @@ async def _poll_all_odds():
                     "skipped": True,
                 }
 
+            # Set when the per-sport quota re-read reports the absolute stop
+            # mid-pass. `absolute_stop` means "no exceptions, no priority sports,
+            # nothing" (redis_state.check_quota_guard), so it has to halt the
+            # SCORES fetch too — that block runs off its own independent query and
+            # consults no quota guard at all, so breaking the odds loop alone would
+            # keep spending on `get_scores` while the breaker says stop.
+            absolute_stop_hit = False
+
             for row in sport_data:
                 sport_key = row[0]
                 soonest_game = row[1]
                 is_live = row[2]
+
+                # 🔴 CERT-535: THE RE-READ RUNS IN EVERY QUOTA MODE, AND IT RUNS
+                # FIRST. It used to live inside `if quota_full_stop:`, so the
+                # value was computed correctly and the *guard around the guard*
+                # was wrong: a pass that began at `live_only_501` — or at plain
+                # `ok_*` — never re-read at all, so `absolute_stop_hit` could
+                # not be SET on that path. Quota can begin a pass just above the
+                # 500-unit absolute stop, spend the rest on its first sport,
+                # cross the line, and keep polling every remaining sport and
+                # every score because only passes ALREADY classified FULL_STOP
+                # bothered to look again. The faster live cadence this queue
+                # shipped makes that crossing more likely, not less.
+                #
+                # It is also ABOVE the 404 skip on purpose: if every sport in
+                # the pass is 404-cached, a re-read placed below the `continue`
+                # is unreachable and the scores block spends under the breaker.
+                # Ask it of the branch, not only of the value — can this even be
+                # reached from the states the task actually starts in?
+                #
+                # `quiet=True` because this is now a per-sport read in every
+                # mode, and the guard's own FULL_STOP line is CRITICAL: a dozen
+                # sports at a 30 s beat would be ~50,000 CRITICAL lines a day
+                # restating a state the pass already announced once at line
+                # 847. This task announces what it DOES — the outer state once
+                # per pass, and its own CRITICAL on the mid-pass absolute stop
+                # immediately below. The return value is unaffected.
+                sport_ok, sport_reason = check_quota_guard(
+                    "poll_odds", sport_key=sport_key, quiet=True,
+                )
+                if "absolute_stop" in sport_reason:
+                    # No exceptions — abandon the whole pass, not just this sport.
+                    logger.critical(
+                        "poll_all_odds ABSOLUTE STOP mid-pass (%s) — halting all polling",
+                        sport_reason,
+                    )
+                    sports_skipped += 1
+                    absolute_stop_hit = True
+                    break
+                # 🔴 THE LATCH RUNS BEFORE EVERY EARLY EXIT BELOW THE BREAK
+                # (CERT-540). It used to sit under the `not sport_ok` continue,
+                # which meant the ONE reading that most certainly proves the
+                # breaker has tripped — a DENY — was the one reading discarded
+                # without recording it. A non-priority sport reading
+                # `full_stop_9000` skipped itself and told the pass nothing, so
+                # the next sport's `ok_*` (quota refilled) or fail-open
+                # `redis_error` re-widened a pass that had already SEEN full
+                # stop, and spent the constrained API.
+                #
+                # Same family as CERT-523 (a floor applied below its only gate),
+                # CERT-518/521 (counters that never reached the verdict) and
+                # CERT-535 (a recheck behind an unreachable condition): the code
+                # knew, and the thing that acts on it did not. **State is
+                # recorded before control flow leaves, always** — a `continue`
+                # is an exit, and an exit above an assignment deletes it.
+                #
+                # Monotonic — within one pass a re-read may only ADD constraint,
+                # never remove it (CERT-528's rule, applied to the MODE and not
+                # only to the conservation floor). `conservation_*` is returned
+                # only when remaining is at or below QUOTA_GUARD_FULL_STOP
+                # (redis_state.check_quota_guard), so it is a full-stop-band
+                # reading like `full_stop_*` — the priority sport is simply the
+                # one allowed through it.
+                if "conservation" in sport_reason or "full_stop" in sport_reason:
+                    quota_full_stop = True
+                    quota_conservation = True
+                if "live_only" in sport_reason:
+                    quota_live_only = True
+
+                if not sport_ok:
+                    # A deny is a deny in every mode. Under FULL_STOP the
+                    # priority filter below would also catch this; above it,
+                    # nothing else would. The mode it implies is already latched.
+                    sports_skipped += 1
+                    continue
 
                 # Skip sports that returned 404 (cached for 24h)
                 if r:
@@ -930,17 +1036,26 @@ async def _poll_all_odds():
                 # Sport-tier multiplier: Tier 2 polls 2x slower, Tier 3 polls 4x slower.
                 # Core sports (Tier 1) keep default intervals; long-tail sports poll less.
                 sport_tier = SPORT_POLLING_TIERS.get(sport_key, SPORT_POLLING_DEFAULT_TIER)
-                tier_mult = SPORT_TIER_MULTIPLIERS.get(sport_tier, 4)
-                poll_interval = poll_interval * tier_mult
+                poll_interval = tier_adjusted_interval(poll_interval, tier, sport_key)
 
-                # Quota guard: in full-stop mode, only priority sports allowed
+                # Quota guard: in full-stop mode, only priority sports allowed.
+                #
+                # 🔴 CERT-528: the per-sport re-read that used to live HERE was
+                # `_, guard_reason` plus `quota_conservation = "conservation" in
+                # guard_reason`. Both halves were fail-open, and the casualty
+                # was the outer FULL_STOP result — the thing the task already
+                # knew: the allow/deny boolean was DISCARDED, and a transient
+                # Redis failure returning (True, "redis_error") ERASED the
+                # conservation floor and dropped a known-constrained live sport
+                # to the flat live cadence. The re-read, its deny handling and
+                # its monotonic latch are all above now (CERT-535) so that a
+                # pass which does NOT start in FULL_STOP still performs them.
+                # What is left here is the part that is genuinely conditional on
+                # the mode: who gets through it.
                 if quota_full_stop:
                     if sport_key not in QUOTA_GUARD_PRIORITY_SPORTS:
                         sports_skipped += 1
                         continue
-                    # Re-check per-sport to get conservation reason
-                    _, guard_reason = check_quota_guard("poll_odds", sport_key=sport_key)
-                    quota_conservation = "conservation" in guard_reason
                     # In full-stop conservation, only poll live games
                     if tier != "live":
                         sports_skipped += 1
@@ -951,20 +1066,46 @@ async def _poll_all_odds():
                     sports_skipped += 1
                     continue
 
-                # Adaptive slowdown: when odds haven't changed for a sport,
-                # gradually increase the interval to conserve API quota.
-                # Only applies to non-live tiers (live games always poll fast).
-                if tier != "live" and r:
+                # 🔴 EVERY FLOOR IS APPLIED BEFORE THE ONE GATE THAT READS IT
+                # (CERT-523). There is exactly one `elapsed < poll_interval`
+                # check in this task, and `SPORT_MIN_POLL_INTERVALS` and
+                # `QUOTA_GUARD_CONSERVATION_INTERVAL` used to be applied AFTER
+                # it — so both were dead. Nothing downstream reads
+                # `poll_interval`; the only thing it can affect is the skip
+                # decision, and it was raised past the point where the decision
+                # was taken. Live AFL gated at its tier interval and never at its
+                # declared 600 s minimum, and FULL_STOP conservation never
+                # slowed a live sport at all.
+                #
+                # That hole predates LAT-P159 and the queue's own cadence change
+                # would have made it MATERIAL — a 10 s gate against a 600 s
+                # declared floor, at exactly the moment quota is most
+                # constrained. **Widening a rate must enumerate what the
+                # widening newly admits** (LAT-P156's lesson, missed here first
+                # time round and caught by CERT-523).
+                #
+                # `compute_effective_interval` is used rather than reimplemented:
+                # it already applied the sport minimum, the conservation floor
+                # and the adaptive slowdown in one place, and it was reachable
+                # ONLY from its own tests — ~30 of them guarding a helper
+                # production never called. Wiring it in is what makes those tests
+                # mean something, and it is the remedy already written in the
+                # repo (this lane's standing "grep for the problem, not the
+                # remedy" rule).
+                unchanged_count = 0
+                if r:
                     try:
-                        unchanged_key = f"bainluck:unchanged_count:{sport_key}"
-                        unchanged_raw = r.get(unchanged_key)
+                        unchanged_raw = r.get(f"bainluck:unchanged_count:{sport_key}")
                         unchanged_count = int(unchanged_raw.decode()) if unchanged_raw else 0
-                        if unchanged_count >= SLOW_THRESHOLD:
-                            poll_interval = max(poll_interval, SLOW_POLL_INTERVAL)
-                        elif unchanged_count >= MEDIUM_THRESHOLD:
-                            poll_interval = max(poll_interval, MEDIUM_POLL_INTERVAL)
                     except Exception:
-                        pass
+                        unchanged_count = 0
+                poll_interval = compute_effective_interval(
+                    base_interval=poll_interval,
+                    sport_key=sport_key,
+                    tier=tier,
+                    unchanged_count=unchanged_count,
+                    quota_conservation=quota_conservation,
+                )
 
                 # Check if enough time has elapsed since last poll for this sport
                 should_poll_sport = True
@@ -990,15 +1131,14 @@ async def _poll_all_odds():
                 # - "soon"/"later" tiers: primary US bookmakers only (saves 1/2)
                 # - "live" tier: full params for maximum coverage
                 # - Conservation mode: always h2h + us only (even live)
-                # Per-sport minimum poll interval (e.g., 10min for AFL)
-                sport_min = SPORT_MIN_POLL_INTERVALS.get(sport_key)
-                if sport_min:
-                    poll_interval = max(poll_interval, sport_min)
-
+                #
+                # The per-sport minimum and the conservation floor USED to be
+                # applied here, below the gate that is the only thing that reads
+                # them (CERT-523). They now live above it, in
+                # `compute_effective_interval`.
                 if quota_conservation:
                     api_markets = "h2h"
                     api_regions = "us"
-                    poll_interval = max(poll_interval, QUOTA_GUARD_CONSERVATION_INTERVAL)
                 elif tier == "live":
                     api_markets = "h2h,spreads,totals"
                     # Tier 1 sports get us+us2 for full bookmaker coverage;
@@ -1117,6 +1257,32 @@ async def _poll_all_odds():
                         logger.warning("Error polling %s: %s", sport_key, e)
                     continue
 
+            # 🔴 THE BOUNDARY RE-READ (CERT-541). `absolute_stop_hit` could only
+            # ever be set by a guard read taken BEFORE an odds call — so if the
+            # LAST (or only) odds response is the one whose recorded
+            # `remaining` crosses the 500-unit absolute stop, there is no next
+            # sport left to observe it, and the scores loop spends again after
+            # the system has recorded "no exceptions, no priority sports,
+            # nothing". A one-sport pass leaks every time.
+            #
+            # The guard has to be on the CONSUMING path, not merely upstream of
+            # it. `record_odds_api_quota` has already written every response's
+            # reading by the time the loop exits, so one read here sees the
+            # whole pass — including its own last call.
+            #
+            # `quiet=True`: this task announces what it DOES, immediately below.
+            if not absolute_stop_hit:
+                _boundary_ok, boundary_reason = check_quota_guard(
+                    "poll_odds", quiet=True,
+                )
+                if "absolute_stop" in boundary_reason:
+                    logger.critical(
+                        "poll_all_odds ABSOLUTE STOP reached by the pass's own last "
+                        "odds call (%s) — skipping the scores fetch",
+                        boundary_reason,
+                    )
+                    absolute_stop_hit = True
+
             # Fetch scores for sports with events that have started.
             # Rate-limited per-sport: ESPN-matched sports already get scores every
             # 60s from ESPN sync, so we only need the Odds API scores as a backup
@@ -1135,6 +1301,11 @@ async def _poll_all_odds():
                 .distinct()
             )
             sports_for_scores = [row[0] for row in sports_needing_scores.all()]
+
+            if absolute_stop_hit:
+                # The breaker said stop with no exceptions; scores are Odds API
+                # calls like any other.
+                sports_for_scores = []
 
             from app.utils.sport_keys import ESPN_SPORT_MAPPING
 
@@ -1158,6 +1329,32 @@ async def _poll_all_odds():
                         espn_covered_sports.add(sport_key)
 
             for sport_key in sports_for_scores:
+                # 🔴 THE SAME CLASS, ONE LEVEL DOWN — and it is closed here
+                # rather than waited for. The boundary read above sees the odds
+                # loop's last call, but `get_scores` calls are Odds API calls
+                # too and they also record quota, so a scores response can be
+                # the one that crosses the absolute stop and every remaining
+                # score in the same pass would spend past it. Nine blocks on
+                # this branch have all been "the guard is upstream of the
+                # consuming path instead of ON it"; a re-read placed only at the
+                # boundary is upstream of THIS loop.
+                #
+                # It is FIRST in the body for the same reason the odds loop's
+                # is: below the ESPN-covered or 404 `continue`, it is
+                # unreachable for exactly the passes that take them.
+                # `quiet=True` — the task announces what it does, immediately.
+                _score_ok, score_reason = check_quota_guard(
+                    "poll_odds", sport_key=sport_key, quiet=True,
+                )
+                if "absolute_stop" in score_reason:
+                    logger.critical(
+                        "poll_all_odds ABSOLUTE STOP mid-scores (%s) — halting the "
+                        "remaining score fetches",
+                        score_reason,
+                    )
+                    absolute_stop_hit = True
+                    break
+
                 if sport_key in espn_covered_sports:
                     continue
 

@@ -37,7 +37,59 @@ LAST_ODDS_HASH_KEY = "bainluck:last_odds_hash"
 
 # Polling intervals (in seconds)
 # Tiered approach based on game proximity (optimized for 5M calls/month)
-LIVE_POLL_INTERVAL = 32       # 32 seconds for live games (the main use case!)
+
+#: How often the beat delivers `app.tasks.poll_all_odds`. **A HARD FLOOR ON EVERY
+#: INTERVAL BELOW IT**: no gate value, however small, can produce more than one
+#: poll per delivery, so the fastest cadence this system can express is one
+#: delivery. `test_live_cadence_lat_p159.py` asserts this equals the live beat
+#: schedule entry, so the two cannot drift (#2236's discipline).
+ODDS_POLL_BEAT_SECONDS = 30
+
+#: 🔴 A GATE OF 32 s AGAINST A 30 s BEAT POLLS EVERY 60 s, NOT EVERY 32 (LAT-P159).
+#: This constant said 32 and carried the comment "the main use case!", and the
+#: system has never once polled a live game at 32 s. `should_poll_now()` gates on
+#: `elapsed >= LIVE_POLL_INTERVAL`, so with a 30 s beat two consecutive deliveries
+#: can never both pass and the real cadence is the beat rounded UP to 60 s.
+#: Measured on production 2026-08-31, from two independent surfaces:
+#:
+#:     beat delivers the task    every  30.1 s  (223 deliveries / 6,710 s)
+#:     the task actually RUNS    every  60.0 s  (median of 49 consecutive gaps)
+#:                               every  64.9 s  (1,331 terminals / 24 h)
+#:
+#: Half of every delivery was discarded, and the reason was two seconds. So the
+#: gate is set BELOW the beat, with room for the pass's own duration (measured
+#: p50 4.1 s / p95 15.1 s): "live" means "every delivery the beat gives us".
+#:
+#: ⚠️ THIS WAS OBSERVED IN AUGUST AND FILED AS A DESIGN. LAT-P039 (#1609/#1716)
+#: measured the same 32-against-30 relationship on 2026-08-11 and taught the
+#: adherence surface to expect it — see `redis_state.record_task_delivery` and
+#: `utils/schedule_adherence`. That was right about the INSTRUMENT (a self-gated
+#: decline is not a missed beat) and it stopped there. Explaining an anomaly is
+#: not deciding it is correct, and an instrument taught to expect a symptom makes
+#: the defect permanently invisible.
+
+#: The p95 of the odds pass itself, measured on production 2026-08-31 over the 50
+#: most recent runs (p50 4.1 s, p90 9.4 s, p95 15.1 s), rounded UP to whole
+#: seconds. It is load-bearing: `update_poll_state` stamps the clock when the pass
+#: FINISHES, so a pass eats its own duration out of the next delivery's elapsed
+#: budget. Re-measuring this re-derives the gate below instead of leaving two
+#: literals to drift apart (#2236).
+SLOWEST_MEASURED_ODDS_PASS_SECONDS = 16
+
+#: 🔴 AND THE GATE IS MET WITH ROOM, NOT EXACTLY (CERT-515, this lane, two cycles
+#: ago: "a cycle that closes exactly as the mirror expires has covered nothing").
+#: The first draft of this queue set the gate to `ODDS_POLL_BEAT_SECONDS // 2` =
+#: 15, which leaves 30 - 15.1 = **14.9 s** for a p95 pass — one tenth of a second
+#: on the wrong side of the bound, i.e. the same defect being repaired on the
+#: branch next door, written again by the same author in the same session. This
+#: file's own guard caught it. Four seconds of margin over the measured p95.
+LIVE_POLL_MARGIN_SECONDS = 4
+
+#: 30 - 16 - 4 = 10. Every term is measured or declared above; none is a literal
+#: chosen to make the arithmetic come out.
+LIVE_POLL_INTERVAL = (
+    ODDS_POLL_BEAT_SECONDS - SLOWEST_MEASURED_ODDS_PASS_SECONDS - LIVE_POLL_MARGIN_SECONDS
+)
 SOON_POLL_INTERVAL = 300      # 5 minutes for games starting in 0-1 hours
 LATER_POLL_INTERVAL = 3600    # 1 hour for games starting in 1-6 hours
 

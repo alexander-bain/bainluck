@@ -679,13 +679,26 @@ def record_task_delivery(full_task_name: str):
     production 2026-08-11:
 
     * ``poll_all_odds`` returns ``{"skipped": True}`` from ``should_poll_now()``
-      before it ever reaches ``_tracked_run``. Its adaptive gate declines about
-      half of its fires **by design** — ``LIVE_POLL_INTERVAL`` is 32s against a
-      30s beat, so two consecutive fires can never both pass — and every decline
-      was recorded as a fire that did not happen. The surface graded it
+      before it ever reaches ``_tracked_run``. Its adaptive gate declined about
+      half of its fires — ``LIVE_POLL_INTERVAL`` was 32s against a 30s beat, so
+      two consecutive fires could never both pass — and every decline was
+      recorded as a fire that did not happen. The surface graded it
       ``ratio 0.50``, which was read as the ingestion beat running at half speed
       for two months. The realtime worker's own execution total says otherwise:
       66 deliveries in the 1,982s since the release, or one per 30.0s exactly.
+
+      🔴 **THIS PARAGRAPH USED TO SAY THAT DECLINE WAS "BY DESIGN". IT WAS NOT
+      (LAT-P159).** Correcting the instrument was right — a self-gated decline
+      genuinely is not a missed beat, which is what the rest of this docstring
+      is about — but the gate had no business declining. 32-against-30 was an
+      accident that doubled every live sport's odds cadence, and describing it
+      as intentional here is what kept it invisible for three weeks: the one
+      surface that would have flagged a task discarding half its deliveries had
+      been taught to expect exactly that. ``LIVE_POLL_INTERVAL`` is now derived
+      from ``ODDS_POLL_BEAT_SECONDS`` and sits below it, so the decline rate
+      should now be near zero while live. **A rising ``self_gated_fires`` on
+      this task is once again a real signal — most likely that the pass has
+      grown slower than the beat period.**
       ``sync_statpal_livescores`` — same 30s beat, same worker, same window, no
       self-gate — reads 65 deliveries and ``ratio 1.00``. Same beat, same
       infrastructure; the only difference is the gate, so the gate is the cause.
@@ -1459,7 +1472,9 @@ import logging
 _quota_logger = logging.getLogger(__name__)
 
 
-def check_quota_guard(task_type: str, sport_key: str | None = None) -> tuple[bool, str]:
+def check_quota_guard(
+    task_type: str, sport_key: str | None = None, quiet: bool = False,
+) -> tuple[bool, str]:
     """Check if an Odds API task should proceed based on remaining quota.
 
     Args:
@@ -1467,6 +1482,23 @@ def check_quota_guard(task_type: str, sport_key: str | None = None) -> tuple[boo
                    "poll_odds" is further split: live games always allowed
                    until FULL_STOP; non-live polling stops at LIVE_ONLY.
         sport_key: Optional sport key for per-sport priority filtering.
+        quiet: Suppress this function's own announcement of the breaker state.
+               The RETURN VALUE is identical — only the log line is dropped.
+
+               For callers that re-read the breaker inside a loop. Since
+               CERT-535, `_poll_all_odds` re-reads once per sport in every
+               quota mode, and a `full_stop` reading logs CRITICAL on every
+               non-priority sport: a dozen sports at a 30 s beat is ~50,000
+               CRITICAL lines a day for a state the pass already announced
+               once. That is a Sentry flood during the exact emergency an
+               operator needs to read, and drowning the breaker's own message
+               is not the same thing as making it loud.
+
+               A quiet read is an internal consistency check, not a decision.
+               The caller is expected to announce what it DOES about it —
+               `_poll_all_odds` logs the outer state once per pass and logs
+               its own CRITICAL on a mid-pass absolute stop. Never pass this
+               from a call site that has no such announcement.
 
     Returns:
         (should_proceed, reason) — False means skip this task entirely.
@@ -1491,33 +1523,37 @@ def check_quota_guard(task_type: str, sport_key: str | None = None) -> tuple[boo
         # Absolute stop: no exceptions, no priority sports, nothing.
         # Live game data still flows via ESPN, StatPal, Kalshi, Polymarket.
         if remaining <= QUOTA_GUARD_ABSOLUTE_STOP:
-            _quota_logger.critical(
-                "QUOTA GUARD: ABSOLUTE STOP — %s remaining. Blocking ALL Odds API calls.",
-                f"{remaining:,}",
-            )
+            if not quiet:
+                _quota_logger.critical(
+                    "QUOTA GUARD: ABSOLUTE STOP — %s remaining. Blocking ALL Odds API calls.",
+                    f"{remaining:,}",
+                )
             return False, f"absolute_stop_{remaining}"
 
         if remaining <= QUOTA_GUARD_FULL_STOP:
             # Priority sports get through in conservation mode
             if task_type == "poll_odds" and sport_key in QUOTA_GUARD_PRIORITY_SPORTS:
-                _quota_logger.info(
-                    "QUOTA GUARD: conservation mode — %s remaining. Allowing priority sport %s.",
-                    f"{remaining:,}", sport_key,
-                )
+                if not quiet:
+                    _quota_logger.info(
+                        "QUOTA GUARD: conservation mode — %s remaining. Allowing priority sport %s.",
+                        f"{remaining:,}", sport_key,
+                    )
                 return True, f"conservation_{remaining}"
-            _quota_logger.critical(
-                "QUOTA GUARD: FULL STOP — %s remaining. Blocking %s.",
-                f"{remaining:,}", task_type,
-            )
+            if not quiet:
+                _quota_logger.critical(
+                    "QUOTA GUARD: FULL STOP — %s remaining. Blocking %s.",
+                    f"{remaining:,}", task_type,
+                )
             return False, f"full_stop_{remaining}"
 
         if remaining <= QUOTA_GUARD_LIVE_ONLY:
             # Only live game polling is allowed
             if task_type in ("discover_events", "poll_futures"):
-                _quota_logger.warning(
-                    "QUOTA GUARD: live-only mode — %s remaining. Blocking %s.",
-                    f"{remaining:,}", task_type,
-                )
+                if not quiet:
+                    _quota_logger.warning(
+                        "QUOTA GUARD: live-only mode — %s remaining. Blocking %s.",
+                        f"{remaining:,}", task_type,
+                    )
                 return False, f"live_only_{remaining}"
             # poll_odds proceeds but will be filtered to live-only by caller
             return True, f"live_only_{remaining}"

@@ -291,8 +291,18 @@ def adherence(
     ingestion beat running at half speed. Its realtime worker had executed it 66
     times in the 1,982s since the release — one per 30.0s, its beat interval, to
     three significant figures. Every "missing" fire was ``should_poll_now()``
-    declining on purpose, because ``LIVE_POLL_INTERVAL`` (32s) is longer than
-    the beat (30s) and two consecutive fires can therefore never both pass.
+    declining, because ``LIVE_POLL_INTERVAL`` (32s) was longer than the beat
+    (30s) and two consecutive fires could therefore never both pass.
+
+    🔴 **THAT DECLINE WAS NOT "ON PURPOSE", WHICH IS WHAT THIS PARAGRAPH USED TO
+    CLAIM (LAT-P159).** The numerator fix above is correct and stands. What was
+    wrong was filing the CAUSE as a design: a 32s gate against a 30s beat was an
+    accident that doubled every live sport's odds cadence, and recording it here
+    as intended behaviour is what made it invisible — this is the surface that
+    would otherwise have flagged a task throwing away half its deliveries.
+    ``LIVE_POLL_INTERVAL`` is now derived from ``ODDS_POLL_BEAT_SECONDS``, so a
+    large ``self_gated_fires`` on ``poll_all_odds`` is a finding again, not a
+    footnote.
 
     ``terminals`` is still reported rather than graded — whether adherence
     should own completion is an open product question (#1716) and inventing a

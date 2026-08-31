@@ -127,19 +127,39 @@ class TestComputeEffectiveInterval:
 class TestSportTierQuotaGuardrails:
 
     def test_tier_intervals_match_quota_budget(self):
-        """Live cadence is the quota budget's sharp edge; keep tier multipliers locked."""
-        cases = [
-            ("basketball_nba", LIVE_POLL_INTERVAL, SOON_POLL_INTERVAL, LATER_POLL_INTERVAL),
-            ("soccer_usa_mls", LIVE_POLL_INTERVAL * 2, SOON_POLL_INTERVAL * 2, LATER_POLL_INTERVAL * 2),
-            ("cricket_ipl", LIVE_POLL_INTERVAL * 4, SOON_POLL_INTERVAL * 4, LATER_POLL_INTERVAL * 4),
-        ]
+        """Pre-game cadence is the quota budget's sharp edge; keep tier multipliers
+        locked. Live is deliberately NOT tiered — see below.
 
-        for sport_key, live_interval, soon_interval, later_interval in cases:
-            sport_tier = SPORT_POLLING_TIERS.get(sport_key, SPORT_POLLING_DEFAULT_TIER)
-            tier_mult = SPORT_TIER_MULTIPLIERS[sport_tier]
+        🔴 THIS TEST WAS A TAUTOLOGY AND PASSED FOR THE LIFE OF THE DEFECT
+        (LAT-P159). It read
+
             assert LIVE_POLL_INTERVAL * tier_mult == live_interval
-            assert SOON_POLL_INTERVAL * tier_mult == soon_interval
-            assert LATER_POLL_INTERVAL * tier_mult == later_interval
+
+        where `live_interval` was defined in this test's own case tuple as
+        `LIVE_POLL_INTERVAL * 2`. It asserted `x*2 == x*2` and would have stayed
+        green under any change to either constant, in either direction, while its
+        docstring claimed to guard "the quota budget's sharp edge". Replaced with
+        the behaviour the docstring describes rather than deleted (LAT-P156's
+        rule), and the expected multipliers are now literals so the assertion
+        cannot be satisfied by its own inputs.
+        """
+        from app.tasks.odds_polling import tier_adjusted_interval
+
+        for sport_key, mult in (
+            ("basketball_nba", 1),
+            ("soccer_usa_mls", 2),
+            ("cricket_ipl", 4),
+        ):
+            sport_tier = SPORT_POLLING_TIERS.get(sport_key, SPORT_POLLING_DEFAULT_TIER)
+            assert SPORT_TIER_MULTIPLIERS[sport_tier] == mult
+
+            assert tier_adjusted_interval(
+                SOON_POLL_INTERVAL, "soon", sport_key) == SOON_POLL_INTERVAL * mult
+            assert tier_adjusted_interval(
+                LATER_POLL_INTERVAL, "later", sport_key) == LATER_POLL_INTERVAL * mult
+            # A live game is live whatever the league — flat across every tier.
+            assert tier_adjusted_interval(
+                LIVE_POLL_INTERVAL, "live", sport_key) == LIVE_POLL_INTERVAL
 
     def test_default_tier_is_long_tail_single_region_h2h_later(self):
         sport_tier = SPORT_POLLING_TIERS.get("cricket_ipl", SPORT_POLLING_DEFAULT_TIER)
