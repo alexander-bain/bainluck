@@ -543,9 +543,25 @@ async def _warm_prop_families() -> dict:
     # `partial` and not `failed`, because the pass did the work it was asked to
     # do — it rebuilt its slice; what it cannot do is get back round the whole
     # set before the mirror lapses, which is the resumable-sweep-fell-short case
-    # `partial` names. A real `failed` is never softened: the downgrade only
-    # applies to a terminal that would otherwise read green.
-    if terminal == "complete" and coverage_exceeded:
+    #
+    # 🔴 AND `failed > 0` IS THE SAME DEFECT ONE ARGUMENT OVER (CERT-521). The
+    # branch above reads `rebuilt or (locked_out and not failed)`, so ANY
+    # successful sibling outvotes a team that threw: `rebuilt=2, failed=1` scored
+    # `complete`. The scalar key is named `failed`, and `_has_damage` recognises
+    # only the COLLECTIONS `errors` / `failed_chunks` / `failed_phases` — so the
+    # classifier could not see it either, and the pass recorded an authoritative
+    # GREEN with a team's mirror left cold. Gotcha #42 says one bad item must not
+    # wipe the pass; it does NOT say the pass should report the failure as
+    # success. Surviving the failure and reporting it are different duties, and
+    # only the first was implemented.
+    #
+    # This is squarely the ship's problem, not a general tidy-up: the teams
+    # LAT-P158 newly admits are the offseason pages this task exists to protect,
+    # and a sibling success was hiding one of them failing.
+    #
+    # `partial` names both cases. A real `failed` is never softened: the
+    # downgrade only ever applies to a terminal that would otherwise read green.
+    if terminal == "complete" and (coverage_exceeded or failed):
         terminal = "partial"
 
     return {

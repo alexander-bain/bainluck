@@ -608,8 +608,22 @@ class TestWarmerVerdicts:
         assert rc.ttls[warm.CURSOR_KEY] == warm.CURSOR_TTL_SECONDS
 
     async def test_one_bad_team_does_not_wipe_the_pass(self):
-        """gotcha #42, and the siblings are asserted, not just the survival."""
+        """gotcha #42, and the siblings are asserted, not just the survival.
+
+        🔴 EXTENDED THROUGH `verdict_for` BY CERT-521, WHICH BLOCKED ON EXACTLY
+        THE GAP THIS TEST USED TO LEAVE. Surviving a bad item and REPORTING it are
+        two duties and only the first was asserted here: the terminal branch reads
+        `rebuilt or (locked_out and not failed)`, so one successful sibling
+        outvoted the team that threw, and `_has_damage` recognises only the
+        COLLECTIONS `errors` / `failed_chunks` / `failed_phases` — never a scalar
+        `failed` — so the enforced classifier returned an authoritative GREEN with
+        `rebuilt=2, failed=1` and a team's mirror left cold.
+
+        Gotcha #42 says one bad item must not wipe the pass. It does not say the
+        pass should call itself healthy.
+        """
         from app.tasks import prop_families_warm as warm
+        from app.utils import task_verdict as tv
 
         rc = _FakeRedis()
         built: list[int] = []
@@ -625,8 +639,54 @@ class TestWarmerVerdicts:
              patch("app.routes.prop_families.build_and_cache_prop_families",
                    side_effect=_explode_on_two):
             out = await warm._warm_prop_families()
+
+        # Survival — unchanged.
         assert built == [1, 3]
         assert out["rebuilt"] == 2 and out["failed"] == 1
+
+        # Truthful health — the half CERT-521 found missing.
+        assert out["terminal"] != "complete", out
+        verdict = tv.verdict_for("warm_prop_families", out)
+        assert verdict.verdict == tv.PARTIAL, verdict
+        assert verdict.authoritative is True, verdict
+        assert verdict.is_green is False, verdict
+
+    async def test_an_all_clean_pass_is_still_green(self):
+        """The control for the guard above: the downgrade must fire on a real
+        failure and on nothing else, or the task is amber every hour and the
+        signal is worth nothing."""
+        from app.tasks import prop_families_warm as warm
+        from app.utils import task_verdict as tv
+
+        rc = _FakeRedis()
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2, 3])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build([])):
+            out = await warm._warm_prop_families()
+
+        assert out["failed"] == 0 and out["rebuilt"] == 3, out
+        assert out["terminal"] == "complete", out
+        assert tv.verdict_for("warm_prop_families", out).is_green is True
+
+    async def test_a_lock_out_is_the_tier_working_and_keeps_its_green(self):
+        """A team already being rebuilt by a reader is not a failure — that is the
+        single-flight lock doing its job — so it must not cost the pass its green.
+        The downgrade keys on `failed`, never on `locked_out`."""
+        from app.tasks import prop_families_warm as warm
+        from app.utils import task_verdict as tv
+
+        rc = _FakeRedis()
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2, 3])), \
+             patch("app.utils.event_concept_cache.acquire_refresh_lock", return_value=None), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build([])):
+            out = await warm._warm_prop_families()
+
+        assert out["locked_out"] == 3 and out["failed"] == 0, out
+        assert out["terminal"] == "complete", out
+        assert tv.verdict_for("warm_prop_families", out).is_green is True
 
     async def test_the_cap_is_reported_never_silent(self):
         from app.tasks import prop_families_warm as warm
