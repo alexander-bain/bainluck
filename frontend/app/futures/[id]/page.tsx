@@ -280,10 +280,20 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
   // Sort outcomes. UX-P230: the comparators live in futuresDetailDisplay so all
   // six field×direction combinations can be exercised, not just the page default.
+  // UX-P232 (CERT-598): the settled flag goes with them. On a resolved market the
+  // hero features the GRADED WINNER (`pickHeroOutcome` below), whose frozen last
+  // price is routinely not the highest on the board — so without this the section
+  // headed "Final Results" led with a loser. `market.status`, never `is_winner`
+  // alone: a stray flag must not make a live market claim a result.
   const sortedOutcomes = useMemo(() => {
     if (!market?.outcomes) return [];
-    return sortFuturesOutcomes(market.outcomes, sortField, sortDirection);
-  }, [market?.outcomes, sortField, sortDirection]);
+    return sortFuturesOutcomes(
+      market.outcomes,
+      sortField,
+      sortDirection,
+      market.status === "resolved",
+    );
+  }, [market?.outcomes, market?.status, sortField, sortDirection]);
 
   // The leader is always the outcome with highest probability (independent of sort)
   const leader = useMemo(() => {

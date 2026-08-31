@@ -81,18 +81,27 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
         "const bChange = b.probability_change_24h ?? -1;",
         "a null change read as a loss rather than as no move",
     ),
+    # UX-P232 re-anchored I and J: the page's call became multi-line when the
+    # settled flag was threaded through it. Same two mutants, same meaning — an
+    # anchor that no longer matches would have failed the battery as INVALID
+    # rather than silently passing, but it still has to be kept honest.
     (
         "I",
         PAGE,
-        "return sortFuturesOutcomes(market.outcomes, sortField, sortDirection);",
-        "return sortFuturesOutcomes(market.outcomes, sortField, \"asc\");",
+        "      sortField,\n      sortDirection,",
+        "      sortField,\n      \"asc\",",
         "the page ignores its own direction state and always ascends",
     ),
     (
         "J",
         PAGE,
-        "return sortFuturesOutcomes(market.outcomes, sortField, sortDirection);",
-        "return [...market.outcomes];",
+        "    return sortFuturesOutcomes(\n"
+        "      market.outcomes,\n"
+        "      sortField,\n"
+        "      sortDirection,\n"
+        "      market.status === \"resolved\",\n"
+        "    );",
+        "    return [...market.outcomes];",
         "the page drops the sort entirely and trusts the payload's arrival order "
         "(passes on production data, which arrives sorted — the vacuity the "
         "shuffled-payload test exists to kill)",
