@@ -285,17 +285,49 @@ def tennis_gender(text: str | None) -> str:
     return ""
 
 
-def tennis_status(status: str | None, resolution_date, now) -> str:
-    """upcoming / live / settled from status + resolution proximity."""
+def tennis_status(
+    status: str | None, resolution_date, now, *, proximity_live: bool = False
+) -> str:
+    """upcoming / live / settled from status + resolution proximity.
+
+    ═══ WHY "live" IS OPT-IN AND DEFAULTS TO OFF (UX-P208) ═══
+
+    This returned "live" for anything resolving within 21 days, and `/hub/tennis`
+    printed a pulsing LIVE dot over four cards dated up to a fortnight ahead —
+    Alex, 2026-08-30, the defect-list item this fix answers. Reproduced on the
+    live payload that evening: WTA Washington (resolving Sep 5), WTA Toronto
+    (Sep 12), the Women's US Open (Sep 13) and ATP Montreal (Sep 13) all carried
+    the dot, six to fourteen days out.
+
+    Proximity to a resolution date is not liveness, and on this data it is not
+    even proximity to a real END. Measured over all 314 open tennis winner
+    markets on 2026-08-31: `commence_time == resolution_date` for **302 of the
+    311** rows carrying both — gotcha #14, a Kalshi close-time artifact rather
+    than a start. All seven tournament winner-field markets behind the rail
+    carry `event_id IS NULL`, so there is no event row to consult either. No
+    trustworthy tournament start signal is reachable from here.
+
+    Golf's sibling classifier already states this rule, in these words:
+    `_golf_status` returns "live" ONLY from an ASSERTED `schedule_status`
+    ("in_progress"/"live"/"active") and warns that it does "NOT trust
+    resolution_date here alone — it can carry a FUTURE Kalshi close-time
+    artifact (gotcha #14)". Tennis has no schedule feed, so tennis has no
+    assertion available, so tennis must not claim.
+
+    Hence the default: silence means "we cannot tell", and a caller that wants
+    the old inference has to name it. `TennisEventAdapter.build_event` passes
+    `proximity_live=True` deliberately — see the note at that call site.
+    """
     if (status or "").lower() in ("resolved", "closed", "settled", "final"):
         return "settled"
     if resolution_date is not None:
         try:
             if resolution_date < now:
                 return "settled"
-            days = (resolution_date - now).total_seconds() / 86400
-            if days <= 21:
-                return "live"
+            if proximity_live:
+                days = (resolution_date - now).total_seconds() / 86400
+                if days <= 21:
+                    return "live"
         except TypeError:
             pass
     return "upcoming"
@@ -400,6 +432,12 @@ async def list_tennis_tournament_concepts(
             ]
             if sibling_dates:
                 end_at = min(sibling_dates)
+        # UX-P208: no `proximity_live` here, so the rail never claims a
+        # tournament has begun — it has no evidence either way (see
+        # `tennis_status`). Membership is deliberately untouched: the filter
+        # below still reads the same `statuses`, and every card that appeared on
+        # the rail before still appears on it. What changed is only what a card
+        # is willing to assert about itself.
         status = tennis_status(winner.status, end_at, now)
         if status not in statuses:
             continue
@@ -497,7 +535,22 @@ class TennisEventAdapter:
 
         # L2-83: compute the event status once, up front — the settled-winner crown
         # below references it, and the envelope reuses it (single source of truth).
-        event_status = tennis_status(winner.status, winner.resolution_date, now)
+        #
+        # UX-P208: `proximity_live=True` keeps THIS surface bit-for-bit as it
+        # was, and it is named rather than inherited so the debt stays visible.
+        #
+        # The inference is unsound here for exactly the reason it was unsound on
+        # the hub rail. It is retained anyway because this page is the flagship
+        # during the US Open, and flipping it to "upcoming" mid-tournament would
+        # trade Alex's bug for a worse one on a busier surface. The honest repair
+        # for this call site is a different repair: unlike the rail, this one HAS
+        # the evidence — `children` below are the tournament's own match markets,
+        # and a draw with played matches is a draw that started. That needs its
+        # own measurement and guards, so it is parked (UX-P208-1) rather than
+        # smuggled into a card fix.
+        event_status = tennis_status(
+            winner.status, winner.resolution_date, now, proximity_live=True
+        )
 
         # Competitors = real players (drop the field-remainder "Other" + placeholders).
         competitors = []

@@ -43,6 +43,7 @@ from app.utils.event_tennis import (
     list_tennis_tournament_concepts,
     select_winner_field,
     tennis_gender,
+    tennis_status,
     tournament_tokens,
 )
 from app.utils.name_normalization import clean_slug
@@ -74,9 +75,14 @@ def _resolve(slug, rows=None):
     return w.name if w else None
 
 
-def _markets_with_outcomes(rows):
+def _markets_with_outcomes(rows, resolution_date=None):
     """Corpus rows as market-shaped objects carrying real `outcomes`, so the hub
-    rail's own `_real_count` (which reads `m.outcomes`) sees the measured count."""
+    rail's own `_real_count` (which reads `m.outcomes`) sees the measured count.
+
+    `resolution_date` defaults to None — the corpus carries none — so the
+    date-dependent branches stay quiet unless a test supplies a date on purpose.
+    UX-P208 supplies one; see `TestTheRailNeverClaimsATournamentIsLive`.
+    """
     out = []
     for r in rows:
         n = r["real_outcome_count"] or 0
@@ -86,7 +92,7 @@ def _markets_with_outcomes(rows):
                 id=r["id"],
                 volume_24h=r["volume_24h"],
                 status=r["status"],
-                resolution_date=None,
+                resolution_date=resolution_date,
                 outcomes=[SimpleNamespace(name=f"Player {i}") for i in range(n)],
             )
         )
@@ -407,6 +413,71 @@ class TestHubRailNeverLinksABrokenShelf:
         assert len(await self._emitted()) >= 11
 
 
+class TestTheRailNeverClaimsATournamentIsLive:
+    """UX-P208. Alex, on the live `/hub/tennis`, 2026-08-30: a pulsing LIVE dot
+    over a date two weeks out. Four of the ten cards carried one — WTA Washington
+    (resolving Sep 5), WTA Toronto (Sep 12), the Women's US Open (Sep 13) and ATP
+    Montreal (Sep 13) — because "live" meant "resolves within 21 days".
+
+    These drive the REAL `list_tennis_tournament_concepts` over the REAL
+    production corpus with one date injected across it, thirteen days out: the
+    same distance as the card Alex was looking at.
+    """
+
+    #: Alex's card, to the day — the Women's US Open resolved Sep 13, read Aug 31.
+    DAYS_OUT = 13
+
+    async def _concepts(self, days_out=None):
+        # Gotcha #44: offset from now, never a literal date.
+        resolution = datetime.now(timezone.utc) + timedelta(
+            days=self.DAYS_OUT if days_out is None else days_out
+        )
+        rows = [r for r in CORPUS if r["status"] == "open"]
+        db = _FakeDB(_markets_with_outcomes(rows, resolution_date=resolution))
+        return await list_tennis_tournament_concepts(db, limit=50)
+
+    async def test_the_fixture_actually_reproduces_the_defect(self):
+        """THE CONTROL, and without it everything below is vacuous.
+
+        Every other rail test in this file runs on `resolution_date=None`, which
+        takes neither date branch — so "nothing is live" would pass on a fixture
+        that could never have been live in the first place. This asks the
+        classifier for the OLD verdict on the injected date, and only a date
+        squarely inside the window that used to produce the dot satisfies it.
+        """
+        now = datetime.now(timezone.utc)
+        assert (
+            tennis_status(
+                "open", now + timedelta(days=self.DAYS_OUT), now, proximity_live=True
+            )
+            == "live"
+        ), "the injected date is outside the old live window — the guard is vacuous"
+
+    async def test_no_card_claims_to_be_live(self):
+        offenders = [c["name"] for c in await self._concepts() if c["status"] == "live"]
+        assert not offenders, f"cards claiming LIVE on a future date: {offenders}"
+
+    async def test_the_population_did_not_change(self):
+        """The fix changes what a card CLAIMS, not which cards exist. A repair
+        that quietly emptied the rail would satisfy the assertion above."""
+        dated = {c["key"] for c in await self._concepts()}
+        rows = [r for r in CORPUS if r["status"] == "open"]
+        undated = {
+            c["key"]
+            for c in await list_tennis_tournament_concepts(
+                _FakeDB(_markets_with_outcomes(rows)), limit=50
+            )
+        }
+        assert dated == undated, "the rail's membership moved"
+        assert len(dated) >= 11
+
+    async def test_a_past_resolution_still_settles_and_leaves_the_rail(self):
+        """The opposite edge: the fix must not turn a concluded tournament into
+        a permanent upcoming one. `statuses` still filters settled concepts out,
+        so a past date empties the rail rather than parking stale cards on it."""
+        assert await self._concepts(days_out=-30) == []
+
+
 # ---------------------------------------------------------------------------
 # 6. A tour tier is a property, not an identity (UX-P182)
 # ---------------------------------------------------------------------------
@@ -557,10 +628,38 @@ class TestMergingNeverSubtractsTheDate:
         assert card["name"] == "ATP 1000 Montreal: Winner"  # identity from the draw
         assert card["start_date"] == ends.isoformat()  # date from the group
 
-    async def test_the_survivor_keeps_its_live_status(self):
+    async def test_the_survivor_keeps_the_status_its_borrowed_date_implies(self):
+        """Was `test_the_survivor_keeps_its_live_status`, asserting `"live"`.
+
+        UX-P182 could assert that because a date five days out USED to imply
+        liveness, which made "live" the cheapest available proof that the
+        group's date had been read at all. UX-P208 removed that inference (a
+        resolution date is not a start — see `tennis_status`), so "live" is no
+        longer reachable here and a bare `== "upcoming"` would pass even if the
+        merge dropped the date entirely. That is precisely the vacuity this
+        class exists to prevent, so the proof is rebuilt rather than relaxed:
+        the borrowed date is shown to still DRIVE the status, in the one
+        direction that is still observable.
+        """
         rich, dated, _ = self._pair()
         (card,) = await self._rail([rich, dated])
-        assert card["status"] == "live"
+        assert card["status"] == "upcoming"
+
+        # The discriminator. Give the sibling a PAST date and the merged card
+        # must settle off the rail — which only the sibling's date can cause,
+        # since `rich` alone carries none and stays. A merge that subtracted the
+        # date would leave the card sitting here as "upcoming" forever.
+        rich2, _, _ = self._pair()
+        past = SimpleNamespace(
+            id=58728642,
+            name="ATP Montreal Winner",
+            status="open",
+            resolution_date=datetime.now(timezone.utc) - timedelta(days=3),
+            volume_24h=67053,
+            outcomes=[SimpleNamespace(name=f"Player {i}") for i in range(46)],
+        )
+        assert await self._rail([rich2, past]) == []
+        assert len(await self._rail([rich2])) == 1
 
     async def test_alone_the_undated_rendering_still_admits_no_date(self):
         """The control. A date is borrowed from a SIBLING, never invented — with

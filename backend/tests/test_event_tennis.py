@@ -64,8 +64,45 @@ class TestStatus:
         assert tennis_status("resolved", NOW + timedelta(days=5), NOW) == "settled"
         assert tennis_status("open", NOW - timedelta(days=1), NOW) == "settled"
 
-    def test_live_when_resolution_near(self):
-        assert tennis_status("open", NOW + timedelta(days=4), NOW) == "live"
+    def test_a_near_resolution_is_not_live_by_default(self):
+        """UX-P208. Alex, 2026-08-30: `/hub/tennis` printed a pulsing LIVE dot
+        over four cards dated up to a fortnight ahead. Proximity to a resolution
+        date is not evidence a tournament has begun, so silence no longer
+        produces the claim — a caller has to ask for the inference by name."""
+        for days in (0.5, 4, 13, 21):
+            assert (
+                tennis_status("open", NOW + timedelta(days=days), NOW) == "upcoming"
+            ), f"a tournament resolving in {days}d claimed to be live"
+
+    def test_the_proximity_inference_survives_where_it_is_asked_for(self):
+        """`build_event` still opts in, so this is a real switch and not a
+        deletion wearing a keyword. Both arms are asserted: without the flag the
+        whole window is quiet, with it the old boundary is bit-for-bit intact."""
+        assert (
+            tennis_status("open", NOW + timedelta(days=4), NOW, proximity_live=True)
+            == "live"
+        )
+        assert (
+            tennis_status("open", NOW + timedelta(days=21), NOW, proximity_live=True)
+            == "live"
+        )
+        assert (
+            tennis_status("open", NOW + timedelta(days=22), NOW, proximity_live=True)
+            == "upcoming"
+        )
+
+    def test_opting_in_never_overrides_a_settled_verdict(self):
+        """The flag widens ONE branch. A resolved market and a past resolution
+        date still settle, or the crown logic downstream would read a decided
+        tournament as in-play."""
+        assert (
+            tennis_status("resolved", NOW + timedelta(days=5), NOW, proximity_live=True)
+            == "settled"
+        )
+        assert (
+            tennis_status("open", NOW - timedelta(days=1), NOW, proximity_live=True)
+            == "settled"
+        )
 
     def test_upcoming_when_far_or_unknown(self):
         assert tennis_status("open", NOW + timedelta(days=60), NOW) == "upcoming"
