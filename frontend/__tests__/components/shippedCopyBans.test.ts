@@ -293,6 +293,28 @@ describe("the rules reject the copy Alex read on production", () => {
       ["Nobody ever quoted this match.", /nobody-ever/],
       ["At no point did a probability arrive for this leg.", /at-no-point/],
       ["This comparison was never complete.", /was-never-complete/],
+
+      // ═══ CERT-539 — the five rewordings that passed BOTH layers ═══
+      //
+      // Every one of these makes the identical all-of-history claim about our
+      // receipt of a number, and every one walked around all six of the
+      // original patterns AND the shipped-bundle scanner. They are listed
+      // verbatim as the cert executed them, so a future narrowing that
+      // re-opens any single family fails here by name.
+      [
+        "There has never been a probability for this market.",
+        /there-was-never-a-reading/,
+      ],
+      ["This question never had a probability.", /never-had-a-reading/],
+      [
+        "We have not once received a number for this market.",
+        /not-once-received/,
+      ],
+      ["We did not receive a number at any time.", /no-reading-at-any-time/],
+      [
+        "A probability has never been available for this question.",
+        /reading-never-been/,
+      ],
     ];
 
     it.each(HISTORY_CLAIMS)("rejects %j", (sentence, whyPattern) => {
@@ -353,6 +375,25 @@ describe("the rules reject the copy Alex read on production", () => {
       "Updates paused. These are the last probabilities we saw, not live ones.",
       "No market has put a probability on today's matches.",
       "Nobody is quoting this match yet. It is in the draw with no probability against it.",
+
+      // ═══ CERT-539 — the three sentences the group used to reject wrongly ═══
+      //
+      // None of these says anything about our receipt of a number: they are
+      // ordinary supported sports and chart prose, and each one would have
+      // failed a product-wide build gate on copy that is simply true. The
+      // patterns that matched them (`at-no-point`, `was-never-complete`,
+      // `nobody-ever`) are now bound to a reading noun, a page subject and a
+      // quoting verb respectively.
+      "At no point did either player face a break point.",
+      "The comeback was never complete.",
+      "Nobody ever scored more than 30 points in this game.",
+
+      // The near-misses of those three narrowings, so a re-widening is caught
+      // at the edge rather than only in the middle.
+      "You can dismiss this at any time.",
+      "The chart shows the comeback was never complete.",
+      "Nobody ever led by more than two breaks.",
+      "At no point was the match in doubt.",
     ];
 
     it.each(TRUE_PAST_TENSE)("supported past-tense copy survives: %j", (sentence) => {
@@ -496,6 +537,48 @@ describe("reading copy back out of minified JavaScript", () => {
     // The replacement half of the same ternary must NOT be a hit, or the guard
     // would be firing on the chunk rather than on the sentence.
     expect(hits.every((h) => !h.literal.includes("We have no number for"))).toBe(true);
+  });
+
+  /**
+   * ═══ CERT-539 — AN ALTERNATE SHAPE, THROUGH LAYER 2 ═══
+   *
+   * The cert's finding was not only that five rewordings passed the predicate;
+   * it was that `scanBundleSource` reported clean on them too. Pinning the new
+   * families at layer 1 alone would answer half the finding and leave the other
+   * half exactly as it was — this file's own JSON-hole test is the worked
+   * example of layer 1 passing while layer 2 read nothing.
+   *
+   * So the alternate wording is planted in the emitted shape as well, and a
+   * DIFFERENT wording from the one above: no "ever", no "reached us", no
+   * "complete". If a future edit narrows the group back to UX-P213's six
+   * literals, the layer-1 pins and this one fail together, which is the
+   * signal that the claim — not the sentence — is what the rule is holding.
+   */
+  it("catches a REWORDED history claim in the shape a chunk really carries it", () => {
+    const planted =
+      'function R(e,t){return t?`There has never been a probability for ${e}.`:`We have no probability for ${e} yet.`}';
+    const hits = scanBundleSource("app/tournaments/[slug]/page-0a584f.js", planted);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.map((h) => h.ban.id).sort()).toEqual(["there-was-never-a-reading"]);
+    expect(hits.every((h) => h.surface === "app/tournaments")).toBe(true);
+    // The conditional half is the sentence the product is allowed to say, and
+    // it must stay clean or the plant is proving nothing about the quantifier.
+    expect(hits.every((h) => !h.literal.includes("We have no probability for"))).toBe(true);
+  });
+
+  /**
+   * The other side of CERT-539, at the layer that would actually break a build.
+   *
+   * A false positive here is not a nuisance — `scanBundleSource` feeds the
+   * product-wide gate, so an over-broad rule fails a deploy on true copy. The
+   * three narrowed patterns are therefore proven clean in the EMITTED shape
+   * too, not only against a bare string.
+   */
+  it("supported sports prose survives the bundle scan", () => {
+    const planted =
+      'function S(){return["At no point did either player face a break point.","The comeback was never complete.","Nobody ever scored more than 30 points in this game."]}';
+    const hits = scanBundleSource("app/tournaments/[slug]/page-0a584f.js", planted);
+    expect(hits.map((h) => `${h.ban.id}: ${h.literal}`)).toEqual([]);
   });
 });
 
