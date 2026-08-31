@@ -326,7 +326,9 @@ class _Guard:
         self.backups: dict[Path, Path] = {}
         self.original: dict[Path, str] = {}
         self._prev_handlers: dict[int, object] = {}
-        self._lock_fh = None
+        # CERT-595: one open file handle per TARGET, in the order they were
+        # acquired. A single handle could only ever exclude an identical set.
+        self._lock_fhs: list = []
 
     # -- signals -------------------------------------------------------
     def _install(self) -> None:
@@ -343,12 +345,41 @@ class _Guard:
                 signal.signal(sig, handler)
 
     # -- the target lock -----------------------------------------------
-    def _lock_path(self) -> Path:
-        """One lock per resolved TARGET SET, so unrelated harnesses never queue."""
-        key = hashlib.sha1(
-            "\n".join(sorted(str(t.resolve()) for t in self.targets)).encode()
-        ).hexdigest()[:16]
-        return MANIFEST_DIR / f"targets-{key}.lock"
+    def _lock_paths(self) -> list[Path]:
+        """🔴 CERT-595: ONE LOCK PER TARGET, NOT ONE PER TARGET SET.
+
+        CERT-588's repair keyed a single lock on the whole sorted target set. The
+        intent was right — serialization is the cost of sharing a file — but
+        equality of whole sets is strictly weaker than OVERLAP, and overlap is
+        what actually shares a file. The cert's probe ran A over `{a, shared}`
+        against B over `{shared, c}`: the two sets hash differently, so both runs
+        took different locks and both walked straight in. A observed B's mutant, B
+        observed restored bytes, both exited 0, and `shared` finished dirty with
+        no manifest naming it — the exact silent false-verdict class CERT-588 was
+        supposed to close, one door further out.
+
+        So the key is the TARGET, and a guard holds one lock for each of them.
+        Two runs serialize precisely when they share at least one file, and
+        disjoint harnesses still never queue.
+
+        **Sorted by resolved path, and that ordering is load-bearing.** Every
+        guard in the system acquires in the same total order, which is what makes
+        a deadlock cycle impossible: A holding `shared` and waiting on `c` while B
+        holds `c` and waits on `shared` cannot arise if both take `c` before
+        `shared`. Deduped for the same reason — two entries resolving to one path
+        would have this process block on its own lock through a second fd.
+        """
+        seen: dict[str, Path] = {}
+        for target in self.targets:
+            resolved = str(target.resolve())
+            if resolved in seen:
+                continue
+            key = hashlib.sha1(resolved.encode()).hexdigest()[:16]
+            # The stem is a reader's affordance only — the hash is the identity,
+            # so two same-named files in different directories never collide.
+            hint = "".join(c if c.isalnum() else "_" for c in target.name)[:32]
+            seen[resolved] = MANIFEST_DIR / f"target-{hint}-{key}.lock"
+        return [seen[k] for k in sorted(seen)]
 
     def _acquire(self) -> None:
         """🔴 CERT-588: SERIALIZE THE WHOLE GUARDED CONTEXT, NOT JUST THE BYTES.
@@ -370,55 +401,68 @@ class _Guard:
         oracle observes only that run's mutation**, and the only way to have it
         on a shared file is to be the only writer for the whole context.
 
-        So the guard now holds an exclusive OS lock, keyed on the resolved target
-        set, from before the first backup until after the restore. Keyed on the
-        TARGETS rather than the label so two different harnesses that touch
-        disjoint files still run in parallel — serialization is the cost of
-        sharing a file, and nothing should pay it that is not sharing one.
+        So the guard now holds an exclusive OS lock PER TARGET (CERT-595 — a
+        single lock over the whole set only excluded runs whose sets were EQUAL,
+        see `_lock_paths`), from before the first backup until after the restore.
+        Keyed on the TARGETS rather than the label so two different harnesses
+        that touch disjoint files still run in parallel — serialization is the
+        cost of sharing a file, and nothing should pay it that is not sharing one.
 
         Bounded wait, then FAIL CLOSED. A battery legitimately holds this for
         many minutes, so a short timeout would turn ordinary overlap into a
         spurious failure; an unbounded one would turn a wedged holder into a
         silent hang, which is the failure mode this module exists to refuse.
+
+        **The deadline spans the whole acquisition, not each lock.** A run over
+        twenty targets must not be able to wait twenty timeouts; the promise the
+        caller is given is a bound on `start()`, not on any one `flock`. And a
+        timeout part-way through releases everything already taken before it
+        raises, so a refusal never leaves this process wedging the runs behind it.
         """
         timeout_s = float(os.getenv("MUTATION_GUARD_LOCK_TIMEOUT_S", "600"))
-        self._lock_fh = open(self._lock_path(), "w")  # noqa: SIM115 — held for the context
         deadline = time.monotonic() + timeout_s
-        announced = False
-        while True:
-            try:
-                fcntl.flock(self._lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                self._lock_fh.write(f"{os.getpid()} {self.label}\n")
-                self._lock_fh.flush()
-                return
-            except BlockingIOError:
-                if not announced:
-                    print(
-                        f"  guard: waiting for another run to release {self._lock_path().name} "
-                        f"— these targets are already being mutated (up to {timeout_s:.0f}s)"
-                    )
-                    announced = True
-                if time.monotonic() >= deadline:
-                    self._lock_fh.close()
-                    self._lock_fh = None
-                    raise RuntimeError(
-                        f"mutation guard '{self.label}' could not take the target lock "
-                        f"{self._lock_path()} within {timeout_s:.0f}s. Another run is "
-                        "mutating the same files. Refusing to start rather than scoring "
-                        "this run's oracle against somebody else's mutant (CERT-588). "
-                        "If no such run exists, a previous one died holding the lock — "
-                        "`python3 -m scripts.evals._mutation_guard --check` will say so."
-                    )
-                time.sleep(0.25)
+        self._lock_fhs = []
+        for lock_path in self._lock_paths():
+            fh = open(lock_path, "w")  # noqa: SIM115 — held for the context
+            announced = False
+            while True:
+                try:
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fh.write(f"{os.getpid()} {self.label}\n")
+                    fh.flush()
+                    self._lock_fhs.append(fh)
+                    break
+                except BlockingIOError:
+                    if not announced:
+                        print(
+                            f"  guard: waiting for another run to release {lock_path.name} "
+                            f"— that target is already being mutated (up to {timeout_s:.0f}s)"
+                        )
+                        announced = True
+                    if time.monotonic() >= deadline:
+                        fh.close()
+                        # Never hold a partial set through a refusal.
+                        self._release()
+                        raise RuntimeError(
+                            f"mutation guard '{self.label}' could not take the target lock "
+                            f"{lock_path} within {timeout_s:.0f}s. Another run is mutating "
+                            "that file. Refusing to start rather than scoring this run's "
+                            "oracle against somebody else's mutant (CERT-588/CERT-595). "
+                            "If no such run exists, a previous one died holding the lock — "
+                            "`python3 -m scripts.evals._mutation_guard --check` will say so."
+                        )
+                    time.sleep(0.25)
 
     def _release(self) -> None:
-        if getattr(self, "_lock_fh", None) is None:
-            return
-        with contextlib.suppress(Exception):
-            fcntl.flock(self._lock_fh, fcntl.LOCK_UN)
-        with contextlib.suppress(Exception):
-            self._lock_fh.close()
-        self._lock_fh = None
+        # Reverse order, mirroring the sorted acquisition. Not required for
+        # correctness with flock, but it keeps the lifecycle readable as a stack
+        # and matches what the acquisition ordering comment promises.
+        for fh in reversed(getattr(self, "_lock_fhs", []) or []):
+            with contextlib.suppress(Exception):
+                fcntl.flock(fh, fcntl.LOCK_UN)
+            with contextlib.suppress(Exception):
+                fh.close()
+        self._lock_fhs = []
 
     # -- lifecycle -----------------------------------------------------
     def start(self) -> "_Guard":

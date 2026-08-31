@@ -834,32 +834,187 @@ def test_each_run_observes_only_its_own_mutant(tmp_path):
 
 
 def test_the_target_lock_is_scoped_to_the_targets_not_the_label(tmp_path):
-    """Serialization is the cost of sharing a FILE; nothing else should pay it."""
+    """Serialization is the cost of sharing a FILE; nothing else should pay it.
+
+    🔴 CERT-595 REWROTE THIS TEST'S PROPERTY. It used to compare a single
+    whole-set lock path, and it passed against a guard that could not exclude
+    two runs sharing ONE file out of several — because equality of sets is
+    strictly weaker than overlap. The assertion is now about the per-target
+    locks, so an overlapping pair is required to SHARE one.
+    """
     import importlib
 
     mg = importlib.import_module("scripts.evals._mutation_guard")
 
-    one, two = tmp_path / "one.py", tmp_path / "two.py"
-    one.write_text("a = 1\n")
-    two.write_text("b = 2\n")
+    one, two, shared = tmp_path / "one.py", tmp_path / "two.py", tmp_path / "shared.py"
+    for p in (one, two, shared):
+        p.write_text("x = 1\n")
 
     original_dir = mg.MANIFEST_DIR
     mg.MANIFEST_DIR = tmp_path / "manifests"
     mg.MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        g_one = mg._Guard((one,), tmp_path / "b1", "same_label")
-        g_two = mg._Guard((two,), tmp_path / "b2", "same_label")
-        assert g_one._lock_path() != g_two._lock_path(), (
+        locks_one = set(mg._Guard((one,), tmp_path / "b1", "same_label")._lock_paths())
+        locks_two = set(mg._Guard((two,), tmp_path / "b2", "same_label")._lock_paths())
+        assert not (locks_one & locks_two), (
             "two guards over DIFFERENT targets share a lock — unrelated harnesses "
             "would serialize for no reason"
         )
-        g_same = mg._Guard((one,), tmp_path / "b3", "a_totally_different_label")
-        assert g_one._lock_path() == g_same._lock_path(), (
+        locks_same = set(
+            mg._Guard((one,), tmp_path / "b3", "a_totally_different_label")._lock_paths()
+        )
+        assert locks_one == locks_same, (
             "two guards over the SAME target take different locks — the label must "
             "not be part of the key or the mutual exclusion does not hold"
         )
+
+        # 🔴 THE CERT-595 CASE. Neither set equals the other, and under the old
+        # whole-set key that was enough for both runs to walk straight in.
+        a_side = set(mg._Guard((one, shared), tmp_path / "b4", "a")._lock_paths())
+        c_side = set(mg._Guard((shared, two), tmp_path / "b5", "c")._lock_paths())
+        assert a_side != c_side, "the probe is malformed — these sets must not be equal"
+        assert a_side & c_side, (
+            "two guards whose target sets OVERLAP but are not EQUAL take no lock in "
+            "common, so nothing serializes them on the file they share (CERT-595)"
+        )
     finally:
         mg.MANIFEST_DIR = original_dir
+
+
+def test_the_lock_order_is_deterministic_so_two_runs_cannot_deadlock(tmp_path):
+    """Per-target locks buy exclusion; a total ORDER is what stops them deadlocking.
+
+    Holding several locks at once introduces a hazard one lock never had: A takes
+    `x` and waits for `y` while B holds `y` and waits for `x`, and both sit there
+    until the timeout fires — a bounded hang, but still two failed runs and a
+    verdict nobody gets. The guard sorts by resolved path, so every run in the
+    system takes the same files in the same order and no cycle can form.
+
+    Asserted on the ORDER rather than on a live race, because a race that happens
+    to interleave safely proves nothing (the lesson CERT-588's sleep-based probe
+    taught). Deduping is asserted here too: the same path twice would have one
+    process block on its own lock through a second descriptor.
+    """
+    import importlib
+
+    mg = importlib.import_module("scripts.evals._mutation_guard")
+
+    x, y, z = tmp_path / "x.py", tmp_path / "y.py", tmp_path / "z.py"
+    for p in (x, y, z):
+        p.write_text("x = 1\n")
+
+    original_dir = mg.MANIFEST_DIR
+    mg.MANIFEST_DIR = tmp_path / "manifests"
+    mg.MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        forward = mg._Guard((x, y, z), tmp_path / "b1", "forward")._lock_paths()
+        reverse = mg._Guard((z, y, x), tmp_path / "b2", "reverse")._lock_paths()
+        assert forward == reverse, (
+            "two guards over the same targets in different ORDER acquire their locks "
+            "in different order — that is a deadlock cycle waiting for the two runs "
+            "that hit it (CERT-595)"
+        )
+        assert forward == sorted(forward), "the acquisition order must be total, not incidental"
+
+        deduped = mg._Guard((x, x, y), tmp_path / "b3", "dupes")._lock_paths()
+        assert len(deduped) == 2, (
+            f"a repeated target produced {len(deduped)} locks — this process would "
+            "block on its own lock through a second file descriptor"
+        )
+    finally:
+        mg.MANIFEST_DIR = original_dir
+
+
+def test_overlapping_target_sets_still_isolate_each_run(tmp_path):
+    """🔴 CERT-595's exact probe: `{a, shared}` against `{shared, c}`.
+
+    The two sets are unequal, so CERT-588's whole-set lock hashed them
+    differently and let both runs in. Measured against the pre-fix tree: A
+    observed `MUTATED BY B`, B observed the restored `ORIGINAL`, both exited 0,
+    and `shared.py` finished as `MUTATED BY A` — dirty, with no manifest naming
+    it, which is the one state `--check` and the residue scanner cannot see.
+
+    Synchronized with handshake files rather than sleeps, for the reason
+    `test_each_run_observes_only_its_own_mutant` records: the defect is a WINDOW,
+    and a staggered probe closes it by luck and then reports a pass.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    backend = Path(__file__).resolve().parents[1]
+    a_py, shared, c_py = tmp_path / "a.py", tmp_path / "shared.py", tmp_path / "c.py"
+    for p in (a_py, shared, c_py):
+        p.write_text("ORIGINAL\n")
+    a_ready, b_wrote = tmp_path / "a_ready", tmp_path / "b_wrote"
+
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        textwrap.dedent(
+            f'''
+            import sys, time, pathlib
+            sys.path.insert(0, {str(backend)!r})
+            from scripts.evals._mutation_guard import guarded_targets
+            d = pathlib.Path({str(tmp_path)!r})
+            shared = d / "shared.py"
+            a_ready, b_wrote = d / "a_ready", d / "b_wrote"
+            tag = sys.argv[1]
+            # The sets OVERLAP on `shared.py` and are deliberately NOT equal.
+            targets = (d / "a.py", shared) if tag == "A" else (shared, d / "c.py")
+
+            def wait_for(path, limit):
+                end = time.monotonic() + limit
+                while time.monotonic() < end:
+                    if path.exists():
+                        return True
+                    time.sleep(0.05)
+                return False
+
+            if tag == "B":
+                wait_for(a_ready, 15)
+            with guarded_targets(targets, {str(tmp_path / "backups")!r}, "cert595_" + tag):
+                shared.write_text("MUTATED BY " + tag + "\\n")
+                if tag == "A":
+                    a_ready.write_text("x")
+                    wait_for(b_wrote, 6)
+                else:
+                    b_wrote.write_text("x")
+                    time.sleep(0.3)
+                observed = shared.read_text().strip()
+            print("OBSERVED:" + observed)
+            '''
+        )
+    )
+
+    def _spawn(tag):
+        return subprocess.Popen(
+            [sys.executable, str(worker), tag],
+            cwd=str(backend), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+
+    a, b = _spawn("A"), _spawn("B")
+    out_a, out_b = a.communicate()[0], b.communicate()[0]
+
+    def _observed(out, tag):
+        line = [ln for ln in out.splitlines() if ln.startswith("OBSERVED:")]
+        assert line, f"run {tag} never reported what it observed:\n{out}"
+        return line[0].split(":", 1)[1]
+
+    seen_a, seen_b = _observed(out_a, "A"), _observed(out_b, "B")
+    assert seen_a == "MUTATED BY A", (
+        f"run A's oracle observed {seen_a!r} on the SHARED target. Its target set is "
+        "not equal to B's, only overlapping — one lock per set does not exclude that "
+        "(CERT-595)"
+    )
+    assert seen_b == "MUTATED BY B", (
+        f"run B's oracle observed {seen_b!r} — the same defect from the other side"
+    )
+    assert shared.read_text() == "ORIGINAL\n", (
+        f"the shared target finished {shared.read_text()!r} instead of pristine, and "
+        "with no manifest naming it — invisible to `--check` and the residue scanner"
+    )
+    for other in (a_py, c_py):
+        assert other.read_text() == "ORIGINAL\n", f"{other.name} was left dirty"
 
 
 def test_the_lock_fails_closed_rather_than_hanging(tmp_path, monkeypatch):
