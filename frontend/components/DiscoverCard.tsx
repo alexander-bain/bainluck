@@ -37,11 +37,24 @@ interface DiscoverCardProps {
    * lib/discoverFirstRun.ts, never behind a storage read in here.
    */
   showProbabilityHint?: boolean;
+  /**
+   * UX-P234 (board item 16) — the pin binding for a futures card, built by the
+   * page from `usePinnedFutures` and handed down. Same reason as
+   * `showProbabilityHint` above: cards stay presentational and the storage read
+   * stays out of here. A first draft called the hook inside the leaf card and it
+   * threw outside `AuthProvider`, taking down ten suites.
+   */
+  pinFor?: (futuresId: number) => {
+    pinned: boolean;
+    onToggle: () => void;
+    atMax: boolean;
+    noun: string;
+  };
 }
 
 // ── Main Export ──
 
-export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, showProbabilityHint }: DiscoverCardProps) {
+export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, showProbabilityHint, pinFor }: DiscoverCardProps) {
   if (groupedItem.type === "group" && groupedItem.items) {
     return (
       <GroupCard
@@ -54,12 +67,12 @@ export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, sh
     );
   }
   const item = groupedItem.item!;
-  return <SingleCard item={item} onDismiss={onDismiss} positionIndex={positionIndex} showProbabilityHint={showProbabilityHint} />;
+  return <SingleCard item={item} onDismiss={onDismiss} positionIndex={positionIndex} showProbabilityHint={showProbabilityHint} pinFor={pinFor} />;
 }
 
 // ── Single Card Wrapper (handles swipe + analytics delegation) ──
 
-function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint }: { item: FeedItem; onDismiss?: () => void; positionIndex?: number; showProbabilityHint?: boolean }) {
+function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFor }: { item: FeedItem; onDismiss?: () => void; positionIndex?: number; showProbabilityHint?: boolean; pinFor?: DiscoverCardProps["pinFor"] }) {
   const router = useRouter();
   const [liked, setLiked] = useState(false);
   const trending = isTrending(item);
@@ -153,9 +166,9 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint }: { i
       <div className="relative z-10" style={cardStyle}>
         {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
         {item.type === "futures" && (item.data as FeedFuturesData).discover_card?.suggested_format === "outcome_distribution" && (item.data as FeedFuturesData).top_outcomes?.length >= 4 ? (
-          <ComparisonCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
+          <ComparisonCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} pin={pinFor?.((item.data as FeedFuturesData).id)} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
         ) : item.type === "futures" ? (
-          <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} showProbabilityHint={showProbabilityHint} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
+          <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} showProbabilityHint={showProbabilityHint} pin={pinFor?.((item.data as FeedFuturesData).id)} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
         ) : null}
         {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
         {/* L2-166: a `concept` item (UFC card / F1 GP / cycling grand tour) reaches

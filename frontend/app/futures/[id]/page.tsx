@@ -46,6 +46,7 @@ import {
   sortFuturesOutcomes,
 } from "@/lib/futuresDetailDisplay";
 import type { FuturesSortField, FuturesSortDirection } from "@/lib/futuresDetailDisplay";
+import { PinButton } from "@/components/PinButton";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
 
@@ -632,17 +633,20 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         <p className="text-[13px] leading-relaxed text-text-secondary mb-4 max-w-2xl">{market.hook_description}</p>
       )}
 
-      {/* Legacy hero kept for share/pin actions */}
+      {/* UX-P234 (board item 15): the pin. This used to be a bare word inside a
+          container whose own comment read "Legacy hero kept for share/pin actions"
+          — scaffolding that shipped. It is now the SAME affordance the Discover
+          feed and the card surfaces use (`components/PinButton`), so a pin looks
+          like a pin wherever a reader meets one. That comment is retired with the
+          thing it described; there is no legacy hero here, only the pin. */}
       <div className="flex items-center gap-3 mb-4">
-        <button
-          onClick={() => togglePin(marketId)}
-          disabled={isMaxReached && !marketIsPinned}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-            marketIsPinned ? "bg-amber-500/10 text-amber-600" : "bg-surface-elevated text-text-secondary hover:text-text-primary"
-          } ${isMaxReached && !marketIsPinned ? "cursor-not-allowed opacity-30" : ""}`}
-        >
-          {marketIsPinned ? "Pinned" : "Pin"}
-        </button>
+        <PinButton
+          pinned={marketIsPinned}
+          onToggle={() => togglePin(marketId)}
+          atMax={isMaxReached}
+          noun="market"
+          variant="labelled"
+        />
       </div>
 
       {/* #883 blend-only: cross-source CombinedMarketCard removed — one blended

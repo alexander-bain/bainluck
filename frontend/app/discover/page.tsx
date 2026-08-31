@@ -12,7 +12,7 @@ import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
 import FeedUnavailableNotice, { type FeedFailureReason } from "@/components/discover/FeedUnavailableNotice";
 import DiscoverSkeletonGrid from "@/components/discover/DiscoverSkeletonGrid";
 import { Button } from "@/components/ui/button";
-import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { usePageTracking, useScrollDepth, useEngagementTime, usePinnedFutures } from "@/hooks";
 import { trackEvent } from "@/lib/analytics";
 import {
   getDiscoverCategoryAdjustment,
@@ -539,6 +539,29 @@ export default function DiscoverPage() {
   usePageTracking({ pageType: "discover", pageTitle: "Discover" });
   useScrollDepth({ pageType: "discover" });
   useEngagementTime({ pageType: "discover" });
+
+  // UX-P234 (board item 16) — Alex: "on the web Discover feed there is no
+  // indication a card can be pinned at all." It could not be: the Discover card
+  // had no pin of any kind, while the SAME market was pinnable from search,
+  // my-stuff and preferences.
+  //
+  // The PAGE owns the store and hands each card its binding, matching how
+  // search/my-stuff/preferences already drive `components/FuturesCard`. A first
+  // draft called this hook inside the leaf card instead; it reaches
+  // `useAuthContext`, which throws outside an `AuthProvider`, and it took down ten
+  // suites that render that card in isolation. `DiscoverCard`'s own docblock
+  // already said why: cards stay presentational, never a storage read in there.
+  const { isPinned: isFuturePinned, togglePin: toggleFuturePin, isMaxReached: futurePinsFull } =
+    usePinnedFutures();
+  const pinForFutures = useCallback(
+    (futuresId: number) => ({
+      pinned: isFuturePinned(futuresId),
+      onToggle: () => toggleFuturePin(futuresId),
+      atMax: futurePinsFull,
+      noun: "market",
+    }),
+    [isFuturePinned, toggleFuturePin, futurePinsFull],
+  );
 
   // Auth state only feeds the L2-242 shared-anon decision below (feed reads still
   // attach the bearer via apiFetch's module-level getter). Signed-in users are
@@ -1319,6 +1342,7 @@ export default function DiscoverPage() {
                       positionIndex={idx}
                       onDismiss={handleLessLike}
                       showProbabilityHint={isFirstPosition && isFirstRunAnon}
+                      pinFor={pinForFutures}
                     />
                   )}
                 </FeedItemShell>
