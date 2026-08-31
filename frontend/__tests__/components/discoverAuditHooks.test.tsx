@@ -130,17 +130,141 @@ const REQUIRED_SELECTOR_APIS = [
   "measureMainRegion",
 ] as const;
 
+/** `=`, `+=`, `??=` and the rest — the documented contiguous SyntaxKind range. */
+function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
+  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+}
+
+/** Every plain name a binding introduces, flattened through destructuring patterns. */
+function boundNames(name: ts.BindingName): string[] {
+  if (ts.isIdentifier(name)) return [name.text];
+  return name.elements.flatMap((el) =>
+    ts.isBindingElement(el) ? boundNames(el.name) : []
+  );
+}
+
 function resolveSpec(file: string, src: string): Resolution {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
 
-  // Module-level string constants, resolved first: `SKELETON` is handed to a
-  // helper rather than to `locator()`, so a selector-call-only read would miss
-  // `discover-skeleton` entirely and then red on its own guarded list.
-  const consts = new Map<string, string>();
+  /**
+   * A name is readable only if it is PROVABLY immutable.
+   *
+   * UX-P228 round 3, after CERT-587. Round 2 recorded every top-level
+   * initializer and handed it back on sight, without ever asking whether the
+   * binding could change. The cert wrote
+   * `let SELECTOR = '[data-testid="discover-card"]'` and then
+   * `SELECTOR += ', [data-' + 'testid="discover-reassigned"]'`, and the
+   * resolver answered with the STALE initializer and `unresolved: []` — a wrong
+   * string returned confidently, which is strictly worse than the loud failure
+   * this design exists to guarantee. A new pack hook stayed unguarded and CI
+   * stayed green: the exact false-green class, reached through the resolver.
+   *
+   * "Also look for `+=`" is the move that lost in rounds 1 and 2. So the rule
+   * is stated positively, as the conjunction of three facts a parser can settle
+   * without a type checker:
+   *
+   *   1. exactly ONE binding of the name in the whole file — no shadowing by a
+   *      parameter, a nested `let`, a catch variable, a destructured element,
+   *      an import or a function/class declaration;
+   *   2. that binding is a top-level `const` with a plain identifier name; and
+   *   3. the name is never a write target anywhere — assignment, compound
+   *      assignment, `++`/`--`, a destructuring-assignment target, or a
+   *      `for..of`/`for..in` head.
+   *
+   * Anything else resolves to null, and null is LOUD. Clause 3 is redundant
+   * with clause 2 for JavaScript that runs (you cannot assign to a `const`), and
+   * it is kept anyway: it is what stops a future edit that relaxes clause 2 for
+   * convenience from silently reopening CERT-587. Both clauses are attacked
+   * directly in `RESOLVER_ATTACKS` below rather than argued for here.
+   */
+  const bindingCount = new Map<string, number>();
+  const writtenNames = new Set<string>();
+  const topLevelConstInit = new Map<string, ts.Expression>();
+
+  const countBinding = (n: string) =>
+    bindingCount.set(n, (bindingCount.get(n) ?? 0) + 1);
+
+  function markWrite(target: ts.Node): void {
+    const t = ts.isParenthesizedExpression(target) ? target.expression : target;
+    if (ts.isIdentifier(t)) writtenNames.add(t.text);
+    else if (ts.isArrayLiteralExpression(t)) t.elements.forEach(markWrite);
+    else if (ts.isSpreadElement(t)) markWrite(t.expression);
+    else if (ts.isObjectLiteralExpression(t)) {
+      for (const p of t.properties) {
+        if (ts.isShorthandPropertyAssignment(p)) writtenNames.add(p.name.text);
+        else if (ts.isPropertyAssignment(p)) markWrite(p.initializer);
+        else if (ts.isSpreadAssignment(p)) markWrite(p.expression);
+      }
+    }
+    // A member write (`obj.x = 1`) rebinds nothing and is deliberately ignored.
+  }
+
+  function census(n: ts.Node): void {
+    // --- value bindings. Interfaces and type aliases live in type space and
+    // cannot shadow a value, so they are correctly absent.
+    if (ts.isVariableDeclaration(n) || ts.isParameter(n)) {
+      boundNames(n.name).forEach(countBinding);
+    } else if (
+      (ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n) || ts.isEnumDeclaration(n)) &&
+      n.name
+    ) {
+      countBinding(n.name.text);
+    } else if (ts.isImportClause(n) && n.name) {
+      countBinding(n.name.text);
+    } else if (ts.isNamespaceImport(n) || ts.isImportSpecifier(n)) {
+      countBinding(n.name.text);
+    }
+
+    // --- writes
+    if (ts.isBinaryExpression(n) && isAssignmentOperator(n.operatorToken.kind)) {
+      markWrite(n.left);
+    } else if (
+      (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) &&
+      (n.operator === ts.SyntaxKind.PlusPlusToken ||
+        n.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      markWrite(n.operand);
+    } else if (
+      (ts.isForOfStatement(n) || ts.isForInStatement(n)) &&
+      !ts.isVariableDeclarationList(n.initializer)
+    ) {
+      markWrite(n.initializer);
+    }
+
+    ts.forEachChild(n, census);
+  }
+  census(sf);
+
+  for (const st of sf.statements) {
+    if (!ts.isVariableStatement(st)) continue;
+    if (!(st.declarationList.flags & ts.NodeFlags.Const)) continue;
+    for (const d of st.declarationList.declarations) {
+      if (ts.isIdentifier(d.name) && d.initializer) {
+        topLevelConstInit.set(d.name.text, d.initializer);
+      }
+    }
+  }
+
+  const isStable = (name: string): boolean =>
+    topLevelConstInit.has(name) &&
+    bindingCount.get(name) === 1 &&
+    !writtenNames.has(name);
+
+  // Guards `const A = B; const B = A;` — a cycle is not a value, so it is a
+  // resolution failure like any other.
+  const resolving = new Set<string>();
 
   function literalOf(n: ts.Node): string | null {
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) return n.text;
-    if (ts.isIdentifier(n)) return consts.get(n.text) ?? null;
+    if (ts.isIdentifier(n)) {
+      if (!isStable(n.text) || resolving.has(n.text)) return null;
+      resolving.add(n.text);
+      try {
+        return literalOf(topLevelConstInit.get(n.text)!);
+      } finally {
+        resolving.delete(n.text);
+      }
+    }
     if (ts.isParenthesizedExpression(n) || ts.isAsExpression(n)) {
       return literalOf(n.expression);
     }
@@ -164,14 +288,16 @@ function resolveSpec(file: string, src: string): Resolution {
     return null;
   }
 
-  for (const st of sf.statements) {
-    if (!ts.isVariableStatement(st)) continue;
-    for (const d of st.declarationList.declarations) {
-      if (ts.isIdentifier(d.name) && d.initializer) {
-        const v = literalOf(d.initializer);
-        if (v !== null) consts.set(d.name.text, v);
-      }
-    }
+  // Resolved module-level constants: `SKELETON` is handed to a helper rather
+  // than to `locator()`, so a selector-call-only read would miss
+  // `discover-skeleton` entirely and then red on its own guarded list. Only
+  // stable names get here, so a mutable one contributes nothing and — if it
+  // reaches a selector API — reds below instead.
+  const constValues: string[] = [];
+  for (const name of topLevelConstInit.keys()) {
+    if (!isStable(name)) continue;
+    const v = literalOf(topLevelConstInit.get(name)!);
+    if (v !== null) constValues.push(v);
   }
 
   // Every API that turns a string into an element reference. `getByTestId`
@@ -225,7 +351,20 @@ function resolveSpec(file: string, src: string): Resolution {
   }
   walk(sf);
 
-  return { file, selectors: [...selectors, ...consts.values()], unresolved, calledNames };
+  return { file, selectors: [...selectors, ...constValues], unresolved, calledNames };
+}
+
+/** The pack's hook set, read out of a resolution. Shared so the attacks below
+ *  exercise the same extraction PACK_HOOKS is built from, not a copy of it. */
+function hooksOf(resolutions: Resolution[]): string[] {
+  return [
+    ...new Set(
+      resolutions
+        .flatMap((r) => r.selectors)
+        .flatMap((s) => [...s.matchAll(/data-testid="([^"]+)"/g)].map((m) => m[1]))
+        .filter((id) => id.startsWith("discover-"))
+    ),
+  ].sort();
 }
 
 const RESOLUTIONS: Resolution[] = fs
@@ -246,13 +385,7 @@ const DISCOVER_SPECS = RESOLUTIONS.filter((r) =>
   fs.readFileSync(path.join(SPEC_DIR, r.file), "utf8").includes("discover-")
 );
 
-const PACK_HOOKS: string[] = [
-  ...new Set(
-    RESOLUTIONS.flatMap((r) => r.selectors).flatMap((s) =>
-      [...s.matchAll(/data-testid="([^"]+)"/g)].map((m) => m[1])
-    ).filter((id) => id.startsWith("discover-"))
-  ),
-].sort();
+const PACK_HOOKS: string[] = hooksOf(RESOLUTIONS);
 
 /**
  * The hooks this file asserts. Every entry is checked below — in the DOM where
@@ -266,6 +399,139 @@ const GUARDED_HOOKS: string[] = [
   "discover-feed-unavailable",
   "discover-skeleton",
 ];
+
+/**
+ * The resolver is ATTACKED here, not described.
+ *
+ * Three certs on one anchor (CERT-582, CERT-584, CERT-587) all found the same
+ * shape: the guard's rationale was written in a comment and the comment was
+ * true of the code the author was picturing. What closes that is running the
+ * attack. Each row below is a spec source this file must handle in one of
+ * exactly two ways — resolve it to a concrete string, or fail LOUDLY — and the
+ * row says which, so a case that starts passing for a new reason is a red.
+ *
+ * `resolveSpec` here is the same function the real specs go through, and
+ * `hooksOf` is the same extraction `PACK_HOOKS` is built from.
+ */
+const RESOLVER_ATTACKS: ReadonlyArray<{
+  name: string;
+  src: string;
+  /** true ⇒ the selector argument must be reported unresolved. */
+  loud: boolean;
+  /** Hooks the extraction must yield. Only meaningful when `loud` is false. */
+  hooks?: string[];
+}> = [
+  {
+    name: "CERT-587: a `let` selector widened by compound assignment",
+    src: `let SELECTOR = '[data-testid="discover-card"]';
+SELECTOR += ', [data-' + 'testid="discover-reassigned"]';
+page.locator(SELECTOR);`,
+    loud: true,
+  },
+  {
+    name: "CERT-587 variant: a `var` selector rewritten inside a helper",
+    src: `var SELECTOR = '[data-testid="discover-card"]';
+function widen() { SELECTOR = '[data-' + 'testid="discover-widened"]'; }
+page.locator(SELECTOR);`,
+    loud: true,
+  },
+  {
+    name: "clause 2: a top-level `let`, even one nothing in this file writes",
+    // Isolates the const rule from the write census. A `let` is a mutable
+    // binding whether or not THIS file happens to move it — the next commit to
+    // the spec can, and the resolver would go on quoting the initializer. The
+    // conservative answer is the only sound one a parser can give.
+    src: `let SELECTOR = '[data-testid="discover-card"]';
+page.locator(SELECTOR);`,
+    loud: true,
+  },
+  {
+    name: "clause 1: a parameter shadowing a module constant",
+    src: `const SELECTOR = '[data-testid="discover-card"]';
+async function probe(page, SELECTOR) { await page.locator(SELECTOR); }`,
+    loud: true,
+  },
+  {
+    name: "clause 1: a nested `let` of the same name",
+    src: `const SELECTOR = '[data-testid="discover-card"]';
+function probe(page) { let SELECTOR = buildOther(); return page.locator(SELECTOR); }`,
+    loud: true,
+  },
+  {
+    name: "clause 3 (mechanism): a write to a name declared `const`",
+    // Not valid at runtime — you cannot assign to a `const`, so clause 2 would
+    // already have caught every legal form of this. It is pinned anyway: clause
+    // 3 exists so that relaxing clause 2 to admit `let` for convenience cannot
+    // silently restore the stale-initializer read CERT-587 found, and a clause
+    // nothing tests is a clause the next edit deletes.
+    src: `const SELECTOR = '[data-testid="discover-card"]';
+[SELECTOR] = pickSelectors();
+page.locator(SELECTOR);`,
+    loud: true,
+  },
+  {
+    name: "a selector built by a call fails loudly",
+    src: `page.locator(buildSelector("discover-runtime"));`,
+    loud: true,
+  },
+  {
+    name: "a resolution cycle is a failure, not a hang",
+    src: `const A = B;
+const B = A;
+page.locator(A);`,
+    loud: true,
+  },
+  {
+    name: "CERT-584's split attribute name is SUPPORTED, not banned",
+    src: `const SELECTOR = "[data-" + 'testid="discover-split"]';
+page.locator(SELECTOR);`,
+    loud: false,
+    hooks: ["discover-split"],
+  },
+  {
+    name: "CERT-582's computed hook name is SUPPORTED",
+    src: `const HOOK = "discover-" + "computed";
+page.locator(\`[data-testid="\${HOOK}"]\`);`,
+    loud: false,
+    hooks: ["discover-computed"],
+  },
+  {
+    name: "getByTestId's bare name is normalised, not forbidden",
+    src: `const HOOK = "discover-bare";
+page.getByTestId(HOOK);`,
+    loud: false,
+    hooks: ["discover-bare"],
+  },
+  {
+    name: "the control's control: an ordinary spec resolves clean",
+    src: `const CARD = '[data-testid="discover-card"]';
+test("cards render", async ({ page }) => { await page.locator(CARD).first(); });`,
+    loud: false,
+    hooks: ["discover-card"],
+  },
+];
+
+describe("the resolver fails closed — attacked, not asserted", () => {
+  test.each(RESOLVER_ATTACKS.map((a) => [a.name, a] as const))("%s", (_name, attack) => {
+    const r = resolveSpec("attack.spec.ts", attack.src);
+    if (attack.loud) {
+      // The whole contract: a selector this file cannot compute must be
+      // reported, never guessed at from a stale or shadowed binding.
+      expect(`unresolved: ${r.unresolved.length}`).not.toBe("unresolved: 0");
+    } else {
+      expect(`${JSON.stringify(r.unresolved)}`).toBe("[]");
+      expect(hooksOf([r])).toEqual(attack.hooks);
+    }
+  });
+
+  test("the attack table exercises both outcomes", () => {
+    // Without this the table degenerates the day someone drops the awkward half
+    // — all-loud would pass a resolver that resolves nothing, all-clean a
+    // resolver that never fails.
+    expect(RESOLVER_ATTACKS.some((a) => a.loud)).toBe(true);
+    expect(RESOLVER_ATTACKS.some((a) => !a.loud)).toBe(true);
+  });
+});
 
 describe("the guarded set still covers the pack", () => {
   test("the pack selects hooks at all — the extraction is not silently empty", () => {
