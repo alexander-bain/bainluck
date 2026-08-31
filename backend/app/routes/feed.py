@@ -37,7 +37,7 @@ from sqlalchemy import (
     String,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, load_only, selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.dependencies.auth import get_optional_user
 # Admission bounds for the shared candidate base live WITH the base (they exist
@@ -193,6 +193,8 @@ from app.utils.personalization import (
     compute_futures_multiplier,
 )
 from app.routes.admin_utils import _check_admin_auth, _resolve_admin_email
+from app.utils import futures_market_snapshot as _futures_snapshot
+from app.utils import principal_independent_cache as _pic
 from app.utils.principal_independent_cache import (
     bind_reuse_sink as _bind_shared_reuse_sink,
 )
@@ -6305,76 +6307,27 @@ def _futures_feed_load_options() -> list:
     unprojected read lazy-loads and raises MissingGreenlet INSIDE the per-item
     serializer — so Discover skips the whole futures pool and Sports serves a
     degraded partial feed (gotcha #42, and the third time this file has paid
-    for it: see the #1698 note on `market_type` below).
+    for it: see the #1698 note on `market_type`).
 
     Two copies is the defect. One factory is the fix: a column added for a new
     read cannot land on one surface and miss the other.
+
+    LAT-P174 (#2143 residual) moved the columns THEMSELVES one level down, into
+    `app/utils/futures_market_snapshot.py`, and this function now builds from
+    them. That is the same rule applied once more rather than a second home for
+    it: those tuples are simultaneously this query's load surface AND the wire
+    format of the shared hydration artifact `_score_futures` reads, so a column
+    added for a new read cannot land on the query and miss the snapshot either.
+    Still ONE list, and both scorers still take their options from here — the
+    guards in `tests/test_feed_market_type_load_only_1698.py` and
+    `tests/test_feed_outcome_projection_cert622.py` pin both halves of that.
+
+    The per-column notes (#1698 on `market_type`, L2-172 / UX-P011 on the
+    outcome price fields, Q480 / CERT-622 on `external_id`, LAT-P195 on the
+    image dimensions) travelled with the columns; the rules they state are
+    unchanged and are why the list is a contract.
     """
-    return [
-        load_only(
-            FuturesMarket.id,
-            FuturesMarket.name,
-            FuturesMarket.source,
-            FuturesMarket.external_id,
-            FuturesMarket.sport_id,
-            FuturesMarket.category,
-            FuturesMarket.llm_sport_category,
-            FuturesMarket.market_tier,
-            # #1698: the serializer reads `market_type`, so it MUST be loaded here.
-            # Omitted, the attribute access lazy-loads, and a lazy load under async
-            # raises MissingGreenlet INSIDE the per-item serializer — which empties the
-            # WHOLE futures pool rather than dropping one card (gotcha #42).
-            FuturesMarket.market_type,
-            FuturesMarket.canonical_market_key,
-            FuturesMarket.group_id,
-            FuturesMarket.group_type,
-            FuturesMarket.image_url,
-            # LAT-P195 (#2614): the hero `srcset` needs the raster's TRUE width,
-            # not the one the URL implies. Same rule as `market_type` above —
-            # unprojected, these lazy-load inside the per-item serializer and
-            # empty the whole futures pool (gotcha #42).
-            FuturesMarket.image_width,
-            FuturesMarket.image_height,
-            FuturesMarket.hook_description,
-            FuturesMarket.hook_generated_at,
-            FuturesMarket.hook_leader_at_generation,
-            FuturesMarket.market_metadata,
-            FuturesMarket.curation_score_adj,
-            FuturesMarket.volume_24h,
-            FuturesMarket.updated_at,
-            FuturesMarket.commence_time,
-            FuturesMarket.resolution_date,
-            FuturesMarket.status,
-            FuturesMarket.created_at,
-            FuturesMarket.llm_league,
-            FuturesMarket.llm_gender,
-            FuturesMarket.llm_level,
-        ),
-        selectinload(FuturesMarket.outcomes).load_only(
-            FuturesOutcome.id,
-            FuturesOutcome.name,
-            FuturesOutcome.team_id,
-            FuturesOutcome.current_probability,
-            FuturesOutcome.probability_change_24h,
-            FuturesOutcome.rank,
-            FuturesOutcome.rank_change_24h,
-            FuturesOutcome.opening_probability,
-            # L2-172: needed for the has_closing_line calibration signal; deferred
-            # here would lazy-load per outcome and crash this async route.
-            FuturesOutcome.calibration_probability,
-            # UX-P011 (#1574): the fabricated-midpoint gate reads the book. Same
-            # rule as the line above — omitting these lazy-loads per outcome and
-            # crashes the async route.
-            FuturesOutcome.current_yes_bid,
-            FuturesOutcome.current_yes_ask,
-            # Q480 / CERT-622: `drop_duplicate_legs(..., lambda o: o.external_id)`
-            # runs on these ORM rows at BOTH call sites. Same rule as the two
-            # notes above — and this one is the column whose absence emptied the
-            # futures pool.
-            FuturesOutcome.external_id,
-        ),
-        selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
-    ]
+    return _futures_snapshot.market_load_options()
 
 
 async def _score_sports_mode_futures(
@@ -7403,6 +7356,12 @@ async def _score_futures(
     # Q480 / CERT-622: ONE shared projection — see `_futures_feed_load_options`.
     # Inlining a second copy here is what let `external_id` be read at this call
     # site and loaded at neither.
+    #
+    # LAT-P174 (#2143 residual): that factory now builds from
+    # ``app/utils/futures_market_snapshot.py``, whose column tuples are ALSO the
+    # wire format of the shared hydration artifact read below. So the query and
+    # the snapshot cannot disagree about what is loaded, for the same reason the
+    # two scorers cannot: there is one list, in one place.
     base_options = _futures_feed_load_options()
 
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
@@ -7516,13 +7475,66 @@ async def _score_futures(
         if not market_ids:
             return []
 
-        markets_result = await db.execute(
-            select(FuturesMarket)
-            .options(*base_options)
-            .where(FuturesMarket.id.in_(market_ids))
+        # LAT-P174 (#2143 residual) — SHARE THE HYDRATION.
+        #
+        # Measured on production 2026-08-31 for a returning reader (117 recorded
+        # impressions), server-side stage header, `x-feed-cache: miss`:
+        #
+        #     x-feed-elapsed-ms 1533.04
+        #     futures.market_load 588.48   futures.scoring_loop 433.64
+        #     events 219.28  personalization 113.08  golf 88.19  ranking 41.78
+        #
+        # 38% of the request, and principal-INDEPENDENT by construction: the
+        # only input is the ordered candidate-ID list, which `candidate_base`
+        # already shares because the pools depend on `(now, sport_filter,
+        # static_tag_filter)` alone. Two principals a second apart issue this
+        # identical SELECT and get identical rows — and LAT-P173 measured who
+        # pays for that: a returning reader misses BY CONSTRUCTION (any recorded
+        # interaction makes `ctx != PersonalizationContext()`, forfeiting both
+        # the LAT-P089 shared entry and the LAT-P141 page base), so the reader
+        # who uses the product waits 892-1,533ms where a stranger waits 6-28ms.
+        #
+        # `principal_independent_cache` refused this artifact for a stated
+        # reason — "a hydrated ORM row therefore CANNOT enter this cache ...
+        # which is why `futures.market_load` is left on the table" — and THAT
+        # REFUSAL IS NOT RELAXED HERE. `assert_plain_data` still rejects an ORM
+        # instance. What changes is the carrier: the shared value is a plain
+        # table of the loaded COLUMN VALUES, and the objects the scoring loop
+        # reads are rebuilt per request as inert snapshots holding no session,
+        # no identity map and no lazy loaders (#2107, gotcha #6).
+        #
+        # Staleness is bounded by the shared TTL (60s default). That is strictly
+        # tighter than what these same rows already reach a reader through: the
+        # anonymous response entry serves 60s fresh plus a 60s stale mirror, and
+        # the prices themselves are repolled on a 2-minute cadence. The key
+        # carries NO clock component for the same reason `canonical_counts`
+        # carries none — LAT-P104 measured a clock-bucketed key throwing away
+        # still-fresh entries, and the TTL is the bound here regardless.
+        _snapshot_key = (
+            "market_load",
+            _futures_snapshot.SNAPSHOT_SCHEMA_VERSION,
+            _pic.digest_of(str(mid) for mid in market_ids),
         )
+
+        async def _build_market_rows():
+            result = await db.execute(
+                select(FuturesMarket)
+                .options(*base_options)
+                .where(FuturesMarket.id.in_(market_ids))
+            )
+            return _futures_snapshot.to_plain(result.scalars().unique().all())
+
+        _snapshot_payload = await _pic.get_or_build(
+            "market_load", _snapshot_key, _build_market_rows
+        )
+        # A payload this build cannot read is a MISS, never an empty feed: an
+        # unreadable shape must send us back through the builder, not report
+        # that there are no candidate markets (gotcha #53).
+        if not _futures_snapshot.is_snapshot_payload(_snapshot_payload):
+            _snapshot_payload = await _build_market_rows()
         markets_by_id = {
-            market.id: market for market in markets_result.scalars().unique().all()
+            market.id: market
+            for market in _futures_snapshot.from_plain(_snapshot_payload)
         }
         markets = [markets_by_id[mid] for mid in market_ids if mid in markets_by_id]
         mark_timing("market_load")
