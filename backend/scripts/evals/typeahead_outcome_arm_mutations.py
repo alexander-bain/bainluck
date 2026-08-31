@@ -285,16 +285,28 @@ MUTANTS: list[tuple[str, str, str, str]] = [
         "CERT-567 exactly: arm once, then run the ordering walk against a "
         "timeout the probe has already spent — two statements under one bound, "
         "so the arm can take twice its declared budget",
-        "        if not await _arm_statement_timeout():\n            return None\n\n        result = await db.execute(",
-        "        result = await db.execute(",
+        # 🔴 VERBATIM, NEVER `\\n`-ESCAPED. Pass B of `scan_mutation_residue.py`
+        # flags a file holding a REPLACEMENT whose NEEDLE is absent, and an
+        # escaped needle is absent from this file by construction — so the first
+        # draft of this mutant reported itself as residue on a clean tree. The
+        # sibling loose-scan harness writes the same rule in its docstring.
+        """        if not await _arm_statement_timeout():
+            return None
+
+        result = await db.execute(""",
+        """        result = await db.execute(""",
     ),
     (
         "M22-REARM-USES-THE-WHOLE-BUDGET-AGAIN",
         "re-arm with the ORIGINAL budget rather than what remains — the full "
         "bound is re-applied before every statement, which is the unbounded arm "
         "wearing a re-arm's clothes",
-        "        left = _arm_remaining_ms()\n        if left <= 0:\n            return False",
-        "        left = bound_ms\n        if left <= 0:\n            return False",
+        """        left = _arm_remaining_ms()
+        if left <= 0:
+            return False""",
+        """        left = bound_ms
+        if left <= 0:
+            return False""",
     ),
     (
         "M23-REMAINING-TRUNCATES-INSTEAD-OF-CEILING",
