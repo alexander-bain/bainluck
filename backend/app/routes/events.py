@@ -14,10 +14,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, union, func, case, cast, Integer, String, literal_column, text, true
+from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Integer, String, literal_column, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, EIPercentile, FuturesMarket, FuturesOutcome, Team, User
@@ -2653,6 +2653,72 @@ _TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS = int(
     os.getenv("TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS", "2000")
 )
 
+# LAT-P166/#2386: THE SAFETY NET ABOVE IS NOW THE LOAD-BEARING PATH FOR COMMON
+# TERMS, and the paragraph above ("after the plan flip it should essentially never
+# fire") is the claim that stopped being true. Measured on production 2026-08-31,
+# `EXPLAIN (ANALYZE, BUFFERS)` on the exact post-LAT-P143 statement, `%win%`:
+#
+#     cache state   duration     blocks read   shared I/O read time
+#     cold           7,677 ms         27,338            13,132 ms
+#     partial        1,249 ms          1,287               402 ms
+#     warm             313 ms              0                 0 ms
+#
+# The PLAN did not decay — all three runs are the same shape. What decays is
+# residency. The statement touches ~35,000 buffers EVERY execution because the
+# planner drives from `ix_futures_markets_status`, materialises all **26,204**
+# open markets and SORTS them, and applies the outcome-name predicate LAST. The
+# arm's cost is therefore independent of how selective the user's query is. On a
+# 4 GB-RAM instance holding a 66 GB database those buffers do not stay resident,
+# so a cold execution blows the 2,000 ms bound and the arm SHEDS — the user
+# silently loses their outcome-name suggestions, and which users lose them is
+# decided by cache roulette rather than by anything about their query.
+#
+# It is also the single largest live consumer of database time in the system:
+# a snapshot->wait->snapshot `pg_stat_statements` DELTA over 150 s measured
+# **161 calls / 28,338 ms**, ~18% of ALL exec time in the window, against 36,015
+# lifetime calls. Every other route pays for that as contention.
+#
+# 🔴 THE MISESTIMATE IS THE MECHANISM. The planner costs that sort believing
+# `status = 'open'` yields 2,056 rows; it yields 26,204, a 12.7x underestimate.
+# The plan is not chosen because it is good, it is chosen because it is mispriced,
+# which is why it cannot be relied on to flip back on its own.
+#
+# THE CURE IS TO STOP ASKING THE PLANNER. Resolve the match set FIRST, as its own
+# trigram-served statement, and only then ask `futures_markets` about a concrete
+# id list. Measured, same production instance, same session:
+#
+#     step 1  `... WHERE name ILIKE %s LIMIT CAP+1`     12-29 ms,   62-118 blocks
+#     step 2  `... WHERE id = ANY(:ids) ORDER BY .. 20`    137 ms,  2,451 buffers
+#
+# ~2,600 buffers against ~35,000 — 13x less buffer traffic, and a plan that no
+# longer depends on a cardinality estimate being right.
+#
+# WHY A CAP, AND WHY THE CAP IS ON OUTCOME ROWS RATHER THAN ON MARKETS. `LIMIT
+# CAP+1` is what lets step 1 terminate early; `DISTINCT` would not, because a hash
+# aggregate must consume its whole input before it emits anything (measured: the
+# `DISTINCT` form of `%win%` cost 7,053 ms for 57,282 ids). Counting raw outcome
+# rows is what makes the completeness test exact: fewer than the limit returned
+# means the limit never bound, so the set IS the complete match set, and the
+# distinct market ids derived from it are complete too.
+#
+# 🔴 AND WHEN THE CAP IS HIT, THIS FALLS BACK TO LAT-P143'S STATEMENT UNCHANGED —
+# it does NOT skip the arm. That is deliberate and it is the whole reason this
+# change is safe to make without a product ruling: below the cap the id set is
+# complete, so the result is SET-IDENTICAL; at or above the cap the query that
+# runs is byte-for-byte the one that runs today. There is no input for which
+# recall changes. The broad-term case is therefore IMPROVED BY NOTHING here and
+# still needs its index (parked as **P116-1**) — raised with these numbers in
+# `alex-inbox/latency-013-…`. Do not read this comment as having fixed `%win%`.
+#
+# Why 5,000 and not tighter: `%rec%` — a genuinely broad-ish real term — matches
+# 4,928 outcome rows / 2,042 markets and measured 1,220 ms on today's statement.
+# 5,000 keeps that class ON the fast path, and step 1 for the whole 4,928 rows
+# measured 128-390 ms, comfortably inside the 2,000 ms bound that still wraps
+# both statements.
+_TYPEAHEAD_OUTCOME_PROBE_CAP = int(
+    os.getenv("TYPEAHEAD_OUTCOME_PROBE_CAP", "5000")
+)
+
 # The futures pool the dropdown ranks from. ONE constant, used by both the final
 # `LIMIT` and the outcome arm's own `LIMIT`, because the two being equal is what
 # makes the split set-identical rather than approximately so — see
@@ -2830,6 +2896,7 @@ async def _resolve_typeahead_outcome_arm(
     arm,
     open_now: tuple,
     deadline: float | None,
+    pattern: str | None = None,
 ) -> list[int] | None:
     """The outcome-name arm's market ids, ordered and bounded. ``None`` = shed it.
 
@@ -2886,9 +2953,45 @@ async def _resolve_typeahead_outcome_arm(
         logger.warning("typeahead outcome-arm timeout not applied: %s", exc)
 
     try:
+        # LAT-P166/#2386: resolve the match set FIRST when we were given the
+        # pattern, so the trigram index drives instead of a 26,204-row sort of
+        # every open market. Full measurement + the completeness proof are at
+        # :data:`_TYPEAHEAD_OUTCOME_PROBE_CAP`. `pattern is None` keeps the old
+        # single-statement path for any caller that has not been updated.
+        market_ids: list[int] | None = None
+        if pattern is not None:
+            probe = await db.execute(
+                select(FuturesOutcome.market_id)
+                .where(FuturesOutcome.name.ilike(pattern))
+                .limit(_TYPEAHEAD_OUTCOME_PROBE_CAP + 1)
+            )
+            probe_rows = probe.all()
+            # STRICTLY FEWER than the limit we asked for means the limit never
+            # bound, so this is the COMPLETE match set — see the cap's docstring.
+            # At or over it we know only that there are more, so we cannot build a
+            # complete id list and must run LAT-P143's statement instead.
+            if len(probe_rows) <= _TYPEAHEAD_OUTCOME_PROBE_CAP:
+                market_ids = sorted(
+                    {row[0] for row in probe_rows if row[0] is not None}
+                )
+
+        if market_ids is not None:
+            if not market_ids:
+                # A real answer: the arm matched no outcome at all. `[]` and
+                # `None` are different states to the caller and must stay so.
+                return []
+            # `= ANY(:ids)` — ONE bind of one int[], not an N-wide IN list, so
+            # this keeps a single `pg_stat_statements` fingerprint however many
+            # ids it carries. A variable-length IN list would generate a new
+            # entry per distinct width and evict itself out of the table, which
+            # is how a statement becomes invisible rather than rare.
+            candidate = FuturesMarket.id == any_(literal(market_ids, ARRAY(Integer)))
+        else:
+            candidate = arm
+
         result = await db.execute(
             select(FuturesMarket.id)
-            .where(arm, *open_now)
+            .where(candidate, *open_now)
             .order_by(
                 FuturesMarket.market_tier.asc().nulls_last(),
                 FuturesMarket.volume.desc().nulls_last(),
@@ -5460,7 +5563,7 @@ async def typeahead_search(
     _ta_mark("events_assemble")
     if _ta_outcome_arm is not None:
         _ta_outcome_ids = await _resolve_typeahead_outcome_arm(
-            db, _ta_outcome_arm, _ta_open_now, _ta_deadline
+            db, _ta_outcome_arm, _ta_open_now, _ta_deadline, pattern=pattern
         )
         # ONE mark, labelled by outcome — the same grammar as
         # `futures_query` / `futures_query_TIMED_OUT` below, and for the same
