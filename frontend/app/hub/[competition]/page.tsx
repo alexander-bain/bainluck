@@ -25,9 +25,14 @@ import {
   probabilityBarWidth,
 } from "@/lib/entityPageChrome";
 import { fetchHub, formatProbability } from "@/lib/api";
-import type { HubResponse, HubUpcoming, LeagueMarket, LeagueMarketOutcome } from "@/lib/api";
-import { eventPath } from "@/lib/eventKey";
+import type { HubResponse, LeagueMarket, LeagueMarketOutcome } from "@/lib/api";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
+// UX-P209: the pill lives outside this route file so a guard can render it and
+// so a second copy cannot quietly become the one that ships. See its header.
+// UX-P210 (CERT-525): and so does the whole rail, for the same reason one level
+// up — the heading is a phase claim about the cards under it, and a guard can
+// only judge that by rendering the section. See `HubUpcomingRail`'s header.
+import { HubUpcomingRail } from "@/components/hub/HubUpcomingRail";
 
 // ---------------------------------------------------------------------------
 // Section display config: friendly labels + render order. Sections the backend
@@ -66,9 +71,6 @@ const SECTION_META: Record<string, { label: string }> = {
 };
 const SECTION_ORDER = ["futures", "props", "matches", "awards", "season_stats", "series", "more_markets"];
 
-/** Neutral heading over the `upcoming` rail when the payload declares none. */
-const UPCOMING_LABEL_FALLBACK = "Upcoming";
-
 function sectionLabel(key: string, served?: Record<string, string> | null): string {
   // The competition's own word wins when it has one (combat hubs say "Fight
   // Markets"); otherwise the neutral default; otherwise L2-174 Item 3b's
@@ -87,53 +89,6 @@ function orderedSections(sections: Record<string, LeagueMarket[]>): [string, Lea
 // ---------------------------------------------------------------------------
 // Small presentational helpers
 // ---------------------------------------------------------------------------
-
-function formatDate(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-}
-
-function StatusPill({ status }: { status: string }) {
-  if (status === "live") {
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-accent-live">
-        <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
-        Live
-      </span>
-    );
-  }
-  if (status === "settled") {
-    return <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Final</span>;
-  }
-  return <span className="text-[10px] font-semibold uppercase tracking-wide text-accent-brand">Upcoming</span>;
-}
-
-function UpcomingCard({ card }: { card: HubUpcoming }) {
-  return (
-    <Link
-      href={eventPath(card.key)}
-      className="group flex-shrink-0 w-64 bg-surface-card border border-surface-border rounded-2xl p-4 transition-colors hover:border-accent-brand/50 hover:bg-surface-elevated"
-    >
-      <div className="flex items-center justify-between mb-2">
-        <StatusPill status={card.status} />
-        {card.is_major && (
-          <span className="text-[10px] font-bold uppercase tracking-wide text-accent-brand">★ Marquee</span>
-        )}
-      </div>
-      <div className="text-[15px] font-semibold text-text-primary leading-snug line-clamp-2 min-h-[2.6em]">
-        {card.name}
-      </div>
-      <div className="mt-3 flex items-center justify-between text-xs text-text-muted">
-        <span>{formatDate(card.start_date) || "TBD"}</span>
-        {typeof card.fight_count === "number" && card.fight_count > 0 && (
-          <span className="font-mono">{card.fight_count} fights</span>
-        )}
-      </div>
-    </Link>
-  );
-}
 
 function OutcomeRow({ o }: { o: LeagueMarketOutcome }) {
   // UX-P061 (#1742), register E2: this was `width: ${pct ?? 0}%`, which renders a
@@ -261,22 +216,13 @@ function HubContent({ competition }: { competition: string }) {
           </div>
         )}
 
-        {/* Upcoming rail */}
-        {hasUpcoming && (
-          <section className="mb-12">
-            <h2 className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-3">
-              {/* UX-P167 (#2167): "Cards" is combat vocabulary. A slam and a
-                  major are tournaments, and this rail printed "Upcoming Cards"
-                  over 12 tennis and 3 golf ones. */}
-              {data.upcoming_label || UPCOMING_LABEL_FALLBACK}
-            </h2>
-            <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
-              {data.upcoming.map((c) => (
-                <UpcomingCard key={c.key} card={c} />
-              ))}
-            </div>
-          </section>
-        )}
+        {/* Upcoming rail — heading included, because the heading is a claim
+            about the cards and only the section knows both. */}
+        <HubUpcomingRail
+          cards={data.upcoming || []}
+          label={data.upcoming_label}
+          neutralLabel={data.upcoming_label_neutral}
+        />
 
         {/* Market sections */}
         {/* UX-P061 (#1742), register E1 — the broken shelf, fixed at its source.

@@ -11,7 +11,11 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
+# UX-P209: `import pytest` was here and unused — zero `pytest.` references in the
+# file. It predates this branch (proved by re-running ruff on the parent's own
+# bytes), and it was invisible because changed-file Ruff only sees a file
+# somebody touches. This diff touches it, so it is fixed here rather than
+# carried as a red gate. Parked as UX-P209-3: nothing sweeps for the class.
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +309,61 @@ class TestHubUpcoming:
         body = (await client.get("/api/hub/mma")).json()
         assert {c["key"] for c in body["upcoming"]} == {"event:ufc:live"}
 
+    async def test_a_card_with_an_unknown_phase_is_still_capped(
+        self, client, monkeypatch
+    ):
+        """UX-P209. The cap used to read `status != "upcoming"` and keep
+        everything else, on the reasoning that live/settled cards are happening
+        now. `unknown` is neither: it says we could not establish the phase, and
+        a card dated a year out is far-future whether or not we know what it is
+        doing. Left alone, the fix one layer down — a lister that stops making
+        an affirmative claim — would have quietly exempted every card it emits
+        from the horizon without one line here changing.
+
+        No capped domain emits `unknown` today (`_HORIZON_CAPPED_DOMAINS` is
+        combat-only, tennis is not in it), so this drives the real route with a
+        substituted lister and pins the rule rather than a current behaviour.
+        The near-dated sibling is the control: it proves the rail did not simply
+        come back empty.
+        """
+        import app.routes.hub as hub
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        far = (now + timedelta(days=365)).isoformat()
+        soon = (now + timedelta(days=5)).isoformat()
+
+        async def _fake_lister(db, *, limit=20):
+            return [
+                {
+                    "key": "event:ufc:unknown-far",
+                    "name": "Phase Unknown, A Year Out",
+                    "domain": "ufc",
+                    "status": "unknown",
+                    "start_date": far,
+                    "is_major": False,
+                    "fight_count": 8,
+                    "latest_commence": far,
+                },
+                {
+                    "key": "event:ufc:unknown-soon",
+                    "name": "Phase Unknown, This Week",
+                    "domain": "ufc",
+                    "status": "unknown",
+                    "start_date": soon,
+                    "is_major": False,
+                    "fight_count": 8,
+                    "latest_commence": soon,
+                },
+            ]
+
+        monkeypatch.setitem(hub._UPCOMING_LISTERS, "ufc", _fake_lister)
+        body = (await client.get("/api/hub/mma")).json()
+        keys = {c["key"] for c in body["upcoming"]}
+        assert keys == {"event:ufc:unknown-soon"}, (
+            "an unknown-phase card escaped the horizon cap"
+        )
+
 
 # ============================================================================
 # Props reclassification (fights vs props out of league_futures "matches")
@@ -452,3 +511,83 @@ class TestHubSectionVocabulary:
             ("mma", "Upcoming Cards", 15),
             ("boxing", "Upcoming Cards", 17),
         }, wrong
+
+
+class TestHubNeutralUpcomingLabel:
+    """UX-P210, repairing CERT-525 — the rail heading gets a phase-free twin.
+
+    CERT-519 stopped a tennis card CLAIMING a phase it cannot establish; the
+    card's pill goes silent on `unknown`. CERT-525 found the claim one level up
+    and still standing:
+
+        > Unknown tennis cards lose the per-card Upcoming pill but remain
+        > directly beneath the visible `Upcoming Tournaments` heading, so the
+        > hub still makes the same unsupported phase claim one level up.
+
+    The heading is a claim about EVERY card under it, so it is licensed only
+    when every card is actually upcoming. That is a fact about the rail the
+    client assembled, so the client decides (see
+    `frontend/lib/hubUpcomingHeading.ts`) and this side supplies the word it
+    picks from. Deciding it here instead would leave the renderer free to print
+    an affirmative heading over an `unknown` card, which is precisely the state
+    CERT-525 blocked — and would make the render guard the cert asked for
+    vacuous, since the page would only be proving that it prints what it is
+    handed.
+
+    What this class polices is the vocabulary contract: the neutral word exists
+    for every hub, and no phase claim ever gets back into it.
+    """
+
+    # A word that says WHEN. The neutral label may contain none of them; the
+    # affirmative label must contain one, which is what keeps this list honest.
+    PHASE_WORDS = ("upcoming", "live", "final", "settled", "soon", "next", "today")
+
+    def _phase_words_in(self, text: str) -> list[str]:
+        low = text.lower()
+        return [w for w in self.PHASE_WORDS if w in low]
+
+    async def test_the_phase_word_list_can_report_a_positive(self, client):
+        """Vacuity control FIRST (UX-P204): a detector that matches nothing would
+        pass every assertion below. The affirmative labels are the known
+        positives — each one is a phase claim and must be seen as one."""
+        from app.routes.hub import HUB_CONFIGS
+
+        assert HUB_CONFIGS, "no configs to census"
+        for slug, cfg in HUB_CONFIGS.items():
+            assert self._phase_words_in(cfg.upcoming_label), (
+                slug,
+                cfg.upcoming_label,
+            )
+        # And the other direction — it must not match everything it is shown.
+        assert self._phase_words_in("Tournaments") == []
+        assert self._phase_words_in("Cards") == []
+
+    async def test_every_hub_declares_a_phase_free_neutral_label(self, client):
+        """Both halves, on the SERVED payload rather than the config, because the
+        payload is what the renderer gets (UX-P208-5: an allowlist between the
+        two can drop a field silently)."""
+        from app.routes.hub import HUB_CONFIGS
+
+        assert len(HUB_CONFIGS) >= 5, "the census below covered five hubs"
+        seen = 0
+        for slug in HUB_CONFIGS:
+            body = (await client.get(f"/api/hub/{slug}")).json()
+            # `in`, not `.get()` — absent and null are different failures and
+            # `.get()` cannot tell them apart (UX-P200-6).
+            assert "upcoming_label_neutral" in body, slug
+            neutral = body["upcoming_label_neutral"]
+            assert isinstance(neutral, str) and neutral, (slug, neutral)
+            assert self._phase_words_in(neutral) == [], (slug, neutral)
+            seen += 1
+        assert seen == len(HUB_CONFIGS)
+
+    async def test_the_neutral_label_keeps_each_hub_its_own_noun(self, client):
+        """Dropping the phase word must not also flatten the sport's vocabulary —
+        that was UX-P167's bug in the opposite direction. A card is still a card
+        and a slam is still a tournament; only the WHEN goes away."""
+        for slug in ("mma", "boxing"):
+            body = (await client.get(f"/api/hub/{slug}")).json()
+            assert body["upcoming_label_neutral"] == "Cards", slug
+        for slug in ("golf", "tennis", "esports"):
+            body = (await client.get(f"/api/hub/{slug}")).json()
+            assert body["upcoming_label_neutral"] == "Tournaments", slug

@@ -141,13 +141,25 @@ const _OLD_SECTION_META: Record<string, string> = {
 };
 const _OLD_UPCOMING_LABEL = "Upcoming Cards";
 
-/** What `GET /api/hub/{slug}` serves after this queue, per the new HubConfig. */
-const SERVED_LABELS: Record<string, { section_labels: Record<string, string>; upcoming_label: string }> = {
-  mma: { section_labels: { ..._OLD_SECTION_META }, upcoming_label: "Upcoming Cards" },
-  boxing: { section_labels: { ..._OLD_SECTION_META }, upcoming_label: "Upcoming Cards" },
-  golf: { section_labels: {}, upcoming_label: "Upcoming Tournaments" },
-  tennis: { section_labels: {}, upcoming_label: "Upcoming Tournaments" },
-  esports: { section_labels: {}, upcoming_label: "Upcoming Tournaments" },
+/**
+ * What `GET /api/hub/{slug}` serves after this queue, per the new HubConfig.
+ *
+ * UX-P210 (CERT-525) added `upcoming_label_neutral` — the same rail heading
+ * with no phase claim in it — because the affirmative one is only true when
+ * every card on the rail is upcoming. These banked payloads are what proved it
+ * is often not: the three tennis rows carry `status: "live"`, under a heading
+ * reading "Upcoming Tournaments". mma / boxing / golf are all genuinely
+ * `upcoming` and are the natural control — their headings do not move.
+ */
+const SERVED_LABELS: Record<
+  string,
+  { section_labels: Record<string, string>; upcoming_label: string; upcoming_label_neutral: string }
+> = {
+  mma: { section_labels: { ..._OLD_SECTION_META }, upcoming_label: "Upcoming Cards", upcoming_label_neutral: "Cards" },
+  boxing: { section_labels: { ..._OLD_SECTION_META }, upcoming_label: "Upcoming Cards", upcoming_label_neutral: "Cards" },
+  golf: { section_labels: {}, upcoming_label: "Upcoming Tournaments", upcoming_label_neutral: "Tournaments" },
+  tennis: { section_labels: {}, upcoming_label: "Upcoming Tournaments", upcoming_label_neutral: "Tournaments" },
+  esports: { section_labels: {}, upcoming_label: "Upcoming Tournaments", upcoming_label_neutral: "Tournaments" },
 };
 
 type Arm = "before" | "after" | "stale_cache";
@@ -276,10 +288,22 @@ describe("UX-P167 — the hub stops describing every sport as a fight card", () 
     expect(text).toContain(hub(slug).sections[firstSection][0].name);
   });
 
-  it("AFTER: tennis reads Matches and Upcoming Tournaments", () => {
+  it("AFTER: tennis reads Matches, and Tournaments with no phase claim", () => {
+    /**
+     * ⚠️ THIS ASSERTION CHANGED IN UX-P210 (CERT-525), AND THE BANKED PAYLOAD IS
+     * WHY. As written by UX-P167 it required the heading "Upcoming Tournaments"
+     * — and all three tennis rows in this very fixture carry `status: "live"`.
+     * The test was pinning a false claim about its own data: production, on
+     * 2026-08-29, filed live tennis tournaments under "Upcoming".
+     *
+     * UX-P167's actual subject was the SPORT'S vocabulary — "Cards" versus
+     * "Tournaments" — and that half is untouched and still asserted below. What
+     * moves is the phase word, which was never this queue's claim to make.
+     */
     const hs = headings(render("tennis", "after"));
     expect(hs).toContain("Matches");
-    expect(hs).toContain("Upcoming Tournaments");
+    expect(hs).toContain("Tournaments"); // the noun UX-P167 won, kept
+    expect(hs).not.toContain("Upcoming Tournaments"); // the phase claim, gone
     expect(hs).not.toContain("Fight Markets");
   });
 
@@ -324,9 +348,22 @@ describe("UX-P167 — the hub stops describing every sport as a fight card", () 
 
   it("the neutral fallback for the upcoming rail is a real word, not an empty heading", () => {
     // A blank <h2> would technically pass every "not.toContain" above.
-    const hs = headings(render("tennis", "stale_cache"));
-    expect(hs).toContain("Upcoming");
-    expect(hs.every((h) => h.length > 0)).toBe(true);
+    //
+    // UX-P210: the CLAIM this test makes is unchanged — the fallback is a real
+    // word — but there are now two of them, because a stale payload carries
+    // neither the sport's noun nor the phase-free twin. A rail that really is
+    // upcoming still reads "Upcoming"; one that is not reads "Events", which is
+    // true of every rail on every hub. Both are asserted so that a regression
+    // to an empty heading, or to the phase word over the live tennis rail,
+    // lands here.
+    const golf = headings(render("golf", "stale_cache")); // all cards upcoming
+    expect(golf).toContain("Upcoming");
+    expect(golf.every((h) => h.length > 0)).toBe(true);
+
+    const tennis = headings(render("tennis", "stale_cache")); // all cards live
+    expect(tennis).toContain("Events");
+    expect(tennis).not.toContain("Upcoming");
+    expect(tennis.every((h) => h.length > 0)).toBe(true);
   });
 
   // ── Artifact ──────────────────────────────────────────────────────────────

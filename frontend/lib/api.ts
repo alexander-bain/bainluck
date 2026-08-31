@@ -1605,7 +1605,11 @@ export interface HubUpcoming {
   key: string;
   name: string;
   domain: string;
-  status: "upcoming" | "live" | "settled" | string;
+  // `unknown` is a first-class value, not a gap: the tennis rail has no
+  // trustworthy start signal, so it declares the phase unknown rather than
+  // guessing one (UX-P209 / CERT-519). `HubStatusPill` withholds the label for
+  // it — see that file for why the open `| string` arm must stay silent too.
+  status: "upcoming" | "live" | "settled" | "unknown" | string;
   start_date: string | null;
   is_major: boolean;
   fight_count?: number | null;
@@ -1629,6 +1633,17 @@ export interface HubResponse {
   section_labels?: Record<string, string>;
   /** Heading over the `upcoming` rail — "Upcoming Cards" for combat, "Upcoming Tournaments" for golf/tennis. */
   upcoming_label?: string;
+  /**
+   * The same heading with no phase claim in it — "Cards", "Tournaments".
+   *
+   * UX-P210 (CERT-525): "Upcoming Tournaments" is a claim about every card on
+   * the rail, and the listers admit `live` and (for tennis) `unknown` cards
+   * beside the upcoming ones. `lib/hubUpcomingHeading.ts` picks between the two
+   * words against the cards actually rendered. Optional for the same reason
+   * `section_labels` is: a payload cached before this shipped carries no twin,
+   * and the rail then prints no heading rather than the affirmative one.
+   */
+  upcoming_label_neutral?: string;
   upcoming: HubUpcoming[];
   sections: Record<string, LeagueMarket[]>;
   total_markets: number;

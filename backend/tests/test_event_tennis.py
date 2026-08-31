@@ -64,9 +64,72 @@ class TestStatus:
         assert tennis_status("resolved", NOW + timedelta(days=5), NOW) == "settled"
         assert tennis_status("open", NOW - timedelta(days=1), NOW) == "settled"
 
-    def test_live_when_resolution_near(self):
-        assert tennis_status("open", NOW + timedelta(days=4), NOW) == "live"
+    def test_a_near_resolution_states_no_phase_at_all_by_default(self):
+        """UX-P208. Alex, 2026-08-30: `/hub/tennis` printed a pulsing LIVE dot
+        over four cards dated up to a fortnight ahead. Proximity to a resolution
+        date is not evidence a tournament has begun, so silence no longer
+        produces the claim — a caller has to ask for the inference by name.
 
-    def test_upcoming_when_far_or_unknown(self):
-        assert tennis_status("open", NOW + timedelta(days=60), NOW) == "upcoming"
-        assert tennis_status("open", None, NOW) == "upcoming"
+        UX-P209 / CERT-519 REBUILT THIS ASSERTION, and the reason is the whole
+        repair. It read `== "upcoming"`, which is how UX-P208 shipped: it stopped
+        the false LIVE and produced a false UPCOMING in its place, on a US Open
+        that was two matches into its third day. A classifier with no evidence
+        must not pick either side, so the value asserted here is `unknown` and
+        the loop below states the property that actually matters — NEITHER
+        affirmative phase — so that swapping one for the other cannot pass again.
+        """
+        for days in (0.5, 4, 13, 21):
+            got = tennis_status("open", NOW + timedelta(days=days), NOW)
+            assert got not in ("live", "upcoming"), (
+                f"a tournament resolving in {days}d claimed the phase {got!r} "
+                "from a resolution date, which is not a phase signal"
+            )
+            assert got == "unknown"
+
+    def test_the_proximity_inference_survives_where_it_is_asked_for(self):
+        """`build_event` still opts in, so this is a real switch and not a
+        deletion wearing a keyword. Both arms are asserted: without the flag the
+        whole window is quiet, with it the old boundary is bit-for-bit intact."""
+        assert (
+            tennis_status("open", NOW + timedelta(days=4), NOW, proximity_live=True)
+            == "live"
+        )
+        assert (
+            tennis_status("open", NOW + timedelta(days=21), NOW, proximity_live=True)
+            == "live"
+        )
+        assert (
+            tennis_status("open", NOW + timedelta(days=22), NOW, proximity_live=True)
+            == "upcoming"
+        )
+
+    def test_opting_in_never_overrides_a_settled_verdict(self):
+        """The flag widens ONE branch. A resolved market and a past resolution
+        date still settle, or the crown logic downstream would read a decided
+        tournament as in-play."""
+        assert (
+            tennis_status("resolved", NOW + timedelta(days=5), NOW, proximity_live=True)
+            == "settled"
+        )
+        assert (
+            tennis_status("open", NOW - timedelta(days=1), NOW, proximity_live=True)
+            == "settled"
+        )
+
+    def test_no_date_and_a_far_date_are_both_unknown_without_the_flag(self):
+        """A far date and no date at all are the same epistemic state here: the
+        rail knows when a winner market resolves and nothing about when play
+        starts. UX-P209 — was `== "upcoming"` for both."""
+        assert tennis_status("open", NOW + timedelta(days=60), NOW) == "unknown"
+        assert tennis_status("open", None, NOW) == "unknown"
+
+    def test_the_flag_grants_the_upcoming_claim_as_well_as_the_live_one(self):
+        """`proximity_live` is the caller declaring that resolution proximity is
+        a usable phase signal on its surface. That declaration is what makes
+        BOTH readings available — so `build_event`, which opts in, is unchanged
+        by UX-P209 on every input, not just on the near ones."""
+        assert (
+            tennis_status("open", NOW + timedelta(days=60), NOW, proximity_live=True)
+            == "upcoming"
+        )
+        assert tennis_status("open", None, NOW, proximity_live=True) == "upcoming"
