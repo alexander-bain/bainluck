@@ -29,8 +29,9 @@ Three failure classes, each with its own gate:
 
 from __future__ import annotations
 
+import ast
 import inspect
-import re
+import textwrap
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -122,29 +123,189 @@ def _loaded_market(market_id: int = 4242) -> _DeferredColumnRow:
 # --------------------------------------------------------------------------
 
 
-def _market_attributes_read_by(func) -> set[str]:
-    """Every `market.<attr>` the given function's SOURCE reads.
+class UnauditableMarketRead(AssertionError):
+    """The scan met a read it cannot follow, so it must not report success.
 
-    The docstring is stripped first. A `getsource` guard that scans the
-    docstring too goes vacuous the moment the prose quotes an attribute name —
-    it would then pass because the DOCUMENTATION mentions the field, not because
-    the code has it.
+    CERT-615 [P1] is the reason this class exists. The predecessor of this
+    module scanned the source with `re.findall(r"\\bmarket\\.(\\w+)")`, which
+    sees a literal `market.<attr>` and NOTHING else. The certifier put
+    `market_alias = market; _ = market_alias.event_id` inside the scoring loop:
+    all seventeen tests here stayed green while every candidate row raised
+    `AttributeError`, the per-item catch skipped it, and `/api/feed` answered
+    `200` with an empty futures pool. The guard was green about a mechanism that
+    had been switched off.
+
+    The lesson is not "widen the regex". It is that a scan which silently
+    returns "nothing to report" for constructs it cannot parse is indistinguish-
+    able from a scan that found nothing. So this analyser RAISES on anything it
+    cannot resolve — a computed `getattr`, a callee it cannot find, a call
+    signature it cannot bind. A guard that cannot see is required to say so.
     """
-    source = inspect.getsource(func)
-    doc = func.__doc__
-    if doc:
-        source = source.replace(doc, "", 1)
-    return set(re.findall(r"\bmarket\.([A-Za-z_][A-Za-z0-9_]*)", source))
+
+
+#: Builtins that provably read no mapped column off the object handed to them.
+#: Deliberately tiny: every name here is a hole in the escape analysis, so the
+#: bar is "reads the object's identity or type, never its attributes".
+_ATTRIBUTE_FREE_BUILTINS = frozenset({"isinstance", "id", "type", "bool"})
+
+#: Recursion bound for following the market into helper callees. Reaching it is
+#: a failure, not a truncation — see `UnauditableMarketRead`.
+_MAX_ESCAPE_DEPTH = 6
+
+
+def _alias_names(tree: ast.AST, seed: str) -> set[str]:
+    """Every local name that can hold the market object, seeded from `seed`.
+
+    Deliberately flow-INSENSITIVE: a name that is ever assigned from an alias
+    counts as an alias everywhere in the function, even on paths where it holds
+    something else. That over-approximates, and over-approximation is the only
+    safe direction for this guard — the worst it can do is demand a column the
+    snapshot did not strictly need, which fails loudly and is fixed by adding
+    the column. Under-approximating is what shipped an empty feed.
+    """
+    aliases = {seed}
+    for _ in range(_MAX_ESCAPE_DEPTH):
+        before = len(aliases)
+        for node in ast.walk(tree):
+            value = getattr(node, "value", None)
+            if not isinstance(value, ast.Name) or value.id not in aliases:
+                continue
+            if isinstance(node, ast.Assign):
+                aliases.update(
+                    t.id for t in node.targets if isinstance(t, ast.Name)
+                )
+            elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and isinstance(
+                node.target, ast.Name
+            ):
+                aliases.add(node.target.id)
+        if len(aliases) == before:
+            break
+    return aliases
+
+
+def _reads_from_call(node: ast.Call, aliases: set[str], owner, seen, depth) -> set[str]:
+    """Attributes reached through a call that receives the market object."""
+    carried_pos = [
+        i
+        for i, arg in enumerate(node.args)
+        if isinstance(arg, ast.Name) and arg.id in aliases
+    ]
+    carried_kw = [
+        kw.arg
+        for kw in node.keywords
+        if isinstance(kw.value, ast.Name) and kw.value.id in aliases and kw.arg
+    ]
+    if not carried_pos and not carried_kw:
+        return set()
+
+    where = f"{owner.__qualname__}: `{ast.unparse(node)[:120]}`"
+    name = node.func.id if isinstance(node.func, ast.Name) else None
+
+    if name == "getattr":
+        # The read the regex could never see. Five of these are live in
+        # `_score_futures` today (`market_type`, `llm_league`, `llm_gender`,
+        # `llm_level`, `id`) and the predecessor guard was blind to all five —
+        # the certifier proved it by deleting `llm_gender` from MARKET_COLUMNS
+        # and watching every test stay green.
+        if (
+            carried_pos == [0]
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        ):
+            return {node.args[1].value}
+        raise UnauditableMarketRead(
+            f"{where} — a `getattr` on the market whose attribute name is not a "
+            "string literal cannot be audited. Read the column directly, or "
+            "this guard cannot promise the snapshot carries it."
+        )
+
+    if name in _ATTRIBUTE_FREE_BUILTINS:
+        return set()
+
+    if name is None:
+        raise UnauditableMarketRead(
+            f"{where} — the market escapes into a callee this scan cannot name. "
+            "Bind it to a module-level function so the reads can be followed."
+        )
+
+    module = inspect.getmodule(owner)
+    target = getattr(module, name, None)
+    if not inspect.isfunction(target):
+        raise UnauditableMarketRead(
+            f"{where} — the market escapes into `{name}`, which does not resolve "
+            f"to a function in `{getattr(module, '__name__', '?')}`. This scan "
+            "will not report success about reads it cannot follow."
+        )
+
+    params = list(inspect.signature(target).parameters)
+    out: set[str] = set()
+    for index in carried_pos:
+        if index >= len(params):
+            raise UnauditableMarketRead(
+                f"{where} — cannot bind positional argument {index} of `{name}`."
+            )
+        out |= _market_attributes_read_by(target, params[index], seen, depth + 1)
+    for keyword in carried_kw:
+        if keyword not in params:
+            raise UnauditableMarketRead(
+                f"{where} — cannot bind keyword `{keyword}` of `{name}`."
+            )
+        out |= _market_attributes_read_by(target, keyword, seen, depth + 1)
+    return out
+
+
+def _market_attributes_read_by(func, param: str = "market", seen=None, depth=0):
+    """Every attribute of the market object `func` can read, transitively.
+
+    Covers, and is tested below to cover: a direct `market.attr`, a read through
+    a local alias, a `getattr` with a literal name, and a read inside any helper
+    the market is passed to. Anything it cannot follow raises
+    `UnauditableMarketRead` rather than being omitted.
+
+    Working on the AST rather than the text also retires the docstring-vacuity
+    problem structurally: prose that happens to mention `market.event_id` is a
+    `Constant`, never an `Attribute`, so it cannot be mistaken for a read and
+    there is nothing to strip.
+    """
+    if depth > _MAX_ESCAPE_DEPTH:
+        raise UnauditableMarketRead(
+            f"escape analysis exceeded depth {_MAX_ESCAPE_DEPTH} at "
+            f"`{func.__qualname__}`; the market is being handed through too many "
+            "layers for this guard to stay honest about what it reads."
+        )
+    seen = set() if seen is None else seen
+    fingerprint = (func.__module__, func.__qualname__, param)
+    if fingerprint in seen:  # recursion / diamond — already accounted for
+        return set()
+    seen.add(fingerprint)
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    aliases = _alias_names(tree, param)
+
+    attrs: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in aliases
+        ):
+            attrs.add(node.attr)
+        elif isinstance(node, ast.Call):
+            attrs |= _reads_from_call(node, aliases, func, seen, depth)
+    return attrs
 
 
 def test_every_market_attribute_the_scoring_loop_reads_is_on_the_snapshot():
     """The drift gate.
 
     `_score_futures` may read a market attribute only if the snapshot carries
-    it. Two names are structural rather than columns and are named here rather
-    than pattern-matched away: `outcomes` and `sport` are the two eagerly-loaded
-    relationships the snapshot rebuilds, and `__dict__` is the deliberate
-    unloaded-column idiom (`market.__dict__.get("story_key")`).
+    it — and CERT-615 [P1] is why "reads" now means aliases, literal `getattr`,
+    and helper callees rather than the literal token `market.`. Three names are
+    structural rather than columns and are named here rather than pattern-
+    matched away: `outcomes` and `sport` are the eagerly-loaded relationships
+    the snapshot rebuilds, and `__dict__` is the deliberate unloaded-column
+    idiom (`market.__dict__.get("story_key")`).
     """
     from app.routes.feed import _score_futures
 
@@ -159,6 +320,70 @@ def test_every_market_attribute_the_scoring_loop_reads_is_on_the_snapshot():
         "`futures_market_snapshot.MARKET_COLUMNS` (which also adds them to the "
         "query's load_only) or the futures pool empties in production."
     )
+
+
+def test_the_drift_gate_sees_the_reads_the_regex_could_not():
+    """The guard's own kill-proof — CERT-615 [P1], stated as a test.
+
+    Each specimen is a construct the predecessor `re.findall(r"market\\.\\w+")`
+    scan returned NOTHING for. If any of these stops being detected, the drift
+    gate above is decorative again and an empty futures pool ships green.
+    """
+
+    def _via_alias(market):
+        alias = market
+        return alias.event_id
+
+    def _via_walrus(market):
+        return (alias := market) and alias.event_id
+
+    def _via_literal_getattr(market):
+        return getattr(market, "event_id", None)
+
+    def _via_helper(market):
+        return _reads_event_id_off(market)
+
+    def _via_keyword(market):
+        return _reads_event_id_off(candidate=market)
+
+    for specimen in (
+        _via_alias,
+        _via_walrus,
+        _via_literal_getattr,
+        _via_helper,
+        _via_keyword,
+    ):
+        assert "event_id" in _market_attributes_read_by(specimen), (
+            f"the drift gate cannot see the read in `{specimen.__name__}` — this "
+            "is exactly the blind spot that let CERT-615's mutation stay green"
+        )
+
+
+def test_the_drift_gate_refuses_rather_than_shrugs_at_what_it_cannot_follow():
+    """A scan that returns "nothing" for what it cannot parse is a scan that
+    always passes. These must RAISE, not come back empty."""
+
+    def _computed_getattr(market):
+        name = "event" + "_id"
+        return getattr(market, name, None)
+
+    def _unresolvable_callee(market):
+        return market.helpers.dispatch(market)
+
+    for specimen in (_computed_getattr, _unresolvable_callee):
+        with pytest.raises(UnauditableMarketRead):
+            _market_attributes_read_by(specimen)
+
+
+def _reads_event_id_off(candidate):
+    """Module-level helper for the escape-analysis specimens above.
+
+    Module-level on purpose: the analyser resolves callees through the owning
+    module's namespace, which is how it follows the market into
+    `_futures_recycle_eligible`, `_should_skip_futures_for_recent_dismissal`
+    and `_market_runtime_filter_trace` in `feed.py`.
+    """
+    return candidate.event_id
 
 
 def test_the_route_builds_its_load_only_from_the_snapshot_module():
@@ -347,6 +572,115 @@ def test_a_foreign_schema_version_is_refused_rather_than_read_as_empty():
         "the route no longer checks the payload shape before using it, so a "
         "stale-schema entry would serve an empty futures pool"
     )
+
+
+def _well_formed_payload() -> dict:
+    """A payload that MUST validate — the positive control for everything below.
+
+    Without it, a validator that refused literally everything would satisfy each
+    refusal test in this section while emptying the feed on every request. Any
+    zero needs a positive control (the array_agg lesson, in a different costume).
+    """
+    return fms.to_plain([_loaded_market(), _loaded_market(4343)])
+
+
+def test_the_validator_accepts_the_payload_the_encoder_actually_produces():
+    """The positive control. If this goes red, every refusal test below is
+    vacuous and the shared cache never hits."""
+    payload = _well_formed_payload()
+    assert fms.is_snapshot_payload(payload) is True
+    assert len(fms.from_plain(payload)) == 2
+
+
+@pytest.mark.parametrize(
+    "label,rows",
+    [
+        # The certifier's exact probe: a same-version envelope whose row is a
+        # 2-tuple. `is_snapshot_payload` used to answer True and `from_plain`
+        # used to skip it, so the route was told "readable" and handed nothing.
+        ("row is not a triple", [["market-only", "missing-outcomes"]]),
+        ("row is not a sequence", [{"market": []}]),
+        # zip() TRUNCATES, so a short market row built a snapshot whose trailing
+        # columns were absent rather than None — an AttributeError inside the
+        # per-item serializer, i.e. the whole pool (gotcha #42).
+        ("market row too short", [[[1, 2, 3], [], None]]),
+        (
+            "market row too long",
+            [[[None] * (len(fms.MARKET_COLUMNS) + 1), [], None]],
+        ),
+        (
+            "outcome row wrong width",
+            [[[None] * len(fms.MARKET_COLUMNS), [[1, 2]], None]],
+        ),
+        (
+            "outcomes is not a sequence",
+            [[[None] * len(fms.MARKET_COLUMNS), "nope", None]],
+        ),
+        (
+            "sport row wrong width",
+            [[[None] * len(fms.MARKET_COLUMNS), [], ["key", "name", "extra"]]],
+        ),
+    ],
+)
+def test_a_same_version_malformed_payload_is_refused_rather_than_decoded_as_empty(
+    label, rows
+):
+    """CERT-615 [P2].
+
+    The version is necessary and not sufficient. Every shape here carries the
+    CURRENT version, so nothing upstream of this check can tell it apart from a
+    good entry — and each one used to decode to `[]`, which the route was
+    entitled to serve as "there are no candidate markets". An empty result is a
+    shape, not a fact (gotcha #53); the only correct answer is "rebuild".
+    """
+    payload = {"v": fms.SNAPSHOT_SCHEMA_VERSION, "rows": rows}
+    assert fms.is_snapshot_payload(payload) is False, label
+    assert fms.from_plain(payload) == [], label
+
+
+def test_one_malformed_row_rejects_the_whole_payload_rather_than_being_skipped():
+    """A partial candidate base is not a cheaper answer than a rebuild.
+
+    Skipping the bad row would serve a feed silently missing markets — the
+    failure nobody can see, which is strictly worse than the one that rebuilds.
+    """
+    payload = _well_formed_payload()
+    assert len(payload["rows"]) == 2
+    payload["rows"].append(["truncated"])
+
+    assert fms.is_snapshot_payload(payload) is False
+    assert fms.from_plain(payload) == [], (
+        "the two good rows were decoded anyway; a corrupt artifact must send the "
+        "caller back to the builder, not hand back a partial pool"
+    )
+
+
+def test_the_check_the_route_makes_is_the_check_the_rebuilder_makes():
+    """The two used to disagree, and the disagreement WAS the defect.
+
+    `is_snapshot_payload` said readable; `from_plain` then dropped rows. Pin
+    them to one another over every specimen in this file so they cannot drift
+    apart again.
+    """
+    specimens = [
+        _well_formed_payload(),
+        {"v": fms.SNAPSHOT_SCHEMA_VERSION, "rows": []},
+        {"v": fms.SNAPSHOT_SCHEMA_VERSION, "rows": [["truncated"]]},
+        {"v": fms.SNAPSHOT_SCHEMA_VERSION + 1, "rows": []},
+        {"v": fms.SNAPSHOT_SCHEMA_VERSION, "rows": "not-a-list"},
+        {"not": "a payload"},
+        None,
+        [],
+    ]
+    for payload in specimens:
+        accepted = fms.is_snapshot_payload(payload)
+        decoded = fms.from_plain(payload)
+        expected = len((payload or {}).get("rows") or []) if accepted else 0
+        assert len(decoded) == expected, (
+            f"accepted={accepted} but decoded {len(decoded)} of {expected} rows "
+            f"for {str(payload)[:80]!r} — the acceptance check and the decoder "
+            "disagree, which is CERT-615 [P2] exactly"
+        )
 
 
 # --------------------------------------------------------------------------
