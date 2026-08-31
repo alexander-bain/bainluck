@@ -9,40 +9,61 @@ CAL-P155 stage 1 — variants that can hold two lone claims (CAL-P151-P1a)
 [2/4] EVENT-KEY SWEEP
   event_id spans [1,273, 15,298,674) in 6 seed partitions
   event [14000000,15298674) refused -> split at 14649337   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event [14000000,14649337) refused -> split at 14324668   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event [14324668,14649337) refused -> split at 14487002   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [14649337,15298674) refused -> split at 14974005   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [14649337,14974005) refused -> split at 14811671   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event [14649337,14811671) refused -> split at 14730504   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event [14730504,14811671) refused -> split at 14771087   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event: 10 partitions, 3 queued, 121,246 markets, 107s
   event [14811671,14974005) refused -> split at 14892838   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [14892838,14974005) refused -> split at 14933421   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event [14933421,14974005) refused -> split at 14953713   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event [14953713,14974005) refused -> split at 14963859   ({"detail":{"error":"query_failed","reason":"statement_timeou)
+  event: 10 partitions, 1 queued, 221,812 markets, 86s
   event [14974005,15298674) refused -> split at 15136339   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [14974005,15136339) refused -> split at 15055172   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event [14974005,15055172) refused -> split at 15014588   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15136339,15298674) refused -> split at 15217506   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15136339,15217506) refused -> split at 15176922   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15136339,15176922) refused -> split at 15156630   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event: 20 partitions, 3 queued, 246,076 markets, 240s
-  event [15156630,15176922) refused -> split at 15166776   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event [15166776,15176922) refused -> split at 15171849   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15176922,15217506) refused -> split at 15197214   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15176922,15197214) refused -> split at 15187068   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15176922,15187068) refused -> split at 15181995   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event [15176922,15181995) refused -> split at 15179458   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15181995,15187068) refused -> split at 15184531   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15184531,15187068) refused -> split at 15185799   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15185799,15187068) refused -> split at 15186433   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15187068,15197214) refused -> split at 15192141   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15187068,15192141) refused -> split at 15189604   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15187068,15189604) refused -> split at 15188336   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event: 30 partitions, 5 queued, 362,305 markets, 385s
+  event: 20 partitions, 5 queued, 362,305 markets, 265s
   event [15189604,15192141) refused -> split at 15190872   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15192141,15197214) refused -> split at 15194677   ({"detail":{"error":"query_failed","reason":"statement_timeou)
   event [15197214,15217506) refused -> split at 15207360   ({"detail":{"error":"query_failed","reason":"statement_timeou)
-  event [15217506,15298674) refused -> split at 15258090   ({"detail":{"error":"query_failed","reason":"statement_timeou)
 
 [3/4] GROUP-KEY SWEEP
+  group_id: 25 cut points so far
+  group_id: 50 cut points so far
+  group_id: 75 cut points so far
+  group_id: 100 cut points so far
+  group_id tiled into 108 partitions by striding the index
+  group: 10 partitions, 98 queued, 80,000 markets, 30s
+  group: 20 partitions, 88 queued, 160,000 markets, 46s
+  group: 30 partitions, 78 queued, 240,000 markets, 59s
+  group: 40 partitions, 68 queued, 319,892 markets, 75s
+  group: 50 partitions, 58 queued, 399,780 markets, 98s
+  group: 60 partitions, 48 queued, 479,669 markets, 118s
+  group: 70 partitions, 38 queued, 559,576 markets, 134s
+  group: 80 partitions, 28 queued, 639,479 markets, 153s
+  group: 90 partitions, 18 queued, 719,361 markets, 163s
+  group: 100 partitions, 8 queued, 799,291 markets, 174s
+
+[4/4] RECONCILE, then list the candidates
+  event tiling  435,105 vs 435,105  OK
+  group tiling  862,408 vs 862,408  OK
+  counts banked -> /Users/bain/bainluck-dev/calibration/artifacts/cal-p155/lone-claim-candidates.json (before listing, so listing cannot lose them)
+
+============================================================================================
+  THE BOUND — keys with >=3 markets holding >=1 lone claim:
+    event    6,108 keys     7,955 lone markets
+    group      115 keys       118 lone markets
+    TOTAL    6,223 keys     8,073 lone markets  <- upper bound
+  of which the sub-case the ruling was ARGUED on (>=2 lone in one key):
+    event      890 keys     2,737 lone markets
+    group        1 keys         4 lone markets
+  candidate keys listed            : 6,108 event + 115 group
+  banked -> /Users/bain/bainluck-dev/calibration/artifacts/cal-p155/lone-claim-candidates.json
+============================================================================================
+⚠️  This is the CANDIDATE BOUND, not the delta.

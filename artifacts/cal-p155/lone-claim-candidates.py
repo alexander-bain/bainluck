@@ -7,15 +7,32 @@ publishes on its own even when two land in the same virtual variant. The number
 owed coming out is *how much population that moves* — the measurement parked as
 `CAL-P151-P1a` in `PARKED-MEASUREMENTS.md`.
 
-THE SCOPE ARGUMENT — this is a bound by CONSTRUCTION, not a sample. A variant is
-``g:<group_id>`` when its group holds >=3 resolved markets in the same source,
-else ``e:<event_id>`` when its event does, else ``m:<market_id>``. An ``m:``
-variant holds exactly ONE market, so today's arm already fires on it and it
-cannot change. So every variant the arm change can touch lives under a group or
-event key with **>=3 resolved markets**, and it must hold **>=2 single-outcome
-markets** or there is no second lone claim for the per-variant counts to have
-refused. This stage enumerates exactly those keys. Anything it does not return
+THE SCOPE ARGUMENT — this is a bound by CONSTRUCTION, not a sample. Derive it
+from the two arms rather than from the story:
+
+    retired:  market_count = 1 AND total_outcomes = 1 AND graded >= 1
+    ruled:    graded_lone_claims >= 1 AND ungraded_lone_claims = 0
+
+A variant changes only where the second fires and the first did not, which needs
+``market_count >= 2`` — with ``market_count = 1`` the single market either IS the
+graded lone claim (both arms fire) or is not one at all (neither does). And
+``market_count >= 2`` needs a ``g:``/``e:`` vm_id, i.e. a group or event key with
+>=3 resolved markets in the same source; an ``m:`` variant holds exactly one
+market by definition.
+
+So: **every variant the ruling can touch lives under a key with >=3 resolved
+markets holding >=1 single-outcome market.** Anything this stage does not return
 is excluded by construction.
+
+🔴 **AN EARLIER CUT OF THIS FILE SAID `>=2` SINGLE-OUTCOME MARKETS AND THAT WAS
+WRONG BY 3x.** It reasoned from the CASE Alex ruled on — two lone claims sharing
+a variant — instead of from the predicate. A variant holding ONE lone claim
+beside one MULTI-outcome market also carries ``market_count = 2``, so the retired
+arm refused the lone claim there too, and the ruled arm admits it (its
+multi-outcome neighbour has ``win_count = 0`` in a no-winner variant and
+``no_winner_markets`` drops it). Measured, the difference is not cosmetic:
+**890 event keys at ``>=2`` against 6,108 at ``>=1``.** *Scope a change from the
+predicate it ships, not from the example that motivated it.*
 
 ⚠️ IT IS A SUPERSET AND SAYS SO. Two deliberate loosenings, both in the safe
 direction: the ``datagolf_recovery_residual`` exclusion is dropped (it forces a
@@ -93,6 +110,12 @@ SELECT COUNT(*) AS keys_,
        COUNT(*) FILTER (WHERE n >= 3) AS keys_ge3,
        COUNT(*) FILTER (WHERE n >= 3 AND lone >= 1) AS keys_ge3_lone1,
        COUNT(*) FILTER (WHERE n >= 3 AND lone >= 2) AS keys_ge3_lone2,
+       -- THE BOUND. Lone markets under a key that can hold a multi-market
+       -- variant: every market the ruling can newly admit is one of these.
+       COALESCE(SUM(lone) FILTER (WHERE n >= 3 AND lone >= 1), 0) AS lone_in_ge1,
+       -- Kept beside it because it is the sub-case Alex's ruling was ARGUED on
+       -- (two graded lone claims in one variant), and reporting only the wider
+       -- number would lose the distinction the decision was made about.
        COALESCE(SUM(lone) FILTER (WHERE n >= 3 AND lone >= 2), 0) AS lone_in_ge2
 FROM (
   SELECT fm.{col}, fm.source, COUNT(*) AS n,
@@ -112,7 +135,7 @@ FROM (
   WHERE fm.status = 'resolved' AND {bounds}
   GROUP BY 1, 2
 ) k
-WHERE k.n >= 3 AND k.lone >= 2
+WHERE k.n >= 3 AND k.lone >= 1
 ORDER BY k.lone DESC, k.{col}
 """
 
@@ -286,7 +309,8 @@ def sweep(col: str, seeds, bounds_fn, split_fn, label: str) -> dict:
     """Walk key-range partitions, halving any that the rail refuses."""
     acc = {
         "keys_": 0, "markets_": 0, "keys_ge3": 0,
-        "keys_ge3_lone1": 0, "keys_ge3_lone2": 0, "lone_in_ge2": 0,
+        "keys_ge3_lone1": 0, "keys_ge3_lone2": 0,
+        "lone_in_ge1": 0, "lone_in_ge2": 0,
     }
     work = list(seeds)
     ranges_done: list[tuple] = []
@@ -471,12 +495,14 @@ def main() -> int:
               f"The COUNTS above are unaffected: they come from the reconciled sweep.")
 
     print("\n" + "=" * 92)
-    print(f"  event keys >=3 markets, >=1 lone : {ev['keys_ge3_lone1']:,}")
-    print(f"  event keys >=3 markets, >=2 lone : {ev['keys_ge3_lone2']:,}"
-          f"   ({ev['lone_in_ge2']:,} lone markets)")
-    print(f"  group keys >=3 markets, >=1 lone : {gr['keys_ge3_lone1']:,}")
-    print(f"  group keys >=3 markets, >=2 lone : {gr['keys_ge3_lone2']:,}"
-          f"   ({gr['lone_in_ge2']:,} lone markets)")
+    print("  THE BOUND — keys with >=3 markets holding >=1 lone claim:")
+    print(f"    event  {ev['keys_ge3_lone1']:>7,} keys   {ev['lone_in_ge1']:>7,} lone markets")
+    print(f"    group  {gr['keys_ge3_lone1']:>7,} keys   {gr['lone_in_ge1']:>7,} lone markets")
+    print(f"    TOTAL  {ev['keys_ge3_lone1'] + gr['keys_ge3_lone1']:>7,} keys   "
+          f"{ev['lone_in_ge1'] + gr['lone_in_ge1']:>7,} lone markets  <- upper bound")
+    print("  of which the sub-case the ruling was ARGUED on (>=2 lone in one key):")
+    print(f"    event  {ev['keys_ge3_lone2']:>7,} keys   {ev['lone_in_ge2']:>7,} lone markets")
+    print(f"    group  {gr['keys_ge3_lone2']:>7,} keys   {gr['lone_in_ge2']:>7,} lone markets")
     print(f"  candidate keys listed            : {len(cand_e):,} event + {len(cand_g):,} group")
     print(f"  banked -> {OUT}")
     print("=" * 92)

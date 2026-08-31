@@ -24,8 +24,13 @@ supervisor finding; `cal-p152`'s **§7** for the twelve code commits beneath the
 4. **Cricket's ingestion fix is DESIGNED and the specimen is now READ, not
    inferred** — 129934 is a container with **zero** sub-market rows ever minted.
    §5, and `DESIGN-polymarket-container-outcomes.md`.
-5. ⚠️ **The population delta is a bound in progress, not a number.** §6 — and the
-   headline is a post-deploy reading by this branch's own standing rule.
+5. **The population bound is measured: ≤8,073 markets of 862,435 — at most
+   0.94%, both tilings reconciled exactly.** Option A is a small, bounded change.
+   The HEADLINE stays a post-deploy reading. §6.
+6. 🔴 **CI found two things the local suite structurally could not**, and one is
+   a schema drift: the ORM declares `is_winner` NOT NULL and production has it
+   nullable, so **no metadata-built test database in this repo can represent
+   "nobody graded this"** — the exact distinction 12-CAL rests on. §9.
 
 ---
 
@@ -178,13 +183,50 @@ different numbers, and only one of them is available before a deploy:
   the defect wearing the repair's name. It is read the moment the lift deploys,
   by `artifacts/cal-p150/board-d15.py` plus one read of `/api/calibration`.
 * **The POPULATION bound is measurable now**, and it is the measurement parked as
-  `CAL-P151-P1a`. `lone-claim-candidates.py` is the instrument.
+  `CAL-P151-P1a`. `lone-claim-candidates.py` is the instrument, and it landed:
 
-**The scope argument makes it a bound by construction, not a sample.** An `m:`
-variant holds exactly one market, so today's arm already fires on it and it
-cannot change. Every variant the ruling can touch therefore lives under a group
-or event key with >=3 resolved markets holding >=2 single-outcome markets. The
-instrument enumerates exactly those.
+| | keys | lone markets |
+|---|---:|---:|
+| **event keys, >=3 markets, >=1 lone claim** | 6,108 | 7,955 |
+| **group keys, >=3 markets, >=1 lone claim** | 115 | 118 |
+| **TOTAL — the upper bound** | **6,223** | **8,073** |
+| *of which the sub-case the ruling was argued on (>=2 lone in one key)* | *891* | *2,741* |
+
+🟢 **AND THE KEY LIST CROSS-CHECKS THE SWEEP.** The listing pass re-walks the
+proven tiling and pulls the qualifying keys themselves: it returned **6,108 event
++ 115 group, zero unlisted ranges** — exactly the counts the aggregate reported,
+arrived at by a different statement. Two readings, one answer.
+
+**8,073 markets against a resolved population of 862,435 — at most 0.94%, and
+that is a ceiling, not the delta.** Every one of those markets is a candidate;
+it only actually moves if its whole variant has no winner at all, and it is a
+superset twice over (the `datagolf_recovery_residual` exclusion is not applied,
+and a market under a >=3 group that also sits in a >=3 event is counted on both
+sides — the producer assigns it to `g:` only). **Both tilings reconciled
+exactly** — 435,105 event and 862,408 group markets against counts taken a
+different way — so the ceiling is complete rather than merely large.
+
+*The plain statement for Alex: option A is a small, bounded population change.*
+
+**The scope argument makes it a bound by construction, not a sample.** A variant
+changes only where the ruled arm fires and the retired one did not, which needs
+`market_count >= 2` — with one market it either IS the graded lone claim (both
+arms fire) or is not one at all (neither does). And `market_count >= 2` needs a
+`g:`/`e:` vm_id, i.e. a key with >=3 resolved markets. So every variant the
+ruling can touch lives under a key with **>=3 resolved markets holding >=1
+single-outcome market**, and the instrument enumerates exactly those.
+
+🔴 **I GOT THAT SCOPE WRONG FIRST TIME, BY 3x, AND THE MEASUREMENT IS WHAT
+CAUGHT IT.** The first cut said ">=2 single-outcome markets" because it reasoned
+from the CASE Alex ruled on — two lone claims sharing a variant — instead of from
+the predicate that ships. A variant holding ONE lone claim beside one
+MULTI-outcome market also carries `market_count = 2`, so the retired arm refused
+that lone claim too, and the ruled arm admits it (the multi-outcome neighbour has
+`win_count = 0` in a no-winner variant and `no_winner_markets` drops it).
+Measured on the first complete run: **890 event keys at `>=2` against 6,108 at
+`>=1`.** *Scope a change from the predicate it ships, not from the example that
+motivated it.* The instrument now reports both, because the narrower one is the
+sub-case the decision was argued on and collapsing them loses that.
 
 🔴 **THE RAIL FOUGHT THIS THE WHOLE WAY AND THE REFUSALS ARE THE TRANSFERABLE
 PART.** Every one measured this session, with correlation ids in the run log:
@@ -225,14 +267,63 @@ collation's own answer rather than arithmetic; and **coverage proved by
 reconciliation** against a count taken a different way (pkey windows), so a hole
 in the tiling fails the run instead of shortening the answer.
 
-⚠️ **STATUS AT HANDOFF: the re-run had not landed its JSON when this was
-written.** The instrument is banked and correct; the counts are not yet in hand.
-Re-run it (`source ~/.claude/.env && python3 artifacts/cal-p155/lone-claim-candidates.py`)
-— and note that the two runs it did complete both reconciled, so the failure mode
-is wall-clock on a contended rail, not correctness. **Stage 2** — folding the
-candidate keys through the producer's own chain to say which of them actually
-change — is not built; `artifacts/cal-p151/cricket-population-fold.py` has the
-component-chunking rail it needs.
+**STAGE 2 IS NOT BUILT AND IS THE ONLY THING BETWEEN THIS CEILING AND THE EXACT
+DELTA.** It folds the candidate keys through the producer's own chain and asks,
+per variant, whether `has_winner = 0` — the condition that turns a candidate into
+a change. `artifacts/cal-p151/cricket-population-fold.py` already has the rail it
+needs (component chunking with a scope proof, so a chunk is a REPLAY of the
+global derivation and not a re-derivation over a subset). Re-run stage 1 first if
+the key list is needed: `source ~/.claude/.env && python3
+artifacts/cal-p155/lone-claim-candidates.py`, and **read `candidate_listing`
+before believing the key list** — the counts above come from the reconciled
+sweep and are unaffected by a partial listing.
+
+## 9. 🔴 CI caught two things the local suite could not, and they are different kinds
+
+The PG gate skips locally — no Postgres in this sandbox — so the inverted fixture
+was unproven until it ran. It came back red twice, and both reds were worth the
+round trip.
+
+**(a) THE ORM AND PRODUCTION DISAGREE ABOUT `is_winner`.**
+`models.py:849` declares `is_winner: Mapped[bool] = mapped_column(Boolean,
+default=False)`. The annotation is not Optional, so SQLAlchemy infers
+`nullable=False` and `Base.metadata.create_all` — **how every real-Postgres gate
+in this repo builds its schema** — creates it NOT NULL. Production is
+`is_nullable = YES, column_default = false` (`information_schema.columns`, read
+2026-08-31).
+
+That drift is load-bearing. The whole 12-CAL argument, gotcha #21, D13's retired
+`graded >= 1` and this queue's `ungraded_lone_claims = 0` all rest on "not a
+winner" spanning a graded loss AND a row nothing ever graded. **In a schema built
+from the model that distinction cannot exist** — so a fixture seeded there would
+have proved the fail-closed conjunct works by never exercising it. CAL-P152's
+lesson in a new place: *a fixture that cannot come from the writer proves nothing
+about the reader.*
+
+The gate now relaxes the column to match the schema the producer actually runs
+against and **asserts via `information_schema` that the DDL took** rather than
+assuming it. The MODEL is deliberately untouched — widening `Mapped[bool]`
+reaches every reader of the attribute and does not belong in a freeze-lift batch;
+it is reported to Alex. ⚠️ **And if any other PG gate ever "proved" a
+nullability behaviour on a metadata-built schema, it proved it against a column
+that could not be null. I did not audit the others and am flagging it, not
+claiming it.**
+
+**(b) A RED-FIRST ARM ENCODES A POPULATION STATE, AND THE RULING CHANGED IT.**
+The reverted two-column join used to MISFILE the loss legs — one admission row to
+match, so they published under the sibling's `baseball`. My assertion said "and
+this fixture must not also duplicate", which was true then. Option A admits the
+cricket variant, so the coarse key now matches BOTH and every outcome is emitted
+once per admitted variant: `[(771511,'baseball'), (771511,'cricket'),
+(771512,'baseball'), (771512,'cricket')]`. That is D5's own duplication defect,
+reproduced on rows the ruling put there.
+
+**CI measured that; I did not predict it.** The arm was re-aimed rather than
+relaxed — the accident is now asserted as a subset, duplication as a strict
+inequality, and the fixed-join assertions (exactly four rows, each under its own
+category, nothing from the unknown-truth variant) are unchanged and still the
+load-bearing ones. The general form: *when you change a population, re-read what
+your red-first arm is proving — it was written against the old one.*
 
 ## 7. What this session did NOT do
 
