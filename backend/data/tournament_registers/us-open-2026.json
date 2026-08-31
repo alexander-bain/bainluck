@@ -21128,6 +21128,8 @@
       "key": "sinner-competes",
       "title": "Will Sinner actually play?",
       "hook": "A withdrawal reshapes the entire men's board.",
+      "settles_at": "2026-08-30T15:05:00+00:00",
+      "settled_answer": "No",
       "draw": "mens-singles",
       "source": "kalshi",
       "market_id": 59172808,
@@ -21152,7 +21154,12 @@
         "kind": "prop-census",
         "observed_at": "2026-08-29T21:12:00+00:00",
         "market_name": "Jannik Sinner to play in the US Open",
-        "answer": "Yes"
+        "answer": "Yes",
+        "settled_evidence": {
+          "kind": "espn-main-draw-field",
+          "observed_at": "2026-08-31T04:00:00+00:00",
+          "note": "ESPN's men's-singles Round 1 is fully named on the live scoreboard -- 128 competitions, 128 distinct athletes -- and Jannik Sinner is not one of them. Corroborated by KXATPCOMPETE-26USOSIN falling from an opening 0.63 to 0.01. The market still reads status='open' (gotcha #33), which is why the register carries the verdict."
+        }
       }
     },
     {
