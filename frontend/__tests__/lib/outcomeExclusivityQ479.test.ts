@@ -16,7 +16,7 @@ import {
 
 describe("only a POSITIVE denial counts as evidence", () => {
   test("false — the source overwrote the default, so we have a fact", () => {
-    expect(outcomesArePricedIndependently(false, 8)).toBe(true);
+    expect(outcomesArePricedIndependently(false, 8, "kalshi")).toBe(true);
   });
 
   test("true is NOT evidence — it is the column default", () => {
@@ -24,45 +24,45 @@ describe("only a POSITIVE denial counts as evidence", () => {
     // precompute_calibration.py's Rung 4 (Queue 299) stopped accepting the same
     // flag as proof of a partition for the same reason; nothing here reinstates
     // it in the other direction either.
-    expect(outcomesArePricedIndependently(true, 8)).toBe(false);
+    expect(outcomesArePricedIndependently(true, 8, "kalshi")).toBe(false);
   });
 
   test("absent is silence, not the opposite claim", () => {
-    expect(outcomesArePricedIndependently(undefined, 8)).toBe(false);
-    expect(outcomesArePricedIndependently(null, 8)).toBe(false);
+    expect(outcomesArePricedIndependently(undefined, 8, "kalshi")).toBe(false);
+    expect(outcomesArePricedIndependently(null, 8, "kalshi")).toBe(false);
   });
 
   test("a truthy/falsy near-miss does not slip through", () => {
     // Guards against a future refactor to `!mutuallyExclusive`, which would
     // print the note on every payload that simply omits the field.
-    expect(outcomesArePricedIndependently(0 as unknown as boolean, 8)).toBe(false);
-    expect(outcomesArePricedIndependently("" as unknown as boolean, 8)).toBe(false);
+    expect(outcomesArePricedIndependently(0 as unknown as boolean, 8, "kalshi")).toBe(false);
+    expect(outcomesArePricedIndependently("" as unknown as boolean, 8, "kalshi")).toBe(false);
   });
 });
 
 describe("the outcome-count floor", () => {
   test("a two-sided market is a duel whatever the flag says", () => {
-    expect(outcomesArePricedIndependently(false, 2)).toBe(false);
-    expect(outcomesArePricedIndependently(false, 1)).toBe(false);
-    expect(outcomesArePricedIndependently(false, 0)).toBe(false);
+    expect(outcomesArePricedIndependently(false, 2, "kalshi")).toBe(false);
+    expect(outcomesArePricedIndependently(false, 1, "kalshi")).toBe(false);
+    expect(outcomesArePricedIndependently(false, 0, "kalshi")).toBe(false);
   });
 
   test("the floor is exactly three, inclusive", () => {
     expect(MIN_OUTCOMES_FOR_INDEPENDENCE_NOTE).toBe(3);
-    expect(outcomesArePricedIndependently(false, 3)).toBe(true);
+    expect(outcomesArePricedIndependently(false, 3, "kalshi")).toBe(true);
   });
 });
 
 describe("both renderings are enumerated, because the copy changes with state", () => {
   test("an open bundle speaks in the present", () => {
-    expect(independentOutcomesNote(false, 8, false)).toBe(
+    expect(independentOutcomesNote(false, 8, false, "kalshi")).toBe(
       INDEPENDENT_OUTCOMES_NOTE_OPEN
     );
     expect(INDEPENDENT_OUTCOMES_NOTE_OPEN).toContain("can happen");
   });
 
   test("a settled bundle speaks in the past", () => {
-    expect(independentOutcomesNote(false, 8, true)).toBe(
+    expect(independentOutcomesNote(false, 8, true, "kalshi")).toBe(
       INDEPENDENT_OUTCOMES_NOTE_SETTLED
     );
     expect(INDEPENDENT_OUTCOMES_NOTE_SETTLED).toContain("could happen");
@@ -77,9 +77,9 @@ describe("both renderings are enumerated, because the copy changes with state", 
   });
 
   test("no note is null, never an empty string", () => {
-    expect(independentOutcomesNote(true, 8, false)).toBeNull();
-    expect(independentOutcomesNote(undefined, 8, false)).toBeNull();
-    expect(independentOutcomesNote(false, 2, false)).toBeNull();
+    expect(independentOutcomesNote(true, 8, false, "kalshi")).toBeNull();
+    expect(independentOutcomesNote(undefined, 8, false, "kalshi")).toBeNull();
+    expect(independentOutcomesNote(false, 2, false, "kalshi")).toBeNull();
   });
 });
 
@@ -97,4 +97,72 @@ describe("the note never asserts a number it cannot support", () => {
       expect(note.toLowerCase()).not.toContain("should add");
     });
   }
+});
+
+// ── CERT-609: `false` is only affirmative if the PARSER makes it so ──────────
+//
+// The first version of this module asserted that `false` "IS evidence — somebody
+// had to overwrite the default to get it". True for Kalshi, false for Polymarket,
+// and the cert caught it by probing the real parser rather than the helper.
+//
+// These tests hold BOTH halves: the behaviour, and the source facts the behaviour
+// is deduced from. Pinning only the behaviour would leave the reasoning
+// unfalsifiable — the day someone repairs Polymarket's parser, or changes
+// Kalshi's default, the gate should move and nothing would say so.
+
+import fs from "fs";
+import path from "path";
+
+const BACKEND = path.resolve(__dirname, "..", "..", "..", "backend");
+
+describe("only a source whose parser cannot invent `false` is trusted", () => {
+  test("polymarket's false is NOT evidence — its parser invents it from an absent key", () => {
+    expect(outcomesArePricedIndependently(false, 8, "polymarket")).toBe(false);
+    expect(independentOutcomesNote(false, 8, false, "polymarket")).toBeNull();
+    expect(independentOutcomesNote(false, 8, true, "polymarket")).toBeNull();
+  });
+
+  test("an unknown or missing source is silence, not trust", () => {
+    for (const source of [undefined, null, "", "espn", "the-odds-api"]) {
+      expect(outcomesArePricedIndependently(false, 8, source)).toBe(false);
+    }
+  });
+
+  test("kalshi is still trusted, so the ship survives the gate", () => {
+    // 109441 — the named specimen — is a Kalshi market. If this ever goes false,
+    // the defect this queue exists for is back on the page.
+    expect(outcomesArePricedIndependently(false, 8, "kalshi")).toBe(true);
+    expect(independentOutcomesNote(false, 8, false, "KALSHI")).toBe(
+      INDEPENDENT_OUTCOMES_NOTE_OPEN
+    );
+  });
+});
+
+describe("the parser facts this gate is deduced from", () => {
+  // Read as source text on purpose: these two lines ARE the argument. A test that
+  // only asserted the gate's behaviour would still pass on the day one of them
+  // changes and the gate became wrong in the other direction.
+
+  test("kalshi defaults an ABSENT flag to true, so its false was written", () => {
+    const src = fs.readFileSync(path.join(BACKEND, "app/services/kalshi_api.py"), "utf8");
+    expect(src).toContain('mutually_exclusive=event_data.get("mutually_exclusive", True)');
+  });
+
+  test("polymarket defaults an ABSENT negRisk to FALSE, and stores it straight through", () => {
+    const api = fs.readFileSync(path.join(BACKEND, "app/services/polymarket_api.py"), "utf8");
+    const task = fs.readFileSync(path.join(BACKEND, "app/tasks/polymarket.py"), "utf8");
+    // The invention…
+    expect(api).toContain('neg_risk=event_data.get("negRisk", False)');
+    // …and the write that carries it into `mutually_exclusive` unexamined.
+    expect(task).toContain("mutually_exclusive=event.neg_risk");
+  });
+
+  test("if polymarket's parser is ever repaired, this test fails and the gate should widen", () => {
+    // Deliberately phrased as a tripwire rather than a claim about today. When
+    // `polymarket_api.py` starts defaulting to None/True, delete this test and add
+    // "polymarket" to AFFIRMATIVE_EXCLUSIVITY_SOURCES — ~1,970 open field markets
+    // become sayable at that moment.
+    const api = fs.readFileSync(path.join(BACKEND, "app/services/polymarket_api.py"), "utf8");
+    expect(api).not.toContain('neg_risk=event_data.get("negRisk", None)');
+  });
 });

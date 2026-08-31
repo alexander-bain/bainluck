@@ -469,10 +469,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // lane1-Q479 (defect 13). Counted off `market.outcomes`, not `outcome_count`:
   // the note is a claim about the rows the reader can actually see and add up,
   // and those two numbers are not the same field.
+  // CERT-609: `source` is load-bearing, not decoration. Polymarket's parser turns
+  // an ABSENT `negRisk` key into `false`, so only Kalshi's `false` is affirmative.
   const independenceNote = independentOutcomesNote(
     market.mutually_exclusive,
     market.outcomes?.length ?? 0,
-    isResolved
+    isResolved,
+    market.source
   );
 
   // L2-65 Item 1b / B7 L2-91: link UP to the richer event-concept surface. Prefer
@@ -862,14 +865,17 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
         {/* lane1-Q479 (defect 13): a ranked list of rows each showing a percent is
             the geometry of a race, and a reader adds up a race. When the SOURCE has
-            told us the set is NOT one — Kalshi's event `mutually_exclusive`,
-            Polymarket's `neg_risk`, already on this payload and already read by the
-            backend — the page has to say so, because on 109441 the honest answer to
-            "why don't these eight add to 100?" is "they were never meant to".
+            told us the set is NOT one — Kalshi's event `mutually_exclusive`, already
+            on this payload and already read by the backend — the page has to say so,
+            because on 109441 the honest answer to "why don't these eight add to 100?"
+            is "they were never meant to".
             Only a positive denial prints: the column defaults to TRUE, so `true`
-            and absent are both silence rather than the opposite claim. Never a
-            renormalisation — the source says independent, and dividing by the
-            sibling sum would invent the exclusivity it denies. */}
+            and absent are both silence rather than the opposite claim.
+            CERT-609: and only Kalshi's denial is positive. Polymarket's `neg_risk`
+            parser turns an ABSENT `negRisk` key into `false`, so its `false` is
+            absence wearing evidence's clothes — see `lib/outcomeExclusivity.ts`.
+            Never a renormalisation — the source says independent, and dividing by
+            the sibling sum would invent the exclusivity it denies. */}
         {independenceNote && (
           <p
             data-testid="independent-outcomes-note"

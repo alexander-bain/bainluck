@@ -197,3 +197,44 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#x27;");
 }
+
+describe("CERT-609 — the RENDERED page does not print the note off a Polymarket false", () => {
+  // The predicate contract lives in `__tests__/lib/outcomeExclusivityQ479.test.ts`.
+  // This block is the served-shape half: the cert's finding was that the UI "can
+  // print 'Several … can happen' from absent metadata", so the proof has to be on
+  // the HTML, not on the helper that feeds it.
+  //
+  // Polymarket's `polymarket_api.py` turns an ABSENT `negRisk` key into `false`
+  // and `tasks/polymarket.py` writes it straight into `mutually_exclusive`. So a
+  // Polymarket `false` is indistinguishable from Polymarket saying nothing —
+  // ~1,970 open field markets carry it.
+  const POLYMARKET = { ...RAW, source: "polymarket" };
+
+  test("same flag, same eight outcomes, different source — and the page stays silent", () => {
+    const html = render(POLYMARKET);
+    expect(html).not.toContain('data-testid="independent-outcomes-note"');
+    expect(html).not.toContain(escapeHtml(INDEPENDENT_OUTCOMES_NOTE_OPEN));
+    expect(html).not.toContain(escapeHtml(INDEPENDENT_OUTCOMES_NOTE_SETTLED));
+  });
+
+  test("silence is the ONLY difference — the rest of the card is byte-identical", () => {
+    // Withholding the claim must not cost the reader anything else. Strip the note
+    // from the Kalshi render and the two pages match exactly.
+    const kalshi = render(RAW);
+    const stripped = kalshi.replace(
+      /<p data-testid="independent-outcomes-note"[^>]*>.*?<\/p>/,
+      ""
+    );
+    // `source` is itself rendered nowhere on this card, so the two must agree.
+    expect(stripped).toBe(render(POLYMARKET));
+  });
+
+  test("and the Kalshi specimen still prints it — the ship is not gated away", () => {
+    // The failure mode of an over-tight fix: satisfy the cert by printing nothing
+    // anywhere. 109441 is Kalshi, so item 13 must still be fixed on the page.
+    expect(RAW.source).toBe("kalshi");
+    const html = render(RAW);
+    expect(html).toContain('data-testid="independent-outcomes-note"');
+    expect(html).toContain(escapeHtml(INDEPENDENT_OUTCOMES_NOTE_OPEN));
+  });
+});

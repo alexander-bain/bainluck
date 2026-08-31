@@ -35,14 +35,14 @@ const MUTANTS = [
   {
     name: "B — absence becomes a claim (`=== false` → `!== true`)",
     file: LIB,
-    from: "    mutuallyExclusive === false && outcomeCount >= MIN_OUTCOMES_FOR_INDEPENDENCE_NOTE",
-    to: "    mutuallyExclusive !== true && outcomeCount >= MIN_OUTCOMES_FOR_INDEPENDENCE_NOTE",
+    from: "    mutuallyExclusive === false &&",
+    to: "    mutuallyExclusive !== true &&",
   },
   {
     name: "C — the default-true flag is treated as evidence (predicate inverted)",
     file: LIB,
-    from: "    mutuallyExclusive === false && outcomeCount >= MIN_OUTCOMES_FOR_INDEPENDENCE_NOTE",
-    to: "    mutuallyExclusive === true && outcomeCount >= MIN_OUTCOMES_FOR_INDEPENDENCE_NOTE",
+    from: "    mutuallyExclusive === false &&",
+    to: "    mutuallyExclusive === true &&",
   },
   {
     name: "D — the outcome-count floor is dropped (a duel gets the note)",
@@ -73,8 +73,8 @@ const MUTANTS = [
   {
     name: "H — no-claim becomes an empty claim (`null` → `\"\"`)",
     file: LIB,
-    from: "  if (!outcomesArePricedIndependently(mutuallyExclusive, outcomeCount)) return null;",
-    to: '  if (!outcomesArePricedIndependently(mutuallyExclusive, outcomeCount)) return "";',
+    from: "  if (!outcomesArePricedIndependently(mutuallyExclusive, outcomeCount, source)) {\n    return null;\n  }",
+    to: '  if (!outcomesArePricedIndependently(mutuallyExclusive, outcomeCount, source)) {\n    return "";\n  }',
   },
   {
     name: "I — the copy implies a renormalisation instead of stating the shape",
@@ -105,6 +105,26 @@ const MUTANTS = [
     file: PAGE,
     from: "    market.outcomes?.length ?? 0,",
     to: "    0,",
+  },
+
+  // ── CERT-609: the provenance gate ──────────────────────────────────────────
+  {
+    name: "M — the source gate is dropped; ANY source's `false` is trusted again",
+    file: LIB,
+    from: "    outcomeCount >= MIN_OUTCOMES_FOR_INDEPENDENCE_NOTE &&\n    AFFIRMATIVE_EXCLUSIVITY_SOURCES.has((source ?? \"\").toLowerCase())",
+    to: "    outcomeCount >= MIN_OUTCOMES_FOR_INDEPENDENCE_NOTE",
+  },
+  {
+    name: "N — polymarket is trusted, though its parser invents `false` from absence",
+    file: LIB,
+    from: 'const AFFIRMATIVE_EXCLUSIVITY_SOURCES = new Set(["kalshi"]);',
+    to: 'const AFFIRMATIVE_EXCLUSIVITY_SOURCES = new Set(["kalshi", "polymarket"]);',
+  },
+  {
+    name: "O — the page stops passing `source`, silencing the note everywhere",
+    file: PAGE,
+    from: "    isResolved,\n    market.source\n  );",
+    to: "    isResolved,\n    undefined\n  );",
   },
 ];
 

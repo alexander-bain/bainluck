@@ -21,10 +21,33 @@
  *     `precompute_calibration.py`'s Rung 4 (Queue 299) stopped accepting it as
  *     proof of a partition for exactly this reason, and nothing here reinstates
  *     it. A `true` market renders exactly as it does today.
- *   * `false` IS evidence — somebody had to overwrite the default to get it,
- *     and the only writers are the sources' own flags: Kalshi's event
- *     `mutually_exclusive` (`services/kalshi_api.py`) and Polymarket's
- *     `neg_risk` (`tasks/polymarket.py`).
+ *   * `false` is evidence ONLY FROM KALSHI. See the next paragraph — this is
+ *     the correction CERT-609 forced, and it is not a detail.
+ *
+ * 🔴 `false` IS NOT UNIVERSALLY AFFIRMATIVE — IT DEPENDS ENTIRELY ON THE PARSER.
+ * The first version of this file claimed `false` "IS evidence — somebody had to
+ * overwrite the default to get it". That is true of exactly one of the two
+ * writers, and CERT-609 caught it:
+ *
+ *   * Kalshi — `services/kalshi_api.py:1435`:
+ *       `mutually_exclusive=event_data.get("mutually_exclusive", True)`
+ *     An ABSENT key becomes `true`. So a Kalshi `false` could only have come
+ *     from Kalshi literally saying `false`. Affirmative. The note is safe.
+ *   * Polymarket — `services/polymarket_api.py:598`:
+ *       `neg_risk=event_data.get("negRisk", False)`
+ *     …stored straight through at `tasks/polymarket.py:1057`
+ *     (`mutually_exclusive=event.neg_risk`). An ABSENT key becomes `false`.
+ *     So a Polymarket `false` is indistinguishable from Polymarket never
+ *     mentioning the field at all. NOT affirmative — it is the same "absence is
+ *     not evidence" trap as `true`, arriving from the other side.
+ *
+ * So the note is gated on `source === "kalshi"`. And note WHERE the measured
+ * table below came from: open **Kalshi** `market_type='field'` markets. The
+ * evidence was always Kalshi-only; the claim was the thing that over-reached.
+ * The ~1,970 Polymarket rows carrying the denial are not proved wrong — they are
+ * unproved, which is a different thing and not something a page should assert.
+ * Repairing Polymarket's provenance so its `false` means something is filed as a
+ * follow-up, not smuggled in here.
  *
  * MEASURED, production 2026-08-31, open Kalshi `market_type='field'` markets
  * with >= 3 outcomes — the flag predicts the sum, so it is real signal:
@@ -66,16 +89,33 @@ export const INDEPENDENT_OUTCOMES_NOTE_SETTLED =
   "Several of these could happen — each was priced on its own, so they don't add up to 100%.";
 
 /**
+ * The sources whose parser makes a `false` mean the source SAID false.
+ *
+ * Kalshi only, and the membership test is a property of the parser, not of the
+ * brand: `kalshi_api.py` defaults an absent key to `true`, so `false` had to be
+ * written. Adding a source here without first checking what ITS parser does
+ * with a missing key is how CERT-609 happened.
+ */
+const AFFIRMATIVE_EXCLUSIVITY_SOURCES = new Set(["kalshi"]);
+
+/**
  * True when the source has POSITIVELY told us this outcome set is not a
  * one-winner partition. `undefined` / `null` / `true` all return false: absence
  * is not evidence, and neither is the column default.
+ *
+ * A `false` from a source whose parser invents `false` out of an absent key
+ * (Polymarket) also returns false — see the module docstring. The page stays
+ * silent rather than asserting independence it cannot support.
  */
 export function outcomesArePricedIndependently(
   mutuallyExclusive: boolean | null | undefined,
-  outcomeCount: number
+  outcomeCount: number,
+  source: string | null | undefined
 ): boolean {
   return (
-    mutuallyExclusive === false && outcomeCount >= MIN_OUTCOMES_FOR_INDEPENDENCE_NOTE
+    mutuallyExclusive === false &&
+    outcomeCount >= MIN_OUTCOMES_FOR_INDEPENDENCE_NOTE &&
+    AFFIRMATIVE_EXCLUSIVITY_SOURCES.has((source ?? "").toLowerCase())
   );
 }
 
@@ -87,9 +127,12 @@ export function outcomesArePricedIndependently(
 export function independentOutcomesNote(
   mutuallyExclusive: boolean | null | undefined,
   outcomeCount: number,
-  isResolved: boolean
+  isResolved: boolean,
+  source: string | null | undefined
 ): string | null {
-  if (!outcomesArePricedIndependently(mutuallyExclusive, outcomeCount)) return null;
+  if (!outcomesArePricedIndependently(mutuallyExclusive, outcomeCount, source)) {
+    return null;
+  }
   return isResolved
     ? INDEPENDENT_OUTCOMES_NOTE_SETTLED
     : INDEPENDENT_OUTCOMES_NOTE_OPEN;
