@@ -27,10 +27,63 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 VIEW = REPO / "ios/Bain Luck/Bain Luck/Components/RelatedFuturesView.swift"
 FORMATTING = REPO / "ios/Bain Luck/Bain Luck/Utilities/FormattingUtilities.swift"
 
-# The seven text sites converted by UX-P217.  An EXACT count, not a floor: a new
-# probability render that skips the helper should fail here, and so should the
-# silent deletion of one that has it.
+# The seven text sites converted by UX-P217, each pinned INDIVIDUALLY.
+#
+# 🔴 CERT-550: A GLOBAL COUNT IS A COMPENSATING GUARD.  This started life as
+# `count(formatProbabilityOrDash) == 7`, and the cert broke it in one move:
+# restore the award-row `0%` defect AND add the helper at an already-safe
+# `if let` site.  Net count still 7, all ten tests still green, defect back on
+# screen.  A count cannot tell WHICH sites are wired — only how many calls
+# exist somewhere in the file.
+#
+# Each site is now anchored by a snippet that includes a neighbouring line
+# unique to it (its font, or its argument), so restoring any ONE site fails
+# regardless of what is added anywhere else.  The count is kept as a
+# SUPPLEMENTARY check for additions, not as the load-bearing one.
+CONVERTED_SITES = [
+    (
+        "settledProbabilityText — the shared helper behind 3 render sites",
+        "    return formatProbabilityOrDash(f.probability)",
+    ),
+    (
+        "award-row percent (the site CERT-550 restored)",
+        "Text(formatProbabilityOrDash(award.future.probability))",
+    ),
+    (
+        "team-futures bar percent, 11pt monospaced",
+        "Text(formatProbabilityOrDash(future.probability))\n"
+        "                                    .font(.system(size: 11, weight: .black, design: .monospaced))",
+    ),
+    (
+        "28pt team-colour hero",
+        "Text(formatProbabilityOrDash(future.probability))\n"
+        "                                .font(.system(size: 28, weight: .bold, design: .rounded))",
+    ),
+    (
+        "title3 row",
+        "Text(formatProbabilityOrDash(future.probability))\n"
+        "                            .font(.title3)",
+    ),
+    (
+        "GameCell 13pt percent",
+        "Text(formatProbabilityOrDash(future.probability))\n"
+        "                                .font(.system(size: 13, weight: .bold, design: .rounded))",
+    ),
+    (
+        "StatGauge dial percent",
+        "Text(formatProbabilityOrDash(probability))",
+    ),
+]
+
 EXPECTED_ORDASH_SITES = 7
+
+# The two percent renders that are correctly guarded by `if let` and must STAY
+# hand-rolled — converting them would change their layout, since they render
+# nothing at all when the price is absent.
+GUARDED_PERCENT_RENDERS = [
+    'Text("\\(Int(prob * 100))%")',
+    'Text("\\(Int((prob * 100).rounded()))%")',
+]
 
 
 def _strip_comments(src: str) -> str:
@@ -101,7 +154,31 @@ class TestNoTextRenderInventsAProbability:
         )
         assert not re.search(r"StatGauge\(probability:[^,]*\?\?", code)
 
-    def test_every_converted_site_is_still_wired_to_the_helper(self):
+    def test_each_converted_site_is_individually_still_wired(self):
+        """The load-bearing check. One assertion per site, anchored so that
+        restoring any single one fails no matter what is added elsewhere."""
+        code = _view_code()
+        missing = [name for name, snippet in CONVERTED_SITES if snippet not in code]
+        assert missing == [], (
+            "these render sites are no longer wired to formatProbabilityOrDash, "
+            f"so they print an invented number for a priceless row: {missing}"
+        )
+
+    def test_the_two_guarded_renders_stay_hand_rolled(self):
+        """The other half of CERT-550's compensating move: it satisfied the
+        count by converting an `if let` site. Those must NOT be converted —
+        they render nothing when the price is absent, which is a different and
+        equally correct answer, and converting them changes their layout."""
+        code = _view_code()
+        for snippet in GUARDED_PERCENT_RENDERS:
+            assert snippet in code, (
+                f"a correctly `if let`-guarded percent render was rewritten: {snippet}"
+            )
+
+    def test_helper_call_count_has_not_drifted(self):
+        """Supplementary, NOT load-bearing (see CERT-550). Catches a NEW render
+        that skips the helper; it cannot catch a swap, which is what the
+        per-site anchors above are for."""
         count = len(re.findall(r"\bformatProbabilityOrDash\(", _view_code()))
         assert count == EXPECTED_ORDASH_SITES, (
             f"expected {EXPECTED_ORDASH_SITES} nil-aware probability renders in "

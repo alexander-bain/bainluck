@@ -46,13 +46,38 @@ final class MissingProbabilityRenderTests: XCTestCase {
         XCTAssertNotEqual(formatProbabilityOrDash(0.0), absentProbabilityMarker)
     }
 
-    /// Priced rows are untouched — the fix must be invisible to the 187,713 open
-    /// outcomes that do carry a price.
-    func testPricedValuesAreUnchangedFromFormatProbability() {
+    /// The HELPER is a pure superset of `formatProbability` for every real value.
+    ///
+    /// ⚠️ CERT-550 was right to call the older wording of this a contradiction.
+    /// "Priced rows are unchanged" is true of the FORMATTER and false of three of
+    /// the seven SITES: those three used to hand-roll `Int(p * 100)%`, so routing
+    /// them through the formatter deliberately changes their priced edge cases.
+    /// `testConvertedSitesDeliberatelyChangePricedEdgeRows` below pins that as
+    /// intended rather than leaving it as an unstated side effect.
+    func testHelperIsAPureSupersetOfFormatProbabilityForRealValues() {
         for value in [0.004, 0.01, 0.1, 0.42, 0.5, 0.905, 0.99, 0.996, 1.0] {
             XCTAssertEqual(formatProbabilityOrDash(value), formatProbability(value),
-                           "priced rows must format identically to before (\(value))")
+                           "the helper must delegate, not fork, for \(value)")
         }
+    }
+
+    /// The RIDER, stated and pinned: the three hand-rolled `Int(p * 100)%` sites
+    /// now route through the app's one formatter, so a priced edge row reads
+    /// `<1%` where it used to read `0%`, and `>99%` where it read `100%`.
+    ///
+    /// This is the UX-P046 class the web retired years ago — "0%" for an outcome
+    /// with a real 0.4% chance is the same overconfident claim this queue exists
+    /// to remove, so it is a deliberate part of the ship, not a side effect.
+    func testConvertedSitesDeliberatelyChangePricedEdgeRows() {
+        // What the hand-rolled sites used to print, for reference.
+        XCTAssertEqual(Int((0.004 * 100).rounded()), 0)
+        XCTAssertEqual(Int((0.996 * 100).rounded()), 100)
+        // What they print now.
+        XCTAssertEqual(formatProbabilityOrDash(0.004), "<1%")
+        XCTAssertEqual(formatProbabilityOrDash(0.996), ">99%")
+        // Non-edge priced rows are genuinely untouched.
+        XCTAssertEqual(formatProbabilityOrDash(0.42), "42%")
+        XCTAssertEqual(formatProbabilityOrDash(0.05), "5%")
     }
 
     func testRenderedPercentOverrideStillReachesTheFormatter() {
