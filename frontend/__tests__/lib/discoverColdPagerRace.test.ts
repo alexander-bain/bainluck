@@ -40,17 +40,40 @@ const PAGE_SOURCE = readFileSync(
   "utf8"
 );
 
+// LAT-P172 addendum — the SAME defect one commit later.
+//
+// `renderedCount > 0` closed the mount case and left the FIRST-PAINT case open.
+// `visibleCount` is seeded to `PAGE_SIZE`, which is the same 20 the first page
+// returns, so the instant page one landed the comparison read `20 >= 20 - 5` —
+// true — and Discover fetched page two before the reader had scrolled.
+//
+// Fable's browser measurement of 2026-08-31 caught all three on the wire:
+//   #1  849 ms → 1,649 ms   the offset=0 request that gates the first card
+//   #2  849 ms → 3,361 ms   LAT-P171's mount-time offset=1 race
+//   #3  1,727 ms → 4,425 ms  THIS one — 78 ms after #1 returned, i.e. one commit
+// Content was not complete until 4,425 ms. Two of the three were uninvited.
+//
+// The precondition is `visibleCount > initialVisibleCount`: the window has been
+// ADVANCED, which only the sentinel observer does. Which is why the sentinel
+// must not be observed against the loading skeleton — see the render guard at
+// the bottom of this file. The two halves are one fix; either alone leaks.
+
+// The mount seed. `app/discover/page.tsx` declares `const PAGE_SIZE = 20` and
+// seeds `useState(PAGE_SIZE)`; the source guard at the bottom pins that this
+// constant is what the page actually passes.
+const INITIAL_VISIBLE = FEED_PAGE_LIMIT;
+
+/** The reader has not touched the window: every cold load starts here. */
+const untouched = { initialVisibleCount: INITIAL_VISIBLE, hasMore: true, loadingMore: false };
+/** The sentinel has come into view once and revealed the next window. */
+const advanced = { visibleCount: 40, initialVisibleCount: INITIAL_VISIBLE, hasMore: true, loadingMore: false };
+
 describe("LAT-P171 — the cold-load pager race", () => {
   it("does NOT paginate on the first commit, before any card has rendered", () => {
     // The exact mount state: visibleCount seeded to the page size, nothing
     // loaded yet, hasMore optimistically true, no request in flight.
     expect(
-      shouldLoadNextPage({
-        visibleCount: FEED_PAGE_LIMIT,
-        renderedCount: 0,
-        hasMore: true,
-        loadingMore: false,
-      })
+      shouldLoadNextPage({ ...untouched, visibleCount: INITIAL_VISIBLE, renderedCount: 0 })
     ).toBe(false);
   });
 
@@ -58,13 +81,11 @@ describe("LAT-P171 — the cold-load pager race", () => {
     // This is what the old inline expression computed for the same state. If a
     // future edit restores it, the assertion above flips; this documents that
     // the two disagree rather than leaving it to a reader's arithmetic.
-    const mountState = { visibleCount: FEED_PAGE_LIMIT, renderedCount: 0 };
+    const mountState = { visibleCount: INITIAL_VISIBLE, renderedCount: 0 };
     const preFix =
       mountState.visibleCount >= mountState.renderedCount - PAGINATION_LOOKAHEAD;
     expect(preFix).toBe(true);
-    expect(
-      shouldLoadNextPage({ ...mountState, hasMore: true, loadingMore: false })
-    ).toBe(false);
+    expect(shouldLoadNextPage({ ...untouched, ...mountState })).toBe(false);
   });
 
   it("the request that WOULD have been issued is a duplicate of page one", () => {
@@ -77,30 +98,12 @@ describe("LAT-P171 — the cold-load pager race", () => {
     expect(overlap).toBe(19);
   });
 
-  it("still paginates once cards are rendered and the reader nears the end", () => {
-    expect(
-      shouldLoadNextPage({
-        visibleCount: 20,
-        renderedCount: 20,
-        hasMore: true,
-        loadingMore: false,
-      })
-    ).toBe(true);
-  });
-
   it("does not paginate while the reader has plenty of unseen cards left", () => {
-    expect(
-      shouldLoadNextPage({
-        visibleCount: 20,
-        renderedCount: 60,
-        hasMore: true,
-        loadingMore: false,
-      })
-    ).toBe(false);
+    expect(shouldLoadNextPage({ ...advanced, renderedCount: 60 })).toBe(false);
   });
 
   it("respects the existing in-flight and exhausted terminals", () => {
-    const near = { visibleCount: 20, renderedCount: 20 };
+    const near = { visibleCount: 40, renderedCount: 40, initialVisibleCount: INITIAL_VISIBLE };
     expect(shouldLoadNextPage({ ...near, hasMore: false, loadingMore: false })).toBe(false);
     expect(shouldLoadNextPage({ ...near, hasMore: true, loadingMore: true })).toBe(false);
   });
@@ -112,8 +115,9 @@ describe("LAT-P171 — the cold-load pager race", () => {
     // already over on the other two terminals.
     expect(
       shouldLoadNextPage({
-        visibleCount: FEED_PAGE_LIMIT,
+        visibleCount: INITIAL_VISIBLE,
         renderedCount: 0,
+        initialVisibleCount: INITIAL_VISIBLE,
         hasMore: false,
         loadingMore: false,
       })
@@ -126,5 +130,99 @@ describe("LAT-P171 — the cold-load pager race", () => {
     expect(PAGE_SOURCE).toContain("shouldLoadNextPage");
     // And it must not have quietly kept an inline copy of the old comparison.
     expect(PAGE_SOURCE).not.toMatch(/visibleCount\s*>=\s*processedItems\.length\s*-\s*5/);
+  });
+});
+
+describe("LAT-P172 — the second uninvited feed build, at first paint", () => {
+  it("🔴 does NOT paginate the instant page one lands — this is the whole ship", () => {
+    // The exact state at first paint: 20 cards arrived, the window still holds
+    // the 20 it was seeded with, the reader has not scrolled.
+    expect(
+      shouldLoadNextPage({ ...untouched, visibleCount: INITIAL_VISIBLE, renderedCount: 20 })
+    ).toBe(false);
+  });
+
+  it("REVERSES an assertion LAT-P171 wrote, and the disagreement is the point", () => {
+    // LAT-P171's file asserted this same state was `true`, under the name "still
+    // paginates once cards are rendered and the reader nears the end". It is not
+    // the reader nearing the end. `visibleCount === renderedCount` is the
+    // DEFINITION of first paint — the window was seeded to exactly the page
+    // size. Reading it as "nearing the end" is what put a second full feed build
+    // on the cold path. Kept as an explicit reversal so the next reader does not
+    // restore the old expectation thinking they are fixing a typo.
+    const firstPaint = { visibleCount: INITIAL_VISIBLE, renderedCount: 20 };
+    const preFix = firstPaint.visibleCount >= firstPaint.renderedCount - PAGINATION_LOOKAHEAD;
+    expect(preFix).toBe(true); // what LAT-P171's predicate computed
+    expect(shouldLoadNextPage({ ...untouched, ...firstPaint })).toBe(false); // what it computes now
+  });
+
+  it("DOES paginate once the sentinel has advanced the window", () => {
+    // The reader scrolled, the observer fired, the window went 20 → 40 and
+    // outran the 20 loaded cards. This is the real "running out" and it must
+    // still work, or the fix trades one uninvited fetch for a dead feed.
+    expect(shouldLoadNextPage({ ...advanced, renderedCount: 20 })).toBe(true);
+  });
+
+  it("keeps prefetching one page ahead once the reader is actually moving", () => {
+    // Page two landed: 40 loaded, 40 visible. The reader HAS consumed a window
+    // by now, so staying a page ahead is legitimate and is not on the cold path.
+    expect(
+      shouldLoadNextPage({
+        visibleCount: 40,
+        renderedCount: 40,
+        initialVisibleCount: INITIAL_VISIBLE,
+        hasMore: true,
+        loadingMore: false,
+      })
+    ).toBe(true);
+  });
+
+  it("a short page one is NOT stranded — the sentinel reaches it without a scroll", () => {
+    // The failure this precondition could plausibly cause: page one renders
+    // fewer cards than fill the screen, so the reader can never scroll, so the
+    // window never advances, so the feed dead-ends holding six cards with
+    // has_more still true.
+    //
+    // It does not happen, and the mechanism is the sentinel: with six cards the
+    // sentinel is already inside the viewport (+400 px rootMargin), the observer
+    // fires without a scroll, and the window advances. Both states asserted so
+    // the claim is a test, not a comment.
+    expect(
+      shouldLoadNextPage({ ...untouched, visibleCount: INITIAL_VISIBLE, renderedCount: 6 })
+    ).toBe(false); // before the observer fires
+    expect(shouldLoadNextPage({ ...advanced, renderedCount: 6 })).toBe(true); // after
+  });
+
+  it("the page passes its own mount seed, not a literal that can drift", () => {
+    // `initialVisibleCount` is only meaningful if it is the value `visibleCount`
+    // was actually seeded with. Pin both ends: the state seed and the argument.
+    expect(PAGE_SOURCE).toMatch(/useState\(PAGE_SIZE\)/);
+    expect(PAGE_SOURCE).toMatch(/initialVisibleCount:\s*PAGE_SIZE/);
+  });
+
+  it("🔴 the sentinel is not observed against the loading skeleton", () => {
+    // The other half of the fix, and without it the precondition is forgeable.
+    // `hasMore` is optimistically `true` from the first commit, so the sentinel
+    // rendered underneath DiscoverSkeletonGrid's nine placeholders while page
+    // one was in flight. Nine placeholders are ~870 px in the three-column
+    // desktop layout — inside the observer's 400 px rootMargin — so on a desktop
+    // viewport the observer intersected an EMPTY page and advanced the window
+    // before a single card existed. `visibleCount > initialVisibleCount` would
+    // then be satisfied by a loading state rather than by a reader.
+    const sentinelGuard = PAGE_SOURCE.match(/\{!isLoading && !feedUnavailable && \(visibleCount < processedItems\.length \|\| hasMore\) && \(/);
+    expect(sentinelGuard).not.toBeNull();
+  });
+
+  it("🔴 the observer effect re-runs when the skeleton clears, or scroll is dead", () => {
+    // The regression the sentinel gate invites, and it is worse than the bug it
+    // fixes: the observer effect resolves `sentinelRef.current` at effect time.
+    // With the node now absent on the first commit, an effect that does not
+    // depend on `isLoading` never re-runs, the ref stays null, and infinite
+    // scroll never arms on ANY cold load.
+    const observerDeps = PAGE_SOURCE.match(
+      /observer\.observe\(sentinel\);\s*\n\s*return \(\) => observer\.disconnect\(\);\s*\n\s*\}, \[([^\]]*)\]\);/
+    );
+    expect(observerDeps).not.toBeNull();
+    expect(observerDeps![1]).toContain("isLoading");
   });
 });
