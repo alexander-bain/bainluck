@@ -1,7 +1,7 @@
 {
-  "last_cycle_at": "2026-08-31T18:10:39.445459+00:00",
+  "last_cycle_at": "2026-08-31T18:23:53.048206+00:00",
   "pid": 37527,
-  "served": "2026-08-31T04:37:36.703361+00:00",
+  "served": null,
   "redis": null,
   "lane_token": "CAL-P148-SERVE-PHASE-PROBE",
   "samples": 33
