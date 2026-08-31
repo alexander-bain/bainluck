@@ -14,6 +14,42 @@ fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to
 
 ---
 
+## STATUS 2026-08-31 18:1xZ (CAL-P159) — **NO CELL TAKEN, DELIBERATELY: TAKING ONE TODAY WOULD DESTROY A CURVE DELTA ALREADY PAID FOR.**
+
+*This supersedes the CAL-P158 entry below on mechanism, and agrees with it on the verdict. P158
+said "the publisher is down, so nothing can be re-measured." That was right but incomplete, and
+the missing half reverses the recommendation from "wait" to "actively do not ship."*
+
+**What the gauge ring says (measured, `GET /api/admin/calibration-beat-gauges?full=true`, beat
+`17:37Z`):** `units_done 60 / units_planned 128`, `+5 units/beat`, `unit_ms_mean 187,139`,
+`cursor_resume 0`. The producer is **resuming correctly and banking durably.** It is not broken.
+
+**Why it restarted:** the `06:04Z` deploy (v3956/v3957) carried the three curve-affecting D-rules,
+all of which edit `precompute_calibration.py`. `_main_input_fingerprint()` hashes the *source* of
+`compute_calibration_payload` / `_calibration_population_ctes` / `_main_futures_sql`, so it moved
+(`b1820040 → 75faaed6`), and `_load_main_checkpoint()` correctly returned `INVALIDATE`. **The
+128-unit bank went to zero and has rebuilt to 60 across 13 beats.**
+
+🔴 **THE CONSEQUENCE FOR THIS FILE'S CHARTER.** A cell rule *is* an edit to those functions — that
+is where cell rules live. So landing the top open cell today would move the fingerprint again,
+reset 60 → 0, and push the next publish out another ~13 beats. It would also discard the delta
+from `67f5a6d3` / `fd033079` / `9c9f7abf` — **already merged, already deployed, never yet
+published**, and the dedup-join fix alone de-duplicates 36.65% of published rows. Trading a
+banked, paid-for delta for an unmeasurable new one is strictly negative under the finish-line
+ruling. **Working "big to small" today means protecting the queue, not adding to it.**
+
+**The unblock is real and it is in flight:** the 187 s/unit is Postgres `standard-0` at **103.3%
+of cap (66.1/64 GB)**; Alex started the plan upgrade at **11:02 PT today** (v3958/v3959). The unit
+bank is in **Redis**, so the 60 units survive the primary swap.
+
+**Prediction, recorded now so it can be graded:** once the upgrade settles, per-unit cost should
+fall toward its former `80,658 ms`; the remaining 68 units then need **~5 beats, not ~14**. The
+next published census should carry the three pending fixes. **Resume the burn-down at the first
+census with `generated_at` after the upgrade — and take rank 1 (`polymarket/baseball`) then, not
+before.**
+
+---
+
 ## STATUS 2026-08-31 (CAL-P158) — NO CELL TAKEN, AND THAT IS THE FINDING: **THE PUBLISHER HAS BEEN DOWN FOR 12 HOURS, SO NO CELL FIX CAN SHOW A PUBLISHED DELTA.**
 
 *This entry exists to answer the charter's own question — the file went five days without an

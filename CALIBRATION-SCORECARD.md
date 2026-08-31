@@ -1,17 +1,28 @@
 # CALIBRATION SCORECARD
 
-## 🎯 THE NEEDLE: **29 / 49 cells at bar** — `2026-08-28T20:37:41Z`
+## 🎯 THE NEEDLE: **31 / 49 cells at bar** — `2026-08-31T04:37:36Z` ⚠️ *census is STALE, see below*
 
 *Cells at bar = material cells (n ≥ 1,000) NOT queued, scored against the bars Alex ratified on
 2026-08-28: **A 2.5 pp / B 3.0 pp / C 3.0 pp** (§1b). **FIXED = 49/49 AND Alex's eyeball on the
 calibration page confirming it is up to standard.** His sign-off is the final gate, not the number
 alone. Series starts here.*
 
-**Published curve: 1.89 pp** (`mce_closing_line`, CI [0.87, 1.98]) — **🟡 → FLAT-TO-WORSE over 30 days.**
+**Published curve: 1.86 pp** (`mce_closing_line`, CI [0.84, 1.95]) — **🟢 → IMPROVING, and this is
+the first move that is not drift.**
 1.23 pp (2026-07-24) → 1.88 pp (2026-08-20) → 1.90 pp (2026-08-27) → 1.90 pp (2026-08-28 `17:33Z`)
-→ **1.89 pp (2026-08-28 `20:37Z`)**. The last point is the first DOWN move this page has recorded
-— queued excess-outcomes 480,342 → **455,783** on the old flat bar — and it is **drift, not
-progress**: nothing has shipped into the producer since 2026-08-13. See §3.
+→ 1.89 pp (2026-08-28 `20:37Z`) → **1.86 pp (2026-08-31 `04:37Z`)**. Cells at bar **29 → 31**;
+queued excess-outcomes 455,783 → **455,808**. Two cells crossed their bar against the ratified
+bars, which is the metric the finish-line ruling names.
+
+> 🔴 **CAL-P159, 2026-08-31 — the producer has been dark for 13 beats and the number above is
+> frozen at `04:37Z`.** The instrument reports it itself: `availability: "stale"`,
+> `producer_stalled: true`, `producer_beats_missed: 13`. The hourly `:15` beat has not published
+> since, so **every rule merged after `04:37Z` is currently worth ZERO on this page** — including
+> three curve-affecting fixes that are merged AND deployed (Heroku v3956/v3957) but have never
+> reached a published census: `67f5a6d3` (dedup join grouped on two of five columns — 36.65% of
+> published rows duplicated), `fd033079` (rank 6 deleted, crypto is 99.5% metal) and `9c9f7abf`
+> (a lone claim published iff it WON). The 31/49 above does **not** include them. Restoring the
+> publish is therefore not maintenance — it is the pending curve delta. Diagnosis: §10.
 
 *Re-run: `python3 backend/scripts/calibration_scorecard.py --live --record --markdown`.
 Everything on this page is folded from the payload `https://api.bainluck.com/api/calibration`
@@ -2249,6 +2260,66 @@ diagnosis — that is the point.**
    not a failure.
 6. **Fix the twin** (Blocker 2) so the *next* rule's delta is predicted by measurement rather than
    by the arithmetic in §7.
+
+---
+
+## 10. CAL-P159, 2026-08-31 — why the curve is frozen at `04:37Z`, in one causal chain
+
+**The producer is not crashing, not deadlocked, and not misconfigured. It is losing a throughput
+race, and the race was restarted from zero by our own deploy.** Read beat-by-beat from the gauge
+ring (`GET /api/admin/calibration-beat-gauges?full=true`), not inferred:
+
+| beat (UTC) | terminal | `units_banked` | `rebuild_units_banked` |
+|---|---|---|---|
+| 02:19 | complete | 128 | 0 |
+| 03:36 | complete | 128 | 13 |
+| 04:37 | **complete — last published census** | 128 | 25 |
+| 05:37 | failed (publish gate: `population_shrink` −10.5%) | 128 | 36 |
+| 06:37 → 17:37 (13 beats) | **cancelled ×13** | — | — |
+
+Then the raw gauges on the most recent beat (`17:37Z`), which is where the story actually is:
+
+```
+staged:units_done      = 60      staged:units_planned  = 128
+staged:units_completed_this_beat = 5     staged:units_this_beat = 7   (2 cancelled)
+staged:unit_ms_mean    = 187,139         staged:cursor_resume  = 0
+staged:units_drifted   = 46  of  staged:units_drift_checkable = 55
+```
+
+**The chain:**
+
+1. `06:04Z` — Heroku **v3956/v3957** deploy the three curve-affecting D-rules (`67f5a6d3`,
+   `fd033079`, `9c9f7abf`). All three edit `backend/app/tasks/precompute_calibration.py`; two also
+   move `calibration_fingerprint_derived_map.json`.
+2. `_main_input_fingerprint()` hashes the **source** of `compute_calibration_payload`,
+   `_calibration_population_ctes` and `_main_futures_sql`. It moved `b1820040 → 75faaed6`.
+3. `_load_main_checkpoint()` returns **`INVALIDATE`** on a fingerprint mismatch — by design, and
+   the design is right: *"a payload half-built by the old code and half by the new is worse than
+   one that took an extra beat."* **The 128-unit bank went to 0.**
+4. Thirteen beats have rebuilt it to **60/128** at ~5 units/beat. At `187 s/unit` against a
+   ~`1,188 s` phase budget, only ~6-7 unit attempts fit in a beat, so ~**14 more beats** are needed.
+
+**Root cause of the 187 s/unit — and it is not in calibration code.** Production Postgres is
+`standard-0`, **66.1 GB against a 64 GB cap (103.3%)**, per-unit cost up 2.3× from `80,658 ms`.
+🟢 **Alex began the plan upgrade at 11:02 PT today** (v3958/v3959, `Upgrading Plan: Replacing
+Primary`). The unit bank lives in **Redis**, not Postgres, so **the 60 banked units survive the
+primary swap.**
+
+**Three things follow, and the third is the one that matters today:**
+
+* `units_drifted: 46/55` is a **disclosure, not a rebuild trigger** — `roster_drift()` counts, it
+  does not discard (that was CAL-P016's mistake, deliberately reverted). Drift does not block
+  convergence; only throughput does.
+* The three pending fixes are **worth a real curve delta** — the dedup-join bug alone duplicated
+  **36.65% of published rows**. They are merged, deployed, and have never reached a census. They
+  land on the published curve at the first successful publish.
+* 🔴 **THE SEQUENCING CONSTRAINT. Any further edit to the fingerprinted source resets 60 → 0 and
+  costs another ~13 beats.** That includes *any new cell rule*, because cell rules live in exactly
+  those functions. So **the correct calibration action today is to ship no rule change** — shipping
+  one would destroy the pending delta from three fixes already paid for, to chase a fourth that
+  could not be re-measured either. Under the finish-line ruling that trade is strictly negative.
+  Checked at `18:1xZ`: the only unmerged branches touching that file are `calibration-94/-96/-99`,
+  all ruling-009 frozen and not in today's merge queue. **Keeping it that way is the ship.**
 
 ---
 
