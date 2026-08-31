@@ -306,3 +306,151 @@ class TestTheShippedRule:
         assert tier_adjusted_interval(
             cfg.SOON_POLL_INTERVAL, "soon", "underwater_hockey_zz"
         ) == cfg.SOON_POLL_INTERVAL * 4
+
+
+# ---------------------------------------------------------------------------
+# 5. THE FLOORS — every one applied BEFORE the single gate that reads it
+# ---------------------------------------------------------------------------
+
+
+class TestEveryFloorReachesTheGate:
+    """🔴 CERT-523's finding, and it is the one that mattered most.
+
+    There is exactly ONE `elapsed < poll_interval` check in `_poll_all_odds`.
+    `SPORT_MIN_POLL_INTERVALS` and `QUOTA_GUARD_CONSERVATION_INTERVAL` were
+    applied BELOW it — so both were dead. Nothing downstream reads
+    `poll_interval`; the only thing it can affect is the skip decision, and it
+    was being raised after the decision had been taken. Live AFL never saw its
+    declared 600 s minimum, and FULL_STOP conservation never slowed a live sport
+    at all.
+
+    That hole PREDATES this queue. What this queue did was make it material: a
+    10 s gate against a 600 s declared floor, at exactly the moment quota is most
+    constrained. **Widening a rate must enumerate what the widening newly
+    admits** — LAT-P156's own lesson, missed here first time round.
+
+    🔴 AND THE GUARD GAP IS THE POINT. `test_sport_min_overrides_base` and the
+    conservation-floor test in `test_polling_config.py` DID assert both floors —
+    against `compute_effective_interval`, which production never called. ~30
+    tests guarding a helper nothing ran, all green, while the shipped path
+    ignored the floors. These guards assert the interval the SHIPPED path
+    computes.
+    """
+
+    @staticmethod
+    def _shipped_interval(base, sport_key, tier, unchanged=0, conservation=False):
+        """The interval the task computes, through the same two helpers it calls
+        and in the same order."""
+        from app.tasks.odds_polling import tier_adjusted_interval
+        from app.utils.polling_config import compute_effective_interval
+
+        return compute_effective_interval(
+            base_interval=tier_adjusted_interval(base, tier, sport_key),
+            sport_key=sport_key,
+            tier=tier,
+            unchanged_count=unchanged,
+            quota_conservation=conservation,
+        )
+
+    def test_the_gate_is_computed_before_the_only_check_that_reads_it(self):
+        """Source ORDER, because ordering IS the defect and no value assertion can
+        see it. Anchored on the AST — the call node must precede the comparison,
+        not merely co-exist with it in the function."""
+        import ast
+        import inspect
+
+        from app.tasks import odds_polling
+
+        src = inspect.getsource(odds_polling._poll_all_odds)
+        tree = ast.parse(src)
+
+        floor_lines = [
+            n.lineno for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            and n.func.id == "compute_effective_interval"
+        ]
+        gate_lines = [
+            n.lineno for n in ast.walk(tree)
+            if isinstance(n, ast.Compare)
+            and any(isinstance(c, ast.Name) and c.id == "poll_interval"
+                    for c in ast.walk(n))
+        ]
+        assert floor_lines, "the shipped path no longer computes the floors at all"
+        assert gate_lines, "the elapsed-vs-interval gate has moved or been renamed"
+        assert max(floor_lines) < min(gate_lines), (
+            f"the floors are applied at line(s) {floor_lines} but the gate that "
+            f"reads them is at {gate_lines} — a floor below the gate is dead code"
+        )
+
+    def test_no_floor_is_applied_inside_the_task_at_all(self):
+        """A SECOND, independent anchor on the same property.
+
+        The ordering guard above is one AST assertion and therefore one point of
+        failure. This one comes at it from the other side: once the floors live in
+        `compute_effective_interval`, the task has no business naming them at all,
+        so re-introducing one inline — above OR below the gate — trips this even if
+        the ordering check is satisfied or has drifted.
+        """
+        import ast
+        import inspect
+
+        from app.tasks import odds_polling
+
+        tree = ast.parse(inspect.getsource(odds_polling._poll_all_odds))
+        names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        for floor in ("SPORT_MIN_POLL_INTERVALS", "QUOTA_GUARD_CONSERVATION_INTERVAL",
+                      "SLOW_POLL_INTERVAL", "MEDIUM_POLL_INTERVAL"):
+            assert floor not in names, (
+                f"`{floor}` is applied inline in `_poll_all_odds` again. Every floor "
+                "belongs in `compute_effective_interval`, which runs before the one "
+                "gate that reads the result — an inline copy is how CERT-523's dead "
+                "floor was written the first time."
+            )
+
+    def test_live_afl_honours_its_declared_ten_minute_minimum(self):
+        """🔴 The exact case CERT-523 named. AFL is the only entry in
+        `SPORT_MIN_POLL_INTERVALS` and it is there because even Tier 3 was too
+        aggressive for its event count. The cadence change took it to 10 s."""
+        interval = self._shipped_interval(LIVE_POLL_INTERVAL, "aussierules_afl", "live")
+        assert interval == cfg.SPORT_MIN_POLL_INTERVALS["aussierules_afl"] == 600, (
+            f"live AFL gates at {interval}s against a declared 600s minimum"
+        )
+        cadence = _effective_cadence_s(interval, MEASURED_PASS_P50_S)
+        assert cadence >= 600
+
+    def test_full_stop_conservation_still_slows_a_live_priority_sport(self):
+        """🔴 The second half. In FULL_STOP the guard permits ONLY priority sports
+        and ONLY live ones — which is precisely when the conservation floor is the
+        last thing standing between us and the quota wall. It must bind on live."""
+        from app.tasks.redis_state import QUOTA_GUARD_CONSERVATION_INTERVAL
+
+        for sport in ("basketball_nba", "baseball_mlb", "basketball_ncaab"):
+            interval = self._shipped_interval(
+                LIVE_POLL_INTERVAL, sport, "live", conservation=True)
+            assert interval >= QUOTA_GUARD_CONSERVATION_INTERVAL, (
+                f"{sport} polls every {interval}s in FULL_STOP conservation, under "
+                f"the {QUOTA_GUARD_CONSERVATION_INTERVAL}s emergency floor"
+            )
+
+    def test_the_ordinary_live_case_is_untouched_by_the_floors(self):
+        """The control. A sport with no minimum, outside conservation, must still
+        get the fast cadence this queue exists to deliver — otherwise the floor
+        repair has quietly undone the ship."""
+        for sport in ("basketball_nba", "americanfootball_ncaaf", "cricket_ipl"):
+            interval = self._shipped_interval(LIVE_POLL_INTERVAL, sport, "live")
+            assert interval == LIVE_POLL_INTERVAL, (sport, interval)
+            assert _effective_cadence_s(interval, MEASURED_PASS_P50_S) == pytest.approx(
+                ODDS_POLL_BEAT_SECONDS)
+
+    def test_the_adaptive_slowdown_still_spares_live_and_still_binds_pre_game(self):
+        """Moving the slowdown into the shared helper must not change who it
+        applies to: pre-game slows when odds stop moving, live never does."""
+        from app.tasks.config import SLOW_POLL_INTERVAL, SLOW_THRESHOLD
+
+        soon = self._shipped_interval(
+            cfg.SOON_POLL_INTERVAL, "basketball_nba", "soon", unchanged=SLOW_THRESHOLD)
+        assert soon >= SLOW_POLL_INTERVAL
+
+        live = self._shipped_interval(
+            LIVE_POLL_INTERVAL, "basketball_nba", "live", unchanged=SLOW_THRESHOLD + 10)
+        assert live == LIVE_POLL_INTERVAL, "the slowdown reached a live game"

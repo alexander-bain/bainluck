@@ -15,15 +15,12 @@ from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
 from app.utils.game_pairing import IdCurrency, external_id_currency
 from app.utils.odds_math import moneyline_to_probability, project_scores
+from app.utils.polling_config import compute_effective_interval
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import (
     LIVE_POLL_INTERVAL,
     SOON_POLL_INTERVAL,
     LATER_POLL_INTERVAL,
-    MEDIUM_POLL_INTERVAL,
-    SLOW_POLL_INTERVAL,
-    MEDIUM_THRESHOLD,
-    SLOW_THRESHOLD,
     ODDS_STALE_MINUTES,
     MIN_HOURS_BEFORE_STALENESS_CHECK,
     SPORT_MAX_DURATIONS,
@@ -31,7 +28,6 @@ from app.tasks.config import (
     SPORT_POLLING_DEFAULT_TIER,
     SPORT_TIER_MULTIPLIERS,
     SPORT_REGION_OVERRIDES,
-    SPORT_MIN_POLL_INTERVALS,
 )
 from app.tasks.redis_state import (
     get_redis_client,
@@ -42,7 +38,6 @@ from app.tasks.redis_state import (
     POLL_STATE_KEY,
     QUOTA_GUARD_LIVE_ONLY,
     QUOTA_GUARD_PRIORITY_SPORTS,
-    QUOTA_GUARD_CONSERVATION_INTERVAL,
 )
 
 logger = logging.getLogger(__name__)
@@ -979,20 +974,46 @@ async def _poll_all_odds():
                     sports_skipped += 1
                     continue
 
-                # Adaptive slowdown: when odds haven't changed for a sport,
-                # gradually increase the interval to conserve API quota.
-                # Only applies to non-live tiers (live games always poll fast).
-                if tier != "live" and r:
+                # 🔴 EVERY FLOOR IS APPLIED BEFORE THE ONE GATE THAT READS IT
+                # (CERT-523). There is exactly one `elapsed < poll_interval`
+                # check in this task, and `SPORT_MIN_POLL_INTERVALS` and
+                # `QUOTA_GUARD_CONSERVATION_INTERVAL` used to be applied AFTER
+                # it — so both were dead. Nothing downstream reads
+                # `poll_interval`; the only thing it can affect is the skip
+                # decision, and it was raised past the point where the decision
+                # was taken. Live AFL gated at its tier interval and never at its
+                # declared 600 s minimum, and FULL_STOP conservation never
+                # slowed a live sport at all.
+                #
+                # That hole predates LAT-P159 and the queue's own cadence change
+                # would have made it MATERIAL — a 10 s gate against a 600 s
+                # declared floor, at exactly the moment quota is most
+                # constrained. **Widening a rate must enumerate what the
+                # widening newly admits** (LAT-P156's lesson, missed here first
+                # time round and caught by CERT-523).
+                #
+                # `compute_effective_interval` is used rather than reimplemented:
+                # it already applied the sport minimum, the conservation floor
+                # and the adaptive slowdown in one place, and it was reachable
+                # ONLY from its own tests — ~30 of them guarding a helper
+                # production never called. Wiring it in is what makes those tests
+                # mean something, and it is the remedy already written in the
+                # repo (this lane's standing "grep for the problem, not the
+                # remedy" rule).
+                unchanged_count = 0
+                if r:
                     try:
-                        unchanged_key = f"bainluck:unchanged_count:{sport_key}"
-                        unchanged_raw = r.get(unchanged_key)
+                        unchanged_raw = r.get(f"bainluck:unchanged_count:{sport_key}")
                         unchanged_count = int(unchanged_raw.decode()) if unchanged_raw else 0
-                        if unchanged_count >= SLOW_THRESHOLD:
-                            poll_interval = max(poll_interval, SLOW_POLL_INTERVAL)
-                        elif unchanged_count >= MEDIUM_THRESHOLD:
-                            poll_interval = max(poll_interval, MEDIUM_POLL_INTERVAL)
                     except Exception:
-                        pass
+                        unchanged_count = 0
+                poll_interval = compute_effective_interval(
+                    base_interval=poll_interval,
+                    sport_key=sport_key,
+                    tier=tier,
+                    unchanged_count=unchanged_count,
+                    quota_conservation=quota_conservation,
+                )
 
                 # Check if enough time has elapsed since last poll for this sport
                 should_poll_sport = True
@@ -1018,15 +1039,14 @@ async def _poll_all_odds():
                 # - "soon"/"later" tiers: primary US bookmakers only (saves 1/2)
                 # - "live" tier: full params for maximum coverage
                 # - Conservation mode: always h2h + us only (even live)
-                # Per-sport minimum poll interval (e.g., 10min for AFL)
-                sport_min = SPORT_MIN_POLL_INTERVALS.get(sport_key)
-                if sport_min:
-                    poll_interval = max(poll_interval, sport_min)
-
+                #
+                # The per-sport minimum and the conservation floor USED to be
+                # applied here, below the gate that is the only thing that reads
+                # them (CERT-523). They now live above it, in
+                # `compute_effective_interval`.
                 if quota_conservation:
                     api_markets = "h2h"
                     api_regions = "us"
-                    poll_interval = max(poll_interval, QUOTA_GUARD_CONSERVATION_INTERVAL)
                 elif tier == "live":
                     api_markets = "h2h,spreads,totals"
                     # Tier 1 sports get us+us2 for full bookmaker coverage;
