@@ -348,9 +348,62 @@ async def _rows(session, ctes, ids):
     ]
 
 
-async def _seed_asym(session):
-    """The CERT-485 P1-a fixture: one vm, a LOSS-ONLY variant and a WINNER variant."""
+async def _match_production_is_winner_nullability(session):
+    """Make `futures_outcomes.is_winner` NULLABLE, the way production has it.
+
+    🔴 THE MODEL AND PRODUCTION DISAGREE, AND THIS GATE IS THE ONLY PLACE IT
+    MATTERS. `models.py:849` declares ``is_winner: Mapped[bool] =
+    mapped_column(Boolean, default=False)`` — a non-Optional annotation, so
+    SQLAlchemy infers ``nullable=False`` and ``Base.metadata.create_all`` builds
+    the column **NOT NULL**. Production has it **NULLABLE with a False default**
+    (`information_schema.columns`, measured 2026-08-31: `is_nullable = YES`,
+    `column_default = false`).
+
+    That drift is not cosmetic here. The entire 12-CAL argument, gotcha #21 and
+    D13's `graded` conjunct rest on "not a winner" spanning a graded loss AND a
+    row nothing ever graded — a distinction that **cannot exist** in a schema
+    built from the model. So a metadata-built test database cannot represent
+    ungraded truth at all, and a fixture seeded into one would prove the
+    conjunct works by never exercising it.
+
+    CAL-P152's lesson, in a new place: *a fixture that cannot come from the
+    writer proves nothing about the reader.* The gate therefore matches the
+    schema the producer actually runs against, and ASSERTS the change took
+    rather than assuming the DDL did what it says.
+
+    The relaxation is safe for neighbouring tests — it removes a constraint, so
+    nothing that inserted a non-null value can start failing — and the CI
+    database is an ephemeral service container.
+
+    The model itself is NOT changed here. Widening `Mapped[bool]` touches every
+    reader of the attribute and is not this queue's cargo; it is reported.
+    """
     from sqlalchemy import text
+
+    await session.execute(
+        text("ALTER TABLE futures_outcomes ALTER COLUMN is_winner DROP NOT NULL")
+    )
+    await session.commit()
+    nullable = (
+        await session.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'futures_outcomes' AND column_name = 'is_winner'"
+            )
+        )
+    ).scalar()
+    assert nullable == "YES", (
+        "the test database still has is_winner NOT NULL, so the ungraded lone "
+        "claim below cannot be seeded and the fail-closed conjunct would be "
+        f"proved by a case that does not exist (got {nullable!r})"
+    )
+
+
+async def _seed_asym(session):
+    """The CERT-485 P1-a fixture: a LOSS-ONLY, a WINNER and an UNKNOWN variant."""
+    from sqlalchemy import text
+
+    await _match_production_is_winner_nullability(session)
 
     await session.execute(
         text("INSERT INTO sports (id, key, name, active) VALUES (:id, :k, :n, true)"),
