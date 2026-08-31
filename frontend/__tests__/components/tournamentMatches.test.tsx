@@ -757,3 +757,54 @@ describe("item 7 — matches click through to the event page", () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// Q463 — THE DAY'S CARD, and the placeholder it must not print as a start
+//
+// Alex on opening day: "It's weird that there's no matches scheduled. that's
+// obviously not true." It was not true; the server was dropping the whole draw
+// because the register's midnight-local placeholder read as a start. The server
+// fix puts those rows back, and these guard the two things that then reach the
+// reader: the TBD rows must not claim a time, and the real ones must keep one.
+// ---------------------------------------------------------------------------
+
+describe("Q463 — a fixture with no published order of play says TBD", () => {
+  const tbd = match({
+    matchup_key: "mens-singles:mannarino-vs-tirante:2026-08-30",
+    // Midnight in Flushing Meadows — ESPN's "some time that day".
+    scheduled_date: "2026-08-31T04:00:00+00:00",
+    start_is_tbd: true,
+    live_state: "upcoming",
+    status_detail: null,
+  });
+
+  it("carries the flag from the payload onto the entry", () => {
+    const [entry] = matchListFromSlate([tbd]);
+    expect(entry.startIsTbd).toBe(true);
+    expect(entry.liveState).toBe("upcoming");
+  });
+
+  it("prints TBD and no clock time on the row", () => {
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={matchListFromSlate([tbd])} />
+    );
+    expect(html).toContain("TBD");
+    // The whole point: no confident hour for a match nobody has scheduled.
+    expect(html).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
+  });
+
+  it("a fixture WITH a real start still prints its time", () => {
+    const scheduled = match({ start_is_tbd: false, live_state: "upcoming" });
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={matchListFromSlate([scheduled])} />
+    );
+    expect(html).toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
+    expect(html).not.toContain("TBD");
+  });
+
+  it("a payload with neither field reads as a real start — nothing regresses", () => {
+    const [entry] = matchListFromSlate([match()]);
+    expect(entry.startIsTbd).toBe(false);
+    expect(entry.liveState).toBeNull();
+  });
+});

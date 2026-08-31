@@ -289,7 +289,9 @@ function MatchRow({
    *  has no `events` row to route to. Never a tournament-private URL. */
   matchHref: string | null;
 }) {
-  const time = entry.scheduledDate ? formatMatchTime(entry.scheduledDate) : null;
+  const time = entry.scheduledDate
+    ? formatMatchTime(entry.scheduledDate, new Date(), entry.startIsTbd)
+    : null;
   const names = entry.sides.map((side) => side.displayName).join(" v ");
 
   return (
@@ -408,12 +410,24 @@ function MatchRow({
  * list is a structure the reader has to learn, so the day becomes a token on
  * the row and only when it is not today — a list where every row says "Today"
  * has taught the reader to stop reading the first token.
+ *
+ * `startIsTbd` PRINTS THE DAY AND REFUSES THE CLOCK (Q463). A fixture with no
+ * published order of play carries midnight-local as its timestamp, and running
+ * that through the formatter yields a confident "12:00 AM" for a match that
+ * will be played in the afternoon. The day is real and worth saying; the hour
+ * is a placeholder and saying it is the small version of the same mistake that
+ * emptied this card for a day.
  */
-function formatMatchTime(scheduled: string, now: Date = new Date()): string {
+function formatMatchTime(
+  scheduled: string,
+  now: Date = new Date(),
+  startIsTbd = false
+): string {
   const at = new Date(scheduled);
   if (Number.isNaN(at.getTime())) return scheduled;
-  const clock = at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   const day = dayHeading(localDayKey(scheduled), now);
+  if (startIsTbd) return day === "Today" ? "Time TBD" : `${day} · TBD`;
+  const clock = at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   return day === "Today" ? clock : `${day} ${clock}`;
 }
 

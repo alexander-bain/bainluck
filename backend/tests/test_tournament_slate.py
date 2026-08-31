@@ -32,7 +32,9 @@ from app.utils.tournament_slate import (
     build_bracket,
     build_props,
     build_results,
+    CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS,
     build_slate,
+    espn_competition_id,
     normalize_pair,
 )
 
@@ -376,6 +378,10 @@ def test_an_empty_slate_is_an_honest_shape_not_an_error():
     slate = build_slate(_register(matchups=[]), prices={}, now=NOW)
     assert slate == {
         "matches": [], "count": 0, "incoherent": 0, "dropped": {},
+        # Q463 / CERT-517: an empty card must say whether the scoreboard was
+        # read at all, and whether what was read was the whole of it.
+        "in_progress": 0, "order_of_play_listed": 0,
+        "order_of_play_complete": True,
         "price_state": "dark", "newest_observed_at": None, "age_hours": None,
         "dark_after_hours": 48.0,
     }
@@ -2003,3 +2009,961 @@ def test_the_route_hands_build_results_the_prices_it_already_loaded():
     assert call.endswith(")")
     assert "prices=prices" in call
 
+
+
+# ---------------------------------------------------------------------------
+# THE ORDER OF PLAY (Q463) — the card said "No matches scheduled" all day
+#
+# Alex, on bainluck.com/tournaments/us-open at ~2:40pm PT on opening day:
+# "It's weird that there's no matches scheduled. that's obviously not true."
+#
+# It was not true. The register recorded what ESPN records before an order of
+# play exists — midnight local, `2026-08-30T04:00Z` — on all 96 main-draw
+# fixtures, and `build_slate` read that placeholder as a START and applied a
+# six-hour elapsed-time bound to it. Six hours after midnight is 10:00Z; the
+# first ball of the tournament was at 15:05Z. Every fixture of opening day was
+# dropped ALREADY_PLAYED five hours before opening day began.
+#
+# These are the class guards. Each one fails on the pre-Q463 builder.
+# ---------------------------------------------------------------------------
+
+#: A matchup carrying the id the draw ceremony pins — the join key.
+def _drawn_matchup(comp_id="182655", **overrides):
+    matchup = _matchup(
+        matchup_key="womens-singles:clara-burel-vs-yexin-ma:2026-08-30",
+        evidence={
+            "kind": "draw-ceremony-espn",
+            "espn_competition_id": comp_id,
+            "espn_round": "Round 1",
+            "observed_at": NOW.isoformat(),
+        },
+    )
+    matchup.update(overrides)
+    return matchup
+
+
+def _listed(comp_id="182655", **overrides):
+    entry = {
+        "espn_competition_id": comp_id,
+        "draw": "womens-singles",
+        "state": "upcoming",
+        "start_at": (NOW + timedelta(hours=3)).isoformat(),
+        "start_is_tbd": False,
+        "status_detail": "Mon, August 31st at 11:00 AM EDT",
+        "espn_round": "Round 1",
+    }
+    entry.update(overrides)
+    return {comp_id: entry}
+
+
+def test_the_midnight_placeholder_no_longer_empties_the_card_on_a_match_day():
+    """THE DEFECT, in one test.
+
+    A fixture registered at midnight local, read six hours later — the exact
+    shape of opening day at 10:00Z. With the scoreboard, ESPN says the match
+    has not been played and it stays, carrying ESPN's real start rather than
+    the placeholder.
+
+    CERT-532 changed the FIRST arm. It used to assert that a caller with no
+    scoreboard drops this fixture — the pre-Q463 behaviour, kept as the
+    contrast. But the reason six elapsed hours is the wrong measurement here is
+    that the value being measured is a ceremony stamp naming a day, and that is
+    true of a caller holding no map exactly as it is of one holding a map that
+    is short. Making the rule depend on who supplied a map would have left the
+    original defect reachable through the plainest caller there is.
+    """
+    midnight = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 4)).isoformat()
+    real_start = (NOW + timedelta(hours=1)).isoformat()
+    register = _register(matchups=[_drawn_matchup(scheduled_date=midnight)])
+
+    without = build_slate(register, prices=_prices(), now=NOW)
+    assert without["count"] == 1, without["dropped"]
+    assert without["dropped"] == {}
+
+    # ...and the day it names does end, with or without a scoreboard.
+    day_later = build_slate(
+        _register(matchups=[_drawn_matchup(
+            scheduled_date=(
+                NOW - timedelta(hours=CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS + MATCH_STALE_AFTER_HOURS + 1)
+            ).isoformat()
+        )]),
+        prices=_prices(),
+        now=NOW,
+    )
+    assert day_later["count"] == 0
+    assert day_later["dropped"] == {"ALREADY_PLAYED": 1}
+
+    with_card = build_slate(
+        register,
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(start_at=real_start),
+    )
+    assert with_card["count"] == 1
+    row = with_card["matches"][0]
+    assert row["live_state"] == "upcoming"
+    # ESPN's start, NOT the register's placeholder — the row must not print
+    # midnight for an afternoon match.
+    assert row["scheduled_date"] == real_start
+    assert row["start_is_tbd"] is False
+
+
+def test_a_match_in_progress_outlives_the_elapsed_time_window():
+    """A five-setter is the one row an hours-since-start rule cannot keep."""
+    long_ago = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 2)).isoformat()
+    slate = build_slate(
+        _register(matchups=[_drawn_matchup(scheduled_date=long_ago)]),
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(state="in_progress", start_at=long_ago,
+                              status_detail="5th Set"),
+    )
+    assert slate["count"] == 1
+    assert slate["in_progress"] == 1
+    row = slate["matches"][0]
+    assert row["live_state"] == "in_progress"
+    assert row["status_detail"] == "5th Set"
+
+
+def test_a_decided_match_leaves_because_espn_says_the_word_not_because_it_is_absent():
+    """DECIDED is reachable ONLY from ESPN's explicit `post` state (CERT-517).
+
+    Its own drop reason: one of these is a fact from the source and the other
+    is an inference from the clock, and a short slate must say which.
+
+    Q463 read ABSENCE as decided, and this test asserted that. It was the
+    shipped defect in test form — see the sibling below for what absence under
+    a partial fetch then did to a live fixture.
+    """
+    soon = (NOW + timedelta(hours=2)).isoformat()
+    slate = build_slate(
+        _register(matchups=[_drawn_matchup(scheduled_date=soon)]),
+        prices=_prices(),
+        now=NOW,
+        # The fixture is ON the scoreboard, and the scoreboard says it is over.
+        order_of_play=_listed(state="decided"),
+    )
+    assert slate["count"] == 0
+    assert slate["dropped"] == {"DECIDED": 1}
+
+
+def test_a_fixture_absent_from_a_complete_scoreboard_is_never_called_decided():
+    """Absence is a statement about the scoreboard, never about the match.
+
+    Complete read, this fixture unmentioned, and its start still ahead: it
+    stays. The only thing that may remove it is the clock, and the clock has
+    nothing to say about a match that has not started.
+    """
+    soon = (NOW + timedelta(hours=2)).isoformat()
+    slate = build_slate(
+        _register(matchups=[_drawn_matchup(scheduled_date=soon)]),
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(comp_id="999999"),
+        order_of_play_complete=True,
+    )
+    assert slate["dropped"] == {}
+    assert slate["count"] == 1
+
+
+def test_one_failed_tour_does_not_empty_the_card_of_its_live_fixtures():
+    """CERT-517's finding, red-first.
+
+    `fetch_tournament_results` permits a per-tour failure and the sync task
+    caches the partial payload — so a live fixture on the failed tour is simply
+    missing from the map. Under Q463 that read as DECIDED and the match
+    vanished: the shipped defect, back again, under a routine condition.
+
+    The fixture here is the opening-day shape exactly — a `04:00Z`
+    midnight-local placeholder, read hours later — so both the DECIDED
+    inference and the clock fallback would remove it if either were allowed to
+    fire on an incomplete read. It carries a pinned competition id, which is
+    what says the scoreboard OUGHT to have mentioned it.
+    """
+    midnight = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 4)).isoformat()
+    register = _register(matchups=[_drawn_matchup(scheduled_date=midnight)])
+
+    partial = build_slate(
+        register,
+        prices=_prices(),
+        now=NOW,
+        # The surviving tour's fixtures only. Ours is not among them.
+        order_of_play=_listed(comp_id="999999"),
+        order_of_play_complete=False,
+    )
+    assert partial["count"] == 1, partial["dropped"]
+    assert partial["dropped"] == {}
+    assert partial["order_of_play_complete"] is False
+
+    # ...and CERT-532 WIDENED this arm rather than leaving it.
+    #
+    # It used to assert that the same absence on a COMPLETE read still drops
+    # the fixture, which scoped the whole exemption to `order_of_play_complete`
+    # being right. The cert's finding is that the flag can be satisfied and
+    # wrong, so a pinned fixture on its own day is now kept whatever the flag
+    # says — the completeness read is a floor under this, not the thing holding
+    # it up.
+    whole = build_slate(
+        register,
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(comp_id="999999"),
+        order_of_play_complete=True,
+    )
+    assert whole["count"] == 1, whole["dropped"]
+    assert whole["dropped"] == {}
+
+    # The exemption has NOT quietly become "never drop anything" — that control
+    # still has to hold, and it now sits on the far side of the day the
+    # ceremony stamp names.
+    stale = build_slate(
+        _register(matchups=[_drawn_matchup(
+            scheduled_date=(
+                NOW - timedelta(hours=CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS + MATCH_STALE_AFTER_HOURS + 1)
+            ).isoformat()
+        )]),
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(comp_id="999999"),
+        order_of_play_complete=True,
+    )
+    assert stale["count"] == 0
+    assert stale["dropped"] == {"ALREADY_PLAYED": 1}
+
+
+def test_the_qualifying_draw_still_drops_on_the_clock_under_a_partial_fetch():
+    """The exemption is bought with a pinned id, and qualifying has none.
+
+    The 28 qualifying matchups the ceremony census never stamped are the
+    population the clock fallback exists for. A partial fetch must not
+    resurrect week-old matches into the day's card.
+    """
+    long_over = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 96)).isoformat()
+    matchup = _drawn_matchup(scheduled_date=long_over)
+    matchup["evidence"] = {}  # no `espn_competition_id` — the qualifying shape
+
+    slate = build_slate(
+        _register(matchups=[matchup]),
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(comp_id="999999"),
+        order_of_play_complete=False,
+    )
+    assert slate["count"] == 0
+    assert slate["dropped"] == {"ALREADY_PLAYED": 1}
+
+
+def test_a_tbd_start_is_flagged_rather_than_printed_as_midnight():
+    midnight = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 4)).isoformat()
+    slate = build_slate(
+        _register(matchups=[_drawn_matchup(scheduled_date=midnight)]),
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(start_at=midnight, start_is_tbd=True,
+                              status_detail=None),
+    )
+    assert slate["count"] == 1
+    assert slate["matches"][0]["start_is_tbd"] is True
+    assert slate["matches"][0]["status_detail"] is None
+
+
+def test_a_fixture_the_scoreboard_does_not_know_keeps_the_clock_fallback():
+    """The qualifying draw carries no competition id, so nothing changed for it.
+
+    Without an id there is no join and no DECIDED verdict to draw — the row
+    must fall back to the elapsed-time bound rather than vanish because some
+    OTHER fixture was on the scoreboard.
+    """
+    played = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 1)).isoformat()
+    upcoming = (NOW + timedelta(hours=2)).isoformat()
+    order = _listed(comp_id="999999")
+
+    gone = build_slate(
+        _register(matchups=[_matchup(scheduled_date=played)]),
+        prices=_prices(), now=NOW, order_of_play=order,
+    )
+    assert gone["dropped"] == {"ALREADY_PLAYED": 1}
+
+    kept = build_slate(
+        _register(matchups=[_matchup(scheduled_date=upcoming)]),
+        prices=_prices(), now=NOW, order_of_play=order,
+    )
+    assert kept["count"] == 1
+    assert kept["matches"][0]["live_state"] is None
+
+
+def test_an_absent_order_of_play_changes_nothing():
+    """No scoreboard is the pre-Q463 behaviour, exactly — never a blank page."""
+    upcoming = (NOW + timedelta(hours=2)).isoformat()
+    register = _register(matchups=[_drawn_matchup(scheduled_date=upcoming)])
+    for order in (None, {}):
+        slate = build_slate(register, prices=_prices(), now=NOW, order_of_play=order)
+        assert slate["count"] == 1, order
+        assert slate["matches"][0]["live_state"] is None
+        assert slate["order_of_play_listed"] == 0
+
+
+def test_an_empty_card_says_whether_the_overlay_was_even_read():
+    """gotcha #53: "nothing is on" and "the overlay joined nothing" are not the
+    same empty card, and for a day nobody could tell them apart."""
+    played = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 1)).isoformat()
+    blind = build_slate(
+        _register(matchups=[_matchup(scheduled_date=played)]),
+        prices=_prices(), now=NOW,
+    )
+    assert blind["count"] == 0 and blind["order_of_play_listed"] == 0
+
+    read = build_slate(
+        _register(matchups=[_matchup(scheduled_date=played)]),
+        prices=_prices(), now=NOW, order_of_play=_listed(comp_id="999999"),
+    )
+    assert read["count"] == 0 and read["order_of_play_listed"] == 1
+
+
+def test_the_competition_id_survives_the_price_overlay():
+    """The matchup-level id is the anchor `apply_resolved_links` cannot destroy.
+
+    The linker REPLACES a `missing` source block wholesale, and it has done so
+    72 times on today's payload. An id read only out of `sources[].evidence`
+    would disappear exactly when the fixture became priced.
+    """
+    from app.utils.tournament_slate import espn_competition_id
+
+    matchup = _drawn_matchup()
+    # Every source block replaced by a linked one carrying no ESPN evidence.
+    matchup["sources"] = [{
+        "source": "kalshi", "kind": "match", "market_id": 1, "outcome_id": 2,
+        "status": "live", "evidence": {"kind": "linker-resolved"},
+    }]
+    assert espn_competition_id(matchup) == "182655"
+
+    # And the per-source copy still answers when the matchup has no evidence.
+    fallback = _matchup()
+    fallback["sources"][0]["evidence"]["espn_competition_id"] = "184739"
+    assert espn_competition_id(fallback) == "184739"
+    assert espn_competition_id(_matchup()) is None
+
+
+def test_a_naive_scheduled_date_is_refused_rather_than_assumed_utc():
+    """Guessing a timezone onto a fixture time is this file's own refusal."""
+    slate = build_slate(
+        _register(matchups=[_matchup(scheduled_date="2026-08-30T04:00:00")]),
+        prices=_prices(), now=NOW,
+    )
+    assert slate["dropped"] == {"NO_SCHEDULED_START": 1}
+
+
+def _balanced_call(source: str, opener: str, *, after: str) -> str:
+    """The full text of one call, paren-balanced — never "up to the first `)`".
+
+    The naive version reads a window that stops inside a nested call and then
+    fails on a correct call site; the existing `build_results` guard learned
+    that the hard way and this is the same scan, shared.
+    """
+    start = source.index(opener, source.index(after))
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "(":
+            depth += 1
+        elif source[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError(f"unbalanced call for {opener!r}")
+
+
+def test_the_route_hands_build_slate_the_order_of_play():
+    """The wiring, which is the half a unit test cannot see (Q463).
+
+    Every test above can pass with the argument dropped at the call site, and
+    the page would go straight back to "No matches scheduled" on a match day —
+    which is exactly how it shipped.
+    """
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "routes" / "tournaments.py"
+    ).read_text()
+    call = _balanced_call(source, "build_slate(", after='payload["slate"]')
+    assert "order_of_play=" in call
+    # CERT-517: and the completeness context with it. The cached payload has
+    # always carried `errors`/`tours_fetched`; this route DISCARDING them is the
+    # whole finding, so the arg that carries the reduction is guarded here.
+    #
+    # CERT-548 CHANGED WHAT THIS GUARD IS FOR, and the note is corrected rather
+    # than left asserting a story that is no longer true. The flag no longer
+    # decides whether any row is kept — neither end of the pinned-fixture clock
+    # rule consults it. It is a DIAGNOSTIC, and this line is what keeps it an
+    # honest one: `build_slate` defaults it to True, so dropping the argument
+    # here does not fail, it makes every partial fetch REPORT ITSELF COMPLETE.
+    # A short slate would then look like a quiet day, which is the exact
+    # confusion CERT-517 asked for the field to prevent.
+    assert "order_of_play_complete=" in call
+
+
+def test_the_capture_rig_hands_build_slate_the_order_of_play():
+    """A rig that renders the page WITHOUT the feature under review is worse
+    than no rig — it produces a real-looking artifact that proves the opposite
+    of what it appears to. That sentence is already in this file's sibling
+    guard for `prices=`; this is the same trap one feature later.
+    """
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "scripts" / "capture_tournament_payload.py"
+    ).read_text()
+    call = _balanced_call(source, "build_slate(", after='payload["slate"]')
+    assert "order_of_play=" in call
+    assert "order_of_play_complete=" in call
+
+
+def test_the_fetch_reduces_completeness_where_it_knows_what_complete_means():
+    """CERT-517's other half: the flag must be WRITTEN, not just read.
+
+    `order_of_play_complete` is derived in `fetch_tournament_results`, the only
+    place that knows both the error list and how many tours there are. If a
+    consumer had to re-derive it from `len(TOURS)`, the second consumer would
+    get the rule subtly different — and the cached payload, which is what the
+    route actually reads, would carry no answer at all.
+    """
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "app" / "services" / "espn_tennis.py"
+    ).read_text()
+    assert 'result["order_of_play_complete"]' in source
+
+
+def _fetched(monkeypatch, payloads, *, event_name="US Open"):
+    """Run `fetch_tournament_results` against canned scoreboards, no network."""
+    import asyncio
+
+    from app.services import espn_tennis
+
+    class _Response:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class _Client:
+        def __init__(self, *a, **k):
+            self._queue = list(payloads)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, params=None):
+            if not self._queue:
+                raise RuntimeError("tour unavailable")
+            return _Response(self._queue.pop(0))
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    return asyncio.run(espn_tennis.fetch_tournament_results(event_name))
+
+
+def _scoreboard(state="pre", comp_id="182655", name="US Open"):
+    return {"events": [{
+        "name": name,
+        "groupings": [{
+            "grouping": {"slug": "mens-singles"},
+            "competitions": [{
+                "id": comp_id,
+                "date": "2026-08-31T15:05Z",
+                "status": {"type": {"state": state, "detail": "d", "shortDetail": "s"}},
+                "round": {"displayName": "Round 1"},
+                "competitors": [
+                    {"athlete": {"displayName": "A B"}, "winner": True},
+                    {"athlete": {"displayName": "C D"}, "winner": False},
+                ],
+            }],
+        }],
+    }]}
+
+
+class TestTwoHundredsAreNotACompleteAnswer:
+    """CERT-526. `order_of_play_complete` asked only "did both requests
+    succeed", and a successful response that does not mention this tournament
+    is an empty answer wearing a 200 (gotcha #53).
+
+    Either hole leaves a pinned fixture missing from a map that CLAIMS to be
+    the whole scoreboard, which costs it the slate's pinned-id exemption and
+    hands it to the clock — and the clock drops it on the `04:00Z` placeholder.
+    That is the empty card, recreated.
+    """
+
+    def test_both_tours_read_and_understood_is_complete(self, monkeypatch):
+        result = _fetched(monkeypatch, [_scoreboard(), _scoreboard()])
+        assert result["errors"] == []
+        assert result["tours_fetched"] == 2
+        assert result["order_of_play_complete"] is True
+
+    def test_a_payload_that_never_mentions_this_tournament_is_NOT_complete(
+        self, monkeypatch
+    ):
+        """Two 200s, zero matching events. Nothing failed and we know nothing."""
+        other = _scoreboard(name="Winston-Salem Open")
+        result = _fetched(monkeypatch, [other, other])
+        assert result["errors"] == []
+        assert result["tours_fetched"] == 2
+        assert result["order_of_play"] == {}
+        assert result["order_of_play_complete"] is False
+
+    def test_a_state_we_could_not_read_makes_the_map_incomplete(self, monkeypatch):
+        """The map is short by exactly the competitions we had no word for."""
+        result = _fetched(
+            monkeypatch, [_scoreboard(state="postponed"), _scoreboard(state="postponed")]
+        )
+        assert result["errors"] == []
+        assert result["stats"]["unknown_state"] == 1
+        assert result["order_of_play_complete"] is False
+
+    def test_a_failed_tour_is_still_incomplete(self, monkeypatch):
+        """CERT-517's original case, unchanged by the CERT-526 widening."""
+        result = _fetched(monkeypatch, [_scoreboard()])
+        assert result["errors"]
+        assert result["tours_fetched"] == 1
+        assert result["order_of_play_complete"] is False
+
+
+class TestANamedShellIsNotAScoreboard:
+    """CERT-532 [P1], red-first, in the cert's own shape.
+
+    `order_of_play_complete` required two successful payloads, a matching
+    event, and no unrecognised states — and a tournament shell carrying a
+    RECOGNISED grouping with an empty `competitions` list satisfies all three
+    while saying nothing whatsoever about any match. `events` counts the
+    shell; nothing counts the silence underneath it.
+
+    That is gotcha #53 one level further in than CERT-526 reached: CERT-526
+    stopped a payload that never NAMES the tournament from reading as
+    complete, and this is a payload that names it and then holds no
+    competitions at all.
+    """
+
+    def _shell(self, name="US Open"):
+        """A matching event, a recognised draw slug, and no competitions."""
+        return {"events": [{
+            "name": name,
+            "groupings": [{
+                "grouping": {"slug": "mens-singles"},
+                "competitions": [],
+            }],
+        }]}
+
+    def test_a_matched_event_with_no_competitions_is_NOT_complete(
+        self, monkeypatch
+    ):
+        result = _fetched(monkeypatch, [self._shell(), self._shell()])
+        assert result["errors"] == []
+        assert result["tours_fetched"] == 2
+        # Every ingredient the old rule looked at says "fine".
+        assert result["stats"]["events"] == 2
+        assert result["stats"]["unknown_state"] == 0
+        # And the map speaks for nothing at all.
+        assert result["stats"]["competitions"] == 0
+        assert result["order_of_play"] == {}
+        assert result["order_of_play_complete"] is False
+
+    def test_a_missing_groupings_key_is_the_same_silence(self, monkeypatch):
+        """The shell need not even carry a recognised slug to reach here."""
+        bare = {"events": [{"name": "US Open"}]}
+        result = _fetched(monkeypatch, [bare, bare])
+        assert result["stats"]["events"] == 2
+        assert result["stats"]["competitions"] == 0
+        assert result["order_of_play_complete"] is False
+
+    def test_one_real_competition_is_still_a_complete_read(self, monkeypatch):
+        """The control: the new clause must not refuse a healthy scoreboard.
+
+        It counts COMPETITIONS SEEN rather than the size of the published map.
+        The two agree today — every state we have a word for is published, and
+        an unknown one already forces incomplete on its own clause — but they
+        are different questions, and "did the scoreboard show us a single
+        match" is the one being asked. A future state that is deliberately
+        counted-but-unpublished must not make a whole read look silent.
+        """
+        result = _fetched(
+            monkeypatch, [_scoreboard(state="post"), _scoreboard(state="post")]
+        )
+        assert result["errors"] == []
+        assert result["stats"]["competitions"] == 1
+        assert result["stats"]["decided"] == 1
+        assert result["order_of_play_complete"] is True
+
+
+class TestAPinnedFixtureSurvivesTheTournament:
+    """CERT-532's real reach: *"a nonempty but truncated map has the same
+    uncovered shape for any omitted pinned id."*
+
+    Refusing completeness for an empty shell closes one route to a
+    false-complete map. It does not close the class, because the consumer's
+    pinned-id exemption is gated on `order_of_play_complete` — so **any** map
+    that is short for a reason nobody counted still hands a pinned fixture to
+    the clock, and the clock measures elapsed time against the register's
+    ceremony stamp, which for the whole main draw is the `04:00Z`
+    midnight-local placeholder. Six hours later the entire draw is
+    `ALREADY_PLAYED`, five hours before the first ball. That is the shipped
+    defect this queue exists to prevent, reachable without any flag being
+    wrong.
+
+    So the fix does not live in the flag. The clock has no authority over a
+    pinned fixture while the register that pins it is still current: absence
+    is never a fact about the match, and only ESPN's explicit `decided`
+    retires one.
+
+    CERT-548 THEN CORRECTED THE SENTENCE ABOVE. "The fix does not live in the
+    flag" was written while the far end of the very same expression was still
+    conjoined with it, so a finished tournament — the one thing ESPN reliably
+    stops listing — could never retire. Neither end consults the flag now; see
+    `TestTheFarEndIsNotAFactAboutTheScoreboard`, which owns that claim.
+
+    CERT-544 CORRECTED THE FAR END OF THIS. It was first written as "a
+    ceremony stamp names a DAY" with a 24-hour allowance, which is still the
+    placeholder-as-event-time mistake: the stamp is written once for the whole
+    ceremony, so it names OPENING day for all 96 fixtures and the bound
+    expired for the entire draw at once on day two. The window is now the
+    tournament the ceremony opens — see
+    `TestTheCeremonyStampNamesTheDrawNotTheDay`, which owns that claim, and
+    `CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS`.
+
+    The cases below say "on its own day" only in the weak sense of "while the
+    register is current"; every bound here is expressed in terms of that
+    constant rather than a literal, because a literal detaching from the rule
+    it guards is exactly what CERT-544 caught.
+    """
+
+    def _pinned(self, hours_ago):
+        stamp = (NOW - timedelta(hours=hours_ago)).isoformat()
+        return _register(matchups=[_drawn_matchup(scheduled_date=stamp)])
+
+    def _slate(self, register, *, complete):
+        return build_slate(
+            register,
+            prices=_prices(),
+            now=NOW,
+            # A map that speaks — for somebody else's fixture, never ours.
+            order_of_play=_listed(comp_id="999999"),
+            order_of_play_complete=complete,
+        )
+
+    def test_a_falsely_complete_map_can_no_longer_empty_the_card(self):
+        """The cert's consequence, end to end: a pinned id missing from a map
+        that CLAIMS to be whole, while the register is current, is kept."""
+        slate = self._slate(self._pinned(MATCH_STALE_AFTER_HOURS + 4), complete=True)
+        assert slate["count"] == 1, slate["dropped"]
+        assert slate["dropped"] == {}
+
+    def test_the_incomplete_case_CERT_517_measured_is_unchanged(self):
+        """The graded behaviour is a floor, not a thing this replaces."""
+        slate = self._slate(self._pinned(MATCH_STALE_AFTER_HOURS + 4), complete=False)
+        assert slate["count"] == 1, slate["dropped"]
+        assert slate["dropped"] == {}
+
+    def test_an_INCOMPLETE_read_does_NOT_exempt_a_fixture_PAST_the_window(self):
+        """⚠️ THIS TEST ASSERTED THE CONDEMNED CONTRACT. CERT-548 CORRECTED IT.
+
+        It previously read `..._still_exempts_...` and claimed *"CERT-517's
+        exemption is unconditional in time, and stays that way"*, keeping a
+        pinned fixture past the window on a partial read. That is the defect the
+        cert found, stated as a rule and guarded: a finished tournament is
+        precisely what ESPN stops listing, so completeness reads false from then
+        on, and a fixture kept "because the fetch was partial" is kept forever.
+        The cert's probe put all 96 pinned main-draw rows on "what is on" a month
+        after the final.
+
+        The old name conflated two things. CERT-517's exemption is about
+        ABSENCE FROM A MAP not being a fact about a MATCH — and that survives,
+        unconditionally and in the STRONGER form Q469 gave it, because inside the
+        window a pinned fixture is now kept on a complete read too. What does not
+        survive is absence from a map licensing a claim about the TOURNAMENT.
+
+        Kept as a real negative control, not deleted: this is still the only
+        assertion in this class driving the incomplete arm past the window, which
+        is what the old docstring correctly said was worth covering. It now
+        covers it with the right answer. Its sibling
+        `test_the_window_ends_and_the_fixture_does_retire` reads the complete arm
+        at the identical age, so the pair pins the far end's INDEPENDENCE from
+        the flag rather than either arm alone.
+        """
+        slate = self._slate(self._pinned(CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS + MATCH_STALE_AFTER_HOURS + 1), complete=False)
+        assert slate["count"] == 0, slate["dropped"]
+        assert slate["dropped"] == {"ALREADY_PLAYED": 1}
+
+    def test_the_incomplete_exemption_INSIDE_the_window_is_what_CERT_517_bought(self):
+        """The claim the renamed test above used to be carrying, kept alive.
+
+        A partial fetch must not empty the card WHILE THE TOURNAMENT IS ON. This
+        is CERT-517's finding in its own terms and it is untouched — and it now
+        holds on a complete read as well, which is Q469's strengthening. Without
+        this the correction above could be read as "CERT-517 was wrong", and it
+        was not; it was applied to the wrong question at one end.
+        """
+        for complete in (True, False):
+            slate = self._slate(
+                self._pinned(CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS - 24),
+                complete=complete,
+            )
+            assert slate["count"] == 1, (complete, slate["dropped"])
+            assert slate["dropped"] == {}
+
+    def test_the_window_ends_and_the_fixture_does_retire(self):
+        """The far end of the bound, or the slate grows forever.
+
+        A pinned fixture that ESPN never once mentioned must still leave "what
+        is on" — the exemption buys it the tournament and not a tenancy.
+        """
+        slate = self._slate(self._pinned(CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS + MATCH_STALE_AFTER_HOURS + 1), complete=True)
+        assert slate["count"] == 0
+        assert slate["dropped"] == {"ALREADY_PLAYED": 1}
+
+    def test_an_UNPINNED_fixture_still_drops_on_the_plain_clock(self):
+        """The control that keeps the exemption scoped.
+
+        Qualifying carries no competition id — the ceremony never matched it
+        to an ESPN competition — so nothing says the scoreboard OUGHT to have
+        mentioned it, and its registered time is a real published start. It
+        keeps the six-hour rule exactly as before.
+        """
+        stamp = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 4)).isoformat()
+        register = _register(
+            matchups=[_matchup(scheduled_date=stamp, evidence=None)]
+        )
+        slate = build_slate(
+            register, prices=_prices(), now=NOW,
+            order_of_play=_listed(comp_id="999999"), order_of_play_complete=True,
+        )
+        assert slate["count"] == 0
+        assert slate["dropped"] == {"ALREADY_PLAYED": 1}
+
+    def test_an_explicit_DECIDED_still_retires_it_the_same_minute(self):
+        """The exemption is about SILENCE. A word from the source outranks it
+        immediately — otherwise this would keep finished matches on the card
+        all day, which is the opposite failure."""
+        register = self._pinned(MATCH_STALE_AFTER_HOURS + 4)
+        slate = build_slate(
+            register, prices=_prices(), now=NOW,
+            order_of_play=_listed(comp_id="182655", state="decided"),
+            order_of_play_complete=True,
+        )
+        assert slate["count"] == 0
+        assert slate["dropped"] == {"DECIDED": 1}
+
+
+class TestTheCeremonyStampNamesTheDrawNotTheDay:
+    """CERT-544, red-first, on the committed register's own value.
+
+    Q468's far end measured 24 hours from the fixture's `scheduled_date`,
+    calling that "the day the stamp names". The stamp does not name a day.
+    **96 of 96 pinned US Open main-draw fixtures carry the single value
+    `2026-08-30T04:00:00+00:00`** — one instant for the whole draw ceremony,
+    not one per match day. So the bound expired for EVERY pinned fixture at
+    06:01 ET on day two, and a truncated or falsely-complete scoreboard could
+    empty the card again on every day of the tournament except the first.
+
+    The repair prevented the opening-day blank and nothing after it, which is
+    not the ship. Same class a fourth time: a placeholder read as an event time.
+
+    What the stamp DOES support is the tournament it opens. A draw ceremony
+    instant is the start of a tournament of bounded length, so it can bound the
+    register's own relevance and nothing finer. Inside that window absence is
+    never authoritative for a pinned fixture — only an explicit `decided` is.
+    """
+
+    #: The committed register's actual shared value, not a constructed one.
+    CEREMONY_STAMP = "2026-08-30T04:00:00+00:00"
+
+    def _register_at_ceremony_stamp(self):
+        return _register(
+            matchups=[_drawn_matchup(scheduled_date=self.CEREMONY_STAMP)]
+        )
+
+    def _slate_at(self, when, *, complete=True):
+        return build_slate(
+            self._register_at_ceremony_stamp(),
+            prices=_prices(),
+            now=datetime.fromisoformat(when),
+            # Nonempty and claiming to be whole — and it omits our fixture.
+            order_of_play=_listed(comp_id="999999"),
+            order_of_play_complete=complete,
+        )
+
+    def test_the_committed_register_really_does_share_one_stamp(self):
+        """The premise, asserted rather than quoted — a guard resting on a
+        claim about a data file must read the file."""
+        import json
+        from pathlib import Path
+
+        register = json.loads(
+            (
+                Path(__file__).resolve().parents[1]
+                / "data" / "tournament_registers" / "us-open-2026.json"
+            ).read_text()
+        )
+        pinned = [
+            m for m in register["matchups"]
+            if ((m.get("sources") or [{}])[0].get("evidence") or {}).get(
+                "espn_competition_id"
+            )
+            or espn_competition_id(m)
+        ]
+        stamps = {m.get("scheduled_date") for m in pinned}
+        assert len(pinned) >= 90, len(pinned)
+        assert stamps == {self.CEREMONY_STAMP}, stamps
+
+    def test_day_two_of_the_tournament_still_lists_its_matches(self):
+        """The cert's executed evidence, to the minute it used."""
+        slate = self._slate_at("2026-08-31T10:01:00+00:00")
+        assert slate["count"] == 1, slate["dropped"]
+        assert slate["dropped"] == {}
+
+    def test_the_LAST_day_of_a_grand_slam_still_lists_its_matches(self):
+        """Two weeks out from the ceremony stamp — the final, which is the
+        furthest a main-draw fixture can be from the draw."""
+        slate = self._slate_at("2026-09-13T18:00:00+00:00")
+        assert slate["count"] == 1, slate["dropped"]
+        assert slate["dropped"] == {}
+
+    def test_a_register_the_tournament_has_outlived_does_retire(self):
+        """The bound the cert asked for, at the only granularity the stamp
+        supports: the tournament, not the day."""
+        slate = self._slate_at("2026-10-15T12:00:00+00:00")
+        assert slate["count"] == 0
+        assert slate["dropped"] == {"ALREADY_PLAYED": 1}
+
+    def test_an_explicit_decided_still_retires_it_on_day_two(self):
+        """Inside the window the exemption is total, so the source's own word
+        is the ONLY thing retiring a pinned fixture — it has to keep working."""
+        slate = build_slate(
+            self._register_at_ceremony_stamp(),
+            prices=_prices(),
+            now=datetime.fromisoformat("2026-08-31T10:01:00+00:00"),
+            order_of_play=_listed(comp_id="182655", state="decided"),
+            order_of_play_complete=True,
+        )
+        assert slate["count"] == 0
+        assert slate["dropped"] == {"DECIDED": 1}
+
+    def test_the_qualifying_draw_is_untouched_by_the_wider_window(self):
+        """Qualifying carries no pinned id and real per-match times, so it
+        keeps the plain six-hour rule. Widening the pinned exemption must not
+        leak into the population the clock is actually for."""
+        stamp = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 4)).isoformat()
+        slate = build_slate(
+            _register(matchups=[_matchup(scheduled_date=stamp, evidence=None)]),
+            prices=_prices(), now=NOW,
+            order_of_play=_listed(comp_id="999999"), order_of_play_complete=True,
+        )
+        assert slate["count"] == 0
+        assert slate["dropped"] == {"ALREADY_PLAYED": 1}
+
+
+class TestTheFarEndIsNotAFactAboutTheScoreboard:
+    """CERT-548, red-first on `738507f0`'s own bytes.
+
+    Q469 freed the NEAR end of the pinned-fixture clock rule from
+    `order_of_play_complete` — inside the register's window absence is never a
+    fact about the match — and left the FAR end conjoined with it:
+
+        retire = order_of_play_complete and started < (cutoff - WINDOW)
+
+    So the bound only exists on a scoreboard read we called complete. **After a
+    tournament ends, ESPN stops listing it, and that is precisely when
+    completeness reads false forever.** The register's fixtures then have no far
+    end at all: the cert's exact merged-tree probe at 2026-10-15 kept all 96
+    pinned main-draw fixtures alive (`count=96`) where a complete read correctly
+    drops all 124.
+
+    ⚠️ THE CLASS, AND IT IS THIS QUEUE'S OWN, A SIXTH TIME. `order_of_play_complete`
+    is a fact about a FETCH. The far end is a claim about the REGISTER — "the
+    tournament this ceremony opened is over" — and the clock and the register are
+    the only two things it can be computed from. Q469 wrote that sentence into
+    the constant's docstring and then left the flag in the expression. A permanent
+    absence of the tournament from the scoreboard is the EXPECTED steady state of
+    a finished tournament, so gating its retirement on the scoreboard mentioning
+    it is a condition that can never again be met.
+
+    The near end keeps everything CERT-517 and CERT-532 bought, and keeps it
+    unconditionally: inside the window a pinned fixture is never retired by the
+    clock, complete read or not. `TestAPinnedFixtureSurvivesTheTournament` and
+    `TestTheCeremonyStampNamesTheDrawNotTheDay` own those claims.
+    """
+
+    CEREMONY_STAMP = "2026-08-30T04:00:00+00:00"
+
+    def _slate_at(self, when, *, complete):
+        return build_slate(
+            _register(matchups=[_drawn_matchup(scheduled_date=self.CEREMONY_STAMP)]),
+            prices=_prices(),
+            now=datetime.fromisoformat(when),
+            # A map that speaks — for somebody else's fixture, never ours.
+            order_of_play=_listed(comp_id="999999"),
+            order_of_play_complete=complete,
+        )
+
+    def test_a_finished_tournament_retires_even_though_espn_stopped_listing_it(self):
+        """THE CERT'S OWN PROBE, to its date.
+
+        A month past the ceremony, on the read a finished tournament actually
+        gets — incomplete, because the scoreboard has moved on. The register
+        describes something that is over, and "what is on" must not carry it.
+        """
+        slate = self._slate_at("2026-10-15T12:00:00+00:00", complete=False)
+        assert slate["count"] == 0
+        assert slate["dropped"] == {"ALREADY_PLAYED": 1}
+
+    def test_the_far_end_reads_the_same_on_both_completeness_values(self):
+        """The general statement, not the one date.
+
+        The far end may not be a function of `order_of_play_complete` at all.
+        Asserting the two arms are EQUAL is what makes this survive somebody
+        re-introducing the conjunction anywhere in the expression, rather than
+        only at the one operator Q469 wrote it at.
+        """
+        for when in (
+            "2026-10-15T12:00:00+00:00",
+            "2026-11-30T12:00:00+00:00",
+            "2027-03-01T12:00:00+00:00",
+        ):
+            complete = self._slate_at(when, complete=True)
+            partial = self._slate_at(when, complete=False)
+            assert complete["count"] == partial["count"] == 0, (when, partial["dropped"])
+            assert complete["dropped"] == partial["dropped"] == {"ALREADY_PLAYED": 1}
+
+    def test_the_near_end_also_reads_the_same_on_both(self):
+        """The other half of the same equality, and the negative control that
+        stops this being satisfied by retiring everything.
+
+        Inside the window BOTH arms must KEEP the fixture. A repair that made
+        the far end unconditional by making the whole rule unconditional would
+        pass the two tests above and re-open the shipped defect.
+        """
+        for when in (
+            "2026-08-30T23:00:00+00:00",   # opening day, after the placeholder
+            "2026-08-31T10:01:00+00:00",   # CERT-544's minute, day two
+            "2026-09-13T18:00:00+00:00",   # the final
+        ):
+            complete = self._slate_at(when, complete=True)
+            partial = self._slate_at(when, complete=False)
+            assert complete["count"] == partial["count"] == 1, (when, partial["dropped"])
+            assert complete["dropped"] == partial["dropped"] == {}
+
+    def test_the_flag_still_reaches_the_payload_as_a_diagnostic(self):
+        """Freeing the clock rule from the flag must not DELETE the flag.
+
+        `order_of_play_complete` earns its place in the payload for the reason
+        CERT-517 named — a short slate under a partial fetch and a short slate
+        on a quiet day are otherwise the same bytes, and only one of them is
+        somebody's emergency. It is reported; it no longer decides.
+        """
+        assert self._slate_at("2026-08-31T10:01:00+00:00", complete=False)[
+            "order_of_play_complete"
+        ] is False
+        assert self._slate_at("2026-08-31T10:01:00+00:00", complete=True)[
+            "order_of_play_complete"
+        ] is True

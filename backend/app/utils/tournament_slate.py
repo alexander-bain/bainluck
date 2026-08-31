@@ -36,6 +36,25 @@ Three things this module refuses to do:
    this morning must not still be presenting this morning's matches at
    midnight.
 
+   ⚠️ **AND IT MUST NOT DO THAT BY GUESSING FROM A PLACEHOLDER (Q463).**  That
+   bound is an *elapsed-time* rule over the register's ``scheduled_date``, and
+   on ceremony day the register records what ESPN records before an order of
+   play exists: **midnight, local** — ``2026-08-30T04:00Z`` on all 96 US Open
+   main-draw fixtures.  Six hours later is 10:00Z; the first ball of the
+   tournament was at 15:05Z.  So every fixture of opening day was dropped
+   ``ALREADY_PLAYED`` **five hours before opening day began**, and the card read
+   "No matches scheduled" from morning to night while Djokovic was on court —
+   Alex, 2026-08-30: *"It's weird that there's no matches scheduled. that's
+   obviously not true."*
+
+   The fix is not a wider window.  A window is a guess about a fixture we have
+   an authority for: the same ESPN scoreboard this page already fetches every
+   three minutes says, per competition, ``pre`` / ``in`` / ``post`` and the real
+   start.  So ``order_of_play`` overrides the clock rule wherever it speaks, the
+   elapsed-time bound survives only as the fallback for a fixture ESPN does not
+   list, and **a decided match leaves the slate because ESPN says it is decided
+   — never because enough hours went by.**
+
 4. **Call a row live off its freshest side.**  A slate row publishes a
    *normalized pair*, so both sides are inside the number the reader sees: an
    0.72 that was normalized against a side quoted twenty days ago is a
@@ -85,9 +104,88 @@ MAX_PAIR_DEVIATION = 0.12
 #: was meant to be dropped, with no single place to look.
 MATCH_STALE_AFTER_HOURS = 6.0
 
+#: How much of a *ceremony stamp* is actually a claim (CERT-532, CERT-544).
+#:
+#: A draw-ceremony fixture's ``scheduled_date`` is not a start.  It is what ESPN
+#: publishes before an order of play exists, and the register writes it once for
+#: the whole ceremony: **96 of 96 pinned US Open main-draw fixtures carry the
+#: single value 2026-08-30T04:00:00+00:00**, the tournament's opening day.
+#: Measuring elapsed time against it therefore says nothing about any
+#: individual match.
+#:
+#: CERT-532's repair called it "the day the stamp names" and allowed 24 hours.
+#: CERT-544 showed why that is still the same mistake: one instant shared by the
+#: whole draw expires for the whole draw at once, so from day two onward a
+#: truncated scoreboard could empty the card again — every day of the tournament
+#: except the first.
+#:
+#: So the stamp is read for the only thing it can support.  A draw ceremony
+#: opens a tournament of bounded length, so it bounds **the register's own
+#: relevance** and nothing finer.  Inside this window a pinned fixture is never
+#: retired by the clock; only ESPN's explicit ``decided`` retires it.  Outside
+#: it, the register describes a tournament that is over and the clock may clear
+#: it away.
+#:
+#: 21 days: a grand slam main draw runs 14 from the ceremony, and the slack is
+#: deliberate — being late to clear a finished register costs a stale row on a
+#: page nobody is loading, while being early costs the live card mid-tournament,
+#: which is the whole defect.
+#:
+#: CERT-548: BOTH ends of this window are computed from the stamp and the clock
+#: ALONE.  The far end was for one revision conjoined with
+#: ``order_of_play_complete``, and that is the same category error the near end
+#: had — a fact about a request standing in for a fact about the tournament.  It
+#: bit hardest at the far end, because a tournament that is over is exactly the
+#: thing ESPN stops listing, so completeness reads false from then on and the
+#: bound could never fire again.  Nothing in this module's row rules reads the
+#: flag; it is reported in the slate payload and it decides nothing.
+CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS = 24.0 * 21
+
 #: A move smaller than this is noise, not a story. Same dead band as the board's
 #: trend direction, so "moved" means one thing across the whole page.
 MOVE_DEAD_BAND = 0.003
+
+
+def _parse_moment(value: Any) -> Optional[datetime]:
+    """An ISO-8601 string -> an aware datetime, or ``None``.
+
+    Naive input is REFUSED rather than assumed UTC.  Every comparison this
+    module makes is against an aware ``now``, so a naive value would raise at
+    the comparison — and the version that silently stamped UTC on it would be
+    guessing a timezone onto a fixture time, which is the exact class of defect
+    this file exists to refuse.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
+
+def espn_competition_id(matchup: dict[str, Any]) -> Optional[str]:
+    """The ESPN competition id the register pinned for this fixture, if any.
+
+    Matchup-level ``evidence`` FIRST, and that ordering is load-bearing.  The
+    draw ceremony writes ``{"kind": "draw-ceremony-espn",
+    "espn_competition_id": ...}`` onto the matchup itself, and
+    ``apply_resolved_links`` may only rewrite ``sources`` — so the matchup-level
+    id is the one anchor on this fixture the price overlay cannot destroy.  The
+    per-source fallback is real (the ceremony census stamps it there too) but it
+    is exactly the copy a linked block replaces, which on today's payload it has
+    already done 72 times.
+    """
+    pinned = (matchup.get("evidence") or {}).get("espn_competition_id")
+    if pinned:
+        return str(pinned)
+    for block in matchup.get("sources") or []:
+        if not isinstance(block, dict):
+            continue
+        candidate = (block.get("evidence") or {}).get("espn_competition_id")
+        if candidate:
+            return str(candidate)
+    return None
 
 
 def _as_float(value: Any) -> Optional[float]:
@@ -176,6 +274,7 @@ def build_match_row(
     now: datetime,
     cutoff: Optional[datetime],
     event_ids: Optional[dict[str, int]] = None,
+    order_of_play: Optional[dict[str, dict[str, Any]]] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """ONE matchup -> one slate row, or a named reason it is not one.
 
@@ -197,25 +296,156 @@ def build_match_row(
       started is the worst possible moment to stop answering questions about
       it.
 
+    ``order_of_play`` (Q463) is ESPN's live card, keyed by competition id — see
+    doctrine 3 in the module docstring for why an elapsed-time rule alone read
+    "No matches scheduled" through the whole of the US Open's opening day.
+    ``cutoff`` gates its refusal too, and for the same reason it gates the
+    clock's: only a caller asking "what is on" wants a decided match withheld.
+
+    This row builder takes **no completeness argument** (CERT-548).  It used to,
+    and the flag decided whether a pinned fixture the scoreboard never mentioned
+    was retired by the clock.  Both ends of that rule have since been shown to
+    be the wrong question — the near end by CERT-532, the far end by CERT-548 —
+    for the same reason twice: ``order_of_play_complete`` is a fact about a
+    REQUEST, and neither "is this match still to come" nor "is this tournament
+    over" can be answered from one.  It survives as a payload diagnostic on
+    ``build_slate``, which is what CERT-517 actually needed it for.
+
     Returns ``(row, None)`` or ``(None, reason)``.  Never both, never neither.
     """
     players = matchup.get("players")
     if not isinstance(players, list) or len(players) != 2:
         return None, "NOT_A_PAIR"
 
-    scheduled = matchup.get("scheduled_date")
-    started: Optional[datetime] = None
-    if isinstance(scheduled, str) and scheduled:
-        try:
-            started = datetime.fromisoformat(scheduled.replace("Z", "+00:00"))
-        except ValueError:
-            started = None
+    started = _parse_moment(matchup.get("scheduled_date"))
+
+    # THE SCOREBOARD FIRST, THE CLOCK ONLY WHERE IT IS SILENT (Q463).
+    #
+    # `comp_id` is an id the register pinned at the draw ceremony, so this is a
+    # dict lookup and none of this page's no-request-time-name-matching posture
+    # is spent on it.
+    # LAZY, like this module's other `espn_tennis` import, and load-bearing.
+    # `app/services/__init__` imports SQLAlchemy, and `test_comparison_specimen`
+    # runs the specimen producer with `-S` and no third-party packages to keep
+    # it runnable inside the frontend CI job. A module-level import here breaks
+    # that job — same discipline as gotcha #3's for `sport_keys`.
+    from app.services.espn_tennis import DECIDED_SLATE_STATE
+
+    comp_id = espn_competition_id(matchup)
+    listed = (order_of_play or {}).get(comp_id) if comp_id else None
+    live_state: Optional[str] = None
+    status_detail: Optional[str] = None
+    start_is_tbd = False
+
+    if listed is not None:
+        live_state = str(listed.get("state") or "") or None
+        status_detail = listed.get("status_detail")
+        start_is_tbd = listed.get("start_is_tbd") is True
+        # ESPN's real start supersedes the register's ceremony-day placeholder
+        # — but only when ESPN has one. A missing or unparseable date must not
+        # blank a start we already hold.
+        started = _parse_moment(listed.get("start_at")) or started
+        if live_state == DECIDED_SLATE_STATE and cutoff is not None:
+            # ESPN SAYS SO, IN A WORD (CERT-517).
+            #
+            # This is the ONLY route to DECIDED. Q463 inferred it from absence
+            # instead, and a partial scoreboard fetch — which
+            # `fetch_tournament_results` permits by design and the task caches
+            # anyway — then read every live fixture on the failed tour as
+            # finished. The match belongs to `build_results`; its own reason,
+            # never folded into ALREADY_PLAYED, because one of these is a fact
+            # from the source and the other is an inference from the clock.
+            return None, "DECIDED"
+
     if started is None:
         return None, "NO_SCHEDULED_START"
-    if cutoff is not None and started < cutoff:
-        # Registered when it was upcoming; it is not upcoming now. The
-        # register is a file and the clock is not.
-        return None, "ALREADY_PLAYED"
+    if cutoff is not None and listed is None and started < cutoff:
+        # THE CLOCK, ONLY WHERE THE SCOREBOARD NEVER SPOKE.
+        #
+        # Registered when it was upcoming, not on the scoreboard now. Reached by
+        # the qualifying draw, whose matchups the ceremony census never stamped
+        # with a competition id at all.
+        #
+        # CERT-517: a fixture that DOES carry a pinned id is exempt while the
+        # scoreboard read is INCOMPLETE. A pinned id means the ceremony matched
+        # this fixture to a real ESPN competition, so a complete scoreboard
+        # would have said a word about it; its silence is then a fact about the
+        # fetch, and the register's `scheduled_date` — for the main draw, the
+        # 04:00Z midnight-local placeholder — is not a start to measure against.
+        # Dropping on it is exactly how opening day emptied itself. The
+        # qualifying draw has no id and is unaffected, so this exemption costs
+        # nothing on a healthy read and saves the card on a flaky one.
+        #
+        # ═══ CERT-532: THE FLAG WAS NEVER THE RIGHT THING TO ASK ═══
+        #
+        # That exemption is only as good as `order_of_play_complete`, and the
+        # cert's finding is that the flag can be wrong while every clause
+        # computing it is satisfied — a named shell with no competitions, and
+        # in general "a nonempty but truncated map has the same uncovered shape
+        # for any omitted pinned id". Tightening the flag closes the routes we
+        # have thought of. It cannot close the class, because the class is a
+        # consumer reading ABSENCE from the map as a fact about the match.
+        #
+        # So the second condition does not consult the flag at all.
+        #
+        # ⚠️ THAT SENTENCE WAS NOT TRUE WHEN IT WAS WRITTEN, and CERT-548 is what
+        # it cost. Q468 freed the NEAR end and left the FAR end conjoined with
+        # the flag, then wrote the rule as though both were done. It is true now
+        # — see the CERT-548 block below, which is the change that made it so.
+        #
+        # ═══ CERT-544: AND IT MUST NOT CONSULT THE STAMP AS A DAY EITHER ═══
+        #
+        # The first version of this said "a ceremony stamp names a day, so the
+        # clock may not retire a pinned fixture until that day has elapsed",
+        # and allowed 24 hours. But the stamp is written ONCE FOR THE WHOLE
+        # CEREMONY — 96 of 96 pinned fixtures share `2026-08-30T04:00Z` — so it
+        # names opening day for every match in the draw, including the final
+        # two weeks later. The bound expired for all 96 at once at 06:01 ET on
+        # day two, and the card could empty itself again on every day of the
+        # tournament except the first. Fixing the opening-day blank alone is
+        # not the ship.
+        #
+        # The stamp is now read only for what it can support. A draw ceremony
+        # opens a tournament of bounded length, so it bounds the REGISTER'S
+        # RELEVANCE and nothing finer. Inside that window the clock has no
+        # authority over a pinned fixture at all: absence is never a fact about
+        # the match, and the only thing that retires one is ESPN's explicit
+        # `decided`, handled above. Outside it, the register describes a
+        # tournament that is over.
+        #
+        # The cost is named: a pinned fixture that really did finish, on a day
+        # ESPN's scoreboard never covered while it was `post`, now lingers for
+        # the rest of the tournament rather than a day. That is the ambiguous
+        # case, and it is still the direction to be wrong in — a stale row is a
+        # smaller lie than a draw that vanishes on the morning it is played,
+        # and it takes a sustained scoreboard outage to reach at all.
+        #
+        # ═══ CERT-548: AND THE FAR END IS NOT ABOUT THE SCOREBOARD EITHER ═══
+        #
+        # Q469 freed the NEAR end from `order_of_play_complete` and left the FAR
+        # end conjoined with it, so the bound only existed on a read we had
+        # called complete. **After a tournament ends ESPN stops listing it, and
+        # that is exactly when completeness reads false — permanently.** The
+        # register's fixtures then had no far end at all: a month past the
+        # ceremony all 96 pinned main-draw rows were still on "what is on".
+        #
+        # The two questions are about different things and only one of them is
+        # about the fetch. `order_of_play_complete` is a fact about a REQUEST.
+        # The far end is a claim about the REGISTER — "the tournament this
+        # ceremony opened is over" — and the clock and the ceremony stamp are the
+        # only two things that can answer it. Conjoining them made retirement
+        # conditional on the scoreboard mentioning a tournament it has no reason
+        # to mention any more: a condition that, once unmet, can never be met
+        # again. So neither end consults the flag, and the flag governs nothing
+        # here at all — it is reported in the payload and it does not decide.
+        if comp_id:
+            retire = started < (
+                cutoff - timedelta(hours=CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS)
+            )
+        else:
+            retire = True
+        if retire:
+            return None, "ALREADY_PLAYED"
 
     block = next(
         (
@@ -331,6 +561,24 @@ def build_match_row(
         "draw_label": draw_label(str(matchup.get("draw") or "")),
         "round": matchup.get("round"),
         "scheduled_date": started.isoformat(),
+        # IS THIS ON RIGHT NOW (Q463)? `in_progress` / `upcoming` / `None`, from
+        # ESPN's own state and never from comparing the start to the clock — a
+        # five-set match outlives any elapsed-time window, and "started 7 hours
+        # ago" is not evidence a match is over. `None` means no scoreboard entry
+        # for this fixture, which is honest and is what every caller that passes
+        # no `order_of_play` gets.
+        "live_state": live_state,
+        # ESPN's display text for that state ("2nd Set"). Beside the enum, never
+        # instead of it: a renderer branches on `live_state` and prints this.
+        "status_detail": status_detail,
+        # IS `scheduled_date` A TIME, OR A DAY WEARING ONE (Q463)?
+        #
+        # `True` means the source has not published an order of play for this
+        # fixture, so the timestamp is midnight local — the exact value that,
+        # read as a start, emptied this card for a whole day. A renderer must
+        # print "TBD" and not "12:00 AM": the placeholder was never wrong as
+        # DATA, only as something displayed or compared without this flag.
+        "start_is_tbd": start_is_tbd,
         "sides": views,
         # The honesty fields. A client that ignores every one of them still
         # cannot render a confident number, because `probability` is None
@@ -378,6 +626,8 @@ def build_slate(
     now: datetime,
     max_stale_hours: float = MATCH_STALE_AFTER_HOURS,
     event_ids: Optional[dict[str, int]] = None,
+    order_of_play: Optional[dict[str, dict[str, Any]]] = None,
+    order_of_play_complete: bool = True,
 ) -> dict[str, Any]:
     """Assemble the daily slate payload.
 
@@ -385,6 +635,27 @@ def build_slate(
     "opening_probability", "observed_at"}``.  Keying on the outcome id the
     register pins — rather than on anything derived from a name at request time
     — is what makes the sides mapping load-bearing instead of decorative.
+
+    ``order_of_play`` is ``espn_tennis.parse_results``' map of ESPN competition
+    id -> ``{"state", "start_at", ...}`` for **every** competition on the
+    scoreboard, decided ones included.  Where it speaks it is the authority on
+    both questions the clock rule was guessing at — is this fixture still to
+    come, and when does it actually start — for the reasons set out as doctrine
+    3 in the module docstring.  ``None`` or ``{}`` leaves every fixture on the
+    elapsed-time fallback, which is what a caller with no scoreboard gets and
+    what this page did before Q463.
+
+    ``order_of_play_complete`` says whether that map is the whole scoreboard or
+    the surviving half of a partial fetch (CERT-517).  **It is a diagnostic and
+    nothing else** — it is reported in the payload and no row is built, kept or
+    dropped on it.  That is CERT-548's correction, and CERT-532's before it: the
+    flag is a fact about a request, so it cannot answer either question the row
+    rule asks, and gating retirement on it made a finished tournament — which no
+    scoreboard has any reason to keep listing — unretirable forever.
+
+    It earns the payload slot for the reason CERT-517 named.  A short slate under
+    a partial fetch and a short slate on a quiet day are otherwise the same
+    bytes, and only one of them is somebody's emergency.
     """
     reg = TournamentRegister(register)
     cutoff = now - timedelta(hours=max_stale_hours)
@@ -394,7 +665,13 @@ def build_slate(
 
     for matchup in reg.matchups:
         row, reason = build_match_row(
-            reg, matchup, prices=prices, now=now, cutoff=cutoff, event_ids=event_ids
+            reg,
+            matchup,
+            prices=prices,
+            now=now,
+            cutoff=cutoff,
+            event_ids=event_ids,
+            order_of_play=order_of_play,
         )
         if row is None:
             reason = reason or "UNKNOWN"
@@ -427,6 +704,17 @@ def build_slate(
         "matches": rows,
         "count": len(rows),
         "incoherent": sum(1 for r in rows if not r["coherent"]),
+        # THE TWO NUMBERS THAT MAKE AN EMPTY SLATE DIAGNOSABLE (Q463, gotcha
+        # #53). "Nothing is on" and "the overlay joined nothing" render
+        # identically and need different people; before this, opening day's
+        # empty card carried no signal at all that a whole draw had been
+        # dropped by a clock rule.
+        "in_progress": sum(1 for r in rows if r.get("live_state") == "in_progress"),
+        "order_of_play_listed": len(order_of_play or {}),
+        # WHETHER THE MAP ABOVE IS THE WHOLE SCOREBOARD (CERT-517). A short
+        # slate under a partial fetch and a short slate on a quiet day are the
+        # same payload without this, and the second one is nobody's emergency.
+        "order_of_play_complete": bool(order_of_play_complete),
         "dropped": dict(sorted(dropped.items())),
         "price_state": price_state(slate_age),
         "newest_observed_at": newest_overall.isoformat() if newest_overall else None,
