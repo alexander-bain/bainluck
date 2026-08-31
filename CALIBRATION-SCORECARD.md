@@ -965,11 +965,11 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 | # | published cell | cls | ECE | n | gap | bar | excess | σ | excess-outcomes | mechanism known? | status |
 |--:|---|:-:|--:|--:|--:|--:|--:|--:|--:|---|---|
 | 1 | `polymarket/baseball` | B | 4.80 | 43,768 | +3.03 | 3.0 | +1.80 | 7.5 | 78,782 | ✅ **named, designed AND RULED (CAL-P117 §6c, Alex 2026-08-28 "EXCLUDE NOW + FIX WRITER")** — 54.4% is `Player Props` containers whose published price is a manufactured coin flip. K′ → **2.71 pp PASS**, 17,827 rows. Exclusion is **TEMPORARY BY DESIGN**, §6f | **ZERO** — ruled, unbuilt (disclosure surface BUILT, §6f) |
-| 2 | `kalshi/economics` | C | 5.29 | 28,613 | −0.47 | 3.0 | +2.29 | 7.8 | 65,524 | ✅ **named, designed AND RULED (CAL-P114 §6b, Alex 2026-08-28 option b)** — 99.7% cumulative index ladders; rules E+E2+E3 → 2.61 pp PASS, **approved with disclosure** | **ZERO** — ruled, unbuilt (disclosure surface BUILT, §6d) |
-| 3 | `polymarket/esports` | B | 7.59 | 14,053 | +6.02 | 3.0 | +4.59 | 10.9 | 64,503 | ✅ **named and designed (CAL-P112, §6a; re-checked on the exact rail, CAL-P114)** — the 1-winner tail `esports_multi_bundle_filter` cannot reach | **ZERO** — designed, unbuilt |
+| 2 | `kalshi/economics` | C | 5.29 | 28,613 | −0.47 | 3.0 | +2.29 | 7.8 | 65,524 | ✅ **named, designed AND RULED (CAL-P114 §6b, Alex 2026-08-28 option b)** — 99.7% cumulative index ladders; rules E+E2+E3 → 2.61 pp PASS, **approved with disclosure** | 🔨 **BUILT by CAL-P162** (RULE E + the `(kalshi, economics)` tuple), awaiting cert. **E2 withheld under 13-CAL**, so the landing number is RULE E's **3.00**, not 2.61 — *at* the bar, zero margin |
+| 3 | `polymarket/esports` | B | 7.59 | 14,053 | +6.02 | 3.0 | +4.59 | 10.9 | 64,503 | ✅ **named and designed (CAL-P112, §6a; re-checked on the exact rail, CAL-P114)** — the 1-winner tail `esports_multi_bundle_filter` cannot reach | 🔨 **BUILT by CAL-P162** on the same mechanism as rank 2. **Reduced, NOT crossed off** — 7.59 → 3.29, still over its 3.0 bar; excess 64,503 → ~3,371 |
 | 4 | `polymarket/soccer` | B | 3.42 | 106,803 | +2.16 | 3.0 | +0.42 | 2.8 | 44,857 | ❌ **none — the named mechanism was measured on the published cell and REFUSED (CAL-P118, §6e)**; O/U ladder coherence reaches 7.4% of the cell and moves it **+0.03 pp, worse on both holdout halves** | **ZERO** — and no longer designed |
 | 5 | `odds_api_bookmaker/basketball_nba` | A | 5.18 | 10,186 | +1.03 | **2.5** | +2.68 | 5.4 | 27,298 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 573 games behind these rows, so the board’s σ counts one outcome ~17.8x. **σ = 1.28, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
-| 6 | `kalshi/crypto` | C | 7.60 | 4,565 | +1.84 | 3.0 | +4.60 | 6.2 | 20,999 | ✅ **named and designed (CAL-P121, §6h)** — the cell is **99.5% metal**, not crypto — gold/silver/lithium/nickel threshold ladders the LLM relabelled (exactly 1 of 4,566 rows is a cryptocurrency market) — and 99.9% is `bundle_multiwin`. **RULE C** = one tuple on rank 2's already-ruled allowlist → removes 4,563 of 4,566 rows | **ZERO** — designed, unbuilt; the rule **deletes the cell** (3 rows → absence) |
+| 6 | `kalshi/crypto` | C | 7.60 | 4,565 | +1.84 | 3.0 | +4.60 | 6.2 | 20,999 | ✅ **named and designed (CAL-P121, §6h)** — the cell is **99.5% metal**, not crypto — gold/silver/lithium/nickel threshold ladders the LLM relabelled (exactly 1 of 4,566 rows is a cryptocurrency market) — and 99.9% is `bundle_multiwin`. **RULE C** = one tuple on rank 2's already-ruled allowlist → removes 4,563 of 4,566 rows | 🟢 **BUILT AND DEPLOYED 2026-08-30 as `fd033079`** (D12 freeze exception). Not yet PUBLISHED — the rebuild that would show it has never completed a beat. The rule **deletes the cell** (3 rows → absence), so the board's denominator goes 49 → 48 on the next published curve |
 | 7 | `odds_api_bookmaker/baseball_mlb_preseason` | A | 8.24 | 3,253 | −7.67 | **2.5** | +5.74 | 6.5 | 18,672 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 217 games behind these rows, so the board’s σ counts one outcome ~15.0x. **σ = 1.69, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
 | 8 | `kalshi/entertainment` | C | 5.21 | 8,355 | +1.07 | 3.0 | +2.21 | 4.0 | 18,465 | ✅ **named and measured (CAL-P122, §6i)** — the exit-exam's settlement-timing lead is refuted cell-wide (`moved` 4.96 vs `unmoved` 6.37). 4.7% of the cell is a class that **cannot contain a loss**: `clean_vms`' `has_winner >= 1` drops **432 authoritative graded losses** and keeps 395 winners. **The honest cell is 6.30 on n 8,850**, and the σ shortcut would have demoted it (1.74σ bound vs **4.66σ measured**) | **ZERO — and NO RULE IS BANKED.** Every passing policy deletes the filtered class; the same rule on the corrected population reads 5.75 and fails. **Alex: 12-CAL + 13-CAL (HOLD RULE E2)** |
 | 9 | `kalshi/golf` | B | 3.88 | 20,500 | +3.72 | 3.0 | +0.88 | 2.5 | 18,040 | ⚠️ `golf_placeholder_filter` live since 07-09 | **shipped, insufficient** |
@@ -2079,6 +2079,61 @@ in the three big families, 1,994 rows, 61.4% of the cell. With CAL-P122-2 that i
 venues saying the same thing: the residual on this board, after every population defect is removed,
 is two-sided bucket error that no gap-driven fold can see.** That is a question about what
 instrument this board is missing, and it is bigger than either cell.
+
+---
+
+## 6k. 🔨 THE FIRST BUILD — CAL-P162, and §4's "40 merges, zero published movement" gets its answer
+
+**Two ranked cells left the designed column and entered the built one, on ONE mechanism and in ONE
+deploy.** Branch `program/calibration-119`, awaiting cert. This is the first entry on this page
+whose status is neither *designed* nor *measured* nor *refused*.
+
+### What was built
+
+**RULE E — the bundle test becomes STRUCTURAL.** A market of `>=3` captured outcomes that is **not
+a proved-exclusive field** is excluded when it resolved with `>=2` winners (the shipped test,
+unchanged) **OR** its published price sum exceeds `MEX_NORMALIZE_THRESHOLD` (1.15). Plus
+`('kalshi','economics')` on the `(source, category)` allowlist, plus the `nonexclusive_bundle_filter`
+payload key with per-cell counts — the disclosure half of Alex's rank-2 ruling, whose page copy has
+been built and rendering nothing since CAL-P114.
+
+| cell | before | after (measured, exact rail) | crosses off? |
+|---|--:|--:|---|
+| rank 2 `kalshi/economics` | 5.29 | **3.00** | ✅ — *at* the bar, **zero margin** |
+| rank 3 `polymarket/esports` | 7.59 | **3.29** | ❌ — excess 64,503 → ~3,371, still over its bar |
+
+**One mechanism reached both, which is why they shipped together.** The 1-winner tail the shipped
+realization test could never see is the entire published residue of rank 3 and 13.4% of rank 2.
+
+### 🔴 Two things withheld, on purpose, and both are owed to Alex
+
+1. **RULE E2 was NOT built, against directive 929's instruction.** 929 says build rank 2 as
+   E+E2+E3. §6i's **13-CAL** — this page's own finding — says E2 must not land before 12-CAL is
+   decided, because E2's stated justification was **measured false** (the capture is two-sided; the
+   *filter* is one-sided). Landing a published exclusion whose stated cause this lane disproved is
+   §6f clause 4's defect exactly. **The cost is the margin: 3.00 instead of 2.61.**
+2. **RULE E3 was NOT built.** It is a *global* widening of `malformed_binaries`, sized on **116
+   esports outcomes**, with an unmeasured curve-wide blast radius. Parked, not dropped.
+
+### The correction this queue makes to the board
+
+**Rank 6 was already done.** Directive 929 listed `kalshi/crypto` (20,999) as "ZERO, unbuilt"
+because it read §6's 08-28 table; the rule shipped **2026-08-30 as `fd033079`** under D12. The
+board and the directive were both a deploy behind the code. Of 929's 229,808 excess-outcomes,
+**150,526 are now covered by shipped code** and the remainder is almost entirely rank 1.
+
+### The prediction, recorded before the code
+
+`artifacts/cal-p162/PREDICTION.md`: **31/49 → 32/48 cells at bar**, headline **1.86 → 1.78 pp**
+(band 1.70–1.86). The falsifier is stated there: if `kalshi/economics` does not land at or under
+3.0 on the published population, RULE E must be **re-argued, not re-tuned**. If the headline
+*rises*, the first suspect is de-cancellation (§2), not a broken filter.
+
+> **What this does not claim.** Nothing here has published. The unit bank stood at **75/128** when
+> this was built and this deploy resets it to zero by design. §4's charge — *"40 merges in 14 days
+> and not one of them changed what publishes"* — is answered only when the curve republishes and
+> the prediction above is graded. **A build is not a ship.** What has changed is that the thing
+> waiting on the rebuild is now a rule rather than another instrument.
 
 ---
 

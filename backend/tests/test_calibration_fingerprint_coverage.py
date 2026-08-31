@@ -137,9 +137,27 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         the totals returned to 54/50. Recorded rather than erased: a tripwire
         that only ever ratchets up teaches the next reader that coming back down
         is suspicious, and here it is exactly right.
+
+        CAL-P162 (2026-08-31) takes this to **55**, and ``uncovered_count``
+        stands still at 50 because the same queue moved one input in each
+        direction:
+
+        * ``NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT`` is new and behaviour-only —
+          published rule prose for RULE E's disclosure. Uncovered, correctly, and
+          it does NOT touch the sql-shaping pin below.
+        * ``MEX_NORMALIZE_THRESHOLD`` moved the other way, from uncovered
+          sql-shaping to **covered by value**. It was always interpolated into
+          the emitted SQL, but until RULE E it only decided how a row was
+          PRICED; it now decides whether a row is PUBLISHED, because it is the
+          sum arm of the bundle exclusion. That is the fifth instance of the hole
+          ``_main_input_fingerprint``'s own comment describes, and it was closed
+          on the deploy that made it curve-shaping — closing it costs a full
+          rebuild on any other day.
         """
-        assert artifact["input_count"] == 54
-        assert len(artifact["covered_by_value"]) == 4
+        assert artifact["input_count"] == 55
+        # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
+        # the deploy that made it decide PUBLICATION rather than only pricing.
+        assert len(artifact["covered_by_value"]) == 5
         assert artifact["uncovered_count"] == 50
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
@@ -216,8 +234,19 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         emitted SQL), not about this repair, and quietly lowering a pin while
         being blocked for quietly raising one would be the same error twice.
         CERT-502's fix-sketch names that detector change as the real remedy.
+
+        🟢 **CAL-P162 (2026-08-31) takes this DOWN, 22 -> 21, and that direction
+        is the whole point of the pin.** ``MEX_NORMALIZE_THRESHOLD`` is now
+        hashed by value in ``_main_input_fingerprint``, so it is no longer an
+        uncovered sql-shaping input. Nothing about the detector changed and
+        nothing was reclassified to get here — the hole was closed, which is the
+        only legitimate way this number falls. The queue also ADDED a
+        behaviour-only input in the same commit
+        (``NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT``) and it correctly did not
+        register here, which is the separation this test exists to enforce,
+        demonstrated in both directions at once.
         """
-        assert artifact["uncovered_sql_shaping"] == 22
+        assert artifact["uncovered_sql_shaping"] == 21
 
     def test_the_four_hashed_roots_are_derived_not_declared_here(self, artifact):
         assert sorted(artifact["hashed_roots"]) == [
