@@ -651,6 +651,96 @@ KALSHI_LINK_RATE_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(
 
 
 # =============================================================================
+# 8a2. KALSHI_MATCH_SERIES_TO_SPORT_KEY — series that price ONE fixture
+# =============================================================================
+#
+# Q477 (P476-1). Kalshi prices one football match through a dozen of its own
+# series — `KXEPLGAME`, `KXEPLSPREAD`, `KXEPLBTTS`, `KXEPLFTTS`, `KXEPLSCORE` —
+# and every one of their tickers carries the SAME fixture token
+# (`26AUG30SUNFUL`). None of them is in `KALSHI_TICKER_TO_SPORT_KEY`, so
+# `is_kalshi_game_level_ticker()` said no, `kalshi_anchor_key()` degraded each to
+# `id_kind='market'` keyed on its own unique ticker, and no two of them could
+# ever collide. Measured on production 2026-08-31: the four real EPL fixtures
+# played that day were carrying **eight** rows on `/api/leagues/soccer_epl`,
+# four of them scoreless midnight twins minted by whichever series failed to
+# name-match; production held 1,531 Kalshi `market` anchors against 625 `game`.
+#
+# **This table exists for the anchor channel and nothing else.** It is
+# deliberately NOT folded into `KALSHI_TICKER_TO_SPORT_KEY`, whose members also
+# become `KALSHI_GAME_TICKER_PREFIXES` — the matcher's Phase 1 ticker scan, the
+# link-rate denominator and three admin surfaces all read that tuple, and this
+# fix needs none of them. One table, one job.
+#
+# **The shape is a cross product on purpose.** A league contributes a STEM and
+# the market type contributes a SUFFIX, so a series Kalshi adds tomorrow in a
+# shape we already understand is covered without a table edit, and a shape we do
+# not understand is simply missed. That asymmetry is the whole safety argument:
+# a MISS costs a duplicate row, which is the status quo, while a FALSE POSITIVE
+# is an absorption — one fixture claiming another's identity, the outcome
+# ruling 048 exists to prevent (gotcha #32) and the exact defect CERT-409 caught
+# here when a best-of-seven series was promoted to a game anchor.
+#
+# Every prefix is an EXACT string, matched with `startswith`, which is what
+# keeps the near-misses apart. Verified against every production series under
+# these stems, and under the rejected `kxucl` one, by
+# `scripts/census_kalshi_match_series.py`:
+#
+#   * `KXLALIGA2GAME` / `KXBUNDESLIGA2GAME` are the SECOND DIVISIONS, and
+#     `KXLALIGA2H` / `KXBUNDESLIGA2H` are the top flight's second HALF. The two
+#     read alike and are different leagues. `kxlaliga2h` never matches
+#     `KXLALIGA2GAME` and `kxlaligagame` never matches it either, so the
+#     Segunda keeps the `market` anchor it has today.
+#   * The season futures (`KXEPLTOP4-26`, `KXEPLLAST-27`, `KXEPLH2H-27ARSTOT`)
+#     carry no `<YYMONDD>` token at all, so `kalshi_game_id()` refuses them a
+#     second time even if a prefix ever did match.
+#
+# **The Champions League is deliberately NOT here, and the reason is measured.**
+# `KXUCL*` is the obvious sixth stem — `KXUCLGAME`, `KXUCLBTTS`, `KXUCLSPREAD`,
+# `KXUCLTOTAL` are all per-fixture and it has the same twins the other five do.
+# Two facts stop it, both checked against production 2026-08-31 rather than
+# assumed:
+#
+#   * `get_sport_key_from_ticker("KXUCLGAME-…")` answers
+#     `soccer_uefa_champions_league`, from the futures stem `kxucl`. **No such
+#     sport row exists** — ours is `soccer_uefa_champs_league` (id 1322). The
+#     anchor namespace would name a competition this database does not have.
+#   * `KXUCLGAME-26AUG04ARACEL` ("Aarhus vs Lech Poznan") is a QUALIFYING tie,
+#     and qualifying is a THIRD sport row (`soccer_uefa_champs_league_qualification`,
+#     id 269328). One namespace over two sport ids is the shape
+#     `find_event_by_anchor`'s cross-sport refusal exists to catch.
+#
+# Neither is fatal and neither is guessable from the ticker, so UCL is parked
+# with its measurement rather than shipped on the assumption that the namespace
+# does not matter. `KXUCLADVANCE` ("AEK Athens vs Levski Sofia") is a
+# TWO-LEGGED TIE and would have stayed out regardless: `advance` is absent from
+# the suffixes and that omission is load-bearing. `KXUCLW*` (Women's Champions
+# League) never matched `kxucl…` under exact-prefix rules anyway.
+_KALSHI_MATCH_SERIES_LEAGUE_STEMS: dict[str, str] = {
+    "kxepl": "soccer_epl",
+    "kxlaliga": "soccer_spain_la_liga",
+    "kxbundesliga": "soccer_germany_bundesliga",
+    "kxseriea": "soccer_italy_serie_a",
+    "kxligue1": "soccer_france_ligue_one",
+}
+
+#: Market types that price exactly one fixture. Measured from the production
+#: census, not enumerated from Kalshi's docs. Anything whose scope is a TIE, a
+#: SERIES or a SEASON is absent by design — see the block comment above.
+_KALSHI_MATCH_SERIES_MARKET_SUFFIXES: tuple[str, ...] = (
+    "game", "spread", "total", "btts", "score", "ftts",
+    "teamtotal", "corners", "tcorners", "firstgoal", "goal",
+    "1h", "1hbtts", "1hspread", "1htotal", "1hscore",
+    "2h", "2hbtts", "2hspread", "2htotal",
+)
+
+KALSHI_MATCH_SERIES_TO_SPORT_KEY: dict[str, str] = {
+    f"{stem}{suffix}": sport_key
+    for stem, sport_key in _KALSHI_MATCH_SERIES_LEAGUE_STEMS.items()
+    for suffix in _KALSHI_MATCH_SERIES_MARKET_SUFFIXES
+}
+
+
+# =============================================================================
 # 8b. KALSHI_FUTURES_TICKER_TO_SPORT_KEY — season/futures tickers → sport key
 #     NOT in KALSHI_GAME_TICKER_PREFIXES (these are NOT game-level markets).
 #     Used by get_sport_key_from_ticker() for sport classification of futures.
@@ -1737,6 +1827,15 @@ def is_kalshi_game_level_ticker(external_id: str) -> bool:
     gate a false positive puts a season market on a game page. A false negative
     on either leaves a market unlinked: visible, reversible, nobody's identity
     destroyed.
+
+    **Q477 deliberately did NOT widen this.** The per-fixture soccer series it
+    registers are a real answer to "does this ticker name one fixture", but this
+    predicate has three consumers with three consequences —
+    `is_game_level_market()`, `extract_ticker_fragments()` and the Kalshi
+    grammar adapter — and only the anchor key builder needed the new answer.
+    Widening here would also have started calling `KXEPLCORNERS` ("Arsenal vs
+    Burnley: Total Corners") a game-level MARKET, which is a different claim
+    about a different thing. See :func:`is_kalshi_match_series_ticker`.
     """
     if not external_id:
         return False
@@ -1749,6 +1848,57 @@ def is_kalshi_game_level_ticker(external_id: str) -> bool:
     if not longest_game:
         return False
     return longest_game > kalshi_futures_prefix_len(external_id)
+
+
+def is_kalshi_match_series_ticker(external_id: str) -> bool:
+    """Does this ticker name ONE FIXTURE via a registered match series?
+
+    Q477. Same longest-prefix-wins rule as
+    :func:`is_kalshi_game_level_ticker`, read off
+    `KALSHI_MATCH_SERIES_TO_SPORT_KEY` instead of the game map, and answering a
+    narrower question for exactly one caller: `kalshi_anchor_key()`.
+
+    **Why this is a second function and not a third branch in the first one.**
+    Q462 consolidated two IMPLEMENTATIONS of one question into
+    `is_kalshi_game_level_ticker`, and that consolidation stands. This is not a
+    third implementation of that question — it is a different question with a
+    different consequence, and the reason for splitting was MEASURED rather than
+    argued. Replaying all 88 promoted production series through both trees:
+
+      * `is_game_level_market()` — **0 of 88 change.** Widening the shared
+        predicate would have been invisible here, because the market NAME
+        already answers for every one of them. This was the reason I expected to
+        find and it is not real; it is written down because "we checked and it
+        was nothing" is a different fact from "we did not check".
+      * `extract_ticker_fragments()` — **36 of 88 change**, from `None` to a
+        real abbreviation pair (`KXBUNDESLIGAGAME-26APR04BMGFCH` ->
+        `('BMG', 'FCH', 'soccer_germany_bundesliga')`). That gate feeds the
+        matcher's fuzzy team comparison, so widening it would change which
+        markets link, on 36 series, in the same commit as an identity change.
+        It is plausibly an improvement — the name comparison failing is what
+        mints the twins in the first place — and it is parked with its
+        measurement rather than ridden.
+      * the Kalshi grammar adapter, which reads the same predicate.
+
+    One measured behaviour change is enough to keep the questions apart. The
+    length rule still keeps `kxeplgame` (9) ahead of the futures stem `kxepl`
+    (5), and still leaves `KXEPLTOP4-26` with no match-series length at all.
+    """
+    if not external_id:
+        return False
+    ext_lower = external_id.lower()
+
+    longest_match = max(
+        (
+            len(p)
+            for p in KALSHI_MATCH_SERIES_TO_SPORT_KEY
+            if ext_lower.startswith(p)
+        ),
+        default=0,
+    )
+    if not longest_match:
+        return False
+    return longest_match > kalshi_futures_prefix_len(external_id)
 
 
 def get_sport_keys_for_category(category: Optional[str]) -> Optional[list[str]]:

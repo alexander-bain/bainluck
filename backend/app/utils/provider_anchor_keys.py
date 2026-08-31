@@ -221,6 +221,7 @@ def kalshi_anchor_key(ticker: Optional[str]) -> Optional[AnchorKey]:
     from app.utils.sport_keys import (
         get_sport_key_from_ticker,
         is_kalshi_game_level_ticker,
+        is_kalshi_match_series_ticker,
     )
 
     raw = str(ticker).strip()
@@ -236,8 +237,15 @@ def kalshi_anchor_key(ticker: Optional[str]) -> Optional[AnchorKey]:
     game_id = kalshi_game_id(raw)
     sport_key = get_sport_key_from_ticker(raw)
 
+    # Q477. TWO positive classifications, not one widened one. The game map
+    # answers "a game ticker in a league we ingest"; the match-series table
+    # answers "a registered per-FIXTURE series", which is the same authority for
+    # this key and a different question for the predicate's three other callers
+    # (`is_kalshi_match_series_ticker` records which, and why). Either is enough
+    # here because either one, plus a fixture token and a sport, is an
+    # id-anchored correspondence under ruling 048 arm A.
     if (
-        is_kalshi_game_level_ticker(raw)
+        (is_kalshi_game_level_ticker(raw) or is_kalshi_match_series_ticker(raw))
         and game_id
         and sport_key
         and sport_key not in _KALSHI_TENNIS_SPORT_KEYS

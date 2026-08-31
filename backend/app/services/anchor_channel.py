@@ -486,6 +486,65 @@ async def record_anchor(
     )
 
 
+async def record_link_anchor(
+    session: AsyncSession,
+    *,
+    event_id: int,
+    source: str,
+    provider_id: Optional[str],
+) -> AnchorWriteResult:
+    """Record the anchor a MATCHER LINK establishes — and never absorb on it.
+
+    Q477 (P476-2). Until now the only writer into this channel was
+    `find_or_create_event`, so an event acquired an anchor only if a provider
+    claim CREATED it or resolved to it through the registry. When the matcher
+    links a market to an event that already exists — the ordinary, healthy path
+    — the correspondence was established and then not written down. Measured on
+    production 2026-08-31: the four real EPL fixtures played that day carried
+    **no `event_provider_anchors` row at all**, while the four scoreless twins
+    minted beside them each carried one. The side with the schedule, the score
+    and the users was the side missing from the channel.
+
+    Two deliberate narrowings, both of which are the safety argument:
+
+    **Only a `game` key is written.** A `market` or `container` anchor is never
+    consulted by :func:`find_event_by_anchor`, so writing one here would add a
+    row per newly-linked market and resolve nothing. That is a separate,
+    unmeasured question and it is parked rather than ridden.
+
+    **A COLLISION here NEVER tags.** :func:`record_anchor` resolves a conflict
+    first-writer-wins, which is the right rule between two claims of equal
+    standing and the WRONG one here: the incumbent is typically a ticker-derived
+    twin that got there first, and the event being linked is typically the
+    schedule-derived row carrying the score. Tagging on it would brand the real
+    row a duplicate of its own twin and hide it from the league rails. So this
+    writes when the id is unclaimed and otherwise reports and does nothing —
+    monotone, and incapable of moving an identity that already exists.
+    """
+    key = anchor_key_for_claim(source, provider_id)
+    if key is None or not key.may_anchor_absorption:
+        return AnchorWriteResult(outcome=NO_KEY, key=key)
+
+    result = await record_anchor(
+        session,
+        event_id=event_id,
+        key=key,
+        claim_context={"source": source, "established_by": "matcher_link"},
+    )
+
+    if result.outcome == COLLISION:
+        logger.info(
+            "Link anchor %s:%s (%s) is already held by event %s while linking a "
+            "market to event %s — leaving the incumbent and NOT tagging: at a "
+            "link site first-writer-wins cannot tell a real row from its twin "
+            "(Q477)",
+            key.source, key.source_id, key.id_kind,
+            result.canonical_event_id, event_id,
+        )
+
+    return result
+
+
 def _json_or_none(value: Optional[dict]) -> Optional[str]:
     if value is None:
         return None
