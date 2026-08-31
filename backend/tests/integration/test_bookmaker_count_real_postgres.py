@@ -124,12 +124,25 @@ async def pg_engine():
 
 
 async def _seed(conn) -> dict[str, int]:
-    """Insert the corpus. Returns `{seed key: outcome id}`."""
+    """Insert the corpus. Returns `{seed key: outcome id}`.
+
+    🔴 EVERY NOT NULL COLUMN IS SPELLED OUT, INCLUDING THE ONES THAT LOOK
+    OPTIONAL. `futures_markets.category` / `.mutually_exclusive` / `.status` and
+    `futures_odds_snapshots.reading_count` are NOT NULL carrying a **client-side
+    `default=`**, which is applied by the ORM and is invisible to a raw INSERT —
+    so omitting them does not silently take the default, it raises
+    `NotNullViolation`. The first CI run of this file failed on exactly that.
+    `test_the_seed_names_every_not_null_column` below pins it against the live
+    metadata rather than against this list, so a new NOT NULL column added to any
+    of these three tables fails here instead of in CI.
+    """
     market_id = (
         await conn.execute(
             text(
-                "INSERT INTO futures_markets (source, external_id, name) "
-                "VALUES ('kalshi', 'lat-p163-market', 'LAT-P163 market') "
+                "INSERT INTO futures_markets "
+                "(source, external_id, name, category, mutually_exclusive, status) "
+                "VALUES ('kalshi', 'lat-p163-market', 'LAT-P163 market', "
+                "'championship', true, 'open') "
                 "RETURNING id"
             )
         )
@@ -151,12 +164,61 @@ async def _seed(conn) -> dict[str, int]:
             await conn.execute(
                 text(
                     "INSERT INTO futures_odds_snapshots "
-                    "(outcome_id, bookmaker, probability) "
-                    "VALUES (:o, :b, 0.5)"
+                    "(outcome_id, bookmaker, probability, reading_count) "
+                    "VALUES (:o, :b, 0.5, 1)"
                 ),
                 {"o": outcome_id, "b": bookmaker},
             )
     return ids
+
+
+#: The columns `_seed` writes, per table. Compared against live metadata below.
+_SEEDED_COLUMNS = {
+    "futures_markets": {
+        "source",
+        "external_id",
+        "name",
+        "category",
+        "mutually_exclusive",
+        "status",
+    },
+    "futures_outcomes": {"market_id", "external_id", "name"},
+    "futures_odds_snapshots": {
+        "outcome_id",
+        "bookmaker",
+        "probability",
+        "reading_count",
+    },
+}
+
+
+def test_the_seed_names_every_not_null_column():
+    """A raw INSERT gets no client-side defaults, so every NOT NULL column
+    without a `server_default` has to be spelled out or the seed raises.
+
+    Needs no database, and that is the point: this is the check that turns a CI
+    round trip into a local failure. It reads the live metadata rather than a
+    copied list, so adding a NOT NULL column to any of these three tables fails
+    here rather than in the one job that can run the gate.
+    """
+    import app.models.models  # noqa: F401 — registers every table on Base
+    from app.services.database import Base
+
+    for table_name, seeded in _SEEDED_COLUMNS.items():
+        table = Base.metadata.tables[table_name]
+        required = {
+            column.name
+            for column in table.columns
+            if not column.nullable
+            and not column.primary_key
+            and column.server_default is None
+        }
+        missing = required - seeded
+        assert not missing, (
+            f"_seed does not write {sorted(missing)} on `{table_name}`, and "
+            f"those columns are NOT NULL with no server_default — a raw INSERT "
+            f"will raise NotNullViolation rather than take the ORM's default"
+        )
 
 
 async def _old_form(conn, outcome_ids: list[int]) -> dict[int, int]:
