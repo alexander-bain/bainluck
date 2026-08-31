@@ -98,7 +98,8 @@ export default function SportPage({ params }: SportPageProps) {
           {events.length === 0 ? (
             <div className="text-center py-12 text-text-secondary">
               <p className="text-lg mb-2">No upcoming events</p>
-              <p className="text-sm">Check back later for more games</p>
+              {/* Ruling 142: what this page lists, not when it will list more. */}
+              <p className="text-sm">This page lists scheduled games for this league.</p>
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2">

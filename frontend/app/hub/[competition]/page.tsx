@@ -257,7 +257,7 @@ function HubContent({ competition }: { competition: string }) {
             data-testid="hub-empty-state"
             data-empty-state-name="entity-competition-present"
           >
-            No open markets right now. Check back when the next card is announced.
+            No open markets right now. This page collects every open market for this competition.
           </div>
         )}
 

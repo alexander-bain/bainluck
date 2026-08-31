@@ -87,8 +87,12 @@ import BEFORE from "../fixtures/uxp176_playoffs_wncaab_before.json";
 import AFTER from "../fixtures/uxp176_playoffs_wncaab_after.json";
 import CONTROL from "../fixtures/uxp176_playoffs_ncaab_control.json";
 
-const FALSE_CLAIM = "No championship odds available yet";
-const FALSE_CLAIM_TAIL = "Odds will appear when sportsbooks and prediction markets publish";
+// UX-P220, ruling 142: the empty state was reworded off its future-tense
+// promise. These constants track the SHIPPED copy; the rows below assert the
+// empty state's PRESENCE and ABSENCE, and a stale constant would make every
+// `not.toContain` here pass for the wrong reason.
+const FALSE_CLAIM = "No championship odds right now";
+const FALSE_CLAIM_TAIL = "This grid covers";
 
 let gridPayload: unknown;
 

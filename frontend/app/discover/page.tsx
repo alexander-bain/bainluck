@@ -503,7 +503,11 @@ function ChallengeModal({
           ) : (
             <div className="rounded-2xl border border-surface-border bg-surface-card p-6 text-center shadow-md">
               <h2 className="text-lg font-black text-text-primary">No challenge cards right now</h2>
-              <p className="mt-2 text-sm text-text-secondary">Check back after the feed refreshes.</p>
+              {/* Ruling 142: say where the challenge gets its questions, not
+                  when more will arrive. */}
+              <p className="mt-2 text-sm text-text-secondary">
+                The daily challenge draws its questions from the live feed.
+              </p>
               <Button
                 type="button"
                 onClick={onClose}

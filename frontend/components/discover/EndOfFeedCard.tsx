@@ -35,8 +35,12 @@ export default function EndOfFeedCard({
       role="status"
     >
       <p className="text-lg font-medium text-text-primary">You&apos;re all caught up</p>
+      {/* Ruling 142: "new markets open throughout the day, so check back soon"
+          promised the reader a refill nobody had committed to. The Refresh
+          button and the category links below are the real affordance; this line
+          now states what the feed holds. */}
       <p className="text-sm text-text-secondary mt-1">
-        {count > 0 ? `${count} markets explored — ` : ""}new markets open throughout the day, so check back soon.
+        {count > 0 ? `${count} markets explored — ` : ""}that is every market in your feed right now.
       </p>
       <button
         onClick={onRefresh}

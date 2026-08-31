@@ -165,9 +165,14 @@ describe("the BEFORE state, from the verbatim served payload", () => {
   });
 
   it("it does NOT look broken — which is why nobody reported it", () => {
+    // UX-P220: this row's subject is that the empty state renders EXPLANATORY
+    // copy rather than an error, not that it renders one particular sentence.
+    // It used to spell "Check back soon", which ruling 142 later banned, so a
+    // green capture was holding a listed debt in place. Anchored on the line
+    // the page ships today and on the navigation affordance beside it.
     const text = visibleText(render(SERVED_BEFORE));
-    expect(text).toContain("Check back soon");
-    expect(text).toContain("browse other categories");
+    expect(text).toContain("This page lists open soccer questions");
+    expect(text).toContain("Browse other categories");
     expect(text).not.toContain("Failed");
     expect(text).not.toContain("Error");
   });

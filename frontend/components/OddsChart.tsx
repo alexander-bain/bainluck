@@ -975,7 +975,9 @@ export default function OddsChart({
               <path d="M24 14v10l7 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
             <p className="text-sm font-medium">Chart available at game time</p>
-            <p className="text-xs">Win probability will update live once the game starts</p>
+            {/* Ruling 142: "will update … once the game starts" promised a
+                future state. Say what the chart plots instead. */}
+            <p className="text-xs">This chart plots win probability minute by minute.</p>
           </>
         ) : (
           <p className="text-sm">No history data available</p>
