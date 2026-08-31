@@ -922,6 +922,14 @@ async def _poll_all_odds():
                     "skipped": True,
                 }
 
+            # Set when the per-sport quota re-read reports the absolute stop
+            # mid-pass. `absolute_stop` means "no exceptions, no priority sports,
+            # nothing" (redis_state.check_quota_guard), so it has to halt the
+            # SCORES fetch too — that block runs off its own independent query and
+            # consults no quota guard at all, so breaking the odds loop alone would
+            # keep spending on `get_scores` while the breaker says stop.
+            absolute_stop_hit = False
+
             for row in sport_data:
                 sport_key = row[0]
                 soonest_game = row[1]
@@ -961,9 +969,41 @@ async def _poll_all_odds():
                     if sport_key not in QUOTA_GUARD_PRIORITY_SPORTS:
                         sports_skipped += 1
                         continue
-                    # Re-check per-sport to get conservation reason
-                    _, guard_reason = check_quota_guard("poll_odds", sport_key=sport_key)
-                    quota_conservation = "conservation" in guard_reason
+                    # Re-check per-sport to get the conservation reason.
+                    #
+                    # 🔴 CERT-528: this re-read used to be `_, guard_reason` plus
+                    # `quota_conservation = "conservation" in guard_reason`. Both
+                    # halves were fail-open, and the casualty was the outer
+                    # FULL_STOP result — the thing we already knew:
+                    #   * the allow/deny boolean was DISCARDED, so quota crossing
+                    #     `absolute_stop` mid-pass ("no exceptions, no priority
+                    #     sports, nothing") polled anyway;
+                    #   * a transient Redis failure returns (True, "redis_error"),
+                    #     which contains no "conservation", so the assignment
+                    #     ERASED the floor set at line 859 and dropped a
+                    #     known-constrained live sport to the flat live cadence.
+                    # Both spend the constrained API at exactly the moment the
+                    # circuit breaker says not to. The rule this encodes: within
+                    # one pass a re-read may only ADD constraint, never remove it.
+                    sport_ok, sport_reason = check_quota_guard(
+                        "poll_odds", sport_key=sport_key
+                    )
+                    if "absolute_stop" in sport_reason:
+                        # No exceptions — abandon the whole pass, not just this sport.
+                        logger.critical(
+                            "poll_all_odds ABSOLUTE STOP mid-pass (%s) — halting all polling",
+                            sport_reason,
+                        )
+                        sports_skipped += 1
+                        absolute_stop_hit = True
+                        break
+                    if not sport_ok:
+                        sports_skipped += 1
+                        continue
+                    # Monotonic: a failed re-read (or one taken after quota
+                    # refilled) can never clear the conservation floor the outer
+                    # full-stop read established.
+                    quota_conservation = quota_conservation or "conservation" in sport_reason
                     # In full-stop conservation, only poll live games
                     if tier != "live":
                         sports_skipped += 1
@@ -1183,6 +1223,11 @@ async def _poll_all_odds():
                 .distinct()
             )
             sports_for_scores = [row[0] for row in sports_needing_scores.all()]
+
+            if absolute_stop_hit:
+                # The breaker said stop with no exceptions; scores are Odds API
+                # calls like any other.
+                sports_for_scores = []
 
             from app.utils.sport_keys import ESPN_SPORT_MAPPING
 
