@@ -426,7 +426,18 @@ def test_the_committed_register_produces_a_real_slate():
     assert slate["dropped"] == {}
 
     unpriced = [row for row in slate["matches"] if row["priced"] is False]
-    assert len(unpriced) >= 90
+    # ⬅️ Q466: this read `>= 90`, and that number was the GAP rather than the
+    # property. It was written when the released main draw pinned no market at
+    # either source, so "90 unpriced fixtures still render" was the ship. The
+    # Kalshi match census then priced 88 of them, and an assertion that most of
+    # the draw is unpriced would now FAIL ON SUCCESS.
+    #
+    # What survives is the thing the number was standing in for: an unpriced
+    # fixture is still a fixture, so however many there are, every one of them
+    # renders and renders honestly (the loop below). The count itself is not an
+    # invariant — it is a measurement of how much of the draw the market has
+    # got round to quoting, and it should keep falling.
+    assert unpriced, "expected at least one unpriced fixture to exercise the shape"
     # `incoherent` counts rows with no trustworthy split. Every one of them is
     # an unpriced fixture and none is a disagreement between two quotes — which
     # is the invariant the old `== 0` was standing in for.

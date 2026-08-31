@@ -478,7 +478,39 @@ def test_committed_register_market_ids_are_a_bounded_load(committed):
     markets nobody asked for.
     """
     view = TournamentRegister(committed)
-    assert len(view.market_ids("kalshi")) == 2
+    # ⬅️ Q466: this read `== 2`, which was the count on the day it was written
+    # and not the bound. The Kalshi match census pinned 88 main-draw fixtures,
+    # and a hardcoded total turns every legitimate pin into a failure while
+    # still not catching the thing the docstring says it is for.
+    #
+    # The BOUND is the property: the load tracks the register's own contents
+    # exactly, so it cannot grow without one of the collections growing.
+    #
+    # Stated as a two-way containment rather than a count. A count has to
+    # re-implement `market_ids`' own collection list to stay honest — and the
+    # first attempt at this got that list wrong in both directions — whereas
+    # containment says the thing the docstring actually promises: nothing is
+    # loaded that the register does not pin, and nothing it pins is missed.
+    loaded = set(view.market_ids("kalshi"))
+    pinned = {
+        block["market_id"]
+        for entry in (*committed["players"], *committed["matchups"],
+                      *committed.get("reaches", []))
+        for block in entry.get("sources") or []
+        if isinstance(block, dict)
+        and block.get("source") == "kalshi"
+        and isinstance(block.get("market_id"), int)
+    }
+    assert loaded == pinned, "the kalshi load and the kalshi pins have diverged"
+    # And no `missing` block contributes one, which is what lets a censused
+    # absence cost the load nothing (`MISSING_ENTRY_HAS_IDENTITY`).
+    assert not any(
+        block.get("status") == "missing" and block.get("market_id") is not None
+        for entry in (*committed["players"], *committed["matchups"],
+                      *committed.get("reaches", []))
+        for block in entry.get("sources") or []
+        if isinstance(block, dict)
+    )
 
     # One market per reach cell that actually links to one. A `missing` block
     # pins no market by construction (`MISSING_ENTRY_HAS_IDENTITY`), so the

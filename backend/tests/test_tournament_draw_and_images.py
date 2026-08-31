@@ -358,12 +358,28 @@ class TestReleasedDraw:
         # "Nobody looked" and "we looked and there is nothing" must not be the
         # same shape — the rule `reaches` already follows for its no_market
         # cells.
+        #
+        # ⬅️ Q466: every R128 fixture used to satisfy this, because the draw
+        # ingest found no match market at EITHER source. The Kalshi census has
+        # since priced 88 of them, so the guard now names the blocks that are
+        # still absent instead of asserting the whole draw is. The property is
+        # unchanged and is the reason this test exists: an absence is RECORDED,
+        # never an empty list.
         reg = TournamentRegister(register)
-        fixture = next(m for m in reg.matchups if m.get("round") == "R128")
-        sources = fixture["sources"]
-        assert {b["source"] for b in sources} == {"kalshi", "polymarket"}
-        for block in sources:
-            assert block["status"] == "missing"
+        r128 = [m for m in reg.matchups if m.get("round") == "R128"]
+        assert r128
+        for fixture in r128:
+            sources = fixture["sources"]
+            assert {b["source"] for b in sources} == {"kalshi", "polymarket"}
+
+        absent = [
+            block
+            for fixture in r128
+            for block in fixture["sources"]
+            if block["status"] == "missing"
+        ]
+        assert absent, "expected at least one source still to have nothing for the draw"
+        for block in absent:
             assert block["market_id"] is None
             assert block["evidence"]["kind"] == "draw-fixture-census-absent"
             assert block["evidence"]["observed_at"]
