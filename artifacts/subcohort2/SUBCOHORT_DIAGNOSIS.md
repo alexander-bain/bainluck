@@ -14,6 +14,138 @@ fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to
 
 ---
 
+## STATUS 2026-08-31 19:3xZ (CAL-P160) — **THE HOLD IS CORRECT BUT ITS STATED REASON IS WRONG: THE BANK IS IN POSTGRES, AND POSTGRES IS BEING REPLACED RIGHT NOW.**
+
+*Agrees with CAL-P159 on the verdict (do not touch the file) and corrects it on two load-bearing
+facts. P159 recorded a prediction so it could be graded; this entry grades it, and it is refuted
+at the first measurable beat. Rank 3's ladder is advanced four rungs with **zero database load**.*
+
+### SESSION STATE (measured, `GET /api/admin/calibration-beat-gauges?full=true`, beat `18:37:31Z`)
+
+| gauge | value |
+|---|---|
+| `staged:units_banked` / `units_planned` | **65 / 128** (was 60 when P159 read it at `17:37Z`) |
+| `staged:beats_to_publish` | **9** — the producer's OWN disclosed ETA, not an estimate |
+| `input_fingerprint` | `75faaed6`, **unchanged across all 13 beats since `06:37Z`** |
+| rate | **+5 units/beat**, perfectly linear, 13 consecutive beats |
+
+Published curve unchanged: `mce_closing_line` **1.86 pp**, population `q268`, `generated_at`
+`2026-08-31T04:37:36Z`. Stale by design — the bank is mid-rebuild and the page correctly serves
+the last complete snapshot.
+
+### 🔴 FINDING A — "THE UNIT BANK IS IN REDIS, SO THE 60 UNITS SURVIVE THE PRIMARY SWAP" IS FALSE
+
+P159 wrote that sentence, and it is the reason the hold was believed safe across Alex's plan
+upgrade. **The bank is in PostgreSQL.** `app/tasks/task_checkpoint.py`'s module docstring is
+explicit, and explains why Redis was *rejected*:
+
+> *"The checkpoint goes in `durable_state_snapshots` (Queue 298's store), **not Redis**. Redis on
+> this project is a 50MB `allkeys-lru` instance running at ~97% of maxmemory — a checkpoint key
+> there is not 'persisted with a TTL', it is a key waiting to be evicted."*
+
+**Why this matters, and it is not academic.** `load_checkpoint()` (same file, l.97–121) is
+documented *"Any read problem at all yields a fresh checkpoint"* — on any non-`missing` read
+status it returns `new_checkpoint(...)` with action `invalidate`. The returned checkpoint is
+**empty**. So **one failed Postgres read zeroes the 65-unit bank** — and `heroku pg:info` right
+now reads `Status: Upgrading Plan: Replacing Primary`, i.e. a live failover whose defining event
+is exactly a dropped connection.
+
+The hold protects the bank from **our deploys**. Nothing protects it from **the swap**, and the
+recorded reasoning was wrong in the direction that hid the exposure.
+
+*Not a hazard, checked and cleared:* `CHECKPOINT_MAX_AGE_S = 14 * 86400`. Hours of failed beats
+during a swap cannot fossilise the bank. The age rule is not the risk; the read rule is.
+
+**Detection signature for the next session — check this FIRST:**
+* log line `checkpoint for <task> not resumable (<status>) — starting fresh`
+* gauge signature: `staged:units_banked` collapsing to ~5–7 on a beat, with `input_fingerprint`
+  **unchanged** at `75faaed6`. Fingerprint-unchanged is what distinguishes a swap-zeroed bank
+  from a deploy-invalidated one — a deploy moves the fingerprint, the swap does not.
+
+### 🔴 FINDING B — P159'S RECORDED PREDICTION, GRADED: **REFUTED AT THE FIRST MEASURABLE BEAT**
+
+P159 predicted: *"once the upgrade settles, per-unit cost should fall toward its former 80,658 ms;
+the remaining 68 units then need ~5 beats, not ~14."* Alex started the upgrade at **11:02 PT
+(18:02Z)**. The `18:37Z` beat is the first to overlap it. Every number moved the **wrong way**:
+
+| gauge | `17:37Z` (pre) | `18:37Z` (first overlapping beat) | direction |
+|---|---:|---:|---|
+| `staged:unit_ms_mean` | 187,139 | **217,588** | **+16%** — predicted to fall toward 80,658 |
+| `staged:unit_ms_worst` | 135,937 | **250,681** | **+84%** |
+| `staged:beats_to_publish` | 6 | **9** | **moved AWAY from publish** |
+| `staged:units_this_beat` | 7 | 6 | fewer |
+
+Corroborated independently: `heroku pg:info` reports `Rollback: earliest from 2026-08-31 18:37` —
+the rollback horizon was reset at **exactly** the beat that degraded, which is the swap starting
+real work. Plan still reads `Standard 0`, `66.1 GB / 64 GB (103.35%)`: **the upgrade has not
+settled, and while it is settling the producer is slower, not faster.**
+
+⚠️ **Honest bound: this is ONE beat.** The direction and the mechanism (a replacement primary
+streaming WAL competes for the same I/O) are coherent, but a single degraded beat is not a trend.
+**The grading completes at the `19:37Z` and `20:37Z` beats** — if `unit_ms_mean` returns toward
+187,000 the degradation was the swap's transient and P159's prediction is merely early; if it
+holds above 210,000 the prediction is refuted outright.
+
+### 🟢 FINDING C — RANK 3 (`soccer/container_member`) ADVANCED FOUR RUNGS, **ZERO DATABASE LOAD**
+
+Every number below is read from artifacts already stored in this repo. No fold was executed
+(see "why no folds ran" below). Cell: **6.27 pp, n=7,682, 5.7σ, impact 25,120.**
+
+| # | check | result | verdict |
+|---:|---|---|---|
+| 1 | price-source fallback (#1978) | share **0.005** (3 of 603) at `avg_open` **0.977** → worst case `0.005 × 97.7` ≈ **≤0.5 pp of 6.27** | **refuted BY COST, not just by share** |
+| 3 | shape / pair coherence | identical pairs are **1,882 of 7,682 (24.5%)** at 19.29 ECE / gap −15.14 — but excluding them makes the cell **WORSE, +6.54 → 12.81** | **present and large, but NOT the driver** |
+| 6 | binning noise floor | **5.7σ** | **real, not noise** |
+| — | **driver localised** | the structurally-**healthy** `ok` class: **n=5,668 = 73.8% of the cell, at 13.51 pp, gap −2.78** | **this is where the mechanism lives** |
+
+🔴 **A METHOD CORRECTION THAT APPLIES TO THE WHOLE BOARD, NOT JUST THIS CELL.** The check-1
+"Reading" paragraph further down this file concludes *"fallback share is 0.00–0.04 — this rules
+out the #1978 price-source fallback"*. That conclusion is drawn from **share alone**, and this
+lane has already proven twice (CAL-P094 item 1, CAL-P095's spike) that **share is not cost**. The
+stored `avg_open` column is the missing half, and it is null exactly when `fallback = 0`, which
+means it is the mean opening price **of the fallback rows only** — the rows that actually enter
+the curve at that price. Those prices are **degenerate**: soccer/cm **0.977**, soccer/q **0.010**,
+baseball/q 0.843, geopolitics/cm 0.763, esports/cm 0.665. A leg entering at 0.977 that loses
+contributes ~95 pp of bucket error. **The right statistic is `share × mean |price − outcome|`,
+never `share`.**
+
+**Completing that arithmetic here does not overturn the conclusion — it strengthens it.** At
+≤0.5 pp of a 6.27 pp cell, fallback is genuinely not the driver for soccer/cm. But the rung is
+now closed **by a bound** instead of by an incomplete argument, which is what the ladder needs.
+Every other cell's check 1 is closed on the incomplete argument and should be re-bounded the same
+cheap way — from stored artifacts, no queries.
+
+🔴 **THE `13.51` COLLISION IS REOPENED — ONE CHEAP CHECK, PRE-REGISTERED.** Rank 1
+(`baseball/quantity`) and rank 3 (`soccer/container_member`) **both** put ~72–74% of their mass in
+a structurally-healthy `ok` class measuring **13.51 pp**. CAL-P094 ruled this "a 2-decimal
+collision, not a shared computation", on the grounds that n differs (4,880 vs 5,668) and gap
+differs (−6.23 vs −2.78). **That argument is not airtight.** ECE is |bias| aggregated over bins;
+gap is signed mean bias. A shared *upstream binning or rounding* cause would produce matched ECE
+with **unmatched** gap — precisely the pattern observed. Two independent cells landing on the same
+13.51 is worth one cheap discriminating check, not a closed question, and both are the top of the
+burn-down. **Pre-registered discriminator:** compare the two `ok` classes' **per-bin** error
+vectors, not their scalars — a shared mechanism matches bin-by-bin, a coincidence does not.
+
+### WHY NO FOLDS RAN, AND WHY THAT IS THE CHARTER AND NOT A GAP
+
+The primary swap is in flight (Finding A). A heavy fold competes for I/O with the producer, and
+the producer's failure mode under a failed read is **not a slow beat — it is a zeroed bank**.
+Running diagnosis that could destroy the artefact the hold exists to protect inverts the point of
+the hold. This is the same call the lane made correctly this morning, and CLAUDE.md LANE ROLES
+already says it: *"Heavy measurement queries never run while an attended fold or apply is in
+flight."* The ladder was advanced four rungs from stored artifacts instead, and the one query that
+would close it is pre-registered above.
+
+### CARRIED TO THE NEXT SESSION
+
+1. Read the gauge ring **first** and check Finding A's detection signature before anything else.
+2. Grade Finding B at the `19:37Z` / `20:37Z` beats.
+3. Rank 3's driver is the `ok` class; run the pre-registered per-bin discriminator **after** the
+   swap settles.
+4. `CERT-530` needs nothing — GREEN and **already merged** into master as `cadf104e`.
+
+---
+
 ## STATUS 2026-08-31 18:1xZ (CAL-P159) — **NO CELL TAKEN, DELIBERATELY: TAKING ONE TODAY WOULD DESTROY A CURVE DELTA ALREADY PAID FOR.**
 
 *This supersedes the CAL-P158 entry below on mechanism, and agrees with it on the verdict. P158
