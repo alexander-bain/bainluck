@@ -31,10 +31,13 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
     (
         "A",
         IMAGES,
-        "      if (wikipediaSummaryIsNotABrand(data)) {\n        cacheSet(cacheKey, null);\n        return null;\n      }\n",
-        "",
+        "  return wikipediaSummaryIsNotABrand(entry) ? null : entry.url ?? null;",
+        "  return entry.url ?? null;",
         "🔴 THE SHIPPED DEFECT — the resolver stops refusing, so Peacock is a bird "
-        "and Apple is a fruit again",
+        "and Apple is a fruit again. ⚠️ RE-ANCHORED by UX-P236: the refusal used to "
+        "be an inline block on the fetch path, and CERT-610 is precisely that it "
+        "was ONLY on the fetch path. It now lives in `decideWikipediaImage`, which "
+        "both the fetch and the cache read go through",
     ),
     (
         "B",
@@ -115,6 +118,45 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
         "aria-label={initials}",
         "the accessible name becomes two letters — a screen reader hears 'A', not "
         "'Amazon', and cannot tell a resolved logo from a placeholder",
+    ),
+    # ── UX-P236, CERT-610's block: the refusal must reach the CACHED reader ──
+    (
+        "L",
+        IMAGES,
+        "    if (isWikipediaCacheEntry(cached)) return decideWikipediaImage(cached);",
+        "    return cached as string | null;",
+        "🔴 CERT-610's DEFECT, EXACTLY — the cache is trusted before the refusal "
+        "runs, so a reader who already loaded the page keeps the bird for 24h. The "
+        "predicate is untouched and correct; it is simply never consulted",
+    ),
+    (
+        "M",
+        IMAGES,
+        "    cacheDelete(cacheKey);",
+        "",
+        "a pre-repair entry is IGNORED but not dropped. Harmless on the happy path "
+        "— the refetch overwrites the key — which is why this is scored against "
+        "the FAILED-refetch test, where nothing overwrites it and the poisoned "
+        "entry survives in the reader's store",
+    ),
+    (
+        "N",
+        IMAGES,
+        "    (value as { k?: unknown }).k === WIKI_CACHE_SHAPE",
+        "    false",
+        "🔴 OVER-CORRECTION, and the tempting one: every cached entry is treated as "
+        "stale, so the refusal is certainly applied and the cache is certainly "
+        "useless. 25 rows becomes 25 network round trips on a page whose cold-load "
+        "time is a named priority today. Killed by the two no-fetch controls",
+    ),
+    (
+        "O",
+        IMAGES,
+        "        description: data.description ?? null,",
+        "        description: null,",
+        "the EVIDENCE is thinned to a verdict: the entry no longer carries what "
+        "Wikipedia said, so a later change to the rules cannot be applied to it "
+        "and the read-time decision silently degrades back to write-time",
     ),
 ]
 

@@ -132,16 +132,34 @@ describe("UX-P236: the reader who already has the bird", () => {
     await expect(getWikipediaImage("Peacock")).resolves.toBeNull();
   });
 
-  test("🔴 and the stale entry is dropped, not merely ignored", async () => {
+  test("the refetched entry is rewritten in the repaired shape", async () => {
     seedPreRepairEntry(store, CACHE_KEY, BIRD_URL);
     serve(PEACOCK_SUMMARY);
 
     await getWikipediaImage("Peacock");
 
-    // Rewritten in the repaired shape — so the next read is a cache HIT that
-    // refuses, rather than a second network round trip.
+    // So the NEXT read is a cache hit that refuses, rather than a second round
+    // trip. Note this is the write path doing the work, not the delete — see
+    // the following test for the case where the delete is what matters.
     const raw = JSON.parse(store.get(CACHE_KEY) as string);
     expect(raw.data.k).toBe("wiki-summary-1");
+  });
+
+  test("🔴 the bird does not survive a FAILED refetch either", async () => {
+    // The case that makes dropping the stale entry load-bearing rather than
+    // tidy. On the happy path the refetch overwrites the poisoned key anyway,
+    // so a test that only checks the happy path would pass with the delete
+    // removed. Here the network is gone: nothing is written, and if the stale
+    // entry were merely IGNORED rather than dropped it would still be sitting
+    // there — ready to be served again by any future reader of that key, and
+    // occupying LRU budget that a live entry needs.
+    seedPreRepairEntry(store, CACHE_KEY, BIRD_URL);
+    global.fetch = (async () => {
+      throw new Error("network is gone");
+    }) as unknown as typeof fetch;
+
+    await expect(getWikipediaImage("Peacock")).resolves.toBeNull();
+    expect(store.has(CACHE_KEY)).toBe(false);
   });
 
   test("a pre-repair entry for a REAL brand is re-resolved, and the brand survives", async () => {
