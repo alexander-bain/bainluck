@@ -107,10 +107,40 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         loosened when it fires is not one. What matters is WHICH number moved:
         ``uncovered_sql_shaping`` is asserted separately below precisely because
         a behaviour-only input must not touch it, and this one does not.
+
+        CAL-P150 (D21, 2026-08-30) moved the totals 47/44 -> 51/48 by adding the
+        four ``BOOKMAKER_CURVE_*`` constants: the Redis key the per-bookmaker
+        curve arrives under, the two refusal reason codes, and the expected
+        magnitude quoted in the refusal text. Three of the four are
+        behaviour-only and do not touch the count below. The fourth does, and
+        that is argued in its own place rather than here.
+
+        D12 in the same queue added a fifth, ``NONEXCLUSIVE_BUNDLE_EXCLUDED_
+        CELLS`` (51 -> 52) — and it is the first addition in this file's history
+        that arrives COVERED. It is interpolated into the emitted SQL, so
+        hashing the CTE builder's source would not have caught a change to it
+        (``inspect.getsource`` hashes the f-string template, not the substituted
+        value); it is hashed by value in ``_main_input_fingerprint`` instead.
+        That is why ``covered_by_value`` moves 3 -> 4 here while
+        ``uncovered_count`` stands still at 48.
+
+        CERT-497/CERT-502 (2026-08-30) added a sixth and a seventh,
+        ``_BOOKMAKER_ROW_REQUIRED_KEYS`` and ``BOOKMAKER_CURVE_SOURCE``
+        (52 -> 54, uncovered 48 -> 50). Both are behaviour-only, both are
+        classified as such, and **neither moves the count below** — which is the
+        separation this docstring promises, restored after CERT-502 found the
+        first attempt breaking it.
+
+        🟢 CAL-P156 MOVED THESE TO 55/51 AND THEN MOVED THEM BACK. It added
+        ``UNGRADED_LONE_CLAIM_RULE_TEXT`` for a "rung 1b"; CERT-520 blocked the
+        rung as dead code and it was removed, so the constant went with it and
+        the totals returned to 54/50. Recorded rather than erased: a tripwire
+        that only ever ratchets up teaches the next reader that coming back down
+        is suspicious, and here it is exactly right.
         """
-        assert artifact["input_count"] == 47
-        assert len(artifact["covered_by_value"]) == 3
-        assert artifact["uncovered_count"] == 44
+        assert artifact["input_count"] == 54
+        assert len(artifact["covered_by_value"]) == 4
+        assert artifact["uncovered_count"] == 50
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -128,8 +158,66 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         class that can silently change the published population — so separating
         them is what stops a routine +1 from being read as "the unguarded
         surface grew".
+
+        🔴 21 -> 22 AT CAL-P150 (D21, 2026-08-30), AND THIS IS A TRIPWIRE BEING
+        RAISED, WHICH IS AS SERIOUS AS ONE BEING LOWERED. Read the argument
+        before accepting the number.
+
+        The new entry is ``BOOKMAKER_CURVE_REDIS_KEY``. It is NOT SQL — it is
+        the Redis key the per-bookmaker curve arrives under — and it is counted
+        because the detector marks any module constant interpolated by f-string,
+        ``+`` or ``%`` (CAL-P032 widened it past f-strings on purpose), and the
+        key is named in the refusal message that exists to tell an operator
+        WHICH key is missing. There is no way to put it in that message the
+        detector will not see; a ``.join`` or a local alias would hide it, and
+        hiding a name from a tripwire is not satisfying one.
+
+        Counting it is defensible on this test's own terms besides. Change the
+        key and the build reads a different curve and publishes ~96,026 fewer
+        outcomes, which is exactly "an input that changes the published
+        population". What it is no longer is SILENT: D21 makes an unresolvable
+        key a named refusal on the producer path rather than a shortfall the
+        gate can only describe as "the population moved". So it is the first
+        member of this count whose failure mode is loud by construction — and it
+        should be the last one accepted on that argument without a fresh one.
+
+        The three sibling constants added by the same change
+        (``BOOKMAKER_CURVE_ABSENT_REFUSAL``, ``..._UNREADABLE_REFUSAL``,
+        ``..._EXPECTED_OUTCOMES``) are behaviour-only, are classified as such,
+        and moved the total in the test above and not this one — which is the
+        separation that test's docstring promises.
+
+        🔴 CAL-P152 RAISED THIS PIN 22 -> 23 AND **CERT-502 BLOCKED ON IT AS A
+        MEASUREMENT-INTEGRITY REGRESSION. THE RAISE IS WITHDRAWN. THE NUMBER IS
+        22 AND THE WITHDRAWAL IS RECORDED HERE RATHER THAN REVERTED SILENTLY.**
+
+        The argument offered was that ``_BOOKMAKER_ROW_REQUIRED_KEYS`` can
+        quietly move the published population, which is true, and that this made
+        it the FRESH argument the paragraph above demands. The cert's answer is
+        the right one: *this* count does not mean "can move the population" — the
+        docstring above says it moves "only when an input reaches the emitted
+        SQL". The constant does not reach SQL, the raising docstring SAID it does
+        not reach SQL, and counting it anyway would have left the guard green
+        while its category stopped meaning what downstream reviewers read it to
+        mean. **A tripwire you widen the definition of is not a tripwire.**
+
+        So the constant is no longer interpolated into the refusal message — the
+        message names the offending key and the fixed prose already names the
+        curve, so nothing an operator needs was lost — and the detector now
+        classifies it, correctly, as behaviour-only. ``BOOKMAKER_CURVE_SOURCE``
+        (CERT-502's own repair) was written the same way for the same reason.
+        Both move the totals in the test above and neither moves this one.
+
+        🔴 **THE HONEST RESIDUE, LEFT VISIBLE:** the D21 entry that took this pin
+        from 21 to 22 has exactly the same problem — ``BOOKMAKER_CURVE_REDIS_KEY``
+        is a Redis key, not SQL, and its own paragraph above concedes "It is NOT
+        SQL". It is left counted because unwinding it is a separate question
+        about the DETECTOR (it cannot distinguish diagnostic interpolation from
+        emitted SQL), not about this repair, and quietly lowering a pin while
+        being blocked for quietly raising one would be the same error twice.
+        CERT-502's fix-sketch names that detector change as the real remedy.
         """
-        assert artifact["uncovered_sql_shaping"] == 21
+        assert artifact["uncovered_sql_shaping"] == 22
 
     def test_the_four_hashed_roots_are_derived_not_declared_here(self, artifact):
         assert sorted(artifact["hashed_roots"]) == [
@@ -159,9 +247,25 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         that is designed to lift (ruling 024's named failure).
 
         The cross-module FIVE is the assertion that carries the meaning and it
-        is unchanged; only the in-module remainder moved (38 -> 39 at CAL-P038),
-        which is the direction that costs nothing — an in-module input is behind
-        the freeze."""
+        is unchanged; only the in-module remainder moved (38 -> 39 at CAL-P038,
+        and 39 -> 43 at CAL-P150 with the four ``BOOKMAKER_CURVE_*``
+        constants), which is the direction that costs nothing — an in-module
+        input is behind the freeze.
+
+        ⚠️ "Behind the freeze" is doing less work than it did. Ruling 009 has
+        now been opened five times in one day (D5, D21, D22, D13, D12), which is
+        exactly ruling 024's named failure arriving on schedule: a freeze
+        designed to lift is not a protection you can keep spending. The cross-
+        module FIVE is still the assertion that carries the meaning.
+
+        43 -> 45 at CERT-497/CERT-502 (``_BOOKMAKER_ROW_REQUIRED_KEYS`` and
+        ``BOOKMAKER_CURVE_SOURCE``). Same direction, same reason: both are
+        defined in the build module, so the FIVE is untouched and this
+        arithmetic is the only thing that moves.
+
+        CAL-P156 took it to 46 and then back to 45 when CERT-520 blocked the
+        rung whose rule text caused the move. The cross-module FIVE never
+        changed, which is the clause that carries the meaning here."""
         cross = sorted(
             r["name"]
             for r in artifact["inputs"]
@@ -175,7 +279,7 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
         ]
-        assert len(cross) + 39 == artifact["uncovered_count"]
+        assert len(cross) + 45 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

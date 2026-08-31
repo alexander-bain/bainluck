@@ -1,0 +1,38 @@
+{
+ "baseball": {
+  "self_check": {
+   "exact": {
+    "n": 41086,
+    "ece": 4.68,
+    "gap": 3.25
+   },
+   "payload": {
+    "n": 45240,
+    "ece": 4.73,
+    "gap": 2.91,
+    "generated_at": "2026-08-30T01:35:22.816259+00:00",
+    "population_version": "q268"
+   },
+   "delta_n": -4154,
+   "delta_n_pct": -9.182,
+   "seconds": 903.6
+  },
+  "distinct_outcomes": 24888,
+  "published_rows": 41086,
+  "inflation": 1.6508,
+  "multiplicity": {
+   "1": 8690,
+   "2": 16198
+  },
+  "as_published": {
+   "n": 41086,
+   "ece": 4.68,
+   "gap": 3.25
+  },
+  "deduplicated": {
+   "n": 24888,
+   "ece": 4.47,
+   "gap": 2.61
+  }
+ }
+}

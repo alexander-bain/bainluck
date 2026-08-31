@@ -1,0 +1,6 @@
+  live chain still carries the bare vm-level winner gate
+  RED  on the live chain (instrument constants absent): module 'calibration_missing_loser_census' has no attribute 'CLEAN_VMS_GATE_RETIRED'
+  GREEN on the patched chain
+  boundary table: 6 cases
+  census arm == producer arm on all 9 (market_count, total_outcomes)
+VERDICT: PRE-BUILD VERIFIED

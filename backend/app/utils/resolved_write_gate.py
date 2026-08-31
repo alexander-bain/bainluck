@@ -9,8 +9,9 @@ asserted nothing.** Two producers wrote it — the generic clock task in
 closed-status sync in ``tasks/polymarket.py`` when Gamma reported an event
 closed — and neither required a venue result, a terminal price, exactly one
 winner, or an explicit void. Meanwhile ``FuturesOutcome.is_winner`` defaults to
-a **non-null ``False``**, so the ordinary outcome insert leaves an ungraded
-field looking exactly like a field where everybody lost.
+**``False`` rather than NULL** — the column is nullable, but nothing writes the
+NULL — so the ordinary outcome insert leaves an ungraded field looking exactly
+like a field where everybody lost.
 
 Why that combination is expensive rather than merely untidy: ``resolved`` is the
 calibration census DENOMINATOR and the entry gate to every winner backfill. So

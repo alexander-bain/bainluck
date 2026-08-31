@@ -1,0 +1,29 @@
+CAL-P144 REFUSAL REGISTER (live board) — the four consecutive refusals, and where each one now sits
+  board read: 20 queued cells
+
+  cell                       session   mode                     board            excess
+  kalshi/entertainment       CAL-P129  holdout                  rank 9             17,808
+  polymarket/golf            CAL-P130  retention                rank 12            15,834
+  polymarket/economics       CAL-P131  no structural dimension  rank 15            11,440
+  polymarket/tech            CAL-P132  exhaustive lattice       rank 19             5,411
+
+  kalshi/entertainment — 12 partitions, no retention floor
+      sumband's 33 pooled passes go to 0 of 1023 under the holdout; best worst-half 3.09 vs a 3.0 bar
+      artifacts/cal-p129/RULE-DESIGN-kalshi-entertainment.md
+      waits on 13-CAL
+      SHARPENED (refusal stands): CAL-P143 measured the lost-loss class here: 395 published at 100.0% winners is really 827 at 47.8%, and the cell headline moves 5.21 -> 6.30, i.e. WORSE. This is the cell D13's 'the fix makes the number worse' framing was written on — and it is one of two that go the wrong way out of four measured. artifacts/cal-p143/GENERALITY-12CAL.md
+  polymarket/golf — 15 partitions (14 inherited + 1 built), exhaustive
+      no subset clears the bar at any retention; the cell shows ~100 golfers each priced ~48% to finish top five
+      artifacts/cal-p130/RULE-DESIGN-polymarket-golf.md
+  polymarket/economics — 16 partitions (15 inherited + 1 built), exhaustive
+      508 outcomes the curve admits only because they won; an 11-band S&P market prices both tails at 40%
+      artifacts/cal-p131/RULE-DESIGN-polymarket-economics.md
+      SHARPENED (refusal stands): CAL-P143 ran CAL-P131's lead on the producer's own chain: 78 eligible losers UNIQUELY dropped (not 508), ECE 39.87, winrate 0.0%; the cell moves 3.90 -> 3.68, i.e. BETTER. artifacts/cal-p143/GENERALITY-12CAL.md
+  polymarket/tech — 17 partitions, whole 2^k lattice at --min-rows 1 --min-share 0
+      zero subsets clear 3.0 on the worst half at ANY retention, including retentions that delete 99% of the cell; best leakage-free 3.12 / 4.66
+      artifacts/cal-p132/RULE-DESIGN-polymarket-tech.md
+      🔴 was rank 19 when refused (CAL-P132) and CAL-P143 recorded it as having LEFT the board; the live board on 2026-08-30 has it back at rank 19. Board membership oscillates — do not treat one render's absence as a resolution
+
+  ON the board: 4 of 4   OFF the board: 0
+
+  EXIT 0

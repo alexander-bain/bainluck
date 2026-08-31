@@ -1,0 +1,2526 @@
+{
+  "cell": "polymarket/esports",
+  "families_condemned": 853,
+  "families_ambiguous_kept_by_the_duplicate_guard": 0,
+  "no_assignment": {
+    "label": "no_assignment",
+    "families": 545,
+    "rung_count_histogram": {
+      "3": 71,
+      "4": 30,
+      "5": 38,
+      "6": 14,
+      "7": 24,
+      "8": 23,
+      "9": 16,
+      "10": 22,
+      "11": 17,
+      "12": 10,
+      "13": 20,
+      "14": 22,
+      "15": 23,
+      "16": 26,
+      "17": 24,
+      "18": 15,
+      "19": 21,
+      "20": 20,
+      "21": 19,
+      "22": 11,
+      "23": 10,
+      "24": 14,
+      "25": 4,
+      "26": 10,
+      "27": 5,
+      "28": 3,
+      "29": 1,
+      "30": 1,
+      "31": 3,
+      "32": 3,
+      "33": 4,
+      "35": 2,
+      "36": 3,
+      "37": 3,
+      "41": 4,
+      "42": 2,
+      "46": 2,
+      "52": 1,
+      "54": 2,
+      "58": 1,
+      "90": 1
+    },
+    "min_rungs": 3,
+    "direction": {
+      "dec": 542,
+      "inc": 3
+    },
+    "distinct_event_ids_per_family": {
+      "1": 544,
+      "2": 1
+    },
+    "families_spanning_more_than_one_event_pct": 0.2,
+    "all_rungs_in_settled_band_pct": 1.3,
+    "some_rungs_in_settled_band_pct": 62.9,
+    "rungs_straddle_the_settled_price_band_pct": 61.7,
+    "over_under_pairs_checked": 9,
+    "over_plus_under_equals_one_pct": 88.9,
+    "has_a_flip_invariant_rung_pct": 79.4,
+    "has_an_ISOLATED_half_rung_pct": 45.1,
+    "near_half_but_outside_band_pct": 13.2,
+    "has_a_market_whose_under_equals_its_over_pct": 0.6,
+    "over_equals_under_markets": 5,
+    "worst_reversal_pp": {
+      "median": 41.0,
+      "p90": 58.0,
+      "max": 99.5
+    },
+    "dp_dies_at_rung_index": {
+      "10": 30,
+      "11": 14,
+      "12": 14,
+      "13": 11,
+      "14": 7,
+      "15": 5,
+      "16": 9,
+      "17": 8,
+      "18": 1,
+      "19": 6,
+      "2": 124,
+      "20": 1,
+      "21": 2,
+      "22": 3,
+      "23": 3,
+      "24": 1,
+      "26": 2,
+      "29": 1,
+      "3": 75,
+      "31": 1,
+      "34": 1,
+      "36": 1,
+      "39": 1,
+      "4": 66,
+      "45": 1,
+      "47": 1,
+      "5": 37,
+      "6": 22,
+      "7": 43,
+      "8": 30,
+      "82": 1,
+      "9": 23
+    }
+  },
+  "unique_one_flip": {
+    "label": "unique_one_flip",
+    "families": 217,
+    "rung_count_histogram": {
+      "2": 85,
+      "3": 85,
+      "4": 14,
+      "5": 9,
+      "6": 5,
+      "7": 1,
+      "8": 2,
+      "10": 1,
+      "11": 2,
+      "12": 1,
+      "13": 2,
+      "14": 1,
+      "15": 1,
+      "16": 2,
+      "17": 1,
+      "19": 1,
+      "23": 1,
+      "24": 1,
+      "27": 1,
+      "34": 1
+    },
+    "min_rungs": 2,
+    "direction": {
+      "dec": 216,
+      "inc": 1
+    },
+    "distinct_event_ids_per_family": {
+      "1": 217
+    },
+    "families_spanning_more_than_one_event_pct": 0.0,
+    "all_rungs_in_settled_band_pct": 3.2,
+    "some_rungs_in_settled_band_pct": 24.4,
+    "rungs_straddle_the_settled_price_band_pct": 21.2,
+    "over_under_pairs_checked": 70,
+    "over_plus_under_equals_one_pct": 74.3,
+    "has_a_flip_invariant_rung_pct": 64.5,
+    "has_an_ISOLATED_half_rung_pct": 12.4,
+    "near_half_but_outside_band_pct": 17.1,
+    "has_a_market_whose_under_equals_its_over_pct": 12.4,
+    "over_equals_under_markets": 35,
+    "worst_reversal_pp": {
+      "median": 2.0,
+      "p90": 49.5,
+      "max": 98.0
+    },
+    "dp_dies_at_rung_index": {
+      "none": 217
+    }
+  },
+  "hard_infeasible": {
+    "label": "still_infeasible_at_widest_slack",
+    "families": 182,
+    "rung_count_histogram": {
+      "3": 9,
+      "4": 8,
+      "5": 11,
+      "6": 5,
+      "7": 11,
+      "8": 15,
+      "9": 5,
+      "10": 6,
+      "11": 2,
+      "12": 3,
+      "13": 5,
+      "14": 6,
+      "15": 5,
+      "16": 8,
+      "17": 8,
+      "18": 9,
+      "19": 8,
+      "20": 7,
+      "21": 5,
+      "22": 4,
+      "23": 4,
+      "24": 4,
+      "25": 4,
+      "26": 5,
+      "27": 1,
+      "28": 2,
+      "31": 2,
+      "32": 2,
+      "33": 3,
+      "35": 2,
+      "36": 1,
+      "37": 2,
+      "41": 2,
+      "42": 1,
+      "46": 2,
+      "52": 1,
+      "54": 2,
+      "58": 1,
+      "90": 1
+    },
+    "min_rungs": 3,
+    "direction": {
+      "dec": 182
+    },
+    "distinct_event_ids_per_family": {
+      "1": 182
+    },
+    "families_spanning_more_than_one_event_pct": 0.0,
+    "all_rungs_in_settled_band_pct": 0.0,
+    "some_rungs_in_settled_band_pct": 64.3,
+    "rungs_straddle_the_settled_price_band_pct": 64.3,
+    "over_under_pairs_checked": 0,
+    "over_plus_under_equals_one_pct": 0.0,
+    "has_a_flip_invariant_rung_pct": 86.3,
+    "has_an_ISOLATED_half_rung_pct": 71.4,
+    "near_half_but_outside_band_pct": 12.1,
+    "has_a_market_whose_under_equals_its_over_pct": 0.0,
+    "over_equals_under_markets": 0,
+    "worst_reversal_pp": {
+      "median": 49.5,
+      "p90": 57.95,
+      "max": 98.9
+    },
+    "dp_dies_at_rung_index": {
+      "10": 7,
+      "11": 2,
+      "12": 3,
+      "13": 3,
+      "14": 2,
+      "15": 2,
+      "16": 1,
+      "17": 5,
+      "18": 1,
+      "19": 3,
+      "2": 23,
+      "20": 1,
+      "21": 2,
+      "22": 3,
+      "23": 2,
+      "24": 1,
+      "26": 1,
+      "3": 31,
+      "36": 1,
+      "4": 33,
+      "45": 1,
+      "47": 1,
+      "5": 18,
+      "6": 11,
+      "7": 12,
+      "8": 5,
+      "82": 1,
+      "9": 6
+    }
+  },
+  "tolerance_ladder": {
+    "0.005": {
+      "repairable_families": 139,
+      "pct_of_no_assignment": 25.5
+    },
+    "0.010": {
+      "repairable_families": 190,
+      "pct_of_no_assignment": 34.9
+    },
+    "0.020": {
+      "repairable_families": 208,
+      "pct_of_no_assignment": 38.2
+    },
+    "0.050": {
+      "repairable_families": 255,
+      "pct_of_no_assignment": 46.8
+    },
+    "0.100": {
+      "repairable_families": 320,
+      "pct_of_no_assignment": 58.7
+    },
+    "0.250": {
+      "repairable_families": 363,
+      "pct_of_no_assignment": 66.6
+    }
+  },
+  "still_infeasible_at_widest_slack": 182,
+  "still_infeasible_pct_of_condemned": 21.3,
+  "worst_examples": [
+    {
+      "family_key": "polymarket:421129\u001ftotal kills <rung> in game 2?",
+      "direction": "dec",
+      "worst_reversal_pp": 98.9,
+      "rungs": [
+        {
+          "value": 44.5,
+          "price": 1.0,
+          "market_id": 16620534,
+          "name": "Total Kills Over/Under 44.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 45.5,
+          "price": 1.0,
+          "market_id": 16620533,
+          "name": "Total Kills Over/Under 45.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 46.5,
+          "price": 1.0,
+          "market_id": 16620480,
+          "name": "Total Kills Over/Under 46.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 47.5,
+          "price": 1.0,
+          "market_id": 16620482,
+          "name": "Total Kills Over/Under 47.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 48.5,
+          "price": 1.0,
+          "market_id": 16620484,
+          "name": "Total Kills Over/Under 48.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 49.5,
+          "price": 1.0,
+          "market_id": 16620486,
+          "name": "Total Kills Over/Under 49.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 50.5,
+          "price": 1.0,
+          "market_id": 16620488,
+          "name": "Total Kills Over/Under 50.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 51.5,
+          "price": 1.0,
+          "market_id": 16620514,
+          "name": "Total Kills Over/Under 51.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 52.5,
+          "price": 1.0,
+          "market_id": 16620511,
+          "name": "Total Kills Over/Under 52.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 53.5,
+          "price": 1.0,
+          "market_id": 16620515,
+          "name": "Total Kills Over/Under 53.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 54.5,
+          "price": 1.0,
+          "market_id": 16620532,
+          "name": "Total Kills Over/Under 54.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 55.5,
+          "price": 1.0,
+          "market_id": 16620535,
+          "name": "Total Kills Over/Under 55.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 56.5,
+          "price": 1.0,
+          "market_id": 16620536,
+          "name": "Total Kills Over/Under 56.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 57.5,
+          "price": 1.0,
+          "market_id": 16620538,
+          "name": "Total Kills Over/Under 57.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 58.5,
+          "price": 1.0,
+          "market_id": 16620539,
+          "name": "Total Kills Over/Under 58.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 59.5,
+          "price": 0.99,
+          "market_id": 16620537,
+          "name": "Total Kills Over/Under 59.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.990000"
+        },
+        {
+          "value": 60.5,
+          "price": 0.99,
+          "market_id": 16620540,
+          "name": "Total Kills Over/Under 60.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.990000"
+        },
+        {
+          "value": 61.5,
+          "price": 0.99,
+          "market_id": 16620541,
+          "name": "Total Kills Over/Under 61.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.990000"
+        },
+        {
+          "value": 62.5,
+          "price": 0.001,
+          "market_id": 16620544,
+          "name": "Total Kills Over/Under 62.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 63.5,
+          "price": 0.5,
+          "market_id": 16620546,
+          "name": "Total Kills Over/Under 63.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 64.5,
+          "price": 0.001,
+          "market_id": 16620545,
+          "name": "Total Kills Over/Under 64.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 65.5,
+          "price": 0.5,
+          "market_id": 16620542,
+          "name": "Total Kills Over/Under 65.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 66.5,
+          "price": 0.001,
+          "market_id": 16620543,
+          "name": "Total Kills Over/Under 66.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 67.5,
+          "price": 0.2,
+          "market_id": 16620550,
+          "name": "Total Kills Over/Under 67.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.200000"
+        },
+        {
+          "value": 68.5,
+          "price": 0.99,
+          "market_id": 16620549,
+          "name": "Total Kills Over/Under 68.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.990000"
+        },
+        {
+          "value": 69.5,
+          "price": 0.5,
+          "market_id": 16620547,
+          "name": "Total Kills Over/Under 69.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 70.5,
+          "price": 0.001,
+          "market_id": 16620548,
+          "name": "Total Kills Over/Under 70.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 71.5,
+          "price": 0.2,
+          "market_id": 16620552,
+          "name": "Total Kills Over/Under 71.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.200000"
+        },
+        {
+          "value": 72.5,
+          "price": 0.001,
+          "market_id": 16620554,
+          "name": "Total Kills Over/Under 72.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 73.5,
+          "price": 0.01,
+          "market_id": 16620553,
+          "name": "Total Kills Over/Under 73.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.010000"
+        },
+        {
+          "value": 74.5,
+          "price": 0.99,
+          "market_id": 16620551,
+          "name": "Total Kills Over/Under 74.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.990000"
+        },
+        {
+          "value": 75.5,
+          "price": 0.2,
+          "market_id": 16620555,
+          "name": "Total Kills Over/Under 75.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.200000"
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:421129\u001ftotal kills <rung> in game 1?",
+      "direction": "dec",
+      "worst_reversal_pp": 98.9,
+      "rungs": [
+        {
+          "value": 38.5,
+          "price": 1.0,
+          "market_id": 16620531,
+          "name": "Total Kills Over/Under 38.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 39.5,
+          "price": 1.0,
+          "market_id": 16620530,
+          "name": "Total Kills Over/Under 39.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 40.5,
+          "price": 1.0,
+          "market_id": 16620528,
+          "name": "Total Kills Over/Under 40.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 41.5,
+          "price": 0.5005,
+          "market_id": 16620527,
+          "name": "Total Kills Over/Under 41.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500500"
+        },
+        {
+          "value": 42.5,
+          "price": 0.5005,
+          "market_id": 16620526,
+          "name": "Total Kills Over/Under 42.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500500"
+        },
+        {
+          "value": 43.5,
+          "price": 0.99,
+          "market_id": 16620529,
+          "name": "Total Kills Over/Under 43.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.990000"
+        },
+        {
+          "value": 44.5,
+          "price": 0.5,
+          "market_id": 16620525,
+          "name": "Total Kills Over/Under 44.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 45.5,
+          "price": 0.99,
+          "market_id": 16620523,
+          "name": "Total Kills Over/Under 45.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.990000"
+        },
+        {
+          "value": 46.5,
+          "price": 0.001,
+          "market_id": 16620489,
+          "name": "Total Kills Over/Under 46.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 47.5,
+          "price": 0.001,
+          "market_id": 16620481,
+          "name": "Total Kills Over/Under 47.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 48.5,
+          "price": 0.001,
+          "market_id": 16620487,
+          "name": "Total Kills Over/Under 48.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 49.5,
+          "price": 0.001,
+          "market_id": 16620483,
+          "name": "Total Kills Over/Under 49.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 50.5,
+          "price": 0.001,
+          "market_id": 16620485,
+          "name": "Total Kills Over/Under 50.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 51.5,
+          "price": 0.001,
+          "market_id": 16620513,
+          "name": "Total Kills Over/Under 51.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 52.5,
+          "price": 0.001,
+          "market_id": 16620512,
+          "name": "Total Kills Over/Under 52.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 53.5,
+          "price": 0.001,
+          "market_id": 16620516,
+          "name": "Total Kills Over/Under 53.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 54.5,
+          "price": 0.99,
+          "market_id": 16620517,
+          "name": "Total Kills Over/Under 54.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.990000"
+        },
+        {
+          "value": 55.5,
+          "price": 0.001,
+          "market_id": 16620518,
+          "name": "Total Kills Over/Under 55.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 56.5,
+          "price": 0.5,
+          "market_id": 16620519,
+          "name": "Total Kills Over/Under 56.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 57.5,
+          "price": 0.001,
+          "market_id": 16620520,
+          "name": "Total Kills Over/Under 57.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 58.5,
+          "price": 0.99,
+          "market_id": 16620521,
+          "name": "Total Kills Over/Under 58.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.990000"
+        },
+        {
+          "value": 59.5,
+          "price": 0.5,
+          "market_id": 16620522,
+          "name": "Total Kills Over/Under 59.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:432710\u001ftotal kills <rung> in game 2?",
+      "direction": "dec",
+      "worst_reversal_pp": 92.95,
+      "rungs": [
+        {
+          "value": 21.5,
+          "price": 0.51,
+          "market_id": 17041616,
+          "name": "Total Kills Over/Under 21.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.510000"
+        },
+        {
+          "value": 22.5,
+          "price": 0.51,
+          "market_id": 17041619,
+          "name": "Total Kills Over/Under 22.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.510000"
+        },
+        {
+          "value": 23.5,
+          "price": 0.51,
+          "market_id": 17041617,
+          "name": "Total Kills Over/Under 23.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.510000"
+        },
+        {
+          "value": 24.5,
+          "price": 0.0305,
+          "market_id": 17041618,
+          "name": "Total Kills Over/Under 24.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.030500"
+        },
+        {
+          "value": 25.5,
+          "price": 0.57,
+          "market_id": 16624365,
+          "name": "Total Kills Over/Under 25.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.570000"
+        },
+        {
+          "value": 26.5,
+          "price": 0.535,
+          "market_id": 16624355,
+          "name": "Total Kills Over/Under 26.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.535000"
+        },
+        {
+          "value": 27.5,
+          "price": 0.96,
+          "market_id": 16624356,
+          "name": "Total Kills Over/Under 27.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.960000"
+        },
+        {
+          "value": 28.5,
+          "price": 0.57,
+          "market_id": 16624364,
+          "name": "Total Kills Over/Under 28.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.570000"
+        },
+        {
+          "value": 29.5,
+          "price": 0.43,
+          "market_id": 16624357,
+          "name": "Total Kills Over/Under 29.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.430000"
+        },
+        {
+          "value": 30.5,
+          "price": 0.385,
+          "market_id": 16703674,
+          "name": "Total Kills Over/Under 30.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.385000"
+        },
+        {
+          "value": 31.5,
+          "price": 0.0055,
+          "market_id": 17005670,
+          "name": "Total Kills Over/Under 31.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005500"
+        },
+        {
+          "value": 32.5,
+          "price": 0.0005,
+          "market_id": 17041611,
+          "name": "Total Kills Over/Under 32.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 33.5,
+          "price": 0.0005,
+          "market_id": 17041612,
+          "name": "Total Kills Over/Under 33.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 34.5,
+          "price": 0.0005,
+          "market_id": 17041615,
+          "name": "Total Kills Over/Under 34.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 35.5,
+          "price": 0.0005,
+          "market_id": 17041613,
+          "name": "Total Kills Over/Under 35.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 36.5,
+          "price": 0.0005,
+          "market_id": 17041614,
+          "name": "Total Kills Over/Under 36.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:464691\u001ftotal kills <rung> in game 2?",
+      "direction": "dec",
+      "worst_reversal_pp": 87.5,
+      "rungs": [
+        {
+          "value": 21.5,
+          "price": 0.005,
+          "market_id": 21278745,
+          "name": "Total Kills Over/Under 21.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005000"
+        },
+        {
+          "value": 22.5,
+          "price": 0.645,
+          "market_id": 20735670,
+          "name": "Total Kills Over/Under 22.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.645000"
+        },
+        {
+          "value": 23.5,
+          "price": 0.5,
+          "market_id": 20562257,
+          "name": "Total Kills Over/Under 23.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 24.5,
+          "price": 0.88,
+          "market_id": 20562253,
+          "name": "Total Kills Over/Under 24.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.880000"
+        },
+        {
+          "value": 25.5,
+          "price": 0.5,
+          "market_id": 20562255,
+          "name": "Total Kills Over/Under 25.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 26.5,
+          "price": 0.5,
+          "market_id": 20562261,
+          "name": "Total Kills Over/Under 26.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 27.5,
+          "price": 0.5,
+          "market_id": 20562259,
+          "name": "Total Kills Over/Under 27.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 28.5,
+          "price": 0.005,
+          "market_id": 21278744,
+          "name": "Total Kills Over/Under 28.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005000"
+        },
+        {
+          "value": 29.5,
+          "price": 0.005,
+          "market_id": 21278743,
+          "name": "Total Kills Over/Under 29.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005000"
+        },
+        {
+          "value": 30.5,
+          "price": 0.005,
+          "market_id": 21278746,
+          "name": "Total Kills Over/Under 30.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005000"
+        },
+        {
+          "value": 31.5,
+          "price": 0.005,
+          "market_id": 21278747,
+          "name": "Total Kills Over/Under 31.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005000"
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:330159\u001ftotal kills <rung> in game 1?",
+      "direction": "dec",
+      "worst_reversal_pp": 68.9,
+      "rungs": [
+        {
+          "value": 16.5,
+          "price": 1.0,
+          "market_id": 13797708,
+          "name": "Total Kills Over/Under 16.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 17.5,
+          "price": 1.0,
+          "market_id": 13797707,
+          "name": "Total Kills Over/Under 17.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 18.5,
+          "price": 1.0,
+          "market_id": 13797706,
+          "name": "Total Kills Over/Under 18.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 19.5,
+          "price": 0.5,
+          "market_id": 13797704,
+          "name": "Total Kills Over/Under 19.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 20.5,
+          "price": 0.001,
+          "market_id": 13797705,
+          "name": "Total Kills Over/Under 20.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 21.5,
+          "price": 0.001,
+          "market_id": 13797703,
+          "name": "Total Kills Over/Under 21.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 22.5,
+          "price": 0.001,
+          "market_id": 13797702,
+          "name": "Total Kills Over/Under 22.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 23.5,
+          "price": 0.001,
+          "market_id": 13797701,
+          "name": "Total Kills Over/Under 23.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 24.5,
+          "price": 0.001,
+          "market_id": 13797700,
+          "name": "Total Kills Over/Under 24.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 25.5,
+          "price": 0.69,
+          "market_id": 13797710,
+          "name": "Total Kills Over/Under 25.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.690000"
+        },
+        {
+          "value": 26.5,
+          "price": 0.001,
+          "market_id": 13797698,
+          "name": "Total Kills Over/Under 26.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 27.5,
+          "price": 0.001,
+          "market_id": 13797695,
+          "name": "Total Kills Over/Under 27.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 28.5,
+          "price": 0.55,
+          "market_id": 13797694,
+          "name": "Total Kills Over/Under 28.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.550000"
+        },
+        {
+          "value": 29.5,
+          "price": 0.51,
+          "market_id": 13797691,
+          "name": "Total Kills Over/Under 29.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.510000"
+        },
+        {
+          "value": 30.5,
+          "price": 0.47,
+          "market_id": 13797692,
+          "name": "Total Kills Over/Under 30.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.470000"
+        },
+        {
+          "value": 31.5,
+          "price": 0.43,
+          "market_id": 13797693,
+          "name": "Total Kills Over/Under 31.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.430000"
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:326643\u001ftotal kills <rung> in game 1?",
+      "direction": "dec",
+      "worst_reversal_pp": 66.9,
+      "rungs": [
+        {
+          "value": 15.5,
+          "price": 1.0,
+          "market_id": 13797543,
+          "name": "Total Kills Over/Under 15.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 16.5,
+          "price": 1.0,
+          "market_id": 13797542,
+          "name": "Total Kills Over/Under 16.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 17.5,
+          "price": 1.0,
+          "market_id": 13797536,
+          "name": "Total Kills Over/Under 17.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 18.5,
+          "price": 0.5,
+          "market_id": 13797535,
+          "name": "Total Kills Over/Under 18.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 19.5,
+          "price": 0.001,
+          "market_id": 13797534,
+          "name": "Total Kills Over/Under 19.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 20.5,
+          "price": 0.001,
+          "market_id": 13797533,
+          "name": "Total Kills Over/Under 20.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 21.5,
+          "price": 0.001,
+          "market_id": 13797532,
+          "name": "Total Kills Over/Under 21.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 22.5,
+          "price": 0.001,
+          "market_id": 13797531,
+          "name": "Total Kills Over/Under 22.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 23.5,
+          "price": 0.001,
+          "market_id": 13797551,
+          "name": "Total Kills Over/Under 23.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 24.5,
+          "price": 0.001,
+          "market_id": 13797550,
+          "name": "Total Kills Over/Under 24.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 25.5,
+          "price": 0.67,
+          "market_id": 13797538,
+          "name": "Total Kills Over/Under 25.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.670000"
+        },
+        {
+          "value": 26.5,
+          "price": 0.001,
+          "market_id": 13797549,
+          "name": "Total Kills Over/Under 26.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 27.5,
+          "price": 0.001,
+          "market_id": 13797529,
+          "name": "Total Kills Over/Under 27.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 28.5,
+          "price": 0.55,
+          "market_id": 13797525,
+          "name": "Total Kills Over/Under 28.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.550000"
+        },
+        {
+          "value": 29.5,
+          "price": 0.53,
+          "market_id": 13797526,
+          "name": "Total Kills Over/Under 29.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.530000"
+        },
+        {
+          "value": 30.5,
+          "price": 0.46,
+          "market_id": 13797528,
+          "name": "Total Kills Over/Under 30.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.460000"
+        },
+        {
+          "value": 31.5,
+          "price": 0.001,
+          "market_id": 13797527,
+          "name": "Total Kills Over/Under 31.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 32.5,
+          "price": 0.001,
+          "market_id": 13797540,
+          "name": "Total Kills Over/Under 32.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:432711\u001ftotal kills <rung> in game 1?",
+      "direction": "dec",
+      "worst_reversal_pp": 65.95,
+      "rungs": [
+        {
+          "value": 13.5,
+          "price": 0.995,
+          "market_id": 17138248,
+          "name": "Total Kills Over/Under 13.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.995000"
+        },
+        {
+          "value": 14.5,
+          "price": 0.995,
+          "market_id": 17138249,
+          "name": "Total Kills Over/Under 14.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.995000"
+        },
+        {
+          "value": 15.5,
+          "price": 0.995,
+          "market_id": 17138247,
+          "name": "Total Kills Over/Under 15.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.995000"
+        },
+        {
+          "value": 16.5,
+          "price": 0.001,
+          "market_id": 17138246,
+          "name": "Total Kills Over/Under 16.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 17.5,
+          "price": 0.001,
+          "market_id": 17138245,
+          "name": "Total Kills Over/Under 17.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 20.5,
+          "price": 0.0005,
+          "market_id": 17104309,
+          "name": "Total Kills Over/Under 20.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 21.5,
+          "price": 0.0005,
+          "market_id": 17104310,
+          "name": "Total Kills Over/Under 21.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 22.5,
+          "price": 0.0005,
+          "market_id": 17104308,
+          "name": "Total Kills Over/Under 22.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 23.5,
+          "price": 0.0005,
+          "market_id": 17104306,
+          "name": "Total Kills Over/Under 23.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 24.5,
+          "price": 0.0005,
+          "market_id": 17104304,
+          "name": "Total Kills Over/Under 24.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 25.5,
+          "price": 0.66,
+          "market_id": 16624399,
+          "name": "Total Kills Over/Under 25.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.660000"
+        },
+        {
+          "value": 26.5,
+          "price": 0.08,
+          "market_id": 16624395,
+          "name": "Total Kills Over/Under 26.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.080000"
+        },
+        {
+          "value": 27.5,
+          "price": 0.53,
+          "market_id": 16624401,
+          "name": "Total Kills Over/Under 27.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.530000"
+        },
+        {
+          "value": 28.5,
+          "price": 0.5,
+          "market_id": 16624397,
+          "name": "Total Kills Over/Under 28.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 29.5,
+          "price": 0.405,
+          "market_id": 16624393,
+          "name": "Total Kills Over/Under 29.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.405000"
+        },
+        {
+          "value": 30.5,
+          "price": 0.0005,
+          "market_id": 17104300,
+          "name": "Total Kills Over/Under 30.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 31.5,
+          "price": 0.0005,
+          "market_id": 17104303,
+          "name": "Total Kills Over/Under 31.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 32.5,
+          "price": 0.0005,
+          "market_id": 17104302,
+          "name": "Total Kills Over/Under 32.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 33.5,
+          "price": 0.0005,
+          "market_id": 17104305,
+          "name": "Total Kills Over/Under 33.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:521056\u001ftotal kills <rung> in game 2?",
+      "direction": "dec",
+      "worst_reversal_pp": 65.45,
+      "rungs": [
+        {
+          "value": 22.5,
+          "price": 0.0055,
+          "market_id": 26959376,
+          "name": "Total Kills Over/Under 22.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005500"
+        },
+        {
+          "value": 23.5,
+          "price": 0.0055,
+          "market_id": 26959375,
+          "name": "Total Kills Over/Under 23.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005500"
+        },
+        {
+          "value": 24.5,
+          "price": 0.66,
+          "market_id": 26487996,
+          "name": "Total Kills Over/Under 24.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.660000"
+        },
+        {
+          "value": 25.5,
+          "price": 0.625,
+          "market_id": 26488048,
+          "name": "Total Kills Over/Under 25.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.625000"
+        },
+        {
+          "value": 26.5,
+          "price": 0.515,
+          "market_id": 26488001,
+          "name": "Total Kills Over/Under 26.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.515000"
+        },
+        {
+          "value": 27.5,
+          "price": 0.53,
+          "market_id": 26488049,
+          "name": "Total Kills Over/Under 27.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.530000"
+        },
+        {
+          "value": 28.5,
+          "price": 0.5,
+          "market_id": 26488008,
+          "name": "Total Kills Over/Under 28.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 29.5,
+          "price": 0.1,
+          "market_id": 26959381,
+          "name": "Total Kills Over/Under 29.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.100000"
+        },
+        {
+          "value": 30.5,
+          "price": 0.1,
+          "market_id": 26959380,
+          "name": "Total Kills Over/Under 30.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.100000"
+        },
+        {
+          "value": 31.5,
+          "price": 0.1,
+          "market_id": 26959377,
+          "name": "Total Kills Over/Under 31.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.100000"
+        },
+        {
+          "value": 32.5,
+          "price": 0.1,
+          "market_id": 26959378,
+          "name": "Total Kills Over/Under 32.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.100000"
+        },
+        {
+          "value": 33.5,
+          "price": 0.4955,
+          "market_id": 26959382,
+          "name": "Total Kills Over/Under 33.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.495500"
+        },
+        {
+          "value": 34.5,
+          "price": 0.4955,
+          "market_id": 26959379,
+          "name": "Total Kills Over/Under 34.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.495500"
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:435869\u001ftotal kills <rung> in game 2?",
+      "direction": "dec",
+      "worst_reversal_pp": 64.95,
+      "rungs": [
+        {
+          "value": 20.5,
+          "price": 0.995,
+          "market_id": 18453929,
+          "name": "Total Kills Over/Under 20.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.995000"
+        },
+        {
+          "value": 21.5,
+          "price": 0.005,
+          "market_id": 18453928,
+          "name": "Total Kills Over/Under 21.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005000"
+        },
+        {
+          "value": 22.5,
+          "price": 0.0055,
+          "market_id": 18453927,
+          "name": "Total Kills Over/Under 22.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005500"
+        },
+        {
+          "value": 23.5,
+          "price": 0.095,
+          "market_id": 18453926,
+          "name": "Total Kills Over/Under 23.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.095000"
+        },
+        {
+          "value": 24.5,
+          "price": 0.4905,
+          "market_id": 18453925,
+          "name": "Total Kills Over/Under 24.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.490500"
+        },
+        {
+          "value": 25.5,
+          "price": 0.095,
+          "market_id": 18453924,
+          "name": "Total Kills Over/Under 25.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.095000"
+        },
+        {
+          "value": 26.5,
+          "price": 0.0005,
+          "market_id": 18453923,
+          "name": "Total Kills Over/Under 26.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 27.5,
+          "price": 0.65,
+          "market_id": 17342024,
+          "name": "Total Kills Over/Under 27.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.650000"
+        },
+        {
+          "value": 28.5,
+          "price": 0.57,
+          "market_id": 17342027,
+          "name": "Total Kills Over/Under 28.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.570000"
+        },
+        {
+          "value": 29.5,
+          "price": 0.6,
+          "market_id": 17342026,
+          "name": "Total Kills Over/Under 29.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.600000"
+        },
+        {
+          "value": 30.5,
+          "price": 0.55,
+          "market_id": 17342025,
+          "name": "Total Kills Over/Under 30.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.550000"
+        },
+        {
+          "value": 31.5,
+          "price": 0.5,
+          "market_id": 17342023,
+          "name": "Total Kills Over/Under 31.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 32.5,
+          "price": 0.5,
+          "market_id": 18320564,
+          "name": "Total Kills Over/Under 32.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 33.5,
+          "price": 0.005,
+          "market_id": 18453921,
+          "name": "Total Kills Over/Under 33.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005000"
+        },
+        {
+          "value": 34.5,
+          "price": 0.0055,
+          "market_id": 18453922,
+          "name": "Total Kills Over/Under 34.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005500"
+        },
+        {
+          "value": 35.5,
+          "price": 0.005,
+          "market_id": 18453930,
+          "name": "Total Kills Over/Under 35.5 in Game 2?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005000"
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:442010\u001ftotal kills <rung> in game 1?",
+      "direction": "dec",
+      "worst_reversal_pp": 64.5,
+      "rungs": [
+        {
+          "value": 16.5,
+          "price": 0.995,
+          "market_id": 18386152,
+          "name": "Total Kills Over/Under 16.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.995000"
+        },
+        {
+          "value": 17.5,
+          "price": 0.995,
+          "market_id": 18386151,
+          "name": "Total Kills Over/Under 17.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.995000"
+        },
+        {
+          "value": 18.5,
+          "price": 0.5,
+          "market_id": 18386150,
+          "name": "Total Kills Over/Under 18.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 19.5,
+          "price": 0.1,
+          "market_id": 18386149,
+          "name": "Total Kills Over/Under 19.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.100000"
+        },
+        {
+          "value": 20.5,
+          "price": 0.1,
+          "market_id": 18386148,
+          "name": "Total Kills Over/Under 20.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.100000"
+        },
+        {
+          "value": 21.5,
+          "price": 0.495,
+          "market_id": 18386134,
+          "name": "Total Kills Over/Under 21.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.495000"
+        },
+        {
+          "value": 22.5,
+          "price": 0.495,
+          "market_id": 18386132,
+          "name": "Total Kills Over/Under 22.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.495000"
+        },
+        {
+          "value": 23.5,
+          "price": 0.005,
+          "market_id": 18386135,
+          "name": "Total Kills Over/Under 23.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.005000"
+        },
+        {
+          "value": 24.5,
+          "price": 0.095,
+          "market_id": 18386131,
+          "name": "Total Kills Over/Under 24.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.095000"
+        },
+        {
+          "value": 25.5,
+          "price": 0.1,
+          "market_id": 18386133,
+          "name": "Total Kills Over/Under 25.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.100000"
+        },
+        {
+          "value": 26.5,
+          "price": 0.65,
+          "market_id": 17343923,
+          "name": "Total Kills Over/Under 26.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.650000"
+        },
+        {
+          "value": 27.5,
+          "price": 0.5,
+          "market_id": 17343925,
+          "name": "Total Kills Over/Under 27.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 28.5,
+          "price": 0.56,
+          "market_id": 17343927,
+          "name": "Total Kills Over/Under 28.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.560000"
+        },
+        {
+          "value": 29.5,
+          "price": 0.54,
+          "market_id": 17343918,
+          "name": "Total Kills Over/Under 29.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.540000"
+        },
+        {
+          "value": 30.5,
+          "price": 0.5,
+          "market_id": 17343920,
+          "name": "Total Kills Over/Under 30.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 31.5,
+          "price": 0.395,
+          "market_id": 18242712,
+          "name": "Total Kills Over/Under 31.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.395000"
+        },
+        {
+          "value": 32.5,
+          "price": 0.36,
+          "market_id": 18242713,
+          "name": "Total Kills Over/Under 32.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.360000"
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:470863\u001ftotal kills <rung> in game 1?",
+      "direction": "dec",
+      "worst_reversal_pp": 62.95,
+      "rungs": [
+        {
+          "value": 24.5,
+          "price": 0.9995,
+          "market_id": 22019801,
+          "name": "Total Kills Over/Under 24.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.999500"
+        },
+        {
+          "value": 25.5,
+          "price": 0.9995,
+          "market_id": 22019802,
+          "name": "Total Kills Over/Under 25.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.999500"
+        },
+        {
+          "value": 26.5,
+          "price": 0.5,
+          "market_id": 20564215,
+          "name": "Total Kills Over/Under 26.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 27.5,
+          "price": 0.5,
+          "market_id": 20564216,
+          "name": "Total Kills Over/Under 27.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 28.5,
+          "price": 0.5,
+          "market_id": 20564214,
+          "name": "Total Kills Over/Under 28.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 29.5,
+          "price": 0.5,
+          "market_id": 20564220,
+          "name": "Total Kills Over/Under 29.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 30.5,
+          "price": 0.5,
+          "market_id": 20564211,
+          "name": "Total Kills Over/Under 30.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 31.5,
+          "price": 0.37,
+          "market_id": 21579367,
+          "name": "Total Kills Over/Under 31.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.370000"
+        },
+        {
+          "value": 32.5,
+          "price": 0.9995,
+          "market_id": 22019803,
+          "name": "Total Kills Over/Under 32.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.999500"
+        },
+        {
+          "value": 33.5,
+          "price": 0.9995,
+          "market_id": 22019807,
+          "name": "Total Kills Over/Under 33.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.999500"
+        },
+        {
+          "value": 34.5,
+          "price": 0.9995,
+          "market_id": 22019804,
+          "name": "Total Kills Over/Under 34.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.999500"
+        },
+        {
+          "value": 35.5,
+          "price": 0.9995,
+          "market_id": 22019805,
+          "name": "Total Kills Over/Under 35.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.999500"
+        },
+        {
+          "value": 36.5,
+          "price": 0.9995,
+          "market_id": 22019806,
+          "name": "Total Kills Over/Under 36.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.999500"
+        },
+        {
+          "value": 37.5,
+          "price": 0.9995,
+          "market_id": 22019810,
+          "name": "Total Kills Over/Under 37.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.999500"
+        },
+        {
+          "value": 38.5,
+          "price": 0.49,
+          "market_id": 22019809,
+          "name": "Total Kills Over/Under 38.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.490000"
+        },
+        {
+          "value": 39.5,
+          "price": 0.0005,
+          "market_id": 22019811,
+          "name": "Total Kills Over/Under 39.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        },
+        {
+          "value": 40.5,
+          "price": 0.0005,
+          "market_id": 22019812,
+          "name": "Total Kills Over/Under 40.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.000500"
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:452273\u001ftotal kills <rung> in game 1?",
+      "direction": "dec",
+      "worst_reversal_pp": 62.9,
+      "rungs": [
+        {
+          "value": 13.5,
+          "price": 0.9995,
+          "market_id": 18582767,
+          "name": "Total Kills Over/Under 13.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.999500"
+        },
+        {
+          "value": 14.5,
+          "price": 0.9,
+          "market_id": 18582766,
+          "name": "Total Kills Over/Under 14.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.900000"
+        },
+        {
+          "value": 15.5,
+          "price": 1.0,
+          "market_id": 18582765,
+          "name": "Total Kills Over/Under 15.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "1.000000"
+        },
+        {
+          "value": 16.5,
+          "price": 0.495,
+          "market_id": 18582764,
+          "name": "Total Kills Over/Under 16.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.495000"
+        },
+        {
+          "value": 17.5,
+          "price": 0.095,
+          "market_id": 18582763,
+          "name": "Total Kills Over/Under 17.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.095000"
+        },
+        {
+          "value": 18.5,
+          "price": 0.001,
+          "market_id": 18582759,
+          "name": "Total Kills Over/Under 18.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 19.5,
+          "price": 0.001,
+          "market_id": 18582762,
+          "name": "Total Kills Over/Under 19.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 20.5,
+          "price": 0.095,
+          "market_id": 18582761,
+          "name": "Total Kills Over/Under 20.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.095000"
+        },
+        {
+          "value": 21.5,
+          "price": 0.001,
+          "market_id": 18582760,
+          "name": "Total Kills Over/Under 21.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 22.5,
+          "price": 0.001,
+          "market_id": 18582758,
+          "name": "Total Kills Over/Under 22.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 23.5,
+          "price": 0.001,
+          "market_id": 18582732,
+          "name": "Total Kills Over/Under 23.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        },
+        {
+          "value": 24.5,
+          "price": 0.63,
+          "market_id": 16634670,
+          "name": "Total Kills Over/Under 24.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.630000"
+        },
+        {
+          "value": 25.5,
+          "price": 0.59,
+          "market_id": 16634671,
+          "name": "Total Kills Over/Under 25.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.590000"
+        },
+        {
+          "value": 26.5,
+          "price": 0.51,
+          "market_id": 16634662,
+          "name": "Total Kills Over/Under 26.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.510000"
+        },
+        {
+          "value": 27.5,
+          "price": 0.5,
+          "market_id": 16634668,
+          "name": "Total Kills Over/Under 27.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 28.5,
+          "price": 0.5,
+          "market_id": 16634664,
+          "name": "Total Kills Over/Under 28.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.500000"
+        },
+        {
+          "value": 29.5,
+          "price": 0.495,
+          "market_id": 18582733,
+          "name": "Total Kills Over/Under 29.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.495000"
+        },
+        {
+          "value": 30.5,
+          "price": 0.001,
+          "market_id": 18582734,
+          "name": "Total Kills Over/Under 30.5 in Game 1?",
+          "event_id": null,
+          "over": null,
+          "under": null,
+          "yes": "0.001000"
+        }
+      ]
+    }
+  ]
+}

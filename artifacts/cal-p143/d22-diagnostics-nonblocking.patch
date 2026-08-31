@@ -1,0 +1,254 @@
+--- a/backend/app/tasks/precompute_calibration.py
++++ b/backend/app/tasks/precompute_calibration.py
+@@ -4044,13 +4044,28 @@
+         """)
+         truth_by_class = runner.reuse(PHASE_DIAGNOSTICS, "truth_by_class")
+         if truth_by_class is None:
+-            with runner.stage("read:truth_census"):
++            # D22: SOFT. This census is a pure diagnostic by its own comment
++            # above ("no source-bias interpretation; just the counts") and the
++            # publish gate reads none of it, yet it is an unbounded scan over
++            # every resolved futures row sitting in a required phase AHEAD of
++            # the publish. When the futures rebuild has a heavy beat it is
++            # squeezed under the ~104 s it needs and the whole publish dies.
++            # It now degrades to UNOBSERVED instead, and says so in the payload.
++            async with runner.soft_stage(db, "read:truth_census") as soft:
+                 truth_result = await db.execute(truth_sql)
+                 truth_by_class = {
+                     r.truth_class: {"outcomes": int(r.outcomes), "markets": int(r.markets)}
+                     for r in truth_result.all()
+                 }
+-            runner.record(PHASE_DIAGNOSTICS, "truth_by_class", truth_by_class)
++            if soft.failed:
++                # Left as None on purpose: ``_build_truth_evidence`` reports
++                # None as UNOBSERVED, and an empty dict would report a clean
++                # contract on no evidence. Not recorded either, so the phase's
++                # carried key set no longer matches and the NEXT beat re-reads
++                # it rather than inheriting a hole.
++                truth_by_class = None
++            else:
++                runner.record(PHASE_DIAGNOSTICS, "truth_by_class", truth_by_class)
+ 
+         # -----------------------------------------------------------
+         # Query 12: L2-78 Item 0 (flagged since L2-73) — the true resolved-data
+@@ -4070,23 +4085,26 @@
+         # Nothing about the query changed; only where it is accounted for.
+         date_range = runner.reuse(PHASE_DIAGNOSTICS, "date_range")
+         if date_range is None:
+-            try:
+-                with runner.stage("read:date_range"):
+-                    dr = (
+-                        await db.execute(
+-                            text(
+-                                "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
+-                                "FROM futures_markets "
+-                                "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
+-                                "AND resolution_date <= NOW() "
+-                                "AND resolution_date >= NOW() - INTERVAL '5 years'"
+-                            )
++            # D22: this was a bare ``try``, and it cannot survive the failure
++            # it was written for. A statement timeout aborts the whole
++            # transaction, so the ``except`` caught the error and the phase's own
++            # commit raised anyway — the beat died with the handler right there.
++            # Same intent, now with the savepoint that makes it true. The
++            # ``if`` stays INSIDE: on a degraded read ``dr`` is never bound.
++            async with runner.soft_stage(db, "read:date_range"):
++                dr = (
++                    await db.execute(
++                        text(
++                            "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
++                            "FROM futures_markets "
++                            "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
++                            "AND resolution_date <= NOW() "
++                            "AND resolution_date >= NOW() - INTERVAL '5 years'"
+                         )
+-                    ).one()
++                    )
++                ).one()
+                 if dr.lo and dr.hi:
+                     date_range = {"start": dr.lo.isoformat(), "end": dr.hi.isoformat()}
+-            except Exception:
+-                logger.warning("calibration date_range aggregate failed", exc_info=True)
+             runner.record(PHASE_DIAGNOSTICS, "date_range", date_range)
+ 
+         if not _diagnostics_carried:
+@@ -4658,7 +4676,7 @@
+ 
+ 
+ def _build_truth_evidence(
+-    truth_by_class: dict,
++    truth_by_class: dict | None,
+     *,
+     mex_normalized_markets: int,
+     mex_published_markets: int,
+@@ -4674,6 +4692,13 @@
+     an unknown resolution_source in the resolved population, or the Queue #259
+     candidate==published partition breaking — never on a source-mix ratio.
+     """
++    # D22: ``None`` means the census did not run this beat (its statement was
++    # cancelled and the beat published anyway). That is NOT the same as a census
++    # that ran and found nothing: with an empty dict every ``.get`` default is
++    # zero and ``contract_ok`` would come back True on no evidence at all. The
++    # distinction is carried all the way into the payload.
++    observed = truth_by_class is not None
++    truth_by_class = truth_by_class or {}
+     unknown = truth_by_class.get("unknown", {"outcomes": 0, "markets": 0})
+     price_derived = truth_by_class.get("price_derived", {"outcomes": 0, "markets": 0})
+     partition_ok = mex_normalized_markets == mex_published_markets
+@@ -4707,7 +4732,28 @@
+             "published_markets": mex_published_markets,
+             "ok": partition_ok,
+         },
+-        "contract_ok": not violations,
++        # D22. THREE fields, and they move together — a reader that checks only
++        # ``contract_ok`` must not be able to read an unobserved beat as a clean
++        # one, so it is ``None`` (not True, not False) when the census did not
++        # run: there is no violation, and there is also no evidence.
++        #
++        # A VIOLATION OUTRANKS UNOBSERVED, and the order of these branches is
++        # the whole reason to write them out. ``partition_invariant`` is derived
++        # from the aggregate, not from the census, so it still answers on a
++        # degraded beat — and a beat that FOUND a broken partition must report
++        # RED even though the other half of the artifact is missing. Ranking
++        # unobserved first would have hidden it.
++        "census_observed": observed,
++        "contract_status": (
++            "violated" if violations
++            else "ok" if observed
++            else "unobserved"
++        ),
++        "contract_ok": (
++            False if violations
++            else True if observed
++            else None
++        ),
+         "contract_violations": violations,
+     }
+ 
+--- a/backend/app/tasks/calibration_main_build.py
++++ b/backend/app/tasks/calibration_main_build.py
+@@ -393,8 +393,25 @@
+ # =============================================================================
+ # The runner
+ # =============================================================================
++
+ 
++class SoftStageOutcome:
++    """What a :meth:`PhaseRunner.soft_stage` body left behind.
+ 
++    ``failed`` is the whole interface: the caller reads it to decide whether the
++    value it just tried to compute exists. An object rather than a return value
++    because the stage is a context manager and the body assigns to its own
++    locals. Deliberately not a dataclass — this module imports none and one
++    two-field holder is not a reason to start.
++    """
++
++    __slots__ = ("failed", "error")
++
++    def __init__(self) -> None:
++        self.failed: bool = False
++        self.error: str | None = None
++
++
+ class PhaseRunner:
+     """Times, bounds, resumes and records one main-build run's phases.
+ 
+@@ -433,6 +450,11 @@
+         self._carried: dict[str, dict[str, Any]] = {}
+         self.carried_phases: list[str] = []
+         self.checkpoint_writes: dict[str, str] = {}
++        #: D22. Names of soft stages whose read did NOT happen this beat. A
++        #: degraded read is not a zero: the payload has to be able to say
++        #: "unobserved" rather than publish a default that reads as evidence
++        #: (gotcha #53 — an empty answer is a response shape).
++        self.degraded_stages: list[str] = []
+         #: Queue 300B Item 1. The SERVER's view of this run — the tag it wrote
+         #: into ``application_name`` and the backend PID that wrote it. Recorded
+         #: in the ledger so a ``pg_stat_activity`` row seen weeks later can be
+@@ -579,6 +601,54 @@
+             }
+         return self._carried[phase].get(key)
+ 
++    @contextlib.asynccontextmanager
++    async def soft_stage(self, db, name: str):
++        """Time a read the beat is allowed to publish WITHOUT.
++
++        D22 (calibration-912 DECIDE 1). The diagnostics phase is required and
++        runs AHEAD of the publish, so a statement timeout in one of its counts
++        kills a beat that had everything it needed to publish. Two of those
++        counts feed nothing the gate reads — by their own comments they are
++        "just the counts".
++
++        THE PART THAT IS NOT A TRY/EXCEPT. A statement timeout aborts the whole
++        transaction, not the statement: after it, every later read in the same
++        session fails and the ``commit`` at the end of the phase raises. That is
++        why the ONE diagnostics read already wrapped in ``try`` — ``date_range``
++        — is not actually fail-soft against the failure that happens; it only
++        survives because it is last, and even then the phase commit inherits the
++        aborted transaction. A savepoint is what makes the rest of the beat
++        reachable: ``ROLLBACK TO SAVEPOINT`` is legal in an aborted subtransaction
++        and returns the session to a usable state.
++
++        ``SET LOCAL statement_timeout`` is applied OUTSIDE the savepoint (per
++        phase, in :meth:`apply_statement_timeout`) so rolling back to it does not
++        drop the phase's own bound.
++
++        Yields a one-field outcome object. The caller MUST branch on
++        ``.failed``: a soft read that quietly leaves its variable at a default
++        is the failure this whole mechanism exists to make visible.
++        """
++        outcome = SoftStageOutcome()
++        savepoint = await db.begin_nested()
++        try:
++            with self.stage(name):
++                yield outcome
++        except Exception as exc:  # noqa: BLE001 — deliberately broad; see below
++            # Broad on purpose: the point is that NO read in here may end the
++            # beat. The failure is not swallowed — it is named in the ledger,
++            # logged with its traceback, and surfaced in the payload.
++            outcome.failed = True
++            outcome.error = f"{type(exc).__name__}: {exc}"[:240]
++            self.degraded_stages.append(name)
++            await savepoint.rollback()
++            logger.warning(
++                "calibration soft stage %s degraded: %s", name, outcome.error,
++                exc_info=True,
++            )
++        else:
++            await savepoint.commit()
++
+     def record(self, phase: str, key: str, value: Any, *, kind: str = "value") -> None:
+         """Capture a freshly-read value so the next beat can carry it."""
+         self._captured.setdefault(phase, {})[key] = (kind, value)
+@@ -864,6 +934,13 @@
+     @contextlib.contextmanager
+     def stage(self, name: str):  # noqa: D102
+         yield
++
++    @contextlib.asynccontextmanager
++    async def soft_stage(self, db, name: str):  # noqa: D102
++        # No savepoint: the null runner is used where there is no live session
++        # to protect. It still yields the outcome object so callers can branch
++        # on ``.failed`` unconditionally.
++        yield SoftStageOutcome()
+ 
+ 
+ NULL_RUNNER = NullPhaseRunner()
+--- a/backend/tests/test_calibration_phase_ledger.py
++++ b/backend/tests/test_calibration_phase_ledger.py
+@@ -1147,7 +1147,14 @@
+         "serialize", "redis_client", "baseline_read", "publish_gate",
+         "durable_publish", "redis_accelerate",
+     ):
+-        assert f'runner.stage("{stage}")' in src, stage
++        # D22: a SOFT stage is still a named stage. ``soft_stage`` opens
++        # ``self.stage(name)`` internally, so the stretch is measured and named
++        # exactly as before; only the call site spells it differently, because
++        # these two reads are now allowed to fail without ending the beat.
++        assert (
++            f'runner.stage("{stage}")' in src
++            or f'runner.soft_stage(db, "{stage}")' in src
++        ), stage
+ 
+ 
+ def test_stages_accumulate_and_are_recorded_even_when_the_body_raises():

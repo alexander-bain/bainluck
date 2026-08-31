@@ -60,10 +60,26 @@ resolution source on the calibration-truth allowlist, and the Kalshi bid/trade
 evidence predicate. It then splits them, because only one half is a defect:
 
 ``B_lone_claim``
-    ``market_count = 1 AND total_outcomes = 1``. One market, one captured
-    outcome, ungrouped, graded a LOSS by an authoritative source. Queue 299
-    says to publish it. ``clean_vms`` drops it. **This is the uniquely dropped
-    population and the one E2's premise is about.**
+    ``graded_lone_claims >= 1``. A variant holding at least one member market
+    with exactly one captured outcome graded a LOSS by an authoritative source.
+    Queue 299 says to publish those. ``clean_vms`` dropped them. **This is the
+    uniquely dropped population and the one E2's premise is about.**
+
+    🔴 CAL-P155 RESTATED THIS CLASS. It used to read ``market_count = 1 AND
+    total_outcomes = 1`` -- a statement about the VARIANT, which counted two
+    lone claims sharing one variant as ``market_count = 2`` and put them in
+    ``A_also_no_winner`` beside genuine unknown truth. Alex ruled the arm
+    per-MARKET (option A, alex-inbox/calibration-919), so the class is now what
+    the producer actually admits.
+
+    🔴 CAL-P156 / CERT-514 WIDENED IT AGAIN, BY REMOVING A CONJUNCT. The class
+    also carried ``AND ungraded_lone_claims = 0`` until the cert blocked it:
+    being variant-grained, it held a graded lone claim back whenever an ungraded
+    one shared its variant, which is the sibling coupling option A removes.
+    Unknown truth is still excluded -- by the producer's rung 1b, at MARKET
+    grain -- so a mixed variant is now SPLIT rather than refused, and this class
+    follows the producer in counting its graded members. ``ungraded_lone_claims``
+    is still reported per row; it just no longer decides the arm.
 
 ``A_also_no_winner``
     everything else in the gate's shadow -- a virtual market of >=2 outcomes
@@ -76,20 +92,33 @@ evidence predicate. It then splits them, because only one half is a defect:
 The split is the whole point. A census that printed one number here would say
 "the gate drops 2,054 rows in this cell" when the defensible claim is 432.
 
-THE COUNTERFACTUAL IS EXACT, NOT ESTIMATED
-------------------------------------------
-A restored ``B_lone_claim`` row's path through the rest of the chain is fully
-determined and can be reasoned to the end rather than simulated:
+THE COUNTERFACTUAL IS EXACT FOR THE SOLITARY HALF — AND CAL-P155 SPLIT THE CLASS
+--------------------------------------------------------------------------------
+A restored ``B_lone_claim`` row in a variant that holds ONLY it has a fully
+determined path through the rest of the chain, reasoned to the end rather than
+simulated:
 
-* ``is_multi`` is ``is_grouped OR eligible >= 3``; both are false by the class's
-  own definition, so the row takes ``deduped``'s ``ELSE ro.rn = 1`` branch.
+* ``is_multi`` is ``is_grouped OR eligible >= 3``; both are false for a variant
+  of one ungrouped market, so the row takes ``deduped``'s ``ELSE ro.rn = 1``
+  branch.
 * ``rn`` partitions by ``vm_id`` and the vm holds exactly one row, so ``rn = 1``.
 * ``is_mex_normalized`` needs ``survivor_n >= 3``, so it is false and
   ``adj_opening_probability`` is the raw curve price ``COALESCE(cp, opening)``.
 
-So the row publishes, at that price, in that bucket, as a loss. The restored
+So that row publishes, at that price, in that bucket, as a loss. The restored
 fold below adds it with ``w = 0`` and is the producer's arithmetic, not a model
 of it.
+
+🔴 **IT IS NOT EXACT FOR THE CO-LOCATED HALF, AND THAT HALF ONLY EXISTS AFTER
+CAL-P155.** Two lone claims can share a variant only when the variant is ``g:``
+or ``e:``, and those have ``is_grouped = true`` by construction — so
+``is_multi`` is TRUE and the row takes the multi branch instead
+(``adj > 0.005 AND adj < 0.98`` and not at the variant's mode price) rather than
+``rn = 1``. Those three conditions can each remove a restored row. **The
+restored fold is therefore an UPPER BOUND on the co-located half**, in the same
+direction as the chunking bound below, and a reader must not read it as the
+published count. The exact figure comes from the chain itself
+(``artifacts/cal-p155/``), never from this reconstruction.
 
 THE ONE APPROXIMATION, AND ITS DIRECTION IS KNOWN
 -------------------------------------------------
@@ -138,18 +167,76 @@ ARM_OTHER = "A_also_no_winner"
 #: asserts it is still in the frozen file: if the gate is ever repaired, this
 #: script is measuring a defect that no longer exists and must say so loudly
 #: rather than print a zero (gotcha #53 -- an empty answer is a response shape).
-CLEAN_VMS_GATE_FRAGMENT = "AND has_winner >= 1"
+CLEAN_VMS_GATE_FRAGMENT = "OR graded_lone_claims >= 1"
+
+#: CAL-P143 (12-CAL / D13): the gate was REPAIRED, so the fragment above pins
+#: the repaired predicate and the guard that used to prove the defect exists now
+#: proves it is gone. Pinned as a pair on purpose: a partial revert that restores
+#: the bare gate while leaving the new comment block behind would satisfy a
+#: presence-only check. The retired text must be ABSENT.
+CLEAN_VMS_GATE_RETIRED = "WHERE eligible >= 1\n                  AND has_winner >= 1"
+
+#: What the instrument MEANS after the repair. ``B_lone_claim`` was the
+#: population the producer dropped; it is now the population the producer
+#: publishes, so the census reads as a RECONCILIATION (dropped should be 0) and
+#: its verdict line inverts. Stated as a constant so the report text and the
+#: guard cannot drift apart.
+CENSUS_MODE_AFTER_REPAIR = "reconciliation"
+
+#: The repaired gate's restored arm, as the producer spells it. Pinned here so
+#: the pure mirror below and the SQL cannot drift apart silently.
+#:
+#: CAL-P155 / D13 option A (Alex 2026-08-30): the arm went PER MARKET. It used
+#: to read ``market_count = 1 AND total_outcomes = 1 AND graded >= 1``, which is
+#: a statement about the VARIANT and therefore refused two lone claims that
+#: merely shared one. This instrument's premise is the arm, so the mirror moves
+#: with it or the census starts measuring a boundary the producer does not have.
+#:
+#: CAL-P156 / CERT-514: the ``AND ungraded_lone_claims = 0`` conjunct is GONE.
+#: It was a fail-closed residue that still made a graded lone claim wait on a
+#: sibling's grade state — the coupling option A removes — and the cert blocked
+#: it. Unknown truth now leaves at MARKET grain, via rung 1b
+#: (``ungraded_lone_claim_markets``), so the admission arm no longer carries a
+#: variant-wide refusal. The mirror below moved with it.
+RESTORED_ARM_SQL = "OR graded_lone_claims >= 1"
 
 
-def classify_vm(market_count: int, total_outcomes: int) -> str:
+def lone_claim_is_restorable(graded_lone_claims: int) -> bool:
+    """The repaired gate's second arm, as a pure function.
+
+    The SQL is the authority; this is its mirror, so the boundary can be tested
+    without a database and so :func:`classify_vm` and the producer can be held
+    to the SAME boundary by one assertion instead of two readings of two
+    languages.
+
+    ``graded_lone_claims`` is a PER-MARKET count over the variant's members.
+
+    🔴 THIS TOOK AN ``ungraded_lone_claims == 0`` CONJUNCT UNTIL CERT-514, AND
+    LOSING IT IS THE REPAIR, NOT A RELAXATION. Keeping unknown truth out of the
+    curve is still absolute (gotcha #21) — it simply is not this predicate's job
+    any more. Admission is variant-grained, so a conjunct here could only refuse
+    the WHOLE variant, taking every independently graded claim down with the one
+    ungraded row it was aimed at; that is precisely the sibling coupling Alex's
+    option A was chosen to remove. The refusal now happens at the market that
+    actually holds the unknown truth, in the producer's rung 1b
+    (``ungraded_lone_claim_markets``). One argument, because the boundary
+    genuinely depends on one number now.
+    """
+    return graded_lone_claims >= 1
+
+
+def classify_vm(graded_lone_claims: int) -> str:
     """Which arm of the gate's shadow a dropped virtual market falls in.
 
     Pure, so the class boundary is testable without production. A lone claim is
-    ONE market carrying ONE captured outcome; anything wider is a multi-outcome
-    market that graded nobody, which Queue 299 rung 1 removes on its own account
-    and which this instrument must never report as the defect.
+    a MEMBER MARKET carrying exactly one captured outcome; a variant holding at
+    least one that is GRADED is the class the producer now publishes — whether
+    or not ungraded lone claims sit beside it, because rung 1b removes those
+    individually (CERT-514). Anything else in the gate's shadow is a
+    multi-outcome market that graded nobody, which Queue 299 rung 1 removes on
+    its own account and which this instrument must never report as the defect.
     """
-    if market_count == 1 and total_outcomes == 1:
+    if lone_claim_is_restorable(graded_lone_claims):
         return ARM_LONE
     return ARM_OTHER
 
@@ -171,8 +258,8 @@ def dropped_sql(source: str, category: str, lo: int, hi: int) -> str:
     )
     return cce._strip_sql_comments(
         "WITH " + pop + f"""
-SELECT vs.market_count AS mc,
-       vs.total_outcomes AS tout,
+SELECT vs.graded_lone_claims AS glc,
+       vs.ungraded_lone_claims AS ulc,
        LEAST(FLOOR(COALESCE(fo.calibration_probability,
                             fo.opening_probability) * 10)::int, 9) AS b,
        COUNT(*) AS n,
@@ -213,7 +300,7 @@ SELECT LEAST(FLOOR(d.adj_opening_probability * 10)::int, 9) AS b,
        ROUND(SUM(d.adj_opening_probability)::numeric, 6) AS sp
 FROM deduped d
 JOIN vm_stats vs ON vs.vm_id = d.vm_id AND vs.source = d.source
-WHERE vs.market_count = 1 AND vs.total_outcomes = 1
+WHERE vs.graded_lone_claims >= 1
 GROUP BY 1""")
 
 
@@ -311,9 +398,12 @@ def sweep(source: str, category: str, width: int,
         print(f"    [{i + 1}/{len(edges) - 1}] ids {rlo}-{rhi} "
               f"({time.time() - t0:.0f}s elapsed)", file=sys.stderr, flush=True)
 
-        for mc, tout, b, n, sp, w in _collect(dropped_sql, source, category,
-                                              rlo, rhi):
-            arm = classify_vm(int(mc), int(tout))
+        # ``_ulc`` is still SELECTed and GROUPed so the census table keeps
+        # reporting the ungraded split, but since CERT-514 it no longer decides
+        # the arm — rung 1b removes those rows per market, not per variant.
+        for glc, _ulc, b, n, sp, w in _collect(dropped_sql, source, category,
+                                               rlo, rhi):
+            arm = classify_vm(int(glc))
             add(dropped[arm], int(b), int(n), int(w), float(sp))
             if half and arm == ARM_LONE:
                 add(halves[half]["dropped_lone"], int(b), int(n), int(w),

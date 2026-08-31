@@ -1,0 +1,30 @@
+  [1/12] ids 112847-5091089
+  [2/12] ids 5091089-10069331
+  [3/12] ids 10069331-15047573
+  [4/12] ids 15047573-20025815
+  [5/12] ids 20025815-25004057
+  [6/12] ids 25004057-29982299
+  [7/12] ids 29982299-34960541
+  [8/12] ids 34960541-39938783
+  [9/12] ids 39938783-44917025
+  [10/12] ids 44917025-49895267
+  [11/12] ids 49895267-54873509
+  [12/12] ids 54873509-59851748
+    timeout — halving 54873509-59851748
+    timeout — halving 57362628-59851748
+
+polymarket/cricket BY MARKET-NAME FAMILY  (raw tables, eligible-priced rows)
+  family                               mkts       n   price  realized   gap pp  ungraded
+  match_winner                         1341    2968  0.5092    0.4447     6.44         0
+  team top batter                       557    1602   0.504    0.3271    17.69         0
+  toss match double                     507    1468  0.4953    0.3283     16.7         0
+  most sixes                            499    1458  0.5005    0.3258    17.47         0
+  who wins the toss?                    647    1230  0.4997    0.1813    31.84         0
+  completed match?                      630    1202  0.5068     0.198    30.88         0
+  more markets                           55     119   0.563    0.5966    -3.37         0
+  match goes to day 3?                    8      14  0.6293    0.3571    27.21         0
+  match goes to day 5?                    8      14  0.4761    0.3571     11.9         0
+  match goes to day 4?                    7      12  0.5455    0.4167    12.88         0
+  t20 1st innings 6 overs line            3       9  0.6183    0.6667    -4.83         0
+  t20 2nd innings 6 overs line            2       4  0.5866      0.75   -16.34         0
+  TOTAL                                       10100

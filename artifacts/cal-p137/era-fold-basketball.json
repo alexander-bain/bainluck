@@ -1,0 +1,1207 @@
+{
+  "category": "basketball",
+  "population_check_vs_cal_p136": {
+    "compared": true,
+    "p136_rows": 25825,
+    "p137_rows": 25825,
+    "only_in_p136": 0,
+    "only_in_p137": 0,
+    "price_drifted": 0,
+    "price_drift_pct": 0.0,
+    "structurally_mismatched": 0,
+    "example_structural": [],
+    "ok": true
+  },
+  "markets_with_more_than_one_leg_of_a_name": {
+    "yes": 0,
+    "over": 0,
+    "under": 0
+  },
+  "composition": {
+    "markets": 25825,
+    "legs_by_branch": {
+      "over:cal": 1745,
+      "over:cal_eq_open": 5746,
+      "over:none": 18025,
+      "over:open": 309,
+      "under:cal": 645,
+      "under:cal_eq_open": 3126,
+      "under:none": 19835,
+      "under:open": 2219,
+      "yes:cal": 2252,
+      "yes:cal_eq_open": 3281,
+      "yes:none": 19749,
+      "yes:open": 543
+    },
+    "priced_leg_branch": {
+      "cal": 3896,
+      "cal_eq_open": 7522,
+      "open": 635
+    },
+    "over_leg_carries_BOTH_branches": 7490
+  },
+  "arms": {
+    "D_package_coalesce": {
+      "laddered": 2452,
+      "markets_drop": 1709,
+      "markets_ambiguous": 0,
+      "markets_coherent": 743,
+      "drop_rate_of_laddered_pct": 69.7,
+      "families_condemned": 311,
+      "families_multi_rung": 557,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 11936,
+        "yes": 6076,
+        "over": 5977,
+        "half_pair": 1836
+      }
+    },
+    "F_cal_branch_only": {
+      "laddered": 1471,
+      "markets_drop": 860,
+      "markets_ambiguous": 0,
+      "markets_coherent": 611,
+      "drop_rate_of_laddered_pct": 58.46,
+      "families_condemned": 180,
+      "families_multi_rung": 375,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 12788,
+        "yes": 5533,
+        "over": 3758,
+        "half_pair": 3746
+      }
+    },
+    "G_open_branch_only": {
+      "laddered": 2446,
+      "markets_drop": 1960,
+      "markets_ambiguous": 0,
+      "markets_coherent": 486,
+      "drop_rate_of_laddered_pct": 80.13,
+      "families_condemned": 358,
+      "families_multi_rung": 554,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 12035,
+        "yes": 5977,
+        "over": 5961,
+        "half_pair": 1852
+      }
+    },
+    "H_cal_era_only": {
+      "laddered": 231,
+      "markets_drop": 105,
+      "markets_ambiguous": 0,
+      "markets_coherent": 126,
+      "drop_rate_of_laddered_pct": 45.45,
+      "families_condemned": 16,
+      "families_multi_rung": 53,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 21784,
+        "yes": 2252,
+        "over": 601,
+        "half_pair": 1188
+      }
+    }
+  },
+  "era_association": {
+    "eligible_families": 557,
+    "by_branch_set": {
+      "cal": {
+        "families": 133,
+        "condemned": 30,
+        "violating_pairs": 48,
+        "markets": 547,
+        "condemn_rate_pct": 22.56
+      },
+      "cal+cal_eq_open": {
+        "families": 29,
+        "condemned": 10,
+        "violating_pairs": 27,
+        "markets": 177,
+        "condemn_rate_pct": 34.48
+      },
+      "cal_eq_open": {
+        "families": 372,
+        "condemned": 253,
+        "violating_pairs": 508,
+        "markets": 1630,
+        "condemn_rate_pct": 68.01
+      },
+      "cal_eq_open+open": {
+        "families": 17,
+        "condemned": 15,
+        "violating_pairs": 25,
+        "markets": 79,
+        "condemn_rate_pct": 88.24
+      },
+      "open": {
+        "families": 6,
+        "condemned": 3,
+        "violating_pairs": 5,
+        "markets": 19,
+        "condemn_rate_pct": 50.0
+      }
+    },
+    "pure_vs_mixed": {
+      "mixed": {
+        "families": 46,
+        "condemned": 25,
+        "violating_pairs": 52,
+        "markets": 256,
+        "condemn_rate_pct": 54.35
+      },
+      "pure": {
+        "families": 511,
+        "condemned": 286,
+        "violating_pairs": 561,
+        "markets": 2196,
+        "condemn_rate_pct": 55.97
+      }
+    },
+    "concentration": {
+      "condemned_that_are_mixed_pct": 8.0,
+      "eligible_that_are_mixed_pct": 8.3
+    }
+  },
+  "as_of_reach": {
+    "priced_markets": 12053,
+    "priced_leg_has_opening_captured_at": 10879,
+    "priced_leg_has_price_changed_at": 11,
+    "opening_captured_at_coverage_pct": 90.26,
+    "price_changed_at_coverage_pct": 0.09,
+    "note": "the CAL branch carries no as-of at all; where coverage is ~0 hypothesis (a) is UNANSWERABLE from futures_outcomes and needs the price-history table (lesson 21)"
+  },
+  "as_of_spread": {
+    "eligible_families": 557,
+    "dated_families": 392,
+    "dated_share_of_eligible_pct": 70.4,
+    "by_rung_as_of_spread": {
+      "<1h": {
+        "families": 386,
+        "condemned": 263,
+        "condemn_rate_pct": 68.13
+      },
+      "1h-1d": {
+        "families": 1,
+        "condemned": 1,
+        "condemn_rate_pct": 100.0
+      },
+      "1d-7d": {
+        "families": 5,
+        "condemned": 5,
+        "condemn_rate_pct": 100.0
+      }
+    }
+  },
+  "violation_shape": {
+    "eligible_families": 557,
+    "condemned_families": 311,
+    "by_rung_count": {
+      "2": {
+        "families": 220,
+        "condemned": 70,
+        "condemn_rate_pct": 31.82
+      },
+      "3": {
+        "families": 96,
+        "condemned": 49,
+        "condemn_rate_pct": 51.04
+      },
+      "4": {
+        "families": 66,
+        "condemned": 42,
+        "condemn_rate_pct": 63.64
+      },
+      "5+": {
+        "families": 175,
+        "condemned": 150,
+        "condemn_rate_pct": 85.71
+      }
+    },
+    "by_magnitude": {
+      "<=0.5pp": {
+        "pairs": 24,
+        "pct": 3.9
+      },
+      "0.5-2pp": {
+        "pairs": 97,
+        "pct": 15.8
+      },
+      "2-5pp": {
+        "pairs": 82,
+        "pct": 13.4
+      },
+      "5-10pp": {
+        "pairs": 71,
+        "pct": 11.6
+      },
+      ">10pp": {
+        "pairs": 339,
+        "pct": 55.3
+      }
+    },
+    "worst_reversal_per_condemned_family": {
+      "median_pp": 29.9,
+      "p90_pp": 54.9
+    }
+  },
+  "settled_step_test": {
+    "eligible_families": 557,
+    "contradictory": 0,
+    "contradictory_and_condemned": 0,
+    "near_boundary_but_not_settled": 237,
+    "by_settlement_mix": {
+      "all_live": {
+        "families": 261,
+        "condemned": 102,
+        "condemn_rate_pct": 39.08
+      },
+      "all_settled": {
+        "families": 74,
+        "condemned": 17,
+        "condemn_rate_pct": 22.97
+      },
+      "mixed_settlement": {
+        "families": 222,
+        "condemned": 192,
+        "condemn_rate_pct": 86.49
+      }
+    },
+    "concentration": {
+      "condemned_that_are_mixed_settlement_pct": 61.7,
+      "eligible_that_are_mixed_settlement_pct": 39.9
+    },
+    "contradictory_share_of_all_settled_pct": 0.0
+  },
+  "leg_swap_test": {
+    "condemned_families": 311,
+    "min_flips_histogram": {
+      "1": 106,
+      "2": 24,
+      "3": 8,
+      "4+": 5
+    },
+    "no_assignment_fixes_it": 168,
+    "one_flip_share_of_condemned_pct": 34.1,
+    "flip_matches_the_other_leg_pct": 42.7,
+    "over_under_pairs_checked": 440
+  },
+  "worst_examples": [
+    {
+      "worst_reversal_pp": 98.0,
+      "direction": "dec",
+      "family_key": "polymarket:385417  ||  76ers vs. celtics: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "209.5": 0.99,
+        "210.5": 0.01,
+        "212.5": 0.99,
+        "215.5": 0.33,
+        "216.5": 0.001,
+        "217.5": 0.001,
+        "222.5": 0.11,
+        "225.5": 0.001
+      },
+      "members": [
+        {
+          "market_id": 34937759,
+          "name": "76ers vs. Celtics: O/U 216.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34937760,
+          "name": "76ers vs. Celtics: O/U 217.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34937776,
+          "name": "76ers vs. Celtics: O/U 215.5",
+          "price": 0.33,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34937777,
+          "name": "76ers vs. Celtics: O/U 222.5",
+          "price": 0.11,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34937780,
+          "name": "76ers vs. Celtics: O/U 225.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34937785,
+          "name": "76ers vs. Celtics: O/U 212.5",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34937788,
+          "name": "76ers vs. Celtics: O/U 209.5",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34937792,
+          "name": "76ers vs. Celtics: O/U 210.5",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 97.9,
+      "direction": "dec",
+      "family_key": "polymarket:266900  ||  wisconsin badgers vs. michigan wolverines: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "134.5": 0.62,
+        "137.5": 0.001,
+        "138.5": 0.98,
+        "147.5": 0.03,
+        "149.5": 0.54,
+        "151.5": 0.47,
+        "160.5": 0.021,
+        "161.5": 0.01
+      },
+      "members": [
+        {
+          "market_id": 35458460,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 161.5",
+          "price": 0.01,
+          "branch": "open"
+        },
+        {
+          "market_id": 35458461,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 160.5",
+          "price": 0.021,
+          "branch": "open"
+        },
+        {
+          "market_id": 35458464,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 147.5",
+          "price": 0.03,
+          "branch": "open"
+        },
+        {
+          "market_id": 35458468,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 149.5",
+          "price": 0.54,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35458473,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 151.5",
+          "price": 0.47,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35458480,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 138.5",
+          "price": 0.98,
+          "branch": "open"
+        },
+        {
+          "market_id": 35458484,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 134.5",
+          "price": 0.62,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35458485,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 137.5",
+          "price": 0.001,
+          "branch": "open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 97.0,
+      "direction": "dec",
+      "family_key": "polymarket:291888  ||  miami hurricanes vs. purdue boilermakers: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "148.5": 0.001,
+        "151.5": 0.51,
+        "152.5": 0.5,
+        "153.5": 0.21,
+        "155.5": 0.49,
+        "156.5": 0.02,
+        "157.5": 0.99
+      },
+      "members": [
+        {
+          "market_id": 35452783,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 152.5",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35452788,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 156.5",
+          "price": 0.02,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35452792,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 153.5",
+          "price": 0.21,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35452794,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 148.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35452796,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 157.5",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35452797,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 151.5",
+          "price": 0.51,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35452798,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 155.5",
+          "price": 0.49,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 97.0,
+      "direction": "dec",
+      "family_key": "polymarket:332515  ||  bulls vs. wizards: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "227.5": 0.01,
+        "229.5": 0.98,
+        "233.5": 0.23,
+        "234.5": 0.5,
+        "236.5": 0.05,
+        "242.5": 0.02,
+        "247.5": 0.49,
+        "248.5": 0.001,
+        "249.5": 0.001,
+        "250.5": 0.001,
+        "251.5": 0.001
+      },
+      "members": [
+        {
+          "market_id": 35446866,
+          "name": "Bulls vs. Wizards: O/U 250.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446890,
+          "name": "Bulls vs. Wizards: O/U 242.5",
+          "price": 0.02,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446892,
+          "name": "Bulls vs. Wizards: O/U 247.5",
+          "price": 0.49,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446899,
+          "name": "Bulls vs. Wizards: O/U 234.5",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446900,
+          "name": "Bulls vs. Wizards: O/U 236.5",
+          "price": 0.05,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446907,
+          "name": "Bulls vs. Wizards: O/U 229.5",
+          "price": 0.98,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446908,
+          "name": "Bulls vs. Wizards: O/U 233.5",
+          "price": 0.23,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446909,
+          "name": "Bulls vs. Wizards: O/U 249.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446914,
+          "name": "Bulls vs. Wizards: O/U 248.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446919,
+          "name": "Bulls vs. Wizards: O/U 227.5",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446925,
+          "name": "Bulls vs. Wizards: O/U 251.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 96.0,
+      "direction": "dec",
+      "family_key": "polymarket:283102  ||  kings vs. hornets: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "226.5": 0.001,
+        "227.5": 0.52,
+        "228.5": 0.66,
+        "229.5": 0.001,
+        "230.5": 0.001,
+        "231.5": 0.001,
+        "232.5": 0.37,
+        "233.5": 0.06,
+        "235.5": 0.21,
+        "238.5": 0.02,
+        "241.5": 0.98
+      },
+      "members": [
+        {
+          "market_id": 35454474,
+          "name": "Kings vs. Hornets: O/U 227.5",
+          "price": 0.52,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35454475,
+          "name": "Kings vs. Hornets: O/U 226.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35454476,
+          "name": "Kings vs. Hornets: O/U 228.5",
+          "price": 0.66,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35454478,
+          "name": "Kings vs. Hornets: O/U 229.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35454512,
+          "name": "Kings vs. Hornets: O/U 230.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35454514,
+          "name": "Kings vs. Hornets: O/U 231.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35454517,
+          "name": "Kings vs. Hornets: O/U 233.5",
+          "price": 0.06,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35454519,
+          "name": "Kings vs. Hornets: O/U 232.5",
+          "price": 0.37,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35454521,
+          "name": "Kings vs. Hornets: O/U 238.5",
+          "price": 0.02,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35454522,
+          "name": "Kings vs. Hornets: O/U 235.5",
+          "price": 0.21,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35454541,
+          "name": "Kings vs. Hornets: O/U 241.5",
+          "price": 0.98,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 89.45,
+      "direction": "dec",
+      "family_key": "polymarket:496953  ||  cavaliers vs. knicks: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "207.5": 0.18,
+        "210.5": 0.105,
+        "213.5": 0.9995,
+        "216.5": 0.9995,
+        "217.5": 0.9995,
+        "218.5": 0.9995,
+        "219.5": 0.001,
+        "222.5": 0.002,
+        "225.5": 0.001
+      },
+      "members": [
+        {
+          "market_id": 22545882,
+          "name": "Cavaliers vs. Knicks: O/U 216.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 22772695,
+          "name": "Cavaliers vs. Knicks: O/U 217.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 22975662,
+          "name": "Cavaliers vs. Knicks: O/U 207.5",
+          "price": 0.18,
+          "branch": "cal"
+        },
+        {
+          "market_id": 22975663,
+          "name": "Cavaliers vs. Knicks: O/U 210.5",
+          "price": 0.105,
+          "branch": "cal"
+        },
+        {
+          "market_id": 22975664,
+          "name": "Cavaliers vs. Knicks: O/U 213.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 22975665,
+          "name": "Cavaliers vs. Knicks: O/U 219.5",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 22975666,
+          "name": "Cavaliers vs. Knicks: O/U 222.5",
+          "price": 0.002,
+          "branch": "cal"
+        },
+        {
+          "market_id": 22975667,
+          "name": "Cavaliers vs. Knicks: O/U 225.5",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 23508113,
+          "name": "Cavaliers vs. Knicks: O/U 218.5",
+          "price": 0.9995,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 88.0,
+      "direction": "dec",
+      "family_key": "polymarket:336054  ||  hawks vs. cavaliers: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "238.5": 0.98,
+        "239.5": 0.05,
+        "240.5": 0.93,
+        "241.5": 0.54,
+        "242.5": 0.43,
+        "243.5": 0.53,
+        "244.5": 0.53,
+        "245.5": 0.32,
+        "246.5": 0.56,
+        "248.5": 0.13
+      },
+      "members": [
+        {
+          "market_id": 35446593,
+          "name": "Hawks vs. Cavaliers: O/U 245.5",
+          "price": 0.32,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446640,
+          "name": "Hawks vs. Cavaliers: O/U 238.5",
+          "price": 0.98,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446644,
+          "name": "Hawks vs. Cavaliers: O/U 240.5",
+          "price": 0.93,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446645,
+          "name": "Hawks vs. Cavaliers: O/U 241.5",
+          "price": 0.54,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446646,
+          "name": "Hawks vs. Cavaliers: O/U 239.5",
+          "price": 0.05,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446647,
+          "name": "Hawks vs. Cavaliers: O/U 246.5",
+          "price": 0.56,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446652,
+          "name": "Hawks vs. Cavaliers: O/U 248.5",
+          "price": 0.13,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446653,
+          "name": "Hawks vs. Cavaliers: O/U 244.5",
+          "price": 0.53,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446654,
+          "name": "Hawks vs. Cavaliers: O/U 243.5",
+          "price": 0.53,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35446655,
+          "name": "Hawks vs. Cavaliers: O/U 242.5",
+          "price": 0.43,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 85.6,
+      "direction": "dec",
+      "family_key": "polymarket:303396  ||  jayson tatum: assists <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "4.5": 0.002,
+        "5.5": 0.858
+      },
+      "members": [
+        {
+          "market_id": 35450754,
+          "name": "Jayson Tatum: Assists O/U 4.5",
+          "price": 0.002,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35450775,
+          "name": "Jayson Tatum: Assists O/U 5.5",
+          "price": 0.858,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 82.0,
+      "direction": "dec",
+      "family_key": "polymarket:350431  ||  magic vs. celtics: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "221.5": 0.55,
+        "222.5": 0.01,
+        "223.5": 0.83,
+        "224.5": 0.55,
+        "226.5": 0.98,
+        "228.5": 0.01,
+        "229.5": 0.82
+      },
+      "members": [
+        {
+          "market_id": 34939338,
+          "name": "Magic vs. Celtics: O/U 223.5",
+          "price": 0.83,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34939341,
+          "name": "Magic vs. Celtics: O/U 226.5",
+          "price": 0.98,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34939342,
+          "name": "Magic vs. Celtics: O/U 224.5",
+          "price": 0.55,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34939344,
+          "name": "Magic vs. Celtics: O/U 228.5",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34939346,
+          "name": "Magic vs. Celtics: O/U 229.5",
+          "price": 0.82,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34939372,
+          "name": "Magic vs. Celtics: O/U 221.5",
+          "price": 0.55,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34939387,
+          "name": "Magic vs. Celtics: O/U 222.5",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 81.9,
+      "direction": "dec",
+      "family_key": "polymarket:325482  ||  pacers vs. cavaliers: 1h <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "115.5": 0.001,
+        "116.5": 0.82
+      },
+      "members": [
+        {
+          "market_id": 35447833,
+          "name": "Pacers vs. Cavaliers: 1H O/U 116.5",
+          "price": 0.82,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35447839,
+          "name": "Pacers vs. Cavaliers: 1H O/U 115.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 79.9,
+      "direction": "dec",
+      "family_key": "polymarket:276190  ||  trail blazers vs. nuggets: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "240.5": 0.888,
+        "241.5": 0.12,
+        "242.5": 0.001,
+        "253.5": 0.8,
+        "255.5": 0.27,
+        "256.5": 0.46,
+        "257.5": 0.04,
+        "258.5": 0.44
+      },
+      "members": [
+        {
+          "market_id": 35455787,
+          "name": "Trail Blazers vs. Nuggets: O/U 256.5",
+          "price": 0.46,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35455788,
+          "name": "Trail Blazers vs. Nuggets: O/U 257.5",
+          "price": 0.04,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35455793,
+          "name": "Trail Blazers vs. Nuggets: O/U 255.5",
+          "price": 0.27,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35455794,
+          "name": "Trail Blazers vs. Nuggets: O/U 258.5",
+          "price": 0.44,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35455796,
+          "name": "Trail Blazers vs. Nuggets: O/U 253.5",
+          "price": 0.8,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35455799,
+          "name": "Trail Blazers vs. Nuggets: O/U 241.5",
+          "price": 0.12,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35455801,
+          "name": "Trail Blazers vs. Nuggets: O/U 242.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35455803,
+          "name": "Trail Blazers vs. Nuggets: O/U 240.5",
+          "price": 0.888,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 79.0,
+      "direction": "dec",
+      "family_key": "polymarket:293092  ||  clippers vs. pacers: 1h <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "114.5": 0.32,
+        "115.5": 0.06,
+        "116.5": 0.85
+      },
+      "members": [
+        {
+          "market_id": 35452699,
+          "name": "Clippers vs. Pacers: 1H O/U 116.5",
+          "price": 0.85,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35452705,
+          "name": "Clippers vs. Pacers: 1H O/U 114.5",
+          "price": 0.32,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35452731,
+          "name": "Clippers vs. Pacers: 1H O/U 115.5",
+          "price": 0.06,
+          "branch": "cal_eq_open"
+        }
+      ]
+    }
+  ],
+  "holdout_at": 35446525,
+  "holdout": {
+    "early": {
+      "rows": 12912,
+      "D_package_coalesce": {
+        "laddered": 1122,
+        "markets_drop": 625,
+        "markets_ambiguous": 0,
+        "markets_coherent": 497,
+        "drop_rate_of_laddered_pct": 55.7,
+        "families_condemned": 115,
+        "families_multi_rung": 265,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 5809,
+          "yes": 3686,
+          "over": 3019,
+          "half_pair": 398
+        }
+      },
+      "H_cal_era_only": {
+        "laddered": 221,
+        "markets_drop": 105,
+        "markets_ambiguous": 0,
+        "markets_coherent": 116,
+        "drop_rate_of_laddered_pct": 47.51,
+        "families_condemned": 16,
+        "families_multi_rung": 49,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 8981,
+          "yes": 2193,
+          "over": 585,
+          "half_pair": 1153
+        }
+      },
+      "era_association": {
+        "eligible_families": 265,
+        "by_branch_set": {
+          "cal": {
+            "families": 124,
+            "condemned": 30,
+            "violating_pairs": 48,
+            "markets": 513,
+            "condemn_rate_pct": 24.19
+          },
+          "cal+cal_eq_open": {
+            "families": 24,
+            "condemned": 9,
+            "violating_pairs": 26,
+            "markets": 156,
+            "condemn_rate_pct": 37.5
+          },
+          "cal_eq_open": {
+            "families": 117,
+            "condemned": 76,
+            "violating_pairs": 146,
+            "markets": 453,
+            "condemn_rate_pct": 64.96
+          }
+        },
+        "pure_vs_mixed": {
+          "mixed": {
+            "families": 24,
+            "condemned": 9,
+            "violating_pairs": 26,
+            "markets": 156,
+            "condemn_rate_pct": 37.5
+          },
+          "pure": {
+            "families": 241,
+            "condemned": 106,
+            "violating_pairs": 194,
+            "markets": 966,
+            "condemn_rate_pct": 43.98
+          }
+        },
+        "concentration": {
+          "condemned_that_are_mixed_pct": 7.8,
+          "eligible_that_are_mixed_pct": 9.1
+        }
+      }
+    },
+    "late": {
+      "rows": 12913,
+      "D_package_coalesce": {
+        "laddered": 1326,
+        "markets_drop": 1084,
+        "markets_ambiguous": 0,
+        "markets_coherent": 242,
+        "drop_rate_of_laddered_pct": 81.75,
+        "families_condemned": 196,
+        "families_multi_rung": 291,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 6127,
+          "yes": 2390,
+          "over": 2958,
+          "half_pair": 1438
+        }
+      },
+      "H_cal_era_only": {
+        "laddered": 7,
+        "markets_drop": 0,
+        "markets_ambiguous": 0,
+        "markets_coherent": 7,
+        "drop_rate_of_laddered_pct": 0.0,
+        "families_condemned": 0,
+        "families_multi_rung": 3,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 12803,
+          "yes": 59,
+          "over": 16,
+          "half_pair": 35
+        }
+      },
+      "era_association": {
+        "eligible_families": 291,
+        "by_branch_set": {
+          "cal": {
+            "families": 9,
+            "condemned": 0,
+            "violating_pairs": 0,
+            "markets": 32,
+            "condemn_rate_pct": 0.0
+          },
+          "cal+cal_eq_open": {
+            "families": 5,
+            "condemned": 1,
+            "violating_pairs": 1,
+            "markets": 21,
+            "condemn_rate_pct": 20.0
+          },
+          "cal_eq_open": {
+            "families": 254,
+            "condemned": 177,
+            "violating_pairs": 362,
+            "markets": 1175,
+            "condemn_rate_pct": 69.69
+          },
+          "cal_eq_open+open": {
+            "families": 17,
+            "condemned": 15,
+            "violating_pairs": 25,
+            "markets": 79,
+            "condemn_rate_pct": 88.24
+          },
+          "open": {
+            "families": 6,
+            "condemned": 3,
+            "violating_pairs": 5,
+            "markets": 19,
+            "condemn_rate_pct": 50.0
+          }
+        },
+        "pure_vs_mixed": {
+          "mixed": {
+            "families": 22,
+            "condemned": 16,
+            "violating_pairs": 26,
+            "markets": 100,
+            "condemn_rate_pct": 72.73
+          },
+          "pure": {
+            "families": 269,
+            "condemned": 180,
+            "violating_pairs": 367,
+            "markets": 1226,
+            "condemn_rate_pct": 66.91
+          }
+        },
+        "concentration": {
+          "condemned_that_are_mixed_pct": 8.2,
+          "eligible_that_are_mixed_pct": 7.6
+        }
+      }
+    }
+  }
+}

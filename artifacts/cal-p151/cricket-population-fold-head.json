@@ -1,0 +1,323 @@
+{
+ "chain": "head",
+ "base_sha": "682c0b37",
+ "scope_proof": {
+  "mixed_keys": [
+   {
+    "kind": "event",
+    "key": "14798532",
+    "source": "kalshi",
+    "total": 2,
+    "cric": 1,
+    "gate_unfiltered": false,
+    "gate_filtered": false
+   },
+   {
+    "kind": "event",
+    "key": "14798618",
+    "source": "kalshi",
+    "total": 2,
+    "cric": 1,
+    "gate_unfiltered": false,
+    "gate_filtered": false
+   },
+   {
+    "kind": "event",
+    "key": "14798622",
+    "source": "kalshi",
+    "total": 2,
+    "cric": 1,
+    "gate_unfiltered": false,
+    "gate_filtered": false
+   },
+   {
+    "kind": "event",
+    "key": "14798627",
+    "source": "kalshi",
+    "total": 2,
+    "cric": 1,
+    "gate_unfiltered": false,
+    "gate_filtered": false
+   },
+   {
+    "kind": "event",
+    "key": "14798691",
+    "source": "kalshi",
+    "total": 2,
+    "cric": 1,
+    "gate_unfiltered": false,
+    "gate_filtered": false
+   },
+   {
+    "kind": "event",
+    "key": "14856015",
+    "source": "kalshi",
+    "total": 2,
+    "cric": 1,
+    "gate_unfiltered": false,
+    "gate_filtered": false
+   },
+   {
+    "kind": "event",
+    "key": "14898695",
+    "source": "kalshi",
+    "total": 2,
+    "cric": 1,
+    "gate_unfiltered": false,
+    "gate_filtered": false
+   }
+  ],
+  "dangerous_keys": []
+ },
+ "population": {
+  "markets": 7992,
+  "by_source": {
+   "kalshi": 1348,
+   "polymarket": 6644
+  },
+  "components": 5626,
+  "largest_component": 21,
+  "chunks": [
+   395,
+   399,
+   400,
+   400,
+   400,
+   400,
+   399,
+   400,
+   400,
+   400,
+   400,
+   400,
+   400,
+   400,
+   400,
+   400,
+   400,
+   400,
+   400,
+   399
+  ]
+ },
+ "families": {
+  "completed match?": {
+   "norm": {
+    "rows_": 108,
+    "distinct_outcomes": 108,
+    "mkts": 54,
+    "winners": 54,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 0,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 0,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 38,
+    "sum_p": 53.754999999999995
+   },
+   "pub": {
+    "rows_": 53,
+    "distinct_outcomes": 53,
+    "mkts": 40,
+    "winners": 37,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 0,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 0,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 0,
+    "sum_p": 26.21
+   }
+  },
+  "match_winner": {
+   "norm": {
+    "rows_": 883,
+    "distinct_outcomes": 883,
+    "mkts": 387,
+    "winners": 546,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 0,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 5,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 5,
+    "sum_p": 450.551506
+   },
+   "pub": {
+    "rows_": 821,
+    "distinct_outcomes": 821,
+    "mkts": 377,
+    "winners": 498,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 0,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 0,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 0,
+    "sum_p": 404.6480060000001
+   }
+  },
+  "more markets": {
+   "norm": {
+    "rows_": 45,
+    "distinct_outcomes": 45,
+    "mkts": 21,
+    "winners": 29,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 0,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 29,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 0,
+    "sum_p": 24.0345
+   },
+   "pub": {
+    "rows_": 13,
+    "distinct_outcomes": 13,
+    "mkts": 6,
+    "winners": 9,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 0,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 0,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 0,
+    "sum_p": 6.7205
+   }
+  },
+  "most sixes": {
+   "norm": {
+    "rows_": 657,
+    "distinct_outcomes": 657,
+    "mkts": 222,
+    "winners": 219,
+    "x_no_winner_market": 3,
+    "x_field_incomplete": 15,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 0,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 11,
+    "sum_p": 221.8235
+   },
+   "pub": {
+    "rows_": 628,
+    "distinct_outcomes": 628,
+    "mkts": 216,
+    "winners": 213,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 0,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 0,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 0,
+    "sum_p": 210.41700000000003
+   }
+  },
+  "team top batter": {
+   "norm": {
+    "rows_": 707,
+    "distinct_outcomes": 707,
+    "mkts": 242,
+    "winners": 240,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 18,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 0,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 11,
+    "sum_p": 242.189
+   },
+   "pub": {
+    "rows_": 684,
+    "distinct_outcomes": 684,
+    "mkts": 235,
+    "winners": 233,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 0,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 0,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 0,
+    "sum_p": 231.22699999999998
+   }
+  },
+  "toss match double": {
+   "norm": {
+    "rows_": 737,
+    "distinct_outcomes": 737,
+    "mkts": 250,
+    "winners": 249,
+    "x_no_winner_market": 3,
+    "x_field_incomplete": 15,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 2,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 13,
+    "sum_p": 252.89049999999997
+   },
+   "pub": {
+    "rows_": 708,
+    "distinct_outcomes": 708,
+    "mkts": 242,
+    "winners": 240,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 0,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 0,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 0,
+    "sum_p": 240.362
+   }
+  },
+  "who wins the toss?": {
+   "norm": {
+    "rows_": 80,
+    "distinct_outcomes": 80,
+    "mkts": 44,
+    "winners": 36,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 0,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 0,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 22,
+    "sum_p": 40.585
+   },
+   "pub": {
+    "rows_": 44,
+    "distinct_outcomes": 44,
+    "mkts": 33,
+    "winners": 15,
+    "x_no_winner_market": 0,
+    "x_field_incomplete": 0,
+    "x_orphan_partition": 0,
+    "x_draw_authority": 0,
+    "x_malformed_binary": 0,
+    "x_illiquid": 0,
+    "x_poly_placeholder": 0,
+    "sum_p": 22.549999999999997
+   }
+  }
+ },
+ "pooled": {
+  "rows": 2951,
+  "distinct_outcomes": 2951,
+  "phantom_rows": 0,
+  "mean_p": 0.3870330416807862,
+  "realized": 0.4218908844459505,
+  "gap_pp": 3.485784276516429
+ }
+}

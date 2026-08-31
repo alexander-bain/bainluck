@@ -1,0 +1,51 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.14+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/bain/bainluck-dev/calibration/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 22237 items / 19249 deselected / 2988 selected
+
+tests/evals/test_cache_failure_resilience.py .                           [  0%]
+tests/evals/test_calibration_census_closure_contract.py .....            [  0%]
+tests/evals/test_calibration_coverage_bridge_contract.py ............... [  0%]
+                                                                         [  0%]
+tests/evals/test_calibration_coverage_unit_authority.py .....            [  0%]
+tests/evals/test_calibration_exit_exam_bundle_contract.py ....           [  1%]
+tests/evals/test_calibration_fingerprint_derived_map.py ......           [  1%]
+tests/evals/test_calibration_independence_disclosure_contract.py ....    [  1%]
+tests/evals/test_calibration_leakage_census.py ........                  [  1%]
+tests/evals/test_calibration_main_phase_budget_contract.py ............. [  2%]
+...                                                                      [  2%]
+tests/evals/test_calibration_metric_robustness.py .......                [  2%]
+tests/evals/test_calibration_orphan_containment_contract.py ............ [  2%]
+                                                                         [  2%]
+tests/evals/test_calibration_policy_census.py .........                  [  3%]
+tests/evals/test_calibration_population_integrity.py .......             [  3%]
+tests/evals/test_calibration_publish_gate_contract.py ...........        [  3%]
+tests/evals/test_calibration_rendered_parity_contract.py ...             [  3%]
+tests/evals/test_calibration_repair_retention_contract.py .......        [  4%]
+tests/evals/test_calibration_subcohort_diagnosis_contract.py ....        [  4%]
+tests/evals/test_calibration_surface_population_authority.py ....        [  4%]
+tests/evals/test_calibration_task_resumability_contract.py ............  [  4%]
+tests/evals/test_calibration_version_rollover_contract.py .............. [  5%]
+..                                                                       [  5%]
+tests/evals/test_calibration_watchdog_evidence_contract.py ....          [  5%]
+tests/evals/test_cohort_ece_parity.py .                                  [  5%]
+tests/evals/test_cohort_sweep.py ..                                      [  5%]
+tests/evals/test_feed_card_trust_contract.py .                           [  5%]
+tests/evals/test_matched_calibration_evidence_contract.py ....           [  5%]
+tests/evals/test_product_measurement_claim_gate.py .                     [  5%]
+tests/evals/test_scoreboard_contamination_contract.py .                  [  5%]
+tests/evals/test_semantic_matching.py .                                  [  5%]
+tests/evals/test_settlement_authority_ladder_contract.py ...             [  5%]
+tests/evals/test_staged_calibration_convergence_contract.py ....         [  5%]
+tests/integration/test_cache_failure_seam.py ....                        [  6%]
+tests/integration/test_calibration_mode_price_source_scope_peers_pg.py s [  6%]
+ssss                                                                     [  6%]
+tests/integration/test_calibration_mode_price_source_scope_pg.py sss     [  6%]
+tests/integration/test_calibration_request_containment_300b.py ......... [  6%]
+.......................                                                  [  7%]
+tests/integration/test_route_admin_data_quality.py ..                    [  7%]
+tests/integration/test_route_calibration.py ............................ [  8%]
+..........

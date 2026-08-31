@@ -1,0 +1,28 @@
+CAL-P143 REFUSAL REGISTER — the four consecutive refusals, and where each one now sits
+  board read: 19 queued cells
+
+  cell                       session   mode                     board            excess
+  kalshi/entertainment       CAL-P129  holdout                  rank 7             18,763
+  polymarket/golf            CAL-P130  retention                rank 12            15,834
+  polymarket/economics       CAL-P131  no structural dimension  rank 15            11,608
+  polymarket/tech            CAL-P132  exhaustive lattice       OFF THE BOARD           -
+
+  kalshi/entertainment — 12 partitions, no retention floor
+      sumband's 33 pooled passes go to 0 of 1023 under the holdout; best worst-half 3.09 vs a 3.0 bar
+      artifacts/cal-p129/RULE-DESIGN-kalshi-entertainment.md
+      waits on 13-CAL
+  polymarket/golf — 15 partitions (14 inherited + 1 built), exhaustive
+      no subset clears the bar at any retention; the cell shows ~100 golfers each priced ~48% to finish top five
+      artifacts/cal-p130/RULE-DESIGN-polymarket-golf.md
+  polymarket/economics — 16 partitions (15 inherited + 1 built), exhaustive
+      508 outcomes the curve admits only because they won; an 11-band S&P market prices both tails at 40%
+      artifacts/cal-p131/RULE-DESIGN-polymarket-economics.md
+  polymarket/tech — 17 partitions, whole 2^k lattice at --min-rows 1 --min-share 0
+      zero subsets clear 3.0 on the worst half at ANY retention, including retentions that delete 99% of the cell; best leakage-free 3.12 / 4.66
+      artifacts/cal-p132/RULE-DESIGN-polymarket-tech.md
+      🔴 was board rank 19 when refused; the board has since moved and it is no longer in the queued 19, so hold-ledger.py cannot see it
+
+  ON the board: 3 of 4   OFF the board: 1
+  🔴 hold-ledger.py reads the board, so it cannot show the 1 refusal(s) above. A hold that leaves the board is resolved; a refusal that leaves the board is still a refusal.
+
+  EXIT 0

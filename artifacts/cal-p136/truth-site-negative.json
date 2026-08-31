@@ -1,0 +1,222 @@
+{
+  "baseball": {
+    "distinct_legs": 2355,
+    "leg_rows": 57869,
+    "distinct_cumulative_legs": 10,
+    "cumulative_leg_rows": 14,
+    "cumulative_pct": 0.024,
+    "top_legs": [
+      [
+        "over",
+        11979
+      ],
+      [
+        "under",
+        11979
+      ],
+      [
+        "yes",
+        6497
+      ],
+      [
+        "no",
+        5957
+      ],
+      [
+        "spread -1.5",
+        1818
+      ],
+      [
+        "spread -2.5",
+        1118
+      ]
+    ],
+    "cumulative_examples": [
+      [
+        "1+",
+        2
+      ],
+      [
+        "2+",
+        2
+      ],
+      [
+        "3+",
+        2
+      ],
+      [
+        "9+",
+        2
+      ],
+      [
+        "10+",
+        1
+      ]
+    ]
+  },
+  "esports": {
+    "distinct_legs": 3675,
+    "leg_rows": 39334,
+    "distinct_cumulative_legs": 6,
+    "cumulative_leg_rows": 6,
+    "cumulative_pct": 0.015,
+    "top_legs": [
+      [
+        "both teams slay a dragon",
+        3254
+      ],
+      [
+        "any player quadra kill",
+        3248
+      ],
+      [
+        "any player penta kill",
+        3246
+      ],
+      [
+        "both teams destroy inhibitors",
+        3235
+      ],
+      [
+        "both teams slay baron nashor",
+        3234
+      ],
+      [
+        "both teams beat roshan",
+        2401
+      ]
+    ],
+    "cumulative_examples": [
+      [
+        "11+",
+        1
+      ],
+      [
+        "1+",
+        1
+      ],
+      [
+        "18m+",
+        1
+      ],
+      [
+        "2+",
+        1
+      ],
+      [
+        "3+",
+        1
+      ]
+    ]
+  },
+  "soccer": {
+    "distinct_legs": 3317,
+    "leg_rows": 11943,
+    "distinct_cumulative_legs": 6,
+    "cumulative_leg_rows": 73,
+    "cumulative_pct": 0.611,
+    "top_legs": [
+      [
+        "both teams to score",
+        1887
+      ],
+      [
+        "1st half o/u 0.5",
+        89
+      ],
+      [
+        "1st half o/u 1.5",
+        89
+      ],
+      [
+        "1st half o/u 2.5",
+        89
+      ],
+      [
+        "2nd half o/u 0.5",
+        84
+      ],
+      [
+        "2nd half o/u 1.5",
+        84
+      ]
+    ],
+    "cumulative_examples": [
+      [
+        "3+",
+        13
+      ],
+      [
+        "1+",
+        12
+      ],
+      [
+        "2+",
+        12
+      ],
+      [
+        "4+",
+        12
+      ],
+      [
+        "5+",
+        12
+      ]
+    ]
+  },
+  "basketball": {
+    "distinct_legs": 2558,
+    "leg_rows": 51375,
+    "distinct_cumulative_legs": 14,
+    "cumulative_leg_rows": 20,
+    "cumulative_pct": 0.039,
+    "top_legs": [
+      [
+        "over",
+        13822
+      ],
+      [
+        "under",
+        13256
+      ],
+      [
+        "yes",
+        7066
+      ],
+      [
+        "no",
+        6721
+      ],
+      [
+        "1h moneyline",
+        394
+      ],
+      [
+        "1h spread -1.5",
+        113
+      ]
+    ],
+    "cumulative_examples": [
+      [
+        "1+",
+        2
+      ],
+      [
+        "2+",
+        2
+      ],
+      [
+        "3+",
+        2
+      ],
+      [
+        "4+",
+        2
+      ],
+      [
+        "5+",
+        2
+      ]
+    ]
+  }
+}

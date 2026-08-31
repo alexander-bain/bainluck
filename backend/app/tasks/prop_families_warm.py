@@ -58,6 +58,48 @@ The 285 rostered teams with no near fixture keep the route's own
 stale-while-revalidate, and the 9,258 rosterless teams were never slow (one
 pattern, not 41). Warming all 367 unconditionally would be four times the
 database work for the teams nobody is looking at this fortnight.
+
+🔴 LAT-P158 — A FIXTURE IS THE WRONG QUESTION TO ASK ABOUT A SEASON-LONG MARKET.
+The paragraph above is right that the reachable set must be declared, and wrong
+about what makes a team reachable. "Has a game in the next fortnight" is a GAME
+CLOCK signal, and this surface has no game clock: `routes/prop_families.py` says
+so itself — *"Prop families are season-long questions ('Next Team', MVP races,
+threshold ladders) whose probabilities move on the futures poll cadence, not on a
+game clock"*. Gating the warm set on a fixture therefore excludes exactly the
+teams whose prop markets are most alive: an OFFSEASON team with championship,
+MVP and Next Team futures trading has no fixture for two months and is precisely
+the page a person opens to see them.
+
+Measured on production `767db311`, 2026-08-31, five team pages, first touch:
+
+    oklahoma-city-thunder    13,262 ms   99 props   NO fixture -> never warmed
+    golden-state-warriors    11,896 ms   84 props   NO fixture -> never warmed
+    new-york-knicks           8,924 ms   76 props   NO fixture -> never warmed
+    los-angeles-dodgers-mlb     251 ms    ~ props   fixture    -> warm, mirror
+    detroit-tigers-mlb          272 ms    ~ props   fixture    -> warm, mirror
+
+A 35-50x difference decided by nothing but whether the sport is in season. And
+the exclusion is not a fringe: **the fifteen teams holding the most prop markets
+in the entire database are all NBA, 59-99 outcomes each, and on 2026-08-31 every
+one of them was outside the warm set.** Census the same day: 367 rostered, 100
+fixture-reachable, and **182 rostered teams hold props with no fixture in the
+window** — 96 of them holding ten or more.
+
+So a team is reachable if it has a near fixture OR it holds enough prop markets
+to render anything at all (`MIN_PROPS_TO_WARM`, which is 2 — the number of
+distinct entities a family costs, derived from the grouper rather than chosen).
+This does NOT increase the database work a pass does: `PASS_BUDGET_SECONDS`
+bounds the pass, not the population, so a wider set changes WHICH teams a pass
+builds and how long a full cycle takes — not how hard any hour hits Postgres.
+
+⚠️ **THE FIRST VERSION OF THIS SET THE THRESHOLD AT 10 AND CERT-513 BLOCKED IT.**
+The argument was "a team below ten renders an empty page". It sounded right, it
+was never tested against production, and it was false: replay found **UConn
+emitting one family from 8 outcomes and Purdue emitting two from 5**. A threshold
+invented to keep a population count under `MAX_TEAMS_PER_PASS` was excluding
+exactly the pages this queue exists to fix, just smaller ones. The count did not
+need keeping down either — the binding ceiling is COVERAGE (240 teams), not the
+per-pass cap, because the pass rotates before it caps.
 """
 
 import logging
@@ -72,6 +114,64 @@ REACHABLE_HORIZON_DAYS = 14
 #: And how far BACK. A team whose game finished last night is still one tap from
 #: a result card, and its prop families are exactly what a person checks after.
 REACHABLE_LOOKBACK_DAYS = 1
+
+#: The SECOND way in, for teams a fixture window cannot see (LAT-P158).
+#:
+#: 🔴 TWO, BECAUSE TWO IS WHAT A FAMILY COSTS — and this number is DERIVED, not
+#: chosen. `group_prop_families` emits a family iff it has **>= 2 distinct
+#: entities** (`utils/prop_families.py`: "Only families with >= 2 DISTINCT
+#: entities are emitted — a single market is not a family"). Two outcomes in one
+#: market IS a family, so two prop outcomes is exactly the point at which a team
+#: can render something. `test_the_threshold_is_exactly_what_a_family_needs`
+#: proves the agreement by RUNNING the grouper at `MIN_PROPS_TO_WARM` and at
+#: `MIN_PROPS_TO_WARM - 1`, rather than asserting a literal that merely agrees
+#: with it by hand (CERT-506's lesson, in the module next door).
+#:
+#: ⚠️ THIS WAS 10 AND 10 WAS WRONG. CERT-513 blocked it: the reasoning was "a team
+#: below ten renders an empty page", which sounded right and is false. Production
+#: replay found UConn emitting one family from 8 outcomes and Purdue emitting TWO
+#: from 5 — real pages, excluded by a threshold invented to keep a population
+#: count tidy. The tidiness was not needed either: see the ceiling below.
+MIN_PROPS_TO_WARM = 2
+
+#: What the union actually measures, and the ceiling that matters.
+#:
+#: Measured 2026-08-31: 100 fixture-reachable, and the union at
+#: `MIN_PROPS_TO_WARM = 2` is **229** teams (at 5 it is 216; at 10 it is 196).
+#:
+#: 🔴 THE BINDING CEILING IS COVERAGE, NOT `MAX_TEAMS_PER_PASS`. Since the pass
+#: rotates before it caps (below), a population larger than one pass's slice is
+#: covered ACROSS passes, so the real constraint is that a full cycle finishes
+#: before the 24 h mirror lapses:
+#:
+#:     ceil(population / (PASS_BUDGET_SECONDS // SLOWEST_MEASURED_BUILD_SECONDS))
+#:         * 3600  <=  STALE_TTL
+MEASURED_UNION_TEAMS = 229
+
+#: 🔴 A CYCLE THAT FINISHES EXACTLY AS THE MIRROR EXPIRES HAS NOT COVERED ANYTHING
+#: (CERT-515). The first version of this ceiling was `<= STALE_TTL`, which admits
+#: 240 teams — 24 passes x 3600 s = 86,400 s against an 86,400 s TTL, i.e. **zero
+#: margin**: the last team in the rotation is rebuilt at the instant its mirror
+#: dies, and any pass that runs a second late leaves it cold. A budget bound must
+#: be met with room, not met exactly.
+#:
+#: One whole pass of slack, so the ceiling is
+#: `((STALE_TTL // period) - 1) * teams_per_pass` = (24 - 1) x 10 = **230**.
+#:
+#: ⚠️ THE MEASURED UNION IS 229. THE HEADROOM IS **ONE TEAM**, and the report says
+#: so rather than rounding it up — the previous claim of "240 ceiling, 11 teams of
+#: headroom" was wrong on both numbers. `PASS_BUDGET_SECONDS` was deliberately NOT
+#: raised to widen it: that is real added load on a database `pg:diagnose`
+#: currently rates RED on hit rate, and it is a measurement-lane call, not a build
+#: lane's. What the build lane owes instead is DETECTION — see
+#: `coverage_exceeded` in the pass verdict, which is what makes seasonal growth
+#: trip in PRODUCTION rather than only against a constant frozen in this file.
+#:
+#: 🔴 AND THE TRIP IS THE TERMINAL (CERT-518). Recording the overflow in a field
+#: nothing reads left the enrolled warmer GREEN while the contract was broken; an
+#: overflowing pass now returns `terminal: partial`, so `task_verdict` — the
+#: consumer that already enforces this task — refuses it a green.
+COVERAGE_MARGIN_PASSES = 1
 
 #: Hard ceiling on how many teams one pass will consider. Not a target — a
 #: backstop, so a roster backfill or a schedule import cannot turn one beat tick
@@ -119,6 +219,23 @@ WARM_CAP = 400
 #: build is reported by this timeout rather than vanishing into a SIGKILL
 #: (project_celery_sigkill_untracked).
 PER_TEAM_TIMEOUT_SECONDS = 60
+
+
+def coverage_ceiling_teams(period_seconds: int = 3600) -> int:
+    """How many teams a full rotation can cover and still leave the mirror margin.
+
+    Derived from the same four constants the coverage contract is written in, so
+    re-measuring the slowest build or re-budgeting the pass moves the ceiling
+    instead of leaving a literal behind to rot (#2236's discipline).
+
+    `COVERAGE_MARGIN_PASSES` is why this is not simply `STALE_TTL // period`: a
+    cycle that closes exactly as the mirror expires has covered nothing (CERT-515).
+    """
+    from app.utils.event_concept_cache import STALE_TTL
+
+    teams_per_pass = max(1, PASS_BUDGET_SECONDS // SLOWEST_MEASURED_BUILD_SECONDS)
+    passes = max(1, (STALE_TTL // period_seconds) - COVERAGE_MARGIN_PASSES)
+    return passes * teams_per_pass
 
 
 async def _refresh_prop_families(team_id: int, cap: int, token: str | None = None) -> dict:
@@ -224,8 +341,9 @@ async def _warm_prop_families() -> dict:
 
     from sqlalchemy import func, or_, select
 
-    from app.models import Event, Team
+    from app.models import Event, FuturesMarket, FuturesOutcome, Team
     from app.routes.prop_families import (
+        _INCLUDED_STATUSES,
         build_and_cache_prop_families,
         prop_families_cache_keys,
     )
@@ -242,21 +360,53 @@ async def _warm_prop_families() -> dict:
 
     try:
         async with get_task_session() as db:
-            q = (
+            _rostered = (
+                Team.roster_players.isnot(None),
+                func.jsonb_array_length(Team.roster_players) > 0,
+            )
+
+            # Way in #1: a fixture inside the window. The in-season page.
+            q_fixture = (
                 select(Team.id)
                 .join(
                     Event,
                     or_(Event.home_team_id == Team.id, Event.away_team_id == Team.id),
                 )
                 .where(
-                    Team.roster_players.isnot(None),
-                    func.jsonb_array_length(Team.roster_players) > 0,
+                    *_rostered,
                     Event.commence_time
                     >= now - timedelta(days=REACHABLE_LOOKBACK_DAYS),
                     Event.commence_time
                     <= now + timedelta(days=REACHABLE_HORIZON_DAYS),
                 )
                 .distinct()
+            )
+
+            # Way in #2 (LAT-P158): enough live prop markets to be worth warming,
+            # fixture or no fixture. Counted the way the route's FK branch counts
+            # — non-event markets in the statuses the route actually surfaces —
+            # so the warm set and the thing being warmed agree about what a prop
+            # is. Anything else and the warmer selects a population the builder
+            # does not serve.
+            q_props = (
+                select(FuturesOutcome.team_id)
+                .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+                .join(Team, Team.id == FuturesOutcome.team_id)
+                .where(
+                    *_rostered,
+                    FuturesMarket.event_id.is_(None),
+                    FuturesMarket.status.in_(_INCLUDED_STATUSES),
+                )
+                .group_by(FuturesOutcome.team_id)
+                .having(func.count(FuturesOutcome.id) >= MIN_PROPS_TO_WARM)
+            )
+
+            # Ordered by id because the cursor rotation below is an id walk; the
+            # union is a SET, and which teams a truncated pass drops is decided by
+            # the rotation, not by the primary key (see the cap, below).
+            q = (
+                select(Team.id)
+                .where(or_(Team.id.in_(q_fixture), Team.id.in_(q_props)))
                 .order_by(Team.id)
             )
             team_ids = [int(t) for t in (await db.execute(q)).scalars().all()]
@@ -265,6 +415,29 @@ async def _warm_prop_families() -> dict:
         return {"terminal": "failed", "selected": 0, "rebuilt": 0}
 
     selected = len(team_ids)
+
+    # 🔴 THE POPULATION IS MEASURED HERE, EVERY PASS, BECAUSE A CONSTANT CANNOT SEE
+    # SEASONAL GROWTH (CERT-515). `MEASURED_UNION_TEAMS` is a census frozen on
+    # 2026-08-31 with ONE team of headroom; football season adds fixture-reachable
+    # teams and no unit test can notice. The pass can: it already knows exactly how
+    # many teams it selected, so it compares that against the derived ceiling and
+    # says so in its verdict. Same discipline as `truncated` directly below — no
+    # silent caps, and here, no silent lapse.
+    #
+    # 🔴 AND SAYING SO MEANS A NON-GREEN TERMINAL, NOT A FIELD (CERT-518). The
+    # downgrade lives at the bottom of the pass, where the terminal is decided.
+    _ceiling = coverage_ceiling_teams()
+    coverage_exceeded = max(0, selected - _ceiling)
+    if coverage_exceeded:
+        logger.warning(
+            "warm_prop_families: %d teams selected exceeds the %d-team coverage "
+            "ceiling by %d — a full rotation no longer finishes inside the mirror, "
+            "so the tail of the set will go cold. This pass returns a PARTIAL "
+            "terminal until it is fixed. Re-derive PASS_BUDGET_SECONDS or "
+            "tighten MIN_PROPS_TO_WARM.",
+            selected, _ceiling, coverage_exceeded,
+        )
+
     truncated = max(0, selected - MAX_TEAMS_PER_PASS)
     if truncated:
         # No silent caps: a pass that covered less than it selected says which
@@ -273,18 +446,26 @@ async def _warm_prop_families() -> dict:
             "warm_prop_families: %d teams selected, capped to %d (%d dropped)",
             selected, MAX_TEAMS_PER_PASS, truncated,
         )
-    team_ids = team_ids[:MAX_TEAMS_PER_PASS]
 
-    # Rotate: start after the id the last pass finished on, wrapping. Without
-    # this every pass warms the same budget-worth of low ids and the tail of the
-    # list is never reached at all (gotcha #34).
+    # 🔴 ROTATE FIRST, THEN CAP (LAT-P158). The cap used to be applied to the
+    # id-ordered list BEFORE the rotation, which made `MAX_TEAMS_PER_PASS` a
+    # permanent membership test rather than a per-pass slice: every team past
+    # position 200 by primary key would be dropped by EVERY pass and never warmed
+    # at all. It did not bind while the set was 100 teams; LAT-P158 widens the set
+    # towards that ceiling, and a widening that starves its own tail is not a
+    # widening (gotcha #34 — one counter shared across a loop starves whatever
+    # comes late; here it was the same 200 ids winning every hour).
+    #
+    # Rotating first makes the cap mean "how many this pass does", and the cursor
+    # guarantees the next pass resumes where this one stopped, so a set larger
+    # than the cap is covered ACROSS passes instead of never.
     cursor = _read_cursor(rc)
     start = 0
     for index, team_id in enumerate(team_ids):
         if team_id > cursor:
             start = index
             break
-    ordered = team_ids[start:] + team_ids[:start]
+    ordered = (team_ids[start:] + team_ids[:start])[:MAX_TEAMS_PER_PASS]
 
     rebuilt = 0
     locked_out = 0
@@ -347,6 +528,42 @@ async def _warm_prop_families() -> dict:
         terminal = "complete"
     else:
         terminal = "failed"
+
+    # 🔴 AN OVERFLOWING POPULATION MUST CHANGE THE TERMINAL, NOT JUST A COUNTER
+    # (CERT-518). The first version of the detector above logged a warning and
+    # put `coverage_exceeded` in the summary — and stopped there, so a pass that
+    # had just broken the mirror contract still returned `terminal: complete`
+    # and `verdict_for` classified it as an AUTHORITATIVE green. Nothing read
+    # the new field: the only references were this producer and its own tests.
+    # A detector whose detection cannot be seen by the health gate it exists to
+    # trip is a false green with extra steps (`app/utils/task_verdict.py`: "it
+    # returned" is not "it worked"), and CERT-515 had asked for a NON-GREEN
+    # terminal in as many words.
+    #
+    # `partial` and not `failed`, because the pass did the work it was asked to
+    # do — it rebuilt its slice; what it cannot do is get back round the whole
+    # set before the mirror lapses, which is the resumable-sweep-fell-short case
+    #
+    # 🔴 AND `failed > 0` IS THE SAME DEFECT ONE ARGUMENT OVER (CERT-521). The
+    # branch above reads `rebuilt or (locked_out and not failed)`, so ANY
+    # successful sibling outvotes a team that threw: `rebuilt=2, failed=1` scored
+    # `complete`. The scalar key is named `failed`, and `_has_damage` recognises
+    # only the COLLECTIONS `errors` / `failed_chunks` / `failed_phases` — so the
+    # classifier could not see it either, and the pass recorded an authoritative
+    # GREEN with a team's mirror left cold. Gotcha #42 says one bad item must not
+    # wipe the pass; it does NOT say the pass should report the failure as
+    # success. Surviving the failure and reporting it are different duties, and
+    # only the first was implemented.
+    #
+    # This is squarely the ship's problem, not a general tidy-up: the teams
+    # LAT-P158 newly admits are the offseason pages this task exists to protect,
+    # and a sibling success was hiding one of them failing.
+    #
+    # `partial` names both cases. A real `failed` is never softened: the
+    # downgrade only ever applies to a terminal that would otherwise read green.
+    if terminal == "complete" and (coverage_exceeded or failed):
+        terminal = "partial"
+
     return {
         "terminal": terminal,
         "selected": selected,
@@ -355,5 +572,9 @@ async def _warm_prop_families() -> dict:
         "failed": failed,
         "deferred": deferred,
         "truncated": truncated,
+        # 0 on a healthy pass; the number of teams the rotation can no longer
+        # reach inside the mirror once the population outgrows the budget.
+        "coverage_exceeded": coverage_exceeded,
+        "coverage_ceiling": _ceiling,
         "seconds": round(time.monotonic() - started, 1),
     }

@@ -1,0 +1,39 @@
+{
+  "condition": "22 of the last 24",
+  "ruling": "009, amended 2026-08-28 (Alex, MC, #2248)",
+  "clean": 3,
+  "window": 24,
+  "required": 22,
+  "beats_in_window": 3,
+  "misses": 0,
+  "misses_allowed": 2,
+  "verdict": "WINDOW_NOT_FULL",
+  "reachable_if_all_remaining_clean": 24,
+  "baseline_at": "2026-08-29T23:35:53+00:00",
+  "excluded_pre_baseline": 165,
+  "ring_observations": 168,
+  "oldest_in_window": "2026-08-29T23:35:53.922062+00:00",
+  "newest_in_window": "2026-08-30T01:35:23.267478+00:00",
+  "p_per_window_at_broken_rate": 5.6e-06,
+  "p_per_window_at_healthy_rate": 0.884,
+  "beats": [
+    {
+      "generated_at": "2026-08-29T23:35:53.922062+00:00",
+      "terminal": "complete",
+      "gate": "pass",
+      "clean": true
+    },
+    {
+      "generated_at": "2026-08-30T00:35:55.963312+00:00",
+      "terminal": "complete",
+      "gate": "pass",
+      "clean": true
+    },
+    {
+      "generated_at": "2026-08-30T01:35:23.267478+00:00",
+      "terminal": "complete",
+      "gate": "pass",
+      "clean": true
+    }
+  ]
+}

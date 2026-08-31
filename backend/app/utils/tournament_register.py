@@ -277,6 +277,15 @@ STRUCTURAL_FINDINGS = frozenset({
     # reason as the sides rules: it is an identity ambiguity, not a display
     # preference, and a display rule would launder it into a plausible answer.
     "PROP_MULTIPLE_ANSWERS",
+    # ── THE SETTLEMENT DECLARATION (Q465) ───────────────────────────────────
+    # An unparseable `settles_at` never fires, so the card sits as a live
+    # question forever — which is the defect this field exists to fix, made
+    # invisible by a typo. An answer with no instant is a curated verdict the
+    # page can never reach. Both are structural for the same reason the answer
+    # rule is: they are silent, and what they publish looks fine.
+    "PROP_SETTLES_AT_NOT_ISO",
+    "PROP_SETTLED_ANSWER_NOT_A_STRING",
+    "PROP_SETTLED_ANSWER_WITHOUT_SETTLES_AT",
     # "Where to watch:" with nothing after it. Small, and still a promise the
     # page cannot keep.
     "BROADCAST_NO_CHANNELS",
@@ -690,6 +699,25 @@ def validate_prop(prop: Any, *, sources: set[str]) -> list[str]:
     # and the renderer shows a ranked list instead of a headline number.
     if len(answers) > 1:
         findings.append("PROP_MULTIPLE_ANSWERS")
+
+    # ═══ THE SETTLEMENT DECLARATION (Q465) ═══
+    #
+    # Both fields are optional and they travel together. Declaring an instant
+    # with no answer is not an error at WRITE time — the agent legitimately
+    # knows "this closes at the first ball" before knowing how it closed, and
+    # `build_props` withholds the card in the gap rather than printing a decided
+    # question as a live one. Declaring an ANSWER with no instant is the real
+    # mistake: an answer that never becomes visible is a curated fact the page
+    # can never reach, and it would sit in the file looking done.
+    settles_at = prop.get("settles_at")
+    if settles_at is not None and not is_iso8601(settles_at):
+        findings.append("PROP_SETTLES_AT_NOT_ISO")
+    settled_answer = prop.get("settled_answer")
+    if settled_answer is not None:
+        if not isinstance(settled_answer, str) or not settled_answer.strip():
+            findings.append("PROP_SETTLED_ANSWER_NOT_A_STRING")
+        if settles_at is None:
+            findings.append("PROP_SETTLED_ANSWER_WITHOUT_SETTLES_AT")
 
     return findings
 

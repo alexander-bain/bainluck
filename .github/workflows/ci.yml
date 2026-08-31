@@ -281,6 +281,33 @@ jobs:
             exit 1
           fi
 
+      - name: futures_outcomes grade schema parity (real Postgres)
+        # CERT-521. `is_winner` was widened to nullable so a metadata-built test
+        # database could finally express "nobody graded this" — and the widening
+        # alone was a REGRESSION, because production's DDL is
+        # `boolean NULL DEFAULT false` while the model carried only a client-side
+        # `default=False`. A raw INSERT omitting the column would have stored NULL
+        # here and FALSE in production, and raw INSERT is how every gate in this
+        # job seeds. A gate could then manufacture ungraded truth out of a field
+        # it forgot to name.
+        #
+        # Real Postgres because a DEFAULT is applied by the SERVER. Four green
+        # metadata guards sat over `is_winner BOOLEAN,` and none of them could
+        # see the missing clause; only asking a database can tell what the
+        # emitted DDL actually does.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_futures_outcome_grade_schema_parity_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/grade_parity.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/grade_parity.txt; then
+            echo "::error::futures_outcomes grade schema parity SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Odds-enrichment equivalence (real Postgres)
         # LAT-P030/#1494. The odds enrichment stage was 84-95% of every slow team
         # query (measured 6,724ms of 12,182ms) because DISTINCT ON cannot skip: it
@@ -402,6 +429,39 @@ jobs:
             -v -s -rs 2>&1 | tee /tmp/modescope_peers.txt
           if grep -qiE "[0-9]+ skipped" /tmp/modescope_peers.txt; then
             echo "::error::calibration mode-price peer-site scope SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: Calibration vm-variant join, one outcome one row (real Postgres)
+        # D5 / ruling 125 with the sign reversed — CAL-P150, #1978. The two steps
+        # above guard a join whose coarse key DELETED rows. This one guards the
+        # same coarse-key mistake three CTEs earlier, where it MULTIPLIES:
+        # `vm_stats` GROUPs BY five columns, `clean_vms` was joined on two, and
+        # every outcome of a virtual market whose members disagree on category,
+        # is_grouped or mutually_exclusive was emitted once per variant. Measured
+        # before the fix: 99.9% of >=3-market groups carry mixed identity, and
+        # the 13 cells folded exactly hold 420,081 published rows against 266,137
+        # distinct — 36.65% phantom.
+        #
+        # Real Postgres and not a string assertion, for the reason written into
+        # the file: the producer's own comment MISDESCRIBED this pair, ruling
+        # 125's text repeated the misdescription, and a string assertion drafted
+        # from either would have been green for months. The claim is relational.
+        #
+        # Two-armed like both steps above: it EXECUTES the reverted two-column
+        # join and asserts the duplication returns, so a green run means
+        # red-first was proved here rather than asserted in a report. It also
+        # carries the cricket regression control the 2026-08-30 directive
+        # requires — cricket's published SET must not move under a change that
+        # is only allowed to change multiplicity, or the D14 reinvestigation
+        # loses its baseline.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_calibration_vm_variant_join_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/vmvariant.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/vmvariant.txt; then
+            echo "::error::calibration vm-variant join gate SKIPPED — the gate did not run"
             exit 1
           fi
 

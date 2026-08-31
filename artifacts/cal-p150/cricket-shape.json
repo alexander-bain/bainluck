@@ -1,0 +1,120 @@
+{
+  "cell": "polymarket/cricket",
+  "basis": "RAW TABLES, not the published population \u2014 a pointer, not a measurement",
+  "id_span": [
+    112847,
+    59851747
+  ],
+  "chunks": 12,
+  "total_n": 10100,
+  "families": [
+    {
+      "family": "match_winner",
+      "markets": 1341,
+      "n": 2968,
+      "mean_price": 0.5092,
+      "realized": 0.4447,
+      "gap_pp": 6.44,
+      "ungraded": 0
+    },
+    {
+      "family": "team top batter",
+      "markets": 557,
+      "n": 1602,
+      "mean_price": 0.504,
+      "realized": 0.3271,
+      "gap_pp": 17.69,
+      "ungraded": 0
+    },
+    {
+      "family": "toss match double",
+      "markets": 507,
+      "n": 1468,
+      "mean_price": 0.4953,
+      "realized": 0.3283,
+      "gap_pp": 16.7,
+      "ungraded": 0
+    },
+    {
+      "family": "most sixes",
+      "markets": 499,
+      "n": 1458,
+      "mean_price": 0.5005,
+      "realized": 0.3258,
+      "gap_pp": 17.47,
+      "ungraded": 0
+    },
+    {
+      "family": "who wins the toss?",
+      "markets": 647,
+      "n": 1230,
+      "mean_price": 0.4997,
+      "realized": 0.1813,
+      "gap_pp": 31.84,
+      "ungraded": 0
+    },
+    {
+      "family": "completed match?",
+      "markets": 630,
+      "n": 1202,
+      "mean_price": 0.5068,
+      "realized": 0.198,
+      "gap_pp": 30.88,
+      "ungraded": 0
+    },
+    {
+      "family": "more markets",
+      "markets": 55,
+      "n": 119,
+      "mean_price": 0.563,
+      "realized": 0.5966,
+      "gap_pp": -3.37,
+      "ungraded": 0
+    },
+    {
+      "family": "match goes to day 3?",
+      "markets": 8,
+      "n": 14,
+      "mean_price": 0.6293,
+      "realized": 0.3571,
+      "gap_pp": 27.21,
+      "ungraded": 0
+    },
+    {
+      "family": "match goes to day 5?",
+      "markets": 8,
+      "n": 14,
+      "mean_price": 0.4761,
+      "realized": 0.3571,
+      "gap_pp": 11.9,
+      "ungraded": 0
+    },
+    {
+      "family": "match goes to day 4?",
+      "markets": 7,
+      "n": 12,
+      "mean_price": 0.5455,
+      "realized": 0.4167,
+      "gap_pp": 12.88,
+      "ungraded": 0
+    },
+    {
+      "family": "t20 1st innings 6 overs line",
+      "markets": 3,
+      "n": 9,
+      "mean_price": 0.6183,
+      "realized": 0.6667,
+      "gap_pp": -4.83,
+      "ungraded": 0
+    },
+    {
+      "family": "t20 2nd innings 6 overs line",
+      "markets": 2,
+      "n": 4,
+      "mean_price": 0.5866,
+      "realized": 0.75,
+      "gap_pp": -16.34,
+      "ungraded": 0
+    }
+  ]
+}

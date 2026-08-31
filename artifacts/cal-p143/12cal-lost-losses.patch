@@ -1,0 +1,144 @@
+--- a/backend/app/tasks/precompute_calibration.py
++++ b/backend/app/tasks/precompute_calibration.py
+@@ -2056,6 +2056,13 @@
+                     COUNT(DISTINCT vm.market_id) AS market_count,
+                     COUNT(*) AS total_outcomes,
+                     COUNT(*) FILTER (WHERE fo.is_winner = true) AS has_winner,
++                    -- 12-CAL: an AFFIRMATIVE grade, which is NOT the complement
++                    -- of has_winner. ``is_winner`` is nullable with a False
++                    -- default, so "not a winner" spans a graded loss and a row
++                    -- nothing ever graded. Only the first may be published as a
++                    -- loss (gotcha #21), and until the lone-claim arm below,
++                    -- nothing in this chain ever had to tell them apart.
++                    COUNT(*) FILTER (WHERE fo.is_winner IS NOT NULL) AS graded,
+                     COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL
+                                       AND fo.opening_probability > 0
+                                       AND fo.opening_probability < 1) AS eligible
+@@ -2067,7 +2074,29 @@
+             clean_vms AS (
+                 SELECT * FROM vm_stats
+                 WHERE eligible >= 1
+-                  AND has_winner >= 1
++                  AND (
++                        has_winner >= 1
++                        -- 12-CAL (YOUR-TURN D13). A LONE CLAIM -- one market,
++                        -- one captured outcome, ungrouped -- is a complete,
++                        -- scoreable prediction, and under the bare
++                        -- ``has_winner >= 1`` gate it published if and ONLY if
++                        -- it WON. Queue 299 rung 1 declines to exclude it on
++                        -- purpose ("a lone Yes/No claim that legitimately
++                        -- resolved No is not an authority failure" -- it
++                        -- requires n_outcomes >= 2) and rung 3 declines it too
++                        -- (market_type = 'field' only). BOTH carve-outs were
++                        -- dead letters: this gate predates Queue 299 by three
++                        -- months (#691, 2026-05-28) and deleted the row three
++                        -- CTEs before either predicate could be evaluated.
++                        --
++                        -- This does NOT admit unknown truth. A >=2-outcome vm
++                        -- that graded nobody still fails this predicate, and is
++                        -- still removed downstream by ``no_winner_markets``,
++                        -- exactly as rung 1 intends. ``graded >= 1`` refuses a
++                        -- row whose ``is_winner`` was never written at all.
++                        OR (market_count = 1 AND total_outcomes = 1
++                            AND graded >= 1)
++                  )
+             ),
+             ranked_outcomes AS MATERIALIZED (
+                 SELECT
+--- a/backend/scripts/calibration_missing_loser_census.py
++++ b/backend/scripts/calibration_missing_loser_census.py
+@@ -138,7 +138,39 @@
+ #: asserts it is still in the frozen file: if the gate is ever repaired, this
+ #: script is measuring a defect that no longer exists and must say so loudly
+ #: rather than print a zero (gotcha #53 -- an empty answer is a response shape).
+-CLEAN_VMS_GATE_FRAGMENT = "AND has_winner >= 1"
++CLEAN_VMS_GATE_FRAGMENT = "OR (market_count = 1 AND total_outcomes = 1"
++
++#: CAL-P143 (12-CAL / D13): the gate was REPAIRED, so the fragment above pins
++#: the repaired predicate and the guard that used to prove the defect exists now
++#: proves it is gone. Pinned as a pair on purpose: a partial revert that restores
++#: the bare gate while leaving the new comment block behind would satisfy a
++#: presence-only check. The retired text must be ABSENT.
++CLEAN_VMS_GATE_RETIRED = "WHERE eligible >= 1\n                  AND has_winner >= 1"
++
++#: What the instrument MEANS after the repair. ``B_lone_claim`` was the
++#: population the producer dropped; it is now the population the producer
++#: publishes, so the census reads as a RECONCILIATION (dropped should be 0) and
++#: its verdict line inverts. Stated as a constant so the report text and the
++#: guard cannot drift apart.
++CENSUS_MODE_AFTER_REPAIR = "reconciliation"
++
++#: The repaired gate's restored arm, as the producer spells it. Pinned here so
++#: the pure mirror below and the SQL cannot drift apart silently.
++RESTORED_ARM_SQL = "OR (market_count = 1 AND total_outcomes = 1\n                            AND graded >= 1)"
++
++
++def lone_claim_is_restorable(market_count: int, total_outcomes: int,
++                             graded: int) -> bool:
++    """The repaired gate's second arm, as a pure function.
++
++    The SQL is the authority; this is its mirror, so the boundary can be tested
++    without a database and so :func:`classify_vm` and the producer can be held
++    to the SAME boundary by one assertion instead of two readings of two
++    languages. ``graded`` is the affirmative-grade count
++    (``is_winner IS NOT NULL``) and is the conjunct that keeps a row nothing
++    ever graded out of the published curve: "not a winner" is not "a loss".
++    """
++    return market_count == 1 and total_outcomes == 1 and graded >= 1
+ 
+ 
+ def classify_vm(market_count: int, total_outcomes: int) -> str:
+--- a/backend/tests/test_calibration_missing_loser_census_p122.py
++++ b/backend/tests/test_calibration_missing_loser_census_p122.py
+@@ -59,30 +59,35 @@
+ # 1. THE PREMISE. Three carve-outs in the frozen producer, pinned.
+ # ---------------------------------------------------------------------------
+ 
+-def test_clean_vms_still_carries_the_vm_level_winner_gate():
+-    """The one line the whole instrument is about.
++def test_clean_vms_no_longer_drops_a_claim_for_losing():
++    """The one line the whole instrument WAS about, now repaired (12-CAL / D13).
+ 
+-    Read from the built SQL rather than the source text, so a gate that moves
+-    to another CTE but keeps its effect still satisfies it, and a gate that is
+-    deleted fails it.
++    This guard used to pin the defect's existence, with a docstring saying that
++    if the gate were ever repaired the instrument would be "obsolete and must be
++    retired, not left printing zeros". The gate was repaired. So the guard is
++    inverted rather than deleted: the same reading of the same CTE, asserting
++    the bare gate is GONE and the lone-claim arm is present. Deleting it would
++    leave the repair unpinned by the suite that found the defect.
+ 
+-    The literal is spelled out here as well as imported. Asserting only
+-    ``mlc.CLEAN_VMS_GATE_FRAGMENT in sql`` checks the constant against itself:
+-    widening it to ``"SELECT"`` would keep this green while the premise went
+-    unpinned.
++    Read from the built SQL rather than the source text, so a gate that moves to
++    another CTE but keeps its effect still satisfies it.
+     """
+     from app.tasks.precompute_calibration import _calibration_population_ctes
+ 
+     sql = _calibration_population_ctes()
+-    assert mlc.CLEAN_VMS_GATE_FRAGMENT == "AND has_winner >= 1"
+-    assert "AND has_winner >= 1" in sql, (
+-        "clean_vms no longer filters on has_winner >= 1. If that is a "
+-        "deliberate repair, this instrument is obsolete and must be retired, "
+-        "not left printing zeros."
++    assert mlc.CLEAN_VMS_GATE_RETIRED not in sql, (
++        "clean_vms still carries the bare `eligible >= 1 AND has_winner >= 1` "
++        "gate — the 12-CAL repair is not in this build."
+     )
+-    # And it is the gate on clean_vms specifically, not some other CTE's.
+-    body = sql.split("clean_vms AS (", 1)[1].split("),", 1)[0]
++    # And it is the gate on clean_vms specifically, not some other CTE's. The
++    # terminator is a LINE: splitting on a bare ")," truncates the body at the
++    # first parenthesised aside inside a comment.
++    body = sql.split("clean_vms AS (", 1)[1].split("\n            ),", 1)[0]
+     assert mlc.CLEAN_VMS_GATE_FRAGMENT in body
++    assert "graded >= 1" in body, (
++        "the restored arm must require an AFFIRMATIVE grade; without it a row "
++        "nothing ever graded publishes as a confident loss"
++    )
+ 
+ 
+ def test_rung_one_still_exempts_the_one_outcome_market():

@@ -395,6 +395,23 @@ def _decode_value(kind: str, value: Any) -> Any:
 # =============================================================================
 
 
+class SoftStageOutcome:
+    """What a :meth:`PhaseRunner.soft_stage` body left behind.
+
+    ``failed`` is the whole interface: the caller reads it to decide whether the
+    value it just tried to compute exists. An object rather than a return value
+    because the stage is a context manager and the body assigns to its own
+    locals. Deliberately not a dataclass — this module imports none and one
+    two-field holder is not a reason to start.
+    """
+
+    __slots__ = ("failed", "error")
+
+    def __init__(self) -> None:
+        self.failed: bool = False
+        self.error: str | None = None
+
+
 class PhaseRunner:
     """Times, bounds, resumes and records one main-build run's phases.
 
@@ -433,6 +450,11 @@ class PhaseRunner:
         self._carried: dict[str, dict[str, Any]] = {}
         self.carried_phases: list[str] = []
         self.checkpoint_writes: dict[str, str] = {}
+        #: D22. Names of soft stages whose read did NOT happen this beat. A
+        #: degraded read is not a zero: the payload has to be able to say
+        #: "unobserved" rather than publish a default that reads as evidence
+        #: (gotcha #53 — an empty answer is a response shape).
+        self.degraded_stages: list[str] = []
         #: Queue 300B Item 1. The SERVER's view of this run — the tag it wrote
         #: into ``application_name`` and the backend PID that wrote it. Recorded
         #: in the ledger so a ``pg_stat_activity`` row seen weeks later can be
@@ -578,6 +600,54 @@ class PhaseRunner:
                 if isinstance(entry, dict)
             }
         return self._carried[phase].get(key)
+
+    @contextlib.asynccontextmanager
+    async def soft_stage(self, db, name: str):
+        """Time a read the beat is allowed to publish WITHOUT.
+
+        D22 (calibration-912 DECIDE 1). The diagnostics phase is required and
+        runs AHEAD of the publish, so a statement timeout in one of its counts
+        kills a beat that had everything it needed to publish. Two of those
+        counts feed nothing the gate reads — by their own comments they are
+        "just the counts".
+
+        THE PART THAT IS NOT A TRY/EXCEPT. A statement timeout aborts the whole
+        transaction, not the statement: after it, every later read in the same
+        session fails and the ``commit`` at the end of the phase raises. That is
+        why the ONE diagnostics read already wrapped in ``try`` — ``date_range``
+        — is not actually fail-soft against the failure that happens; it only
+        survives because it is last, and even then the phase commit inherits the
+        aborted transaction. A savepoint is what makes the rest of the beat
+        reachable: ``ROLLBACK TO SAVEPOINT`` is legal in an aborted subtransaction
+        and returns the session to a usable state.
+
+        ``SET LOCAL statement_timeout`` is applied OUTSIDE the savepoint (per
+        phase, in :meth:`apply_statement_timeout`) so rolling back to it does not
+        drop the phase's own bound.
+
+        Yields a one-field outcome object. The caller MUST branch on
+        ``.failed``: a soft read that quietly leaves its variable at a default
+        is the failure this whole mechanism exists to make visible.
+        """
+        outcome = SoftStageOutcome()
+        savepoint = await db.begin_nested()
+        try:
+            with self.stage(name):
+                yield outcome
+        except Exception as exc:  # noqa: BLE001 — deliberately broad; see below
+            # Broad on purpose: the point is that NO read in here may end the
+            # beat. The failure is not swallowed — it is named in the ledger,
+            # logged with its traceback, and surfaced in the payload.
+            outcome.failed = True
+            outcome.error = f"{type(exc).__name__}: {exc}"[:240]
+            self.degraded_stages.append(name)
+            await savepoint.rollback()
+            logger.warning(
+                "calibration soft stage %s degraded: %s", name, outcome.error,
+                exc_info=True,
+            )
+        else:
+            await savepoint.commit()
 
     def record(self, phase: str, key: str, value: Any, *, kind: str = "value") -> None:
         """Capture a freshly-read value so the next beat can carry it."""
@@ -864,6 +934,44 @@ class NullPhaseRunner:
     @contextlib.contextmanager
     def stage(self, name: str):  # noqa: D102
         yield
+
+    @contextlib.asynccontextmanager
+    async def soft_stage(self, db, name: str):  # noqa: D102
+        # 🔴 CAL-P150 CORRECTION TO THE CAL-P143 PRE-BUILD. This body was a bare
+        # `yield SoftStageOutcome()` — no savepoint AND no handler — on the
+        # reasoning that "the null runner is used where there is no live session
+        # to protect". The first half is right and the second is not: this
+        # runner is what `/api/calibration`'s in-request cold-cache fallback
+        # gets, and one of the two reads D22 makes soft (`read:date_range`) was
+        # previously wrapped in its own `try: ... except Exception:
+        # logger.warning`. Moving it into a soft stage that does not catch
+        # DELETED that handler. Measured: 38 failures across
+        # test_calibration_spreads_totals / _coverage_census_300c / _query /
+        # _field_completeness_257, all `AttributeError: 'NoneType' object has no
+        # attribute 'lo'` — the exact exception the old `except` swallowed.
+        #
+        # So it catches, and the serve path is back to what it was. What it
+        # deliberately does NOT do is open a savepoint: a request session must
+        # not have its transaction structure changed underneath the caller, and
+        # the route path has no phase commit to protect afterwards. That means a
+        # real statement timeout here still leaves an aborted transaction for
+        # any later read in the same request — which was ALSO true before D22,
+        # so it is a limitation carried forward, not one introduced. The
+        # producer path, which is the one that publishes, gets the savepoint.
+        #
+        # Nothing is accumulated in `degraded_stages`: NULL_RUNNER is a module
+        # singleton shared by every request, so a list on it would leak one
+        # request's degradation into the next one's evidence.
+        outcome = SoftStageOutcome()
+        try:
+            yield outcome
+        except Exception as exc:  # noqa: BLE001 — same contract as PhaseRunner
+            outcome.failed = True
+            outcome.error = f"{type(exc).__name__}: {exc}"[:240]
+            logger.warning(
+                "calibration soft stage %s degraded on the serve path: %s",
+                name, outcome.error, exc_info=True,
+            )
 
 
 NULL_RUNNER = NullPhaseRunner()

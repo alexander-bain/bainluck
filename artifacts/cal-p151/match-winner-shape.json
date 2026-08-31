@@ -1,0 +1,89 @@
+{
+ "raw": {
+  "distribution": {
+   "1out_0win_mexFalse": 92,
+   "1out_1win_mexFalse": 118,
+   "2out_0win_mexFalse": 2,
+   "2out_0win_mexTrue": 308,
+   "2out_1win_mexFalse": 1,
+   "2out_1win_mexTrue": 334,
+   "2out_2win_mexFalse": 18,
+   "3out_0win_mexFalse": 65,
+   "3out_1win_mexFalse": 198,
+   "3out_1win_mexTrue": 18,
+   "3out_2win_mexFalse": 395,
+   "3out_3win_mexFalse": 231,
+   "8out_1win_mexTrue": 1,
+   "8out_4win_mexFalse": 1,
+   "9out_1win_mexTrue": 1,
+   "11out_1win_mexTrue": 1,
+   "33out_1win_mexTrue": 1,
+   "36out_1win_mexTrue": 1,
+   "41out_1win_mexTrue": 1
+  },
+  "markets": 1787,
+  "win_count_not_1": 1112,
+  "caught_by_malformed_binary_rung": 308,
+  "invisible_to_it": 804
+ },
+ "samples": [
+  {
+   "market_id": 129554,
+   "name": "T20 World Cup: Sri Lanka vs Zimbabwe (Game 1)"
+  },
+  {
+   "market_id": 129558,
+   "name": "T20 World Cup: Italy vs West Indies (Game 1)"
+  },
+  {
+   "market_id": 129562,
+   "name": "T20 World Cup: Afghanistan vs Canada (Game 1)"
+  },
+  {
+   "market_id": 129934,
+   "name": "T20 World Cup: Australia vs Oman (Game 1)"
+  }
+ ],
+ "published": {
+  "base": {
+   "distribution": {
+    "1legs_0wins": 37,
+    "1legs_1wins": 75,
+    "2legs_0wins": 15,
+    "2legs_1wins": 11,
+    "2legs_2wins": 19,
+    "3legs_1wins": 24,
+    "3legs_2wins": 35,
+    "3legs_3wins": 17,
+    "4legs_0wins": 3,
+    "4legs_2wins": 21,
+    "4legs_4wins": 22,
+    "6legs_2wins": 20,
+    "6legs_4wins": 43,
+    "6legs_6wins": 15,
+    "10legs_1wins": 1,
+    "12legs_1wins": 1,
+    "20legs_1wins": 1
+   },
+   "markets": 360,
+   "win_count_not_1": 247
+  },
+  "head": {
+   "distribution": {
+    "1legs_0wins": 62,
+    "1legs_1wins": 85,
+    "2legs_0wins": 4,
+    "2legs_1wins": 25,
+    "2legs_2wins": 20,
+    "3legs_1wins": 52,
+    "3legs_2wins": 85,
+    "3legs_3wins": 41,
+    "10legs_1wins": 1,
+    "12legs_1wins": 1,
+    "20legs_1wins": 1
+   },
+   "markets": 377,
+   "win_count_not_1": 212
+  }
+ }
+}
