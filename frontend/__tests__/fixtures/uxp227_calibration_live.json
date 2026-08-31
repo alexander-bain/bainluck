@@ -1,0 +1,2271 @@
+{
+ "availability": "stale",
+ "buckets": [
+  {
+   "avg_prob": 0.055,
+   "bucket_idx": 0,
+   "category": "ai_safety",
+   "ci_lower": 0.0,
+   "ci_upper": 0.6576,
+   "n": 2,
+   "price_moved": false,
+   "source": "kalshi",
+   "sum_prob": 0.11,
+   "sum_sq_err": 0.0065,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.07,
+   "bucket_idx": 0,
+   "category": "athletics",
+   "ci_lower": 0.0,
+   "ci_upper": 0.7935,
+   "n": 1,
+   "price_moved": true,
+   "source": "kalshi",
+   "sum_prob": 0.07,
+   "sum_sq_err": 0.0049,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0275,
+   "bucket_idx": 0,
+   "category": "aussierules",
+   "ci_lower": 0.0,
+   "ci_upper": 0.4899,
+   "n": 4,
+   "price_moved": false,
+   "source": "kalshi",
+   "sum_prob": 0.11,
+   "sum_sq_err": 0.0042,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0125,
+   "bucket_idx": 0,
+   "category": "aussierules",
+   "ci_lower": 0.0,
+   "ci_upper": 0.6576,
+   "n": 2,
+   "price_moved": true,
+   "source": "kalshi",
+   "sum_prob": 0.025,
+   "sum_sq_err": 0.0003,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0317,
+   "bucket_idx": 0,
+   "category": "auto_industry",
+   "ci_lower": 0.0,
+   "ci_upper": 0.5615,
+   "n": 3,
+   "price_moved": true,
+   "source": "kalshi",
+   "sum_prob": 0.095,
+   "sum_sq_err": 0.0052,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0423,
+   "bucket_idx": 0,
+   "category": "baseball",
+   "ci_lower": 0.0247,
+   "ci_upper": 0.0297,
+   "n": 16085,
+   "price_moved": false,
+   "source": "kalshi",
+   "sum_prob": 680.025,
+   "sum_sq_err": 417.4841,
+   "winners": 436
+  },
+  {
+   "avg_prob": 0.0366,
+   "bucket_idx": 0,
+   "category": "baseball",
+   "ci_lower": 0.0557,
+   "ci_upper": 0.0696,
+   "n": 4609,
+   "price_moved": false,
+   "source": "polymarket",
+   "sum_prob": 168.7728,
+   "sum_sq_err": 260.2039,
+   "winners": 287
+  },
+  {
+   "avg_prob": 0.039,
+   "bucket_idx": 0,
+   "category": "baseball",
+   "ci_lower": 0.0371,
+   "ci_upper": 0.0448,
+   "n": 10089,
+   "price_moved": true,
+   "source": "polymarket",
+   "sum_prob": 392.9868,
+   "sum_sq_err": 386.9087,
+   "winners": 411
+  },
+  {
+   "avg_prob": 0.0483,
+   "bucket_idx": 0,
+   "category": "basketball",
+   "ci_lower": 0.0638,
+   "ci_upper": 0.1077,
+   "n": 613,
+   "price_moved": false,
+   "source": "polymarket",
+   "sum_prob": 29.6157,
+   "sum_sq_err": 46.3932,
+   "winners": 51
+  },
+  {
+   "avg_prob": 0.045,
+   "bucket_idx": 0,
+   "category": "basketball",
+   "ci_lower": 0.0086,
+   "ci_upper": 0.0213,
+   "n": 1328,
+   "price_moved": true,
+   "source": "polymarket",
+   "sum_prob": 59.8079,
+   "sum_sq_err": 20.0251,
+   "winners": 18
+  },
+  {
+   "avg_prob": 0.0463,
+   "bucket_idx": 0,
+   "category": "bmx",
+   "ci_lower": 0.0,
+   "ci_upper": 0.3543,
+   "n": 7,
+   "price_moved": false,
+   "source": "polymarket",
+   "sum_prob": 0.324,
+   "sum_sq_err": 0.0179,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.08,
+   "bucket_idx": 0,
+   "category": "bull_riding",
+   "ci_lower": 0.0,
+   "ci_upper": 0.7935,
+   "n": 1,
+   "price_moved": true,
+   "source": "polymarket",
+   "sum_prob": 0.08,
+   "sum_sq_err": 0.0064,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.4367,
+   "bucket_idx": 4,
+   "category": "golf",
+   "ci_lower": 0.4385,
+   "ci_upper": 1.0,
+   "n": 3,
+   "price_moved": false,
+   "source": "datagolf",
+   "sum_prob": 1.3101,
+   "sum_sq_err": 0.955,
+   "winners": 3
+  },
+  {
+   "avg_prob": 0.5552,
+   "bucket_idx": 5,
+   "category": "golf",
+   "ci_lower": 0.7008,
+   "ci_upper": 1.0,
+   "n": 9,
+   "price_moved": false,
+   "source": "datagolf",
+   "sum_prob": 4.997,
+   "sum_sq_err": 1.7875,
+   "winners": 9
+  },
+  {
+   "avg_prob": 0.6504,
+   "bucket_idx": 6,
+   "category": "golf",
+   "ci_lower": 0.7847,
+   "ci_upper": 1.0,
+   "n": 14,
+   "price_moved": false,
+   "source": "datagolf",
+   "sum_prob": 9.1052,
+   "sum_sq_err": 1.7213,
+   "winners": 14
+  },
+  {
+   "avg_prob": 0.0495,
+   "bucket_idx": 0,
+   "category": "americanfootball_ncaaf",
+   "ci_lower": 0.0,
+   "ci_upper": 0.7935,
+   "n": 1,
+   "price_moved": null,
+   "source": "odds_api",
+   "sum_prob": 0.0495,
+   "sum_sq_err": 0.0025,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0656,
+   "bucket_idx": 0,
+   "category": "americanfootball_ncaaf_fcs",
+   "ci_lower": 0.0,
+   "ci_upper": 0.3903,
+   "n": 6,
+   "price_moved": null,
+   "source": "odds_api",
+   "sum_prob": 0.3935,
+   "sum_sq_err": 0.0292,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0741,
+   "bucket_idx": 0,
+   "category": "aussierules_afl",
+   "ci_lower": 0.0,
+   "ci_upper": 0.2281,
+   "n": 13,
+   "price_moved": null,
+   "source": "odds_api",
+   "sum_prob": 0.9631,
+   "sum_sq_err": 0.0745,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0752,
+   "bucket_idx": 0,
+   "category": "baseball_mlb",
+   "ci_lower": 0.0,
+   "ci_upper": 0.4899,
+   "n": 4,
+   "price_moved": null,
+   "source": "odds_api_spreads",
+   "sum_prob": 0.301,
+   "sum_sq_err": 0.0236,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0373,
+   "bucket_idx": 0,
+   "category": "baseball_ncaa",
+   "ci_lower": 0.0,
+   "ci_upper": 0.7935,
+   "n": 1,
+   "price_moved": null,
+   "source": "odds_api_spreads",
+   "sum_prob": 0.0373,
+   "sum_sq_err": 0.0014,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.1407,
+   "bucket_idx": 1,
+   "category": "baseball_mlb",
+   "ci_lower": 0.0,
+   "ci_upper": 0.5615,
+   "n": 3,
+   "price_moved": null,
+   "source": "odds_api_spreads",
+   "sum_prob": 0.4221,
+   "sum_sq_err": 0.0603,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0783,
+   "bucket_idx": 0,
+   "category": "baseball_mlb",
+   "ci_lower": 0.1771,
+   "ci_upper": 0.6448,
+   "n": 13,
+   "price_moved": null,
+   "source": "odds_api_totals",
+   "sum_prob": 1.0176,
+   "sum_sq_err": 4.2209,
+   "winners": 5
+  },
+  {
+   "avg_prob": 0.0977,
+   "bucket_idx": 0,
+   "category": "soccer_argentina_primera_division",
+   "ci_lower": 0.0,
+   "ci_upper": 0.6576,
+   "n": 2,
+   "price_moved": null,
+   "source": "odds_api_totals",
+   "sum_prob": 0.1954,
+   "sum_sq_err": 0.0191,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0909,
+   "bucket_idx": 0,
+   "category": "soccer_fa_cup",
+   "ci_lower": 0.0,
+   "ci_upper": 0.7935,
+   "n": 1,
+   "price_moved": null,
+   "source": "odds_api_totals",
+   "sum_prob": 0.0909,
+   "sum_sq_err": 0.0083,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0767,
+   "bucket_idx": 0,
+   "category": "americanfootball_ncaaf_fcs",
+   "ci_lower": 0.0,
+   "ci_upper": 0.3244,
+   "n": 8,
+   "price_moved": null,
+   "source": "odds_api_bookmaker",
+   "sum_prob": 0.6137,
+   "sum_sq_err": 0.0485,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.0901,
+   "bucket_idx": 0,
+   "category": "aussierules_afl",
+   "ci_lower": 0.0,
+   "ci_upper": 0.5615,
+   "n": 3,
+   "price_moved": null,
+   "source": "odds_api_bookmaker",
+   "sum_prob": 0.2702,
+   "sum_sq_err": 0.0244,
+   "winners": 0
+  },
+  {
+   "avg_prob": 0.061,
+   "bucket_idx": 0,
+   "category": "baseball_mlb",
+   "ci_lower": 0.3078,
+   "ci_upper": 0.4152,
+   "n": 303,
+   "price_moved": null,
+   "source": "odds_api_bookmaker",
+   "sum_prob": 18.4861,
+   "sum_sq_err": 97.0844,
+   "winners": 109
+  }
+ ],
+ "by_category": [
+  {
+   "category": "baseball",
+   "ece": 1.93,
+   "gated": false,
+   "mce": 1.93,
+   "mce_unweighted": 1.88,
+   "mce_worst": 1.88,
+   "n": 215680,
+   "outcomes": 215680
+  },
+  {
+   "category": "soccer",
+   "ece": 2.61,
+   "gated": false,
+   "mce": 2.61,
+   "mce_unweighted": 3.22,
+   "mce_worst": 3.22,
+   "n": 132103,
+   "outcomes": 132103
+  },
+  {
+   "category": "basketball",
+   "ece": 1.35,
+   "gated": false,
+   "mce": 1.35,
+   "mce_unweighted": 1.56,
+   "mce_worst": 1.56,
+   "n": 124138,
+   "outcomes": 124138
+  },
+  {
+   "category": "tennis",
+   "ece": 2.05,
+   "gated": false,
+   "mce": 2.05,
+   "mce_unweighted": 1.57,
+   "mce_worst": 1.57,
+   "n": 47646,
+   "outcomes": 47646
+  },
+  {
+   "category": "economics",
+   "ece": 4.93,
+   "gated": false,
+   "mce": 4.93,
+   "mce_unweighted": 5.58,
+   "mce_worst": 5.58,
+   "n": 43270,
+   "outcomes": 43270
+  },
+  {
+   "category": "weather",
+   "ece": 2.08,
+   "gated": false,
+   "mce": 2.08,
+   "mce_unweighted": 4.9,
+   "mce_worst": 4.9,
+   "n": 40982,
+   "outcomes": 40982
+  },
+  {
+   "category": "hockey",
+   "ece": 0.95,
+   "gated": false,
+   "mce": 0.95,
+   "mce_unweighted": 2.73,
+   "mce_worst": 2.73,
+   "n": 35427,
+   "outcomes": 35427
+  },
+  {
+   "category": "basketball_ncaab",
+   "ece": 2.27,
+   "gated": false,
+   "mce": 2.27,
+   "mce_unweighted": 3.06,
+   "mce_worst": 3.06,
+   "n": 33943,
+   "outcomes": 33943
+  },
+  {
+   "category": "esports",
+   "ece": 2.89,
+   "gated": false,
+   "mce": 2.89,
+   "mce_unweighted": 2.62,
+   "mce_worst": 2.62,
+   "n": 30974,
+   "outcomes": 30974
+  },
+  {
+   "category": "baseball_mlb",
+   "ece": 2.1,
+   "gated": false,
+   "mce": 2.1,
+   "mce_unweighted": 18.69,
+   "mce_worst": 18.69,
+   "n": 28060,
+   "outcomes": 28060
+  },
+  {
+   "category": "golf",
+   "ece": 4.05,
+   "gated": false,
+   "mce": 4.05,
+   "mce_unweighted": 7.71,
+   "mce_worst": 7.71,
+   "n": 27356,
+   "outcomes": 27356
+  },
+  {
+   "category": "table_tennis",
+   "ece": 2.45,
+   "gated": false,
+   "mce": 2.45,
+   "mce_unweighted": 2.39,
+   "mce_worst": 2.39,
+   "n": 26908,
+   "outcomes": 26908
+  },
+  {
+   "category": "politics",
+   "ece": 2.82,
+   "gated": false,
+   "mce": 2.82,
+   "mce_unweighted": 3.01,
+   "mce_worst": 3.01,
+   "n": 14373,
+   "outcomes": 14373
+  },
+  {
+   "category": "baseball_ncaa",
+   "ece": 2.35,
+   "gated": false,
+   "mce": 2.35,
+   "mce_unweighted": 4.96,
+   "mce_worst": 4.96,
+   "n": 12919,
+   "outcomes": 12919
+  },
+  {
+   "category": "entertainment",
+   "ece": 4.38,
+   "gated": false,
+   "mce": 4.38,
+   "mce_unweighted": 5.01,
+   "mce_worst": 5.01,
+   "n": 12668,
+   "outcomes": 12668
+  },
+  {
+   "category": "basketball_nba",
+   "ece": 4.4,
+   "gated": false,
+   "mce": 4.4,
+   "mce_unweighted": 5.55,
+   "mce_worst": 5.55,
+   "n": 12470,
+   "outcomes": 12470
+  },
+  {
+   "category": "football",
+   "ece": 2.93,
+   "gated": false,
+   "mce": 2.93,
+   "mce_unweighted": 4.36,
+   "mce_worst": 4.36,
+   "n": 12012,
+   "outcomes": 12012
+  },
+  {
+   "category": "icehockey_nhl",
+   "ece": 3.48,
+   "gated": false,
+   "mce": 3.48,
+   "mce_unweighted": 14.82,
+   "mce_worst": 14.82,
+   "n": 10616,
+   "outcomes": 10616
+  },
+  {
+   "category": "motorsports",
+   "ece": 3.4,
+   "gated": false,
+   "mce": 3.4,
+   "mce_unweighted": 6.47,
+   "mce_worst": 6.47,
+   "n": 6027,
+   "outcomes": 6027
+  },
+  {
+   "category": "basketball_wncaab",
+   "ece": 4.07,
+   "gated": false,
+   "mce": 4.07,
+   "mce_unweighted": 4.49,
+   "mce_worst": 4.49,
+   "n": 5775,
+   "outcomes": 5775
+  },
+  {
+   "category": "crypto",
+   "ece": 7.12,
+   "gated": false,
+   "mce": 7.12,
+   "mce_unweighted": 11.18,
+   "mce_worst": 11.18,
+   "n": 4625,
+   "outcomes": 4625
+  },
+  {
+   "category": "basketball_wnba",
+   "ece": 4.25,
+   "gated": false,
+   "mce": 4.25,
+   "mce_unweighted": 6.88,
+   "mce_worst": 6.88,
+   "n": 4246,
+   "outcomes": 4246
+  },
+  {
+   "category": "baseball_mlb_preseason",
+   "ece": 6.75,
+   "gated": false,
+   "mce": 6.75,
+   "mce_unweighted": 27.36,
+   "mce_worst": 27.36,
+   "n": 4135,
+   "outcomes": 4135
+  },
+  {
+   "category": "tech",
+   "ece": 6.26,
+   "gated": false,
+   "mce": 6.26,
+   "mce_unweighted": 7.0,
+   "mce_worst": 7.0,
+   "n": 4127,
+   "outcomes": 4127
+  },
+  {
+   "category": "mma",
+   "ece": 3.3,
+   "gated": false,
+   "mce": 3.3,
+   "mce_unweighted": 3.78,
+   "mce_worst": 3.78,
+   "n": 3988,
+   "outcomes": 3988
+  },
+  {
+   "category": "cricket",
+   "ece": 7.93,
+   "gated": false,
+   "mce": 7.93,
+   "mce_unweighted": 8.84,
+   "mce_worst": 8.84,
+   "n": 3414,
+   "outcomes": 3414
+  },
+  {
+   "category": "basketball_euroleague",
+   "ece": 4.39,
+   "gated": false,
+   "mce": 4.39,
+   "mce_unweighted": 5.15,
+   "mce_worst": 5.15,
+   "n": 2401,
+   "outcomes": 2401
+  },
+  {
+   "category": "geopolitics",
+   "ece": 4.42,
+   "gated": false,
+   "mce": 4.42,
+   "mce_unweighted": 5.72,
+   "mce_worst": 5.72,
+   "n": 1284,
+   "outcomes": 1284
+  },
+  {
+   "category": "aussierules_afl",
+   "ece": 5.01,
+   "gated": false,
+   "mce": 5.01,
+   "mce_unweighted": 7.26,
+   "mce_worst": 7.26,
+   "n": 1099,
+   "outcomes": 1099
+  },
+  {
+   "category": "rugbyleague_nrl",
+   "ece": 6.36,
+   "gated": false,
+   "mce": 6.36,
+   "mce_unweighted": 8.48,
+   "mce_worst": 8.48,
+   "n": 1071,
+   "outcomes": 1071
+  },
+  {
+   "category": "tennis_wta_canadian_open",
+   "ece": 11.78,
+   "gated": false,
+   "mce": 11.78,
+   "mce_unweighted": 10.98,
+   "mce_worst": 10.98,
+   "n": 1039,
+   "outcomes": 1039
+  },
+  {
+   "category": "basketball_nba_summer_league",
+   "ece": 8.56,
+   "gated": false,
+   "mce": 8.56,
+   "mce_unweighted": 11.02,
+   "mce_worst": 11.02,
+   "n": 1032,
+   "outcomes": 1032
+  },
+  {
+   "category": "tennis_atp_cincinnati_open",
+   "ece": 5.82,
+   "gated": false,
+   "mce": 5.82,
+   "mce_unweighted": 8.24,
+   "mce_worst": 8.24,
+   "n": 1029,
+   "outcomes": 1029
+  },
+  {
+   "category": "tennis_atp_canadian_open",
+   "ece": 7.7,
+   "gated": false,
+   "mce": 7.7,
+   "mce_unweighted": 9.82,
+   "mce_worst": 9.82,
+   "n": 1000,
+   "outcomes": 1000
+  }
+ ],
+ "by_source": [
+  {
+   "ece": 1.3,
+   "gated": false,
+   "mce": 1.3,
+   "mce_unweighted": 1.48,
+   "mce_worst": 1.48,
+   "n": 478468,
+   "outcomes": 478468,
+   "source": "kalshi"
+  },
+  {
+   "ece": 2.44,
+   "gated": false,
+   "mce": 2.44,
+   "mce_unweighted": 2.48,
+   "mce_worst": 2.48,
+   "n": 312239,
+   "outcomes": 312239,
+   "source": "polymarket"
+  },
+  {
+   "ece": 1.4,
+   "gated": false,
+   "mce": 1.4,
+   "mce_unweighted": 2.01,
+   "mce_worst": 2.01,
+   "n": 97277,
+   "outcomes": 97277,
+   "source": "odds_api_bookmaker"
+  },
+  {
+   "ece": 1.43,
+   "gated": false,
+   "mce": 1.43,
+   "mce_unweighted": 1.22,
+   "mce_worst": 1.22,
+   "n": 17014,
+   "outcomes": 17014,
+   "source": "odds_api"
+  },
+  {
+   "ece": 0.83,
+   "gated": false,
+   "mce": 0.83,
+   "mce_unweighted": 16.37,
+   "mce_worst": 16.37,
+   "n": 12705,
+   "outcomes": 12705,
+   "source": "odds_api_totals"
+  },
+  {
+   "ece": 0.72,
+   "gated": false,
+   "mce": 0.72,
+   "mce_unweighted": 11.57,
+   "mce_worst": 11.57,
+   "n": 12410,
+   "outcomes": 12410,
+   "source": "odds_api_spreads"
+  },
+  {
+   "ece": 36.49,
+   "gated": false,
+   "mce": 36.49,
+   "mce_unweighted": 35.79,
+   "mce_worst": 35.79,
+   "n": 36,
+   "outcomes": 36,
+   "source": "datagolf"
+  }
+ ],
+ "cache": {
+  "age_s": 33371,
+  "generated_at": "2026-08-31T04:37:36.703361+00:00",
+  "reason": "main_key_absent",
+  "status": "stale"
+ },
+ "calibration_coverage_census": {
+  "coverage_bridge": {
+   "reconciles": false,
+   "residual": null,
+   "rungs": [
+    {
+     "checked": false,
+     "key": "plotted_on_curve",
+     "outcomes": null,
+     "rule": "Plotted on the published curve \u2014 survived every eligibility, truth, liquidity, shape and representative rule.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "market_result_unavailable",
+     "outcomes": null,
+     "rule": "The whole market is withheld symmetrically because its result cannot be established (DataGolf recovery residual): winners AND losers are dropped together so participation is never one-sidedly assumed.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "truth_source_missing",
+     "outcomes": null,
+     "rule": "The outcome carries no resolution source at all, so nothing independent grades it.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "truth_ineligible_source",
+     "outcomes": null,
+     "rule": "The outcome's winner was established by a source that is not independent of the market's own price (price-derived or guess-family), so it cannot grade its own forecast.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "question_ungraded",
+     "outcomes": null,
+     "rule": "The virtual question this outcome belongs to graded no winner at all, so its members are unknown truth rather than confident losses.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "malformed_or_unknown_truth",
+     "outcomes": null,
+     "rule": "The market's captured result is not a scoreable prediction: nobody graded a winner, a two-outcome partition graded zero or two, a draw-capable duel captured no draw member, or a declared field captured one member or fewer.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "phantom_liquidity",
+     "outcomes": null,
+     "rule": "The price is a phantom, not a forecast: a Kalshi outcome that was never bid and never traded, or a Polymarket no-bid placeholder sitting in the near-0.50 band.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "structural_artifact",
+     "outcomes": null,
+     "rule": "A measured pricing artifact rather than a genuine probability: esports match bundles, golf one-sided-ask placeholders, Kalshi player-prop threshold captures in the settlement-collapse band, and wide-spread weather midpoints.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "field_incomplete",
+     "outcomes": null,
+     "rule": "The outcome belongs to a normalization field that lost a member to an exclusion above, so the partition no longer sums to one and is dropped whole rather than normalized over its survivors.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "representative_not_selected",
+     "outcomes": null,
+     "rule": "The question is published, but this outcome is not the row that represents it: a non-representative binary side, a placeholder modal price, or an extreme tail in a non-partition multi pool.",
+     "unit": "futures_outcome"
+    }
+   ]
+  },
+  "generation": 1788149700148,
+  "invariants": {
+   "ok": false,
+   "violations": [
+    "CENSUS_UNAVAILABLE"
+   ]
+  },
+  "observation_bridge": {
+   "futures_outcomes_plotted": null,
+   "published_curve_observations": null,
+   "reconciles": false,
+   "residual": null,
+   "sportsbook_curve_legs": null
+  },
+  "population_version": "q268",
+  "reachability_bridge": {
+   "from": "resolved_futures_outcomes",
+   "reason": "census_disabled_pending_futures_phase_budget",
+   "reconciles": false,
+   "residual": null,
+   "resolved_futures_outcomes": null,
+   "status": "unavailable",
+   "tiers": [
+    {
+     "checked": false,
+     "key": "priced_in_coverage",
+     "outcomes": null,
+     "rule": "Carries a usable calibration price, so it enters the coverage bridge and is accounted for there. This tier is the hinge between the two reconciliations, not a second headline.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "unpriced_provably_purged",
+     "outcomes": null,
+     "rule": "No usable price, and the market settled longer ago than the MEASURED Kalshi retention horizon \u2014 every probe at this age returned 404, so no upstream API still holds the price. This is permanently unrecoverable and must never be counted as work outstanding.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "unpriced_recoverable",
+     "outcomes": null,
+     "rule": "No usable price, but the market settled recently enough that the price is still expected to be retrievable, or the source is not subject to the retention horizon at all. This IS work outstanding.",
+     "unit": "futures_outcome"
+    },
+    {
+     "checked": false,
+     "key": "unpriced_unknown_age",
+     "outcomes": null,
+     "rule": "No usable price and no settlement date, so reachability cannot be established either way. Deliberately its own tier: folding it into either neighbour would invent a fact, which is the exact failure this census exists to prevent.",
+     "unit": "futures_outcome"
+    }
+   ],
+   "to": "outcomes_with_calibration_coverage",
+   "unit": "futures_outcome",
+   "violations": [
+    "REACHABILITY_UNAVAILABLE"
+   ]
+  },
+  "reason": "census_disabled_pending_futures_phase_budget",
+  "schema_version": "calibration-coverage-bridge/v1",
+  "status": "unavailable",
+  "units": {
+   "outcomes_with_calibration_coverage": {
+    "rule": "One resolved futures outcome carrying a usable calibration price (opening probability strictly between 0 and 1, terminal calibration price preferred). This is the population calibration COVERS; it is not the population the curve PLOTS.",
+    "unit": "futures_outcome",
+    "value": null
+   },
+   "published_curve_observations": {
+    "rule": "One row plotted on the published calibration curve. Futures outcomes are one contributing population; the sportsbook curves (moneyline, spreads, totals, per-bookmaker moneyline) contribute observations that are not futures outcomes.",
+    "unit": "curve_observation",
+    "value": null
+   }
+  }
+ },
+ "closing_line_coverage": {
+  "has_closing": 13223,
+  "needs_closing": 5160,
+  "total": 18383
+ },
+ "corrections": [
+  {
+   "date": "2026-07-09",
+   "description": "Player-threshold props stored the OVER probability against the Under/No side (gotcha #17). Re-graded the Polymarket half (poly MCE 4.68 \u2192 4.01).",
+   "rows": 36207,
+   "title": "Polymarket hockey sign-flip"
+  },
+  {
+   "date": "2026-07-08",
+   "description": "Golf markets resolved at cp=1.0 with future dates were un-resolved so they grade against the real result.",
+   "rows": 230,
+   "title": "Premature golf resolutions"
+  },
+  {
+   "date": "2026-07-09",
+   "description": "Symmetric exclusion of did-not-play / withdrew outcomes so the golf curve isn't inflated by non-participants.",
+   "rows": null,
+   "title": "DataGolf survivorship exclusion"
+  },
+  {
+   "date": "2026-07-09",
+   "description": "Illiquid poly props stamped a no-signal ~0.50 midpoint (Gamma synthetic prices, gotcha #19). #151's census proved no-bid near-0.50 outcomes resolve at 0.10\u20130.28 (placeholders) vs 0.43\u20130.55 for has-bid coin-flips. Now excluded from the curve by bid presence \u2014 read-side only, no regrade.",
+   "rows": null,
+   "title": "Polymarket no-bid placeholder exclusion"
+  },
+  {
+   "date": "2026-07-09",
+   "description": "Resolved 2-outcome mutually-exclusive markets must have exactly one winner. Zero-winner (void) and two-winner (impossible) markets are data artifacts, not scoreable outcomes \u2014 now excluded from the curve. Census: ~43K both-false + ~1.5K both-winner across all categories. Read-side only, no regrade.",
+   "rows": null,
+   "title": "Malformed-binary exclusion"
+  },
+  {
+   "date": "2026-07-09",
+   "description": "Golf winner/round-leader outcomes priced >=0.80 in a mutually-exclusive market with >=2 such outcomes are Kalshi one-sided-ask placeholders (mex probs can't have two 80%+ outcomes; 98.6% lose). Excluded; genuine single leaders (82% win) stay in. Read-side only, no regrade.",
+   "rows": null,
+   "title": "Golf FIELD one-sided-ask placeholder exclusion"
+  },
+  {
+   "date": "2026-07-10",
+   "description": "Mutually-exclusive markets with >=3 outcomes are one question and must sum to ~1.0, but sources stamp each candidate at its one-sided ask so the sum inflated to 2.4-5.3 (census 2026-07-09). Now each such market's probabilities are divided by the per-market sum. Only genuine single-winner partitions are touched; multi-winner ladders/independent binaries and voids are excluded. Read-side only, no regrade.",
+   "rows": null,
+   "title": "Multi-candidate probability normalization"
+  },
+  {
+   "date": "2026-07-11",
+   "description": "Soccer game-odds were captured 2-way (home/away only) \u2014 no draw column \u2014 so every soccer moneyline row summed to ~1.0 and structurally dropped the ~25% draw mass (#1011), in BOTH the events aggregate and the per-bookmaker curve. That over-predicted home/away uniformly across all ~20 leagues (EPL 17.6pp, Switzerland 15.0pp, Turkey 7.6pp). The draw was never stored so these rows can't be reconstructed \u2014 historical soccer moneyline is excluded from the curve (league-scoped by the soccer_* key); soccer spreads/totals are kept. Forward fix = 3-way capture (#1011 draw column). Read-side only, no regrade.",
+   "rows": null,
+   "title": "Soccer 2-way (draw-omission) historical exclusion"
+  },
+  {
+   "date": "2026-07-12",
+   "description": "Polymarket packs a whole esports match (cumulative Total-Kills Over/Under ladders per game, per-game winners, first-blood props) into one non-partition market with >=3 outcomes. Cumulative Over rungs legitimately resolve many YES at once (gotcha #17), so the market has >=2 winners and its prices neither sum to ~1.0 (can't be normalized) nor bucket as a clean prediction \u2014 the counter-class #157 refuses to normalize (OPS-557: 93,629 outcomes over-predict +9.2pp, avg cp-sum 17.9). The >=3-outcome sibling of the malformed-binary filter; excluded from the curve, never re-graded (the many-YES grading is correct). Read-side only, no regrade.",
+   "rows": null,
+   "title": "Esports match-bundle exclusion"
+  },
+  {
+   "date": "2026-07-13",
+   "description": "Kalshi player-prop 'Player: N+' OVER markets (points/assists/goals/total-bases/hits/HR/strikeouts/rebounds/blocks) capture a settled post-game quote as the closing line (Kalshi commence_time \u2248 resolution time, gotcha #14) \u2014 '6+ total bases' at 0.96, impossible as a real OVER. Queue #186 (2026-07-13) corrects the Queue #167 filter: a snapshot-level verify over the Calibration Sentinel's flagged series (#1069\u2013#1073) disproved #167's 'keep the real-bid rows' rule \u2014 real-bid rows are corrupt too (a scorer and a non-scorer in one market both carry cp 0.995 with a live 0.99 bid). The honest discriminator is the CURVE PRICE, not the bid. Now excluded: (A) rows in the degenerate settlement-collapse band (curve price >= 0.90, which resolves 0.11\u20130.48 across every series), and (B) the whole NHL goal-family (category='hockey'), corrupt at every band (opening 0.82\u2192winrate 0.05) though its resolution is verified sane (5.24 scorers/game) \u2014 an illiquid degenerate capture, not a sign-flip. Below the band the liquid NBA/MLB series are an honest diagonal and are KEPT, bringing their high-band actual within ~10pp of predicted (NBAPTS -2pp, MLBKS -2pp). No regrade: the sign-flip premise is disproven and no honest price exists to recover (gotcha #21). Read-side only.",
+   "rows": null,
+   "title": "Kalshi player-prop threshold exclusion \u2014 corrected discriminator (Queue #186)"
+  }
+ ],
+ "date_range": {
+  "end": "2026-08-31T04:30:00+00:00",
+  "start": "2021-09-01T00:00:00+00:00"
+ },
+ "draw_authority_filter": {
+  "applies_to": "cricket, soccer",
+  "draw_member_names": [
+   "abandoned",
+   "draw",
+   "drawn",
+   "no result",
+   "no-result",
+   "tie",
+   "tied"
+  ],
+  "excluded": 1582,
+  "excluded_markets": 769,
+  "rule": "Excludes two-competitor duels on draw-capable questions (soccer, cricket) that captured no draw/tie member. A draw is a real result in those sports, so the question is a three-way partition; storing only the two named sides drops the draw mass and grades a drawn match as two losses (#1011: 7-18pp over-prediction of the named sides across ~20 leagues). The draw was never captured, so these rows cannot be re-graded \u2014 they are excluded as UNKNOWN. Extends the events-curve soccer 2-way rule to the Kalshi/Polymarket futures curve. The category answers only 'can this contest be drawn?'; shape is still decided by evidence (duel), so ladders, Yes/No claims and genuinely 2-way questions stay in, as do duels that DO carry a draw member. Read-side only; never mutates resolutions."
+ },
+ "esports_multi_bundle_filter": {
+  "applies_to": "esports",
+  "excluded": 145346,
+  "rule": "Excludes esports 'match bundle' markets \u2014 Polymarket packs a whole match (cumulative Total-Kills Over/Under ladders per game, per-game winners, first-blood props) into one non-partition market with >=3 outcomes that resolves with >=2 winners. Because the Over rungs are cumulative, many resolve YES at once (gotcha #17), so the prices neither sum to ~1.0 (can't be normalized \u2014 multiple partitions mashed) nor bucket as a clean prediction (OPS-557 census: 93,629 outcomes, winrate 0.395 vs cp 0.487 = +9.2pp, avg per-market cp-sum 17.9). The >=3-outcome sibling of the malformed-binary filter and the exclusion complement of #157's counter-class guard. The many-YES ladder grading is correct, so these are excluded from the curve, never re-graded. Read-side only; never mutates resolutions."
+ },
+ "exclusion_symmetry": {
+  "note": "The never-traded liquidity filter is asymmetric across sources. Kalshi excludes every never-traded outcome (all price bands); Polymarket only excludes never-traded outcomes in the near-0.50 placeholder band. poly_never_traded_in_curve is the cohort that never traded but sits outside that band, so it is STILL counted in the curve \u2014 the residual asymmetry. Measurement only; closing it (excluding all poly never-traded) is a separate Alex-gated decision (gotcha #21 keeps this read-side).",
+  "per_source": {
+   "kalshi": {
+    "never_traded_excluded": "all_bands",
+    "rule": "Excludes outcomes that never showed a real bid (yes_bid > 0) or trade (last_price > 0) in any snapshot \u2014 pure one-sided, never-traded placeholder prices. Applied to Kalshi only; never mutates resolutions."
+   },
+   "polymarket": {
+    "asymmetry_note": "Unlike Kalshi (all-bands), Polymarket only excludes never-traded outcomes in the near-0.50 placeholder band; never-traded outcomes outside that band are still counted (see poly_never_traded_in_curve).",
+    "never_traded_excluded": "placeholder_band_0.45_0.55",
+    "rule": "Excludes Polymarket outcomes near 0.50 (cp in [0.45, 0.55]) that never showed a real bid or trade in any snapshot \u2014 Gamma synthetic placeholder prices, not genuine coin-flips (#151 census: no-bid near-0.50 resolve at 0.10\u20130.28 vs has-bid at 0.43\u20130.55). Read-side only; never mutates resolutions."
+   }
+  },
+  "poly_never_traded_excluded_by_band": 20847,
+  "poly_never_traded_in_curve": 28832,
+  "poly_never_traded_total": 49679
+ },
+ "exclusivity_evidence": {
+  "applies_to": "all",
+  "category_consulted_for_shape": false,
+  "mutually_exclusive_column_accepted": false,
+  "required_market_type": "field",
+  "required_relations": [
+   "competitors",
+   "exclusive_ranges"
+  ],
+  "rule": "Per-market probability normalization now requires PROVED exclusivity from the persisted shape classifier (market_type='field' AND shape.exhaustive=true AND shape.expected_winners=1 AND an exclusive outcome relation), not the futures_markets.mutually_exclusive column \u2014 whose default is True and which the classifier's own docstring records as set for Yes/No claims and duels alike, so it is not evidence. Census 2026-08-01: the old gate admitted 51,424 markets whose relation the classifier declined to resolve and 27,958 cumulative-threshold ladders (gotcha #17 co-winners) into a rule that divides every member by the market's own sibling sum. Category is never consulted: the same structure is judged identically in cricket, esports and entertainment. A market that loses candidacy is NOT dropped \u2014 it flows to the multi pool with its raw captured price. Read-side only; never mutates resolutions."
+ },
+ "generated_at": "2026-08-31T04:37:36.703361+00:00",
+ "golf_placeholder_filter": {
+  "applies_to": "golf",
+  "excluded": 1848,
+  "rule": "Excludes golf winner/round-leader outcomes priced >=0.80 in mutually-exclusive markets that have >=2 outcomes in that band \u2014 one-sided-ask placeholder prices (mex probabilities can't have two 80%+ outcomes; ~98.6% resolve as losers). Genuine single-leader markets (one outcome >=0.80, 82% win) stay in. Read-side only; never mutates resolutions."
+ },
+ "heuristic_filter": {
+  "applies_to": "polymarket",
+  "excluded_by_source": {
+   "kalshi": 12377,
+   "polymarket": 20457
+  },
+  "rule": "Outcomes resolved by legacy heuristic passes (pass2_guess, pass2_loser, all_losers) are excluded from the published curve: they were guessed, not authoritatively settled (Lane-2 #754 measured pass2_loser at 0.0% winrate even at 0.5-0.9 prices), and 97% lack a polymarket_event_id so authoritative re-resolution is infeasible. Read-side exclusion only; markets stay resolved, never re-graded (gotcha #21)."
+ },
+ "kalshi_prop_threshold_filter": {
+  "applies_to": "kalshi",
+  "excluded": 101106,
+  "rule": "Excludes the corrupt slice of Kalshi player-prop threshold outcomes (single-sided 'Player: N+' OVER markets \u2014 points/assists/goals/total-bases/hits/HR/strikeouts/rebounds/blocks). Two exclusions: (A) the NHL goal-family (llm_sport_category='hockey') at/above 0.50, whose prices are degenerate in the high band (0.50\u20130.70 winrate 0.31, >=0.90 winrate 0.18) \u2014 an illiquid capture (gotcha #14), not a sign-flip or resolution bug \u2014 while its honest low band (<0.50, ~3pp calibrated) is RECOVERED (Queue #194/#1089, correcting #941's over-broad wholesale drop); and (B) any row whose curve price (closing line, else opening) sits in the degenerate settlement-collapse band (>= 0.90), which resolves 0.11\u20130.48 across every series \u2014 the settled post-game quote stamped as the line ('6+ total bases' at 0.96, physically impossible as a real OVER). Below that band the liquid series (NBA points/reb/ast/3pt, MLB TB/HIT/HR/KS) are an honest diagonal and are KEPT, bringing their high-band actual within ~10pp of predicted. Queue #186 (2026-07-13) corrects #167: its no-live-bid discriminator was itself an artifact \u2014 real-bid rows are corrupt too (a scorer and a non-scorer in one market both carry cp 0.995 with ybid 0.99), so the curve price, not the bid, is the honest discriminator. No regrade: the sign-flip premise is disproven (low prices resolve low, honestly) and there is no honest price to recover for the excluded rows (gotcha #21). Read-side only; never mutates resolutions or probabilities."
+ },
+ "liquidity_filter": {
+  "applies_to": "kalshi",
+  "kalshi_excluded": 100548,
+  "kalshi_included": 777523,
+  "rule": "Excludes outcomes that never showed a real bid (yes_bid > 0) or trade (last_price > 0) in any snapshot \u2014 pure one-sided, never-traded placeholder prices. Applied to Kalshi only; never mutates resolutions."
+ },
+ "malformed_binary_filter": {
+  "applies_to": "all",
+  "both_false_excluded": 140,
+  "both_winner_excluded": 0,
+  "excluded": 140,
+  "rule": "Excludes resolved 2-outcome mutually-exclusive markets whose winner count is not exactly 1 \u2014 zero winners (void/malformed resolution) or two winners (impossible / double-graded). These are data artifacts, not scoreable outcomes. Read-side only; never mutates resolutions."
+ },
+ "mce_ci_lower": 0.84,
+ "mce_ci_upper": 1.95,
+ "mce_closing_line": 1.86,
+ "mce_opening_price": 1.58,
+ "mex_normalization": {
+  "applies_to": "all",
+  "field_completeness": {
+   "candidate_markets": 3736,
+   "field_incomplete_excluded_markets": 435,
+   "field_incomplete_excluded_outcomes": 6919,
+   "published_normalized_markets": 3301,
+   "published_normalized_markets_post_dedup": 3301,
+   "published_normalized_outcomes_post_dedup": 34534,
+   "rule": "A resolved mutually-exclusive / field market is normalized (each outcome's probability divided by the per-market sum) ONLY when its captured partition is COMPLETE \u2014 every eligible member survives every per-outcome exclusion and the winner is among the survivors \u2014 so the published field sums to ~1.0. If a published exclusion removed any member, the field is PARTIAL: normalizing the survivors would inflate them (their true combined share is < 1.0), so the whole market is excluded from the curve with a repair reason instead of being normalized over survivors. Completeness is structural (no stored expected-member count exists); exclusion-induced partiality is what is detected. Read-side only; never mutates resolutions."
+  },
+  "normalized_outcomes": 37192,
+  "rule": "Normalizes resolved mutually-exclusive markets with >=3 outcomes and exactly one winner whose per-market probability sum exceeds 1.15 \u2014 each outcome's probability is divided by the market sum so the partition sums to ~1.0 (fixes one-sided-ask over-confidence; census 2026-07-09 found sums of 2.4-5.3 in economics/entertainment/tech/football). Multi-winner ladders / independent binaries (2+ winners) and voids (0 winners) are the counter-class and left untouched, as are markets already summing to ~1.0. Read-side only; never mutates resolutions.",
+  "threshold": 1.15
+ },
+ "min_category_outcomes": 1000,
+ "no_winner_filter": {
+  "applies_to": "all",
+  "excluded": 29404,
+  "excluded_markets": 2399,
+  "rule": "Excludes every resolved market with >=2 outcomes that graded NOBODY a winner. is_winner has a False default, so an ungraded or never-captured result is stored exactly like a real loss \u2014 an all-loser market is therefore UNKNOWN truth (an omitted draw where both sides lose, an orphan half whose winner lives in another market, or a market nothing ever graded), not a set of confident losses. Generalizes the malformed-binary both-false rule from 2-outcome mutually-exclusive markets to every shape. Read-side only; never re-grades, never mutates resolutions."
+ },
+ "nonexclusive_bundle_census": {
+  "by_category": [
+   {
+    "category": "baseball",
+    "published_n": 215680,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 7.3,
+    "remainder_n": 44916,
+    "would_exclude_ece": 3.29,
+    "would_exclude_n": 170764
+   },
+   {
+    "category": "basketball",
+    "published_n": 124138,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 7.33,
+    "remainder_n": 26959,
+    "would_exclude_ece": 2.51,
+    "would_exclude_n": 97179
+   },
+   {
+    "category": "soccer",
+    "published_n": 132103,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 2.66,
+    "remainder_n": 70947,
+    "would_exclude_ece": 4.76,
+    "would_exclude_n": 61156
+   },
+   {
+    "category": "economics",
+    "published_n": 43270,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 8.7,
+    "remainder_n": 7308,
+    "would_exclude_ece": 5.71,
+    "would_exclude_n": 35962
+   },
+   {
+    "category": "tennis",
+    "published_n": 47646,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 1.86,
+    "remainder_n": 19626,
+    "would_exclude_ece": 2.2,
+    "would_exclude_n": 28020
+   },
+   {
+    "category": "hockey",
+    "published_n": 35427,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 11.05,
+    "remainder_n": 9784,
+    "would_exclude_ece": 5.83,
+    "would_exclude_n": 25643
+   },
+   {
+    "category": "table_tennis",
+    "published_n": 26908,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 13.89,
+    "remainder_n": 1885,
+    "would_exclude_ece": 2.58,
+    "would_exclude_n": 25023
+   },
+   {
+    "category": "golf",
+    "published_n": 27356,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 10.91,
+    "remainder_n": 8813,
+    "would_exclude_ece": 10.06,
+    "would_exclude_n": 18543
+   },
+   {
+    "category": "politics",
+    "published_n": 14373,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 4.44,
+    "remainder_n": 5459,
+    "would_exclude_ece": 2.86,
+    "would_exclude_n": 8914
+   },
+   {
+    "category": "entertainment",
+    "published_n": 12668,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 8.31,
+    "remainder_n": 6001,
+    "would_exclude_ece": 4.32,
+    "would_exclude_n": 6667
+   },
+   {
+    "category": "football",
+    "published_n": 12012,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 2.91,
+    "remainder_n": 6829,
+    "would_exclude_ece": 8.96,
+    "would_exclude_n": 5183
+   },
+   {
+    "category": "crypto",
+    "published_n": 4625,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 30.31,
+    "remainder_n": 4,
+    "would_exclude_ece": 11.16,
+    "would_exclude_n": 4621
+   },
+   {
+    "category": "weather",
+    "published_n": 40982,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 5.42,
+    "remainder_n": 37850,
+    "would_exclude_ece": 5.92,
+    "would_exclude_n": 3132
+   },
+   {
+    "category": "motorsports",
+    "published_n": 6027,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 9.65,
+    "remainder_n": 3239,
+    "would_exclude_ece": 6.82,
+    "would_exclude_n": 2788
+   },
+   {
+    "category": "tech",
+    "published_n": 4127,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 5.65,
+    "remainder_n": 1427,
+    "would_exclude_ece": 7.53,
+    "would_exclude_n": 2700
+   },
+   {
+    "category": "mma",
+    "published_n": 3988,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 4.38,
+    "remainder_n": 2766,
+    "would_exclude_ece": 5.14,
+    "would_exclude_n": 1222
+   },
+   {
+    "category": "cricket",
+    "published_n": 3414,
+    "remainder_clears_sample_bar": true,
+    "remainder_ece": 10.25,
+    "remainder_n": 2556,
+    "would_exclude_ece": 13.67,
+    "would_exclude_n": 858
+   },
+   {
+    "category": "geopolitics",
+    "published_n": 1284,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 7.9,
+    "remainder_n": 457,
+    "would_exclude_ece": 5.64,
+    "would_exclude_n": 827
+   },
+   {
+    "category": "commodities",
+    "published_n": 666,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": null,
+    "remainder_n": 0,
+    "would_exclude_ece": 7.4,
+    "would_exclude_n": 666
+   },
+   {
+    "category": "chess",
+    "published_n": 841,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 7.99,
+    "remainder_n": 352,
+    "would_exclude_ece": 16.29,
+    "would_exclude_n": 489
+   },
+   {
+    "category": "energy",
+    "published_n": 184,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 28.17,
+    "remainder_n": 9,
+    "would_exclude_ece": 16.0,
+    "would_exclude_n": 175
+   },
+   {
+    "category": "legal",
+    "published_n": 306,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 16.21,
+    "remainder_n": 213,
+    "would_exclude_ece": 20.39,
+    "would_exclude_n": 93
+   },
+   {
+    "category": "culture",
+    "published_n": 68,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 50.5,
+    "remainder_n": 1,
+    "would_exclude_ece": 18.88,
+    "would_exclude_n": 67
+   },
+   {
+    "category": "health",
+    "published_n": 61,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 28.25,
+    "remainder_n": 6,
+    "would_exclude_ece": 11.06,
+    "would_exclude_n": 55
+   },
+   {
+    "category": "ai_safety",
+    "published_n": 33,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": null,
+    "remainder_n": 0,
+    "would_exclude_ece": 7.22,
+    "would_exclude_n": 33
+   },
+   {
+    "category": "lacrosse",
+    "published_n": 303,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 7.61,
+    "remainder_n": 276,
+    "would_exclude_ece": 16.95,
+    "would_exclude_n": 27
+   },
+   {
+    "category": "boxing",
+    "published_n": 238,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 9.98,
+    "remainder_n": 214,
+    "would_exclude_ece": 26.92,
+    "would_exclude_n": 24
+   },
+   {
+    "category": "cycling",
+    "published_n": 73,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 13.67,
+    "remainder_n": 49,
+    "would_exclude_ece": 23.94,
+    "would_exclude_n": 24
+   },
+   {
+    "category": "aussierules",
+    "published_n": 77,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 19.59,
+    "remainder_n": 67,
+    "would_exclude_ece": 39.7,
+    "would_exclude_n": 10
+   },
+   {
+    "category": "horse_racing",
+    "published_n": 8,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": null,
+    "remainder_n": 0,
+    "would_exclude_ece": 36.41,
+    "would_exclude_n": 8
+   },
+   {
+    "category": "auto_industry",
+    "published_n": 7,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": null,
+    "remainder_n": 0,
+    "would_exclude_ece": 13.93,
+    "would_exclude_n": 7
+   },
+   {
+    "category": "rugby",
+    "published_n": 333,
+    "remainder_clears_sample_bar": false,
+    "remainder_ece": 9.1,
+    "remainder_n": 332,
+    "would_exclude_ece": 29.5,
+    "would_exclude_n": 1
+   }
+  ],
+  "candidate_markets": 38294,
+  "candidate_outcomes": 973784,
+  "excluded_from_curve_for": [
+   "esports"
+  ],
+  "measured_only_for": "all other categories",
+  "rule": "Category-independent census of the non-exclusive bundle shape (>=3 outcomes resolving with >=2 winners \u2014 independent binaries packed into one market, so not a partition at any price). The esports cohort is EXCLUDED from the curve (OPS-557 measured +9.2pp there); every other category is MEASURED ONLY, because a blanket exclusion would delete 81% of hockey (ECE 0.87pp) and 47% of tennis (ECE 2.42pp) \u2014 well-calibrated cohorts with no evidence of the esports defect. Publishing the per-category n/ECE of the bundle cohort vs the remainder is what lets the exclusion decision be made on evidence rather than on the shape label alone. Measurement only; changes no curve row."
+ },
+ "orphan_partition_filter": {
+  "applies_to": "all (field shape only)",
+  "excluded": 0,
+  "excluded_markets": 0,
+  "rule": "Excludes 'field' markets (>2 named competitors, one wins) that captured <=1 member \u2014 an orphan half of a partition whose siblings are missing, so its lone price is a fragment of a distribution never observed and its result cannot be checked against the rest of the field. Scoped to the field shape only: a standalone Yes/No claim with one outcome is a complete prediction and stays in. Read-side only; never mutates resolutions."
+ },
+ "poly_placeholder_filter": {
+  "applies_to": "polymarket",
+  "excluded": 20847,
+  "included": 515604,
+  "rule": "Excludes Polymarket outcomes near 0.50 (cp in [0.45, 0.55]) that never showed a real bid or trade in any snapshot \u2014 Gamma synthetic placeholder prices, not genuine coin-flips (#151 census: no-bid near-0.50 resolve at 0.10\u20130.28 vs has-bid at 0.43\u20130.55). Read-side only; never mutates resolutions."
+ },
+ "population_predicate_fingerprint": "a540a6fb9aeb6563a3f8d24af4880dd9",
+ "population_version": "q268",
+ "producer": {
+  "age_s": 33371,
+  "beats_missed": 9,
+  "interval_s": 3600,
+  "stall_after_s": 14400,
+  "stalled": true,
+  "task": "precompute_calibration_main"
+ },
+ "representative_tie_authority": {
+  "authority": "canonical-outcome-id/v1",
+  "changes_population_count": false,
+  "questions": 13570,
+  "rule": "Representative side is the outcome closest to 50%; exact ties break by immutable canonical outcome ID. No Yes/No or favourite/underdog preference."
+ },
+ "small_sample_categories": [
+  {
+   "category": "tennis_wta_cincinnati_open",
+   "disposition": "parked_below_publish_bar",
+   "ece": 8.96,
+   "outcomes": 985,
+   "publish_bar": 1000
+  },
+  {
+   "category": "mma_mixed_martial_arts",
+   "disposition": "parked_below_publish_bar",
+   "ece": 6.62,
+   "outcomes": 922,
+   "publish_bar": 1000
+  },
+  {
+   "category": "chess",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.21,
+   "outcomes": 841,
+   "publish_bar": 1000
+  },
+  {
+   "category": "lacrosse_ncaa",
+   "disposition": "parked_below_publish_bar",
+   "ece": 9.56,
+   "outcomes": 829,
+   "publish_bar": 1000
+  },
+  {
+   "category": "icehockey_sweden_hockey_league",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.24,
+   "outcomes": 730,
+   "publish_bar": 1000
+  },
+  {
+   "category": "americanfootball_cfl",
+   "disposition": "parked_below_publish_bar",
+   "ece": 10.62,
+   "outcomes": 688,
+   "publish_bar": 1000
+  },
+  {
+   "category": "commodities",
+   "disposition": "parked_below_publish_bar",
+   "ece": 6.15,
+   "outcomes": 666,
+   "publish_bar": 1000
+  },
+  {
+   "category": "americanfootball_nfl_preseason",
+   "disposition": "parked_below_publish_bar",
+   "ece": 18.49,
+   "outcomes": 611,
+   "publish_bar": 1000
+  },
+  {
+   "category": "americanfootball_ufl",
+   "disposition": "parked_below_publish_bar",
+   "ece": 8.96,
+   "outcomes": 593,
+   "publish_bar": 1000
+  },
+  {
+   "category": "lacrosse_pll",
+   "disposition": "parked_below_publish_bar",
+   "ece": 6.74,
+   "outcomes": 476,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_usa_mls",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.79,
+   "outcomes": 422,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_england_league1",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.12,
+   "outcomes": 409,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_argentina_primera_division",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.04,
+   "outcomes": 397,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_efl_champ",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.49,
+   "outcomes": 393,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_england_league2",
+   "disposition": "parked_below_publish_bar",
+   "ece": 1.65,
+   "outcomes": 393,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_spain_segunda_division",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.01,
+   "outcomes": 375,
+   "publish_bar": 1000
+  },
+  {
+   "category": "rugby",
+   "disposition": "parked_below_publish_bar",
+   "ece": 5.56,
+   "outcomes": 333,
+   "publish_bar": 1000
+  },
+  {
+   "category": "icehockey_sweden_allsvenskan",
+   "disposition": "parked_below_publish_bar",
+   "ece": 8.14,
+   "outcomes": 329,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_brazil_serie_b",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.71,
+   "outcomes": 325,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_brazil_campeonato",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.71,
+   "outcomes": 324,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_italy_serie_b",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.29,
+   "outcomes": 317,
+   "publish_bar": 1000
+  },
+  {
+   "category": "tennis_wta_monterrey_open",
+   "disposition": "parked_below_publish_bar",
+   "ece": 15.76,
+   "outcomes": 307,
+   "publish_bar": 1000
+  },
+  {
+   "category": "legal",
+   "disposition": "parked_below_publish_bar",
+   "ece": 13.2,
+   "outcomes": 306,
+   "publish_bar": 1000
+  },
+  {
+   "category": "lacrosse",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.66,
+   "outcomes": 303,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_spain_la_liga",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.44,
+   "outcomes": 302,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_germany_liga3",
+   "disposition": "parked_below_publish_bar",
+   "ece": 7.34,
+   "outcomes": 294,
+   "publish_bar": 1000
+  },
+  {
+   "category": "tennis_atp_washington_open",
+   "disposition": "parked_below_publish_bar",
+   "ece": 24.48,
+   "outcomes": 286,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_italy_serie_a",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.0,
+   "outcomes": 279,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_china_superleague",
+   "disposition": "parked_below_publish_bar",
+   "ece": 0.73,
+   "outcomes": 277,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_mexico_ligamx",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.87,
+   "outcomes": 264,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_poland_ekstraklasa",
+   "disposition": "parked_below_publish_bar",
+   "ece": 6.38,
+   "outcomes": 260,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_epl",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.8,
+   "outcomes": 256,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_belgium_first_div",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.01,
+   "outcomes": 250,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_japan_j_league",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.6,
+   "outcomes": 247,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_germany_bundesliga",
+   "disposition": "parked_below_publish_bar",
+   "ece": 3.83,
+   "outcomes": 241,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_germany_bundesliga2",
+   "disposition": "parked_below_publish_bar",
+   "ece": 3.67,
+   "outcomes": 240,
+   "publish_bar": 1000
+  },
+  {
+   "category": "boxing",
+   "disposition": "parked_below_publish_bar",
+   "ece": 7.59,
+   "outcomes": 238,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_france_ligue_one",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.01,
+   "outcomes": 238,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_turkey_super_league",
+   "disposition": "parked_below_publish_bar",
+   "ece": 5.26,
+   "outcomes": 235,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_conmebol_copa_libertadores",
+   "disposition": "parked_below_publish_bar",
+   "ece": 5.15,
+   "outcomes": 234,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_netherlands_eredivisie",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.38,
+   "outcomes": 232,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_portugal_primeira_liga",
+   "disposition": "parked_below_publish_bar",
+   "ece": 3.35,
+   "outcomes": 231,
+   "publish_bar": 1000
+  },
+  {
+   "category": "americanfootball_ncaaf_fcs",
+   "disposition": "parked_below_publish_bar",
+   "ece": 10.29,
+   "outcomes": 229,
+   "publish_bar": 1000
+  },
+  {
+   "category": "tennis_wta_washington_open",
+   "disposition": "parked_below_publish_bar",
+   "ece": 12.7,
+   "outcomes": 229,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_sweden_superettan",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.72,
+   "outcomes": 221,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_france_ligue_two",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.55,
+   "outcomes": 219,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_chile_campeonato",
+   "disposition": "parked_below_publish_bar",
+   "ece": 3.86,
+   "outcomes": 218,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_league_of_ireland",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.88,
+   "outcomes": 215,
+   "publish_bar": 1000
+  },
+  {
+   "category": "basketball_nbl",
+   "disposition": "parked_below_publish_bar",
+   "ece": 15.71,
+   "outcomes": 201,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_conmebol_copa_sudamericana",
+   "disposition": "parked_below_publish_bar",
+   "ece": 9.76,
+   "outcomes": 201,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_greece_super_league",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.4,
+   "outcomes": 199,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_norway_eliteserien",
+   "disposition": "parked_below_publish_bar",
+   "ece": 1.66,
+   "outcomes": 197,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_fifa_world_cup",
+   "disposition": "parked_below_publish_bar",
+   "ece": 6.36,
+   "outcomes": 191,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_sweden_allsvenskan",
+   "disposition": "parked_below_publish_bar",
+   "ece": 5.18,
+   "outcomes": 191,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_switzerland_superleague",
+   "disposition": "parked_below_publish_bar",
+   "ece": 6.2,
+   "outcomes": 186,
+   "publish_bar": 1000
+  },
+  {
+   "category": "energy",
+   "disposition": "parked_below_publish_bar",
+   "ece": 5.61,
+   "outcomes": 184,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_finland_veikkausliiga",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.89,
+   "outcomes": 183,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_russia_premier_league",
+   "disposition": "parked_below_publish_bar",
+   "ece": 0.89,
+   "outcomes": 173,
+   "publish_bar": 1000
+  },
+  {
+   "category": "rodeo",
+   "disposition": "parked_below_publish_bar",
+   "ece": 32.63,
+   "outcomes": 172,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_austria_bundesliga",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.4,
+   "outcomes": 170,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_korea_kleague1",
+   "disposition": "parked_below_publish_bar",
+   "ece": 7.95,
+   "outcomes": 169,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_spl",
+   "disposition": "parked_below_publish_bar",
+   "ece": 7.1,
+   "outcomes": 166,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_denmark_superliga",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.04,
+   "outcomes": 151,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_australia_aleague",
+   "disposition": "parked_below_publish_bar",
+   "ece": 5.66,
+   "outcomes": 133,
+   "publish_bar": 1000
+  },
+  {
+   "category": "pickleball",
+   "disposition": "parked_below_publish_bar",
+   "ece": 6.02,
+   "outcomes": 114,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_uefa_europa_conference_league",
+   "disposition": "parked_below_publish_bar",
+   "ece": 1.7,
+   "outcomes": 87,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_uefa_champs_league",
+   "disposition": "parked_below_publish_bar",
+   "ece": 4.84,
+   "outcomes": 84,
+   "publish_bar": 1000
+  },
+  {
+   "category": "aussierules",
+   "disposition": "parked_below_publish_bar",
+   "ece": 10.92,
+   "outcomes": 77,
+   "publish_bar": 1000
+  },
+  {
+   "category": "cycling",
+   "disposition": "parked_below_publish_bar",
+   "ece": 9.35,
+   "outcomes": 73,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_uefa_europa_league",
+   "disposition": "parked_below_publish_bar",
+   "ece": 9.78,
+   "outcomes": 69,
+   "publish_bar": 1000
+  },
+  {
+   "category": "culture",
+   "disposition": "parked_below_publish_bar",
+   "ece": 13.65,
+   "outcomes": 68,
+   "publish_bar": 1000
+  },
+  {
+   "category": "health",
+   "disposition": "parked_below_publish_bar",
+   "ece": 7.62,
+   "outcomes": 61,
+   "publish_bar": 1000
+  },
+  {
+   "category": "olympics",
+   "disposition": "parked_below_publish_bar",
+   "ece": 9.86,
+   "outcomes": 56,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_fa_cup",
+   "disposition": "parked_below_publish_bar",
+   "ece": 9.91,
+   "outcomes": 55,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_uefa_champs_league_qualification",
+   "disposition": "parked_below_publish_bar",
+   "ece": 9.47,
+   "outcomes": 42,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_uefa_champs_league_women",
+   "disposition": "parked_below_publish_bar",
+   "ece": 11.37,
+   "outcomes": 39,
+   "publish_bar": 1000
+  },
+  {
+   "category": "skateboarding",
+   "disposition": "parked_below_publish_bar",
+   "ece": 9.95,
+   "outcomes": 38,
+   "publish_bar": 1000
+  },
+  {
+   "category": "tennis_atp_us_open",
+   "disposition": "parked_below_publish_bar",
+   "ece": 12.95,
+   "outcomes": 36,
+   "publish_bar": 1000
+  },
+  {
+   "category": "tennis_wta_us_open",
+   "disposition": "parked_below_publish_bar",
+   "ece": 21.47,
+   "outcomes": 34,
+   "publish_bar": 1000
+  },
+  {
+   "category": "ai_safety",
+   "disposition": "parked_below_publish_bar",
+   "ece": 7.62,
+   "outcomes": 33,
+   "publish_bar": 1000
+  },
+  {
+   "category": "americanfootball_ncaaf",
+   "disposition": "parked_below_publish_bar",
+   "ece": 44.27,
+   "outcomes": 33,
+   "publish_bar": 1000
+  },
+  {
+   "category": "squash",
+   "disposition": "parked_below_publish_bar",
+   "ece": 8.06,
+   "outcomes": 31,
+   "publish_bar": 1000
+  },
+  {
+   "category": "sailing",
+   "disposition": "parked_below_publish_bar",
+   "ece": 10.12,
+   "outcomes": 30,
+   "publish_bar": 1000
+  },
+  {
+   "category": "sumo",
+   "disposition": "parked_below_publish_bar",
+   "ece": 0.0,
+   "outcomes": 29,
+   "publish_bar": 1000
+  },
+  {
+   "category": "americanfootball_nfl",
+   "disposition": "parked_below_publish_bar",
+   "ece": 31.84,
+   "outcomes": 25,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_fifa_world_cup_qualifiers_europe",
+   "disposition": "parked_below_publish_bar",
+   "ece": 14.38,
+   "outcomes": 19,
+   "publish_bar": 1000
+  },
+  {
+   "category": "softball",
+   "disposition": "parked_below_publish_bar",
+   "ece": 24.35,
+   "outcomes": 13,
+   "publish_bar": 1000
+  },
+  {
+   "category": "bmx",
+   "disposition": "parked_below_publish_bar",
+   "ece": 11.44,
+   "outcomes": 10,
+   "publish_bar": 1000
+  },
+  {
+   "category": "climbing",
+   "disposition": "parked_below_publish_bar",
+   "ece": 11.83,
+   "outcomes": 10,
+   "publish_bar": 1000
+  },
+  {
+   "category": "horse_racing",
+   "disposition": "parked_below_publish_bar",
+   "ece": 34.2,
+   "outcomes": 8,
+   "publish_bar": 1000
+  },
+  {
+   "category": "wrestling",
+   "disposition": "parked_below_publish_bar",
+   "ece": 21.81,
+   "outcomes": 8,
+   "publish_bar": 1000
+  },
+  {
+   "category": "auto_industry",
+   "disposition": "parked_below_publish_bar",
+   "ece": 10.86,
+   "outcomes": 7,
+   "publish_bar": 1000
+  },
+  {
+   "category": "weightlifting",
+   "disposition": "parked_below_publish_bar",
+   "ece": 34.01,
+   "outcomes": 7,
+   "publish_bar": 1000
+  },
+  {
+   "category": "bull_riding",
+   "disposition": "parked_below_publish_bar",
+   "ece": 34.33,
+   "outcomes": 6,
+   "publish_bar": 1000
+  },
+  {
+   "category": "poker",
+   "disposition": "parked_below_publish_bar",
+   "ece": 26.92,
+   "outcomes": 6,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_england_efl_cup",
+   "disposition": "parked_below_publish_bar",
+   "ece": 19.72,
+   "outcomes": 6,
+   "publish_bar": 1000
+  },
+  {
+   "category": "xgames",
+   "disposition": "parked_below_publish_bar",
+   "ece": 26.5,
+   "outcomes": 4,
+   "publish_bar": 1000
+  },
+  {
+   "category": "darts",
+   "disposition": "parked_below_publish_bar",
+   "ece": 19.17,
+   "outcomes": 3,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_germany_dfb_pokal",
+   "disposition": "parked_below_publish_bar",
+   "ece": 45.86,
+   "outcomes": 3,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_uefa_nations_league",
+   "disposition": "parked_below_publish_bar",
+   "ece": 48.19,
+   "outcomes": 3,
+   "publish_bar": 1000
+  },
+  {
+   "category": "surfing",
+   "disposition": "parked_below_publish_bar",
+   "ece": 2.33,
+   "outcomes": 3,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_italy_coppa_italia",
+   "disposition": "parked_below_publish_bar",
+   "ece": 47.85,
+   "outcomes": 2,
+   "publish_bar": 1000
+  },
+  {
+   "category": "athletics",
+   "disposition": "parked_below_publish_bar",
+   "ece": 7.0,
+   "outcomes": 1,
+   "publish_bar": 1000
+  },
+  {
+   "category": "figure_skating",
+   "disposition": "parked_below_publish_bar",
+   "ece": 0.5,
+   "outcomes": 1,
+   "publish_bar": 1000
+  },
+  {
+   "category": "soccer_spain_copa_del_rey",
+   "disposition": "parked_below_publish_bar",
+   "ece": 43.93,
+   "outcomes": 1,
+   "publish_bar": 1000
+  },
+  {
+   "category": "track_and_field",
+   "disposition": "parked_below_publish_bar",
+   "ece": 32.0,
+   "outcomes": 1,
+   "publish_bar": 1000
+  }
+ ],
+ "soccer_2way_filter": {
+  "applies_to": "odds_api, odds_api_bookmaker",
+  "bookmaker_excluded": 49381,
+  "events_excluded": 11286,
+  "excluded": 60667,
+  "rule": "Excludes historical soccer game-odds (moneyline) from the curve \u2014 BOTH the events aggregate (odds_api) and the per-bookmaker (odds_api_bookmaker) sources. Soccer h2h is 3-way (home/draw/away) but both stored only a 2-way home/away split summing to ~1.0, dropping the ~25% draw mass and over-predicting home/away by 7-18pp uniformly across ~20 leagues (#1011). The draw was never captured so these rows can't be re-graded; league-scoped by the soccer_* key. Soccer spreads/totals (genuinely 2-way) are kept. Forward fix = 3-way capture. Read-side only; never mutates resolutions."
+ },
+ "spreads_summary": {
+  "by_sport": [
+   {
+    "mce": 1.26,
+    "outcomes": 1892,
+    "sport": "basketball_ncaab"
+   },
+   {
+    "mce": 2.92,
+    "outcomes": 1068,
+    "sport": "baseball_mlb"
+   }
+  ],
+  "mce": 0.72,
+  "outcomes": 12410,
+  "winners": 6208
+ },
+ "staged": {
+  "measured": false,
+  "reason": "served_at_absent"
+ },
+ "total_markets": 863375,
+ "total_outcomes": 930149,
+ "total_winners": 357565,
+ "totals_summary": {
+  "by_sport": [
+   {
+    "mce": 0.8,
+    "outcomes": 1888,
+    "sport": "basketball_ncaab"
+   },
+   {
+    "mce": 3.16,
+    "outcomes": 1056,
+    "sport": "baseball_mlb"
+   }
+  ],
+  "mce": 0.83,
+  "outcomes": 12705,
+  "winners": 6235
+ },
+ "truth_evidence": {
+  "by_class": {
+   "eligible": {
+    "markets": 148031,
+    "outcomes": 999565
+   },
+   "ineligible_other": {
+    "markets": 32514,
+    "outcomes": 77468
+   },
+   "missing": {
+    "markets": 255295,
+    "outcomes": 519792
+   },
+   "price_derived": {
+    "markets": 171130,
+    "outcomes": 452613
+   }
+  },
+  "contract_ok": true,
+  "contract_violations": [],
+  "partition_invariant": {
+   "normalized_markets": 3301,
+   "ok": true,
+   "published_markets": 3301
+  },
+  "price_derived_excluded": {
+   "markets": 171130,
+   "outcomes": 452613
+  },
+  "published_outcomes": 790743,
+  "published_questions": 81538,
+  "rule": "A source may grade a published forecast only if its winner is established INDEPENDENTLY of the market's own price (venue/API settlement or deterministic public-data). Price-derived truth (clean_resolution / settlement_sync) is excluded \u2014 Queue #261.",
+  "unknown_sources": {
+   "markets": 0,
+   "outcomes": 0
+  }
+ },
+ "void_filter": {
+  "applies_to": "datagolf",
+  "excluded": 15651,
+  "rule": "Excludes resolved outcomes for players who never participated (did_not_play / withdrew) \u2014 VOIDs with no real outcome to score, not losses. Mostly DataGolf 'Make the Cut' markets; never mutates resolutions."
+ },
+ "weather_wide_spread_filter": {
+  "applies_to": "kalshi (weather only)",
+  "excluded": 641,
+  "rule": "Excludes Kalshi WEATHER outcomes whose captured price is a fabricated wide-book midpoint: a book with yes_ask - yes_bid >= 0.50 and NO trade in any snapshot has no real price discovery at its midpoint (#182). These rows carry a live bid so the #940 liquidity filter keeps them \u2014 the wide spread is the discriminator. WEATHER ONLY: #182's census showed tech's miscalibration is genuine, not wide-book noise, so tech is left in. Read-side only; never mutates resolutions."
+ }
+}

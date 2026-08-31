@@ -21,14 +21,38 @@
 //
 // So the hooks are now the anchor, and this suite is their tripwire: drop,
 // rename, or duplicate one and CI fails HERE, loudly, instead of the audit
-// quietly grading something else. Asserted at the source level — the page is a
-// large client component behind SWR, and rendering it would prove less and
-// break more (the same call `discoverAuditHooks.test.tsx` makes for the
-// Discover page body).
+// quietly grading something else.
+//
+// UX-P227 — WHY THIS SUITE READS BOTH THE SOURCE AND THE DOM.
+//
+// It used to read only the source, justified by "the page is a large client
+// component behind SWR, and rendering it would prove less and break more". That
+// was inherited rather than measured, and measuring it found both halves false
+// for THIS page:
+//
+//   - "break more" is false. `app/calibration/page.tsx` gates on `useSWR`, which
+//     is a MODULE BOUNDARY — a mock settles it synchronously, with no DOM. It
+//     renders in ~350ms behind the five mocks below. (Contrast `app/daily`,
+//     which opens on `useState(true)` cleared only inside a `useEffect`: no DOM,
+//     no mock, no render, ever. Same outward shape, opposite answer — the gate
+//     KIND is what decides, not the size of the component.)
+//   - "prove less" is false, and backwards. A source grep can only count hooks
+//     someone remembered to list, and cannot tell a hook that is DECLARED from
+//     one that REACHES THE DOM. Rendering found two things the grep could not:
+//     `calibration-provider-panel` is declared once and renders THREE times, and
+//     `calibration-overall-split` — which the pack selects positionally, as
+//     `> summary` — was not guarded here at all.
+//
+// So both layers stay, because they prove different things. The source layer
+// asserts what a grep is actually good at: declaration counts, ordering inside
+// the JSX, and the non-export rule. The DOM layer asserts reachability and
+// real cardinality. Neither subsumes the other, and the pack-coverage guard
+// below is what stops the list drifting out of step with the pack again.
 
 import { MATCHED_BUCKET_MIN_SIDE_N } from "@/lib/calibrationMath";
 import * as fs from "fs";
 import * as path from "path";
+import * as React from "react";
 
 /**
  * The files the calibration surface's hooks are declared in.
@@ -117,6 +141,15 @@ const SINGLETON_HOOKS = [
   "calibration-shape-annex-note",
   "calibration-buckets-in-band-note",
   "calibration-price-basis-note",
+  // UX-P227. The pack has selected this since L2-230 and this list never
+  // carried it, so the tripwire was blind to exactly one of the hooks it
+  // exists to protect — and to the worst one: the pack reads it as
+  // `[data-testid="calibration-overall-split"] > summary`, a positional child
+  // read of the same class the header above calls the real hazard. Dropping or
+  // renaming it left CI green. Found by rendering (the source grep can only
+  // check names already on this list), and kept honest from here by
+  // "every hook the pack selects is guarded here" below.
+  "calibration-overall-split",
 ] as const;
 
 // UX-P078 (Alex ruling 2026-08-14(b) item 3): By Source collapsed to one panel
@@ -567,5 +600,262 @@ describe("item 4 — every section names the cohort it draws from", () => {
     // Labelling THAT section with the active cohort would be a lie in the one
     // place the distinction is being explained to the reader.
     expect(SOURCE).toContain('<CohortTag cohort={cohort} scope="comparison" />');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UX-P227 — the tripwire covers the PACK, and the hooks reach the DOM.
+// ---------------------------------------------------------------------------
+
+/**
+ * Every hook this suite guards, in one set.
+ *
+ * The three lists above are split by what they mean in the SOURCE (declared
+ * once vs declared once inside a `.map()`); for coverage and reachability the
+ * only question is whether a hook is guarded at all.
+ */
+const GUARDED_HOOKS: readonly string[] = [
+  ...SINGLETON_HOOKS,
+  ...COLLECTION_HOOKS,
+  ...UX_P078_HOOKS,
+];
+
+describe("the tripwire guards every hook the pack actually selects", () => {
+  // The gap this closes: the lists above are hand-maintained, and nothing tied
+  // them to the pack. `calibration-overall-split` was selected by the pack and
+  // absent here, so the one thing the suite promises — "drop or rename a hook
+  // the audit depends on and CI fails HERE" — was untrue for it.
+  //
+  // Reading the pack file is what makes that unrepeatable. A hook added to the
+  // spec reds this test until it is guarded, which is the safe direction and
+  // the whole point of a tripwire.
+  const SPEC = fs.readFileSync(
+    path.join(__dirname, "..", "..", "e2e", "specs", "calibration.spec.ts"),
+    "utf8"
+  );
+
+  // Literal occurrences anywhere in the spec, including inside its hook arrays
+  // (`STAT_HOOKS`) and its selector constants. Deliberately not restricted to
+  // selector syntax: a hook named only in a comment is over-covered, which
+  // costs a line here and cannot hide a real hole.
+  const PACK_HOOKS = [
+    ...new Set([...SPEC.matchAll(/calibration-[a-z0-9-]+/g)].map((m) => m[0])),
+  ]
+    // `<hook>-value` is StatCard's thread-through, addressed by the pack as a
+    // suffix of a hook already on the list; it is not separately declared.
+    .filter((h) => !h.endsWith("-value"))
+    .sort();
+
+  test("the pack still selects hooks at all", () => {
+    // Anti-vacuity: an empty extraction passes every assertion below.
+    expect(PACK_HOOKS.length).toBeGreaterThanOrEqual(10);
+  });
+
+  // STATED GAP, measured (battery M8, a scored survivor). This check is
+  // ONE-DIRECTIONAL: pack ⊆ guarded. A hook REMOVED from the pack is not
+  // caught here, and that is deliberate — a hook may legitimately be guarded
+  // without the pack selecting it (most of the list is), so asserting the
+  // reverse would red on every one of them. The cost of the gap is a stale
+  // entry surviving here after the pack drops it; the cost of closing it would
+  // be a guard nobody could keep green. The browser rail is what notices a
+  // selector the pack no longer uses.
+
+  test.each(PACK_HOOKS)("%s is guarded by this suite", (hook) => {
+    expect(GUARDED_HOOKS).toContain(hook);
+  });
+});
+
+// The five mocks the page needs to render off a payload. Each replaces a
+// MODULE BOUNDARY — none of them stands in for page-internal state, so nothing
+// below is asserting the mock rather than the page.
+jest.mock("next/link", () => ({
+  __esModule: true,
+  default: ({ href, children }: { href: string; children: React.ReactNode }) =>
+    React.createElement("a", { href }, children),
+}));
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/calibration",
+}));
+jest.mock("@/lib/analytics", () => ({ trackEvent: jest.fn() }));
+jest.mock("@/components/Analytics", () => ({
+  useAnalyticsContext: () => ({ track: jest.fn() }),
+}));
+jest.mock("@/hooks", () => ({
+  useEngagementTime: () => undefined,
+  usePageTracking: () => undefined,
+  useScrollDepth: () => undefined,
+}));
+
+describe("the hooks REACH THE DOM, in the state each belongs to", () => {
+  /**
+   * A real `GET /api/calibration` response, pruned to 27 buckets.
+   *
+   * Captured rather than hand-written, because a hand-written one does not
+   * merely risk being wrong — it silently re-answers "can this page render" as
+   * "no". Two guessed fixtures were tried first: five plausible keys was
+   * refused by the population contract, and dropping `population_version`
+   * crashed inside `toFixed`. The live payload has 44 top-level keys and
+   * rendered first time.
+   *
+   * The prune is measured, not assumed: buckets are 89% of the capture, and
+   * keeping three per (source, price_moved) group renders a byte-identical SET
+   * of test hooks to the full 2,015-bucket payload. Anything that needs more
+   * than that will fail loudly here rather than degrade quietly.
+   */
+  const PAYLOAD = JSON.parse(
+    fs.readFileSync(
+      path.join(__dirname, "..", "fixtures", "uxp227_calibration_live.json"),
+      "utf8"
+    )
+  );
+
+  /**
+   * The same payload with the two cohorts moved onto disjoint bucket indices.
+   *
+   * `calibration-matched-unavailable` is the one hook no other state reaches:
+   * it needs the activity section to render (so BOTH cohorts must be present)
+   * while no bucket index is shared (so `matched.widest` is falsy). Deleting a
+   * cohort outright does not get there — it drops the whole section, and the
+   * hook with it.
+   */
+  const NO_MATCHED_PAIR = {
+    ...PAYLOAD,
+    buckets: (PAYLOAD.buckets as Array<Record<string, unknown>>).map((b) =>
+      b.price_moved === true ? { ...b, bucket_idx: (b.bucket_idx as number) + 50 } : b
+    ),
+  };
+
+  function domCounts(swr: unknown): { counts: Record<string, number>; html: string } {
+    let html = "";
+    jest.isolateModules(() => {
+      jest.doMock("swr", () => ({ __esModule: true, default: () => swr }));
+      // UX-P223-3: `isolateModules` gives the subject a FRESH `react`, so
+      // `react-dom/server` must be required INSIDE the registry that will
+      // render — a module-scope import here dies on the page's first `useMemo`.
+      const { renderToStaticMarkup } = require("react-dom/server");
+      const R = require("react");
+      const Page = require("../../app/calibration/page").default;
+      html = renderToStaticMarkup(R.createElement(Page));
+    });
+    const counts: Record<string, number> = {};
+    for (const m of html.matchAll(/data-testid="([^"]+)"/g)) {
+      counts[m[1]] = (counts[m[1]] ?? 0) + 1;
+    }
+    return { counts, html };
+  }
+
+  const loaded = () => domCounts({ data: PAYLOAD, error: undefined, isLoading: false });
+
+  /**
+   * Measured DOM cardinality in the loaded state.
+   *
+   * This is the distinction the source layer cannot draw at all. Up there,
+   * `calibration-provider-panel` and `calibration-shape-breakdown` are both
+   * "declared exactly once" and the file has to explain in a COMMENT that the
+   * first is a `.map()` and the second is not. Here that comment is an
+   * assertion: one renders three times and the other renders once.
+   */
+  const ONE_IN_DOM = [
+    ...SINGLETON_HOOKS.filter(
+      // Reached only by a state that has no payload, or by no-matched-pair.
+      (h) =>
+        !["calibration-error", "calibration-loading", "calibration-matched-unavailable"].includes(h)
+    ),
+    // From UX_P078_HOOKS: this one really is a singleton in the DOM. Its
+    // list-mate `calibration-provider-panel` is not, which is the whole point.
+    "calibration-shape-breakdown",
+  ];
+
+  const MANY_IN_DOM = ["calibration-provider-panel", ...COLLECTION_HOOKS];
+
+  test("the loaded render is the real page, not a loading shell", () => {
+    // Anti-vacuity, and the thing every assertion below rests on. An empty or
+    // spinner-only render would satisfy "hook absent" checks trivially.
+    const { counts, html } = loaded();
+    expect(html.length).toBeGreaterThan(50_000);
+    expect(html).toContain('data-contract-state="match"');
+    expect(counts["calibration-loading"]).toBeUndefined();
+    expect(counts["calibration-error"]).toBeUndefined();
+    expect(counts["calibration-page"]).toBe(1);
+  });
+
+  test.each(ONE_IN_DOM)("%s reaches the DOM exactly once", (hook) => {
+    // Exactly once is what the rail's `.first()` depends on. Two elements and
+    // the audit reads whichever markup order put first — the failure the
+    // source layer's duplicate check is aimed at, verified where it happens.
+    expect(loaded().counts[hook]).toBe(1);
+  });
+
+  test.each(MANY_IN_DOM)("%s reaches the DOM as a repeated row", (hook) => {
+    // Declared once in source, many times in the DOM. The source layer asserts
+    // the declaration; only a render can confirm the repetition is real.
+    expect(loaded().counts[hook] ?? 0).toBeGreaterThan(1);
+  });
+
+  test("every guarded hook is reachable in SOME state", () => {
+    // A hook that is declared, guarded, and rendered by no state at all is
+    // dead weight the pack would wait for forever. Five states cover the
+    // surface: loaded, loading, transport error, contract refusal, and the
+    // no-matched-pair case.
+    const seen = new Set<string>();
+    for (const state of [
+      { data: PAYLOAD, error: undefined, isLoading: false },
+      { data: undefined, error: undefined, isLoading: true },
+      { data: undefined, error: new Error("boom"), isLoading: false },
+      { data: { ...PAYLOAD, population_version: "NOT-A-VERSION-THIS-BUILD-KNOWS" }, error: undefined, isLoading: false },
+      { data: NO_MATCHED_PAIR, error: undefined, isLoading: false },
+    ]) {
+      for (const h of Object.keys(domCounts(state).counts)) seen.add(h);
+    }
+    const unreachable = GUARDED_HOOKS.filter((h) => !seen.has(h));
+    expect(unreachable).toEqual([]);
+  });
+
+  test("the refusal states render the error hook and NEVER the page hook", () => {
+    // The source layer proves this by comparing two string indices. The render
+    // proves the thing itself: on a transport failure and on a refused
+    // population contract, no number-bearing markup exists to be mislabelled.
+    for (const state of [
+      { data: undefined, error: new Error("boom"), isLoading: false },
+      { data: { ...PAYLOAD, population_version: "NOT-A-VERSION-THIS-BUILD-KNOWS" }, error: undefined, isLoading: false },
+    ]) {
+      const { counts } = domCounts(state);
+      expect(counts["calibration-error"]).toBe(1);
+      expect(counts["calibration-page"]).toBeUndefined();
+      expect(counts["calibration-stat-ece"]).toBeUndefined();
+    }
+  });
+
+  test("the loading state is ONLY the loading hook", () => {
+    const { counts } = domCounts({ data: undefined, error: undefined, isLoading: true });
+    expect(counts["calibration-loading"]).toBe(1);
+    expect(counts["calibration-page"]).toBeUndefined();
+    expect(counts["calibration-error"]).toBeUndefined();
+  });
+
+  test("the two refusals are told apart by name, in the DOM", () => {
+    // Same hook, different failure. If these collapse to one name the rail is
+    // back to "something was red" — the exact loss the source layer's
+    // `data-error-state-name` check exists to prevent, checked here on the
+    // rendered attribute rather than on the JSX that is supposed to emit it.
+    const transport = domCounts({ data: undefined, error: new Error("boom"), isLoading: false });
+    const refused = domCounts({
+      data: { ...PAYLOAD, population_version: "NOT-A-VERSION-THIS-BUILD-KNOWS" },
+      error: undefined,
+      isLoading: false,
+    });
+    expect(transport.html).toContain('data-error-state-name="load-failed"');
+    expect(refused.html).toContain('data-error-state-name="population-contract-refused"');
+  });
+
+  test("the no-matched-pair state reaches the unavailable hook, inside a live section", () => {
+    const { counts } = domCounts({ data: NO_MATCHED_PAIR, error: undefined, isLoading: false });
+    expect(counts["calibration-matched-unavailable"]).toBe(1);
+    // And it is the SECTION's fallback, not the section's absence — otherwise
+    // this state would prove the hook reachable by deleting its neighbourhood.
+    expect(counts["calibration-activity-section"]).toBe(1);
+    expect(counts["calibration-matched-buckets"]).toBeUndefined();
   });
 });
