@@ -78,6 +78,8 @@ jest.mock("@/components/Analytics", () => ({
 import FeedCard from "@/components/FeedCard";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CARD_SUM_EXPLANATION } from "@/lib/cardSum";
+import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
+import { heroOutcome } from "@/lib/discover/heroOutcome";
 import {
   SUM_INDEPENDENT_PRICES,
   cardSumReason,
@@ -206,11 +208,25 @@ describe("UX-P160 — the card rule reaches the feed", () => {
   });
 
   it("the headline never disagrees with its own row, before or after", () => {
-    // Queue 283's invariant. The headline is printed first and repeats the leader.
+    // Queue 283's invariant: ONE outcome never renders two different numbers on
+    // one card.
+    //
+    // UX-P238 amended HOW this is checked, not what it claims. The old form was
+    // `nums[0] === nums[1]` — "the headline repeats the FIRST row" — which is a
+    // statement about POSITION, and it held only while the headline was always
+    // the leader. A card whose leader is the negation of its own question now
+    // headlines the affirmative side, so the headline repeats the SECOND row and
+    // the positional form fails while the invariant itself is untouched. Anchor
+    // on the hero's own row and the assertion answers for the invariant again.
     for (const row of twoOutcome()) {
       for (const before of [true, false]) {
+        const outcomes = (itemFor(row, before).data as FeedFuturesData).top_outcomes ?? [];
+        const printedSlice = leaderFirstSlice(outcomes, 3);
+        const heroIndex = printedSlice.indexOf(heroOutcome(printedSlice)!);
+        expect(heroIndex).toBeGreaterThanOrEqual(0);
         const nums = printedNumbers(html(row, before));
-        expect(nums[0]).toBe(nums[1]);
+        // nums[0] is the headline; nums[1..] are the rows in printed order.
+        expect(nums[0]).toBe(nums[1 + heroIndex]);
       }
     }
   });

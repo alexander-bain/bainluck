@@ -1,0 +1,657 @@
+{
+ "108621": {
+  "data": {
+   "canonical_market_key": "politics::championship:2027",
+   "card_sum_reason": null,
+   "confidence_score": 0.8235,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "confidence_tier": "high",
+   "discover_card": {
+    "bundle_candidate": false,
+    "comparison_theme": null,
+    "distribution_outcomes": [
+     {
+      "label": "Democratic Party",
+      "movement": -0.01,
+      "probability": 0.845
+     },
+     {
+      "label": "Republican Party",
+      "movement": 0.01,
+      "probability": 0.155
+     }
+    ],
+    "public_source_disagreement": false,
+    "qa_signals": [
+     "multi_source_consistency_check"
+    ],
+    "reasons": [],
+    "remaining_outcome_count": 0,
+    "suggested_format": "binary_probability",
+    "threshold_points": []
+   },
+   "discover_llm": {
+    "archetype": "race",
+    "audience_scope": "broad",
+    "comparison_axes": [],
+    "junk_flags": [],
+    "salience_score": 5,
+    "subtopic": "elections",
+    "topic": "politics"
+   },
+   "group_id": "kalshi:CONTROLH-2026",
+   "group_type": "kalshi_event",
+   "hook_description": null,
+   "id": 108621,
+   "image_url": "https://images.pexels.com/photos/5926371/pexels-photo-5926371.jpeg?auto=compress&cs=tinysrgb&h=350",
+   "interestingness_reasons": [
+    "multi_source",
+    "fresh",
+    "trading_volume"
+   ],
+   "interestingness_score": 54.84,
+   "llm_sport_category": "politics",
+   "market_tags": [
+    "category:conference",
+    "market_status:open",
+    "source:kalshi",
+    "sport:politics",
+    "tier:2"
+   ],
+   "market_tier": 2,
+   "market_type": "duel",
+   "name": "Which party will win the U.S. House?",
+   "outcome_count": 2,
+   "resolution_date": "2027-02-01T15:00:00+00:00",
+   "source": "kalshi",
+   "source_count": 2,
+   "sources": [
+    "kalshi",
+    "polymarket"
+   ],
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "temporal_badge": null,
+   "top_outcomes": [
+    {
+     "id": 1593960,
+     "movement": -0.01,
+     "name": "Democratic Party",
+     "probability": 0.845,
+     "rank": 1,
+     "rendered_percent": 85
+    },
+    {
+     "id": 1593961,
+     "movement": 0.01,
+     "name": "Republican Party",
+     "probability": 0.155,
+     "rank": 2,
+     "rendered_percent": 15
+    }
+   ]
+  },
+  "item": {
+   "context_summary": "Democratic Party leads at 84% across 2 sources",
+   "headline": "Tracked by 2 sources",
+   "reason": "Democratic Party (84%) leads Which party will win the U.S. House? across 2 sources",
+   "score": 80,
+   "type": "futures"
+  }
+ },
+ "52756062": {
+  "data": {
+   "canonical_market_key": null,
+   "card_sum_reason": "independent_prices",
+   "confidence_score": 0.4706,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "confidence_tier": "moderate",
+   "discover_card": {
+    "bundle_candidate": false,
+    "comparison_theme": null,
+    "distribution_outcomes": [
+     {
+      "label": "Democratic party",
+      "movement": 0.08,
+      "probability": 0.25
+     },
+     {
+      "label": "Republican party",
+      "movement": -0.72,
+      "probability": 0.16
+     }
+    ],
+    "public_source_disagreement": false,
+    "qa_signals": [],
+    "reasons": [
+     "recent_movement"
+    ],
+    "remaining_outcome_count": 0,
+    "suggested_format": "probability_timeline",
+    "threshold_points": []
+   },
+   "group_id": "kalshi:KXSTATELEG-TXHOUS26",
+   "group_type": "kalshi_event",
+   "hook_description": null,
+   "id": 52756062,
+   "image_url": null,
+   "interestingness_reasons": [
+    "decisive_but_not_settled",
+    "moving"
+   ],
+   "interestingness_score": 45.02,
+   "llm_sport_category": "politics",
+   "market_tags": [
+    "category:championship",
+    "market_status:open",
+    "source:kalshi",
+    "sport:politics",
+    "tier:1"
+   ],
+   "market_tier": 1,
+   "market_type": "duel",
+   "name": "Texas State House winner?",
+   "outcome_count": 2,
+   "resolution_date": "2027-11-03T15:00:00+00:00",
+   "source": "kalshi",
+   "source_count": 1,
+   "sources": [
+    "kalshi"
+   ],
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "story_key": "story:regional_us_elections",
+   "temporal_badge": null,
+   "top_outcomes": [
+    {
+     "id": 198635469,
+     "movement": 0.08,
+     "name": "Democratic party",
+     "probability": 0.25,
+     "rank": 1,
+     "rendered_percent": 25
+    },
+    {
+     "id": 198635468,
+     "movement": -0.72,
+     "name": "Republican party",
+     "probability": 0.16,
+     "rank": 2,
+     "rendered_percent": 16
+    }
+   ]
+  },
+  "item": {
+   "context_summary": "New favorite: Democratic party (25%)",
+   "headline": "New favorite: Democratic party (25%)",
+   "reason": "New favorite: Democratic party (25%) now leads Texas State House winner?",
+   "score": 45,
+   "type": "futures"
+  }
+ },
+ "57792416": {
+  "data": {
+   "canonical_market_key": "economics::game_prop:2026",
+   "card_sum_reason": null,
+   "confidence_score": 0.4706,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "confidence_tier": "moderate",
+   "discover_card": {
+    "bundle_candidate": true,
+    "comparison_theme": "ipo_valuation",
+    "distribution_outcomes": [
+     {
+      "label": "No",
+      "movement": null,
+      "probability": 0.725
+     },
+     {
+      "label": "Yes",
+      "movement": -0.5,
+      "probability": 0.275
+     }
+    ],
+    "public_source_disagreement": false,
+    "qa_signals": [],
+    "reasons": [
+     "threshold_values",
+     "bundle_candidate"
+    ],
+    "remaining_outcome_count": 0,
+    "suggested_format": "threshold_heatmap",
+    "threshold_points": [
+     {
+      "direction": "exact",
+      "label": "Will Neuralink's valuation hit (HIGH) $47.5B by August 31?",
+      "probability": null,
+      "source": "market_name",
+      "unit": "$B",
+      "value": 47500000000.0
+     }
+    ]
+   },
+   "group_id": "polymarket:779163",
+   "group_type": "polymarket_sub_market",
+   "hook_description": null,
+   "id": 57792416,
+   "image_url": null,
+   "interestingness_reasons": [
+    "decisive_but_not_settled",
+    "moving",
+    "resolving_soon"
+   ],
+   "interestingness_score": 53.7,
+   "llm_sport_category": "economics",
+   "market_tags": [
+    "category:game_prop",
+    "market_status:open",
+    "source:polymarket",
+    "tier:2"
+   ],
+   "market_tier": 2,
+   "market_type": "container_member",
+   "name": "Will Neuralink's valuation hit (HIGH) $47.5B by August 31?",
+   "outcome_count": 2,
+   "resolution_date": "2026-09-01T19:00:00+00:00",
+   "source": "polymarket",
+   "source_count": 1,
+   "sources": [
+    "polymarket"
+   ],
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "temporal_badge": "Closing Soon",
+   "top_outcomes": [
+    {
+     "id": 214513320,
+     "movement": null,
+     "name": "Not Neuralink's valuation",
+     "probability": 0.725,
+     "rank": 1,
+     "rendered_percent": 73
+    },
+    {
+     "id": 214513319,
+     "movement": -0.5,
+     "name": "Neuralink's valuation",
+     "probability": 0.275,
+     "rank": 2,
+     "rendered_percent": 27
+    }
+   ]
+  },
+  "item": {
+   "context_summary": "Neuralink's valuation down 50.0 points today; Not Neuralink's valuation leads at 72%",
+   "headline": "Neuralink's valuation down 50.0 points today",
+   "reason": "Neuralink's valuation moved down 50.0 points today in Will Neuralink's valuation hit (HIGH) $47.5B by August 31?",
+   "score": 50,
+   "type": "futures"
+  }
+ },
+ "59530991": {
+  "data": {
+   "canonical_market_key": null,
+   "card_sum_reason": null,
+   "confidence_score": 0.6471,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "confidence_tier": "moderate",
+   "discover_card": {
+    "bundle_candidate": false,
+    "comparison_theme": null,
+    "distribution_outcomes": [
+     {
+      "label": "August 31",
+      "movement": -0.005,
+      "probability": 0.9195
+     }
+    ],
+    "public_source_disagreement": false,
+    "qa_signals": [],
+    "reasons": [],
+    "remaining_outcome_count": 0,
+    "suggested_format": "binary_probability",
+    "threshold_points": []
+   },
+   "group_id": "polymarket:907010",
+   "group_type": "polymarket_event",
+   "hook_description": "Tensions are escalating as Russia intensifies its military operations, raising fears of a renewed assault on Kyiv. With recent shifts in troop movements and strategic rhetoric, the global community is closely watching how this could reshape the conflict's trajectory and regional stability.",
+   "id": 59530991,
+   "image_url": "https://images.pexels.com/photos/6143369/pexels-photo-6143369.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+   "interestingness_reasons": [
+    "resolving_soon"
+   ],
+   "interestingness_score": 37.49,
+   "llm_sport_category": "geopolitics",
+   "market_tags": [
+    "category:conference",
+    "market_status:open",
+    "source:polymarket",
+    "tier:2"
+   ],
+   "market_tier": 2,
+   "market_type": "duel",
+   "name": "Will Russia target Kyiv by...?",
+   "outcome_count": 2,
+   "resolution_date": "2026-08-31T23:59:00+00:00",
+   "source": "polymarket",
+   "source_count": 1,
+   "sources": [
+    "polymarket"
+   ],
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "temporal_badge": "Closing Soon",
+   "top_outcomes": [
+    {
+     "id": 221542982,
+     "movement": -0.005,
+     "name": "August 31",
+     "probability": 0.9195,
+     "rank": 1,
+     "rendered_percent": 92
+    }
+   ]
+  },
+  "item": {
+   "context_summary": "Will Russia target Kyiv by...",
+   "headline": "Will Russia target Kyiv by...",
+   "reason": "Will Russia target Kyiv by...?",
+   "score": 50,
+   "type": "futures"
+  }
+ },
+ "59698974": {
+  "data": {
+   "canonical_market_key": null,
+   "card_sum_reason": null,
+   "confidence_score": 0.3529,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "confidence_tier": "low",
+   "discover_card": {
+    "bundle_candidate": true,
+    "comparison_theme": "sports_paths",
+    "distribution_outcomes": [
+     {
+      "label": "Diogo Moreira",
+      "movement": null,
+      "probability": 0.5
+     },
+     {
+      "label": "Enea Bastianini",
+      "movement": null,
+      "probability": 0.495
+     }
+    ],
+    "public_source_disagreement": false,
+    "qa_signals": [],
+    "reasons": [
+     "bundle_candidate"
+    ],
+    "remaining_outcome_count": 0,
+    "suggested_format": "binary_probability",
+    "threshold_points": []
+   },
+   "group_id": "polymarket:927447",
+   "group_type": "negrisk",
+   "hook_description": null,
+   "id": 59698974,
+   "image_url": null,
+   "interestingness_reasons": [],
+   "interestingness_score": 21.32,
+   "llm_sport_category": "motorsports",
+   "market_tags": [
+    "category:championship",
+    "market_status:open",
+    "source:polymarket",
+    "sport:motorsports",
+    "tier:1"
+   ],
+   "market_tier": 1,
+   "market_type": "duel",
+   "name": "MotoGP World Champion (2026)",
+   "outcome_count": 2,
+   "resolution_date": "2026-11-29T23:59:00+00:00",
+   "source": "polymarket",
+   "source_count": 1,
+   "sources": [
+    "polymarket"
+   ],
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "temporal_badge": null,
+   "top_outcomes": [
+    {
+     "id": 222361736,
+     "movement": null,
+     "name": "Diogo Moreira",
+     "probability": 0.5,
+     "rank": 1,
+     "rendered_percent": 50
+    },
+    {
+     "id": 222361737,
+     "movement": null,
+     "name": "Enea Bastianini",
+     "probability": 0.495,
+     "rank": 2,
+     "rendered_percent": 50
+    }
+   ]
+  },
+  "item": {
+   "context_summary": "Diogo Moreira leads at 50%",
+   "headline": "Diogo Moreira leads at 50%",
+   "reason": "Diogo Moreira (50%) leads MotoGP World Champion (2026)",
+   "score": 31,
+   "type": "futures"
+  }
+ },
+ "59925149": {
+  "data": {
+   "canonical_market_key": null,
+   "card_sum_reason": null,
+   "confidence_score": 0.3529,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "confidence_tier": "low",
+   "discover_card": {
+    "bundle_candidate": true,
+    "comparison_theme": "macro_ranges",
+    "distribution_outcomes": [
+     {
+      "label": "Yes",
+      "movement": 0.0,
+      "probability": 0.67
+     }
+    ],
+    "public_source_disagreement": false,
+    "qa_signals": [],
+    "reasons": [
+     "threshold_values",
+     "bundle_candidate"
+    ],
+    "remaining_outcome_count": 0,
+    "suggested_format": "threshold_heatmap",
+    "threshold_points": [
+     {
+      "direction": "exact",
+      "label": "Will Tesla (TSLA) close above $360 on September 1?",
+      "probability": null,
+      "source": "market_name",
+      "unit": "$",
+      "value": 360.0
+     }
+    ]
+   },
+   "group_id": "polymarket:941340",
+   "group_type": "polymarket_sub_market",
+   "hook_description": "As Tesla navigates a rapidly changing electric vehicle market and faces intensified competition, investors are closely monitoring its stock price, particularly as it approaches a critical threshold that could signal broader trends in the tech and automotive industries.",
+   "id": 59925149,
+   "image_url": null,
+   "interestingness_reasons": [
+    "decisive_but_not_settled",
+    "fresh",
+    "resolving_soon"
+   ],
+   "interestingness_score": 49.84,
+   "llm_sport_category": "economics",
+   "market_tags": [
+    "category:game_prop",
+    "market_status:open",
+    "source:polymarket",
+    "tier:2"
+   ],
+   "market_tier": 2,
+   "market_type": "container_member",
+   "name": "Will Tesla (TSLA) close above $360 on September 1?",
+   "outcome_count": 2,
+   "resolution_date": "2026-09-01T20:00:00+00:00",
+   "source": "polymarket",
+   "source_count": 1,
+   "sources": [
+    "polymarket"
+   ],
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "story_key": "story:daily_equity_direction",
+   "temporal_badge": "Closing Soon",
+   "top_outcomes": [
+    {
+     "id": 223394841,
+     "movement": null,
+     "name": "Tesla (TSLA) close above $360 on Sept...",
+     "probability": 0.67,
+     "rank": 1,
+     "rendered_percent": 67
+    }
+   ]
+  },
+  "item": {
+   "context_summary": "Tesla (TSLA) close above $360 on Sept... leads at 67%",
+   "headline": "Tesla (TSLA) close above $360 on Sept... leads at 67%",
+   "reason": "Tesla (TSLA) close above $360 on Sept... (67%) leads Will Tesla (TSLA) close above $360 on September 1?",
+   "score": 16,
+   "type": "futures"
+  }
+ },
+ "59934328": {
+  "data": {
+   "canonical_market_key": null,
+   "card_sum_reason": null,
+   "confidence_score": 0.6471,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "confidence_tier": "moderate",
+   "discover_card": {
+    "bundle_candidate": true,
+    "comparison_theme": "rotten_tomatoes_scores",
+    "distribution_outcomes": [
+     {
+      "label": "No",
+      "movement": null,
+      "probability": 0.88
+     },
+     {
+      "label": "Yes",
+      "movement": -0.47,
+      "probability": 0.12
+     }
+    ],
+    "public_source_disagreement": false,
+    "qa_signals": [],
+    "reasons": [
+     "threshold_values",
+     "bundle_candidate"
+    ],
+    "remaining_outcome_count": 0,
+    "suggested_format": "threshold_heatmap",
+    "threshold_points": [
+     {
+      "direction": "exact",
+      "label": "Will \"Onslaught\" score at least 80 on the Rotten Tomatoes Tomatometer?",
+      "probability": null,
+      "source": "market_name",
+      "unit": "",
+      "value": 80.0
+     }
+    ]
+   },
+   "group_id": "polymarket:942935",
+   "group_type": "polymarket_sub_market",
+   "hook_description": null,
+   "id": 59934328,
+   "image_url": "https://image.tmdb.org/t/p/w1280/pmPXXniQlb4EdYY0gVZO90rf54F.jpg",
+   "interestingness_reasons": [
+    "fresh",
+    "moving",
+    "resolving_soon"
+   ],
+   "interestingness_score": 62.81,
+   "llm_sport_category": "entertainment",
+   "market_tags": [
+    "category:game_prop",
+    "market_status:open",
+    "source:polymarket",
+    "sport:entertainment",
+    "tier:2"
+   ],
+   "market_tier": 2,
+   "market_type": "container_member",
+   "name": "Will \"Onslaught\" score at least 80 on the Rotten Tomatoes Tomatometer?",
+   "outcome_count": 2,
+   "resolution_date": "2026-09-07T23:59:00+00:00",
+   "source": "polymarket",
+   "source_count": 1,
+   "sources": [
+    "polymarket"
+   ],
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "temporal_badge": "New",
+   "top_outcomes": [
+    {
+     "id": 223434870,
+     "movement": null,
+     "name": "No: \"Onslaught\" score at least 80 on ...",
+     "probability": 0.88,
+     "rank": 1,
+     "rendered_percent": 88
+    },
+    {
+     "id": 223434869,
+     "movement": -0.47,
+     "name": "\"Onslaught\" score at least 80 on the ...",
+     "probability": 0.12,
+     "rank": 2,
+     "rendered_percent": 12
+    }
+   ]
+  },
+  "item": {
+   "context_summary": "\"Onslaught\" score at least 80 on the ... down 47.0 points today; No: \"Onslaught\" score at least 80 on ... leads at 88%",
+   "headline": "\"Onslaught\" score at least 80 on the ... down 47.0 points today",
+   "reason": "\"Onslaught\" score at least 80 on the ... moved down 47.0 points today in Will \"Onslaught\" score at least 80 on the Rotten Tomatoes Tomatometer?",
+   "score": 62,
+   "type": "futures"
+  }
+ }
+}
