@@ -40,6 +40,46 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Titles that carry a date — derived, never typed. Gotcha #44.
+#
+# Production's weather titles name a date, and `/api/weather/*` is SUPPOSED to
+# hide a market whose title names a date that has passed
+# (`is_title_implied_stale`, grace 1 day for an explicit month+day). So a typed
+# date in a fixture is not a detail, it is a fuse: "Aug 29, 2026" burned down at
+# 00:00 UTC on 2026-08-31 and turned `backend-tests (2)` red on master and on
+# every open PR across four lanes (#2357). The tree did not change; the clock
+# did.
+#
+# Offset FIRST, then format — and always emit the year. A year-less "January 2"
+# derived on December 28 would be re-read by `_implied_year_from_market_name`
+# as January 2 of the year now ENDING, i.e. ~12 months stale, which is the same
+# outage wearing a different hat.
+# ---------------------------------------------------------------------------
+
+
+def _title_date(days_ahead):
+    """A month-day-year string that is `days_ahead` in the future, always."""
+    when = datetime.now(timezone.utc) + timedelta(days=days_ahead)
+    return f"{when:%B} {when.day}, {when.year}"
+
+
+def _title_month(days_ahead):
+    """A month-year string ("Jan 2027") that is `days_ahead` in the future."""
+    when = datetime.now(timezone.utc) + timedelta(days=days_ahead)
+    return f"{when:%b} {when.year}"
+
+
+# Distinct offsets keep the two Beijing markets two different questions, which
+# is what makes them two markets rather than one repeated.
+_RAIN_TITLE = f"Where will it rain on {_title_date(5)}?"
+_LA_TEMP_TITLE = f"Highest temperature in Los Angeles on {_title_date(3)}?"
+_BEIJING_TITLE = f"Highest temperature in Beijing on {_title_date(3)}?"
+_BEIJING_NEXT_DAY_TITLE = f"Highest temperature in Beijing on {_title_date(4)}?"
+_DROUGHT_TITLE = f"Exceptional drought (D4) by state — week of {_title_date(6)}"
+_SNOW_TITLE = f"Which city gets the most snow in {_title_month(180)}?"
+
+
 def _outcome(name, probability, *, outcome_id=1):
     return SimpleNamespace(
         id=outcome_id,
@@ -120,7 +160,7 @@ class TestFeaturedNamesItsOutcome:
         _serve(mock_db, [
             _market(
                 market_id=59704867,
-                name="Where will it rain on Aug 29, 2026?",
+                name=_RAIN_TITLE,
                 outcomes=_RAIN_OUTCOMES,
             )
         ])
@@ -136,7 +176,7 @@ class TestFeaturedNamesItsOutcome:
         _serve(mock_db, [
             _market(
                 market_id=59746940,
-                name="Highest temperature in Los Angeles on August 31?",
+                name=_LA_TEMP_TITLE,
                 outcomes=[
                     _outcome("76-77°F", 0.205, outcome_id=21),
                     _outcome("78-79°F", 0.450, outcome_id=22),
@@ -316,7 +356,7 @@ class TestNothingWorthNaming:
         _serve(mock_db, [
             _market(
                 market_id=47,
-                name="Which city gets the most snow in Jan 2027?",
+                name=_SNOW_TITLE,
                 outcomes=[
                     _outcome("Buffalo", None, outcome_id=81),
                     _outcome("Denver", 0.0, outcome_id=82),
@@ -366,7 +406,7 @@ class TestNothingWorthNaming:
         _serve(mock_db, [
             _market(
                 market_id=59646564,
-                name="Exceptional drought (D4) by state — week of September 1, 2026",
+                name=_DROUGHT_TITLE,
                 outcomes=[
                     _outcome("No", 0.925, outcome_id=91),
                     _outcome("Colorado", 0.900, outcome_id=92),
@@ -446,7 +486,7 @@ class TestTheNamedLeaderIsThePrintedNumber:
     @pytest.mark.parametrize(
         "name,outcomes",
         [
-            ("Where will it rain on Aug 29, 2026?", _RAIN_OUTCOMES),
+            (_RAIN_TITLE, _RAIN_OUTCOMES),
             ("Major volcano eruption in 2026?", _VOLCANO_OUTCOMES),
             (
                 "Min Arctic sea ice extent this summer?",
@@ -481,7 +521,7 @@ class TestTheNamedLeaderIsThePrintedNumber:
         _serve(mock_db, [
             _market(
                 market_id=59731168,
-                name="Highest temperature in Beijing on August 31?",
+                name=_BEIJING_TITLE,
                 outcomes=[
                     _outcome("29°C", 0.250, outcome_id=81),
                     _outcome("31°C", 0.250, outcome_id=82),
@@ -511,7 +551,7 @@ class TestTheNamedLeaderIsThePrintedNumber:
         _serve(mock_db, [
             _market(
                 market_id=59731169,
-                name="Highest temperature in Beijing on September 1?",
+                name=_BEIJING_NEXT_DAY_TITLE,
                 outcomes=[
                     _outcome("29°C", 0.250, outcome_id=85),
                     _outcome("31°C", 0.250, outcome_id=86),
@@ -540,7 +580,7 @@ class TestNothingElseChanged:
         _serve(mock_db, [
             _market(
                 market_id=59704867,
-                name="Where will it rain on Aug 29, 2026?",
+                name=_RAIN_TITLE,
                 outcomes=_RAIN_OUTCOMES,
                 source="kalshi",
                 resolution_date=now + timedelta(days=2),
@@ -549,7 +589,7 @@ class TestNothingElseChanged:
 
         item = (await client.get(f"/api/weather/{endpoint}")).json()[0]
 
-        assert item["q"] == "Where will it rain on Aug 29, 2026?"
+        assert item["q"] == _RAIN_TITLE
         assert item["prob"] == 78
         assert item["src"] == "kalshi"
         assert item["tag"] == "Daily rain"
@@ -562,7 +602,7 @@ class TestNothingElseChanged:
         _serve(mock_db, [
             _market(
                 market_id=59704867,
-                name="Where will it rain on Aug 29, 2026?",
+                name=_RAIN_TITLE,
                 outcomes=_RAIN_OUTCOMES,
             )
         ])
