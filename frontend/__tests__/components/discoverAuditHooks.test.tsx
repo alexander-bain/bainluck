@@ -315,14 +315,50 @@ function resolveSpec(file: string, src: string): Resolution {
   const unresolved: string[] = [];
   const calledNames = new Set<string>();
 
+  /**
+   * Which API a call invokes — or an admission that this file cannot tell.
+   *
+   * UX-P229 round 4, after CERT-590. Rounds 1–3 read the callee as "a property
+   * access or a bare identifier, otherwise no name", and the cert reached a
+   * selector through `page["locator"](…)`: an ElementAccessExpression, so the
+   * name came out `""`, the call was not recognised as a selector call at all,
+   * and a computed `discover-element-access` hook stayed out of `PACK_HOOKS`
+   * while the suite passed 42/42.
+   *
+   * That is the round-2 defect in a new coat — the ATTRIBUTE name was split
+   * there, the METHOD name here — so the answer is the same one that ended it
+   * for the selector: resolve the name instead of pattern-matching the syntax,
+   * and admit it out loud when it cannot be resolved.
+   *
+   *   - property access / identifier -> the name.
+   *   - element access -> `literalOf` the subscript, so `page["locator"]` and
+   *     `page["loc" + "ator"]` are both simply `locator`.
+   *   - a subscript that does not resolve -> `null`, which is LOUD: the call
+   *     could be `locator` and this file cannot say it is not.
+   *   - an inline function expression -> not a named API. Its body is walked
+   *     like any other code, so a selector inside it is read normally.
+   */
+  function calleeName(callee: ts.Expression): string | null {
+    if (ts.isPropertyAccessExpression(callee)) return callee.name.text;
+    if (ts.isIdentifier(callee)) return callee.text;
+    if (ts.isParenthesizedExpression(callee)) return calleeName(callee.expression);
+    if (ts.isElementAccessExpression(callee)) return literalOf(callee.argumentExpression);
+    if (ts.isArrowFunction(callee) || ts.isFunctionExpression(callee)) return "";
+    // A conditional, an awaited value, the result of another call: any of these
+    // can evaluate to a selector method, and none of them can be read here.
+    return null;
+  }
+
   function walk(n: ts.Node): void {
     if (ts.isCallExpression(n)) {
       const callee = n.expression;
-      const name = ts.isPropertyAccessExpression(callee)
-        ? callee.name.text
-        : ts.isIdentifier(callee)
-          ? callee.text
-          : "";
+      const resolvedName = calleeName(callee);
+      if (resolvedName === null) {
+        unresolved.push(
+          `<unreadable callee>(${callee.getText().replace(/\s+/g, " ").slice(0, 80)})`
+        );
+      }
+      const name = resolvedName ?? "";
       if (name) calledNames.add(name);
       const idx = SELECTOR_ARG[name];
       if (idx !== undefined && n.arguments.length > idx) {
@@ -468,6 +504,46 @@ function probe(page) { let SELECTOR = buildOther(); return page.locator(SELECTOR
 [SELECTOR] = pickSelectors();
 page.locator(SELECTOR);`,
     loud: true,
+  },
+  {
+    name: "CERT-590: a selector reached through `page[\"locator\"](…)`",
+    // The method name written as a subscript. Round 3 read the callee as syntax
+    // and produced no name at all, so the call was never recognised as a
+    // selector call — the hook was not missed, it was never looked for.
+    src: `const SELECTOR = '[data-testid="discover-element-access"]';
+page["locator"](SELECTOR);`,
+    loud: false,
+    hooks: ["discover-element-access"],
+  },
+  {
+    name: "a subscripted method name assembled from parts is SUPPORTED",
+    src: `const SELECTOR = '[data-testid="discover-subscript-split"]';
+page["loc" + "ator"](SELECTOR);`,
+    loud: false,
+    hooks: ["discover-subscript-split"],
+  },
+  {
+    name: "a subscripted method name this file cannot compute fails loudly",
+    // It could be `locator`. Refusing to guess is the whole contract.
+    src: `const SELECTOR = '[data-testid="discover-unknown-api"]';
+page[pickApi()](SELECTOR);`,
+    loud: true,
+  },
+  {
+    name: "a callee chosen at runtime fails loudly",
+    src: `const SELECTOR = '[data-testid="discover-conditional-api"]';
+(useCss ? page.locator : page.$)(SELECTOR);`,
+    loud: true,
+  },
+  {
+    name: "an inline IIFE is not an unreadable API — and its body is still read",
+    // `tournament-inventory.spec.ts` really does call an arrow inline. Treating
+    // that as an unreadable callee would red a spec doing nothing wrong, and
+    // the selector inside it must still be extracted.
+    src: `const SELECTOR = '[data-testid="discover-inside-iife"]';
+(() => { page.locator(SELECTOR); })();`,
+    loud: false,
+    hooks: ["discover-inside-iife"],
   },
   {
     name: "a selector built by a call fails loudly",
