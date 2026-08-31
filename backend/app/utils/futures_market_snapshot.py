@@ -71,9 +71,15 @@ from typing import Any, Iterable, Sequence
 #:
 #: ORDER IS THE WIRE FORMAT. A row is a positional list, not a dict, because the
 #: repeated key names of a 700-row dict payload are pure overhead on a shared
-#: artifact that is size-capped (`MAX_ENVELOPE_BYTES`). Appending is safe;
-#: reordering or removing requires a `SNAPSHOT_SCHEMA_VERSION` bump, which is
-#: part of the cache key and therefore self-invalidating.
+#: artifact that is size-capped (`MAX_ENVELOPE_BYTES`). Reordering or removing
+#: requires a `SNAPSHOT_SCHEMA_VERSION` bump, which is part of the cache key and
+#: therefore self-invalidating.
+#:
+#: Appending is safe but NOT wire-compatible, and CERT-615 [P2] is why that
+#: distinction is now stated: row arity is validated exactly, so an in-flight
+#: entry written by the previous width is REJECTED and rebuilt rather than
+#: zip-truncated into a pool whose new column is invisibly absent on every row.
+#: Rebuilding one artifact once is the cheap outcome; the truncation was not.
 MARKET_COLUMNS: tuple[str, ...] = (
     "id",
     "name",
@@ -134,6 +140,13 @@ SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 #: Bumped whenever the tuples above change shape. It travels in the shared cache
 #: key, so a deploy that changes the wire format cannot read a predecessor's
 #: entries — they simply expire under their own TTL.
+#:
+#: CERT-615 [P2]: the version is necessary but NOT sufficient. A same-version
+#: payload whose rows are the wrong shape used to be accepted by
+#: `is_snapshot_payload` and then silently dropped row-by-row by `from_plain`,
+#: so a corrupt entry read as "there are no candidate markets" rather than
+#: "rebuild this" — an empty result reported as a fact (gotcha #53). Arity is
+#: now validated per row, and a single bad row rejects the whole envelope.
 SNAPSHOT_SCHEMA_VERSION = 1
 
 
@@ -238,28 +251,74 @@ def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
     return {"v": SNAPSHOT_SCHEMA_VERSION, "rows": rows}
 
 
+def _is_value_tuple(values: Any, width: int) -> bool:
+    """Whether `values` is a positional row of exactly `width` entries.
+
+    Exactly, not at-least: `__init__` builds the attributes with `zip`, and
+    `zip` TRUNCATES. A short row would therefore construct a snapshot whose
+    trailing columns are silently absent rather than `None`, and reading one of
+    them raises `AttributeError` inside the per-item serializer — which empties
+    the whole futures pool (gotcha #42). A long row would carry a column this
+    build has no name for. Both are corruption; neither is readable.
+    """
+    return isinstance(values, (list, tuple)) and len(values) == width
+
+
+def _validated_rows(payload: Any) -> list | None:
+    """The rows of a well-formed CURRENT-schema artifact, or `None`.
+
+    The single validator behind both `is_snapshot_payload` and `from_plain`, so
+    the two can no longer disagree about what "readable" means. CERT-615 [P2]:
+    they did — the check accepted any same-version dict with a list of rows,
+    while the rebuilder quietly dropped every row it could not unpack, so a
+    corrupt envelope decoded to an empty pool and the route, having been told
+    the payload was fine, served it.
+
+    One bad row rejects the WHOLE payload rather than being skipped. A partial
+    candidate base is not a cheaper answer than rebuilding — it is a feed
+    missing markets nobody can see are missing.
+    """
+    if not isinstance(payload, dict) or payload.get("v") != SNAPSHOT_SCHEMA_VERSION:
+        return None
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        if not isinstance(row, (list, tuple)) or len(row) != 3:
+            return None
+        market_values, outcome_rows, sport_values = row
+        if not _is_value_tuple(market_values, len(MARKET_COLUMNS)):
+            return None
+        if not isinstance(outcome_rows, (list, tuple)):
+            return None
+        if any(not _is_value_tuple(o, len(OUTCOME_COLUMNS)) for o in outcome_rows):
+            return None
+        if sport_values is not None and not _is_value_tuple(
+            sport_values, len(SPORT_COLUMNS)
+        ):
+            return None
+    return rows
+
+
 def from_plain(payload: Any) -> list[FuturesMarketSnapshot]:
     """Rebuild snapshots from the artifact `to_plain` produced.
 
-    Returns `[]` for anything that is not a payload of this schema version —
-    a shape the caller must treat as "build it yourself", never as "there are no
-    candidate markets". The caller checks the version itself before deciding;
-    this function refuses rather than guesses.
+    Returns `[]` for anything that is not a fully well-formed payload of this
+    schema version — a shape the caller must treat as "build it yourself", never
+    as "there are no candidate markets". The caller checks
+    `is_snapshot_payload` before deciding; this function refuses rather than
+    guesses, and the two now share `_validated_rows` so the check the caller
+    makes is the check this function makes.
     """
-    if not isinstance(payload, dict) or payload.get("v") != SNAPSHOT_SCHEMA_VERSION:
-        return []
-    rows = payload.get("rows")
-    if not isinstance(rows, list):
+    rows = _validated_rows(payload)
+    if rows is None:
         return []
     out: list[FuturesMarketSnapshot] = []
-    for row in rows:
-        if not isinstance(row, (list, tuple)) or len(row) != 3:
-            continue
-        market_values, outcome_rows, sport_values = row
+    for market_values, outcome_rows, sport_values in rows:
         out.append(
             FuturesMarketSnapshot(
                 market_values,
-                [FuturesOutcomeSnapshot(o) for o in (outcome_rows or [])],
+                [FuturesOutcomeSnapshot(o) for o in outcome_rows],
                 SportSnapshot(sport_values) if sport_values is not None else None,
             )
         )
@@ -267,12 +326,13 @@ def from_plain(payload: Any) -> list[FuturesMarketSnapshot]:
 
 
 def is_snapshot_payload(payload: Any) -> bool:
-    """Whether `payload` is a well-formed artifact of the CURRENT schema."""
-    return (
-        isinstance(payload, dict)
-        and payload.get("v") == SNAPSHOT_SCHEMA_VERSION
-        and isinstance(payload.get("rows"), list)
-    )
+    """Whether `payload` is a well-formed artifact of the CURRENT schema.
+
+    "Well-formed" means every row too, not merely the envelope — see
+    `_validated_rows`. `True` here is the caller's licence to use the decoded
+    pool as the answer, so it has to mean the decode will be complete.
+    """
+    return _validated_rows(payload) is not None
 
 
 __all__ = [

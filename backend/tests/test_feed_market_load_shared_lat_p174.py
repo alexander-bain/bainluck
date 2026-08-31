@@ -328,6 +328,62 @@ async def test_a_second_principal_does_not_re_issue_the_market_load_select(
 
 
 @pytest.mark.asyncio
+async def test_the_shared_hit_path_still_serves_the_futures_pool_it_was_given(
+    two_principal_client, market_load_counter
+):
+    """CERT-615 [P1] — the assertion whose absence let a dead mechanism grade green.
+
+    Every other test in this file measures the SAVING: one SELECT instead of
+    two, the header, the key, the copy. Not one of them looked at what came
+    back. The certifier put `market_alias = market; _ = market_alias.event_id`
+    into the scoring loop and the whole suite stayed green while `/api/feed`
+    answered `200` with `items: []` — every candidate row raised
+    `AttributeError`, the per-item catch skipped it (gotcha #42), and a feed
+    with nothing in it is a successful response (gotcha #53).
+
+    So this is the ship's own liveness check: the shared-cache HIT must serve
+    the same pool the cold build served. It is deliberately a comparison rather
+    than a fixed count — pinning "1 item" would make it re-fail for any scoring
+    change that has nothing to do with sharing, and pinning "> 0" alone would
+    miss a share that quietly serves a SMALLER pool.
+    """
+    counts, markets = market_load_counter
+
+    r1 = await two_principal_client.get(
+        "/api/feed?limit=5", headers={"X-Session-Id": "lat-p174-live-A"}
+    )
+    r2 = await two_principal_client.get(
+        "/api/feed?limit=5", headers={"X-Session-Id": "lat-p174-live-B"}
+    )
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+
+    # The second request must actually be on the shared path, or this asserts
+    # nothing about sharing — it would just be two independent cold builds.
+    assert "market_load" in r2.headers.get("X-Feed-Shared", "").split(","), (
+        f"request two did not reuse the hydration rows: "
+        f"{r2.headers.get('X-Feed-Shared')!r}"
+    )
+
+    fresh = [i for i in r1.json()["items"] if i.get("type") == "futures"]
+    shared = [i for i in r2.json()["items"] if i.get("type") == "futures"]
+
+    assert fresh, (
+        f"the COLD build served no futures cards from {len(markets)} seeded "
+        "candidate markets, so this test cannot say anything about the shared "
+        "path; the harness is broken, not the share"
+    )
+    assert len(shared) == len(fresh), (
+        f"the shared-cache hit served {len(shared)} futures card(s) where the "
+        f"cold build served {len(fresh)}. The rows rebuilt from the snapshot are "
+        "not reaching the scoring loop intact — an attribute the loop reads is "
+        "missing from `MARKET_COLUMNS`, and production would answer 200 with an "
+        "empty futures pool."
+    )
+    assert [i["data"]["id"] for i in shared] == [i["data"]["id"] for i in fresh]
+
+
+@pytest.mark.asyncio
 async def test_the_reuse_is_named_on_the_response_so_production_can_verify_it(
     two_principal_client
 ):

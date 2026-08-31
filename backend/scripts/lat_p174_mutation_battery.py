@@ -42,8 +42,8 @@ MUTATIONS = [
     (
         "schema-version-not-checked",
         "app/utils/futures_market_snapshot.py",
-        'and payload.get("v") == SNAPSHOT_SCHEMA_VERSION\n        and isinstance(payload.get("rows"), list)',
-        'and isinstance(payload.get("rows"), list)',
+        '    if not isinstance(payload, dict) or payload.get("v") != SNAPSHOT_SCHEMA_VERSION:\n        return None',
+        "    if not isinstance(payload, dict):\n        return None",
         "tests/test_futures_market_snapshot_lat_p174.py",
     ),
     (
@@ -66,6 +66,58 @@ MUTATIONS = [
         '_snapshot_payload = await _pic.get_or_build(\n            "market_load", _snapshot_key, _build_market_rows\n        )',
         "_snapshot_payload = await _build_market_rows()",
         "tests/test_feed_market_load_shared_lat_p174.py",
+    ),
+    # ----------------------------------------------------------------------
+    # CERT-615 repairs. Each of these five was GREEN under the battery above —
+    # that is the whole finding, so each now has its own attacker.
+    # ----------------------------------------------------------------------
+    (
+        # [P1] The certifier's own mutation, verbatim. Against the blocked tree
+        # this left all 17 tests green while `/api/feed` served `items: []`.
+        # Pointed at the SHIP file so it proves the runtime half specifically;
+        # the drift gate kills it independently.
+        "cert615-p1-alias-read-of-an-absent-column",
+        "app/routes/feed.py",
+        "    for market in markets:\n        try:\n            is_recycled = False",
+        "    for market in markets:\n        try:\n            market_alias = market\n"
+        "            _ = market_alias.event_id\n            is_recycled = False",
+        "tests/test_feed_market_load_shared_lat_p174.py",
+    ),
+    (
+        # [P1] `llm_gender` is read only through `getattr`, so the regex scan
+        # could not see it. This is the certifier's second independent probe.
+        "cert615-p1-getattr-only-column-dropped",
+        "app/utils/futures_market_snapshot.py",
+        '    "llm_gender",\n',
+        "",
+        "tests/test_futures_market_snapshot_lat_p174.py",
+    ),
+    (
+        # [P1] Neuter the analyser's alias tracking — the construct the regex
+        # was blind to. The guard must not be able to lose this and stay green.
+        "cert615-p1-drift-gate-stops-following-aliases",
+        "tests/test_futures_market_snapshot_lat_p174.py",
+        "    aliases = {seed}\n    for _ in range(_MAX_ESCAPE_DEPTH):",
+        "    aliases = {seed}\n    for _ in range(0):",
+        "tests/test_futures_market_snapshot_lat_p174.py",
+    ),
+    (
+        # [P1] Neuter the literal-`getattr` arm the same way.
+        "cert615-p1-drift-gate-stops-reading-literal-getattr",
+        "tests/test_futures_market_snapshot_lat_p174.py",
+        "            return {node.args[1].value}",
+        "            return set()",
+        "tests/test_futures_market_snapshot_lat_p174.py",
+    ),
+    (
+        # [P2] Accept the envelope without validating row arity — the exact
+        # state the blocked tree shipped, where a same-version malformed
+        # payload was declared readable and then decoded to nothing.
+        "cert615-p2-row-arity-not-validated",
+        "app/utils/futures_market_snapshot.py",
+        "    return isinstance(values, (list, tuple)) and len(values) == width",
+        "    return isinstance(values, (list, tuple))",
+        "tests/test_futures_market_snapshot_lat_p174.py",
     ),
 ]
 

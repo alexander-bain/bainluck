@@ -7371,7 +7371,19 @@ async def _score_futures(
         # A payload this build cannot read is a MISS, never an empty feed: an
         # unreadable shape must send us back through the builder, not report
         # that there are no candidate markets (gotcha #53).
+        #
+        # CERT-615 [P2]: `is_snapshot_payload` now validates every ROW, not just
+        # the envelope, so a same-version payload with a malformed row lands
+        # here and rebuilds instead of decoding to an empty pool. And it says so
+        # — a corrupt shared artifact on the flagship route is an event, not a
+        # quietly-absorbed cost ("it returned" is not "it worked").
         if not _futures_snapshot.is_snapshot_payload(_snapshot_payload):
+            logger.warning(
+                "market_load shared artifact was unreadable — rebuilding "
+                "(candidate_ids=%d, payload_type=%s)",
+                len(market_ids),
+                type(_snapshot_payload).__name__,
+            )
             _snapshot_payload = await _build_market_rows()
         markets_by_id = {
             market.id: market
