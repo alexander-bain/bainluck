@@ -406,13 +406,18 @@ async def get_economics(db: AsyncSession):
         )
         return float(outcomes[0].current_probability) if outcomes and outcomes[0].current_probability else None
 
-    # Classify into themes — exclude resolved, extreme, and title-stale markets
+    # Classify into themes — exclude resolved, extreme, and title-stale markets.
+    # ``featured_eligible`` is the SAME survivor set, kept so the cross-source
+    # spotlight below can be fed the markets this page judged fit to feature
+    # rather than the raw query result. UX-P194-1.
     themed: dict[str, list] = defaultdict(list)
+    featured_eligible: list = []
     for m in all_markets:
         if should_exclude_from_featured(
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
         ):
             continue
+        featured_eligible.append(m)
         theme = _classify_theme(m)
         themed[theme].append(m)
 
@@ -678,9 +683,11 @@ async def get_economics(db: AsyncSession):
     # rendering an empty card under a header that claimed `count` markets.
     gov_distributions = [d for m in gov_markets if (d := _distribution_row(m))]
 
-    # Cross-source spotlight
+    # Cross-source spotlight — fed the FEATURED-ELIGIBLE set, not `all_markets`.
+    # A market this page already refused to put in a theme section must not
+    # reappear as its headline source disagreement. UX-P194-1.
     cross_source = find_cross_source_markets(
-        all_markets, market_row_fn=_cross_source_row_fn
+        featured_eligible, market_row_fn=_cross_source_row_fn
     )
 
     # Count total active markets

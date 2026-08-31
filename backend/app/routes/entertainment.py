@@ -563,13 +563,20 @@ async def get_entertainment(db: AsyncSession):
         )
         return float(outcomes[0].current_probability) if outcomes and outcomes[0].current_probability else None
 
+    # `featured_eligible` is the single survivor set of
+    # `should_exclude_from_featured`. It was computed twice here (once for
+    # themes, once for trending) and a third consumer — the cross-source
+    # spotlight — was reading `all_markets` raw. One list, three readers.
+    # UX-P194-1.
     themed: dict[str, list] = defaultdict(list)
+    featured_eligible: list = []
     for m in all_markets:
         exclude = should_exclude_from_featured(
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
         )
         if exclude:
             continue
+        featured_eligible.append(m)
         theme = _classify_theme(m)
         if theme == "excluded":
             continue
@@ -577,12 +584,7 @@ async def get_entertainment(db: AsyncSession):
 
     # Build all enriched rows for trending scoring
     all_rows = []
-    for m in all_markets:
-        exclude = should_exclude_from_featured(
-            m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
-        )
-        if exclude:
-            continue
+    for m in featured_eligible:
         row = _market_row(m)
         if row and _is_interesting(row):
             all_rows.append(row)
@@ -595,9 +597,11 @@ async def get_entertainment(db: AsyncSession):
         themed.get("social_media", []), 15
     )
 
-    # Cross-source spotlight
+    # Cross-source spotlight — fed the FEATURED-ELIGIBLE set, not `all_markets`.
+    # A market this page already refused to put in a theme section must not
+    # reappear as its headline source disagreement. UX-P194-1.
     cross_source = find_cross_source_markets(
-        list(all_markets), market_row_fn=_cross_source_row_fn
+        list(featured_eligible), market_row_fn=_cross_source_row_fn
     )
 
     total = sum(len(v) for v in themed.values())

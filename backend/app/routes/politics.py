@@ -658,11 +658,18 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
 
     stale_cutoff = now - timedelta(days=7)
     themed: dict[str, list] = defaultdict(list)
+    # Survivors of `should_exclude_from_featured` ONLY — captured before the
+    # politics-specific filters below, so the cross-source spotlight inherits
+    # this page's featured-eligibility rule and nothing more. UX-P194-1;
+    # widening it to `market_reads_settled` is deliberately NOT done here
+    # (that helper has one consumer today — UX-P197-1).
+    featured_eligible: list = []
     for m in all_markets:
         if should_exclude_from_featured(
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
         ):
             continue
+        featured_eligible.append(m)
         if _is_non_politics(m):
             continue
         # CERT-452: a decided election must not render as an open question.
@@ -761,9 +768,11 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     senate_map = _build_senate_map(congressional_markets)
     _t = _mark("congressional", _t)
 
-    # Cross-source spotlight
+    # Cross-source spotlight — fed the FEATURED-ELIGIBLE set, not `all_markets`.
+    # A market this page already refused to put in a theme section must not
+    # reappear as its headline source disagreement. UX-P194-1.
     cross_source = find_cross_source_markets(
-        list(all_markets), market_row_fn=_cross_source_row_fn
+        list(featured_eligible), market_row_fn=_cross_source_row_fn
     )
     _t = _mark("cross_source", _t)
 

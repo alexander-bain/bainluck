@@ -419,6 +419,35 @@ def should_exclude_from_featured(
     """Return a reason to exclude from featured sections, or None if OK.
 
     Checks: resolved status, probability extremes, title-implied staleness.
+
+    ═══ WHAT "FEATURED" COVERS (UX-P194-1) ═══
+
+    Every surface a category page puts a market ON is a featured section, and
+    that includes the cross-source spotlight — not only the theme lists. The
+    three category routes each ran this predicate over their themed markets and
+    then handed `find_cross_source_markets` the RAW query result, so a market
+    this predicate had just rejected could still headline the page as its
+    source disagreement.
+
+    Measured on production 2026-08-31, across 19 live spotlight cards on
+    `/economics`, `/politics` and `/entertainment`: one card survived that had
+    no business doing so. `/politics` featured "Will the Supreme Court rule in
+    favor of Trump's tariffs" as Kalshi 25.5% vs Polymarket 0.1%, a 25-point
+    "disagreement" whose Polymarket side was a dead market with a leader
+    probability of 0.0005 — `probability_extreme`, well under
+    ``PROBABILITY_EXTREME_LOW``. The page's own theme sections had already
+    dropped it. The spotlight had not been told.
+
+    ⚠️ Note which arm caught it. ``find_cross_source_markets`` already skips
+    ``is_resolved`` markets on its own, so the `"resolved"` arm was mostly
+    covered; the arms that were NOT are `probability_extreme` and the
+    `stale_*` title reasons. A guard for this class has to plant one of those.
+
+    ⚠️ And note which SIDE it was on. A cross-source card is a PAIR, and the
+    live specimen was unfit on its Polymarket half while its Kalshi half was
+    perfectly healthy at 0.255. A guard that only ever makes the Kalshi member
+    ineligible would pass while the real production defect walked through.
+    Exclude either member and the card must go.
     """
     if status and status != "open":
         return "resolved"
