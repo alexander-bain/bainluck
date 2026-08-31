@@ -1,0 +1,36 @@
+==============================================================================
+CAL-P144 — the truth census against the window the futures loop leaves it
+==============================================================================
+PHASE_DEADLINE_MS        1380000
+census cost (1 measured) 88284 ms  (read:truth_census, last completing beat)
+beats in history         168   gauged 137   UNGAUGED 31
+
+-- 1. the prediction: bound < census cost => the beat dies ------------
+   bound BELOW census need    n=  20  failed= 15 ( 75%)  complete=  1  cancelled=  4
+   bound ABOVE census need    n= 117  failed= 44 ( 38%)  complete= 61  cancelled= 12
+
+   per-beat hazard p = 20/137 = 0.146
+     P(>=1 class-B miss in  1 beats) = 14.6%
+     P(>=1 class-B miss in  5 beats) = 54.6%
+     P(>=1 class-B miss in 10 beats) = 79.4%
+     P(>=1 class-B miss in 15 beats) = 90.6%
+
+-- 2. is the hazard a REBUILD condition? ------------------------------
+   Pearson r(units_done, window_left_ms) = +0.041   n=137
+   -> near zero: the residual does NOT depend on how far the rebuild got.
+      A rebuild-heavy beat is not more exposed; EVERY beat is exposed.
+
+-- 3. window_left_ms is a residual, not a reserve ---------------------
+   min 26521  p10 86567  p25 134051  median 221581  max 432311
+   one unit costs  min 140919  median 263943  max 451292
+   _unit_fits_in_window() admits a unit on unit cost alone. The leftover
+   is bounded by one unit's cost and reserves nothing for diagnostics.
+
+-- 4. sensitivity: the census cost is ONE observation -----------------
+   census   60000 ms ->  11/137 beats cannot fit  ( 8.0%)
+   census   75000 ms ->  13/137 beats cannot fit  ( 9.5%)
+   census   88284 ms ->  20/137 beats cannot fit  (14.6%)  <== measured
+   census  100000 ms ->  30/137 beats cannot fit  (21.9%)
+   census  120000 ms ->  34/137 beats cannot fit  (24.8%)
+
+exit 0 = the prediction was CHECKED. The verdict is the table above.

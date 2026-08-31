@@ -1,0 +1,34 @@
+========================================================================================
+CAL-P144 — CAL-P140 freeze-window beats vs the bound the census ran under
+========================================================================================
+census cost (measured, 1 obs): 88284 ms
+
+  n  generated_at        hand class                   window_left     bound    margin  predicted
+  1  2026-08-29T23:35:53 CLEAN                             232787    209509    121225  survives
+  2  2026-08-30T00:35:55 CLEAN                             343348    313348    225064  survives
+  3  2026-08-30T01:35:23 CLEAN                             390463    360463    272179  survives
+  4  2026-08-30T02:38:29 B_DIAGNOSTICS_TRUTH_CENSUS         29367     26431    -61853  class B
+  5  2026-08-30T03:37:54 CLEAN                             395754    365754    277470  survives
+  6  2026-08-30T04:35:25 CLEAN                             282198    253979    165695  survives
+  7  2026-08-30T05:26:33 C_DEPLOY_KILL                 (no gauge)
+  8  2026-08-30T06:38:18 CLEAN                             103224     92902      4618  survives
+  9  2026-08-30T07:36:38 CLEAN                             155667    140101     51817  survives
+ 10  2026-08-30T08:47:24 CLEAN                             159788    143810     55526  survives
+ 11  2026-08-30T09:43:19 CLEAN                             102840     92556      4272  survives
+ 12  2026-08-30T10:40:42 CLEAN                             160337    144304     56020  survives
+ 13  2026-08-30T11:38:03 CLEAN                             147984    133186     44902  survives
+ 14  2026-08-30T12:25:53 CLEAN                         (no gauge)
+ 15  2026-08-30T13:42:18 B_DIAGNOSTICS_TRUTH_CENSUS         81542     73388    -14896  class B
+ 16  2026-08-30T14:38:38 CLEAN                             106157     95542      7258  survives
+ 17  2026-08-30T15:37:22 CLEAN                             150293    135264     46980  survives
+ 18  2026-08-30T16:39:29 CLEAN                             146380    131742     43458  survives
+ 19  2026-08-30T17:37:41 CLEAN                             101083     90975      2691  survives
+ 20  2026-08-30T18:17:12 C_DEPLOY_KILL                 (no gauge)
+ 21  2026-08-30T19:41:06 CLEAN                             193796    174417     86133  survives
+
+gauged beats 18   model agrees 18   disagrees 0   ungauged 3
+
+The CLEAN beats with the least room, in ms of margin:
+   beat 19: cleared by 2691 ms (2.7 s)
+   beat 11: cleared by 4272 ms (4.3 s)
+   beat  8: cleared by 4618 ms (4.6 s)

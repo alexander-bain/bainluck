@@ -1,0 +1,21 @@
+CAL-P141 RECONCILER — the cheap duplication census against the exact one
+  exact cells on file: 14   cheap cells on file: 8   overlapping: 5
+
+  BASIS PROOF — on 3 cell(s) with zero population drift, the payload-basis
+  instrument's row count equals the census's own payload_n exactly:
+    polymarket/baseball      exact rows    45,240  ==  census payload_n (drift +0.000%)   replica holds 41,177
+    polymarket/basketball    exact rows    13,116  ==  census payload_n (drift +0.000%)   replica holds 8,426
+    polymarket/hockey        exact rows     2,281  ==  census payload_n (drift +0.000%)   replica holds 1,779
+
+  cell                      payload  replica  basis gap   rowcov  outcov  mode
+  polymarket/baseball        1.8019   1.6536       8.2%   0.9102  0.9918  REPLICA_SHORT
+  polymarket/basketball      1.7679   1.1347      35.8%   0.6424  1.0009  REPLICA_SHORT
+  kalshi/basketball          1.7578   1.4793      15.8%   0.8358  0.9932  REPLICA_SHORT
+  kalshi/baseball            1.7099   1.3049      23.7%   0.9971  1.3067  DISTINCT_INFLATED
+  polymarket/hockey          1.3659   1.0608      22.3%   0.7799  1.0042  REPLICA_SHORT
+
+  ORDERING: 2/10 ranked pairs discordant between the two bases
+    🔴 kalshi/baseball vs polymarket/basketball — the replica basis orders these backwards
+    🔴 kalshi/basketball vs polymarket/basketball — the replica basis orders these backwards
+
+  🔴 EXIT 4 — the replica basis does not preserve the payload basis's ordering, so it cannot pick which cell to fold next and it cannot extend calibration-911 §3. Both numbers are correct; they are correct about different populations.

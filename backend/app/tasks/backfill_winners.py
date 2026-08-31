@@ -6798,7 +6798,14 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     if _budget_left() < _BUDGET_MARGIN_S:
         return _partial_result("bookmaker_closing")
     _mark("bookmaker_closing")
-    bookmaker_stats = await _precompute_bookmaker_calibration()
+    # Pass the PIPELINE's wall, not this function's own. Its standalone budget
+    # is sized against its own 1800s beat; entering here it has at most
+    # `_budget_left()` of an 840s task, already spent down by resolution and the
+    # earlier maintenance. Without the deadline the callee would obey a budget
+    # measured from the wrong zero and take the whole task down with it.
+    bookmaker_stats = await _precompute_bookmaker_calibration(
+        deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S
+    )
     closing_stats = await _backfill_closing_lines()
 
     if _budget_left() < _BUDGET_MARGIN_S:
@@ -7380,13 +7387,163 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     }
 
 
-async def _precompute_bookmaker_calibration():
+#: CAL-P134 (#1835). One bounded slice of the per-bookmaker moneyline curve.
+#:
+#: TWO CHANGES FROM THE QUERY THIS REPLACES, and the first is why the old one
+#: could not finish. The old shape enumerated each event's bookmakers with a
+#: ``SELECT DISTINCT`` over its pre-game snapshots and then went back to
+#: ``odds_snapshots`` a SECOND time, through a ``CROSS JOIN LATERAL``, to fetch
+#: the last row per (event, bookmaker). That is two passes over the same rows to
+#: answer one question. ``DISTINCT ON (event, bookmaker) … ORDER BY … captured_at
+#: DESC`` answers it in one.
+#:
+#: The rewrite is EXACT, not approximate, and the difference worth checking is
+#: the filter placement: the old outer pass required only ``home_win_probability
+#: IS NOT NULL`` while the LATERAL additionally required ``away`` non-null and
+#: both ``> 0``. A bookmaker with no row satisfying the stricter set was dropped
+#: by the inner join, so hoisting the full filter up front removes exactly the
+#: same bookmakers. Measured on six categories where the old form still
+#: completed inside db-query's ceiling — ``basketball_euroleague``,
+#: ``aussierules_afl``, ``rugbyleague_nrl``, ``soccer_england_league2``,
+#: ``lacrosse_ncaa``, ``mma_mixed_martial_arts`` — the bucket rows are
+#: byte-identical and the query is 3.4x to 10x faster. ``icehockey_nhl``, which
+#: the old form could not finish at all, chunks to 8.8 s and totals n=8,658,
+#: matching the published ``odds_api_bookmaker/icehockey_nhl`` cell exactly.
+#:
+#: The second change is that it takes a category and a time window, so the sweep
+#: is a sum of bounded pieces rather than one unbounded scan of all history.
+#: Partitioning is exact here because ``category`` is a GROUP BY key and the
+#: window partitions events: per-bucket ``n``, ``winners``, ``sum_prob`` and
+#: ``sum_sq_err`` are additive, and ``avg_prob`` is recomputed from the totals.
+_BOOKMAKER_CHUNK_SQL = """
+SELECT LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
+       category,
+       COUNT(*) AS n,
+       SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
+       SUM(prob) AS sum_prob,
+       SUM((prob - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+FROM (
+    SELECT cl.home_win_probability::float
+           / NULLIF(cl.home_win_probability::float
+                    + cl.away_win_probability::float, 0) AS prob,
+           cl.won, cl.category
+    FROM (
+        SELECT DISTINCT ON (ee.id, os.bookmaker)
+               os.home_win_probability, os.away_win_probability,
+               (ee.home_score > ee.away_score) AS won, ee.category
+        FROM (
+            SELECT e.id, e.commence_time, e.home_score, e.away_score,
+                   s.key AS category
+            FROM events e
+            JOIN sports s ON s.id = e.sport_id
+            WHERE e.status IN ('completed', 'closed')
+              AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+              AND e.home_score != e.away_score
+              AND e.commence_time IS NOT NULL
+              AND s.key = :category
+              AND e.commence_time >= :lo AND e.commence_time < :hi
+        ) ee
+        JOIN odds_snapshots os ON os.event_id = ee.id
+        WHERE os.captured_at < ee.commence_time
+          AND os.home_win_probability IS NOT NULL
+          AND os.away_win_probability IS NOT NULL
+          AND os.home_win_probability > 0
+          AND os.away_win_probability > 0
+        ORDER BY ee.id, os.bookmaker, os.captured_at DESC
+    ) cl
+) outcomes
+WHERE prob > 0.01 AND prob < 0.99
+GROUP BY bucket_idx, category
+"""
+
+#: Per-slice ceiling. Deliberately far below the task's soft limit: the point is
+#: that no single statement can consume the budget, so a slow slice costs a
+#: split rather than the run.
+_CHUNK_TIMEOUT_S = 45
+
+#: Splitting stops here. 12 halvings of the span below take a slice under an
+#: hour wide; a window that narrow and still timing out is a query bug or a lock,
+#: not density, and must be reported rather than subdivided forever.
+_CHUNK_MAX_DEPTH = 12
+_CHUNK_MIN_SPAN_S = 3600.0
+
+#: The TRAVERSAL budget. ``_CHUNK_TIMEOUT_S`` bounds one STATEMENT; until this
+#: constant nothing bounded the WALK, and the two are not the same bound.
+#:
+#: A calendar month is ~2.68 Ms, so halving to a ``_CHUNK_MIN_SPAN_S`` floor
+#: bottoms out at depth 10 (2.68 Ms / 2^10 = 2,615 s <= 3,600 s), which is
+#: 1,024 leaves under 2,047 timed nodes. One irreducible month therefore costs
+#: 2,047 x 45 s ~= 92 ks of querying inside an 1,800 s task: the task is
+#: soft-killed mid-traversal on every cycle, the Redis key is never written,
+#: the 24 h TTL lapses, and the publish outage this function exists to end
+#: persists while the database is loaded for nothing.
+#:
+#: The kill was always SAFE — the single ``setex`` happens after every slice
+#: lands, so nothing partial is ever published — but safe is not the same as
+#: diagnosed. A soft kill raises ``SoftTimeLimitExceeded`` out of this function
+#: before the terminal contract can be written, so the one run that knows what
+#: went wrong is the one run that never gets to say. This budget converts that
+#: silent kill into a reported ``failed`` terminal naming the unrun cells.
+#:
+#: Sized against the 1,800 s soft limit with a 180 s margin: the longest
+#: uninterrupted operation past the final check is one 45 s statement, and the
+#: aggregate-and-publish tail after the walk is a single ``setex``.
+_TRAVERSAL_BUDGET_S = 1620.0  # soft_time_limit=1800, keep a 180s margin
+
+def _add_month(dt: datetime) -> datetime:
+    """The exclusive upper edge of ``dt``'s calendar month.
+
+    The grid cell is a calendar month, so the edge has to be one too — adding a
+    fixed 30 days would leave a one-to-three-day gap in every long month, and a
+    gap in a partition of the event set is silently dropped population rather
+    than a visible failure. There is no dateutil in this tree.
+    """
+    return (datetime(dt.year + 1, 1, 1, tzinfo=dt.tzinfo) if dt.month == 12
+            else datetime(dt.year, dt.month + 1, 1, tzinfo=dt.tzinfo))
+
+
+async def _precompute_bookmaker_calibration(deadline: float | None = None):
     """Precompute per-bookmaker moneyline calibration and cache in Redis.
+
+    ``deadline`` is an absolute ``time.monotonic()`` stamp from a caller that
+    owns a shorter wall than this function's own. It has two callers with two
+    different zeros — the standalone ``precompute_bookmaker_calibration`` beat
+    (soft limit 1,800 s, measured from entry) and the ``backfill_winners``
+    ``bookmaker_closing`` phase (soft limit 840 s, measured from a pipeline
+    start that is already several minutes old by the time this runs) — so the
+    zero cannot be inferred here. Passing it is how the phase caller says so;
+    ``_effective_stop_at`` then takes the earlier of the two. A budget measured
+    from the wrong zero is not a budget, it is a duration.
 
     Each bookmaker's closing moneyline (last pre-game snapshot) paired with
     the game outcome. Resolution is free (home_score > away_score). Devigged
     via home_prob / (home_prob + away_prob). Results stored as aggregated
     calibration buckets in Redis for the calibration endpoint to read.
+
+    CAL-P134 (#1835) — THE SWEEP IS BOUNDED NOW, AND IT FAILS CLOSED.
+
+    Until CAL-P134 this was ONE statement over all of history with no bound in
+    either dimension, re-run from scratch every six hours. It stopped finishing
+    inside the task's 600 s soft limit, the Redis key aged out of its 24 h TTL,
+    and ``/api/calibration`` went 23 hours without publishing because the reader
+    turned the missing key into a candidate short by ~96K outcomes that the
+    population gate then rightly refused. Deploying more read-side work could
+    never have fixed that; only the writer could.
+
+    Two changes, and neither moves a published number:
+
+    * the statement is a single pass (see ``_BOOKMAKER_CHUNK_SQL``), measured
+      3.4x-10x faster on every category where the old form still completed, with
+      byte-identical bucket rows;
+    * it runs per (category, time window) with a 45 s per-statement ceiling and
+      splits a window that times out, so the run is a sum of bounded pieces.
+
+    And the part that matters more than the speed: **if any slice is
+    irreducible, the Redis key is NOT written and the terminal is ``failed``.**
+    A partial curve is not a smaller version of the right answer, it is exactly
+    the shape that caused the outage — the reader publishes whatever the key
+    holds, and a short key produces a silent non-publish rather than a visible
+    absence. Writing nothing keeps the absence loud.
 
     #1835 — this function returns TERMINAL TRUTH, and it must keep doing so.
 
@@ -7416,7 +7573,12 @@ async def _precompute_bookmaker_calibration():
       can see.
     """
     import json as _json
+    import time as _time
+
     from app.tasks.redis_state import get_redis_client
+
+    _t0 = _time.monotonic()
+    _stop_at = _effective_stop_at(_t0, _TRAVERSAL_BUDGET_S, deadline)
 
     stats = {
         "bookmakers": 0,
@@ -7431,81 +7593,177 @@ async def _precompute_bookmaker_calibration():
     }
 
     try:
+        chunks_done = 0
+        chunks_failed: list[str] = []
+        # Kept apart from `chunks_failed` deliberately. Both fail closed, but
+        # they are different diagnoses and the repair differs: `irreducible`
+        # means one window will not answer however narrow it gets (a query bug
+        # or a lock), `unrun` means the walk simply ran out of wall. Pooling
+        # them would report a database problem every time the task was merely
+        # too slow, which is the reading that sends the next session hunting
+        # the wrong defect.
+        chunks_unrun: list[str] = []
+        agg: dict = {}
+
         async with get_task_session() as session:
-            result = await session.execute(text("""
-                    WITH eligible_events AS (
-                        SELECT e.id, e.commence_time, e.home_score, e.away_score,
-                               s.key AS category
-                        FROM events e
-                        JOIN sports s ON s.id = e.sport_id
-                        WHERE e.status IN ('completed', 'closed')
-                          AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
-                          AND e.home_score != e.away_score
-                          AND e.commence_time IS NOT NULL
-                    ),
-                    event_bookmakers AS (
-                        SELECT DISTINCT ee.id AS event_id, ee.commence_time,
-                               ee.home_score, ee.away_score, ee.category,
-                               os.bookmaker
-                        FROM eligible_events ee
-                        JOIN odds_snapshots os ON os.event_id = ee.id
-                        WHERE os.captured_at < ee.commence_time
-                          AND os.home_win_probability IS NOT NULL
-                    )
-                    SELECT
-                        LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
-                        category,
-                        COUNT(*) AS n,
-                        SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
-                        AVG(prob) AS avg_prob,
-                        SUM(prob::float) AS sum_prob,
-                        SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
-                    FROM (
-                        SELECT
-                            cl.home_win_probability::float
-                            / NULLIF(cl.home_win_probability::float + cl.away_win_probability::float, 0)
-                            AS prob,
-                            (eb.home_score > eb.away_score) AS won,
-                            eb.category
-                        FROM event_bookmakers eb
-                        CROSS JOIN LATERAL (
-                            SELECT os.home_win_probability, os.away_win_probability
-                            FROM odds_snapshots os
-                            WHERE os.event_id = eb.event_id
-                              AND os.bookmaker = eb.bookmaker
-                              AND os.captured_at < eb.commence_time
-                              AND os.home_win_probability IS NOT NULL
-                              AND os.away_win_probability IS NOT NULL
-                              AND os.home_win_probability > 0
-                              AND os.away_win_probability > 0
-                            ORDER BY os.captured_at DESC
-                            LIMIT 1
-                        ) cl
-                    ) outcomes
-                    WHERE prob > 0.01 AND prob < 0.99
-                    GROUP BY bucket_idx, category
-                    ORDER BY bucket_idx, category
-                """))
-            rows = result.all()
+            # The grid comes from where the events ACTUALLY are, not from a
+            # fixed span. Starting each category at one wide window and halving
+            # into its dense region costs a full 45 s timeout PER LEVEL on the
+            # way down — about six of them for a busy sport, which is most of
+            # the soft limit spent locating data we could have asked for. This
+            # one cheap GROUP BY (measured 2.2 s) yields only the
+            # (category, month) cells that contain eligible events, so an empty
+            # span is never queried at all and a dense cell starts one halving
+            # away from its answer.
+            grid = (await session.execute(text("""
+                SELECT s.key AS category,
+                       date_trunc('month', e.commence_time) AS bucket_start
+                FROM events e
+                JOIN sports s ON s.id = e.sport_id
+                WHERE e.status IN ('completed', 'closed')
+                  AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+                  AND e.home_score != e.away_score
+                  AND e.commence_time IS NOT NULL
+                GROUP BY 1, 2
+                ORDER BY 1, 2
+            """))).all()
+
+            async def _slice(category, lo, hi, depth=0):
+                """One bounded slice, or a SPLIT. Returns True when it landed.
+
+                Adaptive rather than a fixed grid because snapshot density is
+                not uniform in either dimension: NHL's whole population sits in
+                one four-month window, and a grid tuned for it starves MLB. The
+                split-on-timeout discipline is the rail's, applied to a writer.
+                """
+                nonlocal chunks_done
+                # Checked at the TOP, which is the one place that covers both
+                # ways this function spends the wall: issuing a statement, and
+                # recursing after one timed out. A check sited only at the call
+                # in the grid loop would bound the number of CELLS and leave the
+                # 2,047-node fan-out inside a single cell unbounded, which is
+                # the shape that actually consumes the task.
+                if _time.monotonic() >= _stop_at:
+                    chunks_unrun.append(
+                        f"{category} {lo.date()}..{hi.date()} unrun at depth "
+                        f"{depth}")
+                    return False
+                try:
+                    await session.execute(
+                        text(f"SET LOCAL statement_timeout = '{_CHUNK_TIMEOUT_S}s'"))
+                    rows = (await session.execute(
+                        text(_BOOKMAKER_CHUNK_SQL),
+                        {"category": category, "lo": lo, "hi": hi})).all()
+                except Exception as exc:
+                    await session.rollback()
+                    if not _is_statement_timeout(exc):
+                        raise
+                    span = (hi - lo).total_seconds()
+                    if depth >= _CHUNK_MAX_DEPTH or span <= _CHUNK_MIN_SPAN_S:
+                        chunks_failed.append(
+                            f"{category} {lo.date()}..{hi.date()} irreducible "
+                            f"at depth {depth}")
+                        return False
+                    mid = lo + (hi - lo) / 2
+                    a = await _slice(category, lo, mid, depth + 1)
+                    b = await _slice(category, mid, hi, depth + 1)
+                    return a and b
+
+                chunks_done += 1
+                for r in rows:
+                    key = (r.bucket_idx, r.category)
+                    slot = agg.setdefault(
+                        key, {"n": 0, "winners": 0, "sum_prob": 0.0, "sum_sq_err": 0.0})
+                    slot["n"] += r.n
+                    slot["winners"] += r.winners
+                    slot["sum_prob"] += float(r.sum_prob)
+                    slot["sum_sq_err"] += float(r.sum_sq_err)
+                return True
+
+            for cell in grid:
+                lo = cell.bucket_start
+                if lo.tzinfo is None:
+                    lo = lo.replace(tzinfo=timezone.utc)
+                await _slice(cell.category, lo, _add_month(lo))
 
             buckets = []
-            for r in rows:
+            for (bucket_idx, category), slot in sorted(agg.items(),
+                                                       key=lambda kv: kv[0]):
                 buckets.append(
                     {
-                        "bucket_idx": r.bucket_idx,
+                        "bucket_idx": bucket_idx,
                         "source": "odds_api_bookmaker",
-                        "category": r.category,
+                        "category": category,
                         "price_moved": None,
-                        "n": r.n,
-                        "winners": r.winners,
-                        "avg_prob": float(r.avg_prob),
-                        "sum_prob": float(r.sum_prob),
-                        "sum_sq_err": float(r.sum_sq_err),
+                        "n": slot["n"],
+                        "winners": slot["winners"],
+                        # Recomputed from the running sum rather than averaged
+                        # across chunks: a mean of per-chunk means is weighted by
+                        # chunk, not by row, and the chunk boundaries are chosen
+                        # by how slow the database was that minute.
+                        "avg_prob": slot["sum_prob"] / slot["n"],
+                        "sum_prob": slot["sum_prob"],
+                        "sum_sq_err": slot["sum_sq_err"],
                     }
                 )
-                stats["data_points"] += r.n
+                stats["data_points"] += slot["n"]
 
-            if not buckets:
+            stats["chunks"] = chunks_done
+            stats["chunks_failed"] = chunks_failed
+            stats["chunks_unrun"] = chunks_unrun
+            stats["budget_exhausted"] = bool(chunks_unrun)
+            stats["duration_seconds"] = round(_time.monotonic() - _t0, 1)
+
+            if chunks_unrun:
+                # FAIL CLOSED for the same reason as the branch below — a curve
+                # missing whatever the unrun cells held is short, and short is
+                # the defect — but say the OTHER thing, because this is not a
+                # database that would not answer. It is a walk that did not
+                # finish, and before this branch existed it was not a report at
+                # all: the task was soft-killed here and the terminal contract,
+                # which is the only thing that can distinguish these states, was
+                # never reached. An absence nobody can attribute is the whole
+                # failure this function was rewritten to stop producing.
+                stats["terminal"] = "failed"
+                stats["errors"].append(
+                    f"traversal budget exhausted after "
+                    f"{stats['duration_seconds']}s with {len(chunks_unrun)} "
+                    f"cell(s) unrun ({len(chunks_failed)} irreducible, "
+                    f"{chunks_done} landed); Redis key NOT written rather than "
+                    f"published short: {'; '.join(chunks_unrun[:5])}"
+                )
+                logger.error(
+                    "Bookmaker calibration: BUDGET EXHAUSTED after %.1fs — "
+                    "%d cell(s) unrun, %d irreducible, %d landed. Key NOT "
+                    "written, odds_api_bookmaker will be ABSENT rather than "
+                    "shrunken (#1835): %s",
+                    stats["duration_seconds"], len(chunks_unrun),
+                    len(chunks_failed), chunks_done,
+                    "; ".join(chunks_unrun[:5]),
+                )
+            elif chunks_failed:
+                # FAIL CLOSED, and this is the whole point of the rewrite.
+                #
+                # A partial curve is not a smaller version of the right answer —
+                # it is the exact defect this outage was made of. The reader
+                # publishes whatever the key holds, and a key holding 8 of 89
+                # sports produces a candidate that the population gate refuses,
+                # which is a silent non-publish. Writing nothing keeps the
+                # ABSENCE loud, which is what the terminal contract is for.
+                stats["terminal"] = "failed"
+                stats["errors"].append(
+                    f"{len(chunks_failed)} chunk(s) irreducible; Redis key NOT "
+                    f"written rather than published short: "
+                    f"{'; '.join(chunks_failed[:5])}"
+                )
+                logger.error(
+                    "Bookmaker calibration: %d/%d chunks irreducible — key NOT "
+                    "written, odds_api_bookmaker will be ABSENT rather than "
+                    "shrunken (#1835): %s",
+                    len(chunks_failed), chunks_done + len(chunks_failed),
+                    "; ".join(chunks_failed[:5]),
+                )
+            elif not buckets:
                 # The query ran and found nothing. NOT a crash, and NOT green:
                 # the reader publishes no source at all in this state, which is
                 # indistinguishable from the writer never having run. Say which
@@ -7536,7 +7794,7 @@ async def _precompute_bookmaker_calibration():
                         86400,
                         _json.dumps(buckets),
                     )
-                    stats["bookmakers"] = len(set(r.category for r in rows))
+                    stats["bookmakers"] = len({c for _, c in agg})
                     stats["published"] = True
                     stats["terminal"] = "complete"
                 except Exception as e:

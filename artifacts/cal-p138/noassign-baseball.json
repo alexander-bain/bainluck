@@ -1,0 +1,1350 @@
+{
+  "cell": "polymarket/baseball",
+  "families_condemned": 2175,
+  "families_ambiguous_kept_by_the_duplicate_guard": 0,
+  "no_assignment": {
+    "label": "no_assignment",
+    "families": 571,
+    "rung_count_histogram": {
+      "3": 96,
+      "4": 74,
+      "5": 107,
+      "6": 50,
+      "7": 127,
+      "8": 37,
+      "9": 34,
+      "10": 15,
+      "11": 15,
+      "12": 3,
+      "13": 6,
+      "14": 2,
+      "15": 3,
+      "16": 1,
+      "17": 1
+    },
+    "min_rungs": 3,
+    "direction": {
+      "dec": 571
+    },
+    "distinct_event_ids_per_family": {
+      "1": 571
+    },
+    "families_spanning_more_than_one_event_pct": 0.0,
+    "all_rungs_in_settled_band_pct": 1.8,
+    "some_rungs_in_settled_band_pct": 43.6,
+    "rungs_straddle_the_settled_price_band_pct": 41.9,
+    "over_under_pairs_checked": 3445,
+    "over_plus_under_equals_one_pct": 48.0,
+    "has_a_flip_invariant_rung_pct": 14.9,
+    "has_an_ISOLATED_half_rung_pct": 6.8,
+    "near_half_but_outside_band_pct": 15.9,
+    "has_a_market_whose_under_equals_its_over_pct": 34.7,
+    "over_equals_under_markets": 379,
+    "worst_reversal_pp": {
+      "median": 22.0,
+      "p90": 52.45,
+      "max": 97.9
+    },
+    "dp_dies_at_rung_index": {
+      "10": 3,
+      "11": 1,
+      "13": 1,
+      "14": 1,
+      "2": 209,
+      "3": 155,
+      "4": 93,
+      "5": 39,
+      "6": 34,
+      "7": 24,
+      "8": 9,
+      "9": 2
+    }
+  },
+  "unique_one_flip": {
+    "label": "unique_one_flip",
+    "families": 1509,
+    "rung_count_histogram": {
+      "2": 1354,
+      "3": 85,
+      "4": 32,
+      "5": 21,
+      "6": 4,
+      "7": 5,
+      "8": 6,
+      "9": 2
+    },
+    "min_rungs": 2,
+    "direction": {
+      "dec": 1509
+    },
+    "distinct_event_ids_per_family": {
+      "1": 1509
+    },
+    "families_spanning_more_than_one_event_pct": 0.0,
+    "all_rungs_in_settled_band_pct": 0.4,
+    "some_rungs_in_settled_band_pct": 11.9,
+    "rungs_straddle_the_settled_price_band_pct": 11.5,
+    "over_under_pairs_checked": 3321,
+    "over_plus_under_equals_one_pct": 84.6,
+    "has_a_flip_invariant_rung_pct": 7.1,
+    "has_an_ISOLATED_half_rung_pct": 3.8,
+    "near_half_but_outside_band_pct": 9.5,
+    "has_a_market_whose_under_equals_its_over_pct": 8.9,
+    "over_equals_under_markets": 164,
+    "worst_reversal_pp": {
+      "median": 18.5,
+      "p90": 40.0,
+      "max": 98.55
+    },
+    "dp_dies_at_rung_index": {
+      "none": 1509
+    }
+  },
+  "hard_infeasible": {
+    "label": "still_infeasible_at_widest_slack",
+    "families": 78,
+    "rung_count_histogram": {
+      "3": 2,
+      "4": 7,
+      "5": 12,
+      "6": 5,
+      "7": 19,
+      "8": 6,
+      "9": 8,
+      "10": 5,
+      "11": 5,
+      "12": 2,
+      "13": 3,
+      "14": 1,
+      "15": 2,
+      "16": 1
+    },
+    "min_rungs": 3,
+    "direction": {
+      "dec": 78
+    },
+    "distinct_event_ids_per_family": {
+      "1": 78
+    },
+    "families_spanning_more_than_one_event_pct": 0.0,
+    "all_rungs_in_settled_band_pct": 0.0,
+    "some_rungs_in_settled_band_pct": 70.5,
+    "rungs_straddle_the_settled_price_band_pct": 70.5,
+    "over_under_pairs_checked": 605,
+    "over_plus_under_equals_one_pct": 37.2,
+    "has_a_flip_invariant_rung_pct": 23.1,
+    "has_an_ISOLATED_half_rung_pct": 14.1,
+    "near_half_but_outside_band_pct": 23.1,
+    "has_a_market_whose_under_equals_its_over_pct": 55.1,
+    "over_equals_under_markets": 91,
+    "worst_reversal_pp": {
+      "median": 45.0,
+      "p90": 70.0,
+      "max": 96.9
+    },
+    "dp_dies_at_rung_index": {
+      "10": 1,
+      "2": 19,
+      "3": 23,
+      "4": 18,
+      "5": 4,
+      "6": 6,
+      "7": 5,
+      "8": 2
+    }
+  },
+  "tolerance_ladder": {
+    "0.005": {
+      "repairable_families": 40,
+      "pct_of_no_assignment": 7.0
+    },
+    "0.010": {
+      "repairable_families": 65,
+      "pct_of_no_assignment": 11.4
+    },
+    "0.020": {
+      "repairable_families": 86,
+      "pct_of_no_assignment": 15.1
+    },
+    "0.050": {
+      "repairable_families": 177,
+      "pct_of_no_assignment": 31.0
+    },
+    "0.100": {
+      "repairable_families": 285,
+      "pct_of_no_assignment": 49.9
+    },
+    "0.250": {
+      "repairable_families": 493,
+      "pct_of_no_assignment": 86.3
+    }
+  },
+  "still_infeasible_at_widest_slack": 78,
+  "still_infeasible_pct_of_condemned": 3.6,
+  "worst_examples": [
+    {
+      "family_key": "polymarket:633212\u001fcincinnati reds vs. milwaukee brewers: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 96.9,
+      "rungs": [
+        {
+          "value": 6.5,
+          "price": 0.001,
+          "market_id": 48806314,
+          "name": "Cincinnati Reds vs. Milwaukee Brewers: O/U 6.5",
+          "event_id": 14970016,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 7.5,
+          "price": 0.38,
+          "market_id": 48806308,
+          "name": "Cincinnati Reds vs. Milwaukee Brewers: O/U 7.5",
+          "event_id": 14970016,
+          "over": "0.380000",
+          "under": "0.620000",
+          "yes": null
+        },
+        {
+          "value": 8.5,
+          "price": 0.01,
+          "market_id": 48806296,
+          "name": "Cincinnati Reds vs. Milwaukee Brewers: O/U 8.5",
+          "event_id": 14970016,
+          "over": "0.010000",
+          "under": "0.990000",
+          "yes": null
+        },
+        {
+          "value": 9.5,
+          "price": 0.21,
+          "market_id": 48806307,
+          "name": "Cincinnati Reds vs. Milwaukee Brewers: O/U 9.5",
+          "event_id": 14970016,
+          "over": "0.210000",
+          "under": "0.790000",
+          "yes": null
+        },
+        {
+          "value": 10.5,
+          "price": 0.4,
+          "market_id": 48806310,
+          "name": "Cincinnati Reds vs. Milwaukee Brewers: O/U 10.5",
+          "event_id": 14970016,
+          "over": "0.400000",
+          "under": "0.600000",
+          "yes": null
+        },
+        {
+          "value": 11.5,
+          "price": 0.97,
+          "market_id": 48806315,
+          "name": "Cincinnati Reds vs. Milwaukee Brewers: O/U 11.5",
+          "event_id": 14970016,
+          "over": "0.970000",
+          "under": "0.030000",
+          "yes": null
+        },
+        {
+          "value": 12.5,
+          "price": 0.38,
+          "market_id": 48806312,
+          "name": "Cincinnati Reds vs. Milwaukee Brewers: O/U 12.5",
+          "event_id": 14970016,
+          "over": "0.380000",
+          "under": "0.620000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:313809\u001fnew york mets vs. san francisco giants: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 94.0,
+      "rungs": [
+        {
+          "value": 9.5,
+          "price": 0.01,
+          "market_id": 34606794,
+          "name": "New York Mets vs. San Francisco Giants: O/U 9.5",
+          "event_id": 12204753,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        },
+        {
+          "value": 10.5,
+          "price": 0.35,
+          "market_id": 34606787,
+          "name": "New York Mets vs. San Francisco Giants: O/U 10.5",
+          "event_id": 12204753,
+          "over": "0.350000",
+          "under": "0.650000",
+          "yes": null
+        },
+        {
+          "value": 11.5,
+          "price": 0.95,
+          "market_id": 34606788,
+          "name": "New York Mets vs. San Francisco Giants: O/U 11.5",
+          "event_id": 12204753,
+          "over": "0.950000",
+          "under": "0.950000",
+          "yes": null
+        },
+        {
+          "value": 12.5,
+          "price": 0.48,
+          "market_id": 34606789,
+          "name": "New York Mets vs. San Francisco Giants: O/U 12.5",
+          "event_id": 12204753,
+          "over": "0.480000",
+          "under": "0.520000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:335923\u001fatlanta braves vs. los angeles angels: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 92.0,
+      "rungs": [
+        {
+          "value": 10.5,
+          "price": 0.36,
+          "market_id": 34605541,
+          "name": "Atlanta Braves vs. Los Angeles Angels: O/U 10.5",
+          "event_id": 12256877,
+          "over": "0.360000",
+          "under": "0.640000",
+          "yes": null
+        },
+        {
+          "value": 11.5,
+          "price": 0.05,
+          "market_id": 34605543,
+          "name": "Atlanta Braves vs. Los Angeles Angels: O/U 11.5",
+          "event_id": 12256877,
+          "over": "0.050000",
+          "under": "0.050000",
+          "yes": null
+        },
+        {
+          "value": 12.5,
+          "price": 0.4,
+          "market_id": 34605544,
+          "name": "Atlanta Braves vs. Los Angeles Angels: O/U 12.5",
+          "event_id": 12256877,
+          "over": "0.400000",
+          "under": "0.600000",
+          "yes": null
+        },
+        {
+          "value": 13.5,
+          "price": 0.97,
+          "market_id": 34605548,
+          "name": "Atlanta Braves vs. Los Angeles Angels: O/U 13.5",
+          "event_id": 12256877,
+          "over": "0.970000",
+          "under": "0.970000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:516901\u001farizona diamondbacks vs. seattle mariners: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 82.0,
+      "rungs": [
+        {
+          "value": 4.5,
+          "price": 0.93,
+          "market_id": 28957537,
+          "name": "Arizona Diamondbacks vs. Seattle Mariners: O/U 4.5",
+          "event_id": 14795272,
+          "over": "0.930000",
+          "under": "0.780000",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.84,
+          "market_id": 28957538,
+          "name": "Arizona Diamondbacks vs. Seattle Mariners: O/U 5.5",
+          "event_id": 14795272,
+          "over": "0.840000",
+          "under": "0.665000",
+          "yes": null
+        },
+        {
+          "value": 6.5,
+          "price": 0.71,
+          "market_id": 28923742,
+          "name": "Arizona Diamondbacks vs. Seattle Mariners: O/U 6.5",
+          "event_id": 14795272,
+          "over": "0.710000",
+          "under": "0.570000",
+          "yes": null
+        },
+        {
+          "value": 7.5,
+          "price": 0.59,
+          "market_id": 28923737,
+          "name": "Arizona Diamondbacks vs. Seattle Mariners: O/U 7.5",
+          "event_id": 14795272,
+          "over": "0.590000",
+          "under": "0.710000",
+          "yes": null
+        },
+        {
+          "value": 8.5,
+          "price": 0.545,
+          "market_id": 28923743,
+          "name": "Arizona Diamondbacks vs. Seattle Mariners: O/U 8.5",
+          "event_id": 14795272,
+          "over": "0.545000",
+          "under": "0.625000",
+          "yes": null
+        },
+        {
+          "value": 9.5,
+          "price": 0.395,
+          "market_id": 28923744,
+          "name": "Arizona Diamondbacks vs. Seattle Mariners: O/U 9.5",
+          "event_id": 14795272,
+          "over": "0.395000",
+          "under": "0.720000",
+          "yes": null
+        },
+        {
+          "value": 10.5,
+          "price": 0.175,
+          "market_id": 28923745,
+          "name": "Arizona Diamondbacks vs. Seattle Mariners: O/U 10.5",
+          "event_id": 14795272,
+          "over": "0.175000",
+          "under": "0.775000",
+          "yes": null
+        },
+        {
+          "value": 11.5,
+          "price": 0.72,
+          "market_id": 29145948,
+          "name": "Arizona Diamondbacks vs. Seattle Mariners: O/U 11.5",
+          "event_id": 14795272,
+          "over": "0.720000",
+          "under": "0.280000",
+          "yes": null
+        },
+        {
+          "value": 12.5,
+          "price": 0.995,
+          "market_id": 29145949,
+          "name": "Arizona Diamondbacks vs. Seattle Mariners: O/U 12.5",
+          "event_id": 14795272,
+          "over": "0.995000",
+          "under": "0.585000",
+          "yes": null
+        },
+        {
+          "value": 13.5,
+          "price": 0.365,
+          "market_id": 29145950,
+          "name": "Arizona Diamondbacks vs. Seattle Mariners: O/U 13.5",
+          "event_id": 14795272,
+          "over": "0.365000",
+          "under": "0.645000",
+          "yes": null
+        },
+        {
+          "value": 14.5,
+          "price": 0.385,
+          "market_id": 29178393,
+          "name": "Arizona Diamondbacks vs. Seattle Mariners: O/U 14.5",
+          "event_id": 14795272,
+          "over": "0.385000",
+          "under": "0.615000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:548060\u001flos angeles angels vs. los angeles dodgers: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 75.0,
+      "rungs": [
+        {
+          "value": 5.5,
+          "price": 0.765,
+          "market_id": 33086288,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 5.5",
+          "event_id": 14879154,
+          "over": "0.765000",
+          "under": "0.235000",
+          "yes": null
+        },
+        {
+          "value": 6.5,
+          "price": 0.695,
+          "market_id": 33086289,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 6.5",
+          "event_id": 14879154,
+          "over": "0.695000",
+          "under": "0.305000",
+          "yes": null
+        },
+        {
+          "value": 7.5,
+          "price": 0.565,
+          "market_id": 33086290,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 7.5",
+          "event_id": 14879154,
+          "over": "0.565000",
+          "under": "0.595000",
+          "yes": null
+        },
+        {
+          "value": 8.5,
+          "price": 0.475,
+          "market_id": 33034503,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 8.5",
+          "event_id": 14879154,
+          "over": "0.475000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 9.5,
+          "price": 0.385,
+          "market_id": 33086291,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 9.5",
+          "event_id": 14879154,
+          "over": "0.385000",
+          "under": "0.410000",
+          "yes": null
+        },
+        {
+          "value": 10.5,
+          "price": 0.32,
+          "market_id": 33086292,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 10.5",
+          "event_id": 14879154,
+          "over": "0.320000",
+          "under": "0.340000",
+          "yes": null
+        },
+        {
+          "value": 11.5,
+          "price": 0.245,
+          "market_id": 33086293,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 11.5",
+          "event_id": 14879154,
+          "over": "0.245000",
+          "under": "0.760000",
+          "yes": null
+        },
+        {
+          "value": 12.5,
+          "price": 0.65,
+          "market_id": 33561725,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 12.5",
+          "event_id": 14879154,
+          "over": "0.650000",
+          "under": "0.350000",
+          "yes": null
+        },
+        {
+          "value": 13.5,
+          "price": 0.995,
+          "market_id": 33581684,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 13.5",
+          "event_id": 14879154,
+          "over": "0.995000",
+          "under": "0.005000",
+          "yes": null
+        },
+        {
+          "value": 15.5,
+          "price": 0.5,
+          "market_id": 33581687,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 15.5",
+          "event_id": 14879154,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 16.5,
+          "price": 0.5,
+          "market_id": 33581688,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 16.5",
+          "event_id": 14879154,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 17.5,
+          "price": 0.505,
+          "market_id": 33613207,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 17.5",
+          "event_id": 14879154,
+          "over": "0.505000",
+          "under": "0.505000",
+          "yes": null
+        },
+        {
+          "value": 18.5,
+          "price": 0.395,
+          "market_id": 33613209,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 18.5",
+          "event_id": 14879154,
+          "over": "0.395000",
+          "under": "0.605000",
+          "yes": null
+        },
+        {
+          "value": 19.5,
+          "price": 0.5,
+          "market_id": 33613204,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 19.5",
+          "event_id": 14879154,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 20.5,
+          "price": 0.5,
+          "market_id": 33613206,
+          "name": "Los Angeles Angels vs. Los Angeles Dodgers: O/U 20.5",
+          "event_id": 14879154,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:481013\u001fnew york mets vs. washington nationals: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 74.45,
+      "rungs": [
+        {
+          "value": 5.5,
+          "price": 0.795,
+          "market_id": 22850743,
+          "name": "New York Mets vs. Washington Nationals: O/U 5.5",
+          "event_id": 14638962,
+          "over": "0.795000",
+          "under": "0.215000",
+          "yes": null
+        },
+        {
+          "value": 6.5,
+          "price": 0.7,
+          "market_id": 22850744,
+          "name": "New York Mets vs. Washington Nationals: O/U 6.5",
+          "event_id": 14638962,
+          "over": "0.700000",
+          "under": "0.725000",
+          "yes": null
+        },
+        {
+          "value": 7.5,
+          "price": 0.9995,
+          "market_id": 22850745,
+          "name": "New York Mets vs. Washington Nationals: O/U 7.5",
+          "event_id": 14638962,
+          "over": "0.999500",
+          "under": "0.605000",
+          "yes": null
+        },
+        {
+          "value": 8.5,
+          "price": 0.525,
+          "market_id": 22850746,
+          "name": "New York Mets vs. Washington Nationals: O/U 8.5",
+          "event_id": 14638962,
+          "over": "0.525000",
+          "under": "0.465000",
+          "yes": null
+        },
+        {
+          "value": 9.5,
+          "price": 0.425,
+          "market_id": 22711379,
+          "name": "New York Mets vs. Washington Nationals: O/U 9.5",
+          "event_id": 14638962,
+          "over": "0.425000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 10.5,
+          "price": 0.345,
+          "market_id": 22850741,
+          "name": "New York Mets vs. Washington Nationals: O/U 10.5",
+          "event_id": 14638962,
+          "over": "0.345000",
+          "under": "0.365000",
+          "yes": null
+        },
+        {
+          "value": 11.5,
+          "price": 0.255,
+          "market_id": 22798999,
+          "name": "New York Mets vs. Washington Nationals: O/U 11.5",
+          "event_id": 14638962,
+          "over": "0.255000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 12.5,
+          "price": 0.9995,
+          "market_id": 23503605,
+          "name": "New York Mets vs. Washington Nationals: O/U 12.5",
+          "event_id": 14638962,
+          "over": "0.999500",
+          "under": "0.860000",
+          "yes": null
+        },
+        {
+          "value": 15.5,
+          "price": 0.0005,
+          "market_id": 23503609,
+          "name": "New York Mets vs. Washington Nationals: O/U 15.5",
+          "event_id": 14638962,
+          "over": "0.000500",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 16.5,
+          "price": 0.0005,
+          "market_id": 23503610,
+          "name": "New York Mets vs. Washington Nationals: O/U 16.5",
+          "event_id": 14638962,
+          "over": "0.000500",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 17.5,
+          "price": 0.0005,
+          "market_id": 23532835,
+          "name": "New York Mets vs. Washington Nationals: O/U 17.5",
+          "event_id": 14638962,
+          "over": "0.000500",
+          "under": "0.340000",
+          "yes": null
+        },
+        {
+          "value": 18.5,
+          "price": 0.0005,
+          "market_id": 23532836,
+          "name": "New York Mets vs. Washington Nationals: O/U 18.5",
+          "event_id": 14638962,
+          "over": "0.000500",
+          "under": "0.245000",
+          "yes": null
+        },
+        {
+          "value": 19.5,
+          "price": 0.0005,
+          "market_id": 23532838,
+          "name": "New York Mets vs. Washington Nationals: O/U 19.5",
+          "event_id": 14638962,
+          "over": "0.000500",
+          "under": "0.250000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:579964\u001ftampa bay rays vs. los angeles dodgers: 1st 5 innings <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 70.9,
+      "rungs": [
+        {
+          "value": 2.5,
+          "price": 0.001,
+          "market_id": 37526499,
+          "name": "Tampa Bay Rays vs. Los Angeles Dodgers: 1st 5 Innings O/U 2.5",
+          "event_id": 14916946,
+          "over": "0.001000",
+          "under": "0.505000",
+          "yes": null
+        },
+        {
+          "value": 3.5,
+          "price": 0.59,
+          "market_id": 37526500,
+          "name": "Tampa Bay Rays vs. Los Angeles Dodgers: 1st 5 Innings O/U 3.5",
+          "event_id": 14916946,
+          "over": "0.590000",
+          "under": "0.505000",
+          "yes": null
+        },
+        {
+          "value": 4.5,
+          "price": 0.001,
+          "market_id": 37526501,
+          "name": "Tampa Bay Rays vs. Los Angeles Dodgers: 1st 5 Innings O/U 4.5",
+          "event_id": 14916946,
+          "over": "0.001000",
+          "under": "0.505000",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.71,
+          "market_id": 37526502,
+          "name": "Tampa Bay Rays vs. Los Angeles Dodgers: 1st 5 Innings O/U 5.5",
+          "event_id": 14916946,
+          "over": "0.710000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 6.5,
+          "price": 0.001,
+          "market_id": 37526503,
+          "name": "Tampa Bay Rays vs. Los Angeles Dodgers: 1st 5 Innings O/U 6.5",
+          "event_id": 14916946,
+          "over": "0.001000",
+          "under": "0.500000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:555183\u001fmilwaukee brewers vs. athletics: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 70.0,
+      "rungs": [
+        {
+          "value": 8.5,
+          "price": 0.795,
+          "market_id": 34213224,
+          "name": "Milwaukee Brewers vs. Athletics: O/U 8.5",
+          "event_id": 15036906,
+          "over": "0.795000",
+          "under": "0.915000",
+          "yes": null
+        },
+        {
+          "value": 9.5,
+          "price": 0.745,
+          "market_id": 34213225,
+          "name": "Milwaukee Brewers vs. Athletics: O/U 9.5",
+          "event_id": 15036906,
+          "over": "0.745000",
+          "under": "0.999500",
+          "yes": null
+        },
+        {
+          "value": 10.5,
+          "price": 0.68,
+          "market_id": 34213226,
+          "name": "Milwaukee Brewers vs. Athletics: O/U 10.5",
+          "event_id": 15036906,
+          "over": "0.680000",
+          "under": "0.999500",
+          "yes": null
+        },
+        {
+          "value": 11.5,
+          "price": 0.615,
+          "market_id": 34110362,
+          "name": "Milwaukee Brewers vs. Athletics: O/U 11.5",
+          "event_id": 15036906,
+          "over": "0.615000",
+          "under": "0.995000",
+          "yes": null
+        },
+        {
+          "value": 12.5,
+          "price": 0.01,
+          "market_id": 34213227,
+          "name": "Milwaukee Brewers vs. Athletics: O/U 12.5",
+          "event_id": 15036906,
+          "over": "0.010000",
+          "under": "0.920000",
+          "yes": null
+        },
+        {
+          "value": 13.5,
+          "price": 0.01,
+          "market_id": 34213228,
+          "name": "Milwaukee Brewers vs. Athletics: O/U 13.5",
+          "event_id": 15036906,
+          "over": "0.010000",
+          "under": "0.865000",
+          "yes": null
+        },
+        {
+          "value": 14.5,
+          "price": 0.71,
+          "market_id": 34213229,
+          "name": "Milwaukee Brewers vs. Athletics: O/U 14.5",
+          "event_id": 15036906,
+          "over": "0.710000",
+          "under": "0.730000",
+          "yes": null
+        },
+        {
+          "value": 15.5,
+          "price": 0.66,
+          "market_id": 34534922,
+          "name": "Milwaukee Brewers vs. Athletics: O/U 15.5",
+          "event_id": 15036906,
+          "over": "0.660000",
+          "under": "0.565000",
+          "yes": null
+        },
+        {
+          "value": 16.5,
+          "price": 0.48,
+          "market_id": 34534919,
+          "name": "Milwaukee Brewers vs. Athletics: O/U 16.5",
+          "event_id": 15036906,
+          "over": "0.480000",
+          "under": "0.720000",
+          "yes": null
+        },
+        {
+          "value": 17.5,
+          "price": 0.001,
+          "market_id": 34534918,
+          "name": "Milwaukee Brewers vs. Athletics: O/U 17.5",
+          "event_id": 15036906,
+          "over": "0.001000",
+          "under": "0.350000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:470420\u001fmiami marlins vs. tampa bay rays: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 68.45,
+      "rungs": [
+        {
+          "value": 2.5,
+          "price": 0.505,
+          "market_id": 21639593,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 2.5",
+          "event_id": 14634419,
+          "over": "0.505000",
+          "under": "0.000000",
+          "yes": null
+        },
+        {
+          "value": 3.5,
+          "price": 0.9995,
+          "market_id": 21609842,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 3.5",
+          "event_id": 14634419,
+          "over": "0.999500",
+          "under": "0.000000",
+          "yes": null
+        },
+        {
+          "value": 4.5,
+          "price": 0.83,
+          "market_id": 20881014,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 4.5",
+          "event_id": 14634419,
+          "over": "0.830000",
+          "under": "0.000000",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.715,
+          "market_id": 20881015,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 5.5",
+          "event_id": 14634419,
+          "over": "0.715000",
+          "under": "0.000000",
+          "yes": null
+        },
+        {
+          "value": 6.5,
+          "price": 0.9995,
+          "market_id": 20881016,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 6.5",
+          "event_id": 14634419,
+          "over": "0.999500",
+          "under": "0.625000",
+          "yes": null
+        },
+        {
+          "value": 7.5,
+          "price": 0.525,
+          "market_id": 20816982,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 7.5",
+          "event_id": 14634419,
+          "over": "0.525000",
+          "under": "0.000000",
+          "yes": null
+        },
+        {
+          "value": 8.5,
+          "price": 0.43,
+          "market_id": 20816983,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 8.5",
+          "event_id": 14634419,
+          "over": "0.430000",
+          "under": "0.560000",
+          "yes": null
+        },
+        {
+          "value": 9.5,
+          "price": 0.315,
+          "market_id": 20881017,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 9.5",
+          "event_id": 14634419,
+          "over": "0.315000",
+          "under": "0.670000",
+          "yes": null
+        },
+        {
+          "value": 10.5,
+          "price": 0.9995,
+          "market_id": 20881013,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 10.5",
+          "event_id": 14634419,
+          "over": "0.999500",
+          "under": "0.000000",
+          "yes": null
+        },
+        {
+          "value": 12.5,
+          "price": 0.9995,
+          "market_id": 21670664,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 12.5",
+          "event_id": 14634419,
+          "over": "0.999500",
+          "under": "0.505000",
+          "yes": null
+        },
+        {
+          "value": 13.5,
+          "price": 0.9995,
+          "market_id": 21670669,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 13.5",
+          "event_id": 14634419,
+          "over": "0.999500",
+          "under": "0.505000",
+          "yes": null
+        },
+        {
+          "value": 14.5,
+          "price": 0.9995,
+          "market_id": 21670666,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 14.5",
+          "event_id": 14634419,
+          "over": "0.999500",
+          "under": "0.000000",
+          "yes": null
+        },
+        {
+          "value": 15.5,
+          "price": 0.0005,
+          "market_id": 21670668,
+          "name": "Miami Marlins vs. Tampa Bay Rays: O/U 15.5",
+          "event_id": 14634419,
+          "over": "0.000500",
+          "under": "0.994500",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:470429\u001fmilwaukee brewers vs. minnesota twins: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 67.95,
+      "rungs": [
+        {
+          "value": 3.5,
+          "price": 0.0005,
+          "market_id": 21703840,
+          "name": "Milwaukee Brewers vs. Minnesota Twins: O/U 3.5",
+          "event_id": 14634458,
+          "over": "0.000500",
+          "under": "0.000500",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.001,
+          "market_id": 20965288,
+          "name": "Milwaukee Brewers vs. Minnesota Twins: O/U 5.5",
+          "event_id": 14634458,
+          "over": "0.001000",
+          "under": "0.750000",
+          "yes": null
+        },
+        {
+          "value": 6.5,
+          "price": 0.68,
+          "market_id": 20965289,
+          "name": "Milwaukee Brewers vs. Minnesota Twins: O/U 6.5",
+          "event_id": 14634458,
+          "over": "0.680000",
+          "under": "1.000000",
+          "yes": null
+        },
+        {
+          "value": 7.5,
+          "price": 0.04,
+          "market_id": 20965290,
+          "name": "Milwaukee Brewers vs. Minnesota Twins: O/U 7.5",
+          "event_id": 14634458,
+          "over": "0.040000",
+          "under": "1.000000",
+          "yes": null
+        },
+        {
+          "value": 8.5,
+          "price": 0.17,
+          "market_id": 20817008,
+          "name": "Milwaukee Brewers vs. Minnesota Twins: O/U 8.5",
+          "event_id": 14634458,
+          "over": "0.170000",
+          "under": "0.495000",
+          "yes": null
+        },
+        {
+          "value": 9.5,
+          "price": 0.05,
+          "market_id": 20965291,
+          "name": "Milwaukee Brewers vs. Minnesota Twins: O/U 9.5",
+          "event_id": 14634458,
+          "over": "0.050000",
+          "under": "1.000000",
+          "yes": null
+        },
+        {
+          "value": 10.5,
+          "price": 0.335,
+          "market_id": 20965292,
+          "name": "Milwaukee Brewers vs. Minnesota Twins: O/U 10.5",
+          "event_id": 14634458,
+          "over": "0.335000",
+          "under": "1.000000",
+          "yes": null
+        },
+        {
+          "value": 11.5,
+          "price": 0.14,
+          "market_id": 20965293,
+          "name": "Milwaukee Brewers vs. Minnesota Twins: O/U 11.5",
+          "event_id": 14634458,
+          "over": "0.140000",
+          "under": "0.245000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:523535\u001fdetroit tigers vs. chicago white sox: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 64.4,
+      "rungs": [
+        {
+          "value": 2.5,
+          "price": 0.9995,
+          "market_id": 30075375,
+          "name": "Detroit Tigers vs. Chicago White Sox: O/U 2.5",
+          "event_id": 14959726,
+          "over": "0.999500",
+          "under": "0.999500",
+          "yes": null
+        },
+        {
+          "value": 3.5,
+          "price": 0.001,
+          "market_id": 30075379,
+          "name": "Detroit Tigers vs. Chicago White Sox: O/U 3.5",
+          "event_id": 14959726,
+          "over": "0.001000",
+          "under": "0.000500",
+          "yes": null
+        },
+        {
+          "value": 4.5,
+          "price": 0.01,
+          "market_id": 30075376,
+          "name": "Detroit Tigers vs. Chicago White Sox: O/U 4.5",
+          "event_id": 14959726,
+          "over": "0.010000",
+          "under": "0.000500",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.01,
+          "market_id": 29524430,
+          "name": "Detroit Tigers vs. Chicago White Sox: O/U 5.5",
+          "event_id": 14959726,
+          "over": "0.010000",
+          "under": "0.000500",
+          "yes": null
+        },
+        {
+          "value": 6.5,
+          "price": 0.645,
+          "market_id": 29524431,
+          "name": "Detroit Tigers vs. Chicago White Sox: O/U 6.5",
+          "event_id": 14959726,
+          "over": "0.645000",
+          "under": "0.000500",
+          "yes": null
+        },
+        {
+          "value": 7.5,
+          "price": 0.05,
+          "market_id": 29524432,
+          "name": "Detroit Tigers vs. Chicago White Sox: O/U 7.5",
+          "event_id": 14959726,
+          "over": "0.050000",
+          "under": "0.000500",
+          "yes": null
+        },
+        {
+          "value": 8.5,
+          "price": 0.455,
+          "market_id": 29524423,
+          "name": "Detroit Tigers vs. Chicago White Sox: O/U 8.5",
+          "event_id": 14959726,
+          "over": "0.455000",
+          "under": "0.000500",
+          "yes": null
+        },
+        {
+          "value": 9.5,
+          "price": 0.35,
+          "market_id": 29524433,
+          "name": "Detroit Tigers vs. Chicago White Sox: O/U 9.5",
+          "event_id": 14959726,
+          "over": "0.350000",
+          "under": "0.000500",
+          "yes": null
+        },
+        {
+          "value": 10.5,
+          "price": 0.285,
+          "market_id": 29524434,
+          "name": "Detroit Tigers vs. Chicago White Sox: O/U 10.5",
+          "event_id": 14959726,
+          "over": "0.285000",
+          "under": "0.000500",
+          "yes": null
+        },
+        {
+          "value": 11.5,
+          "price": 0.21,
+          "market_id": 29524435,
+          "name": "Detroit Tigers vs. Chicago White Sox: O/U 11.5",
+          "event_id": 14959726,
+          "over": "0.210000",
+          "under": "0.000500",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:506000\u001farizona diamondbacks vs. san francisco giants: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 60.5,
+      "rungs": [
+        {
+          "value": 5.5,
+          "price": 0.95,
+          "market_id": 27427392,
+          "name": "Arizona Diamondbacks vs. San Francisco Giants: O/U 5.5",
+          "event_id": 14969741,
+          "over": "0.950000",
+          "under": "0.925000",
+          "yes": null
+        },
+        {
+          "value": 6.5,
+          "price": 0.9,
+          "market_id": 27427393,
+          "name": "Arizona Diamondbacks vs. San Francisco Giants: O/U 6.5",
+          "event_id": 14969741,
+          "over": "0.900000",
+          "under": "0.875000",
+          "yes": null
+        },
+        {
+          "value": 7.5,
+          "price": 0.665,
+          "market_id": 27427385,
+          "name": "Arizona Diamondbacks vs. San Francisco Giants: O/U 7.5",
+          "event_id": 14969741,
+          "over": "0.665000",
+          "under": "0.555000",
+          "yes": null
+        },
+        {
+          "value": 8.5,
+          "price": 0.565,
+          "market_id": 27427394,
+          "name": "Arizona Diamondbacks vs. San Francisco Giants: O/U 8.5",
+          "event_id": 14969741,
+          "over": "0.565000",
+          "under": "0.435000",
+          "yes": null
+        },
+        {
+          "value": 9.5,
+          "price": 0.39,
+          "market_id": 27427395,
+          "name": "Arizona Diamondbacks vs. San Francisco Giants: O/U 9.5",
+          "event_id": 14969741,
+          "over": "0.390000",
+          "under": "0.995000",
+          "yes": null
+        },
+        {
+          "value": 10.5,
+          "price": 0.995,
+          "market_id": 27427396,
+          "name": "Arizona Diamondbacks vs. San Francisco Giants: O/U 10.5",
+          "event_id": 14969741,
+          "over": "0.995000",
+          "under": "0.750000",
+          "yes": null
+        },
+        {
+          "value": 11.5,
+          "price": 0.425,
+          "market_id": 27427397,
+          "name": "Arizona Diamondbacks vs. San Francisco Giants: O/U 11.5",
+          "event_id": 14969741,
+          "over": "0.425000",
+          "under": "0.225000",
+          "yes": null
+        },
+        {
+          "value": 12.5,
+          "price": 0.0005,
+          "market_id": 27615683,
+          "name": "Arizona Diamondbacks vs. San Francisco Giants: O/U 12.5",
+          "event_id": 14969741,
+          "over": "0.000500",
+          "under": "0.000500",
+          "yes": null
+        }
+      ]
+    }
+  ]
+}

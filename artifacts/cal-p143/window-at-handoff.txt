@@ -1,0 +1,26 @@
+CAL-P140 RE-BASELINE MONITOR — 22 of the last 24
+  13/16 clean so far (window 24)   (3 misses; -1 of 2 budget left)
+  ###?##C#######B#   <- oldest ... newest   (# clean, A/B/C/D miss class, ? unattributed)
+  baseline 2026-08-29T23:35:53+00:00
+  ring     168 observations, 152 excluded as pre-baseline
+  VERDICT  WINDOW_NOT_FULL
+
+  §6e — what the clean beats are (discriminator: disclosure.staged_at):
+    MEASUREMENT  a new census was promoted, the number could move: 1
+    REPUBLISH    the same census re-served, one reading:           11
+    UNKNOWN      no prior published beat to compare against:       1
+    censuses served in window: 2  -> promotions inside it: 1
+
+  misses by class:
+    # 4 2026-08-30T02:38:29.994681+00:00  B_OR_D_UNATTRIBUTED
+        failed before the gate was evaluated. B (diagnostics timeout) and D (the read:events regression) are indistinguishable in the ring; the error lived in
+    # 7 2026-08-30T05:26:33.752872+00:00  C_DEPLOY_KILL
+        task cancelled mid-flight after 693263 ms — a release, not the producer
+    #15 2026-08-30T13:42:18.758274+00:00  B_DIAGNOSTICS_TRUTH_CENSUS
+        (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.QueryCanceledError'>: canceling statement due to statement timeout
+
+  ⚠️  At least one miss is UNATTRIBUTED. B and D are indistinguishable in the
+      ring; the error lives in task-metrics.last_error and is overwritten by
+      the next failure. A miss not classified within one beat is unclassifiable.
+
+  sampler coverage: 50 producer runs examined, 0 dropped

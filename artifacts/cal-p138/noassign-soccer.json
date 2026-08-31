@@ -1,0 +1,856 @@
+{
+  "cell": "polymarket/soccer",
+  "families_condemned": 6496,
+  "families_ambiguous_kept_by_the_duplicate_guard": 0,
+  "no_assignment": {
+    "label": "no_assignment",
+    "families": 3843,
+    "rung_count_histogram": {
+      "3": 1139,
+      "4": 479,
+      "5": 8,
+      "6": 1599,
+      "7": 582,
+      "8": 10,
+      "9": 26
+    },
+    "min_rungs": 3,
+    "direction": {
+      "dec": 3843
+    },
+    "distinct_event_ids_per_family": {
+      "1": 3797,
+      "2": 46
+    },
+    "families_spanning_more_than_one_event_pct": 1.2,
+    "all_rungs_in_settled_band_pct": 0.2,
+    "some_rungs_in_settled_band_pct": 0.9,
+    "rungs_straddle_the_settled_price_band_pct": 0.7,
+    "over_under_pairs_checked": 19355,
+    "over_plus_under_equals_one_pct": 96.5,
+    "has_a_flip_invariant_rung_pct": 78.9,
+    "has_an_ISOLATED_half_rung_pct": 10.9,
+    "near_half_but_outside_band_pct": 13.0,
+    "has_a_market_whose_under_equals_its_over_pct": 79.5,
+    "over_equals_under_markets": 8200,
+    "worst_reversal_pp": {
+      "median": 2.0,
+      "p90": 28.0,
+      "max": 77.0
+    },
+    "dp_dies_at_rung_index": {
+      "2": 2283,
+      "3": 740,
+      "4": 329,
+      "5": 367,
+      "6": 117,
+      "7": 7
+    }
+  },
+  "unique_one_flip": {
+    "label": "unique_one_flip",
+    "families": 2277,
+    "rung_count_histogram": {
+      "2": 890,
+      "3": 1041,
+      "4": 247,
+      "5": 1,
+      "6": 39,
+      "7": 59
+    },
+    "min_rungs": 2,
+    "direction": {
+      "dec": 2276,
+      "inc": 1
+    },
+    "distinct_event_ids_per_family": {
+      "1": 2262,
+      "2": 15
+    },
+    "families_spanning_more_than_one_event_pct": 0.7,
+    "all_rungs_in_settled_band_pct": 0.2,
+    "some_rungs_in_settled_band_pct": 0.7,
+    "rungs_straddle_the_settled_price_band_pct": 0.5,
+    "over_under_pairs_checked": 6536,
+    "over_plus_under_equals_one_pct": 97.4,
+    "has_a_flip_invariant_rung_pct": 80.7,
+    "has_an_ISOLATED_half_rung_pct": 4.0,
+    "near_half_but_outside_band_pct": 12.6,
+    "has_a_market_whose_under_equals_its_over_pct": 80.5,
+    "over_equals_under_markets": 2829,
+    "worst_reversal_pp": {
+      "median": 0.5,
+      "p90": 11.5,
+      "max": 45.95
+    },
+    "dp_dies_at_rung_index": {
+      "none": 2277
+    }
+  },
+  "hard_infeasible": {
+    "label": "still_infeasible_at_widest_slack",
+    "families": 65,
+    "rung_count_histogram": {
+      "3": 31,
+      "4": 1,
+      "5": 1,
+      "6": 24,
+      "7": 7,
+      "9": 1
+    },
+    "min_rungs": 3,
+    "direction": {
+      "dec": 65
+    },
+    "distinct_event_ids_per_family": {
+      "1": 64,
+      "2": 1
+    },
+    "families_spanning_more_than_one_event_pct": 1.5,
+    "all_rungs_in_settled_band_pct": 0.0,
+    "some_rungs_in_settled_band_pct": 3.1,
+    "rungs_straddle_the_settled_price_band_pct": 3.1,
+    "over_under_pairs_checked": 304,
+    "over_plus_under_equals_one_pct": 93.4,
+    "has_a_flip_invariant_rung_pct": 63.1,
+    "has_an_ISOLATED_half_rung_pct": 55.4,
+    "near_half_but_outside_band_pct": 27.7,
+    "has_a_market_whose_under_equals_its_over_pct": 66.2,
+    "over_equals_under_markets": 104,
+    "worst_reversal_pp": {
+      "median": 34.0,
+      "p90": 39.0,
+      "max": 47.95
+    },
+    "dp_dies_at_rung_index": {
+      "2": 48,
+      "3": 9,
+      "5": 7,
+      "6": 1
+    }
+  },
+  "tolerance_ladder": {
+    "0.005": {
+      "repairable_families": 1648,
+      "pct_of_no_assignment": 42.9
+    },
+    "0.010": {
+      "repairable_families": 1907,
+      "pct_of_no_assignment": 49.6
+    },
+    "0.020": {
+      "repairable_families": 2205,
+      "pct_of_no_assignment": 57.4
+    },
+    "0.050": {
+      "repairable_families": 2699,
+      "pct_of_no_assignment": 70.2
+    },
+    "0.100": {
+      "repairable_families": 2977,
+      "pct_of_no_assignment": 77.5
+    },
+    "0.250": {
+      "repairable_families": 3778,
+      "pct_of_no_assignment": 98.3
+    }
+  },
+  "still_infeasible_at_widest_slack": 65,
+  "still_infeasible_pct_of_condemned": 1.0,
+  "worst_examples": [
+    {
+      "family_key": "polymarket:184194\u001fkawkab ac vs. oc safi: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 47.95,
+      "rungs": [
+        {
+          "value": 1.5,
+          "price": 0.505,
+          "market_id": 13793726,
+          "name": "Kawkab AC vs. OC Safi: O/U 1.5",
+          "event_id": 5774618,
+          "over": "0.505000",
+          "under": "0.490000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.0005,
+          "market_id": 13793729,
+          "name": "Kawkab AC vs. OC Safi: O/U 2.5",
+          "event_id": 5774618,
+          "over": "0.000500",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 3.5,
+          "price": 0.0005,
+          "market_id": 13793730,
+          "name": "Kawkab AC vs. OC Safi: O/U 3.5",
+          "event_id": 5774618,
+          "over": "0.000500",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 4.5,
+          "price": 0.48,
+          "market_id": 13793727,
+          "name": "Kawkab AC vs. OC Safi: O/U 4.5",
+          "event_id": 5774618,
+          "over": "0.480000",
+          "under": "0.515000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:510386\u001ftunisia vs. netherlands: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 47.5,
+      "rungs": [
+        {
+          "value": 0.5,
+          "price": 0.948,
+          "market_id": 24750549,
+          "name": "Tunisia vs. Netherlands: O/U 0.5",
+          "event_id": 14791724,
+          "over": "0.948000",
+          "under": "0.973500",
+          "yes": null
+        },
+        {
+          "value": 1.5,
+          "price": 0.805,
+          "market_id": 24750557,
+          "name": "Tunisia vs. Netherlands: O/U 1.5",
+          "event_id": 14791724,
+          "over": "0.805000",
+          "under": "0.885000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.565,
+          "market_id": 24750552,
+          "name": "Tunisia vs. Netherlands: O/U 2.5",
+          "event_id": 14791724,
+          "over": "0.565000",
+          "under": "0.515000",
+          "yes": null
+        },
+        {
+          "value": 3.5,
+          "price": 0.34,
+          "market_id": 24750558,
+          "name": "Tunisia vs. Netherlands: O/U 3.5",
+          "event_id": 14791724,
+          "over": "0.340000",
+          "under": "0.485000",
+          "yes": null
+        },
+        {
+          "value": 4.5,
+          "price": 0.165,
+          "market_id": 24750548,
+          "name": "Tunisia vs. Netherlands: O/U 4.5",
+          "event_id": 14791724,
+          "over": "0.165000",
+          "under": "0.190000",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.085,
+          "market_id": 24750555,
+          "name": "Tunisia vs. Netherlands: O/U 5.5",
+          "event_id": 14791724,
+          "over": "0.085000",
+          "under": "0.140000",
+          "yes": null
+        },
+        {
+          "value": 6.5,
+          "price": 0.5,
+          "market_id": 38453088,
+          "name": "Tunisia vs. Netherlands: O/U 6.5",
+          "event_id": 14791724,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 7.5,
+          "price": 0.015,
+          "market_id": 38453086,
+          "name": "Tunisia vs. Netherlands: O/U 7.5",
+          "event_id": 14791724,
+          "over": "0.015000",
+          "under": "0.985000",
+          "yes": null
+        },
+        {
+          "value": 8.5,
+          "price": 0.49,
+          "market_id": 38453085,
+          "name": "Tunisia vs. Netherlands: O/U 8.5",
+          "event_id": 14791724,
+          "over": "0.490000",
+          "under": "0.505000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:773539\u001fgnk dinamo zagreb vs. fk kauno \u017ealgiris: fk kauno \u017ealgiris <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 42.5,
+      "rungs": [
+        {
+          "value": 0.5,
+          "price": 0.34,
+          "market_id": 57657689,
+          "name": "GNK Dinamo Zagreb vs. FK Kauno \u017dalgiris: FK Kauno \u017dalgiris O/U 0.5",
+          "event_id": 15185184,
+          "over": "0.340000",
+          "under": "0.660000",
+          "yes": null
+        },
+        {
+          "value": 1.5,
+          "price": 0.07,
+          "market_id": 57657690,
+          "name": "GNK Dinamo Zagreb vs. FK Kauno \u017dalgiris: FK Kauno \u017dalgiris O/U 1.5",
+          "event_id": 15185184,
+          "over": "0.070000",
+          "under": "0.930000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.495,
+          "market_id": 57657691,
+          "name": "GNK Dinamo Zagreb vs. FK Kauno \u017dalgiris: FK Kauno \u017dalgiris O/U 2.5",
+          "event_id": 15185184,
+          "over": "0.495000",
+          "under": "0.505000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:734135\u001ffk r\u012bgas futbola skola vs. \u00edf vestri: \u00edf vestri <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 41.5,
+      "rungs": [
+        {
+          "value": 0.5,
+          "price": 0.385,
+          "market_id": 56820943,
+          "name": "FK R\u012bgas Futbola Skola vs. \u00cdF Vestri: \u00cdF Vestri O/U 0.5",
+          "event_id": 15177139,
+          "over": "0.385000",
+          "under": "0.615000",
+          "yes": null
+        },
+        {
+          "value": 1.5,
+          "price": 0.085,
+          "market_id": 56820944,
+          "name": "FK R\u012bgas Futbola Skola vs. \u00cdF Vestri: \u00cdF Vestri O/U 1.5",
+          "event_id": 15177139,
+          "over": "0.085000",
+          "under": "0.915000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.5,
+          "market_id": 56820945,
+          "name": "FK R\u012bgas Futbola Skola vs. \u00cdF Vestri: \u00cdF Vestri O/U 2.5",
+          "event_id": 15177139,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:795404\u001fcd riestra vs. estudiantes de la plata: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 40.0,
+      "rungs": [
+        {
+          "value": 0.5,
+          "price": 0.795,
+          "market_id": 58235657,
+          "name": "CD Riestra vs. Estudiantes de La Plata: O/U 0.5",
+          "event_id": 15187571,
+          "over": "0.795000",
+          "under": "0.205000",
+          "yes": null
+        },
+        {
+          "value": 1.5,
+          "price": 0.5,
+          "market_id": 58235658,
+          "name": "CD Riestra vs. Estudiantes de La Plata: O/U 1.5",
+          "event_id": 15187571,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.245,
+          "market_id": 58235659,
+          "name": "CD Riestra vs. Estudiantes de La Plata: O/U 2.5",
+          "event_id": 15187571,
+          "over": "0.245000",
+          "under": "0.755000",
+          "yes": null
+        },
+        {
+          "value": 3.5,
+          "price": 0.135,
+          "market_id": 58235660,
+          "name": "CD Riestra vs. Estudiantes de La Plata: O/U 3.5",
+          "event_id": 15187571,
+          "over": "0.135000",
+          "under": "0.865000",
+          "yes": null
+        },
+        {
+          "value": 4.5,
+          "price": 0.1,
+          "market_id": 58235661,
+          "name": "CD Riestra vs. Estudiantes de La Plata: O/U 4.5",
+          "event_id": 15187571,
+          "over": "0.100000",
+          "under": "0.900000",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.5,
+          "market_id": 58235662,
+          "name": "CD Riestra vs. Estudiantes de La Plata: O/U 5.5",
+          "event_id": 15187571,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:773162\u001fulytau fc vs. fc astana: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 39.5,
+      "rungs": [
+        {
+          "value": 0.5,
+          "price": 0.5,
+          "market_id": 57653807,
+          "name": "Ulytau FC vs. FC Astana: O/U 0.5",
+          "event_id": 15185379,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 1.5,
+          "price": 0.515,
+          "market_id": 57653808,
+          "name": "Ulytau FC vs. FC Astana: O/U 1.5",
+          "event_id": 15185379,
+          "over": "0.515000",
+          "under": "0.485000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.5,
+          "market_id": 57653809,
+          "name": "Ulytau FC vs. FC Astana: O/U 2.5",
+          "event_id": 15185379,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 3.5,
+          "price": 0.495,
+          "market_id": 57653810,
+          "name": "Ulytau FC vs. FC Astana: O/U 3.5",
+          "event_id": 15185379,
+          "over": "0.495000",
+          "under": "0.505000",
+          "yes": null
+        },
+        {
+          "value": 4.5,
+          "price": 0.105,
+          "market_id": 57653811,
+          "name": "Ulytau FC vs. FC Astana: O/U 4.5",
+          "event_id": 15185379,
+          "over": "0.105000",
+          "under": "0.895000",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.5,
+          "market_id": 57653812,
+          "name": "Ulytau FC vs. FC Astana: O/U 5.5",
+          "event_id": 15185379,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:764104\u001fsalford city fc vs. shrewsbury town fc: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 39.0,
+      "rungs": [
+        {
+          "value": 0.5,
+          "price": 0.505,
+          "market_id": 57386290,
+          "name": "Salford City FC vs. Shrewsbury Town FC: O/U 0.5",
+          "event_id": null,
+          "over": "0.505000",
+          "under": "0.495000",
+          "yes": null
+        },
+        {
+          "value": 1.5,
+          "price": 0.785,
+          "market_id": 57386291,
+          "name": "Salford City FC vs. Shrewsbury Town FC: O/U 1.5",
+          "event_id": null,
+          "over": "0.785000",
+          "under": "0.215000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.515,
+          "market_id": 57396990,
+          "name": "Salford City FC vs. Shrewsbury Town FC: O/U 2.5",
+          "event_id": null,
+          "over": "0.515000",
+          "under": "0.485000",
+          "yes": null
+        },
+        {
+          "value": 3.5,
+          "price": 0.27,
+          "market_id": 57386292,
+          "name": "Salford City FC vs. Shrewsbury Town FC: O/U 3.5",
+          "event_id": null,
+          "over": "0.270000",
+          "under": "0.730000",
+          "yes": null
+        },
+        {
+          "value": 4.5,
+          "price": 0.11,
+          "market_id": 57396992,
+          "name": "Salford City FC vs. Shrewsbury Town FC: O/U 4.5",
+          "event_id": null,
+          "over": "0.110000",
+          "under": "0.890000",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.5,
+          "market_id": 57386293,
+          "name": "Salford City FC vs. Shrewsbury Town FC: O/U 5.5",
+          "event_id": null,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:764107\u001fbristol rovers fc vs. peterborough united fc: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 39.0,
+      "rungs": [
+        {
+          "value": 0.5,
+          "price": 0.5,
+          "market_id": 57386200,
+          "name": "Bristol Rovers FC vs. Peterborough United FC: O/U 0.5",
+          "event_id": 15183227,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 1.5,
+          "price": 0.5,
+          "market_id": 57386201,
+          "name": "Bristol Rovers FC vs. Peterborough United FC: O/U 1.5",
+          "event_id": 15183227,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.5,
+          "market_id": 57386202,
+          "name": "Bristol Rovers FC vs. Peterborough United FC: O/U 2.5",
+          "event_id": 15183227,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 3.5,
+          "price": 0.5,
+          "market_id": 57386203,
+          "name": "Bristol Rovers FC vs. Peterborough United FC: O/U 3.5",
+          "event_id": 15183227,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 4.5,
+          "price": 0.11,
+          "market_id": 57396890,
+          "name": "Bristol Rovers FC vs. Peterborough United FC: O/U 4.5",
+          "event_id": 15183227,
+          "over": "0.110000",
+          "under": "0.890000",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.5,
+          "market_id": 57386204,
+          "name": "Bristol Rovers FC vs. Peterborough United FC: O/U 5.5",
+          "event_id": 15183227,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:764108\u001fleyton orient fc vs. oxford united fc: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 39.0,
+      "rungs": [
+        {
+          "value": 0.5,
+          "price": 0.5,
+          "market_id": 57386170,
+          "name": "Leyton Orient FC vs. Oxford United FC: O/U 0.5",
+          "event_id": 15190427,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 1.5,
+          "price": 0.5,
+          "market_id": 57386171,
+          "name": "Leyton Orient FC vs. Oxford United FC: O/U 1.5",
+          "event_id": 15190427,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.525,
+          "market_id": 57396854,
+          "name": "Leyton Orient FC vs. Oxford United FC: O/U 2.5",
+          "event_id": 15190427,
+          "over": "0.525000",
+          "under": "0.475000",
+          "yes": null
+        },
+        {
+          "value": 3.5,
+          "price": 0.5,
+          "market_id": 57386172,
+          "name": "Leyton Orient FC vs. Oxford United FC: O/U 3.5",
+          "event_id": 15190427,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 4.5,
+          "price": 0.11,
+          "market_id": 57396856,
+          "name": "Leyton Orient FC vs. Oxford United FC: O/U 4.5",
+          "event_id": 15190427,
+          "over": "0.110000",
+          "under": "0.890000",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.5,
+          "market_id": 57386173,
+          "name": "Leyton Orient FC vs. Oxford United FC: O/U 5.5",
+          "event_id": 15190427,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:597444\u001fus yacoub el mansour vs. hus agadir: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 38.5,
+      "rungs": [
+        {
+          "value": 0.5,
+          "price": 0.54,
+          "market_id": 37803067,
+          "name": "US Yacoub El Mansour vs. HUS Agadir: O/U 0.5",
+          "event_id": 14956166,
+          "over": "0.540000",
+          "under": "0.460000",
+          "yes": null
+        },
+        {
+          "value": 1.5,
+          "price": 0.53,
+          "market_id": 37803068,
+          "name": "US Yacoub El Mansour vs. HUS Agadir: O/U 1.5",
+          "event_id": 14956166,
+          "over": "0.530000",
+          "under": "0.470000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.5,
+          "market_id": 37803069,
+          "name": "US Yacoub El Mansour vs. HUS Agadir: O/U 2.5",
+          "event_id": 14956166,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 3.5,
+          "price": 0.425,
+          "market_id": 37803070,
+          "name": "US Yacoub El Mansour vs. HUS Agadir: O/U 3.5",
+          "event_id": 14956166,
+          "over": "0.425000",
+          "under": "0.575000",
+          "yes": null
+        },
+        {
+          "value": 4.5,
+          "price": 0.065,
+          "market_id": 37803071,
+          "name": "US Yacoub El Mansour vs. HUS Agadir: O/U 4.5",
+          "event_id": 14956166,
+          "over": "0.065000",
+          "under": "0.935000",
+          "yes": null
+        },
+        {
+          "value": 5.5,
+          "price": 0.45,
+          "market_id": 37803042,
+          "name": "US Yacoub El Mansour vs. HUS Agadir: O/U 5.5",
+          "event_id": 14956166,
+          "over": "0.450000",
+          "under": "0.550000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:795407\u001fca rosario central vs. ca aldosivi: ca aldosivi <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 38.5,
+      "rungs": [
+        {
+          "value": 0.5,
+          "price": 0.425,
+          "market_id": 58235569,
+          "name": "CA Rosario Central vs. CA Aldosivi: CA Aldosivi O/U 0.5",
+          "event_id": 15187569,
+          "over": "0.425000",
+          "under": "0.575000",
+          "yes": null
+        },
+        {
+          "value": 1.5,
+          "price": 0.11,
+          "market_id": 58235570,
+          "name": "CA Rosario Central vs. CA Aldosivi: CA Aldosivi O/U 1.5",
+          "event_id": 15187569,
+          "over": "0.110000",
+          "under": "0.890000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.495,
+          "market_id": 58235571,
+          "name": "CA Rosario Central vs. CA Aldosivi: CA Aldosivi O/U 2.5",
+          "event_id": 15187569,
+          "over": "0.495000",
+          "under": "0.505000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:734067\u001ffk partizan beograd vs. fc una strassen: fc una strassen <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 38.5,
+      "rungs": [
+        {
+          "value": 0.5,
+          "price": 0.435,
+          "market_id": 56821466,
+          "name": "FK Partizan Beograd vs. FC UNA Strassen: FC UNA Strassen O/U 0.5",
+          "event_id": 15177135,
+          "over": "0.435000",
+          "under": "0.565000",
+          "yes": null
+        },
+        {
+          "value": 1.5,
+          "price": 0.115,
+          "market_id": 56821467,
+          "name": "FK Partizan Beograd vs. FC UNA Strassen: FC UNA Strassen O/U 1.5",
+          "event_id": 15177135,
+          "over": "0.115000",
+          "under": "0.885000",
+          "yes": null
+        },
+        {
+          "value": 2.5,
+          "price": 0.5,
+          "market_id": 56821468,
+          "name": "FK Partizan Beograd vs. FC UNA Strassen: FC UNA Strassen O/U 2.5",
+          "event_id": 15177135,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        }
+      ]
+    }
+  ]
+}

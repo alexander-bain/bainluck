@@ -2252,8 +2252,23 @@ def compute_calibration_prices(self):
 
 @celery_app.task(
     bind=True,
-    soft_time_limit=600,
-    time_limit=660,
+    # CAL-P134 (#1835): 600 -> 1800. This is the first version of this number
+    # that is MEASURED rather than inherited. The sweep is 372 non-empty
+    # (category, month) cells over 15,948 eligible events; a stratified sample
+    # of 64 of them — the 20 largest plus every eighth of the rest — took 377 s
+    # through db-query, with 24 of those 64 hitting db-query's own 10 s row-path
+    # cap so their true cost is a lower bound. The whole grid does not fit in
+    # 600 s and never did; the 23-hour publish outage of 2026-08-29 is what that
+    # looked like from outside.
+    #
+    # Raising a limit is normally the wrong move, and it is only safe here
+    # because of the two things that landed with it: no single statement can run
+    # longer than ``_CHUNK_TIMEOUT_S`` (45 s), so the longest uninterrupted
+    # operation is bounded far below the limit; and the Redis write happens once,
+    # at the end, after every slice has landed — so a run killed at the limit
+    # publishes NOTHING rather than a short curve.
+    soft_time_limit=1800,
+    time_limit=1860,
     name="app.tasks.precompute_bookmaker_calibration",
 )
 def precompute_bookmaker_calibration(self):
@@ -2275,13 +2290,15 @@ def precompute_bookmaker_calibration(self):
     soft-limit kill loses the run's compute and nothing else, and the next fire
     recomputes from scratch.
 
-    ⚠️ The query is NOT cheap and its true runtime is UNMEASURED: it exceeded
-    25s on production (db-query's ceiling) so only a lower bound is known. 600s
-    is inherited from the sibling above, not derived from a measurement. This is
-    survivable precisely because of the terminal contract — the task is enrolled
-    in ``task_verdict.ENFORCED_TASKS``, so if 600s turns out to be too short the
-    run reads NOT-GREEN instead of vanishing, and the next step is a bounded or
-    incremental query rather than another silent quarter.
+    ⚠️ 600s DID turn out to be too short, exactly as the paragraph this replaces
+    warned, and the terminal contract worked: the run read NOT-GREEN instead of
+    vanishing. What it could not do was keep the site publishing — the Redis key
+    aged out of its 24h TTL and /api/calibration went 23 hours without a fresh
+    curve. CAL-P134 took the next step that paragraph named, "a bounded or
+    incremental query": the sweep is now 372 bounded (category, month) slices
+    with a 45s per-statement ceiling and adaptive splitting, the statement
+    itself is a single pass rather than two, and the limit above is measured.
+    See ``_precompute_bookmaker_calibration`` for the numbers.
     """
     from app.tasks.backfill_winners import _precompute_bookmaker_calibration
     return _tracked_run("bookmaker_calibration", _precompute_bookmaker_calibration())

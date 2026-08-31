@@ -1,0 +1,47 @@
+CAL-P140 WINDOW ODDS — 22 of 24
+
+  [whole-ring]  all three regimes pooled — printed only so the pooling error is visible
+    168 beats, 66 clean, 102 misses, miss rate 0.607
+      CLEAN                    66
+      A_GATE_REFUSAL           35
+      C_DEPLOY_KILL            33
+      BD_EARLY_CANCEL          18
+      B_WINDOW_EXHAUSTION      15
+      UNCLASSIFIED             1
+
+  [post-v3921, key-outage excluded]  THE OPERATIVE BAND: D repaired, A's key-outage saturation removed
+    15 beats, 8 clean, 7 misses, miss rate 0.467
+      CLEAN                    8
+      C_DEPLOY_KILL            4
+      B_WINDOW_EXHAUSTION      2
+      BD_EARLY_CANCEL          1
+
+  [post-rebaseline]  the live window itself — too short to be a rate, printed as the check
+    7 beats, 5 clean, 2 misses, miss rate 0.286
+      CLEAN                    5
+      B_WINDOW_EXHAUSTION      1
+      C_DEPLOY_KILL            1
+
+  operative miss rate 0.467, 90% CI [0.333, 0.600] (15 beats, 2000 moving-block draws, block 3, seed 20260830)
+
+  live window: 7/24 beats, 2 misses, 0 of 2 budget left, 17 beats to go
+
+    at miss rate 0.467  (measured rate carried forward)
+      expected further misses: 7.93 against a budget of 0
+      P(condition met) = 0.0000
+
+    at miss rate 0.333  (optimistic end of the measured rate's 90% CI (15 beats, moving-block bootstrap))
+      expected further misses: 5.67 against a budget of 0
+      P(condition met) = 0.0010
+
+    at miss rate 0.600  (pessimistic end of the same CI)
+      expected further misses: 10.2 against a budget of 0
+      P(condition met) = 0.0000
+
+    at miss rate 0.273  (no releases during the window (class C suppressed))
+      expected further misses: 4.64 against a budget of 0
+      P(condition met) = 0.0045
+
+    at miss rate 0.050  (the amendment's own healthy 0.95 publish rate — a ceiling, not a forecast)
+      expected further misses: 0.85 against a budget of 0
+      P(condition met) = 0.4181

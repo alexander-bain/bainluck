@@ -1,0 +1,64 @@
+CAL-P145 REFUSAL REGISTER (live board) — every documented refusal, and where each cell now sits
+  board read: 20 queued cells   refusal documents: 8   cells refused: 13
+
+  cell                                       session   disposition      refused at     board now      excess now
+  polymarket/soccer                          CAL-P118  no rule exists   rank 4         rank 4             37,768
+  odds_api_bookmaker/basketball_nba          CAL-P120  not established  -              rank 5             27,298
+  kalshi/golf                                CAL-P127  not established  rank 9         rank 7             18,736
+  odds_api_bookmaker/baseball_mlb_preseason  CAL-P120  not established  -              rank 8             18,672
+  kalshi/entertainment                       CAL-P129  no rule exists   rank 8         rank 9             17,808
+  polymarket/cricket                         CAL-P123  no rule exists   rank 10        rank 10            16,290
+  polymarket/golf                            CAL-P130  no rule exists   rank 12        rank 12            15,834
+  odds_api_bookmaker/icehockey_nhl           CAL-P120  not established  -              rank 13            12,035
+  odds_api_bookmaker/basketball_wncaab       CAL-P120  not established  -              rank 14            12,006
+  polymarket/economics                       CAL-P131  no rule exists   rank 15        rank 15            11,440
+  odds_api_bookmaker/basketball_wnba         CAL-P120  not established  -              rank 18             8,573
+  polymarket/tech                            CAL-P132  no rule exists   rank 19        rank 19             5,411
+  odds_api_bookmaker/basketball_euroleague   CAL-P120  not established  -              rank 20             5,092
+
+  CAL-P118 — polymarket/soccer  [no rule exists]
+      searched: the cell's own named mechanism (incoherent ladders) plus every variant tried, holdout-split
+      the shipped rule makes the cell WORSE on BOTH halves — OLD 4.86 -> 4.99, NEW 2.01 -> 2.22; rank 4 keeps its 44,857 excess-outcomes and loses its check
+      artifacts/cal-p118/RULE-DESIGN-polymarket-soccer.md
+  CAL-P120 — odds_api_bookmaker/basketball_nba + 5 more  [not established]
+      searched: all six cells re-folded at game grain instead of bookmaker-row grain
+      every one of the six falls below the board's own SIGMA_GATE = 2.0 once the unit is a game (measured sigma 0.62-1.72); 82,345 of 478,677 excess-outcomes (17.2%) are an artifact of counting one game 10-18x
+      artifacts/cal-p120/RULE-DESIGN-odds-api-bookmaker-six-cells.md
+      🔴 refused as NOT ESTABLISHED and still seated: six of the twenty live seats, including rank 5. A refusal that the board never acted on is the loudest thing this register can show — the conveyor still ranks these cells above cells nobody has searched
+  CAL-P123 — polymarket/cricket  [no rule exists]
+      searched: 1,971 candidate rules — all 127 non-empty name-family subsets and all 1,844 shape x price-sum subsets retaining >=300 rows, exhaustive
+      not one of the 1,971 brings the cell under 3.0; the best lands at 4.96 while deleting 29% of the cell, and the best family rule at 5.45 while deleting 76%
+      artifacts/cal-p123/RULE-DESIGN-polymarket-cricket.md
+      waits on D14 (whether the VENUE is wrong rather than us)
+  CAL-P127 — kalshi/golf  [not established]
+      searched: eight partitions exhaustively, NO RULE BANKED
+      measured sigma 1.42 (cluster bootstrap) against SIGMA_GATE 2.0 — the cell is not established and the document recommends taking it OFF the board (17-CAL)
+      artifacts/cal-p127/RULE-DESIGN-kalshi-golf.md
+      🔴 recommended OFF the board by its own refusal and still seated at rank 7 — the recommendation is 17-CAL and is unanswered
+      waits on 17-CAL
+  CAL-P129 — kalshi/entertainment  [no rule exists]
+      searched: 12 partitions, no retention floor
+      sumband's 33 pooled passes go to 0 of 1023 under the holdout; best worst-half 3.09 vs a 3.0 bar
+      artifacts/cal-p129/RULE-DESIGN-kalshi-entertainment.md
+      waits on 13-CAL
+      SHARPENED (refusal stands): CAL-P143 measured the lost-loss class here: 395 published at 100.0% winners is really 827 at 47.8%, and the cell headline moves 5.21 -> 6.30, i.e. WORSE. This is the cell D13's 'the fix makes the number worse' framing was written on — and it is one of two that go the wrong way out of four measured. artifacts/cal-p143/GENERALITY-12CAL.md
+  CAL-P130 — polymarket/golf  [no rule exists]
+      searched: 15 partitions (14 inherited + 1 built), exhaustive
+      no subset clears the bar at any retention; the cell shows ~100 golfers each priced ~48% to finish top five
+      artifacts/cal-p130/RULE-DESIGN-polymarket-golf.md
+  CAL-P131 — polymarket/economics  [no rule exists]
+      searched: 16 partitions (15 inherited + 1 built), exhaustive
+      508 outcomes the curve admits only because they won; an 11-band S&P market prices both tails at 40%
+      artifacts/cal-p131/RULE-DESIGN-polymarket-economics.md
+      SHARPENED (refusal stands): CAL-P143 ran CAL-P131's lead on the producer's own chain: 78 eligible losers UNIQUELY dropped (not 508), ECE 39.87, winrate 0.0%; the cell moves 3.90 -> 3.68, i.e. BETTER. artifacts/cal-p143/GENERALITY-12CAL.md
+  CAL-P132 — polymarket/tech  [no rule exists]
+      searched: 17 partitions, whole 2^k lattice at --min-rows 1 --min-share 0
+      zero subsets clear 3.0 on the worst half at ANY retention, including retentions that delete 99% of the cell; best leakage-free 3.12 / 4.66
+      artifacts/cal-p132/RULE-DESIGN-polymarket-tech.md
+      was rank 19 when refused (CAL-P132) and CAL-P143 recorded it as having LEFT the board; the live board has it back at rank 19. Board membership oscillates — do not treat one render's absence as a resolution
+
+  ON the board: 13 of 20 live seats   OFF the board: 0 of 13 refused cells
+  Excess-outcomes under a documented refusal: 206,963 of 472,104 (43.8%)
+  🔴 A seat under a documented refusal is a seat the conveyor's step 1 will select and then decline. That is the empty-set selection in alex-inbox/calibration-908, shown as a number rather than asserted.
+
+  EXIT 0

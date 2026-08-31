@@ -79,3 +79,24 @@ d38a7e2a61e42f2a4747ca1ddd832b837ea30b00:frontend/__tests__/lib/analyticsSanitiz
 cad97a4d4476a0b95d771cd3ed755cd370f3d2b6:frontend/__tests__/lib/analyticsSanitizeShapes.test.ts:generic-api-key:34
 7ef2ce7fbca7687f8080f0406738bac66d8ed5bb:frontend/e2e/contract/redaction.contract.test.js:stripe-access-token:61
 
+# --- lane token, NOT a credential (CAL-P147, #1978; allowlisted by CAL-P151) ---
+# `CAL-P147-RENDER-BANKER` is a process tag. It is put in argv ON PURPOSE so a
+# later session can `pgrep -f`/`pkill` exactly one lane's watcher without a
+# pattern that also matches another worktree's work — the failure CAL-P150 hit
+# and cal-p149 §2 documents. It authenticates nothing, grants nothing, and
+# appears verbatim in the runner directive's own restart line. There is nothing
+# to rotate; gitleaks matches it only because the identifier says "TOKEN" and
+# the value is a long opaque-looking string.
+#
+# Both findings are in ONE ancestor commit, f5a465ac, which is a base of
+# `program/calibration-119` — so this red reproduces on EVERY PR from any branch
+# carrying CAL-P147, not just ours. CERT-485 (2026-08-30 18:26Z) made it
+# token-blocking, which is why it is being fixed here rather than ridden.
+#
+# ⚠️ Fingerprints are commit-pinned, so RE-COMMITTING either file re-introduces
+# the finding under a new SHA. `banker-heartbeat.json` is rewritten every 180 s
+# by the live banker; leave it uncommitted, or add its new fingerprint here in
+# the same change.
+f5a465ac884f0c97445aaf09d10cb72e21612da0:artifacts/cal-p147/render-banker.py:generic-api-key:75
+f5a465ac884f0c97445aaf09d10cb72e21612da0:artifacts/cal-p147-renders/banker-heartbeat.json:generic-api-key:7
+

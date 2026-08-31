@@ -1,0 +1,296 @@
+
+=== polymarket/cricket
+    pull [1] ids 112847-1112847
+    pull [2] ids 1112847-2112847
+    pull [3] ids 2112847-3112847
+    pull [4] ids 3112847-4112847
+    pull [5] ids 4112847-5112847
+    pull [6] ids 5112847-6112847
+    pull [7] ids 6112847-7112847
+    pull [8] ids 7112847-8112847
+    pull [9] ids 8112847-9112847
+    pull [10] ids 9112847-10112847
+    pull [11] ids 10112847-11112847
+    pull [12] ids 11112847-12112847
+    pull [13] ids 12112847-13112847
+    pull [14] ids 13112847-14112847
+    pull [15] ids 14112847-15112847
+    pull [16] ids 15112847-16112847
+    pull [17] ids 16112847-17112847
+    pull [18] ids 17112847-18112847
+    pull [19] ids 18112847-19112847
+    pull [20] ids 19112847-20112847
+    pull [21] ids 20112847-21112847
+    pull [22] ids 21112847-22112847
+    pull [23] ids 22112847-23112847
+    pull [24] ids 23112847-24112847
+    pull [25] ids 24112847-25112847
+    pull [26] ids 25112847-26112847
+    pull [27] ids 26112847-27112847
+    pull [28] ids 27112847-28112847
+    pull [29] ids 28112847-29112847
+    pull [30] ids 29112847-30112847
+    pull [31] ids 30112847-31112847
+    pull [32] ids 31112847-32112847
+    pull [33] ids 32112847-33112847
+    pull [34] ids 33112847-34112847
+    pull [35] ids 34112847-35112847
+    pull [36] ids 35112847-36112847
+    pull [37] ids 36112847-37112847
+    pull [38] ids 37112847-38112847
+    pull [39] ids 38112847-39112847
+    pull [40] ids 39112847-40112847
+    pull [41] ids 40112847-41112847
+    pull [42] ids 41112847-42112847
+    pull [43] ids 42112847-43112847
+    pull [44] ids 43112847-44112847
+    pull [45] ids 44112847-45112847
+    pull [46] ids 45112847-46112847
+    pull [47] ids 46112847-47112847
+    pull [48] ids 47112847-48112847
+    pull [49] ids 48112847-49112847
+    pull [50] ids 49112847-50112847
+    pull [51] ids 50112847-51112847
+    pull [52] ids 51112847-52112847
+    pull [53] ids 52112847-53112847
+    pull [54] ids 53112847-54112847
+    pull [55] ids 54112847-55112847
+    pull [56] ids 55112847-56112847
+    pull [57] ids 56112847-57112847
+    pull [58] ids 57112847-58112847
+    pull [59] ids 58112847-59112847
+    pull [60] ids 59112847-59851747
+    [1/60] ids 112847-1112847 (0s elapsed)
+    [2/60] ids 1112847-2112847 (1s elapsed)
+    [3/60] ids 2112847-3112847 (1s elapsed)
+    [4/60] ids 3112847-4112847 (2s elapsed)
+    [5/60] ids 4112847-5112847 (2s elapsed)
+    [6/60] ids 5112847-6112847 (3s elapsed)
+    [7/60] ids 6112847-7112847 (3s elapsed)
+    [8/60] ids 7112847-8112847 (4s elapsed)
+    [9/60] ids 8112847-9112847 (5s elapsed)
+    [10/60] ids 9112847-10112847 (6s elapsed)
+    [11/60] ids 10112847-11112847 (6s elapsed)
+    [12/60] ids 11112847-12112847 (7s elapsed)
+    [13/60] ids 12112847-13112847 (8s elapsed)
+    [14/60] ids 13112847-14112847 (8s elapsed)
+    [15/60] ids 14112847-15112847 (10s elapsed)
+    [16/60] ids 15112847-16112847 (11s elapsed)
+    [17/60] ids 16112847-17112847 (11s elapsed)
+    [18/60] ids 17112847-18112847 (12s elapsed)
+    [19/60] ids 18112847-19112847 (13s elapsed)
+    [20/60] ids 19112847-20112847 (13s elapsed)
+    [21/60] ids 20112847-21112847 (13s elapsed)
+    [22/60] ids 21112847-22112847 (14s elapsed)
+    [23/60] ids 22112847-23112847 (15s elapsed)
+    [24/60] ids 23112847-24112847 (16s elapsed)
+    [25/60] ids 24112847-25112847 (16s elapsed)
+    [26/60] ids 25112847-26112847 (17s elapsed)
+    [27/60] ids 26112847-27112847 (18s elapsed)
+    [28/60] ids 27112847-28112847 (18s elapsed)
+    [29/60] ids 28112847-29112847 (19s elapsed)
+    [30/60] ids 29112847-30112847 (20s elapsed)
+    [31/60] ids 30112847-31112847 (20s elapsed)
+    [32/60] ids 31112847-32112847 (21s elapsed)
+    [33/60] ids 32112847-33112847 (22s elapsed)
+    [34/60] ids 33112847-34112847 (24s elapsed)
+    [35/60] ids 34112847-35112847 (25s elapsed)
+    [36/60] ids 35112847-36112847 (27s elapsed)
+    [37/60] ids 36112847-37112847 (28s elapsed)
+    [38/60] ids 37112847-38112847 (29s elapsed)
+    [39/60] ids 38112847-39112847 (30s elapsed)
+    [40/60] ids 39112847-40112847 (31s elapsed)
+    [41/60] ids 40112847-41112847 (31s elapsed)
+    [42/60] ids 41112847-42112847 (32s elapsed)
+    [43/60] ids 42112847-43112847 (32s elapsed)
+    [44/60] ids 43112847-44112847 (32s elapsed)
+    [45/60] ids 44112847-45112847 (33s elapsed)
+    [46/60] ids 45112847-46112847 (33s elapsed)
+    [47/60] ids 46112847-47112847 (33s elapsed)
+    [48/60] ids 47112847-48112847 (34s elapsed)
+    [49/60] ids 48112847-49112847 (34s elapsed)
+    [50/60] ids 49112847-50112847 (34s elapsed)
+    [51/60] ids 50112847-51112847 (35s elapsed)
+    [52/60] ids 51112847-52112847 (35s elapsed)
+    [53/60] ids 52112847-53112847 (35s elapsed)
+    [54/60] ids 53112847-54112847 (36s elapsed)
+    [55/60] ids 54112847-55112847 (36s elapsed)
+    [56/60] ids 55112847-56112847 (37s elapsed)
+    [57/60] ids 56112847-57112847 (38s elapsed)
+    [58/60] ids 57112847-58112847 (42s elapsed)
+    [59/60] ids 58112847-59112847 (62s elapsed)
+    [60/60] ids 59112847-59851747 (67s elapsed)
+  PARTITION — offline, from CAL-P137's cached rows
+    cell                                         polymarket/cricket
+    rows_cached                                  6264
+    rows_priced                                  1969
+    families                                     0
+    families_condemned                           0
+    families_ambiguous_kept                      0
+    min_flips_histogram                          {}
+    unique_one_flip_families                     0
+    markets_in_two_arms_before_precedence        0
+    markets_per_arm                              {'a_flip1_suspect': 0, 'b_flip1_sibling': 0, 'c_flip1_ambiguous': 0, 'd_flip2plus': 0, 'e_no_assignment': 0, 'f_mono_ambiguous': 0, 'g_mono_coherent': 0}
+    min_flips agrees with era-fold._min_flips    0 families, 0 disagreements
+
+  curve generated 2026-08-30T17:37:40.844750+00:00  population q268
+  SELF-CHECK — the producer's own chain against the payload it produced
+    exact replica    n=   2952  ECE=  7.66  gap=  -3.48
+    payload          n=   3258  ECE=   8.0  gap=  -4.51
+    delta            n=   -306 (-9.392%)
+
+  arm                   markets  published  reach%       n   share     ECE      gap  mean_p  realized  ECE_flip
+  a_flip1_suspect             0          0       —       0
+  b_flip1_sibling             0          0       —       0
+  c_flip1_ambiguous           0          0       —       0
+  d_flip2plus                 0          0       —       0
+  e_no_assignment             0          0       —       0
+  f_mono_ambiguous            0          0       —       0
+  g_mono_coherent             0          0       —       0
+  z_not_in_a_ladder        1150       1150  100.0%    2952  100.0%    7.66    -3.48  0.3872    0.4221     37.70
+
+
+=== polymarket/CAL-P150-CRICKET-LEGSWAP
+    pull [1] ids 112847-1112847
+    pull [2] ids 1112847-2112847
+    pull [3] ids 2112847-3112847
+    pull [4] ids 3112847-4112847
+    pull [5] ids 4112847-5112847
+    pull [6] ids 5112847-6112847
+    pull [7] ids 6112847-7112847
+    pull [8] ids 7112847-8112847
+    pull [9] ids 8112847-9112847
+    pull [10] ids 9112847-10112847
+    pull [11] ids 10112847-11112847
+    pull [12] ids 11112847-12112847
+    pull [13] ids 12112847-13112847
+    pull [14] ids 13112847-14112847
+    pull [15] ids 14112847-15112847
+    pull [16] ids 15112847-16112847
+    pull [17] ids 16112847-17112847
+    pull [18] ids 17112847-18112847
+    pull [19] ids 18112847-19112847
+    pull [20] ids 19112847-20112847
+    pull [21] ids 20112847-21112847
+    pull [22] ids 21112847-22112847
+    pull [23] ids 22112847-23112847
+    pull [24] ids 23112847-24112847
+    pull [25] ids 24112847-25112847
+    pull [26] ids 25112847-26112847
+    pull [27] ids 26112847-27112847
+    pull [28] ids 27112847-28112847
+    pull [29] ids 28112847-29112847
+    pull [30] ids 29112847-30112847
+    pull [31] ids 30112847-31112847
+    pull [32] ids 31112847-32112847
+    pull [33] ids 32112847-33112847
+    pull [34] ids 33112847-34112847
+    pull [35] ids 34112847-35112847
+    pull [36] ids 35112847-36112847
+    pull [37] ids 36112847-37112847
+    pull [38] ids 37112847-38112847
+    pull [39] ids 38112847-39112847
+    pull [40] ids 39112847-40112847
+    pull [41] ids 40112847-41112847
+    pull [42] ids 41112847-42112847
+    pull [43] ids 42112847-43112847
+    pull [44] ids 43112847-44112847
+    pull [45] ids 44112847-45112847
+    pull [46] ids 45112847-46112847
+    pull [47] ids 46112847-47112847
+    pull [48] ids 47112847-48112847
+    pull [49] ids 48112847-49112847
+    pull [50] ids 49112847-50112847
+    pull [51] ids 50112847-51112847
+    pull [52] ids 51112847-52112847
+    pull [53] ids 52112847-53112847
+    pull [54] ids 53112847-54112847
+    pull [55] ids 54112847-55112847
+    pull [56] ids 55112847-56112847
+    pull [57] ids 56112847-57112847
+    pull [58] ids 57112847-58112847
+    pull [59] ids 58112847-59112847
+    pull [60] ids 59112847-59851747
+    [1/60] ids 112847-1112847 (0s elapsed)
+    [2/60] ids 1112847-2112847 (2s elapsed)
+    [3/60] ids 2112847-3112847 (3s elapsed)
+    [4/60] ids 3112847-4112847 (5s elapsed)
+    [5/60] ids 4112847-5112847 (6s elapsed)
+    [6/60] ids 5112847-6112847 (7s elapsed)
+    [7/60] ids 6112847-7112847 (8s elapsed)
+    [8/60] ids 7112847-8112847 (9s elapsed)
+    [9/60] ids 8112847-9112847 (10s elapsed)
+    [10/60] ids 9112847-10112847 (11s elapsed)
+    [11/60] ids 10112847-11112847 (12s elapsed)
+    [12/60] ids 11112847-12112847 (14s elapsed)
+    [13/60] ids 12112847-13112847 (15s elapsed)
+    [14/60] ids 13112847-14112847 (17s elapsed)
+    [15/60] ids 14112847-15112847 (20s elapsed)
+    [16/60] ids 15112847-16112847 (21s elapsed)
+    [17/60] ids 16112847-17112847 (21s elapsed)
+    [18/60] ids 17112847-18112847 (22s elapsed)
+    [19/60] ids 18112847-19112847 (23s elapsed)
+    [20/60] ids 19112847-20112847 (23s elapsed)
+    [21/60] ids 20112847-21112847 (24s elapsed)
+    [22/60] ids 21112847-22112847 (25s elapsed)
+    [23/60] ids 22112847-23112847 (26s elapsed)
+    [24/60] ids 23112847-24112847 (26s elapsed)
+    [25/60] ids 24112847-25112847 (27s elapsed)
+    [26/60] ids 25112847-26112847 (28s elapsed)
+    [27/60] ids 26112847-27112847 (29s elapsed)
+    [28/60] ids 27112847-28112847 (30s elapsed)
+    [29/60] ids 28112847-29112847 (30s elapsed)
+    [30/60] ids 29112847-30112847 (31s elapsed)
+    [31/60] ids 30112847-31112847 (32s elapsed)
+    [32/60] ids 31112847-32112847 (32s elapsed)
+    [33/60] ids 32112847-33112847 (34s elapsed)
+    [34/60] ids 33112847-34112847 (37s elapsed)
+    [35/60] ids 34112847-35112847 (37s elapsed)
+    [36/60] ids 35112847-36112847 (43s elapsed)
+    [37/60] ids 36112847-37112847 (44s elapsed)
+    [38/60] ids 37112847-38112847 (44s elapsed)
+    [39/60] ids 38112847-39112847 (44s elapsed)
+    [40/60] ids 39112847-40112847 (45s elapsed)
+    [41/60] ids 40112847-41112847 (45s elapsed)
+    [42/60] ids 41112847-42112847 (45s elapsed)
+    [43/60] ids 42112847-43112847 (46s elapsed)
+    [44/60] ids 43112847-44112847 (46s elapsed)
+    [45/60] ids 44112847-45112847 (46s elapsed)
+    [46/60] ids 45112847-46112847 (47s elapsed)
+    [47/60] ids 46112847-47112847 (47s elapsed)
+    [48/60] ids 47112847-48112847 (47s elapsed)
+    [49/60] ids 48112847-49112847 (48s elapsed)
+    [50/60] ids 49112847-50112847 (48s elapsed)
+    [51/60] ids 50112847-51112847 (48s elapsed)
+    [52/60] ids 51112847-52112847 (49s elapsed)
+    [53/60] ids 52112847-53112847 (49s elapsed)
+    [54/60] ids 53112847-54112847 (49s elapsed)
+    [55/60] ids 54112847-55112847 (50s elapsed)
+    [56/60] ids 55112847-56112847 (50s elapsed)
+    [57/60] ids 56112847-57112847 (51s elapsed)
+    [58/60] ids 57112847-58112847 (53s elapsed)
+    [59/60] ids 58112847-59112847 (62s elapsed)
+    [60/60] ids 59112847-59851747 (66s elapsed)
+  PARTITION — offline, from CAL-P137's cached rows
+    cell                                         polymarket/CAL-P150-CRICKET-LEGSWAP
+    rows_cached                                  0
+    rows_priced                                  0
+    families                                     0
+    families_condemned                           0
+    families_ambiguous_kept                      0
+    min_flips_histogram                          {}
+    unique_one_flip_families                     0
+    markets_in_two_arms_before_precedence        0
+    markets_per_arm                              {'a_flip1_suspect': 0, 'b_flip1_sibling': 0, 'c_flip1_ambiguous': 0, 'd_flip2plus': 0, 'e_no_assignment': 0, 'f_mono_ambiguous': 0, 'g_mono_coherent': 0}
+    min_flips agrees with era-fold._min_flips    0 families, 0 disagreements
+
+  curve generated 2026-08-30T17:37:40.844750+00:00  population q268
+  SELF-CHECK — the producer's own chain against the payload it produced
+Traceback (most recent call last):
+  File "/Users/bain/bainluck-dev/calibration/artifacts/cal-p138/published-legswap-fold.py", line 266, in <module>
+    out = fold_cell(cat, cce.DEFAULT_WIDTH)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bain/bainluck-dev/calibration/artifacts/cal-p138/published-legswap-fold.py", line 200, in fold_cell
+    f"ECE={sc['exact']['ece']:>6}  gap={sc['exact']['gap']:>+7}")
+          ^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: unsupported format string passed to NoneType.__format__

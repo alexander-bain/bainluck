@@ -1,0 +1,108 @@
+{
+  "cell": "polymarket/cricket",
+  "partition": {
+    "cell": "polymarket/cricket",
+    "rows_cached": 6264,
+    "rows_priced": 1969,
+    "families": 0,
+    "families_condemned": 0,
+    "families_ambiguous_kept": 0,
+    "min_flips_histogram": {},
+    "unique_one_flip_families": 0,
+    "markets_in_two_arms_before_precedence": 0,
+    "markets_per_arm": {
+      "a_flip1_suspect": 0,
+      "b_flip1_sibling": 0,
+      "c_flip1_ambiguous": 0,
+      "d_flip2plus": 0,
+      "e_no_assignment": 0,
+      "f_mono_ambiguous": 0,
+      "g_mono_coherent": 0
+    }
+  },
+  "min_flips_self_check": {
+    "families_checked": 0,
+    "cost_disagreements": 0,
+    "examples": [],
+    "ok": true
+  },
+  "cache_age_rows": {
+    "compared": false,
+    "reason": "no cal-p136 cache for this cell"
+  },
+  "population_self_check": {
+    "exact": {
+      "n": 2952,
+      "ece": 7.66,
+      "gap": -3.48
+    },
+    "payload": {
+      "n": 3258,
+      "ece": 8.0,
+      "gap": -4.51,
+      "generated_at": "2026-08-30T17:37:40.844750+00:00",
+      "population_version": "q268"
+    },
+    "delta_n": -306,
+    "delta_n_pct": -9.392,
+    "seconds": 70.8
+  },
+  "published_markets_in_cell": 1150,
+  "arms": {
+    "a_flip1_suspect": {
+      "markets_in_cell": 0,
+      "markets_published": 0,
+      "reach_pct": null,
+      "n": 0
+    },
+    "b_flip1_sibling": {
+      "markets_in_cell": 0,
+      "markets_published": 0,
+      "reach_pct": null,
+      "n": 0
+    },
+    "c_flip1_ambiguous": {
+      "markets_in_cell": 0,
+      "markets_published": 0,
+      "reach_pct": null,
+      "n": 0
+    },
+    "d_flip2plus": {
+      "markets_in_cell": 0,
+      "markets_published": 0,
+      "reach_pct": null,
+      "n": 0
+    },
+    "e_no_assignment": {
+      "markets_in_cell": 0,
+      "markets_published": 0,
+      "reach_pct": null,
+      "n": 0
+    },
+    "f_mono_ambiguous": {
+      "markets_in_cell": 0,
+      "markets_published": 0,
+      "reach_pct": null,
+      "n": 0
+    },
+    "g_mono_coherent": {
+      "markets_in_cell": 0,
+      "markets_published": 0,
+      "reach_pct": null,
+      "n": 0
+    },
+    "z_not_in_a_ladder": {
+      "markets_in_cell": 1150,
+      "markets_published": 1150,
+      "reach_pct": 100.0,
+      "n": 2952,
+      "ece": 7.66,
+      "gap": -3.48,
+      "mean_p": 0.3872,
+      "realized": 0.4221,
+      "ece_if_flipped": 37.7
+    }
+  },
+  "holdout_at": null,
+  "holdout": {}
+}
